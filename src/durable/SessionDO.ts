@@ -16,10 +16,12 @@ import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
 import type { Row, SessionProjection, TimecodeCtx } from './sessionCore';
+import { TranscriptStore } from './transcriptStore';
 import { TransportStore } from './transportStore';
 
 export type { SessionProjection, TransportState } from './sessionCore';
 export type { AudioSegmentMeta } from './audioStore';
+export type { TranscriptWord } from './transcriptStore';
 
 export class SessionDO extends DurableObject<Env> {
   private core!: SessionCore;
@@ -27,6 +29,7 @@ export class SessionDO extends DurableObject<Env> {
   private transport!: TransportStore;
   private audio!: AudioStore;
   private lease!: LeaseStore;
+  private transcript!: TranscriptStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -36,6 +39,7 @@ export class SessionDO extends DurableObject<Env> {
     this.transport = new TransportStore(this.core);
     this.audio = new AudioStore(this.core);
     this.lease = new LeaseStore(this.core);
+    this.transcript = new TranscriptStore(this.core);
   }
 
   // --- substrate delegates (temporary shim; removed in Task 8) ---
@@ -189,64 +193,21 @@ export class SessionDO extends DurableObject<Env> {
     return this.audio.syncAudioFromR2(known);
   }
 
-  // -- RPC: transcript words (manual CRUD; generation is stubbed in the router) --
-
-  listTranscriptWords(): TranscriptWord[] {
-    return this.all('SELECT * FROM session_transcript_words ORDER BY ordinal').map(wordRow);
+  // --- transcript delegates ---
+  listTranscriptWords() {
+    return this.transcript.listTranscriptWords();
   }
-
-  insertTranscriptWord(data: {
-    session_time: string;
-    speaker: string;
-    word: string;
-  }): TranscriptWord {
-    const id = crypto.randomUUID();
-    const ordinal = Number(
-      this.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_transcript_words')?.n ??
-        0,
-    );
-    this.db.exec(
-      `INSERT INTO session_transcript_words (id, session_time, speaker, word, ordinal, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      id,
-      data.session_time,
-      data.speaker,
-      data.word,
-      ordinal,
-      isoZ(new Date()),
-    );
-    return wordRow(this.first('SELECT * FROM session_transcript_words WHERE id = ?', id) as Row);
+  insertTranscriptWord(data: Parameters<TranscriptStore['insertTranscriptWord']>[0]) {
+    return this.transcript.insertTranscriptWord(data);
   }
-
   updateTranscriptWord(
     wordId: string,
-    patch: { session_time?: string; speaker?: string; word?: string },
-  ): TranscriptWord | null {
-    const existing = this.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId);
-    if (existing === null) return null;
-    const cols: string[] = [];
-    const vals: SqlStorageValue[] = [];
-    for (const key of ['session_time', 'speaker', 'word'] as const) {
-      if (patch[key] !== undefined) {
-        cols.push(`${key} = ?`);
-        vals.push(patch[key] as string);
-      }
-    }
-    if (cols.length) {
-      this.db.exec(
-        `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE id = ?`,
-        ...vals,
-        wordId,
-      );
-    }
-    return wordRow(
-      this.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId) as Row,
-    );
+    patch: Parameters<TranscriptStore['updateTranscriptWord']>[1],
+  ) {
+    return this.transcript.updateTranscriptWord(wordId, patch);
   }
-
-  deleteTranscriptWord(wordId: string): boolean {
-    const r = this.db.exec('DELETE FROM session_transcript_words WHERE id = ?', wordId);
-    return r.rowsWritten > 0;
+  deleteTranscriptWord(wordId: string) {
+    return this.transcript.deleteTranscriptWord(wordId);
   }
 
   // -- RPC: topics (manual CRUD) -----------------------------------------------
@@ -305,17 +266,6 @@ export class SessionDO extends DurableObject<Env> {
   }
 }
 
-export interface TranscriptWord {
-  id: string;
-  session_time: string;
-  speaker: string;
-  word: string;
-  start_sec: number;
-  end_sec: number;
-  ordinal: number;
-  created_at_utc: string;
-}
-
 export interface Topic {
   id: string;
   session_time: string;
@@ -324,19 +274,6 @@ export interface Topic {
   summary: string;
   ordinal: number;
   created_at_utc: string;
-}
-
-function wordRow(r: Row): TranscriptWord {
-  return {
-    id: String(r.id),
-    session_time: String(r.session_time ?? ''),
-    speaker: String(r.speaker ?? ''),
-    word: String(r.word ?? ''),
-    start_sec: Number(r.start_sec ?? 0),
-    end_sec: Number(r.end_sec ?? 0),
-    ordinal: Number(r.ordinal ?? 0),
-    created_at_utc: String(r.created_at_utc ?? ''),
-  };
 }
 
 function topicRow(r: Row): Topic {
