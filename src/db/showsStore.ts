@@ -1,0 +1,188 @@
+// Shows CRUD + the pure per-show / per-category shaping functions the React
+// app's api/types.ts expects. Moved verbatim out of d1.ts (Catalog).
+
+import { normalizeEventPaletteNine, validateEventPalettePreset } from '../studio';
+import { nowIso } from './shared';
+import type { Row } from './shared';
+
+function categoriesListFromShowRow(r: Row): unknown[] {
+  try {
+    const raw = JSON.parse(String(r.categories_json ?? '[]'));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function hexColorsFromJson(rawJson: unknown, maxCount = 9): string[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(String(rawJson ?? '[]'));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw.slice(0, maxCount)) {
+    const s = String(x).trim();
+    if (s.length === 7 && s.startsWith('#')) out.push(s.toLowerCase());
+  }
+  return out;
+}
+
+/** _show_api_dict — the per-show shape the React app's api/types.ts expects. */
+export function showApiDict(r: Row): Record<string, unknown> {
+  const pal = normalizeEventPaletteNine(hexColorsFromJson(r.event_palette_json));
+  const presetRaw = String(r.event_palette_preset ?? '')
+    .trim()
+    .toLowerCase();
+  const preset = validateEventPalettePreset(presetRaw || 'custom');
+  const customRaw = hexColorsFromJson(r.event_palette_custom_json);
+  const custom = customRaw.length === 0 ? [...pal] : normalizeEventPaletteNine(customRaw);
+  return {
+    id: String(r.id),
+    studio_id: String(r.studio_id),
+    name: String(r.name),
+    show_code: String(r.show_code),
+    next_episode: Number(r.next_episode) || 1,
+    categories: categoriesListFromShowRow(r),
+    event_palette: pal,
+    event_palette_preset: preset,
+    event_palette_custom: custom,
+  };
+}
+
+/** _dropdown_options_api_shape. */
+function dropdownOptionsApiShape(raw: unknown): Array<{ label: string; needs_context: boolean }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ label: string; needs_context: boolean }> = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const lab = item.trim();
+      if (lab) out.push({ label: lab, needs_context: false });
+    } else if (item && typeof item === 'object') {
+      const o = item as Record<string, unknown>;
+      const lab = String(o.label ?? o.name ?? '').trim();
+      if (lab) out.push({ label: lab, needs_context: Boolean(o.needs_context ?? false) });
+    }
+  }
+  return out;
+}
+
+/** _show_categories_api_shape — label/color/type/dropdown_options/on-off for the browser. */
+export function showCategoriesApiShape(rawCategories: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(rawCategories)) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const c of rawCategories) {
+    if (!c || typeof c !== 'object') continue;
+    const o = c as Record<string, unknown>;
+    const lab = String(o.label ?? o.name ?? '').trim() || '—';
+    const type = String(o.type ?? 'BUTTON').toUpperCase();
+    out.push({
+      id: String(o.id ?? ''),
+      label: lab,
+      color: String(o.color ?? '#7cb7ff'),
+      type,
+      dropdown_options: type === 'DROPDOWN' ? dropdownOptionsApiShape(o.dropdown_options) : [],
+      on_label: String(o.on_label ?? ''),
+      off_label: String(o.off_label ?? ''),
+    });
+  }
+  return out;
+}
+
+export class ShowsStore {
+  constructor(private db: D1Database) {}
+
+  async getShowRow(showId: string): Promise<Row | null> {
+    return this.db.prepare('SELECT * FROM shows WHERE id = ?').bind(showId).first<Row>();
+  }
+
+  // TODO(cleanup): no callers — candidate for removal in a separate pass
+  async getShowShowCode(showId: string): Promise<string> {
+    const row = await this.getShowRow(showId);
+    return row ? String(row.show_code ?? '').trim() : '';
+  }
+
+  async listShowsForStudio(studioId: string): Promise<Row[]> {
+    const { results } = await this.db
+      .prepare('SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC')
+      .bind(studioId)
+      .all<Row>();
+    return results ?? [];
+  }
+
+  async createShow(opts: {
+    studioId: string;
+    name: string;
+    showCode: string;
+    categoriesJson: string;
+    paletteJson: string;
+    paletteCustomJson: string;
+  }): Promise<string> {
+    const sid = crypto.randomUUID();
+    await this.db
+      .prepare(
+        `INSERT INTO shows
+           (id, studio_id, name, show_code, next_episode, categories_json,
+            event_palette_json, event_palette_preset, event_palette_custom_json, created_at_utc)
+         VALUES (?, ?, ?, ?, 1, ?, ?, 'custom', ?, ?)`,
+      )
+      .bind(
+        sid,
+        opts.studioId,
+        opts.name.trim(),
+        opts.showCode.trim().toUpperCase(),
+        opts.categoriesJson,
+        opts.paletteJson,
+        opts.paletteCustomJson,
+        nowIso(),
+      )
+      .run();
+    return sid;
+  }
+
+  async updateShowFields(
+    showId: string,
+    fields: {
+      name?: string;
+      show_code?: string;
+      next_episode?: number;
+      categories_json?: string;
+      event_palette_json?: string;
+      event_palette_preset?: string;
+      event_palette_custom_json?: string;
+    },
+  ): Promise<boolean> {
+    const row = await this.getShowRow(showId);
+    if (row === null) return false;
+    const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
+    const sc =
+      fields.show_code !== undefined
+        ? fields.show_code.trim().toUpperCase()
+        : String(row.show_code ?? '')
+            .trim()
+            .toUpperCase();
+    const ne =
+      fields.next_episode !== undefined ? fields.next_episode : Number(row.next_episode) || 1;
+    const cj = fields.categories_json ?? String(row.categories_json ?? '[]');
+    const pj = fields.event_palette_json ?? String(row.event_palette_json ?? '[]');
+    const pp =
+      fields.event_palette_preset !== undefined
+        ? fields.event_palette_preset.trim().toLowerCase()
+        : String(row.event_palette_preset ?? 'custom')
+            .trim()
+            .toLowerCase() || 'custom';
+    const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
+    await this.db
+      .prepare(
+        `UPDATE shows
+           SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
+               event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
+         WHERE id = ?`,
+      )
+      .bind(nm, sc, ne, cj, pj, pp, pcj, showId)
+      .run();
+    return true;
+  }
+}

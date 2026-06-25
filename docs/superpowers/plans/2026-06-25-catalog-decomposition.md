@@ -17,6 +17,7 @@
 - **`D1Database`** is an ambient global from `worker-configuration.d.ts` — never import it.
 - **Verify after every task:** `npm run typecheck` (`tsc --noEmit`) passes AND `npx vitest run` passes before committing.
 - **Move bodies verbatim.** When a task says "move method X (lines A–B)," copy the method body exactly; apply ONLY the explicitly-listed cross-store rewrites. Do not refactor logic.
+- **Store construction goes in the constructor body, NOT field initializers.** With `target: ES2022` (`useDefineForClassFields`), `readonly x = new Store(this.db)` field initializers run BEFORE the `private db` parameter property is assigned, so `this.db` would be `undefined`. Declare `readonly <store>: <Store>;` and assign `this.<store> = new <Store>(db, ...)` inside the constructor (using the `db` param directly), in dependency order. Arrow-property delegates (`m = (...) => this.<store>.m(...)`) are safe as field initializers — they read `this.<store>` at call time, not creation time.
 - **The two dead methods** `getShowShowCode` and `setSessionEpisodeDate` have zero callers anywhere. Relocate them faithfully (into their store, NOT delegated on the facade) and leave a `// TODO(cleanup): no callers — candidate for removal in a separate pass` comment. Do not remove them in this refactor.
 
 ---

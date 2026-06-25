@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { showApiDict, showCategoriesApiShape } from './d1';
+import { showApiDict, showCategoriesApiShape } from './showsStore';
 
 describe('showApiDict', () => {
   it('shapes a full show row with a custom palette', () => {
