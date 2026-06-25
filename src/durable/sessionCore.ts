@@ -198,7 +198,10 @@ export class SessionCore {
     this.db.exec('DELETE FROM meta WHERE key = ?', key);
   }
 
-  /** Wraps ctx.storage.setAlarm so lease logic never touches ctx directly. */
+  /** Wraps ctx.storage.setAlarm so lease logic never touches ctx directly.
+   * NOTE: setAlarm REPLACES any pending alarm (one slot per DO). The recording
+   * lease is the sole consumer today; a second consumer must coordinate through
+   * SessionDO.alarm() rather than calling this independently. */
   setAlarm(atMs: number): void {
     void this.ctx.storage.setAlarm(atMs);
   }
