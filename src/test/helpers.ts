@@ -89,3 +89,20 @@ export async function loginCookie(userId: string): Promise<string> {
 export function adminHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
+
+/** Write a companion presence KV entry so primarySession() resolves to sessionId. */
+export async function setCompanionPresence(
+  clientId: string,
+  sessionId: string,
+  opts: { visible?: boolean; is_playing?: boolean } = {},
+): Promise<void> {
+  await env.AUTH.put(`companion:presence:${clientId}`, '1', {
+    expirationTtl: 60,
+    metadata: {
+      session_id: sessionId,
+      visible: opts.visible ?? true,
+      is_playing: opts.is_playing ?? false,
+      updated: Date.now(),
+    },
+  });
+}
