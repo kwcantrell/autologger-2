@@ -5,6 +5,8 @@
 
 import { z } from 'zod';
 
+export const MAX_METADATA_BYTES = 8000; // matches the message length cap.
+
 // Pydantic `X | None = None` ⇒ field is optional and may be null. `.nullish()`
 // folds both "absent" and explicit `null` to `null | undefined`, matching the
 // Python routers' `is not None` checks.
@@ -47,7 +49,12 @@ export type SessionUpdateBody = z.infer<typeof sessionUpdateBodySchema>;
 export const logBodySchema = z.object({
   category: z.string().min(1).max(200),
   message: z.string().min(1).max(8000),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z
+    .record(z.unknown())
+    .default({})
+    .refine((v) => JSON.stringify(v).length <= MAX_METADATA_BYTES, {
+      message: `metadata exceeds ${MAX_METADATA_BYTES} serialized bytes`,
+    }),
   marked_at_utc: z.string().nullish(),
 });
 export type LogBody = z.infer<typeof logBodySchema>;

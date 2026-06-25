@@ -147,6 +147,10 @@ export class SessionDO extends DurableObject<Env> {
     return this.transport.statusLive(ctx);
   }
 
+  // Single alarm reconciliation point. The DO has exactly one alarm slot, fired
+  // once; today the recording lease is the sole consumer. Any future scheduled
+  // timer MUST route through here (and re-arm to the earliest pending wake) —
+  // never call ctx.storage.setAlarm independently, or it clobbers lease expiry.
   override async alarm(): Promise<void> {
     this.lease.expireIfStale();
   }

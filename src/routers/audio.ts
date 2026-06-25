@@ -25,6 +25,16 @@ function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, 
   };
 }
 
+export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — bound the buffered upload.
+
+/** Reject an over-cap upload with 413. No-op for unknown (null) or NaN sizes;
+ * the post-read byteLength check is the backstop when Content-Length is absent. */
+export function enforceAudioByteLimit(bytes: number | null): void {
+  if (bytes !== null && Number.isFinite(bytes) && bytes > MAX_AUDIO_BYTES) {
+    throw new ApiError(413, `Audio payload exceeds the ${MAX_AUDIO_BYTES}-byte limit.`);
+  }
+}
+
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
@@ -38,8 +48,11 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
 audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
+  const declared = c.req.header('content-length');
+  enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
   const payload = await c.req.arrayBuffer();
   if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
+  enforceAudioByteLimit(payload.byteLength);
   const mime = c.req.header('content-type') ?? 'audio/webm';
   const started = parseOptionalMarkedAt(c.req.query('started_at_utc'));
   const ended = parseOptionalMarkedAt(c.req.query('ended_at_utc'));
