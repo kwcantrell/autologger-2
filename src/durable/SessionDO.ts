@@ -10,22 +10,25 @@
 // returns a `projection` block the Worker writes to the D1 sessions row.
 
 import { DurableObject } from 'cloudflare:workers';
-import { formatSmpte, isoZ, parseUtcMs, toTotalFrames, transportTimecode } from '../timecode';
+import { isoZ } from '../timecode';
 import { EventStore } from './eventStore';
 import { SessionCore } from './sessionCore';
-import type { Row, SessionProjection, TimecodeCtx, TransportState } from './sessionCore';
+import type { Row, SessionProjection, TimecodeCtx } from './sessionCore';
+import { TransportStore } from './transportStore';
 
 export type { SessionProjection, TransportState } from './sessionCore';
 
 export class SessionDO extends DurableObject<Env> {
   private core!: SessionCore;
   private events!: EventStore;
+  private transport!: TransportStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.core = new SessionCore(ctx);
     this.core.initSchema();
     this.events = new EventStore(this.core);
+    this.transport = new TransportStore(this.core);
   }
 
   // --- substrate delegates (temporary shim; removed in Task 8) ---
@@ -37,15 +40,6 @@ export class SessionDO extends DurableObject<Env> {
   }
   private first(query: string, ...binds: SqlStorageValue[]): Row | null {
     return this.core.first(query, ...binds);
-  }
-  private transportRow() {
-    return this.core.transportRow();
-  }
-  private revision(): number {
-    return this.core.revision();
-  }
-  private projection(): SessionProjection {
-    return this.core.projection();
   }
   private broadcast(msg: Record<string, unknown>): void {
     this.core.broadcast(msg);
@@ -148,106 +142,21 @@ export class SessionDO extends DurableObject<Env> {
     return this.events.maybeRelinkOrphans(input);
   }
 
-  // -- RPC: transport ----------------------------------------------------------
-
-  private transportStateDict(ctx: TimecodeCtx): TransportState {
-    const tr = this.transportRow();
-    const tc = transportTimecode(ctx.frameRate, ctx.startOffsetFrames, tr, Date.now());
-    return {
-      is_rolling: tr.is_rolling,
-      current_take: tr.current_take,
-      roll_started_at_utc: tr.roll_started_at_utc,
-      elapsed_frames: tr.elapsed_frames,
-      timecode: formatSmpte(tc),
-      timecode_total_frames: toTotalFrames(tc),
-    };
+  // --- transport delegates ---
+  transportSnapshot(ctx: TimecodeCtx) {
+    return this.transport.transportSnapshot(ctx);
   }
-
-  transportSnapshot(ctx: TimecodeCtx): TransportState {
-    return this.transportStateDict(ctx);
+  startTake(ctx: TimecodeCtx) {
+    return this.transport.startTake(ctx);
   }
-
-  startTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
-    const tr = this.transportRow();
-    if (tr.is_rolling) {
-      return {
-        state: { ...this.transportStateDict(ctx), started: false },
-        projection: this.projection(),
-      };
-    }
-    const nextTake = tr.current_take + 1;
-    this.db.exec(
-      'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
-      nextTake,
-      isoZ(new Date()),
-    );
-    this.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
-    const st = this.transportStateDict(ctx);
-    return { state: { ...st, started: true }, projection: this.projection() };
+  stopTake(ctx: TimecodeCtx) {
+    return this.transport.stopTake(ctx);
   }
-
-  stopTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
-    const tr = this.transportRow();
-    if (!tr.is_rolling) {
-      return {
-        state: { ...this.transportStateDict(ctx), stopped: false },
-        projection: this.projection(),
-      };
-    }
-    let extra = 0;
-    if (tr.roll_started_at_utc) {
-      const started = parseUtcMs(tr.roll_started_at_utc);
-      if (!Number.isNaN(started)) {
-        extra = Math.max(0, Math.trunc(((Date.now() - started) / 1000) * ctx.frameRate));
-      }
-    }
-    const totalElapsed = tr.elapsed_frames + extra;
-    this.db.exec(
-      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
-      totalElapsed,
-    );
-    this.broadcast({ type: 'transport.changed', is_rolling: false, current_take: tr.current_take });
-    const st = this.transportStateDict(ctx);
-    return { state: { ...st, stopped: true }, projection: this.projection() };
+  stopTakeWithDuration(input: Parameters<TransportStore['stopTakeWithDuration']>[0]) {
+    return this.transport.stopTakeWithDuration(input);
   }
-
-  /** Finalize an in-progress take with an exact duration (YouTube import path). */
-  stopTakeWithDuration(input: { durationS: number; ctx: TimecodeCtx }): SessionProjection {
-    const tr = this.transportRow();
-    const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
-    this.db.exec(
-      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
-      tr.elapsed_frames + extra,
-    );
-    return this.projection();
-  }
-
-  // -- RPC: status (DO-owned parts; Worker composes the D1 metadata + lease) ----
-
-  statusLive(ctx: TimecodeCtx): {
-    is_rolling: boolean;
-    current_take: number;
-    event_count: number;
-    logged_event_count: number;
-    events_stream_revision: number;
-    session_timecode: string;
-    session_timecode_total_frames: number;
-  } {
-    const st = this.transportStateDict(ctx);
-    const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
-    const logged = Number(
-      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")?.c ??
-        0,
-    );
-    return {
-      is_rolling: st.is_rolling,
-      current_take: st.current_take,
-      event_count: total,
-      logged_event_count: logged,
-      events_stream_revision: this.revision(),
-      session_timecode: st.timecode,
-      session_timecode_total_frames: st.timecode_total_frames,
-    };
+  statusLive(ctx: TimecodeCtx) {
+    return this.transport.statusLive(ctx);
   }
 
   // -- RPC: audio-recording lease (in-DO state + alarm auto-expiry) -------------
