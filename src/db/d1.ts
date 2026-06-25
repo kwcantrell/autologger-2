@@ -17,29 +17,14 @@ import {
   type StudioProfile,
   studioConfigKey,
   studioToApiDict,
+  ValidationError,
   validateEventPalettePreset,
   validateSettingsBlob,
 } from '../studio';
+import { nowIso } from './shared';
+import type { AuthUser, ProfileCtx, Row } from './shared';
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  google_sub: string;
-  given_name: string;
-  family_name: string;
-  picture_url: string;
-}
-
-export interface ProfileCtx {
-  oauthConfigured: boolean;
-  adminMeta: Record<string, boolean>;
-}
-
-type Row = Record<string, unknown>;
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
+export type { AuthUser, ProfileCtx, Row } from './shared';
 
 function categoriesListFromShowRow(r: Row): unknown[] {
   try {
@@ -634,4 +619,344 @@ export class Catalog {
       auth: await this.authSection(user, oauthConfigured),
     };
   }
+
+  // -- sessions index (D1 metadata + live projection from the SessionDO) --------
+
+  async getSessionStudioId(sessionId: string): Promise<string | null> {
+    const r = await this.db
+      .prepare(
+        `SELECT sh.studio_id AS studio_id FROM sessions s
+         LEFT JOIN shows sh ON sh.id = s.show_id WHERE s.id = ?`,
+      )
+      .bind(sessionId)
+      .first<Row>();
+    if (r === null) return null;
+    const sid = String(r.studio_id ?? '').trim();
+    return sid || null;
+  }
+
+  async getSessionIndexRow(
+    sessionId: string,
+    opts: { includeHidden?: boolean } = {},
+  ): Promise<Row | null> {
+    let q = 'SELECT * FROM sessions WHERE id = ?';
+    if (!opts.includeHidden) q += ' AND COALESCE(ui_hidden, 0) = 0';
+    return this.db.prepare(q).bind(sessionId).first<Row>();
+  }
+
+  /** Joined index row carrying show_code / show_name for deck titles. */
+  async getSessionJoinedRow(
+    sessionId: string,
+    opts: { includeHidden?: boolean } = {},
+  ): Promise<Row | null> {
+    let q = `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
+             FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id WHERE s.id = ?`;
+    if (!opts.includeHidden) q += ' AND COALESCE(s.ui_hidden, 0) = 0';
+    return this.db.prepare(q).bind(sessionId).first<Row>();
+  }
+
+  async listSessionsForShow(showId: string): Promise<Row[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
+         FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id
+         WHERE s.show_id = ? AND COALESCE(s.ui_hidden, 0) = 0
+         ORDER BY s.created_at_utc DESC`,
+      )
+      .bind(showId)
+      .all<Row>();
+    return results ?? [];
+  }
+
+  async createSessionIndex(opts: {
+    showId: string;
+    title: string;
+    frameRate: number;
+    startOffsetFrames: number;
+    episode: string;
+    notes: string;
+    startedAtUtc: string;
+    createdAtUtc: string;
+  }): Promise<string> {
+    const id = crypto.randomUUID();
+    await this.db
+      .prepare(
+        `INSERT INTO sessions
+           (id, show_id, title, archived, ui_hidden, frame_rate, start_offset_frames,
+            episode, notes, started_at_utc, created_at_utc,
+            event_count, is_rolling, current_take, transport_elapsed_frames)
+         VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+      )
+      .bind(
+        id,
+        opts.showId,
+        opts.title,
+        opts.frameRate,
+        opts.startOffsetFrames,
+        opts.episode,
+        opts.notes,
+        opts.startedAtUtc,
+        opts.createdAtUtc,
+      )
+      .run();
+    await this.bumpShowNextEpisodeFromEpisodeString(opts.showId, opts.episode);
+    return id;
+  }
+
+  /** _bump_show_next_episode_from_episode_string. */
+  async bumpShowNextEpisodeFromEpisodeString(showId: string, episode: string): Promise<void> {
+    const ep = (episode || '').trim().toUpperCase();
+    if (ep.startsWith('BONUS')) return;
+    const m = /^(\d+)$/.exec(ep);
+    if (!m) return;
+    const n = Number(m[1]);
+    if (n > 10000) return;
+    await this.db
+      .prepare('UPDATE shows SET next_episode = MAX(COALESCE(next_episode, 1), ?) WHERE id = ?')
+      .bind(n + 1, showId)
+      .run();
+  }
+
+  /** update_session — title + start_offset_frames. Throws ValidationError on empty title. */
+  async updateSessionIndex(
+    sessionId: string,
+    fields: { title?: string; startOffsetFrames?: number },
+  ): Promise<Row | null> {
+    const row = await this.getSessionIndexRow(sessionId, { includeHidden: true });
+    if (row === null) return null;
+    const newTitle = fields.title !== undefined ? fields.title.trim() : String(row.title);
+    if (!newTitle) throw new ValidationError('title must not be empty');
+    const newOffset =
+      fields.startOffsetFrames !== undefined
+        ? fields.startOffsetFrames
+        : Number(row.start_offset_frames ?? 0);
+    if (newOffset < 0) throw new ValidationError('start_offset_frames must be >= 0');
+    await this.db
+      .prepare('UPDATE sessions SET title = ?, start_offset_frames = ? WHERE id = ?')
+      .bind(newTitle, newOffset, sessionId)
+      .run();
+    return this.getSessionIndexRow(sessionId, { includeHidden: true });
+  }
+
+  async setSessionArchived(sessionId: string, archived: boolean): Promise<boolean> {
+    const res = await this.db
+      .prepare('UPDATE sessions SET archived = ? WHERE id = ?')
+      .bind(archived ? 1 : 0, sessionId)
+      .run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  async setSessionUiHidden(sessionId: string, hidden: boolean): Promise<boolean> {
+    const res = await this.db
+      .prepare('UPDATE sessions SET ui_hidden = ? WHERE id = ?')
+      .bind(hidden ? 1 : 0, sessionId)
+      .run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  async setSessionEpisodeDate(sessionId: string, dateStr: string): Promise<void> {
+    await this.db
+      .prepare('UPDATE sessions SET episode_date = ? WHERE id = ?')
+      .bind(dateStr, sessionId)
+      .run();
+  }
+
+  /** Mirror the DO's live projection onto the D1 sessions row for cheap listing. */
+  async projectSessionLive(
+    sessionId: string,
+    p: {
+      event_count: number;
+      max_timecode_total_frames: number | null;
+      is_rolling: boolean;
+      current_take: number;
+      transport_elapsed_frames: number;
+      roll_started_at_utc: string | null;
+    },
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE sessions SET event_count = ?, max_timecode_total_frames = ?,
+           is_rolling = ?, current_take = ?, transport_elapsed_frames = ?, roll_started_at_utc = ?
+         WHERE id = ?`,
+      )
+      .bind(
+        p.event_count,
+        p.max_timecode_total_frames,
+        p.is_rolling ? 1 : 0,
+        p.current_take,
+        p.transport_elapsed_frames,
+        p.roll_started_at_utc,
+        sessionId,
+      )
+      .run();
+  }
+
+  /** get_session_show_categories — categories list + names from the session's show. */
+  async getSessionShowCategories(
+    sessionId: string,
+  ): Promise<{ categories: unknown[]; showName: string; showCode: string } | null> {
+    const row = await this.getSessionIndexRow(sessionId, { includeHidden: true });
+    if (row === null) return null;
+    const showId = String(row.show_id ?? '').trim();
+    if (!showId) return null;
+    const show = await this.getShowRow(showId);
+    if (show === null) return null;
+    let cats: unknown[] = [];
+    try {
+      const parsed = JSON.parse(String(show.categories_json ?? '[]'));
+      if (Array.isArray(parsed)) cats = parsed;
+    } catch {
+      cats = [];
+    }
+    return {
+      categories: cats,
+      showName: String(show.name ?? ''),
+      showCode: String(show.show_code ?? ''),
+    };
+  }
+
+  /** studio_profile_for_session — categories from the session's show, else active studio. */
+  async studioProfileForSession(sessionId: string): Promise<StudioProfile> {
+    const raw = await this.getSessionShowCategories(sessionId);
+    let stu = await this.getSessionStudioId(sessionId);
+    if (!stu || !this.isKnownStudio(stu)) stu = (await this.resolveActiveStudio()).id;
+    if (raw === null) return this.loadStudioProfile(stu);
+    const name = this.names[stu] ?? stu;
+    return blobToProfile(stu, name, {
+      categories: raw.categories,
+      show_title_format: '',
+      default_frame_rate: 24.0,
+    } as unknown as SettingsBlob);
+  }
+
+  // -- admin: users + studio definitions ---------------------------------------
+
+  async authListUsersAdmin(): Promise<Row[]> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT id, google_sub, email, given_name, family_name, picture_url,
+                created_at_utc, disabled_at_utc
+         FROM users ORDER BY created_at_utc DESC`,
+      )
+      .all<Row>();
+    return results ?? [];
+  }
+
+  /** Fetch a user row including disabled accounts (admin). */
+  async authGetUserRowAny(userId: string): Promise<Row | null> {
+    return this.db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first<Row>();
+  }
+
+  async authSetUserDisabled(userId: string, disabled: boolean): Promise<void> {
+    if (disabled) {
+      await this.db
+        .prepare('UPDATE users SET disabled_at_utc = ? WHERE id = ?')
+        .bind(nowIso(), userId)
+        .run();
+    } else {
+      await this.db
+        .prepare('UPDATE users SET disabled_at_utc = NULL WHERE id = ?')
+        .bind(userId)
+        .run();
+    }
+  }
+
+  async authRemoveMembership(userId: string, studioId: string): Promise<boolean> {
+    const res = await this.db
+      .prepare('DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?')
+      .bind(userId, studioId)
+      .run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  private static readonly STUDIO_ID_SLUG_RE = /^[a-z][a-z0-9-]{1,62}$/;
+
+  /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
+  async adminCreateStudio(studioId: string, displayName: string): Promise<void> {
+    const sid = (studioId || '').trim();
+    const disp = (displayName || '').trim();
+    if (!sid || !disp) throw new ValidationError('Team id and display name are required.');
+    if (!Catalog.STUDIO_ID_SLUG_RE.test(sid)) {
+      throw new ValidationError(
+        'Team id must be a lowercase slug: start with a letter, then letters, digits, or hyphens (2-63 chars).',
+      );
+    }
+    if (disp.length > 200) throw new ValidationError('Display name is too long.');
+    if (BUILTIN_STUDIO_ORDER.includes(sid)) {
+      throw new ValidationError('That team id is reserved for a built-in team.');
+    }
+    const existing = await this.db
+      .prepare('SELECT 1 FROM studio_definitions WHERE id = ?')
+      .bind(sid)
+      .first<Row>();
+    if (existing !== null) throw new ValidationError('A team with that id already exists.');
+    await this.db
+      .prepare(
+        'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
+      )
+      .bind(sid, disp, nowIso())
+      .run();
+    await this.refreshStudioRegistry();
+  }
+
+  /** admin_delete_studio — remove a user-defined team (blocks if shows exist). */
+  async adminDeleteStudio(studioId: string): Promise<void> {
+    const sid = (studioId || '').trim();
+    if (BUILTIN_STUDIO_ORDER.includes(sid)) {
+      throw new ValidationError('Cannot delete a built-in team.');
+    }
+    const cntRow = await this.db
+      .prepare('SELECT COUNT(*) AS c FROM shows WHERE studio_id = ?')
+      .bind(sid)
+      .first<Row>();
+    const nshows = Number(cntRow?.c ?? 0);
+    if (nshows > 0) {
+      throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
+    }
+    await this.db.batch([
+      this.db.prepare('DELETE FROM user_studio_memberships WHERE studio_id = ?').bind(sid),
+      this.db.prepare('DELETE FROM studio_definitions WHERE id = ?').bind(sid),
+      this.db.prepare('DELETE FROM app_settings WHERE key = ?').bind(studioConfigKey(sid)),
+    ]);
+    await this.refreshStudioRegistry();
+  }
+}
+
+/** _dropdown_options_api_shape. */
+function dropdownOptionsApiShape(raw: unknown): Array<{ label: string; needs_context: boolean }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ label: string; needs_context: boolean }> = [];
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const lab = item.trim();
+      if (lab) out.push({ label: lab, needs_context: false });
+    } else if (item && typeof item === 'object') {
+      const o = item as Record<string, unknown>;
+      const lab = String(o.label ?? o.name ?? '').trim();
+      if (lab) out.push({ label: lab, needs_context: Boolean(o.needs_context ?? false) });
+    }
+  }
+  return out;
+}
+
+/** _show_categories_api_shape — label/color/type/dropdown_options/on-off for the browser. */
+export function showCategoriesApiShape(rawCategories: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(rawCategories)) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const c of rawCategories) {
+    if (!c || typeof c !== 'object') continue;
+    const o = c as Record<string, unknown>;
+    const lab = String(o.label ?? o.name ?? '').trim() || '—';
+    const type = String(o.type ?? 'BUTTON').toUpperCase();
+    out.push({
+      id: String(o.id ?? ''),
+      label: lab,
+      color: String(o.color ?? '#7cb7ff'),
+      type,
+      dropdown_options: type === 'DROPDOWN' ? dropdownOptionsApiShape(o.dropdown_options) : [],
+      on_label: String(o.on_label ?? ''),
+      off_label: String(o.off_label ?? ''),
+    });
+  }
+  return out;
 }
