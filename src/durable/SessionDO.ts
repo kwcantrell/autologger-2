@@ -13,6 +13,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { isoZ } from '../timecode';
 import { AudioStore } from './audioStore';
 import { EventStore } from './eventStore';
+import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
 import type { Row, SessionProjection, TimecodeCtx } from './sessionCore';
 import { TransportStore } from './transportStore';
@@ -25,6 +26,7 @@ export class SessionDO extends DurableObject<Env> {
   private events!: EventStore;
   private transport!: TransportStore;
   private audio!: AudioStore;
+  private lease!: LeaseStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -33,6 +35,7 @@ export class SessionDO extends DurableObject<Env> {
     this.events = new EventStore(this.core);
     this.transport = new TransportStore(this.core);
     this.audio = new AudioStore(this.core);
+    this.lease = new LeaseStore(this.core);
   }
 
   // --- substrate delegates (temporary shim; removed in Task 8) ---
@@ -45,21 +48,6 @@ export class SessionDO extends DurableObject<Env> {
   private first(query: string, ...binds: SqlStorageValue[]): Row | null {
     return this.core.first(query, ...binds);
   }
-  private broadcast(msg: Record<string, unknown>): void {
-    this.core.broadcast(msg);
-  }
-  private metaGet(key: string): string | null {
-    return this.core.metaGet(key);
-  }
-  private metaSet(key: string, value: string): void {
-    this.core.metaSet(key, value);
-  }
-  private metaDelete(key: string): void {
-    this.core.metaDelete(key);
-  }
-
-  // Heartbeats older than this free the recording lease (AUDIO_RECORDING_LEASE_STALE_SEC).
-  private static readonly LEASE_STALE_MS = 40_000;
 
   // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------
 
@@ -163,68 +151,22 @@ export class SessionDO extends DurableObject<Env> {
     return this.transport.statusLive(ctx);
   }
 
-  // -- RPC: audio-recording lease (in-DO state + alarm auto-expiry) -------------
-
-  claimLease(clientId: string): boolean {
-    const cid = clientId.trim();
-    if (!cid) return false;
-    const now = Date.now();
-    const holder = this.metaGet('lease_holder');
-    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
-    if (holder === null || holder === cid || now - seen >= SessionDO.LEASE_STALE_MS) {
-      this.metaSet('lease_holder', cid);
-      this.metaSet('lease_seen_ms', String(now));
-      this.core.setAlarm(now + SessionDO.LEASE_STALE_MS);
-      this.broadcast({ type: 'lease.changed' });
-      return true;
-    }
-    return false;
-  }
-
-  heartbeatLease(clientId: string): boolean {
-    const cid = clientId.trim();
-    if (!cid) return false;
-    if (this.metaGet('lease_holder') !== cid) return false;
-    const now = Date.now();
-    this.metaSet('lease_seen_ms', String(now));
-    this.core.setAlarm(now + SessionDO.LEASE_STALE_MS);
-    return true;
-  }
-
-  releaseLease(clientId: string): void {
-    const cid = clientId.trim();
-    if (!cid) return;
-    if (this.metaGet('lease_holder') !== cid) return;
-    this.metaDelete('lease_holder');
-    this.metaDelete('lease_seen_ms');
-    this.broadcast({ type: 'lease.changed' });
-  }
-
-  leaseStatus(): {
-    holder_client_id: string | null;
-    lease_alive: boolean;
-    lease_age_sec: number | null;
-  } {
-    const holder = this.metaGet('lease_holder');
-    if (holder === null) return { holder_client_id: null, lease_alive: false, lease_age_sec: null };
-    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
-    const age = Math.max(0, (Date.now() - seen) / 1000);
-    return {
-      holder_client_id: holder,
-      lease_alive: age < SessionDO.LEASE_STALE_MS / 1000,
-      lease_age_sec: age,
-    };
-  }
-
   override async alarm(): Promise<void> {
-    const holder = this.metaGet('lease_holder');
-    if (holder === null) return;
-    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
-    if (Date.now() - seen >= SessionDO.LEASE_STALE_MS) {
-      this.metaDelete('lease_holder');
-      this.metaDelete('lease_seen_ms');
-      this.broadcast({ type: 'lease.changed' });
-    }
+    this.lease.expireIfStale();
+  }
+
+  // --- lease delegates ---
+  claimLease(clientId: string) {
+    return this.lease.claimLease(clientId);
+  }
+  heartbeatLease(clientId: string) {
+    return this.lease.heartbeatLease(clientId);
+  }
+  releaseLease(clientId: string) {
+    return this.lease.releaseLease(clientId);
+  }
+  leaseStatus() {
+    return this.lease.leaseStatus();
   }
 
   // --- audio delegates ---
