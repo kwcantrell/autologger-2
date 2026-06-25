@@ -10,18 +10,19 @@
 // returns a `projection` block the Worker writes to the D1 sessions row.
 
 import { DurableObject } from 'cloudflare:workers';
-import { isoZ } from '../timecode';
 import { AudioStore } from './audioStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
-import type { Row, SessionProjection, TimecodeCtx } from './sessionCore';
+import type { SessionProjection, TimecodeCtx } from './sessionCore';
+import { TopicStore } from './topicStore';
 import { TranscriptStore } from './transcriptStore';
 import { TransportStore } from './transportStore';
 
 export type { SessionProjection, TransportState } from './sessionCore';
 export type { AudioSegmentMeta } from './audioStore';
 export type { TranscriptWord } from './transcriptStore';
+export type { Topic } from './topicStore';
 
 export class SessionDO extends DurableObject<Env> {
   private core!: SessionCore;
@@ -30,6 +31,7 @@ export class SessionDO extends DurableObject<Env> {
   private audio!: AudioStore;
   private lease!: LeaseStore;
   private transcript!: TranscriptStore;
+  private topics!: TopicStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -40,17 +42,7 @@ export class SessionDO extends DurableObject<Env> {
     this.audio = new AudioStore(this.core);
     this.lease = new LeaseStore(this.core);
     this.transcript = new TranscriptStore(this.core);
-  }
-
-  // --- substrate delegates (temporary shim; removed in Task 8) ---
-  private get db(): SqlStorage {
-    return this.core.db;
-  }
-  private all(query: string, ...binds: SqlStorageValue[]): Row[] {
-    return this.core.all(query, ...binds);
-  }
-  private first(query: string, ...binds: SqlStorageValue[]): Row | null {
-    return this.core.first(query, ...binds);
+    this.topics = new TopicStore(this.core);
   }
 
   // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------
@@ -210,81 +202,18 @@ export class SessionDO extends DurableObject<Env> {
     return this.transcript.deleteTranscriptWord(wordId);
   }
 
-  // -- RPC: topics (manual CRUD) -----------------------------------------------
-
-  listTopics(): Topic[] {
-    return this.all('SELECT * FROM session_topics ORDER BY ordinal').map(topicRow);
+  // --- topic delegates ---
+  listTopics() {
+    return this.topics.listTopics();
   }
-
-  insertTopic(data: {
-    session_time: string;
-    duration_sec: number;
-    topic_level: number;
-    summary: string;
-  }): Topic {
-    const id = crypto.randomUUID();
-    const ordinal = Number(
-      this.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_topics')?.n ?? 0,
-    );
-    this.db.exec(
-      `INSERT INTO session_topics (id, session_time, duration_sec, topic_level, summary, ordinal, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      data.session_time,
-      data.duration_sec,
-      data.topic_level,
-      data.summary,
-      ordinal,
-      isoZ(new Date()),
-    );
-    return topicRow(this.first('SELECT * FROM session_topics WHERE id = ?', id) as Row);
+  insertTopic(data: Parameters<TopicStore['insertTopic']>[0]) {
+    return this.topics.insertTopic(data);
   }
-
-  updateTopic(
-    topicId: string,
-    patch: { session_time?: string; duration_sec?: number; topic_level?: number; summary?: string },
-  ): Topic | null {
-    const existing = this.first('SELECT * FROM session_topics WHERE id = ?', topicId);
-    if (existing === null) return null;
-    const cols: string[] = [];
-    const vals: SqlStorageValue[] = [];
-    for (const key of ['session_time', 'duration_sec', 'topic_level', 'summary'] as const) {
-      if (patch[key] !== undefined) {
-        cols.push(`${key} = ?`);
-        vals.push(patch[key] as SqlStorageValue);
-      }
-    }
-    if (cols.length) {
-      this.db.exec(`UPDATE session_topics SET ${cols.join(', ')} WHERE id = ?`, ...vals, topicId);
-    }
-    return topicRow(this.first('SELECT * FROM session_topics WHERE id = ?', topicId) as Row);
+  updateTopic(topicId: string, patch: Parameters<TopicStore['updateTopic']>[1]) {
+    return this.topics.updateTopic(topicId, patch);
   }
-
-  deleteTopic(topicId: string): boolean {
-    const r = this.db.exec('DELETE FROM session_topics WHERE id = ?', topicId);
-    return r.rowsWritten > 0;
+  deleteTopic(topicId: string) {
+    return this.topics.deleteTopic(topicId);
   }
-}
-
-export interface Topic {
-  id: string;
-  session_time: string;
-  duration_sec: number;
-  topic_level: number;
-  summary: string;
-  ordinal: number;
-  created_at_utc: string;
-}
-
-function topicRow(r: Row): Topic {
-  return {
-    id: String(r.id),
-    session_time: String(r.session_time ?? ''),
-    duration_sec: Number(r.duration_sec ?? 0),
-    topic_level: Number(r.topic_level ?? 1),
-    summary: String(r.summary ?? ''),
-    ordinal: Number(r.ordinal ?? 0),
-    created_at_utc: String(r.created_at_utc ?? ''),
-  };
 }
 
