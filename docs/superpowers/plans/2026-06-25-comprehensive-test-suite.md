@@ -160,6 +160,8 @@ Reusable seed + auth helpers so later integration tasks stay declarative.
 
 - [ ] **Step 1: Write `src/test/helpers.ts`**
 
+> **Reconciled during execution:** the real `Catalog` creators use camelCase keys and RETURN the id string (not a row): `adminCreateStudio(studioId, displayName): void`; `authCreateUserGoogle({ email, googleSub, givenName, familyName, pictureUrl }): string`; `createShow({ studioId, name, showCode, categoriesJson, paletteJson, paletteCustomJson }): string`; `createSessionIndex({ showId, title, frameRate, startOffsetFrames, episode, notes, startedAtUtc, createdAtUtc }): string`. Also: add `"@cloudflare/vitest-pool-workers"` to `tsconfig.json` `compilerOptions.types` so `cloudflare:test` + `D1Migration` resolve under `tsc`. The code below reflects these corrections.
+
 ```ts
 import { env } from 'cloudflare:test';
 import { createLoginSession } from '../auth/identity';
