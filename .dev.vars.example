@@ -1,0 +1,5 @@
+# Copy to `.dev.vars` (gitignored) for local `wrangler dev`.
+# These map to `wrangler secret put` keys for a real deploy (login-gated, run by you).
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+API_TOKEN=machine-bearer-token-for-companion-and-devices
+ADMIN_TOKEN=bearer-token-for-/api/admin

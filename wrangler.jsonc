@@ -1,0 +1,29 @@
+{
+  // AutoLogger on Cloudflare — phase 1-2 subset.
+  // Local-dev only: D1/KV ids are placeholders Miniflare ignores in `wrangler dev`/`--local`.
+  // Real ids + `wrangler deploy` are a later, login-gated step the user runs themselves.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "autologger",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-02-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "autologger",
+      "database_id": "local",
+      "migrations_dir": "src/db/migrations"
+    }
+  ],
+  "kv_namespaces": [{ "binding": "AUTH", "id": "local" }],
+  "vars": {
+    "PUBLIC_BASE_URL": "http://127.0.0.1:8787",
+    "GOOGLE_CLIENT_ID": "",
+    "REQUIRE_LOGIN": "0",
+    "SESSION_COOKIE": "autologger_sid",
+    "SESSION_DAYS": "14",
+    "NEW_USER_ALL_TEAMS": "0",
+    "COOKIE_SECURE": "",
+    "IP_ALLOWLIST": ""
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "autologger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AutoLogger on Cloudflare — Worker + D1 + KV (phases 1-2: auth, catalog, profile/studio/shows)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cf-typegen": "wrangler types",
+    "migrate:local": "wrangler d1 migrations apply autologger --local"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "jose": "^5.9.6",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9",
+    "wrangler": "^4.100.0"
+  }
+}
