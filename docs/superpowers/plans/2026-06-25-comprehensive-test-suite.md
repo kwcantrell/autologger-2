@@ -37,50 +37,46 @@ De-risks the toolchain (pool-workers ↔ vitest 2.1.9) before any bulk authoring
 
 - [ ] **Step 1: Install the pool-workers dev dependency**
 
-Run: `npm install -D @cloudflare/vitest-pool-workers@^0.5.0`
-Expected: installs without peer-dependency errors against `vitest@2.1.9`. If npm reports a peer conflict, run `npm info @cloudflare/vitest-pool-workers peerDependencies` and install the version whose `vitest` range includes `2.1.9` (do not upgrade vitest).
+Run: `npm install -D @cloudflare/vitest-pool-workers@^0.8.71`
+Resolved during planning: latest pool-workers needs vitest ^4; `0.8.71` is the newest release whose `vitest` peer range is `2.0.x - 3.2.x` (includes the installed `2.1.9`) and still exposes `defineWorkersConfig` + `readD1Migrations`. Do not upgrade vitest.
 
-- [ ] **Step 2: Write `vitest.config.ts`**
+- [ ] **Step 2: Write `vitest.workspace.ts`**
+
+vitest 2.1.9 uses a **workspace file** for multi-project (the `test.projects` key is vitest 3.2+). `defineWorkersProject` (async form) computes the migrations binding per the workers project.
 
 ```ts
-import { defineWorkersConfig, readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
+import { defineWorkersProject, readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
 import path from 'node:path';
+import { defineWorkspace } from 'vitest/config';
 
-export default defineWorkersConfig(async () => {
-  const migrations = await readD1Migrations(path.join(__dirname, 'src/db/migrations'));
-  return {
+export default defineWorkspace([
+  {
+    // Pure / node tier — fakes, no bindings. Excludes integration files.
     test: {
-      projects: [
-        {
-          // Pure / node tier — fakes, no bindings. Excludes integration files.
-          test: {
-            name: 'unit',
-            include: ['src/**/*.test.ts'],
-            exclude: ['src/**/*.int.test.ts'],
-            environment: 'node',
-          },
-        },
-        {
-          // Integration tier — real bindings inside workerd.
-          test: {
-            name: 'workers',
-            include: ['src/**/*.int.test.ts'],
-            setupFiles: ['./src/test/setup.int.ts'],
-            poolOptions: {
-              workers: {
-                isolatedStorage: true,
-                wrangler: { configPath: './wrangler.jsonc' },
-                miniflare: {
-                  bindings: { TEST_MIGRATIONS: migrations },
-                },
-              },
-            },
-          },
-        },
-      ],
+      name: 'unit',
+      include: ['src/**/*.test.ts'],
+      exclude: ['src/**/*.int.test.ts'],
+      environment: 'node',
     },
-  };
-});
+  },
+  defineWorkersProject(async () => {
+    const migrations = await readD1Migrations(path.resolve('src/db/migrations'));
+    return {
+      test: {
+        name: 'workers',
+        include: ['src/**/*.int.test.ts'],
+        setupFiles: ['./src/test/setup.int.ts'],
+        poolOptions: {
+          workers: {
+            isolatedStorage: true,
+            wrangler: { configPath: './wrangler.jsonc' },
+            miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+          },
+        },
+      },
+    };
+  }),
+]);
 ```
 
 - [ ] **Step 3: Write the integration setup file `src/test/setup.int.ts`**
@@ -108,8 +104,13 @@ import { describe, expect, it } from 'vitest';
 import app from '../index';
 
 describe('harness smoke', () => {
-  it('migrations applied: studios table is queryable', async () => {
-    const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM studios').first<{ n: number }>();
+  it('migrations applied: a migrated table is queryable', async () => {
+    // NOTE: the studio table is `studio_definitions` (NOT `studios`). Migration
+    // 0001 creates: users, user_studio_memberships, user_prefs,
+    // studio_definitions, shows, app_settings, sessions.
+    const r = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM studio_definitions',
+    ).first<{ n: number }>();
     expect(typeof r?.n).toBe('number');
   });
 

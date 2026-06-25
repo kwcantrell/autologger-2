@@ -18,6 +18,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.71",
     "typescript": "^5.7.2",
     "vitest": "^2.1.9",
     "wrangler": "^4.100.0"
