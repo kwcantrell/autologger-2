@@ -147,14 +147,6 @@ export class SessionIndexStore {
     return (res.meta.changes ?? 0) > 0;
   }
 
-  // TODO(cleanup): no callers — candidate for removal in a separate pass
-  async setSessionEpisodeDate(sessionId: string, dateStr: string): Promise<void> {
-    await this.db
-      .prepare('UPDATE sessions SET episode_date = ? WHERE id = ?')
-      .bind(dateStr, sessionId)
-      .run();
-  }
-
   /** Mirror the DO's live projection onto the D1 sessions row for cheap listing. */
   async projectSessionLive(
     sessionId: string,

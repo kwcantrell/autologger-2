@@ -98,12 +98,6 @@ export class ShowsStore {
     return this.db.prepare('SELECT * FROM shows WHERE id = ?').bind(showId).first<Row>();
   }
 
-  // TODO(cleanup): no callers — candidate for removal in a separate pass
-  async getShowShowCode(showId: string): Promise<string> {
-    const row = await this.getShowRow(showId);
-    return row ? String(row.show_code ?? '').trim() : '';
-  }
-
   async listShowsForStudio(studioId: string): Promise<Row[]> {
     const { results } = await this.db
       .prepare('SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC')

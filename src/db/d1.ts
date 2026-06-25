@@ -31,7 +31,6 @@ export class Catalog {
 
   // --- shows delegates ---
   getShowRow = (showId: string) => this.shows.getShowRow(showId);
-  getShowShowCode = (showId: string) => this.shows.getShowShowCode(showId);
   listShowsForStudio = (studioId: string) => this.shows.listShowsForStudio(studioId);
   createShow = (opts: Parameters<ShowsStore['createShow']>[0]) => this.shows.createShow(opts);
   updateShowFields = (showId: string, fields: Parameters<ShowsStore['updateShowFields']>[1]) =>
