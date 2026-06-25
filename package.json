@@ -1,6 +1,6 @@
 {
   "name": "autologger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "AutoLogger on Cloudflare — Worker + D1 + KV (phases 1-2: auth, catalog, profile/studio/shows)",
   "type": "module",

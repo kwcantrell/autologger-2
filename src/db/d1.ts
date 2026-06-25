@@ -1,6 +1,8 @@
-// D1 catalog query layer — ports the catalog methods of src/autologger/storage/db.py
-// and the profile assembly (_profile_payload + helpers) from web/deps.py.
-// KV-backed login sessions + OAuth CSRF state live in auth/identity.ts, not here.
+// Catalog — thin facade over the D1 domain stores (studioRegistry / authStore /
+// showsStore / sessionIndexStore / profileAssembler). Preserves the per-request
+// `new Catalog(db)` + init() + method surface that routers call via c.get('catalog').
+// The flat delegate methods are a compatibility shim; the `readonly` store fields
+// are the forward-looking API. KV login sessions + OAuth CSRF live in auth/identity.ts.
 
 import type { AuthUser, ProfileCtx } from './shared';
 import { AuthStore } from './authStore';
