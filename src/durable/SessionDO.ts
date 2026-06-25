@@ -1,0 +1,925 @@
+// SessionDO — one Durable Object per session holds the hot, single-writer live
+// data: events + transport (phase 3), audio-segment metadata + recording lease
+// (phase 4), and a hibernatable WebSocket fan-out (phase 5). Embedded SQLite via
+// `ctx.storage.sql`. Tables are ported near-verbatim from storage/db.py; the
+// per-row `session_id` column is dropped since the DO *is* the session.
+//
+// The Worker owns D1 (session index/metadata) and projects the few list-relevant
+// live fields back to D1 after each mutation — so the DO never needs a DB binding
+// and cross-session listing stays a pure D1 query. Every mutation therefore
+// returns a `projection` block the Worker writes to the D1 sessions row.
+
+import { DurableObject } from 'cloudflare:workers';
+import { type EventRpc, UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
+import {
+  formatSmpte,
+  fromTotalFrames,
+  isoZ,
+  parseUtcMs,
+  type TransportFields,
+  timecodeForMark,
+  toTotalFrames,
+  transportTimecode,
+} from '../timecode';
+
+type Row = Record<string, SqlStorageValue>;
+
+/** Live fields the Worker mirrors onto the D1 sessions row for cheap listing. */
+export interface SessionProjection {
+  event_count: number;
+  max_timecode_total_frames: number | null;
+  is_rolling: boolean;
+  current_take: number;
+  transport_elapsed_frames: number;
+  roll_started_at_utc: string | null;
+}
+
+interface TimecodeCtx {
+  frameRate: number;
+  startOffsetFrames: number;
+}
+
+/** Concrete (RPC-serializable) transport snapshot; `started`/`stopped` flag a no-op vs change. */
+export interface TransportState {
+  is_rolling: boolean;
+  current_take: number;
+  roll_started_at_utc: string | null;
+  elapsed_frames: number;
+  timecode: string;
+  timecode_total_frames: number;
+  started?: boolean;
+  stopped?: boolean;
+}
+
+export class SessionDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.initSchema();
+  }
+
+  private get db(): SqlStorage {
+    return this.ctx.storage.sql;
+  }
+
+  private initSchema(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS events (
+        id TEXT PRIMARY KEY,
+        wall_time_utc TEXT NOT NULL,
+        frame_rate REAL NOT NULL,
+        timecode_total_frames INTEGER,
+        category TEXT NOT NULL,
+        message TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_events_wall ON events(wall_time_utc, id);
+      CREATE TABLE IF NOT EXISTS session_transport (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        is_rolling INTEGER NOT NULL DEFAULT 0,
+        current_take INTEGER NOT NULL DEFAULT 0,
+        roll_started_at_utc TEXT,
+        elapsed_frames INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO session_transport (id) VALUES (1);
+      CREATE TABLE IF NOT EXISTS session_audio_segments (
+        id TEXT PRIMARY KEY,
+        ordinal INTEGER NOT NULL,
+        started_at_utc TEXT,
+        ended_at_utc TEXT,
+        mime_type TEXT NOT NULL,
+        r2_key TEXT NOT NULL,
+        recording_ordinal INTEGER,
+        waveform_peaks_json TEXT,
+        waveform_db_floor REAL,
+        created_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_audio_ordinal ON session_audio_segments(ordinal);
+      CREATE TABLE IF NOT EXISTS session_transcript_words (
+        id TEXT PRIMARY KEY,
+        session_time TEXT NOT NULL DEFAULT '',
+        speaker TEXT NOT NULL DEFAULT '',
+        word TEXT NOT NULL DEFAULT '',
+        start_sec REAL NOT NULL DEFAULT 0.0,
+        end_sec REAL NOT NULL DEFAULT 0.0,
+        ordinal INTEGER NOT NULL,
+        created_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_words_ordinal ON session_transcript_words(ordinal);
+      CREATE TABLE IF NOT EXISTS session_topics (
+        id TEXT PRIMARY KEY,
+        session_time TEXT NOT NULL DEFAULT '',
+        duration_sec REAL NOT NULL DEFAULT 0,
+        topic_level INTEGER NOT NULL DEFAULT 1,
+        summary TEXT NOT NULL DEFAULT '',
+        ordinal INTEGER NOT NULL,
+        created_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_topics_ordinal ON session_topics(ordinal);
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT OR IGNORE INTO meta (key, value) VALUES ('events_stream_revision', '0');
+    `);
+  }
+
+  // Heartbeats older than this free the recording lease (AUDIO_RECORDING_LEASE_STALE_SEC).
+  private static readonly LEASE_STALE_MS = 40_000;
+
+  // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------
+
+  override async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade') !== 'websocket') {
+      return new Response('Expected a WebSocket upgrade.', { status: 426 });
+    }
+    const role =
+      new URL(request.url).searchParams.get('role') === 'companion' ? 'companion' : 'browser';
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ role });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Send a JSON message to every attached socket (browser tabs + Companion). */
+  private broadcast(msg: Record<string, unknown>): void {
+    const data = JSON.stringify(msg);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(data);
+      } catch {
+        // socket is going away; hibernation cleanup drops it.
+      }
+    }
+  }
+
+  /** Snapshot of attached sockets by role (presence; no TTL bookkeeping). */
+  presence(): { browsers: number; companions: number } {
+    let browsers = 0;
+    let companions = 0;
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment() as { role?: string } | null;
+      if (att?.role === 'companion') companions += 1;
+      else browsers += 1;
+    }
+    return { browsers, companions };
+  }
+
+  /** Relay a record/play command to all attached sockets (Companion → browser). */
+  broadcastCommand(command: string): void {
+    this.broadcast({ type: 'command', command });
+  }
+
+  override async webSocketMessage(_ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(message);
+    } catch {
+      return;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const p = parsed as Record<string, unknown>;
+      if (p.type === 'command' && typeof p.command === 'string') {
+        this.broadcastCommand(p.command);
+      }
+      // Bare `{type:'ping'}` keepalives are simply ignored.
+    }
+  }
+
+  override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+    try {
+      ws.close(code < 1000 || code > 4999 ? 1000 : code);
+    } catch {
+      // already closed
+    }
+  }
+
+  override async webSocketError(): Promise<void> {
+    // Hibernation drops the socket; nothing else to clean up.
+  }
+
+  // -- small SQL helpers -------------------------------------------------------
+
+  private all(query: string, ...binds: SqlStorageValue[]): Row[] {
+    return this.db.exec<Row>(query, ...binds).toArray();
+  }
+
+  private first(query: string, ...binds: SqlStorageValue[]): Row | null {
+    const rows = this.all(query, ...binds);
+    return rows.length ? rows[0] : null;
+  }
+
+  private transportRow(): TransportFields & { current_take: number } {
+    const r = this.first('SELECT * FROM session_transport WHERE id = 1');
+    return {
+      is_rolling: Boolean(Number(r?.is_rolling ?? 0)),
+      current_take: Number(r?.current_take ?? 0),
+      roll_started_at_utc: (r?.roll_started_at_utc as string | null) ?? null,
+      elapsed_frames: Number(r?.elapsed_frames ?? 0),
+    };
+  }
+
+  private bumpRevision(): void {
+    this.db.exec(
+      "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'events_stream_revision'",
+    );
+  }
+
+  private revision(): number {
+    const r = this.first("SELECT value FROM meta WHERE key = 'events_stream_revision'");
+    return Number(r?.value ?? 0);
+  }
+
+  private projection(): SessionProjection {
+    const agg = this.first('SELECT COUNT(*) AS n, MAX(timecode_total_frames) AS mx FROM events');
+    const tr = this.transportRow();
+    const mx = agg?.mx;
+    return {
+      event_count: Number(agg?.n ?? 0),
+      max_timecode_total_frames: mx === null || mx === undefined ? null : Number(mx),
+      is_rolling: tr.is_rolling,
+      current_take: tr.current_take,
+      transport_elapsed_frames: tr.elapsed_frames,
+      roll_started_at_utc: tr.roll_started_at_utc,
+    };
+  }
+
+  private rowToRpc(r: Row): EventRpc {
+    const tf = r.timecode_total_frames;
+    const fr = Number(r.frame_rate);
+    const hasTf = tf !== null && tf !== undefined;
+    return {
+      event_id: String(r.id),
+      wall_time_utc: String(r.wall_time_utc),
+      timecode: hasTf ? formatSmpte(fromTotalFrames(Number(tf), fr)) : null,
+      frame_rate: hasTf ? fr : null,
+      timecode_total_frames: hasTf ? Number(tf) : null,
+      category: String(r.category),
+      message: String(r.message),
+      metadata_json: String(r.metadata_json ?? '{}'),
+    };
+  }
+
+  // -- RPC: lifecycle ----------------------------------------------------------
+
+  /** Touch the DO so its transport row exists; returns the current projection. */
+  ensure(): SessionProjection {
+    return this.projection();
+  }
+
+  // -- RPC: events -------------------------------------------------------------
+
+  addEvent(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    markedAtUtc: string | null;
+    ctx: TimecodeCtx;
+  }): { event: EventRpc; projection: SessionProjection } {
+    const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : Date.now();
+    const wallMs = Number.isNaN(markMs) ? Date.now() : markMs;
+    const tr = this.transportRow();
+    const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
+    const totalFrames = toTotalFrames(tc);
+    const id = crypto.randomUUID();
+    const wallIso = isoZ(new Date(wallMs));
+    const metaJson = input.metadataJson || '{}';
+    this.db.exec(
+      `INSERT INTO events (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      wallIso,
+      tc.frame_rate,
+      totalFrames,
+      input.category,
+      input.message,
+      metaJson,
+    );
+    this.bumpRevision();
+    this.broadcast({ type: 'event.changed', revision: this.revision() });
+    const r = this.first('SELECT * FROM events WHERE id = ?', id);
+    return { event: this.rowToRpc(r as Row), projection: this.projection() };
+  }
+
+  listEvents(input: { limit: number; offset: number }): {
+    events: EventRpc[];
+    total: number;
+    loggedTotal: number;
+    revision: number;
+  } {
+    const rows = this.all(
+      'SELECT * FROM events ORDER BY wall_time_utc ASC, id ASC LIMIT ? OFFSET ?',
+      Math.trunc(input.limit),
+      Math.trunc(input.offset),
+    );
+    const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
+    const loggedTotal = Number(
+      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")?.c ??
+        0,
+    );
+    return {
+      events: rows.map((r) => this.rowToRpc(r)),
+      total,
+      loggedTotal,
+      revision: this.revision(),
+    };
+  }
+
+  getEvent(eventId: string): EventRpc | null {
+    const r = this.first('SELECT * FROM events WHERE id = ?', eventId);
+    return r ? this.rowToRpc(r) : null;
+  }
+
+  /** All events (unpaged) for CSV/JSONL export; the Worker sorts + enriches. */
+  exportEvents(): EventRpc[] {
+    return this.all('SELECT * FROM events').map((r) => this.rowToRpc(r));
+  }
+
+  updateEvent(input: {
+    eventId: string;
+    category: string;
+    message: string;
+    wallTimeUtc: string;
+    timecodeTotalFrames: number;
+    metadataJson: string;
+  }): { event: EventRpc; projection: SessionProjection } | null {
+    const old = this.first('SELECT * FROM events WHERE id = ?', input.eventId);
+    if (old === null) return null;
+    this.db.exec(
+      `UPDATE events SET category = ?, message = ?, wall_time_utc = ?,
+         timecode_total_frames = ?, metadata_json = ? WHERE id = ?`,
+      input.category,
+      input.message,
+      input.wallTimeUtc,
+      input.timecodeTotalFrames,
+      input.metadataJson || '{}',
+      input.eventId,
+    );
+    this.bumpRevision();
+    this.broadcast({ type: 'event.changed', revision: this.revision() });
+    const r = this.first('SELECT * FROM events WHERE id = ?', input.eventId);
+    return { event: this.rowToRpc(r as Row), projection: this.projection() };
+  }
+
+  deleteEvent(eventId: string): { ok: boolean; projection: SessionProjection } {
+    const existed = this.first('SELECT 1 AS x FROM events WHERE id = ?', eventId) !== null;
+    if (existed) {
+      this.db.exec('DELETE FROM events WHERE id = ?', eventId);
+      this.bumpRevision();
+      this.broadcast({ type: 'event.changed', revision: this.revision() });
+    }
+    return { ok: existed, projection: this.projection() };
+  }
+
+  /** Relink orphan events to a category id when the snapshot label matches exactly one button.
+   *  Guarded to run at most once per events_stream_revision (the only inputs are events +
+   *  the show categories the Worker passes in, both of which bump the revision). */
+  maybeRelinkOrphans(input: { validIds: string[]; labelToIds: Record<string, string[]> }): number {
+    const rev = this.revision();
+    const lastRaw = this.first("SELECT value FROM meta WHERE key = 'relink_checked_rev'");
+    if (lastRaw !== null && Number(lastRaw.value) === rev) return 0;
+    this.db.exec(
+      "INSERT INTO meta (key, value) VALUES ('relink_checked_rev', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      String(rev),
+    );
+    const hasSnap =
+      this.first(
+        'SELECT 1 AS x FROM events WHERE json_extract(metadata_json, ?) IS NOT NULL LIMIT 1',
+        `$.${UI_SNAPSHOT_LABEL_KEY}`,
+      ) !== null;
+    if (!hasSnap) return 0;
+
+    const valid = new Set(input.validIds);
+    const rows = this.all('SELECT * FROM events ORDER BY wall_time_utc ASC, id ASC');
+    let n = 0;
+    for (const row of rows) {
+      const catId = String(row.category);
+      if (catId.toLowerCase() === 'internal' || valid.has(catId)) continue;
+      let meta: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(String(row.metadata_json ?? '{}'));
+        if (parsed && typeof parsed === 'object') meta = parsed as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const snap = meta[UI_SNAPSHOT_LABEL_KEY];
+      if (typeof snap !== 'string') continue;
+      const key = snap.trim().toLowerCase();
+      const candidates = input.labelToIds[key] ?? [];
+      if (candidates.length !== 1) continue;
+      delete meta[UI_SNAPSHOT_LABEL_KEY];
+      delete meta[UI_SNAPSHOT_COLOR_KEY];
+      this.db.exec(
+        'UPDATE events SET category = ?, metadata_json = ? WHERE id = ?',
+        candidates[0],
+        JSON.stringify(meta),
+        String(row.id),
+      );
+      n += 1;
+    }
+    if (n) this.bumpRevision();
+    return n;
+  }
+
+  // -- RPC: transport ----------------------------------------------------------
+
+  private transportStateDict(ctx: TimecodeCtx): TransportState {
+    const tr = this.transportRow();
+    const tc = transportTimecode(ctx.frameRate, ctx.startOffsetFrames, tr, Date.now());
+    return {
+      is_rolling: tr.is_rolling,
+      current_take: tr.current_take,
+      roll_started_at_utc: tr.roll_started_at_utc,
+      elapsed_frames: tr.elapsed_frames,
+      timecode: formatSmpte(tc),
+      timecode_total_frames: toTotalFrames(tc),
+    };
+  }
+
+  transportSnapshot(ctx: TimecodeCtx): TransportState {
+    return this.transportStateDict(ctx);
+  }
+
+  startTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
+    const tr = this.transportRow();
+    if (tr.is_rolling) {
+      return {
+        state: { ...this.transportStateDict(ctx), started: false },
+        projection: this.projection(),
+      };
+    }
+    const nextTake = tr.current_take + 1;
+    this.db.exec(
+      'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
+      nextTake,
+      isoZ(new Date()),
+    );
+    this.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
+    const st = this.transportStateDict(ctx);
+    return { state: { ...st, started: true }, projection: this.projection() };
+  }
+
+  stopTake(ctx: TimecodeCtx): { state: TransportState; projection: SessionProjection } {
+    const tr = this.transportRow();
+    if (!tr.is_rolling) {
+      return {
+        state: { ...this.transportStateDict(ctx), stopped: false },
+        projection: this.projection(),
+      };
+    }
+    let extra = 0;
+    if (tr.roll_started_at_utc) {
+      const started = parseUtcMs(tr.roll_started_at_utc);
+      if (!Number.isNaN(started)) {
+        extra = Math.max(0, Math.trunc(((Date.now() - started) / 1000) * ctx.frameRate));
+      }
+    }
+    const totalElapsed = tr.elapsed_frames + extra;
+    this.db.exec(
+      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
+      totalElapsed,
+    );
+    this.broadcast({ type: 'transport.changed', is_rolling: false, current_take: tr.current_take });
+    const st = this.transportStateDict(ctx);
+    return { state: { ...st, stopped: true }, projection: this.projection() };
+  }
+
+  /** Finalize an in-progress take with an exact duration (YouTube import path). */
+  stopTakeWithDuration(input: { durationS: number; ctx: TimecodeCtx }): SessionProjection {
+    const tr = this.transportRow();
+    const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
+    this.db.exec(
+      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
+      tr.elapsed_frames + extra,
+    );
+    return this.projection();
+  }
+
+  // -- RPC: status (DO-owned parts; Worker composes the D1 metadata + lease) ----
+
+  statusLive(ctx: TimecodeCtx): {
+    is_rolling: boolean;
+    current_take: number;
+    event_count: number;
+    logged_event_count: number;
+    events_stream_revision: number;
+    session_timecode: string;
+    session_timecode_total_frames: number;
+  } {
+    const st = this.transportStateDict(ctx);
+    const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
+    const logged = Number(
+      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")?.c ??
+        0,
+    );
+    return {
+      is_rolling: st.is_rolling,
+      current_take: st.current_take,
+      event_count: total,
+      logged_event_count: logged,
+      events_stream_revision: this.revision(),
+      session_timecode: st.timecode,
+      session_timecode_total_frames: st.timecode_total_frames,
+    };
+  }
+
+  // -- meta helpers ------------------------------------------------------------
+
+  private metaGet(key: string): string | null {
+    const r = this.first('SELECT value FROM meta WHERE key = ?', key);
+    return r ? String(r.value) : null;
+  }
+
+  private metaSet(key: string, value: string): void {
+    this.db.exec(
+      'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      key,
+      value,
+    );
+  }
+
+  private metaDelete(key: string): void {
+    this.db.exec('DELETE FROM meta WHERE key = ?', key);
+  }
+
+  // -- RPC: audio-recording lease (in-DO state + alarm auto-expiry) -------------
+
+  claimLease(clientId: string): boolean {
+    const cid = clientId.trim();
+    if (!cid) return false;
+    const now = Date.now();
+    const holder = this.metaGet('lease_holder');
+    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
+    if (holder === null || holder === cid || now - seen >= SessionDO.LEASE_STALE_MS) {
+      this.metaSet('lease_holder', cid);
+      this.metaSet('lease_seen_ms', String(now));
+      void this.ctx.storage.setAlarm(now + SessionDO.LEASE_STALE_MS);
+      this.broadcast({ type: 'lease.changed' });
+      return true;
+    }
+    return false;
+  }
+
+  heartbeatLease(clientId: string): boolean {
+    const cid = clientId.trim();
+    if (!cid) return false;
+    if (this.metaGet('lease_holder') !== cid) return false;
+    const now = Date.now();
+    this.metaSet('lease_seen_ms', String(now));
+    void this.ctx.storage.setAlarm(now + SessionDO.LEASE_STALE_MS);
+    return true;
+  }
+
+  releaseLease(clientId: string): void {
+    const cid = clientId.trim();
+    if (!cid) return;
+    if (this.metaGet('lease_holder') !== cid) return;
+    this.metaDelete('lease_holder');
+    this.metaDelete('lease_seen_ms');
+    this.broadcast({ type: 'lease.changed' });
+  }
+
+  leaseStatus(): {
+    holder_client_id: string | null;
+    lease_alive: boolean;
+    lease_age_sec: number | null;
+  } {
+    const holder = this.metaGet('lease_holder');
+    if (holder === null) return { holder_client_id: null, lease_alive: false, lease_age_sec: null };
+    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
+    const age = Math.max(0, (Date.now() - seen) / 1000);
+    return {
+      holder_client_id: holder,
+      lease_alive: age < SessionDO.LEASE_STALE_MS / 1000,
+      lease_age_sec: age,
+    };
+  }
+
+  override async alarm(): Promise<void> {
+    const holder = this.metaGet('lease_holder');
+    if (holder === null) return;
+    const seen = Number(this.metaGet('lease_seen_ms') ?? 0);
+    if (Date.now() - seen >= SessionDO.LEASE_STALE_MS) {
+      this.metaDelete('lease_holder');
+      this.metaDelete('lease_seen_ms');
+      this.broadcast({ type: 'lease.changed' });
+    }
+  }
+
+  // -- RPC: audio segments (metadata only; bytes live in R2) --------------------
+
+  addAudioSegment(input: {
+    sessionId: string;
+    mimeType: string;
+    startedAtUtc: string | null;
+    endedAtUtc: string | null;
+    recordingOrdinal: number | null;
+  }): AudioSegmentMeta {
+    const segId = crypto.randomUUID();
+    const mt = (input.mimeType || 'audio/webm').toLowerCase();
+    let ext = 'webm';
+    if (mt.includes('ogg')) ext = 'ogg';
+    else if (mt.includes('wav')) ext = 'wav';
+    else if (mt.includes('mp4') || mt.includes('m4a')) ext = 'm4a';
+    const ordinal = Number(
+      this.first('SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments')?.n ?? 1,
+    );
+    const r2Key = `audio/${input.sessionId}/${String(ordinal).padStart(4, '0')}_${segId}.${ext}`;
+    let ro: number | null = null;
+    if (input.recordingOrdinal !== null && Number.isFinite(input.recordingOrdinal)) {
+      const ri = Math.trunc(input.recordingOrdinal);
+      if (ri >= 1) ro = ri;
+    }
+    this.db.exec(
+      `INSERT INTO session_audio_segments
+         (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      segId,
+      ordinal,
+      input.startedAtUtc,
+      input.endedAtUtc,
+      input.mimeType || 'audio/webm',
+      r2Key,
+      ro,
+      isoZ(new Date()),
+    );
+    this.broadcast({ type: 'audio.changed' });
+    return {
+      id: segId,
+      ordinal,
+      started_at_utc: input.startedAtUtc,
+      ended_at_utc: input.endedAtUtc,
+      mime_type: input.mimeType || 'audio/webm',
+      r2_key: r2Key,
+      recording_ordinal: ro,
+      waveform_peaks: null,
+      waveform_db_floor: null,
+    };
+  }
+
+  listAudioSegments(): AudioSegmentMeta[] {
+    const rows = this.all('SELECT * FROM session_audio_segments ORDER BY ordinal ASC');
+    return rows.map((r) => this.audioRowToMeta(r));
+  }
+
+  private audioRowToMeta(r: Row): AudioSegmentMeta {
+    let peaks: number[] | null = null;
+    const wf = r.waveform_peaks_json;
+    if (wf) {
+      try {
+        const parsed = JSON.parse(String(wf));
+        if (Array.isArray(parsed) && parsed.length) peaks = parsed.map((x) => Number(x));
+      } catch {
+        peaks = null;
+      }
+    }
+    const floor = r.waveform_db_floor;
+    const ro = r.recording_ordinal;
+    return {
+      id: String(r.id),
+      ordinal: Number(r.ordinal),
+      started_at_utc: (r.started_at_utc as string | null) ?? null,
+      ended_at_utc: (r.ended_at_utc as string | null) ?? null,
+      mime_type: String(r.mime_type),
+      r2_key: String(r.r2_key),
+      recording_ordinal: ro === null || ro === undefined ? null : Number(ro),
+      waveform_peaks: peaks,
+      waveform_db_floor: floor === null || floor === undefined ? null : Number(floor),
+    };
+  }
+
+  deleteAudioSegment(segmentId: string): void {
+    this.db.exec('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
+  }
+
+  getAudioSegmentKey(segmentId: string): { r2_key: string; mime_type: string } | null {
+    const r = this.first(
+      'SELECT r2_key, mime_type FROM session_audio_segments WHERE id = ?',
+      segmentId,
+    );
+    return r ? { r2_key: String(r.r2_key), mime_type: String(r.mime_type) } : null;
+  }
+
+  setAudioSegmentWaveform(input: { segmentId: string; peaks: number[] }): boolean {
+    const blob = JSON.stringify(input.peaks);
+    const r = this.db.exec(
+      'UPDATE session_audio_segments SET waveform_peaks_json = ?, waveform_db_floor = ? WHERE id = ?',
+      blob,
+      -48.0,
+      input.segmentId,
+    );
+    if (r.rowsWritten > 0) this.broadcast({ type: 'audio.changed' });
+    return r.rowsWritten > 0;
+  }
+
+  /** Reconcile metadata against the R2 keys the Worker found under the session prefix. */
+  syncAudioFromR2(known: Array<{ r2_key: string; ordinal: number }>): {
+    inserted: number;
+  } {
+    let inserted = 0;
+    const now = isoZ(new Date());
+    for (const k of known) {
+      const exists = this.first(
+        'SELECT 1 AS x FROM session_audio_segments WHERE r2_key = ?',
+        k.r2_key,
+      );
+      if (exists !== null) continue;
+      const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a)$/i.exec(k.r2_key);
+      if (m === null) continue;
+      const segId = m[2];
+      const ext = m[3].toLowerCase();
+      const mime =
+        ext === 'ogg'
+          ? 'audio/ogg'
+          : ext === 'wav'
+            ? 'audio/wav'
+            : ext === 'm4a'
+              ? 'audio/mp4'
+              : 'audio/webm';
+      this.db.exec(
+        `INSERT INTO session_audio_segments
+           (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
+         VALUES (?, ?, NULL, NULL, ?, ?, NULL, ?)`,
+        segId,
+        k.ordinal,
+        mime,
+        k.r2_key,
+        now,
+      );
+      inserted += 1;
+    }
+    return { inserted };
+  }
+
+  // -- RPC: transcript words (manual CRUD; generation is stubbed in the router) --
+
+  listTranscriptWords(): TranscriptWord[] {
+    return this.all('SELECT * FROM session_transcript_words ORDER BY ordinal').map(wordRow);
+  }
+
+  insertTranscriptWord(data: {
+    session_time: string;
+    speaker: string;
+    word: string;
+  }): TranscriptWord {
+    const id = crypto.randomUUID();
+    const ordinal = Number(
+      this.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_transcript_words')?.n ??
+        0,
+    );
+    this.db.exec(
+      `INSERT INTO session_transcript_words (id, session_time, speaker, word, ordinal, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      id,
+      data.session_time,
+      data.speaker,
+      data.word,
+      ordinal,
+      isoZ(new Date()),
+    );
+    return wordRow(this.first('SELECT * FROM session_transcript_words WHERE id = ?', id) as Row);
+  }
+
+  updateTranscriptWord(
+    wordId: string,
+    patch: { session_time?: string; speaker?: string; word?: string },
+  ): TranscriptWord | null {
+    const existing = this.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId);
+    if (existing === null) return null;
+    const cols: string[] = [];
+    const vals: SqlStorageValue[] = [];
+    for (const key of ['session_time', 'speaker', 'word'] as const) {
+      if (patch[key] !== undefined) {
+        cols.push(`${key} = ?`);
+        vals.push(patch[key] as string);
+      }
+    }
+    if (cols.length) {
+      this.db.exec(
+        `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE id = ?`,
+        ...vals,
+        wordId,
+      );
+    }
+    return wordRow(
+      this.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId) as Row,
+    );
+  }
+
+  deleteTranscriptWord(wordId: string): boolean {
+    const r = this.db.exec('DELETE FROM session_transcript_words WHERE id = ?', wordId);
+    return r.rowsWritten > 0;
+  }
+
+  // -- RPC: topics (manual CRUD) -----------------------------------------------
+
+  listTopics(): Topic[] {
+    return this.all('SELECT * FROM session_topics ORDER BY ordinal').map(topicRow);
+  }
+
+  insertTopic(data: {
+    session_time: string;
+    duration_sec: number;
+    topic_level: number;
+    summary: string;
+  }): Topic {
+    const id = crypto.randomUUID();
+    const ordinal = Number(
+      this.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_topics')?.n ?? 0,
+    );
+    this.db.exec(
+      `INSERT INTO session_topics (id, session_time, duration_sec, topic_level, summary, ordinal, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      data.session_time,
+      data.duration_sec,
+      data.topic_level,
+      data.summary,
+      ordinal,
+      isoZ(new Date()),
+    );
+    return topicRow(this.first('SELECT * FROM session_topics WHERE id = ?', id) as Row);
+  }
+
+  updateTopic(
+    topicId: string,
+    patch: { session_time?: string; duration_sec?: number; topic_level?: number; summary?: string },
+  ): Topic | null {
+    const existing = this.first('SELECT * FROM session_topics WHERE id = ?', topicId);
+    if (existing === null) return null;
+    const cols: string[] = [];
+    const vals: SqlStorageValue[] = [];
+    for (const key of ['session_time', 'duration_sec', 'topic_level', 'summary'] as const) {
+      if (patch[key] !== undefined) {
+        cols.push(`${key} = ?`);
+        vals.push(patch[key] as SqlStorageValue);
+      }
+    }
+    if (cols.length) {
+      this.db.exec(`UPDATE session_topics SET ${cols.join(', ')} WHERE id = ?`, ...vals, topicId);
+    }
+    return topicRow(this.first('SELECT * FROM session_topics WHERE id = ?', topicId) as Row);
+  }
+
+  deleteTopic(topicId: string): boolean {
+    const r = this.db.exec('DELETE FROM session_topics WHERE id = ?', topicId);
+    return r.rowsWritten > 0;
+  }
+}
+
+export interface TranscriptWord {
+  id: string;
+  session_time: string;
+  speaker: string;
+  word: string;
+  start_sec: number;
+  end_sec: number;
+  ordinal: number;
+  created_at_utc: string;
+}
+
+export interface Topic {
+  id: string;
+  session_time: string;
+  duration_sec: number;
+  topic_level: number;
+  summary: string;
+  ordinal: number;
+  created_at_utc: string;
+}
+
+function wordRow(r: Row): TranscriptWord {
+  return {
+    id: String(r.id),
+    session_time: String(r.session_time ?? ''),
+    speaker: String(r.speaker ?? ''),
+    word: String(r.word ?? ''),
+    start_sec: Number(r.start_sec ?? 0),
+    end_sec: Number(r.end_sec ?? 0),
+    ordinal: Number(r.ordinal ?? 0),
+    created_at_utc: String(r.created_at_utc ?? ''),
+  };
+}
+
+function topicRow(r: Row): Topic {
+  return {
+    id: String(r.id),
+    session_time: String(r.session_time ?? ''),
+    duration_sec: Number(r.duration_sec ?? 0),
+    topic_level: Number(r.topic_level ?? 1),
+    summary: String(r.summary ?? ''),
+    ordinal: Number(r.ordinal ?? 0),
+    created_at_utc: String(r.created_at_utc ?? ''),
+  };
+}
+
+export interface AudioSegmentMeta {
+  id: string;
+  ordinal: number;
+  started_at_utc: string | null;
+  ended_at_utc: string | null;
+  mime_type: string;
+  r2_key: string;
+  recording_ordinal: number | null;
+  waveform_peaks: number[] | null;
+  waveform_db_floor: number | null;
+}

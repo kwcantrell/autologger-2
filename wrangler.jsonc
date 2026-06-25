@@ -16,6 +16,15 @@
     }
   ],
   "kv_namespaces": [{ "binding": "AUTH", "id": "local" }],
+  "durable_objects": {
+    "bindings": [{ "name": "SESSION_DO", "class_name": "SessionDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionDO"] }],
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "autologger-audio" }],
+  // SPA is built into ./public by the frontend's CF build (AUTOLOGGER_CF_BUILD=1).
+  // "none": `/` and `/admin/users` are independent page builds with no client-side
+  // router, so the Worker routes HTML explicitly and ASSETS streams hashed statics.
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "none" },
   "vars": {
     "PUBLIC_BASE_URL": "http://127.0.0.1:8787",
     "GOOGLE_CLIENT_ID": "",

@@ -1,0 +1,30 @@
+# Secrets / env templates
+.dev.vars
+.dev.vars.*
+.dev.vars.example
+
+# Lockfiles & package manifests (dependency metadata, no code structure)
+package-lock.json
+package.json
+
+# Build / tooling / deploy config (not source, no AST nodes)
+tsconfig.json
+wrangler.jsonc
+.gitignore
+.graphifyignore
+
+# Generated / build artifacts
+node_modules/
+dist/
+public/
+.wrangler/
+worker-configuration.d.ts
+
+# Tooling / agent state
+.claude/
+graphify-out/
+
+# OS / editor / logs
+.DS_Store
+*.log
+*.swp

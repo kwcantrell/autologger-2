@@ -392,3 +392,105 @@ export function suggestedShowCode(name: string): string {
     .slice(0, 12);
   return frag || 'SHOW';
 }
+
+// ── Event enrichment + UI snapshots (ported from studio.py) ──────────────────
+
+/** session_deck_display_title — `Show Code - Episode` when a show is linked, else stored title. */
+export function sessionDeckDisplayTitle(opts: {
+  showCode?: string | null;
+  episode?: string | null;
+  storedTitle?: string;
+}): string {
+  const sc = String(opts.showCode ?? '').trim();
+  const ep = String(opts.episode ?? '').trim();
+  if (sc) return `${sc} - ${ep || '1'}`;
+  const t = String(opts.storedTitle ?? '').trim();
+  return t || '—';
+}
+
+// Persisted on log rows for the orphan UI (button removed); relink matches on label.
+export const UI_SNAPSHOT_LABEL_KEY = 'al_category_label_snapshot';
+export const UI_SNAPSHOT_COLOR_KEY = 'al_category_color_snapshot';
+
+export function normalizeEventButtonNameForRelink(name: string): string {
+  // casefold ≈ toLowerCase for our (Latin) button names.
+  return String(name ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/** Copy metadata and set snapshot keys from the live category (hex color normalized). */
+export function mergeCategoryUiSnapshotsIntoMetadata(
+  metadata: Record<string, unknown>,
+  cat: CategoryDef | null,
+): Record<string, unknown> {
+  const out = { ...(metadata ?? {}) };
+  if (cat === null) return out;
+  out[UI_SNAPSHOT_LABEL_KEY] = cat.label;
+  const hx = String(cat.color ?? '').trim();
+  out[UI_SNAPSHOT_COLOR_KEY] = COLOR_HEX.test(hx) ? hx.toLowerCase() : hx;
+  return out;
+}
+
+export function stripCategoryUiSnapshots(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...(metadata ?? {}) };
+  delete out[UI_SNAPSHOT_LABEL_KEY];
+  delete out[UI_SNAPSHOT_COLOR_KEY];
+  return out;
+}
+
+/** The event shape the SessionDO returns over RPC. Metadata crosses as a JSON
+ *  *string* (metadata_json) — Cloudflare's RPC serializer rejects `unknown` and
+ *  chokes on recursive JSON types, and the DO stores it as text anyway. */
+export interface EventRpc {
+  event_id: string;
+  wall_time_utc: string;
+  timecode: string | null;
+  frame_rate: number | null;
+  timecode_total_frames: number | null;
+  category: string;
+  message: string;
+  metadata_json: string;
+}
+
+/** enrich_event_for_session output: an EventRpc with metadata parsed + label/color. */
+export function enrichEventRpc(ev: EventRpc, profile: StudioProfile): Record<string, unknown> {
+  let meta: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(ev.metadata_json || '{}');
+    if (parsed && typeof parsed === 'object') meta = parsed as Record<string, unknown>;
+  } catch {
+    meta = {};
+  }
+  const d: Record<string, unknown> = {
+    event_id: ev.event_id,
+    wall_time_utc: ev.wall_time_utc,
+    timecode: ev.timecode,
+    frame_rate: ev.frame_rate,
+    timecode_total_frames: ev.timecode_total_frames,
+    category: ev.category,
+    message: ev.message,
+    metadata: meta,
+  };
+  const cat = profile.categories.find((c) => c.id === ev.category) ?? null;
+  if (String(ev.category).toLowerCase() === 'internal') {
+    d.category_label = 'Internal';
+    d.category_color = 'var(--muted)';
+  } else if (cat !== null) {
+    d.category_label = cat.label;
+    d.category_color = cat.color;
+  } else {
+    const labSnap = String(meta[UI_SNAPSHOT_LABEL_KEY] ?? '').trim();
+    const colRaw = meta[UI_SNAPSHOT_COLOR_KEY];
+    let colSnap: string | null = null;
+    if (typeof colRaw === 'string') {
+      const hx = colRaw.trim();
+      if (COLOR_HEX.test(hx)) colSnap = hx.toLowerCase();
+    }
+    d.category_label = labSnap || String(ev.category);
+    d.category_color = colSnap;
+  }
+  return d;
+}
