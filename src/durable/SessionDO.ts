@@ -1,8 +1,8 @@
-// SessionDO — one Durable Object per session holds the hot, single-writer live
-// data: events + transport (phase 3), audio-segment metadata + recording lease
-// (phase 4), and a hibernatable WebSocket fan-out (phase 5). Embedded SQLite via
-// `ctx.storage.sql`. Tables are ported near-verbatim from storage/db.py; the
-// per-row `session_id` column is dropped since the DO *is* the session.
+// SessionDO — one Durable Object per session. Thin framework shell: holds the
+// lifecycle hooks (fetch/webSocket*/alarm) and a flat RPC surface that delegates
+// to the domain stores (event/transport/audio/lease/transcript/topic) over a
+// shared SessionCore. The single-writer invariant is unchanged — one DO instance,
+// one ctx.storage.sql. Type re-exports keep the Worker's importers stable.
 //
 // The Worker owns D1 (session index/metadata) and projects the few list-relevant
 // live fields back to D1 after each mutation — so the DO never needs a DB binding
