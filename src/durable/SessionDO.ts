@@ -16,108 +16,57 @@ import {
   fromTotalFrames,
   isoZ,
   parseUtcMs,
-  type TransportFields,
   timecodeForMark,
   toTotalFrames,
   transportTimecode,
 } from '../timecode';
+import { SessionCore } from './sessionCore';
+import type { Row, SessionProjection, TimecodeCtx, TransportState } from './sessionCore';
 
-type Row = Record<string, SqlStorageValue>;
-
-/** Live fields the Worker mirrors onto the D1 sessions row for cheap listing. */
-export interface SessionProjection {
-  event_count: number;
-  max_timecode_total_frames: number | null;
-  is_rolling: boolean;
-  current_take: number;
-  transport_elapsed_frames: number;
-  roll_started_at_utc: string | null;
-}
-
-interface TimecodeCtx {
-  frameRate: number;
-  startOffsetFrames: number;
-}
-
-/** Concrete (RPC-serializable) transport snapshot; `started`/`stopped` flag a no-op vs change. */
-export interface TransportState {
-  is_rolling: boolean;
-  current_take: number;
-  roll_started_at_utc: string | null;
-  elapsed_frames: number;
-  timecode: string;
-  timecode_total_frames: number;
-  started?: boolean;
-  stopped?: boolean;
-}
+export type { SessionProjection, TransportState } from './sessionCore';
 
 export class SessionDO extends DurableObject<Env> {
+  private core!: SessionCore;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.initSchema();
+    this.core = new SessionCore(ctx);
+    this.core.initSchema();
   }
 
+  // --- substrate delegates (temporary shim; removed in Task 8) ---
   private get db(): SqlStorage {
-    return this.ctx.storage.sql;
+    return this.core.db;
   }
-
-  private initSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id TEXT PRIMARY KEY,
-        wall_time_utc TEXT NOT NULL,
-        frame_rate REAL NOT NULL,
-        timecode_total_frames INTEGER,
-        category TEXT NOT NULL,
-        message TEXT NOT NULL,
-        metadata_json TEXT NOT NULL DEFAULT '{}'
-      );
-      CREATE INDEX IF NOT EXISTS idx_events_wall ON events(wall_time_utc, id);
-      CREATE TABLE IF NOT EXISTS session_transport (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        is_rolling INTEGER NOT NULL DEFAULT 0,
-        current_take INTEGER NOT NULL DEFAULT 0,
-        roll_started_at_utc TEXT,
-        elapsed_frames INTEGER NOT NULL DEFAULT 0
-      );
-      INSERT OR IGNORE INTO session_transport (id) VALUES (1);
-      CREATE TABLE IF NOT EXISTS session_audio_segments (
-        id TEXT PRIMARY KEY,
-        ordinal INTEGER NOT NULL,
-        started_at_utc TEXT,
-        ended_at_utc TEXT,
-        mime_type TEXT NOT NULL,
-        r2_key TEXT NOT NULL,
-        recording_ordinal INTEGER,
-        waveform_peaks_json TEXT,
-        waveform_db_floor REAL,
-        created_at_utc TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_audio_ordinal ON session_audio_segments(ordinal);
-      CREATE TABLE IF NOT EXISTS session_transcript_words (
-        id TEXT PRIMARY KEY,
-        session_time TEXT NOT NULL DEFAULT '',
-        speaker TEXT NOT NULL DEFAULT '',
-        word TEXT NOT NULL DEFAULT '',
-        start_sec REAL NOT NULL DEFAULT 0.0,
-        end_sec REAL NOT NULL DEFAULT 0.0,
-        ordinal INTEGER NOT NULL,
-        created_at_utc TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_words_ordinal ON session_transcript_words(ordinal);
-      CREATE TABLE IF NOT EXISTS session_topics (
-        id TEXT PRIMARY KEY,
-        session_time TEXT NOT NULL DEFAULT '',
-        duration_sec REAL NOT NULL DEFAULT 0,
-        topic_level INTEGER NOT NULL DEFAULT 1,
-        summary TEXT NOT NULL DEFAULT '',
-        ordinal INTEGER NOT NULL,
-        created_at_utc TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_topics_ordinal ON session_topics(ordinal);
-      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT OR IGNORE INTO meta (key, value) VALUES ('events_stream_revision', '0');
-    `);
+  private all(query: string, ...binds: SqlStorageValue[]): Row[] {
+    return this.core.all(query, ...binds);
+  }
+  private first(query: string, ...binds: SqlStorageValue[]): Row | null {
+    return this.core.first(query, ...binds);
+  }
+  private transportRow() {
+    return this.core.transportRow();
+  }
+  private bumpRevision(): void {
+    this.core.bumpRevision();
+  }
+  private revision(): number {
+    return this.core.revision();
+  }
+  private projection(): SessionProjection {
+    return this.core.projection();
+  }
+  private broadcast(msg: Record<string, unknown>): void {
+    this.core.broadcast(msg);
+  }
+  private metaGet(key: string): string | null {
+    return this.core.metaGet(key);
+  }
+  private metaSet(key: string, value: string): void {
+    this.core.metaSet(key, value);
+  }
+  private metaDelete(key: string): void {
+    this.core.metaDelete(key);
   }
 
   // Heartbeats older than this free the recording lease (AUDIO_RECORDING_LEASE_STALE_SEC).
@@ -139,33 +88,14 @@ export class SessionDO extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Send a JSON message to every attached socket (browser tabs + Companion). */
-  private broadcast(msg: Record<string, unknown>): void {
-    const data = JSON.stringify(msg);
-    for (const ws of this.ctx.getWebSockets()) {
-      try {
-        ws.send(data);
-      } catch {
-        // socket is going away; hibernation cleanup drops it.
-      }
-    }
-  }
-
   /** Snapshot of attached sockets by role (presence; no TTL bookkeeping). */
   presence(): { browsers: number; companions: number } {
-    let browsers = 0;
-    let companions = 0;
-    for (const ws of this.ctx.getWebSockets()) {
-      const att = ws.deserializeAttachment() as { role?: string } | null;
-      if (att?.role === 'companion') companions += 1;
-      else browsers += 1;
-    }
-    return { browsers, companions };
+    return this.core.presence();
   }
 
   /** Relay a record/play command to all attached sockets (Companion → browser). */
   broadcastCommand(command: string): void {
-    this.broadcast({ type: 'command', command });
+    this.core.broadcastCommand(command);
   }
 
   override async webSocketMessage(_ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -179,7 +109,7 @@ export class SessionDO extends DurableObject<Env> {
     if (parsed && typeof parsed === 'object') {
       const p = parsed as Record<string, unknown>;
       if (p.type === 'command' && typeof p.command === 'string') {
-        this.broadcastCommand(p.command);
+        this.core.broadcastCommand(p.command);
       }
       // Bare `{type:'ping'}` keepalives are simply ignored.
     }
@@ -195,52 +125,6 @@ export class SessionDO extends DurableObject<Env> {
 
   override async webSocketError(): Promise<void> {
     // Hibernation drops the socket; nothing else to clean up.
-  }
-
-  // -- small SQL helpers -------------------------------------------------------
-
-  private all(query: string, ...binds: SqlStorageValue[]): Row[] {
-    return this.db.exec<Row>(query, ...binds).toArray();
-  }
-
-  private first(query: string, ...binds: SqlStorageValue[]): Row | null {
-    const rows = this.all(query, ...binds);
-    return rows.length ? rows[0] : null;
-  }
-
-  private transportRow(): TransportFields & { current_take: number } {
-    const r = this.first('SELECT * FROM session_transport WHERE id = 1');
-    return {
-      is_rolling: Boolean(Number(r?.is_rolling ?? 0)),
-      current_take: Number(r?.current_take ?? 0),
-      roll_started_at_utc: (r?.roll_started_at_utc as string | null) ?? null,
-      elapsed_frames: Number(r?.elapsed_frames ?? 0),
-    };
-  }
-
-  private bumpRevision(): void {
-    this.db.exec(
-      "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'events_stream_revision'",
-    );
-  }
-
-  private revision(): number {
-    const r = this.first("SELECT value FROM meta WHERE key = 'events_stream_revision'");
-    return Number(r?.value ?? 0);
-  }
-
-  private projection(): SessionProjection {
-    const agg = this.first('SELECT COUNT(*) AS n, MAX(timecode_total_frames) AS mx FROM events');
-    const tr = this.transportRow();
-    const mx = agg?.mx;
-    return {
-      event_count: Number(agg?.n ?? 0),
-      max_timecode_total_frames: mx === null || mx === undefined ? null : Number(mx),
-      is_rolling: tr.is_rolling,
-      current_take: tr.current_take,
-      transport_elapsed_frames: tr.elapsed_frames,
-      roll_started_at_utc: tr.roll_started_at_utc,
-    };
   }
 
   private rowToRpc(r: Row): EventRpc {
@@ -263,7 +147,7 @@ export class SessionDO extends DurableObject<Env> {
 
   /** Touch the DO so its transport row exists; returns the current projection. */
   ensure(): SessionProjection {
-    return this.projection();
+    return this.core.projection();
   }
 
   // -- RPC: events -------------------------------------------------------------
@@ -522,25 +406,6 @@ export class SessionDO extends DurableObject<Env> {
     };
   }
 
-  // -- meta helpers ------------------------------------------------------------
-
-  private metaGet(key: string): string | null {
-    const r = this.first('SELECT value FROM meta WHERE key = ?', key);
-    return r ? String(r.value) : null;
-  }
-
-  private metaSet(key: string, value: string): void {
-    this.db.exec(
-      'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      key,
-      value,
-    );
-  }
-
-  private metaDelete(key: string): void {
-    this.db.exec('DELETE FROM meta WHERE key = ?', key);
-  }
-
   // -- RPC: audio-recording lease (in-DO state + alarm auto-expiry) -------------
 
   claimLease(clientId: string): boolean {
@@ -552,7 +417,7 @@ export class SessionDO extends DurableObject<Env> {
     if (holder === null || holder === cid || now - seen >= SessionDO.LEASE_STALE_MS) {
       this.metaSet('lease_holder', cid);
       this.metaSet('lease_seen_ms', String(now));
-      void this.ctx.storage.setAlarm(now + SessionDO.LEASE_STALE_MS);
+      this.core.setAlarm(now + SessionDO.LEASE_STALE_MS);
       this.broadcast({ type: 'lease.changed' });
       return true;
     }
@@ -565,7 +430,7 @@ export class SessionDO extends DurableObject<Env> {
     if (this.metaGet('lease_holder') !== cid) return false;
     const now = Date.now();
     this.metaSet('lease_seen_ms', String(now));
-    void this.ctx.storage.setAlarm(now + SessionDO.LEASE_STALE_MS);
+    this.core.setAlarm(now + SessionDO.LEASE_STALE_MS);
     return true;
   }
 
