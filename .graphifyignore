@@ -24,6 +24,10 @@ worker-configuration.d.ts
 .claude/
 graphify-out/
 
+# Process / workflow docs + tests (scaffolding, not system architecture)
+docs/superpowers/
+*.test.ts
+
 # OS / editor / logs
 .DS_Store
 *.log
