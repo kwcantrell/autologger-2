@@ -31,16 +31,32 @@ export async function seedUser(
   return id;
 }
 
+/** A single valid BUTTON category with the stable id `cam`, so event logging
+ * (which rejects unknown categories) works against a seeded session. */
+export const SEED_CATEGORY_ID = 'cam';
+const SEED_CATEGORIES_JSON = JSON.stringify([
+  {
+    id: SEED_CATEGORY_ID,
+    name: 'Camera',
+    color: '#112233',
+    type: 'BUTTON',
+    dropdown_options: [],
+    on_label: '',
+    off_label: '',
+  },
+]);
+
 export async function seedShow(opts: {
   studioId: string;
   name?: string;
   code?: string;
+  categoriesJson?: string;
 }): Promise<string> {
   return catalogFor().createShow({
     studioId: opts.studioId,
     name: opts.name ?? 'Test Show',
     showCode: opts.code ?? 'TS',
-    categoriesJson: '[]',
+    categoriesJson: opts.categoriesJson ?? SEED_CATEGORIES_JSON,
     paletteJson: '[]',
     paletteCustomJson: '[]',
   });
