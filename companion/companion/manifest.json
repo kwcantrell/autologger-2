@@ -13,7 +13,7 @@
   "runtime": {
     "type": "node22",
     "api": "nodejs-ipc",
-    "apiVersion": "2.0.4",
+    "apiVersion": "1.14.1",
     "entrypoint": "../dist/main.js"
   },
   "manufacturer": "AutoLogger",

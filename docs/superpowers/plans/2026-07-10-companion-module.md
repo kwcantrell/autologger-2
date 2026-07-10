@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **`@companion-module/base` pinned to `~2.0.0`.** npm-latest `2.1.1` is rejected at load by Companion 4.3.4 (its accepted range is `~0.6 || 1 - 1.14.x || 2 - 2.0.x`). Never install `@latest` / unqualified `^2`.
+- **`@companion-module/base` pinned to `~1.14.0`** (stable 1.x — the documented API this module targets: `runEntrypoint`, `InstanceBase<TConfig>`). Companion 4.3.4's accepted range is `~0.6 || 1 - 1.14.x || 2 - 2.0.x`; the `2.0.x` line **removed `runEntrypoint`** (reworked alpha API, "unconfirmed" for 4.3), so we use stable `1.14.x` (latest 1.x is `1.14.1`). Never install `@latest` / unqualified `^1` (drifts to `1.99.0` nightlies). The `check:base` guard enforces the accepted range. *(Decision 2026-07-10: the plan originally pinned `~2.0.0`; corrected to `~1.14.0` at the gate after Task 1 surfaced that all plan code is 1.x-shaped.)*
 - **No new server API surface.** Consume only these five endpoints: `GET /api/companion/state`, `GET /api/companion/categories`, `POST /api/companion/log`, `POST /api/companion/transport`, `POST /api/companion/command`. Do NOT call `POST /api/companion/presence` from the module (that is the browser's heartbeat; the e2e harness simulates it).
 - **Server env var is `API_TOKEN`** (this Node repo), not `AUTOLOGGER_API_TOKEN` (the Python sibling). Use `API_TOKEN` in all docs.
 - **Concurrency invariants (mandatory):** single `/state` fetch in flight; monotonic sequence number fences stale responses; `refreshNow()` funnels through the same `pollState()` as the tick; self-rescheduling `setTimeout` (not `setInterval`); `destroy()`/`configUpdated()` cancel schedule + debounce timers and abort all fetches via one instance-scoped `AbortController`; an `isDestroyed` flag guards every fetch continuation.
@@ -84,7 +84,7 @@ playwright.config.ts        # + "companion" project, binary-gated
     "package": "companion-module-build"
   },
   "dependencies": {
-    "@companion-module/base": "~2.0.0"
+    "@companion-module/base": "~1.14.0"
   },
   "devDependencies": {
     "@companion-module/tools": "^2.0.0",
@@ -154,7 +154,7 @@ const ok =
 if (!ok) {
   console.error(
     `@companion-module/base ${version} is outside Companion 4.3.4's accepted range ` +
-      `(~0.6 || 1 - 1.14.x || 2 - 2.0.x). Pin to ~2.0.0.`,
+      `(~0.6 || 1 - 1.14.x || 2 - 2.0.x). Pin to ~1.14.0 (stable 1.x).`,
   );
   process.exit(1);
 }
@@ -179,7 +179,7 @@ console.log(`@companion-module/base ${version} OK for Companion 4.3.4.`);
   "runtime": {
     "type": "node22",
     "api": "nodejs-ipc",
-    "apiVersion": "2.0.0",
+    "apiVersion": "1.14.1",
     "entrypoint": "../dist/main.js"
   },
   "manufacturer": "AutoLogger",
@@ -206,9 +206,21 @@ AutoLogger session** — the module acts on whichever session that browser repor
 - **Record/Play** are relayed to the browser; the `command_error` variable reports if delivery failed. `Playing` state is best-effort (reported by the browser), unlike `Rolling`/`Recording`.
 ```
 
-- [ ] **Step 7: Create `companion/src/upgrades.ts`**
+- [ ] **Step 7: Create `companion/src/upgrades.ts`** (+ a placeholder `config.ts` so its import resolves)
+
+`upgrades.ts` imports `ModuleConfig` from `./config.js`, but the real `config.ts` isn't built until Task 2. Create a minimal placeholder `companion/src/config.ts` now so Task 1 typechecks; Task 2 overwrites it via TDD:
 
 ```ts
+// companion/src/config.ts — placeholder; Task 2 replaces this with the real config module.
+export interface ModuleConfig {
+  url: string;
+  token: string;
+  pollMs: number;
+}
+```
+
+```ts
+// companion/src/upgrades.ts
 import type { CompanionStaticUpgradeScript } from '@companion-module/base';
 import type { ModuleConfig } from './config.js';
 

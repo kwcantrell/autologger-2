@@ -14,7 +14,7 @@
     "package": "companion-module-build"
   },
   "dependencies": {
-    "@companion-module/base": "~2.0.0"
+    "@companion-module/base": "~1.14.0"
   },
   "devDependencies": {
     "@companion-module/tools": "^2.0.0",

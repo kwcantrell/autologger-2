@@ -83,11 +83,15 @@ the spec panel):
 
 Companion 4.3.4 accepts module-API versions in the range `~0.6 || 1 - 1.14.x || 2 - 2.0.x`
 (from its own `ModuleApiVersionCheck`). npm-latest `@companion-module/base` is **2.1.1**,
-which Companion 4.3.4 **rejects at load**. The dependency MUST be pinned to the `2.0.x`
-range (`"@companion-module/base": "~2.0.0"`), NOT `latest` / an unqualified `^2`. A build
-or CI check should fail if the resolved version falls outside `0.6.x`/`1.x≤1.14`/`2.0.x`.
-Confirm the manifest `runtime.type` enum (expected `node22`, whose runtime dir exists in
-the install) against the pinned base version's manifest schema before writing the manifest.
+which Companion 4.3.4 **rejects at load**. A build or CI check should fail if the resolved
+version falls outside `0.6.x`/`1.x≤1.14`/`2.0.x`. Confirm the manifest `runtime.type` enum
+(expected `node22`, whose runtime dir exists in the install) before writing the manifest.
+
+> **Implementation correction (2026-07-10, during build):** the dependency is pinned to
+> **`~1.14.0` (stable 1.x)**, not `~2.0.0`. The `2.0.x` line is a reworked alpha API that
+> **removed `runEntrypoint`** and is "unconfirmed" for Companion 4.3; stable `1.14.x` is the
+> documented API all published modules use and is within 4.3.4's accepted range. See the
+> plan's Global Constraints and Panel & review log.
 
 ## Server endpoints consumed (already implemented)
 
