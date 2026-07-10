@@ -430,25 +430,9 @@
   min-width: 0;
 }
 
-:global(.v4-episode) {
-  font-size: 1.375rem;
-  color: var(--accent);
-  text-align: left;
-  text-transform: uppercase;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-:global(.v4-session-date) {
-  font-size: 1.375rem;
-  color: var(--accent);
-  text-align: right;
-  text-transform: uppercase;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
+/* `.v4-episode` / `.v4-session-date` base + v5 rules extracted to Timeline.tsx JSX
+ * (Tailwind slice 5a) — contextual overrides move with their target (Timeline emits
+ * these via `.v5-studio-name-inline` / `.v5-session-date-inline`). */
 
 :global(.v4-session-ctrl) {
   flex: 1 1 auto;
@@ -475,16 +459,9 @@
   background: #4c505a;
   border: none;
   flex-shrink: 0;
-}/* Integrated session typography overrides (apply only when #v4-log-session wraps these elements) */
-:global(#v4-log-session #studio-name.v4-episode) {
-  font-weight: 400;
-  font-variation-settings: normal;
-  text-transform: capitalize;
-}
-
-:global(#v4-log-session .v4-session-date) {
-  text-transform: uppercase;
-}/* ============================================================
+}/* `#v4-log-session #studio-name.v4-episode` + `#v4-log-session .v4-session-date`
+ * integrated typography overrides extracted to Timeline.tsx JSX (Tailwind slice 5a). */
+/* ============================================================
  * v5-ui.css carve-out (Phase 3, v1.12.0) — session stage chrome
  * ============================================================ */
 
@@ -547,15 +524,8 @@
   box-shadow: var(--v5-panel-elevate);
   box-sizing: border-box;
 }/* Timeline stack vs live log: same panel shell; swap contents while rolling / recording */
-:global(#v4-log-session .v5-session-timeline-stack) {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  gap: 0;
-  box-sizing: border-box;
-}
+/* `#v4-log-session .v5-session-timeline-stack` flex chain extracted to Timeline.tsx
+ * JSX (Tailwind slice 5a) — Timeline renders the timeline-stack. */
 
 :global(#v4-log-session) .v5SessionLiveLog {
   display: flex;
@@ -742,121 +712,12 @@
 
 :global(#v4-log-session) .v5ControlsStatusValue.v5ControlsStatusValueRecording {
   color: #ef4444;
-}/* ---- Playback deck title (session title + studio · date inline) ---- */
-:global(#v4-log-session .v5-deck-title-cluster) {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: flex-start;
-  gap: 0.45rem 0.65rem;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-:global(#v4-log-session .v5-deck-title-cluster > .v4-playback-deck-title) {
-  flex: 0 1 auto;
-}
-
-:global(#v4-log-session .v5-deck-session-meta) {
-  display: inline-flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: flex-start;
-  gap: 0.35rem 0.45rem;
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-:global(#v4-log-session .v5-deck-meta-sep) {
-  color: rgba(255, 255, 255, 0.32);
-  font-weight: 500;
-  user-select: none;
-}
-
-:global(#v4-log-session .v5-studio-name-inline) {
-  flex: 0 1 auto;
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-size: .9rem;
-  font-weight: 600;
-  text-transform: capitalize;
-  color: var(--v5-primary);
-  white-space: nowrap;
-}
-
-:global(#v4-log-session .v5-session-date-inline) {
-  flex: 0 1 auto;
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--v5-muted);
-  white-space: nowrap;
-}/* Session title block (Export lives in .v5-panel-head__actions) */
-:global(#v4-log-session .v4-playback-deck-header) {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.75rem;
-  width: 100%;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-
-:global(#v4-log-session .v4-playback-deck-title) {
-  margin: 0;
-  min-width: 0;
-  flex: 1 1 auto;
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  color: var(--v5-text);
-  text-transform: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-:global(#v4-log-session .v5-btn-export-log.btn.primary) {
-  padding: 0.45rem 1rem;
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  border-radius: var(--v5-radius-sm);
-  border-color: rgba(56, 189, 248, 0.45);
-  background: rgba(56, 189, 248, 0.22);
-  color: #f0f9ff;
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.12);
-}
-
-:global(#v4-log-session .v5-btn-export-log.btn.primary:hover) {
-  background: rgba(56, 189, 248, 0.3);
-  border-color: rgba(56, 189, 248, 0.55);
-  color: #fff;
-}/* ---- Session aside / clock / nav buttons (legacy session-aside chrome) ---- */
-:global(.v4-session-date) {
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-size: 0.78rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--v5-muted);
-}
-
-:global(.v4-episode) {
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0em;
-  text-transform: capitalize;
-  color: var(--v5-primary);
-}
+}/* ---- Playback deck title (session title + studio · date inline) ----
+ * The full deck-title-cluster / deck-session-meta / deck-meta-sep / studio-name-inline /
+ * session-date-inline / playback-deck-header / playback-deck-title / v5-btn-export-log
+ * group, plus the `.v4-session-date` / `.v4-episode` session-aside base rules, were
+ * extracted to Timeline.tsx JSX (Tailwind slice 5a) — Timeline renders every one of
+ * these elements, so the contextual overrides travel with their target. */
 
 .v4SessionCtrlRule {
   background: var(--v5-line);

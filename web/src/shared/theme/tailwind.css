@@ -91,8 +91,8 @@
   }
 
   /* Pulsing "importing/decoding…" status labels. TransportControls' wfLabelPulse
-   * consumes this now; Timeline.module.css keeps its own hash-scoped duplicate
-   * until Task 10 — no collision (that copy is still legacy-layer scoped). */
+   * and Timeline's waveform-decoding label both consume this single token now
+   * (Task 10 folded Timeline's former hash-scoped duplicate into it). */
   --animate-wf-label-pulse: wf-label-pulse 2s ease-in-out infinite;
   @keyframes wf-label-pulse {
     0%,
@@ -101,6 +101,30 @@
     }
     50% {
       opacity: 1;
+    }
+  }
+
+  /* Timeline nav-marker message marquee (unguarded 15s loop — no motion-reduce
+   * guard in the source). */
+  --animate-marker-msg-marquee: marker-msg-marquee 15s linear infinite;
+  @keyframes marker-msg-marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* Timeline's V5 live-track background shimmer (session-context only). Guarded
+   * by motion-reduce:animate-none on the consumer. */
+  --animate-v5-timeline-mock-shimmer: v5-timeline-mock-shimmer 12s linear infinite;
+  @keyframes v5-timeline-mock-shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
     }
   }
 }
@@ -255,4 +279,89 @@
   border: 1px solid var(--v5-border-strong);
   box-shadow: var(--v5-panel-elevate);
   color: var(--v5-text);
+}
+
+/* Timeline viewport hides its horizontal scrollbar (scrub is pointer/keyboard,
+ * not scrollbar) — ::-webkit-scrollbar + the -ms/scrollbar-width resets can't be
+ * inline utilities. Applied to the .timelineViewport JSX (Task 10). */
+@utility timeline-hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+    height: 0;
+  }
+}
+
+/* Timeline hide-internal marker toggle. The EventLogSheet "show internal" toggle
+ * sets body[data-hide-internal="1"]; the `i` (case-insensitive) attribute flag on
+ * the marker's own data-cat does not survive Tailwind's arbitrary-variant parser,
+ * so this stays a small @layer components rule with the case-insensitive matcher
+ * intact. The .timelineMarker JSX keeps emitting its data-cat attribute. */
+@layer components {
+  body[data-hide-internal='1'] .timelineMarker[data-cat='Internal' i] {
+    display: none;
+  }
+}
+
+/* Timeline perf-debug toggles — parked here verbatim from Timeline.module.css
+ * (Task 10). These must beat the converted marker/waveform/shadow utilities, so
+ * !important is the toggle contract; they join perfDebug's own module in Task 11.
+ * The .timelineMarker/.timelinePlayhead/etc. class strings are retained on the JSX
+ * for these (and the hide-internal rule above) to target. */
+@layer components {
+  body.perf-dbg--no-timeline-waveform .timelineWaveforms {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.perf-dbg--no-playhead-glow .timelineMarkerPlayheadGlow {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.perf-dbg--no-panel-shadows #v4-log-session .v4TlTrackLive .timelineShell,
+  body.perf-dbg--no-panel-shadows #v4-log-session .v4TlTrackLive .timelineTrack {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineMarker,
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineMarker:hover,
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineMarkerSelected,
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineMarkerSelected:hover {
+    box-shadow: none !important;
+    transform: translate(-50%, -50%) !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineMarkerPlayheadGlow {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelineClipActive {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #v4-log-session .timelinePlayhead {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #timeline-shell .timelineMarker,
+  body.perf-dbg--no-timeline-marker-fx #timeline-shell .timelineMarker:hover {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-timeline-marker-fx #timeline-shell .timelinePlayhead {
+    box-shadow: none !important;
+  }
+
+  body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformFill {
+    fill: rgba(148, 163, 184, 0.32) !important;
+  }
+
+  body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformProgress {
+    fill: rgba(56, 189, 248, 0.4) !important;
+  }
 }

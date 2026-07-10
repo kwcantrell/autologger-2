@@ -1,6 +1,13 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { fmtHmsFromSec } from '../../../../shared/utils/timecode';
-import styles from '../Timeline.module.css';
+
+// --- converted class strings (were Timeline.module.css) ---
+// .timelineTicks base + `.timelineInner .timelineTicks { margin-top: 0.22rem }` +
+// `.v4TlTrackLive .timelineTicks` (font-size 0.58rem) + #v4-log-session v5 rule (Inter,
+// 0.62rem, v5 color, tabular-nums) — the #v4-log-session rule wins, so this is the
+// session-context look Timeline always renders.
+const TICKS =
+  'flex justify-between gap-[0.5rem] w-full flex-shrink-0 mt-[0.22rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-medium tracking-[0.06em] [font-variant-numeric:tabular-nums] text-[rgba(229,238,252,0.36)]';
 
 declare global {
   interface Window {
@@ -39,7 +46,7 @@ export function TimelineTicks({ totalSec }: Props) {
   }, [zoom, totalSec]);
 
   return (
-    <div className={styles.timelineTicks} id="timeline-ticks">
+    <div className={TICKS} id="timeline-ticks">
       {labels.map((label, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: tick labels keyed by position
         <span key={i}>{label}</span>
