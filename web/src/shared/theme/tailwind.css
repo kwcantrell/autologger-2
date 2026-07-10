@@ -89,6 +89,20 @@
       transform: translateY(0);
     }
   }
+
+  /* Pulsing "importing/decoding…" status labels. TransportControls' wfLabelPulse
+   * consumes this now; Timeline.module.css keeps its own hash-scoped duplicate
+   * until Task 10 — no collision (that copy is still legacy-layer scoped). */
+  --animate-wf-label-pulse: wf-label-pulse 2s ease-in-out infinite;
+  @keyframes wf-label-pulse {
+    0%,
+    100% {
+      opacity: 0.7;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
 }
 
 /* Hybrid-period aliases: values live in tokens.css (single source of truth);
