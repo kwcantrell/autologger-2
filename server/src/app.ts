@@ -86,8 +86,9 @@ export function wireApp(
   app.route('/', exportsRouter);
   app.route('/', adminRouter);
 
-  // Static hosting. __API_ROOT__ substitution is PHASE-1 TRANSITIONAL (spec:
-  // scope #6) — sub-project 2 replaces it with a Vite build-time define.
+  // Static hosting: explicit page routes (no client-side router) + a catch-all
+  // for hashed /assets/* and /static/*. publicDir is the web/ workspace's Vite
+  // build output, passed by main.ts (tests pass a fixture dir).
   async function serveHtml(c: Context<AppEnv>, assetPath: string) {
     let html: string;
     try {
@@ -95,7 +96,7 @@ export function wireApp(
     } catch {
       return c.notFound();
     }
-    return c.html(html.replaceAll('__API_ROOT__', '/api'));
+    return c.html(html);
   }
 
   app.get('/', (c) => serveHtml(c, 'src/pages/index/index.html'));
