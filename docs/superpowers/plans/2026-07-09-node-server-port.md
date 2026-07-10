@@ -2822,6 +2822,27 @@ git commit -m "chore!: remove Cloudflare tooling — AutoLogger is a portable No
 - **Placeholders:** none — every code step carries the code; the two "author the prose" steps (T16 S4) and "carry over scenarios from the old file" steps (T14/T15) name the exact required content/source.
 - **Known judgment calls encoded:** blob root is `DATA_DIR/blobs` (keys already start with `audio/`); the E1 default flip lives in `env.ts` with the harness pinning `REQUIRE_LOGIN=0` to preserve existing suite semantics; `HOST` env var added (analogous to `PORT`; spec's config table silence noted); vitest lands on TWO node projects (unit + integration) rather than the spec's "single project (or deleted)" — the integration tier needs `setupFiles` the unit tier must not run.
 
+## Execution log
+
+### 2026-07-09 — Executed and merged to main (3d3692f, v0.4.0)
+
+All 16 tasks completed via subagent-driven development; per-task reviews + final
+whole-branch review passed; 207/207 tests green. Three authorized production changes
+beyond the plan text (each reviewed and documented in code/docs): (1) v4-mapped-IPv6
+unmapping scoped to incoming addresses in `ipAllowlist.ts`; (2) `oauth_google.ts` JWKS
+via global fetch + `createLocalJWKSet` (jose's Node build uses node:https); (3) the
+`wireApp` bindings middleware mutates the per-request env in place (reassignment broke
+@hono/node-ws's identity handshake — WS upgrades were silently dead until Task 15).
+
+**Non-blocking follow-up bundle (one future ticket):** unify the two `SqlValue` types
+(`sessionCore.ts` narrow vs `sqlShim.ts` +Buffer); sweep stale test comments
+(`auth.int.test.ts` names the removed `createRemoteJWKSet`; unwired `resetMockAgent`
+export); decide `expirationTtl: 0` semantics in `KvStore` (currently means "no expiry");
+add a note that WS broadcasts inside `inTxn` are non-transactional. **Accepted
+residual:** a v6-mapped allowlist ENTRY no longer matches a v6-mapped incoming address
+(fail-closed; the 403 detail prints the raw mapped address, so copy-pasting it into
+`IP_ALLOWLIST` won't match — remedies sketched in the Task 12 review).
+
 ## Plan review log
 
 ### 2026-07-09 — Single plan reviewer (spec coverage / buildability / decomposition), fixes applied
