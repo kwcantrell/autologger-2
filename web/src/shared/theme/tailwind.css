@@ -89,6 +89,20 @@
       transform: translateY(0);
     }
   }
+
+  /* Pulsing "importing/decoding…" status labels. TransportControls' wfLabelPulse
+   * consumes this now; Timeline.module.css keeps its own hash-scoped duplicate
+   * until Task 10 — no collision (that copy is still legacy-layer scoped). */
+  --animate-wf-label-pulse: wf-label-pulse 2s ease-in-out infinite;
+  @keyframes wf-label-pulse {
+    0%,
+    100% {
+      opacity: 0.7;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
 }
 
 /* Hybrid-period aliases: values live in tokens.css (single source of truth);
@@ -143,6 +157,61 @@
 }
 @utility panel-elevate {
   box-shadow: var(--v5-panel-elevate);
+}
+
+/* V6Rail's module-local :root token set (recipe 3b escape hatch). These 16 vars
+ * are a private mini-token-set for the rail's geometry/timing; inlining them as
+ * arbitrary-property utilities would be pure noise on dozens of elements. They stay
+ * a :root block so cross-file consumers keep resolving them (NewSessionModal reads
+ * var(--v6-rail-gap)). Not @theme — they are not utility-generating design tokens. */
+@layer components {
+  :root {
+    --v6-rail-w-expanded: 16.25rem; /* 260px */
+    --v6-rail-w-collapsed: 4rem;
+    --v6-rail-pad-collapsed-x: 0.25rem;
+    --v6-rail-pad-collapsed-y: 0.45rem;
+    --v6-rail-collapsed-inner: calc(
+      var(--v6-rail-w-collapsed) - 2 * var(--v6-rail-pad-collapsed-x)
+    );
+    --v6-rail-pad: 1.1rem;
+    --v6-rail-btn-h: 3rem;
+    --v6-rail-btn-pad-x: 1rem;
+    --v6-rail-gap: 1.3rem;
+    --v6-rail-gap-sm: 1rem;
+    --v6-rail-ease: cubic-bezier(0.22, 1, 0.32, 1);
+    --v6-rail-dur: 0.63s;
+    --v6-rail-recent-shelf-max-h: 28rem;
+    --v6-rail-recent-shelf-mt: 1rem;
+    --v6-rail-recent-shelf-pad: 0.6rem;
+    --v6-rail-recent-shelf-radius: 1rem;
+    --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
+  }
+}
+
+/* CategoryButtonStrip's thin strip scrollbar — ::-webkit-scrollbar pseudo-elements
+ * can't be expressed as inline utilities, so they live in a named utility applied
+ * to the .catStrip element. `scrollbar-width: thin` pairs with it for Firefox. */
+@utility cat-strip-scrollbar {
+  scrollbar-width: thin;
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+}
+
+/* RecentSessionsList's OverlayScrollbars viewport — the flex/gap layout for the
+ * session cards must live on the library-generated [data-overlayscrollbars-viewport]
+ * inner element, which is not a JSX node and so can't carry utilities. Scoped to the
+ * rail scroll host (#session-list / #archived-list both emit `os-rail-sessions`). */
+@layer components {
+  .os-rail-sessions > [data-overlayscrollbars-viewport] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
 }
 
 /* Floating-panel chrome shared by the Radix wrappers (Dialog/Popover/Tooltip
