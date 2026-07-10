@@ -47,7 +47,7 @@ export function YouTubeImportErrorModal({
       <p>Could not download audio from the YouTube link. What would you like to do?</p>
 
       {showRetryInput && (
-        <div className="tool-row" style={{ marginTop: '0.75rem' }}>
+        <div className="tool-row mt-3">
           <input
             type="url"
             className="profile-select"
@@ -70,7 +70,7 @@ export function YouTubeImportErrorModal({
         </div>
       )}
 
-      <div className="tool-row" style={{ marginTop: '1rem', gap: '0.5rem' }}>
+      <div className="tool-row mt-4 gap-2">
         {!showRetryInput && (
           <button type="button" className="btn primary" onClick={() => setShowRetryInput(true)}>
             Try a different link

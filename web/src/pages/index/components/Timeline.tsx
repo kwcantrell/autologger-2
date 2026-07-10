@@ -184,7 +184,7 @@ const TIMELINE_TRACK_LAYERS =
 
 // .timelineHoverPlayhead + #v4-log-session visible color. Visible modifier via clsx.
 const TIMELINE_HOVER_PLAYHEAD =
-  'absolute top-1/2 bottom-auto left-0 w-px h-[calc(100%-0.85rem)] m-0 rounded-[999px] [background:color-mix(in_srgb,var(--muted)_72%,transparent)] -translate-x-1/2 -translate-y-1/2 z-[3] pointer-events-none opacity-0 [transition:opacity_0.1s_ease]';
+  'absolute top-1/2 bottom-auto left-0 w-px h-[calc(100%-0.85rem)] m-0 rounded-[999px] [background:color-mix(in_srgb,var(--color-muted)_72%,transparent)] -translate-x-1/2 -translate-y-1/2 z-[3] pointer-events-none opacity-0 [transition:opacity_0.1s_ease]';
 const TIMELINE_HOVER_PLAYHEAD_VISIBLE = 'opacity-55 bg-[rgba(229,238,252,0.28)]';
 // .timelineMarkerPlayheadGlow base (big glow shadow) + #v4-log-session (smaller v5 shadow).
 // --marker-glow-col is runtime-set. base opacity/transform driven by JS inline styles.
@@ -753,7 +753,7 @@ export function Timeline({
       const d = Math.abs(sec - activeSec);
       if (d < bestDist) {
         bestDist = d;
-        best = { sec, col: String(e.category_color || '').trim() || 'var(--accent)' };
+        best = { sec, col: String(e.category_color || '').trim() || 'var(--color-accent)' };
       }
     }
     if (!best) {

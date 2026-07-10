@@ -1,7 +1,5 @@
-import { cx } from '@/shared/theme/classnames';
-
-import styles from './perfDebug.module.css';
-
+// Panel/fab chrome lives in tailwind.css (@layer components, consolidated
+// perf-debug section) — these plain class strings target those named rules.
 const STORAGE_KEY = 'autologger:perfDebugV1';
 
 export const DEBUG_SESSION_TRANSPORT_KEY = 'autologger:debugSessionTransport';
@@ -154,26 +152,26 @@ export function initPerfDebugUI(opts: InitPerfDebugUIOptions = {}): void {
 
   const panel = document.createElement('div');
   panel.id = 'perf-debug-panel';
-  panel.className = styles.perfDebugPanel;
+  panel.className = 'perf-debug-panel';
   panel.setAttribute('role', 'region');
   panel.setAttribute('aria-label', 'Performance debug');
 
   if (mount) {
-    panel.classList.add(styles.perfDebugPanelEmbedded);
+    panel.classList.add('perf-debug-panel--embedded');
     panel.hidden = false;
   } else {
     panel.hidden = true;
   }
 
   const title = document.createElement('p');
-  title.className = styles.perfDebugPanelTitle;
+  title.className = 'perf-debug-panel__title';
   title.textContent = 'Lag culprits (saved locally)';
 
   panel.appendChild(title);
 
   function bindFlagRow(f: FlagDef): void {
     const row = document.createElement('div');
-    row.className = styles.perfDebugPanelRow;
+    row.className = 'perf-debug-panel__row';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.id = `perf-dbg-cb-${f.id}`;
@@ -196,22 +194,22 @@ export function initPerfDebugUI(opts: InitPerfDebugUIOptions = {}): void {
   for (const f of FLAGS) bindFlagRow(f);
 
   const sessionTitle = document.createElement('p');
-  sessionTitle.className = styles.perfDebugPanelTitle;
+  sessionTitle.className = 'perf-debug-panel__title';
   sessionTitle.style.marginTop = '0.75rem';
   sessionTitle.textContent = 'Session transport (dev)';
   panel.appendChild(sessionTitle);
 
   const sessionHint = document.createElement('p');
-  sessionHint.className = styles.perfDebugPanelHint;
+  sessionHint.className = 'perf-debug-panel__hint';
   sessionHint.style.marginBottom = '0.35rem';
   sessionHint.textContent =
     'Overrides button layout and timeline / log panel. Does not start or stop real timecode or recording.';
   panel.appendChild(sessionHint);
 
   const sessionFieldset = document.createElement('fieldset');
-  sessionFieldset.className = styles.perfDebugPanelFieldset;
+  sessionFieldset.className = 'perf-debug-panel__fieldset';
   const sessionLegend = document.createElement('legend');
-  sessionLegend.className = styles.perfDebugPanelLegend;
+  sessionLegend.className = 'perf-debug-panel__legend';
   sessionLegend.textContent = 'Forced state';
   sessionFieldset.appendChild(sessionLegend);
 
@@ -238,7 +236,7 @@ export function initPerfDebugUI(opts: InitPerfDebugUIOptions = {}): void {
 
   for (const opt of SESSION_OPTS) {
     const row = document.createElement('div');
-    row.className = cx(styles.perfDebugPanelRow, styles.perfDebugPanelRowRadio);
+    row.className = 'perf-debug-panel__row perf-debug-panel__row--radio';
     const radio = document.createElement('input');
     radio.type = 'radio';
     radio.name = sessionGroupName;
@@ -269,11 +267,11 @@ export function initPerfDebugUI(opts: InitPerfDebugUIOptions = {}): void {
   panel.appendChild(sessionFieldset);
 
   const hint = document.createElement('p');
-  hint.className = styles.perfDebugPanelHint;
+  hint.className = 'perf-debug-panel__hint';
   hint.textContent = `Edit PERF_DEBUG_FORCE in perfDebug.ts to default-on. Storage key: ${STORAGE_KEY}`;
 
   const actions = document.createElement('div');
-  actions.className = styles.perfDebugPanelActions;
+  actions.className = 'perf-debug-panel__actions';
 
   const btnAllOff = document.createElement('button');
   btnAllOff.type = 'button';
@@ -309,7 +307,7 @@ export function initPerfDebugUI(opts: InitPerfDebugUIOptions = {}): void {
   const fab = document.createElement('button');
   fab.type = 'button';
   fab.id = 'perf-debug-fab';
-  fab.className = styles.perfDebugFab;
+  fab.className = 'perf-debug-fab';
   fab.textContent = 'Perf';
   fab.setAttribute('aria-expanded', 'false');
   fab.setAttribute('aria-controls', 'perf-debug-panel');

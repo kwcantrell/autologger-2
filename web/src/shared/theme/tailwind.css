@@ -1,14 +1,10 @@
 /*
- * Tailwind v4 entry (spec stage 0c). Layer order is the hybrid-period contract:
- * ALL legacy CSS lives in `legacy`, lowest — converted utilities always win.
- * Preflight is intentionally absent (baseline.css is our base layer until slice 6).
+ * Tailwind v4 entry. Layer order (low → high): theme, base, components,
+ * utilities. The migration's `legacy` layer is gone — all former legacy CSS
+ * (tokens/baseline/chrome/bgGlow) now lives in these Tailwind layers or the
+ * :root token blocks below. No Preflight (our @layer base carries the reset).
  */
-@layer legacy, theme, base, components, utilities;
-
-@import './tokens.css' layer(legacy);
-@import './baseline.css' layer(legacy);
-@import './chrome.css' layer(legacy);
-@import './bgGlow.css' layer(legacy);
+@layer theme, base, components, utilities;
 
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
@@ -141,37 +137,165 @@
   }
 }
 
-/* Hybrid-period aliases: values live in tokens.css (single source of truth);
- * `inline` makes utilities emit var(--legacy-name), resolved at the usage site.
- * Slice 6 (Task 11) inlines the literal values and deletes tokens.css. */
+/* Design-token theme scale (Task 11 — literal values inlined from the deleted
+ * tokens.css). `@theme inline` keeps utilities emitting the literal directly
+ * (no `:root` var indirection) and prunes the var when unused. */
 @theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-surface-raised: var(--surface-raised);
-  --color-surface-btn: var(--surface-btn);
-  --color-border: var(--border);
-  --color-text: var(--text);
-  --color-muted: var(--muted);
-  --color-accent: var(--accent);
-  --color-accent-dim: var(--accent-dim);
-  --color-danger: var(--danger);
-  --color-v5-bg: var(--v5-bg);
-  --color-v5-text: var(--v5-text);
-  --color-v5-muted: var(--v5-muted);
-  --color-v5-soft: var(--v5-soft);
-  --color-v5-primary: var(--v5-primary);
-  --color-v5-primary2: var(--v5-primary2);
-  --color-v5-danger: var(--v5-danger);
-  --color-v5-line: var(--v5-line);
-  --color-v5-border: var(--v5-border);
-  --color-v5-border-strong: var(--v5-border-strong);
-  --font-mono: var(--mono);
-  --radius-app: var(--radius);
-  --radius-v5-lg: var(--v5-radius-lg);
-  --radius-v5-md: var(--v5-radius-md);
-  --radius-v5-sm: var(--v5-radius-sm);
-  --radius-v4-9: var(--v4-radius-9);
-  --radius-v4-10: var(--v4-radius-10);
+  --color-bg: #1e2129;
+  --color-surface: #252830;
+  --color-surface-raised: #2c303a;
+  --color-surface-btn: #2a2d36;
+  --color-border: #343842;
+  --color-accent-dim: #4a8fd9;
+  --color-danger: #ff6b6b;
+  --color-v5-bg: #070b14;
+  --color-v5-text: #e5eefc;
+  --color-v5-muted: rgba(229, 238, 252, 0.55);
+  --color-v5-soft: #94a3b8;
+  --color-v5-primary: #38bdf8;
+  --color-v5-primary2: #22d3ee;
+  --color-v5-danger: #f87171;
+  --color-v5-line: rgba(148, 163, 184, 0.16);
+  --color-v5-border: rgba(255, 255, 255, 0.06);
+  --color-v5-border-strong: rgba(255, 255, 255, 0.1);
+  --radius-app: 10px;
+  --radius-v5-lg: 1.875rem;
+  --radius-v5-md: 1.25rem;
+  --radius-v5-sm: 1rem;
+  --radius-v4-9: 0.5625rem;
+  --radius-v4-10: 0.625rem;
+}
+
+/* TSX-consumed tokens: raw `var(--color-*)` strings in TSX inline styles are not
+ * utility candidates the Tailwind scanner sees, and `--font-mono` is consumed via
+ * `font-[family-name:var(--font-mono)]` arbitrary utilities. `@theme static` emits
+ * these into `:root` unconditionally so those var() references always resolve
+ * (Timeline/TimelineMarkers/NewSessionModal/EventLogRow read --color-accent/-muted/
+ * -text; EventLogRow/FeedTable/EventLogSheet read --font-mono). */
+@theme static {
+  --color-text: #e8eaed;
+  --color-muted: #9aa0a6;
+  --color-accent: #7cb7ff;
+  --font-mono: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+}
+
+/* Non-namespace + legacy-flat tokens (Task 11 — moved verbatim from the deleted
+ * tokens.css :root block). Kept as real custom properties (NOT @theme) because
+ * they are consumed as var() by hand-written rules in this file (the ported
+ * chrome/base rules + SessionWorkspace/AppShell/Timeline escape hatches) and by the
+ * remaining component CSS/TSX that reads the v4, v5, surface, and radius tokens. The
+ * flat colors also have literal @theme-inline twins above for utility generation;
+ * these :root copies serve the plain-CSS var() consumers. The poppins and
+ * league-gothic fonts live in @theme; the mono stack became --font-mono. */
+:root {
+  /* Matte dark slate + noise (see body::before in baseline.css) */
+  --bg: #1e2129;
+  --surface: #252830;
+  --surface-raised: #2c303a; /* feed-table / log-sheet header rows */
+  --surface-btn: #2a2d36; /* .btn base + category-strip buttons */
+  --border: #343842;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #7cb7ff;
+  --accent-dim: #4a8fd9;
+  --danger: #ff6b6b;
+  --radius: 10px;
+  /* --font-poppins / --font-league-gothic moved into @theme (tailwind.css) — same-name
+   * namespace tokens can't be defined twice. Self-hosted Google Fonts: Poppins
+   * 100/300/400/600; League Gothic variable width. */
+
+  /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
+  --v5-bg: #070b14;
+  --v5-text: #e5eefc;
+  --v5-muted: rgba(229, 238, 252, 0.55);
+  --v5-soft: #94a3b8;
+  --v5-primary: #38bdf8;
+  --v5-primary2: #22d3ee;
+  --v5-danger: #f87171;
+  --v5-line: rgba(148, 163, 184, 0.16);
+  /* Slightly more opaque than old "blur glass" so panels stay readable without backdrop-filter */
+  --v5-glass-top: rgba(19, 27, 48, 0.91);
+  --v5-glass-bot: rgba(11, 16, 30, 0.84);
+  --v5-glass-strong-top: rgba(22, 31, 54, 0.94);
+  --v5-glass-strong-bot: rgba(12, 18, 32, 0.9);
+  /* Stacked: specular haze + tinted body (replaces frosted blur visually) */
+  --v5-glass-face: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 44%),
+    linear-gradient(180deg, var(--v5-glass-top), var(--v5-glass-bot));
+  --v5-glass-face-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
+  --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
+  --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --v5-border: rgba(255, 255, 255, 0.06);
+  --v5-border-strong: rgba(255, 255, 255, 0.1);
+  /* Mock .shadow-glow: lift + hairline + cyan/sky bloom */
+  --v5-shadow-glow: 0 1px 0 rgba(255, 255, 255, 0.055), 0 22px 60px rgba(2, 8, 23, 0.58),
+    0 0 0 1px rgba(255, 255, 255, 0.048), 0 0 128px -36px rgba(56, 189, 248, 0.14),
+    0 0 64px -28px rgba(14, 165, 233, 0.09);
+  --v5-panel-elevate: var(--v5-shadow-glow), var(--v5-glass-rim);
+  --v5-radius-lg: 1.875rem;
+  --v5-radius-md: 1.25rem;
+  --v5-radius-sm: 1rem;
+  --v5-aside-w: 22.5rem;
+  --v5-panel-padding: 1.5rem;
+  --v5-panel-head-main-gap: 0.1rem;
+
+  /* Timeline wave lane: 1.5× app's 3.45rem + integrated vertical margin */
+  --v5-timeline-lane-base: calc(3.45rem + 2 * var(--v4-nav-grid-my, 0.5rem));
+  --v5-timeline-lane-h: calc(var(--v5-timeline-lane-base) * 1.5);
+  --v5-timeline-lane-delta: calc(var(--v5-timeline-lane-base) * 0.5);
+
+  /* V4 design tokens (formerly scoped under `.v4-scratch`; promoted to :root in v1.15.0).
+   * Consumed by Timeline.css, SessionWorkspace.css, EventLogSheet.css, V6Rail.css,
+   * TransportControls.css, CategoryButtonStrip.css, and AppShell.css.
+   * Tokens with no remaining var() consumer were pruned in v1.23.5. */
+  --v4-bar-h: 3.17125rem;
+  --v4-rec-mr: 1.316625rem;
+  --v4-search-mx: 2.30409375rem;
+  --v4-log-top-h: 8.76125rem;
+  --v4-btn-area-pt: 0.7525rem;
+  --v4-btn-area-px: 3.511rem;
+  --v4-grid-gap-y: 0.3225rem;
+  --v4-cat-btn-w: 7.2414375rem;
+  --v4-cat-btn-h: 6.665rem;
+  --v4-ctrl-btn-w: 4.05959375rem;
+  --v4-ctrl-btn-h: 3.81625rem;
+  --v4-ctrl-btn-my: 0.80625rem;
+  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 2);
+  --v4-session-nav-btn-h: calc(var(--v4-ctrl-btn-h) / 2);
+  --v4-clock-box-h: 3.06375rem;
+  --v4-clock-box-mb: 0.5375rem;
+  --v4-clock-box-mv: var(--v4-clock-box-mb);
+  --v4-clock-inner-py: 0.2rem;
+  --v4-clock-inner-h: calc(var(--v4-clock-box-h) - 2px);
+  --v4-clock-label-straddle: 0.34rem;
+  --v4-radius-9: 0.5625rem;
+  --v4-radius-10: 0.625rem;
+  --v4-ext-row-h: 2.63375rem;
+  --v4-tl-row-h: 6.1275rem;
+  --v4-zoom-handle-w: 0.87775rem;
+  --v4-zoom-handle-h: 0.86rem;
+  --v4-nav-edge-m: 1.316625rem;
+  --v4-nav-area-h: calc(var(--v4-ext-row-h) / 2);
+  --v4-nav-grid-my: 0.5rem;
+  --v4-tl-bar-ml: 1.316625rem;
+  --v4-tl-bar-mr: 5.705375rem;
+  --v4-tl-bar-h: 3.5475rem;
+  --v4-icon-nav-back: url("../../assets/icons/icon_nav_back.png");
+  --v4-icon-nav-next: url("../../assets/icons/icon_next_nav.png");
+
+  /* Z-index scale for the floating layers (v1.23.5; rail/toast tokens added with
+   * the Phase 2 Radix normalization). Stack, bottom to top: rail scrim/drawer →
+   * dialog overlay/content → popover → top-float (tooltip, select dropdown,
+   * audio-save busy overlay) → toast. Intra-component stacking (small 1-30
+   * values and the Timeline tooltip layers) stays local to each module. */
+  --z-rail-scrim: 1500;
+  --z-rail-drawer: 1501;
+  --z-dialog-overlay: 5000;
+  --z-dialog-content: 5001;
+  --z-popover: 5300;
+  --z-top-float: 5500;
+  --z-toast: 6000;
 }
 
 /* The repo's dominant hover flavor: fires on touch-tap too (only chrome's .btn
@@ -316,11 +440,19 @@
   }
 }
 
-/* Timeline perf-debug toggles — parked here verbatim from Timeline.module.css
- * (Task 10). These must beat the converted marker/waveform/shadow utilities, so
- * !important is the toggle contract; they join perfDebug's own module in Task 11.
+/* ============================================================
+ * PERF-DEBUG (consolidated, Task 11 commit 2).
+ * All perf A/B toggle rules + the perf-debug panel/fab chrome, in one section.
+ * body.perf-dbg--* classes are toggled by shared/utils/perfDebug.ts (localStorage +
+ * optional PERF_DEBUG_FORCE). Toggles must beat the converted marker/waveform/
+ * shadow utilities, so `!important` is the toggle contract (recipe-sanctioned).
+ * Sources folded here: Timeline.module.css (Task 10 parked block, below),
+ * perfDebug.module.css (its :global toggles + hashed panel/fab locals — now plain
+ * class names emitted by perfDebug.ts), and bgGlow's --no-v5-page-fx toggle (below).
  * The .timelineMarker/.timelinePlayhead/etc. class strings are retained on the JSX
- * for these (and the hide-internal rule above) to target. */
+ * for these (and the hide-internal rule above) to target.
+ * ------------------------------------------------------------
+ * Timeline perf-debug toggles — verbatim from Timeline.module.css (Task 10). */
 @layer components {
   body.perf-dbg--no-timeline-waveform .timelineWaveforms {
     display: none !important;
@@ -375,6 +507,175 @@
 
   body.perf-dbg--no-v5-waveform-gradients #v4-log-session .timelineWaveformProgress {
     fill: rgba(56, 189, 248, 0.4) !important;
+  }
+}
+
+/* perfDebug.module.css :global toggles (verbatim). The perf-dbg--* body classes
+ * target elements across the app, so these stay whole-selector rules. */
+@layer components {
+  /* V5 full-page grid + radial glow (from bgGlow.css — matches the former
+     body.v5-ui.perf-dbg--no-v5-page-fx::before/::after rule). */
+  body.perf-dbg--no-v5-page-fx .v5-bg-glow {
+    display: none !important;
+  }
+
+  /* Brand / loading WebM loops. */
+  body.perf-dbg--no-decorative-videos .autologger-loading-video {
+    display: none !important;
+  }
+
+  /* Large panel shadows (less composite work when scrolling). */
+  body.perf-dbg--no-panel-shadows .panel,
+  body.perf-dbg--no-panel-shadows .footer,
+  body.perf-dbg--no-panel-shadows .v4-top-bar,
+  body.perf-dbg--no-panel-shadows .v4-log-top,
+  body.perf-dbg--no-panel-shadows .v4-log-sheet,
+  body.perf-dbg--no-panel-shadows .v4-session-aside {
+    box-shadow: none !important;
+  }
+}
+
+/* perfDebug panel/fab chrome — ported from perfDebug.module.css's hashed locals.
+ * perfDebug.ts now emits these as plain class strings (was `styles.*`). Kept as
+ * named rules (not inline utilities) because the panel carries pseudo-state
+ * (`[hidden]`), an `--embedded` variant, and descendant input/label/button rules
+ * that can't ride on the DOM-built elements as inline utilities. Dev-only debug UI
+ * (not in visual baselines). */
+@layer components {
+  .perf-debug-panel {
+    position: fixed;
+    right: 10px;
+    /* Sits above the .perf-debug-fab toggle (bottom:10px, ~25px tall) so the
+       "Hide" button stays visible and clickable while the panel is open. */
+    bottom: 48px;
+    z-index: 2147483000;
+    max-width: min(20rem, calc(100vw - 20px));
+    max-height: min(70vh, 28rem);
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 0.5rem 0.65rem;
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+
+  .perf-debug-panel[hidden] {
+    display: none !important;
+  }
+
+  /* Embedded in Settings modal (no fixed corner chrome) */
+  .perf-debug-panel--embedded {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    max-width: 100%;
+    max-height: none;
+    box-shadow: none;
+  }
+
+  .perf-debug-panel__title {
+    margin: 0 0 0.35rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #94a3b8;
+  }
+
+  .perf-debug-panel__row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
+    margin: 0.2rem 0;
+  }
+
+  .perf-debug-panel__row input {
+    margin-top: 0.2rem;
+    flex-shrink: 0;
+  }
+
+  .perf-debug-panel__row label {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .perf-debug-panel__hint {
+    margin: 0.45rem 0 0;
+    font-size: 0.65rem;
+    color: #64748b;
+  }
+
+  .perf-debug-panel__fieldset {
+    margin: 0 0 0.5rem;
+    padding: 0.45rem 0.55rem 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.4rem;
+  }
+
+  .perf-debug-panel__legend {
+    padding: 0 0.3rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #94a3b8;
+  }
+
+  .perf-debug-panel__row--radio {
+    margin: 0.15rem 0;
+  }
+
+  .perf-debug-panel__actions {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .perf-debug-panel__actions button {
+    font: inherit;
+    font-size: 0.68rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.35rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: #e2e8f0;
+    cursor: pointer;
+  }
+
+  .perf-debug-panel__actions button:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .perf-debug-fab {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    /* One above .perf-debug-panel so the toggle is never occluded by the panel. */
+    z-index: 2147483001;
+    padding: 0.35rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(15, 23, 42, 0.92);
+    color: #94a3b8;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+
+  .perf-debug-fab:hover {
+    color: #e2e8f0;
+  }
+
+  .perf-debug-fab[hidden] {
+    display: none !important;
   }
 }
 
@@ -574,7 +875,9 @@
 /* --- `.btn` chrome inside the session (V5 recolor) ---
  * `.v4-log-session .btn` recolors chrome buttons rendered by many child components
  * (TransportControls, etc.), so it's a components-layer context rule, not inline
- * utilities on one JSX tree. `.btn` chrome itself stays legacy until Task 11. */
+ * utilities on one JSX tree. `.btn` chrome itself now lives in the page-chrome
+ * components block below (Task 11); this session recolor (specificity 0,1,1) still
+ * out-specifies the base `.btn` (0,1,0) within the same components layer. */
 @layer components {
   .v4-log-session .btn {
     border-radius: var(--v5-radius-sm);
@@ -692,5 +995,861 @@
 @layer components {
   .muted {
     color: var(--v5-soft);
+  }
+}
+
+/* ============================================================
+ * Page chrome (Task 11, slice 6 — ported from the deleted chrome.css).
+ * Multi-consumer chrome vocabulary (audit B): shell/header/brand/settings/
+ * modal/btn/field/panel/profile-select/tool-row/fps/footer/developer/crumb/…
+ * All emitted class strings are unchanged; these named rules live in
+ * `@layer components` (below utilities), so per-element utility overrides from
+ * earlier slices keep winning. The `.btn` compound family (.btn / .btn.primary /
+ * .btn.danger / :disabled / (hover:hover) guards / max-md touch floor) lives here
+ * ENTIRELY as plain rules — an @utility+components split would invert layer order
+ * and flatten primary/danger to default buttons.
+ * ============================================================ */
+@layer components {
+  .shell {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.1rem 1.05rem 2.2rem;
+  }
+
+  .shell-v3 {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Grid lockup: logo and text column share one row; logo and headline stack share the same vertical midpoint. */
+  .brand-with-logo .brand-lockup {
+    display: grid;
+    grid-template-columns: 6rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0;
+    min-height: 0;
+  }
+
+  .brand-logo {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    justify-self: start;
+    align-self: center;
+    z-index: 0;
+    width: 6rem;
+    height: 6rem;
+    max-width: min(6rem, 42vw);
+    max-height: min(6rem, 42vw);
+    margin-left: -0.2rem;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+  }
+
+  .brand-with-logo .brand-text {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    /* Pull text over the right part of the mark (replaces former padding-left on absolute layout). */
+    margin-left: -1.65rem;
+    padding-left: 0;
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline {
+    margin: 0.18rem 0 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+    max-width: 28rem;
+  }
+
+  .admin-settings-block {
+    margin: 1rem 0 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-panel .admin-settings-block {
+    margin-top: 0.5rem;
+  }
+
+  .settings-subheading {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .modal-dropdown-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .modal-lead {
+    margin: 0 0 1rem;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .modal-hint {
+    margin: 0 0 0.65rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+  }
+
+  .profile-select {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin: 0 0 1rem;
+    width: 100%;
+    cursor: pointer;
+  }
+
+  .main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.82rem 0.95rem 0.9rem;
+  }
+
+  .panel h2 {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .field span {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .num {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+    width: 4.5rem;
+    margin-left: 0.35rem;
+  }
+
+  .num.wide {
+    width: 6rem;
+  }
+
+  .mono,
+  .sheet .mono {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  /* The `.btn` compound family — plain rules, kept together in one layer. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.95rem;
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--text);
+    background: var(--surface-btn);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  /* Hover guarded behind `hover: hover` so the style does not latch after a tap
+   * on touch devices (phone-first, Phase 3) — one of only three guarded hovers
+   * in the app (audit G). Focus-visible rings are unaffected. */
+  @media (hover: hover) {
+    .btn:hover {
+      border-color: var(--accent-dim);
+      color: var(--accent);
+    }
+  }
+
+  /* Disabled: match flat neutral look (same as e.g. Record Audio when off) */
+  .btn:disabled,
+  .btn:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .btn.primary {
+    background: linear-gradient(180deg, #2a3544, #222a36);
+    border-color: #3d4a5c;
+  }
+
+  @media (hover: hover) {
+    .btn.primary:hover {
+      border-color: var(--accent);
+    }
+  }
+
+  .btn.primary:disabled,
+  .btn.primary:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .btn.danger {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    color: var(--danger);
+  }
+
+  @media (hover: hover) {
+    .btn.danger:hover {
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+  }
+
+  .btn.danger:disabled,
+  .btn.danger:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .tool-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1rem;
+  }
+
+  /* `!important` mirrors `.hidden` (base layer): this global chrome class name
+   * collides with Tailwind's core `.inline{display:inline}` utility in the higher
+   * `utilities` layer, which would otherwise flatten these flex labels. Kept as the
+   * canonical `.inline` chrome hook (NewSessionModal label chips still emit it). */
+  .inline {
+    display: inline-flex !important;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .export-row {
+    margin-top: 0.75rem;
+  }
+
+  .footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .footer .mono {
+    color: var(--accent);
+  }
+
+  .developer-footer {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .developer-label {
+    margin: 0 0 0.65rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+
+  .developer-logo {
+    display: block;
+    max-width: min(288px, 92vw);
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+    opacity: 1;
+  }
+
+  .crumb {
+    margin: 0 0 0.35rem;
+    font-size: 0.9rem;
+  }
+
+  .crumb a {
+    color: var(--accent-dim);
+    text-decoration: none;
+  }
+
+  .crumb a:hover {
+    color: var(--accent);
+  }
+
+  .faint {
+    color: var(--muted);
+    font-size: 0.8rem;
+    word-break: break-all;
+  }
+
+  .new-session-form .field {
+    margin-bottom: 0.75rem;
+  }
+
+  .tool-row-session-opts {
+    align-items: flex-end;
+  }
+
+  .fps-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: min(100%, 14rem);
+  }
+
+  .fps-field-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .fps-select {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    max-width: 100%;
+    cursor: pointer;
+  }
+
+  .fps-select:focus {
+    outline: 2px solid var(--accent-dim);
+    outline-offset: 1px;
+  }
+
+  .fps-custom-wrap {
+    margin-top: 0.15rem;
+  }
+
+  .fps-custom-label {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .fps-custom-input {
+    min-width: 6rem;
+  }
+
+  .fps-hint {
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.3;
+    max-width: 18rem;
+  }
+
+  .modal-export-actions {
+    margin-top: 0.25rem;
+  }
+
+  /* Phone-first cutover aligned to the md breakpoint (≤767px = md - 1). */
+  @media (max-width: 767px) {
+    .header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    /* Touch-target floor for the app-wide button (covers Dialog/sheet actions
+     * and all chrome forms). */
+    .btn {
+      min-height: 2.75rem;
+    }
+  }
+}
+
+/* Bare form-element baseline (Task 11, from the deleted chrome.css element rules).
+ * `input[type="text"], textarea` styled every plain text field app-wide; `.num`
+ * shared this box but keeps its own width/margin in the components block above.
+ * Kept in `@layer components` (NOT base) so the original single-legacy-layer
+ * cascade is preserved: `input[type=text]` (specificity 0,1,1) intentionally
+ * out-specifies `.profile-select` (0,1,0), so profile-select text inputs keep
+ * the 0.55rem padding they render with today. Moving these to `@layer base`
+ * would let `.profile-select` win by layer and shrink those inputs (~1.6px). */
+@layer components {
+  input[type='text'],
+  textarea {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 2.5rem;
+  }
+}
+
+/* ============================================================
+ * BASE LAYER (Task 11 commit 3 — ported from the deleted baseline.css + bgGlow.css).
+ * @font-face declarations, universal box-sizing reset (once — was duplicated in
+ * tokens.css + baseline.css), cross-browser normalization, body baseline, film-grain
+ * layer, page-content stacking. In @layer base so per-component utilities win.
+ * The .hidden hook, the audio-saving pointer-events lock, and the bg-glow perf toggle
+ * need to beat utilities, so they live in @layer components (below / perf-debug section).
+ * ============================================================ */
+@layer base {
+  /* Self-hosted (OFL via Google Fonts): Chivo Mono, League Gothic, Poppins,
+   * Inter, Oswald, Roboto — .woff2 in src/assets/fonts/ */
+  /* vietnamese */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxAD1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxED1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gx8D1WB4m9w.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* vietnamese */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 200;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxAD1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 200;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxED1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 200;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gx8D1WB4m9w.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* vietnamese */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxAD1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gxED1WB4m9xv3Q.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Chivo Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/mFT0WbgRxKvF_Z5eQMO9gx8D1WB4m9w.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* vietnamese */
+  @font-face {
+    font-family: 'League Gothic';
+    font-style: normal;
+    font-weight: 400;
+    font-stretch: 75% 100%;
+    font-display: swap;
+    src: url("../../assets/fonts/qFdC35CBi4tvBz81xy7WG7ep0hcojnA4PLDzOA.woff2") format('woff2');
+    unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'League Gothic';
+    font-style: normal;
+    font-weight: 400;
+    font-stretch: 75% 100%;
+    font-display: swap;
+    src: url("../../assets/fonts/qFdC35CBi4tvBz81xy7WG7ep0hYojnA4PLDzOA.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'League Gothic';
+    font-style: normal;
+    font-weight: 400;
+    font-stretch: 75% 100%;
+    font-display: swap;
+    src: url("../../assets/fonts/qFdC35CBi4tvBz81xy7WG7ep0hgojnA4PLA.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* devanagari */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucXtAOvWDSHFF.woff2") format('woff2');
+    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTufntAOvWDSHFF.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 100;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiGyp8kv8JHgFVrLPTucHtAOvWDSA.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* devanagari */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z11lFd2JQEl8qw.woff2") format('woff2');
+    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1JlFd2JQEl8qw.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLDz8Z1xlFd2JQEk.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* devanagari */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJbecnFHGPezSQ.woff2") format('woff2');
+    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJnecnFHGPezSQ.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiEyp8kv8JHgFVrJJfecnFHGPc.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* devanagari */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z11lFd2JQEl8qw.woff2") format('woff2');
+    unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B09;
+  }
+  /* latin-ext */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1JlFd2JQEl8qw.woff2") format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  /* latin */
+  @font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/pxiByp8kv8JHgFVrLEj6Z1xlFd2JQEk.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  /* Inter (vendored from Google Fonts CDN, stage 0a): latin subset only —
+   * app renders English UI text; matches the CDN link's family/weight set. */
+  @font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("../../assets/fonts/inter-400.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("../../assets/fonts/inter-500.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("../../assets/fonts/inter-600.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Oswald (vendored from Google Fonts CDN, stage 0a): latin subset only. */
+  @font-face {
+    font-family: 'Oswald';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("../../assets/fonts/oswald-500.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  /* Roboto (vendored from Google Fonts CDN, stage 0a): latin subset only. */
+  @font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 500;
+    font-stretch: 100%;
+    font-display: swap;
+    src: url("../../assets/fonts/roboto-500.woff2") format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  /* Universal box-sizing reset (formerly duplicated in tokens.css + baseline.css). */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  /* Cross-browser normalization (Phase 2): suppress the mobile tap-highlight;
+   * body-level overscroll/bounce lock and the fallback focus ring follow. Hover-only
+   * styling stays guarded behind @media (hover: hover) in the component that owns it. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--v5-primary);
+    outline-offset: 2px;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+    font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--v5-text);
+    background-color: var(--v5-bg);
+    position: relative;
+    isolation: isolate;
+  }
+
+  /* Page-content stacking context: bg-glow nodes sit at z-index 0; everything else
+   * z-index 1 (promoted from body.v5-ui > * in v1.15.0). */
+  body > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Fine film-grain / ISO noise over flat slate */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.055;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+    background-repeat: repeat;
+  }
+}
+
+/* Ambient background glow — DOM nodes rendered by ThemeProvider (bgGlow.css). */
+@layer base {
+  .v5-bg-glow {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  /* Top grid + cool sky-blue wash from the page header */
+  .v5-bg-glow--grid {
+    background-image:
+      radial-gradient(circle at 50% -8%, rgba(56, 189, 248, 0.09), transparent 32%),
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: auto, 24px 24px, 24px 24px;
+    background-position: center top, center, center;
+  }
+
+  /* Corner glows: bottom-left purple, top-right cyan */
+  .v5-bg-glow--corners {
+    background:
+      radial-gradient(ellipse 120% 80% at 0% 100%, rgba(168, 85, 247, 0.08), transparent 45%),
+      radial-gradient(ellipse 100% 70% at 100% 35%, rgba(14, 165, 233, 0.07), transparent 40%);
+  }
+}
+
+/* baseline.css hooks that must beat the utilities layer → @layer components.
+ * `.hidden` is the canonical JS-toggled hide hook (V6Rail/Timeline/SessionWorkspace);
+ * the audio-saving lock disables pointer events app-wide during an async save.
+ * Both keep `!important` — the recipe-sanctioned toggle-contract use. */
+@layer components {
+  .hidden {
+    display: none !important;
+  }
+
+  body.autologger-audio-saving {
+    user-select: none;
+  }
+
+  body.autologger-audio-saving * {
+    pointer-events: none !important;
+  }
+
+  body.autologger-audio-saving #autologger-audio-save-overlay,
+  body.autologger-audio-saving #autologger-audio-save-overlay * {
+    pointer-events: auto !important;
   }
 }

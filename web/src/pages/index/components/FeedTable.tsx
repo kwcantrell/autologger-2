@@ -30,11 +30,11 @@ export const FEED_ROW = 'hover-always:bg-[rgba(255,255,255,0.03)]';
 /** Feed body cell. `vertical-align` is intentionally NOT set here — callers add
  *  `align-middle` (Transcribe) or `align-top` (Topics tall-summary rows) so the two
  *  don't collide on one element (generated-order, not class-order, decides). Default
- *  grey mirrors Event Feed's internal-row `color: var(--muted)`. */
+ *  grey mirrors Event Feed's internal-row `color: var(--color-muted)`. */
 export const FEED_CELL =
   'px-[0.4rem] py-[0.1rem] [border-bottom:1px_solid_rgba(255,255,255,0.04)] text-muted';
 /** Time column — blue monospaced, mirrors `.sheet .tc`. */
-export const FEED_CELL_TIME = 'font-[family-name:var(--mono)] text-accent whitespace-nowrap';
+export const FEED_CELL_TIME = 'font-[family-name:var(--font-mono)] text-accent whitespace-nowrap';
 /** Inline editable input. `mono` variant swaps the family to `monospace` (was
  *  `.feedInlineInput:global(.mono)` → `var(--mono-font, monospace)`, undefined var →
  *  `monospace`); pass `FEED_INLINE_INPUT_MONO` alongside for those cells. */

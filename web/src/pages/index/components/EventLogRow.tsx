@@ -27,7 +27,7 @@ const CELL_BASE =
 const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
 /** Timecode cell (was `.sheet .tc` + the `cursor:pointer!important` lock on td.tc + children). */
 const CELL_TC =
-  'text-left align-middle font-[family-name:var(--mono)] text-accent whitespace-nowrap !cursor-pointer [&_*]:!cursor-pointer';
+  'text-left align-middle font-[family-name:var(--font-mono)] text-accent whitespace-nowrap !cursor-pointer [&_*]:!cursor-pointer';
 /** Category cell (was `.sheetCat`). */
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */
@@ -105,7 +105,7 @@ export function EventLogRow({
   const isInternal = event.category.toLowerCase() === 'internal';
 
   const catStyle = color ? { color } : undefined;
-  const msgStyle = isInternal ? catStyle : { color: 'var(--text)' };
+  const msgStyle = isInternal ? catStyle : { color: 'var(--color-text)' };
 
   // --- Refs for inline rolling edit (uncontrolled, blur-to-save) ---
   const tcRef = useRef<HTMLInputElement>(null);

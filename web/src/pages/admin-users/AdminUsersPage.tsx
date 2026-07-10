@@ -162,7 +162,7 @@ export function AdminUsersPage() {
               onChange={(e) => saveToken(e.target.value)}
             />
           </label>
-          <div className="settings-actions" style={{ marginBottom: '1.5rem' }}>
+          <div className="settings-actions mb-6">
             <button type="button" className="btn primary" onClick={loadAll} disabled={loading}>
               {loading ? 'Loading…' : 'Load data'}
             </button>
@@ -261,19 +261,15 @@ export function AdminUsersPage() {
                         {u.given_name} {u.family_name}
                       </td>
                       <td>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        <div className="flex flex-wrap gap-1">
                           {u.memberships.map((sid) => (
-                            <span
-                              key={sid}
-                              style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}
-                            >
+                            <span key={sid} className="inline-flex gap-1 items-center">
                               <code>{sid}</code>
                               <button
                                 type="button"
-                                className="btn btn-icon danger"
+                                className="btn btn-icon danger text-[10px] px-1 py-0"
                                 aria-label={`Remove from ${sid}`}
                                 onClick={() => removeMembership(u.id, sid)}
-                                style={{ fontSize: '10px', padding: '0 4px' }}
                               >
                                 ×
                               </button>
@@ -283,8 +279,7 @@ export function AdminUsersPage() {
                             trigger={
                               <button
                                 type="button"
-                                className="btn"
-                                style={{ fontSize: '12px' }}
+                                className="btn text-[12px]"
                                 aria-label={`Add team membership for ${u.email}`}
                               >
                                 + Add team

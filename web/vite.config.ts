@@ -8,10 +8,6 @@ export default defineConfig({
   root: __dirname,
   base: '/',
 
-  css: {
-    modules: { localsConvention: 'camelCaseOnly' },
-  },
-
   resolve: {
     alias: {
       '@/api': path.resolve(__dirname, 'src/api'),
