@@ -1,9 +1,12 @@
 {
   "name": "autologger",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
-  "description": "AutoLogger on Cloudflare — Worker + D1 + KV (phases 1-2: auth, catalog, profile/studio/shows)",
+  "description": "AutoLogger — portable Node server (Hono + better-sqlite3 + filesystem blobs)",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
     "start": "tsx --env-file-if-exists=.env src/main.ts",
@@ -20,13 +23,10 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.8.71",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
-    "undici": "^8.7.0",
-    "vitest": "^2.1.9",
-    "wrangler": "^4.100.0"
+    "vitest": "^2.1.9"
   }
 }

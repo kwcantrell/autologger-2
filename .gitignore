@@ -1,15 +1,13 @@
 node_modules/
-.wrangler/
-.dev.vars
-.dev.vars.*
-!.dev.vars.example
+.env
 dist/
-# SPA build artifact — reproduced by the frontend CF build (AUTOLOGGER_CF_BUILD=1)
+# SPA build artifact — reproduced by the frontend build (AUTOLOGGER_CF_BUILD=1)
 public/
 *.log
 .DS_Store
-# wrangler types output is regenerated locally
-worker-configuration.d.ts
+
+# local server data (SQLite DBs + audio blobs), see DATA_DIR in .env.example
+data/
 
 # editor swap files
 *.swp

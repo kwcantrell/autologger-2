@@ -45,6 +45,7 @@ export function wireApp(
   // one, sees a mismatch, and terminates the raw socket — the WS client sees a
   // bare error/close(1006) with no application-level trace. Preserve identity;
   // only backfill keys the adapter (incoming/outgoing) hasn't already set.
+  // Callers must pass a per-request env; we mutate it.
   if (opts.bindings) {
     const b = opts.bindings as unknown as Record<string, unknown>;
     app.use('*', async (c, next) => {

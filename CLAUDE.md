@@ -1,51 +1,68 @@
 # CLAUDE.md — autologger-cf
 
 Guidance for Claude Code in this repo. Read at the start of every session.
-For deep architecture, endpoint parity, and provisioning steps see **`README.md`** —
+For deep architecture, endpoint parity, and storage layout see **`README.md`** —
 this file stays short and points there rather than duplicating it.
 
 ## Project overview
 
-Cloudflare Worker port of the Python AutoLogger backend (`../autologger`) — a faithful
+Portable Node server port of the Python AutoLogger backend (`../autologger`) — a faithful
 TypeScript reimplementation serving the **same JSON shapes** the existing React frontend
 expects. **Hono** routing + **Zod** validation + **jose** for Google ID-token verify, on:
 
-- **D1** (SQLite) — global catalog (users/studios/shows/prefs) + a lightweight `sessions` index.
-- **KV** (`AUTH`) — login sessions, OAuth CSRF, Companion presence (TTL).
-- **Durable Object** (`SessionDO`, one per session) — live spine: events, transport, audio
-  metadata, recording lease (+40s `alarm`), transcript words, topics, WebSocket fan-out.
-- **R2** (`AUDIO`) — audio bytes; the DO holds only metadata + R2 keys.
+- **better-sqlite3** — catalog DB (`DATA_DIR/catalog.db`: users/studios/shows/prefs, login
+  sessions, OAuth CSRF, Companion presence, sessions index) + one DB file per session
+  (`DATA_DIR/sessions/<id>.db`).
+- **Filesystem blobs** (`DATA_DIR/blobs/audio/…`) — audio bytes, replacing R2.
+- **In-process SessionHub per session** — live spine: events, transport, audio metadata,
+  recording lease (timer-driven auto-expiry), transcript words, topics, WebSocket fan-out.
+  Replaces the Durable Object.
+- **`@hono/node-ws`** for WebSocket upgrades, served by **`@hono/node-server`**.
 
-**Local-only through phase 7.** No Cloudflare login, no remote provisioning. The D1/KV/DO/R2
-ids in `wrangler.jsonc` are placeholders Miniflare ignores in local mode; secrets live in a
-gitignored `.dev.vars`. Real ids + `wrangler deploy` are the final, login-gated cutover the
-**user** runs — see README "Cutover". Transcription + YouTube import are intentionally `503`
-on this deployment (no Workers AI/Workflow/Queue).
+**Runs anywhere Node 22 runs.** No cloud account, no login, no remote provisioning — a single
+Node process, state on local disk under `DATA_DIR`. Transcription + YouTube import are
+intentionally `503` on this deployment (no external transcription integration wired up).
+`restart_supported` stays `false` (gate decision E2).
 
 ## Setup & commands
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars                 # fill GOOGLE_CLIENT_SECRET for real OAuth
+cp .env.example .env                           # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 
-npm run cf-typegen                             # regenerate worker-configuration.d.ts (Env)
+npm run dev                                    # tsx watch → 127.0.0.1:8787
 npm run typecheck                              # tsc --noEmit
-npm run migrate:local                          # apply + seed local D1
-npm run dev                                    # wrangler dev (Miniflare) → 127.0.0.1:8787
-npm test                                       # vitest run (unit + workers projects)
+npm test                                       # vitest run (unit + integration projects)
 ```
 
 - Two vitest tiers (`vitest.workspace.ts`): **unit** (`*.test.ts`, node, no bindings) and
-  **workers** (`*.int.test.ts`, Miniflare with real D1 migrations).
-- Sandbox note: if wrangler hits `EACCES … /home/node/.config/.wrangler`, prefix commands
-  with `XDG_CONFIG_HOME=/tmp/wr-config`.
+  **integration** (`*.int.test.ts`, node, real SQLite via `src/test/setup.int.ts`).
+
+## Invariants (spec)
+
+- **Single Node process** — no clustering, no multi-worker fan-out.
+- **SessionHub RPC bodies are synchronous** — zero `await`s inside a hub method; async work
+  (fetch, streaming) belongs in the router layer.
+- **Hub mutations are transactional** — every mutating RPC runs inside a `better-sqlite3`
+  transaction.
+- **Idle hubs close their DB handles and reopen lazily** on next access via
+  `SessionHubRegistry#get()`.
+- **Bindings injection in `src/app.ts` (`wireApp`) mutates the per-request `env` object in
+  place** rather than replacing it — `@hono/node-ws` upgrade handshakes compare that object's
+  identity to decide whether to complete the upgrade. Callers must pass a **fresh env per
+  request**; reusing one env across concurrent requests will cross-contaminate bindings.
+- **Google ID-token verification** fetches Google's JWKS via global `fetch` +
+  `jose`'s `createLocalJWKSet` (10-minute cache, refetch once on an unrecognized `kid`) —
+  not `jose`'s `node:https`-based remote-JWKS path.
 
 ## Source layout
 
 Mirrors the Python backend module-for-module; each `src/` file notes its Python origin in a
-header comment. Router files live in `src/routers/`; the live DO is `src/durable/SessionDO.ts`;
-the D1 layer is `src/db/d1.ts` with migrations in `src/db/migrations/`. Full annotated tree +
-endpoint→Python-parity table are in **`README.md`**.
+header comment. Router files live in `src/routers/`; the live per-session spine is
+`src/durable/SessionHub.ts` (+ domain stores alongside it); the catalog DB layer is
+`src/db/d1.ts` with migrations in `src/db/migrations/`; Node-specific infrastructure (config
+wiring, migrator, blob store, kv-on-sqlite, presence) lives in `src/node/`. Full annotated
+tree + endpoint→Python-parity table are in **`README.md`**.
 
 ## Conventions
 
@@ -60,9 +77,9 @@ endpoint→Python-parity table are in **`README.md`**.
 
 ## Guardrails
 
-- Never commit secrets. `.dev.vars` is gitignored; real ids/tokens never land in `wrangler.jsonc`.
-- Never run remote provisioning or `wrangler deploy` — the cutover is login-gated and the user's.
-- `public/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it.
+- Never commit secrets. `.env` is gitignored; real tokens never land in tracked files.
+- `public/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it. The
+  frontend source still lives in the parent Python repo until sub-project 2 moves it here.
 
 ## How we work (SDLC)
 
