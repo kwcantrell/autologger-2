@@ -1,6 +1,6 @@
+import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import styles from './Toast.module.css';
 
 interface ShowOpts {
   persistent?: boolean;
@@ -108,9 +108,19 @@ export function Toast() {
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <output id="toast-queue" className={styles.toastQueue} aria-live="polite">
+    <output
+      id="toast-queue"
+      aria-live="polite"
+      className="pointer-events-none fixed right-5 bottom-5 z-(--z-toast) flex max-w-[min(90vw,360px)] flex-col items-end gap-2"
+    >
       {entries.map((entry) => (
-        <div key={entry.id} className={`${styles.toast} ${entry.isError ? styles.error : ''}`}>
+        <div
+          key={entry.id}
+          className={clsx(
+            'glass-face-strong animate-toast-enter pointer-events-auto w-full rounded-v5-sm border px-[0.9rem] py-[0.65rem] text-[0.85rem] leading-[1.35] shadow-[0_8px_32px_rgba(0,0,0,0.35)]',
+            entry.isError ? 'border-danger text-[#ffb4b4]' : 'border-v5-border text-v5-text',
+          )}
+        >
           {entry.message}
         </div>
       ))}
