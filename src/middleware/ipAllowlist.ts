@@ -14,8 +14,7 @@ interface Net {
 
 const CIDR_RE = /^(.+)\/(\d{1,3})$/;
 
-/** Strip URL-style [ipv6], zone id (%en0), shell quotes, and IPv4-mapped prefix (::ffff:).
- * Node sockets report loopback as ::ffff:127.0.0.1; strip the prefix so it matches 127.0.0.1. */
+/** Strip URL-style [ipv6], zone id (%en0), and shell quotes. */
 function normalizeEntry(partIn: string): string {
   let part = partIn.trim();
   if (
@@ -31,11 +30,16 @@ function normalizeEntry(partIn: string): string {
   if (addr.length >= 2 && addr.startsWith('[') && addr.endsWith(']')) addr = addr.slice(1, -1);
   if (addr.includes('%')) addr = addr.split('%', 1)[0];
   addr = addr.trim();
-  // Strip IPv4-mapped IPv6 prefix so ::ffff:127.0.0.1 normalizes to 127.0.0.1.
-  if (addr.toLowerCase().startsWith('::ffff:')) {
-    addr = addr.slice('::ffff:'.length);
-  }
   return bits !== null ? `${addr}/${bits}` : addr;
+}
+
+/** Strip a leading IPv4-mapped IPv6 prefix (::ffff:) from an incoming client address so
+ * Node sockets reporting loopback as ::ffff:127.0.0.1 match a plain v4 allowlist entry.
+ * Address-side only — allowlist entries keep their literal parsed version (see
+ * `normalizeEntry`), so an operator-written ::ffff:10.0.0.0/24 stays a v6 network. */
+function unmapV4(addrIn: string): string {
+  const m = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(addrIn.trim());
+  return m ? m[1] : addrIn;
 }
 
 function ipv4ToBigInt(addr: string): bigint | null {
@@ -137,8 +141,8 @@ export function parseIpAllowlist(raw: string): Net[] | null {
   return out.length ? out : null;
 }
 
-function ipInAllowlist(addr: string, nets: Net[]): boolean {
-  const parsed = parseAddr(normalizeEntry(addr));
+export function ipInAllowlist(addr: string, nets: Net[]): boolean {
+  const parsed = parseAddr(unmapV4(normalizeEntry(addr)));
   if (parsed === null) return false;
   return nets.some(
     (net) =>
