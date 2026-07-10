@@ -33,6 +33,62 @@
       transform: translateY(0);
     }
   }
+
+  --animate-tooltip-fade-in: tooltip-fade-in 0.12s ease-out;
+  @keyframes tooltip-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  --animate-popover-fade-in: popover-fade-in 0.14s ease-out;
+  @keyframes popover-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  --animate-overlay-fade-in: overlay-fade-in 0.18s ease-out;
+  @keyframes overlay-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  --animate-content-fade-in: content-fade-in 0.2s ease-out;
+  @keyframes content-fade-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 6px));
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%);
+    }
+  }
+
+  --animate-sheet-slide-up: sheet-slide-up 0.26s cubic-bezier(0.22, 1, 0.32, 1);
+  @keyframes sheet-slide-up {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
 }
 
 /* Hybrid-period aliases: values live in tokens.css (single source of truth);
@@ -87,4 +143,15 @@
 }
 @utility panel-elevate {
   box-shadow: var(--v5-panel-elevate);
+}
+
+/* Floating-panel chrome shared by the Radix wrappers (Dialog/Popover/Tooltip
+ * content + the index-local Select dropdown). Ported verbatim from the deleted
+ * `.glassPanel` (glass.module.css) — a compound of four properties, so it can't
+ * be a single-property utility. */
+@utility glass-panel {
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border-strong);
+  box-shadow: var(--v5-panel-elevate);
+  color: var(--v5-text);
 }
