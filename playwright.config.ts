@@ -6,12 +6,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   testDir: './e2e',
-  globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: 'http://127.0.0.1:8791',
   },
   webServer: {
-    command: 'npm run start -w server',
+    // Wipe e2e server state in the SAME shell invocation Playwright uses to
+    // spawn the server — globalSetup is NOT guaranteed to run before webServer
+    // starts (Playwright's task order is: plugin setup incl. webServer, THEN
+    // globalSetups), so rm-then-start must be one atomic command here, not
+    // split across globalSetup + webServer.command. A crashed prior run
+    // (SIGKILL teardown) must not leak DBs/WAL files into this run.
+    command: `node -e "require('node:fs').rmSync(process.env.DATA_DIR,{recursive:true,force:true})" && npm run start -w server`,
     url: 'http://127.0.0.1:8791/api/profile',
     // Never adopt a leftover orphan started with different env.
     reuseExistingServer: false,
