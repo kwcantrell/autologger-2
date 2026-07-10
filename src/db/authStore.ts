@@ -1,11 +1,12 @@
 // Users, studio memberships, per-user prefs, and admin user operations.
 // Moved verbatim out of d1.ts (Catalog). Self-contained on this.db.
 
+import type { CatalogDb } from '../node/d1Adapter';
 import { nowIso } from './shared';
 import type { Row } from './shared';
 
 export class AuthStore {
-  constructor(private db: D1Database) {}
+  constructor(private db: CatalogDb) {}
 
   async authGetUserByGoogleSub(googleSub: string): Promise<Row | null> {
     return this.db

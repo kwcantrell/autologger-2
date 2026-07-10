@@ -12,7 +12,7 @@ import {
   validateCategoriesList,
   validateEventPalettePreset,
 } from '../studio';
-import type { AppEnv } from '../types';
+import type { AppEnv, Env } from '../types';
 
 export const profileRouter = new Hono<AppEnv>();
 

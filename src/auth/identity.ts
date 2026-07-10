@@ -3,6 +3,7 @@
 // login_sessions + oauth_csrf_tokens SQLite tables become KV keys with TTL.
 
 import type { AuthUser, Catalog } from '../db/d1';
+import type { KvStore } from '../node/kvStore';
 
 const SESSION_PREFIX = 'session:'; // session:<sha256(token)> -> userId
 const CSRF_PREFIX = 'csrf:'; // csrf:<state> -> "1"
@@ -33,7 +34,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
 // -- OAuth CSRF state (replaces oauth_csrf_tokens + 30-min expiry) -------------
 
 export async function putOauthState(
-  kv: KVNamespace,
+  kv: KvStore,
   state: string,
   ttlSeconds = 1800,
 ): Promise<void> {
@@ -41,7 +42,7 @@ export async function putOauthState(
 }
 
 /** Delete and return true if the state existed (one-shot). */
-export async function takeOauthState(kv: KVNamespace, state: string): Promise<boolean> {
+export async function takeOauthState(kv: KvStore, state: string): Promise<boolean> {
   const key = `${CSRF_PREFIX}${state}`;
   const v = await kv.get(key);
   if (v === null) return false;
@@ -57,7 +58,7 @@ export function newOauthState(): string {
 
 /** Create an opaque bearer token; store SHA-256(token) -> userId in KV with TTL. */
 export async function createLoginSession(
-  kv: KVNamespace,
+  kv: KvStore,
   userId: string,
   ttlDays: number,
 ): Promise<string> {
@@ -68,7 +69,7 @@ export async function createLoginSession(
   return raw;
 }
 
-export async function revokeLoginSession(kv: KVNamespace, rawToken: string): Promise<void> {
+export async function revokeLoginSession(kv: KvStore, rawToken: string): Promise<void> {
   const t = rawToken.trim();
   if (!t) return;
   await kv.delete(`${SESSION_PREFIX}${await sha256Hex(t)}`);
@@ -76,7 +77,7 @@ export async function revokeLoginSession(kv: KVNamespace, rawToken: string): Pro
 
 /** Resolve a session cookie value to an AuthUser via KV → D1, or null. */
 export async function resolveSessionUser(
-  kv: KVNamespace,
+  kv: KvStore,
   catalog: Catalog,
   rawToken: string | undefined,
 ): Promise<AuthUser | null> {

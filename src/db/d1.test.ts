@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { CatalogDb } from '../node/d1Adapter';
 import { Catalog } from './d1';
 
-// A stub D1Database — construction must not touch it (init() is never called here).
-const stubDb = {} as unknown as D1Database;
+// A stub CatalogDb — construction must not touch it (init() is never called here).
+const stubDb = {} as unknown as CatalogDb;
 
 describe('Catalog facade', () => {
   const catalog = new Catalog(stubDb);

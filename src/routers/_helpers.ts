@@ -1,8 +1,9 @@
 // Shared router helpers — the session access gate (_session_access_gate),
-// SessionDO stub resolution, timecode context, and marked-at parsing.
+// per-session hub resolution, timecode context, and marked-at parsing.
 
 import type { Context } from 'hono';
 import type { Row } from '../db/d1';
+import type { SessionHub } from '../durable/SessionHub';
 import { requireLoginEnabled } from '../env';
 import type { AppEnv } from '../types';
 
@@ -29,12 +30,9 @@ export function timecodeCtx(row: Row): TimecodeCtx {
   };
 }
 
-/** Resolve the per-session Durable Object stub (addressed by session id). */
-export function getSessionDO(
-  c: Context<AppEnv>,
-  sessionId: string,
-): DurableObjectStub<import('../durable/SessionDO').SessionDO> {
-  return c.env.SESSION_DO.get(c.env.SESSION_DO.idFromName(sessionId));
+/** Resolve the in-process per-session hub (addressed by session id). */
+export function getSessionDO(c: Context<AppEnv>, sessionId: string): SessionHub {
+  return c.env.SESSION_DO.get(sessionId);
 }
 
 /** _session_access_gate — login gate + existence + studio-membership scope. Returns the D1 row. */

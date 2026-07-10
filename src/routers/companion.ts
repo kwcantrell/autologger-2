@@ -8,6 +8,7 @@
 
 import { type Context, Hono } from 'hono';
 import { showCategoriesApiShape } from '../db/d1';
+import type { PresenceRegistry } from '../node/presence';
 import {
   companionCommandAckBodySchema,
   companionCommandBodySchema,
@@ -21,37 +22,11 @@ import { ApiError, getSessionDO, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 
-const PRESENCE_PREFIX = 'companion:presence:';
 const LAST_COMMAND_KEY = 'companion:last_command';
-// KV enforces a 60s floor on expirationTtl, so the key lingers up to 60s; logical
-// presence freshness (15s, matching the Python hub) is enforced via `updated`.
-const PRESENCE_KV_TTL_SEC = 60;
-const PRESENCE_FRESH_MS = 15_000;
-
-interface PresenceMeta {
-  session_id: string;
-  visible: boolean;
-  is_playing: boolean;
-  updated: number;
-}
-
-async function listPresence(kv: KVNamespace): Promise<PresenceMeta[]> {
-  const out: PresenceMeta[] = [];
-  let cursor: string | undefined;
-  do {
-    const res = await kv.list<PresenceMeta>({ prefix: PRESENCE_PREFIX, cursor });
-    const now = Date.now();
-    for (const k of res.keys) {
-      if (k.metadata && now - k.metadata.updated <= PRESENCE_FRESH_MS) out.push(k.metadata);
-    }
-    cursor = res.list_complete ? undefined : res.cursor;
-  } while (cursor);
-  return out;
-}
 
 /** Freshest live presence with a session open, preferring visible tabs (hub.primary). */
-async function primarySession(kv: KVNamespace): Promise<string | null> {
-  const live = (await listPresence(kv)).filter((p) => p.session_id);
+function primarySession(presence: PresenceRegistry): string | null {
+  const live = presence.list().filter((p) => p.session_id);
   if (!live.length) return null;
   live.sort((a, b) => {
     const v = (b.visible ? 1 : 0) - (a.visible ? 1 : 0);
@@ -61,7 +36,7 @@ async function primarySession(kv: KVNamespace): Promise<string | null> {
 }
 
 async function requireActiveSession(c: Context<AppEnv>): Promise<string> {
-  const sid = await primarySession(c.env.AUTH);
+  const sid = primarySession(c.env.PRESENCE);
   if (!sid || (await c.get('catalog').getSessionIndexRow(sid, { includeHidden: true })) === null) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
   }
@@ -72,26 +47,23 @@ companionRouter.post('/api/companion/presence', async (c) => {
   const body = companionPresenceBodySchema.parse(await c.req.json());
   const cid = body.client_id.trim();
   if (body.closing) {
-    await c.env.AUTH.delete(`${PRESENCE_PREFIX}${cid}`);
+    c.env.PRESENCE.remove(cid);
     return c.json({ ok: true });
   }
-  const meta: PresenceMeta = {
+  const meta = {
     session_id: (body.session_id ?? '').trim(),
     visible: body.visible,
     is_playing: body.is_playing,
     updated: Date.now(),
   };
-  await c.env.AUTH.put(`${PRESENCE_PREFIX}${cid}`, '1', {
-    expirationTtl: PRESENCE_KV_TTL_SEC,
-    metadata: meta,
-  });
+  c.env.PRESENCE.upsert(cid, meta);
   return c.json({ ok: true });
 });
 
 companionRouter.get('/api/companion/state', async (c) => {
   const catalog = c.get('catalog');
-  const presences = await listPresence(c.env.AUTH);
-  const activeSid = await primarySession(c.env.AUTH);
+  const presences = c.env.PRESENCE.list();
+  const activeSid = primarySession(c.env.PRESENCE);
   let sessionOut: Record<string, unknown> | null = null;
   let resolvedSid: string | null = activeSid;
   if (activeSid) {

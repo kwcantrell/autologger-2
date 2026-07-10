@@ -4,6 +4,7 @@
 // The flat delegate methods are a compatibility shim; the `readonly` store fields
 // are the forward-looking API. KV login sessions + OAuth CSRF live in auth/identity.ts.
 
+import type { CatalogDb } from '../node/d1Adapter';
 import type { AuthUser, ProfileCtx } from './shared';
 import { AuthStore } from './authStore';
 import { ProfileAssembler } from './profileAssembler';
@@ -21,7 +22,7 @@ export class Catalog {
   readonly sessions: SessionIndexStore;
   readonly profile: ProfileAssembler;
 
-  constructor(db: D1Database) {
+  constructor(db: CatalogDb) {
     this.studios = new StudioRegistry(db);
     this.shows = new ShowsStore(db);
     this.auth = new AuthStore(db);

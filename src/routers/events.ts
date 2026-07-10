@@ -99,14 +99,6 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   });
 });
 
-// Hibernatable WebSocket: the browser (and Companion) attach here for instant
-// event/transport/audio/lease/command pushes, retiring the status/events polls.
-eventsRouter.get('/api/sessions/:sessionId/ws', async (c) => {
-  const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId, { includeHidden: true });
-  return getSessionDO(c, sessionId).fetch(c.req.raw);
-});
-
 eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);

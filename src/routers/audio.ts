@@ -4,7 +4,9 @@
 // back with HTTP range support (audio scrubbing).
 
 import { Hono } from 'hono';
-import type { AudioSegmentMeta } from '../durable/SessionDO';
+import type { AudioSegmentMeta } from '../durable/SessionHub';
+import { InvalidRangeError } from '../node/blobStore';
+import type { BlobRange } from '../node/blobStore';
 import { audioSegmentWaveformBodySchema } from '../schemas';
 import type { AppEnv } from '../types';
 import { ApiError, getSessionDO, parseOptionalMarkedAt, requireSession } from './_helpers';
@@ -67,7 +69,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     recordingOrdinal,
   });
   try {
-    await c.env.AUDIO.put(seg.r2_key, payload, { httpMetadata: { contentType: seg.mime_type } });
+    await c.env.AUDIO.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
     await getSessionDO(c, sessionId).deleteAudioSegment(seg.id);
@@ -113,18 +115,23 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   const rangeHeader = c.req.header('range');
   if (rangeHeader) {
     const parsed = parseRange(rangeHeader);
-    const obj = await c.env.AUDIO.get(got.r2_key, parsed ? { range: parsed } : undefined);
+    let obj;
+    try {
+      obj = await c.env.AUDIO.get(got.r2_key, parsed ? { range: parsed } : undefined);
+    } catch (e) {
+      if (e instanceof InvalidRangeError) {
+        throw new ApiError(416, 'Requested range not satisfiable.');
+      }
+      throw e;
+    }
     if (obj === null) throw new ApiError(404, 'Audio segment not found.');
     const size = obj.size;
     const r = obj.range;
     let start = 0;
     let length = size;
-    if (r && 'offset' in r) {
+    if (r) {
       start = r.offset ?? 0;
       length = r.length ?? size - start;
-    } else if (r && 'suffix' in r) {
-      length = r.suffix;
-      start = size - length;
     }
     const end = start + length - 1;
     return new Response(obj.body, {
@@ -167,8 +174,8 @@ audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', a
   return c.json({ ok: true });
 });
 
-/** Parse a single `bytes=start-end` range into R2's range form. */
-function parseRange(header: string): R2Range | null {
+/** Parse a single `bytes=start-end` range into BlobStore's range form. */
+function parseRange(header: string): BlobRange | null {
   const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (m === null) return null;
   const startRaw = m[1];

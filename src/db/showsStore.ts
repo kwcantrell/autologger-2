@@ -1,6 +1,7 @@
 // Shows CRUD + the pure per-show / per-category shaping functions the React
 // app's api/types.ts expects. Moved verbatim out of d1.ts (Catalog).
 
+import type { CatalogDb } from '../node/d1Adapter';
 import { normalizeEventPaletteNine, validateEventPalettePreset } from '../studio';
 import { nowIso } from './shared';
 import type { Row } from './shared';
@@ -92,7 +93,7 @@ export function showCategoriesApiShape(rawCategories: unknown): Array<Record<str
 }
 
 export class ShowsStore {
-  constructor(private db: D1Database) {}
+  constructor(private db: CatalogDb) {}
 
   async getShowRow(showId: string): Promise<Row | null> {
     return this.db.prepare('SELECT * FROM shows WHERE id = ?').bind(showId).first<Row>();

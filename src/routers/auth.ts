@@ -160,7 +160,7 @@ authRouter.get('/auth/google/callback', async (c) => {
     httpOnly: true,
     maxAge: Math.floor(ttlDays * 86400),
     sameSite: 'Lax',
-    secure: cookieSecureForRequest(c.env, c.req.url),
+    secure: cookieSecureForRequest(c.env, c.req.raw),
     path: '/',
   });
   return c.redirect('/', 302);

@@ -2,6 +2,7 @@
 // session→studio profile resolution. Moved verbatim out of d1.ts (Catalog),
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
+import type { CatalogDb } from '../node/d1Adapter';
 import { blobToProfile, ValidationError } from '../studio';
 import type { SettingsBlob, StudioProfile } from '../studio';
 import type { Row } from './shared';
@@ -10,7 +11,7 @@ import type { StudioRegistry } from './studioRegistry';
 
 export class SessionIndexStore {
   constructor(
-    private db: D1Database,
+    private db: CatalogDb,
     private studios: StudioRegistry,
     private shows: ShowsStore,
   ) {}

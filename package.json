@@ -5,12 +5,10 @@
   "description": "AutoLogger on Cloudflare — Worker + D1 + KV (phases 1-2: auth, catalog, profile/studio/shows)",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "cf-typegen": "wrangler types",
-    "migrate:local": "wrangler d1 migrations apply autologger --local"
+    "test": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",

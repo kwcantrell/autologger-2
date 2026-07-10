@@ -1,8 +1,9 @@
 // IP allowlist — ports the CSV/CIDR parse + match from web/deps.py + app.py.
-// On Cloudflare the trusted client IP is CF-Connecting-IP (replaces the
-// X-Forwarded-For / localhost-trust logic). Empty IP_ALLOWLIST ⇒ disabled.
+// On Node the trusted client IP is the socket address, unless TRUST_PROXY
+// explicitly delegates to the first X-Forwarded-For hop. Empty IP_ALLOWLIST ⇒ disabled.
 
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
+import { trustProxyEnabled } from '../env';
 import type { AppEnv } from '../types';
 
 interface Net {
@@ -141,15 +142,14 @@ function ipInAllowlist(addr: string, nets: Net[]): boolean {
   );
 }
 
-/** Trusted client IP on Cloudflare: CF-Connecting-IP, then first X-Forwarded-For hop. */
-function effectiveClientIp(req: Request): string {
-  const cf = req.headers.get('CF-Connecting-IP');
-  if (cf) return cf.trim();
-  const tci = req.headers.get('True-Client-IP');
-  if (tci) return tci.trim();
-  const xff = req.headers.get('X-Forwarded-For');
-  if (xff) return xff.split(',')[0].trim();
-  return '';
+/** Client IP on Node: the socket address, unless TRUST_PROXY explicitly
+ * delegates to the first X-Forwarded-For hop. CF header trust is gone. */
+function effectiveClientIp(c: Context<AppEnv>): string {
+  if (trustProxyEnabled(c.env)) {
+    const xff = c.req.header('x-forwarded-for');
+    if (xff) return xff.split(',')[0].trim();
+  }
+  return c.env.incoming?.socket?.remoteAddress ?? '';
 }
 
 // Parse once per distinct IP_ALLOWLIST string (env is per-request on Workers, so we
@@ -167,11 +167,11 @@ function netsForEnv(raw: string): Net[] | null {
 export const ipAllowlistMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   const nets = netsForEnv(c.env.IP_ALLOWLIST ?? '');
   if (nets === null) return next();
-  const addr = effectiveClientIp(c.req.raw);
+  const addr = effectiveClientIp(c);
   if (ipInAllowlist(addr, nets)) return next();
   let detail =
     `Forbidden — client IP '${addr}' is not in IP_ALLOWLIST.\n` +
-    'Add this IP (or your LAN CIDR) to the list, then redeploy.\n';
+    'Add this IP (or your LAN CIDR) to the list, then restart the server.\n';
   if (addr.includes(':')) {
     detail +=
       'IPv6 tip: a home /64 is a:b:c:d::/64 (four groups). If the fourth group keeps' +

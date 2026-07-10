@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Env } from './types';
 import {
   adminMeta,
   adminTokenConfigured,
@@ -14,11 +15,14 @@ import {
 const E = (o: Record<string, string | undefined>): Env => o as unknown as Env;
 
 describe('env flag parsing', () => {
-  it('requireLoginEnabled is true only for 1/true/yes', () => {
+  it('requireLoginEnabled defaults true; false only for 0/false/no', () => {
     expect(requireLoginEnabled(E({ REQUIRE_LOGIN: '1' }))).toBe(true);
     expect(requireLoginEnabled(E({ REQUIRE_LOGIN: 'TRUE' }))).toBe(true);
     expect(requireLoginEnabled(E({ REQUIRE_LOGIN: '0' }))).toBe(false);
-    expect(requireLoginEnabled(E({}))).toBe(false);
+    expect(requireLoginEnabled(E({ REQUIRE_LOGIN: 'false' }))).toBe(false);
+    expect(requireLoginEnabled(E({ REQUIRE_LOGIN: 'no' }))).toBe(false);
+    expect(requireLoginEnabled(E({}))).toBe(true);
+    expect(requireLoginEnabled(E({ REQUIRE_LOGIN: '' }))).toBe(true);
   });
 
   it('newUserAllTeamsEnabled defaults off and is false for 0/false/no', () => {
@@ -33,11 +37,20 @@ describe('env flag parsing', () => {
   });
 
   it('cookieSecureForRequest honors explicit flag, else derives from scheme', () => {
-    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'yes' }), 'http://x')).toBe(true);
-    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'no' }), 'https://x')).toBe(false);
-    expect(cookieSecureForRequest(E({}), 'https://x')).toBe(true);
-    expect(cookieSecureForRequest(E({}), 'http://x')).toBe(false);
-    expect(cookieSecureForRequest(E({}), 'not a url')).toBe(false);
+    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'yes' }), new Request('http://x'))).toBe(
+      true,
+    );
+    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'no' }), new Request('https://x'))).toBe(
+      false,
+    );
+    expect(cookieSecureForRequest(E({}), new Request('https://x'))).toBe(true);
+    expect(cookieSecureForRequest(E({}), new Request('http://x'))).toBe(false);
+  });
+
+  it('cookieSecureForRequest trusts X-Forwarded-Proto only under TRUST_PROXY', () => {
+    const req = new Request('http://x', { headers: { 'x-forwarded-proto': 'https' } });
+    expect(cookieSecureForRequest(E({ TRUST_PROXY: '1' }), req)).toBe(true);
+    expect(cookieSecureForRequest(E({}), req)).toBe(false);
   });
 
   it('sessionTtlDays — current behavior: finite passes through (incl. non-positive)', () => {

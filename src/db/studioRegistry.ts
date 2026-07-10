@@ -2,6 +2,7 @@
 // per-studio settings blobs, and admin studio create/delete. Moved verbatim
 // out of d1.ts (Catalog) — this module owns the order/names registry state.
 
+import type { CatalogDb } from '../node/d1Adapter';
 import {
   BUILTIN_STUDIO_NAMES,
   BUILTIN_STUDIO_ORDER,
@@ -21,7 +22,7 @@ export class StudioRegistry {
   private order: string[] = [];
   private names: Record<string, string> = {};
 
-  constructor(private db: D1Database) {}
+  constructor(private db: CatalogDb) {}
 
   /** Must be awaited once per request before reads that depend on the studio registry. */
   async init(): Promise<void> {
