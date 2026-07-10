@@ -2,7 +2,6 @@ import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { hideToast, showToast } from '../../../shared/components/Toast';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
-import styles from './AudioSaveOverlay.module.css';
 
 type Visibility = 'hidden' | 'showing' | 'leaving';
 
@@ -83,25 +82,25 @@ export function AudioSaveOverlay({ isUploading }: Props) {
     <div
       id="autologger-audio-save-overlay"
       className={clsx(
-        styles.audioSaveOverlay,
-        visibility === 'leaving' && styles.audioSaveOverlayLeaving,
+        'fixed inset-0 z-(--z-top-float) flex items-center justify-center bg-[rgba(8,10,14,0.88)] p-6 [transition:opacity_0.35s_ease]',
+        visibility === 'leaving' ? 'opacity-0' : 'opacity-100',
       )}
       tabIndex={-1}
       role="dialog"
       aria-modal={true}
       aria-labelledby="autologger-audio-save-title"
     >
-      <div className={styles.audioSaveOverlayInner}>
+      <div className="pointer-events-none flex flex-col items-center gap-4 text-center">
         <video
           ref={videoRef}
-          className={styles.audioSaveOverlayVideo}
+          className="h-auto w-[min(220px,55vw)] object-contain"
           src={AUTOLOGGER_LOADING_VIDEO_SRC}
           preload="auto"
           muted
           playsInline
           disablePictureInPicture
         />
-        <p id="autologger-audio-save-title" className={styles.audioSaveOverlayLabel}>
+        <p id="autologger-audio-save-title" className="m-0 text-[0.95rem] text-muted">
           Saving Audio...
         </p>
       </div>
