@@ -49,9 +49,15 @@ injectWebSocket(server);
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
+    // server.close() alone never completes while a WebSocket is open (upgraded
+    // sockets aren't idle keep-alives) — the normal state of this app. Destroy
+    // them too, and guarantee exit even if something else holds the loop.
+    const failsafe = setTimeout(() => process.exit(1), 5000);
+    failsafe.unref();
     server.close(() => {
       close();
       process.exit(0);
     });
+    (server as import('node:http').Server).closeAllConnections?.();
   });
 }
