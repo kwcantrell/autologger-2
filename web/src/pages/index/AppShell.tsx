@@ -7,7 +7,6 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
-import styles from './AppShell.module.css';
 import { NewSessionModal } from './components/NewSessionModal';
 import { V6Rail } from './components/V6Rail';
 import { WorkspaceStatic } from './components/WorkspaceStatic';
@@ -169,12 +168,18 @@ export function AppShell() {
   return (
     <>
       <Toast />
-      <div className="shell shell-v3">
-        <div className={clsx('v6-app', styles.v6App)} id="v6-app">
+      {/* shell/shell-v3 strings retained (chrome.css .shell stays legacy until Task 11);
+          the AppShell overrides that widen it convert to utilities here (win by layer). */}
+      <div className="shell shell-v3 max-w-none w-full mx-0 px-0 pb-0">
+        {/* v6-app string retained; desktop flex row filling viewport, max-md block. */}
+        <div
+          className="v6-app flex flex-row items-stretch flex-1 w-full min-w-0 overflow-hidden min-h-[100dvh] max-md:block max-md:overflow-visible max-md:min-h-0"
+          id="v6-app"
+        >
           {isMobile && railOpen && (
             <button
               type="button"
-              className={styles.railScrim}
+              className="fixed inset-0 z-(--z-rail-scrim) appearance-none border-none p-0 bg-[rgba(6,9,16,0.55)] [backdrop-filter:blur(1.5px)] cursor-pointer animate-rail-scrim-fade"
               aria-label="Close navigation"
               onClick={closeRail}
             />
@@ -202,14 +207,24 @@ export function AppShell() {
               closeRail();
             }}
           />
+          {/* main-v3 / v3-layout-session-focus strings retained. Display comes from
+              SessionWorkspace's `.main-v3` @layer rule (display:block — the app.css
+              cascade, which is the baseline value on BOTH viewports); DO NOT set display
+              here (an inline flex would beat that @layer rule and, on mobile, collapse
+              the block flow so the hamburger cluster loses its height). The v6Workspace
+              flex-ITEM sizing (flex:1 1 auto etc.) is inline. */}
           <main
-            className={clsx('main-v3', 'v3-layout-session-focus', styles.v6Workspace)}
+            className="main-v3 v3-layout-session-focus flex-1 min-w-0 min-h-0 relative [overflow-x:clip] overflow-y-visible"
             id="v3-main"
           >
-            <div className={styles.v6WorkspaceTopCluster}>
+            <div className="shrink-0 w-full mb-6 box-border">
+              {/* Hamburger: hidden ≥768px, off-canvas toggle <768px. The desktop-first
+                  source (base display:none + max-md:inline-flex) is expressed as the two
+                  mutually-exclusive breakpoints (md:hidden + inline-flex) so no
+                  utility-cascade-order quirk can leave `hidden` winning on mobile. */}
               <button
                 type="button"
-                className={styles.mobileRailToggle}
+                className="md:hidden inline-flex items-center justify-center w-11 h-11 mt-[0.6rem] ml-3 box-border rounded-v5-sm border border-v5-border-strong bg-white/[0.04] text-v5-text cursor-pointer"
                 aria-label="Open navigation"
                 onClick={() => setRailOpen(true)}
               >
@@ -229,23 +244,26 @@ export function AppShell() {
                   />
                 </svg>
               </button>
+              {/* Void top-bar strip: the .v6WorkspaceTopBarVoid !important zero-height
+                  war vs .v4-top-bar min-height is resolved here by writing the winning
+                  values directly — both rules were AppShell's own and now live as
+                  utilities on this one element, so the flags are dropped (layer order
+                  suffices). v4-top-bar string retained (perfDebug shadow toggle). */}
               <header
-                className={clsx(
-                  'v4-top-bar',
-                  styles.v6WorkspaceTopBar,
-                  styles.v6WorkspaceTopBarVoid,
-                )}
+                className="v4-top-bar w-full max-w-full flex-shrink-0 box-border h-0 min-h-0 max-h-0 p-0 m-0 border-none overflow-hidden opacity-0 pointer-events-none"
                 id="v4-app-top-bar"
               />
               <output
-                className={styles.v6WorkspaceRecordingBar}
+                className="flex flex-row items-center justify-end gap-[0.45rem] w-full box-border pl-4 pr-8"
                 aria-live="polite"
                 aria-label="Recording status"
               >
-                <span className={styles.v4Recording} id="top-bar-recording">
+                {/* v4Recording / v4Timecode are always display:none (body.v4-is-recording
+                    is never toggled), so `hidden` carries the whole rule. */}
+                <span className="hidden" id="top-bar-recording">
                   RECORDING AUDIO
                 </span>
-                <span className={clsx(styles.v4Timecode, 'mono')} id="top-bar-recording-dur">
+                <span className={clsx('hidden', 'mono')} id="top-bar-recording-dur">
                   00:00:00
                 </span>
               </output>
