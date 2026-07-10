@@ -1,3 +1,4 @@
+@layer legacy {
 /* ── app.css carve-out — timeline shell, track, clips, waveforms, markers, zoom rail, ticks ── */
 
 .timelineShell {
@@ -1377,4 +1378,6 @@ body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
 
 :global(body.perf-dbg--no-v5-waveform-gradients #v4-log-session) .timelineWaveformProgress {
   fill: rgba(56, 189, 248, 0.4) !important;
+}
+
 }

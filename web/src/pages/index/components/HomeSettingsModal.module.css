@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * HomeSettingsModal.tsx co-located styles: the full-screen settings modal — toolbar with
  * team/show selects, profile show fields, account block, and the folder/browser-style
@@ -367,4 +368,6 @@
 
 .eventsIntro {
   margin-top: 0;
+}
+
 }

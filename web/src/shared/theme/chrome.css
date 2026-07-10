@@ -310,7 +310,12 @@ textarea {
 }
 
 .inline {
-  display: inline-flex;
+  /* `!important` mirrors `.hidden` (baseline.css): this global chrome class name
+   * collides with Tailwind's core `.inline{display:inline}` utility, which sits in
+   * the higher `utilities` layer and would otherwise flatten these flex labels
+   * during the hybrid period. Same treatment the plan prescribes for chrome
+   * utilities that must beat the utilities layer until they're converted. */
+  display: inline-flex !important;
   align-items: center;
   font-size: 0.85rem;
   color: var(--muted);

@@ -1,8 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRoot } from 'react-dom/client';
-import '@/shared/theme/tokens.css';
-import '@/shared/theme/baseline.css';
-import '@/shared/theme/chrome.css';
+import '@/shared/theme/tailwind.css';
 // Vendored third-party lib (animate.css v4.1.1, stage 0a) — kept out of the
 // Tailwind migration and out of cascade layers permanently: it's purely
 // additive animation utility classes (animate__animated/animate__pulse)

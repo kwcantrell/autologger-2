@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * V6Rail.tsx co-located styles: the permanent left rail (toggle button, primary CTAs,
  * recent/archived shelves, footer Google sign-in + Settings). Converted from plain
@@ -475,4 +476,6 @@
     flex: 1 1 auto;
     max-height: var(--v6-rail-recent-shelf-max-h);
   }
+}
+
 }

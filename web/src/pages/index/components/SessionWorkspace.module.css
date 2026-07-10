@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * SessionWorkspace.tsx co-located styles: the session stage and its panel sub-shells.
  * Carved from v6-app-shell.css (Phase 2, v1.10.0), v5-ui.css (Phase 3, v1.12.0),
@@ -1071,4 +1072,6 @@
     height: auto;
     min-height: 0;
   }
+}
+
 }

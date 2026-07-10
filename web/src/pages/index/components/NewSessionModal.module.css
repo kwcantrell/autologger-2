@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * NewSessionModal.tsx co-located styles. Carved from v6-app-shell.css (Phase 2, v1.10.0).
  * Converted to *.module.css in Phase 6 (v1.15.0); the single local class is hash-scoped
@@ -137,4 +138,6 @@
   width: 100%;
   max-width: 14rem;
   min-width: 0;
+}
+
 }

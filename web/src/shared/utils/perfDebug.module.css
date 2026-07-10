@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * Performance A/B toggles — body classes set by perfDebug.ts (localStorage + optional PERF_DEBUG_FORCE).
  * The body.perf-dbg--* selectors target elements outside this component, so they stay :global.
@@ -159,4 +160,6 @@
 
 .perf-debug-fab[hidden] {
   display: none !important;
+}
+
 }

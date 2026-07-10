@@ -1,6 +1,4 @@
-import '@/shared/theme/tokens.css';
-import '@/shared/theme/baseline.css';
-import '@/shared/theme/chrome.css';
+import '@/shared/theme/tailwind.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider } from '@/shared/theme/ThemeProvider';

@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * FeedTable + row + toolbar chrome shared across the three feeds rendered inside
  * SessionWorkspace's tab panel (Event Feed / Transcribe / Topics).
@@ -270,4 +271,6 @@
 
 .feedGlassBtnPrimary:hover:not(:disabled) {
   background: linear-gradient(165deg, rgba(56, 189, 248, 0.24), rgba(15, 23, 42, 0.52));
+}
+
 }
