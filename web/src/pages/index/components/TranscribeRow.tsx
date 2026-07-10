@@ -1,7 +1,13 @@
 import clsx from 'clsx';
 import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
-import styles from './FeedTable.module.css';
+import {
+  FEED_CELL,
+  FEED_CELL_TIME,
+  FEED_INLINE_INPUT,
+  FEED_INLINE_INPUT_MONO,
+  FEED_ROW,
+} from './FeedTable';
 
 interface EditState {
   session_time: string;
@@ -44,19 +50,19 @@ export const TranscribeRow = memo(function TranscribeRow({ row, speakerOffset, o
   const vals = edit ?? { session_time: row.session_time, speaker: row.speaker, word: row.word };
 
   return (
-    <tr className={styles.feedRow}>
-      <td className={clsx(styles.feedCell, styles.feedCellTime)}>
+    <tr className={FEED_ROW}>
+      <td className={clsx(FEED_CELL, 'align-middle', FEED_CELL_TIME)}>
         <input
-          className={clsx(styles.feedInlineInput, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
           onFocus={startEdit}
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
       </td>
-      <td className={styles.feedCell}>
+      <td className={clsx(FEED_CELL, 'align-middle')}>
         <input
-          className={styles.feedInlineInput}
+          className={FEED_INLINE_INPUT}
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
@@ -64,9 +70,9 @@ export const TranscribeRow = memo(function TranscribeRow({ row, speakerOffset, o
           onBlur={(e) => commitField('speaker', e.target.value)}
         />
       </td>
-      <td className={styles.feedCell}>
+      <td className={clsx(FEED_CELL, 'align-middle')}>
         <input
-          className={styles.feedInlineInput}
+          className={FEED_INLINE_INPUT}
           value={vals.word}
           onFocus={startEdit}
           onChange={(e) => setEdit((p) => (p ? { ...p, word: e.target.value } : p))}

@@ -3,23 +3,27 @@ import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks
 import { toast } from '../../../shared/components/Toast';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FeedTable } from './FeedTable';
-import styles from './FeedTable.module.css';
+import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
 import { TopicsRow } from './TopicsRow';
 
 type SortKey = 'session_time' | 'duration_sec' | 'topic_level' | 'summary';
 const sortReducer = clickSortReducer<SortKey>;
 
 const COLUMNS: ColumnDef[] = [
-  { key: 'session_time', label: 'Session Time', sortKey: 'session_time', thModifier: 'feedThTime' },
+  {
+    key: 'session_time',
+    label: 'Session Time',
+    sortKey: 'session_time',
+    thClassName: 'text-left w-[6.5rem]',
+  },
   {
     key: 'duration_sec',
     label: 'Duration (s)',
     sortKey: 'duration_sec',
-    thModifier: 'feedThDuration',
+    thClassName: 'text-left w-24',
   },
-  { key: 'topic_level', label: 'Level', sortKey: 'topic_level', thModifier: 'feedThLevel' },
-  { key: 'summary', label: 'Summary', sortKey: 'summary', thModifier: 'feedThSummary' },
+  { key: 'topic_level', label: 'Level', sortKey: 'topic_level', thClassName: 'text-left w-16' },
+  { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: 'text-left min-w-56' },
 ];
 
 interface Props {
@@ -65,10 +69,10 @@ export function TopicsFeed({ sessionId }: Props) {
 
   const toolbar = (
     <>
-      {genError && <span className={styles.feedError}>{genError}</span>}
+      {genError && <span className="ml-2 text-[0.78rem] text-v5-danger">{genError}</span>}
       <button
         type="button"
-        className={styles.feedGlassBtn}
+        className={FEED_GLASS_BTN}
         disabled={generate.isPending}
         onClick={handleGenerate}
       >
@@ -76,7 +80,7 @@ export function TopicsFeed({ sessionId }: Props) {
       </button>
       <button
         type="button"
-        className={styles.feedGlassBtn}
+        className={FEED_GLASS_BTN}
         disabled={insert.isPending}
         onClick={handleInsert}
       >
@@ -92,7 +96,10 @@ export function TopicsFeed({ sessionId }: Props) {
       feedAriaLabel="Topics feed"
       toolbar={toolbar}
       toolbarAriaLabel="Topics feed tools"
-      modifier="v5-topics-feed"
+      // `v5-topics-feed` retained as a chrome hook; the flex-column panel layout
+      // (was `:global(.v5-topics-feed)` in FeedTable.module.css) rides along as
+      // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
+      modifier="v5-topics-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
     >
       <FeedTable
         columns={COLUMNS}

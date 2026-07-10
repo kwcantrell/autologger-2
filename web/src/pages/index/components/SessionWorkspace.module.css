@@ -180,24 +180,9 @@
   flex-direction: column;
 }
 
-:global(#v4-log-session .v4-log-sheet.v5-event-feed) {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-x: clip;
-  overflow-y: visible;
-}
-
-:global(#v4-log-session .v4-log-sheet.v5-event-feed > .v5-event-feed-top) {
-  flex-shrink: 0;
-}
-
-:global(#v4-log-session .v4-log-sheet.v5-event-feed .v5-event-feed-top),
-:global(#v4-log-session .v4-log-sheet.v5-event-feed .v5-event-feed-top__titles),
-:global(#v4-log-session .v4-log-sheet.v5-event-feed .v5-event-feed-head) {
-  overflow: visible;
-}
+/* Feed-panel overflow/flex overrides moved to FeedShell.tsx (Task 9, tailwind slice 4):
+ * `#v4-log-session .v4-log-sheet.v5-event-feed` (+ its `> .v5-event-feed-top` shrink and the
+ * top/titles/head overflow-visible group) are now utilities on the FeedShell JSX. */
 
 /* --- Phase 4 (v4-scratch.css origin) — log-session/-top/-bottom width */
 
@@ -289,9 +274,8 @@
   flex: 1 1 auto;
 }
 
-:global(.v4-log-sheet .sheet th) {
-  position: static;
-}
+/* `.v4-log-sheet .sheet th { position: static }` (Event Feed header is not sticky) moved to
+ * EventLogSheet.tsx (Task 9) as `!static` on the Event Feed <th> columns. */
 
 :global(.v4-session-workspace .v4-log-bottom) {
   width: 100%;
@@ -738,12 +722,9 @@
   color: var(--v5-text);
 }
 
-:global(#v4-log-session .v5-panel-main-title--numeric) {
-  font-size: 1.75rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.03em;
-}
+/* `.v5-panel-main-title--numeric` (FeedShell's feed count heading) moved to FeedShell.tsx
+ * (Task 9). The shared `.v5-panel-main-title` base above stays — it also styles the Session
+ * Controls `--status` title. */
 
 :global(#v4-log-session .v5-panel-main-title--status) .v5ControlsStatusLine {
   display: inline;
