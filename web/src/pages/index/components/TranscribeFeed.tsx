@@ -9,8 +9,7 @@ import {
 import { toast } from '../../../shared/components/Toast';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FeedTable } from './FeedTable';
-import styles from './FeedTable.module.css';
+import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
 import { TranscribeRow } from './TranscribeRow';
 
 type SortKey = 'session_time' | 'speaker' | 'word';
@@ -21,10 +20,10 @@ const COLUMNS: ColumnDef[] = [
     key: 'session_time',
     label: 'Session Time',
     sortKey: 'session_time',
-    thClassName: styles.feedThTime,
+    thClassName: 'text-left w-[6.5rem]',
   },
-  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thClassName: styles.feedThSpeaker },
-  { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: styles.feedThWord },
+  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thClassName: 'text-left w-32' },
+  { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: 'text-left min-w-40' },
 ];
 
 // Approximate rendered height of a single TranscribeRow (input + cell padding + border).
@@ -108,10 +107,10 @@ export function TranscribeFeed({ sessionId }: Props) {
 
   const toolbar = (
     <>
-      {genError && <span className={styles.feedError}>{genError}</span>}
+      {genError && <span className="ml-2 text-[0.78rem] text-v5-danger">{genError}</span>}
       <button
         type="button"
-        className={styles.feedGlassBtn}
+        className={FEED_GLASS_BTN}
         disabled={generate.isPending}
         onClick={handleGenerate}
       >
@@ -119,7 +118,7 @@ export function TranscribeFeed({ sessionId }: Props) {
       </button>
       <button
         type="button"
-        className={styles.feedGlassBtn}
+        className={FEED_GLASS_BTN}
         disabled={insert.isPending}
         onClick={handleInsert}
       >
@@ -135,7 +134,10 @@ export function TranscribeFeed({ sessionId }: Props) {
       feedAriaLabel="Transcript feed"
       toolbar={toolbar}
       toolbarAriaLabel="Transcript feed tools"
-      modifier="v5-transcribe-feed"
+      // `v5-transcribe-feed` retained as a chrome hook; the flex-column panel layout
+      // (was `:global(.v5-transcribe-feed)` in FeedTable.module.css) rides along as
+      // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
+      modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
     >
       <FeedTable
         columns={COLUMNS}

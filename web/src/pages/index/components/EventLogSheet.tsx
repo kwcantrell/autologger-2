@@ -12,8 +12,7 @@ import { clickSortReducer, type SortState as SharedSortState } from '../utils/so
 import { EventLogRow, type RowEditValues } from './EventLogRow';
 import styles from './EventLogSheet.module.css';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FeedTable } from './FeedTable';
-import feedStyles from './FeedTable.module.css';
+import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
 
 // ---------------------------------------------------------------------------
 // Sort
@@ -94,7 +93,7 @@ function TimeDisplayDropdown({
       trigger={
         <button
           type="button"
-          className={feedStyles.feedGlassBtn}
+          className={FEED_GLASS_BTN}
           aria-haspopup="listbox"
           disabled={disabled}
         >
@@ -141,12 +140,7 @@ function FilterDropdown({
     <Popover
       ariaLabel="Filter events"
       trigger={
-        <button
-          type="button"
-          className={feedStyles.feedGlassBtn}
-          aria-haspopup="menu"
-          disabled={disabled}
-        >
+        <button type="button" className={FEED_GLASS_BTN} aria-haspopup="menu" disabled={disabled}>
           Filter
         </button>
       }
@@ -356,20 +350,26 @@ export function EventLogSheet({ sessionId }: Props) {
   };
 
   // --- Column definitions (time column label/sortKey are dynamic) ---
+  // Event Feed: the <th> keeps its legacy `.sheet th { text-align: center }` (FEED_TH sets
+  // no text-align, so that legacy rule still applies). The visible label reads left because
+  // the full-width sort button is `text-left` — but the <th>'s own centering still governs
+  // auto-layout column widths, so we must NOT force `text-left` here (doing so reflows the
+  // columns and narrows the table by ~3px). Transcribe/Topics DO pass `text-left` (no
+  // `.sheet` context — their legacy `.feedTh` was left-aligned).
   const eventColumns: ColumnDef[] = [
     {
       key: 'time',
       label: viewUtc ? 'World Clock' : 'Session Time',
       sortKey: viewUtc ? 'utc' : 'timecode',
-      thClassName: feedStyles.feedThTime,
+      thClassName: 'w-[6.5rem]',
     },
     {
       key: 'category',
       label: 'Event',
       sortKey: 'category',
-      thClassName: feedStyles.feedThCategory,
+      thClassName: 'w-32',
     },
-    { key: 'message', label: 'Message', sortKey: 'message', thClassName: feedStyles.feedThMessage },
+    { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
   ];
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
@@ -379,7 +379,7 @@ export function EventLogSheet({ sessionId }: Props) {
       {!batchEditMode && (
         <button
           type="button"
-          className={feedStyles.feedGlassBtn}
+          className={FEED_GLASS_BTN}
           disabled={!canBatchEdit}
           title={
             canBatchEdit
@@ -395,7 +395,7 @@ export function EventLogSheet({ sessionId }: Props) {
         <span className={styles.v5EventFeedToolbarBatch}>
           <button
             type="button"
-            className={clsx(feedStyles.feedGlassBtn, feedStyles.feedGlassBtnPrimary)}
+            className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
             disabled={batchSaving}
             onClick={() => handleSaveBatch().catch(() => {})}
           >
@@ -403,7 +403,7 @@ export function EventLogSheet({ sessionId }: Props) {
           </button>
           <button
             type="button"
-            className={feedStyles.feedGlassBtn}
+            className={FEED_GLASS_BTN}
             disabled={batchSaving}
             onClick={handleCancelBatch}
           >

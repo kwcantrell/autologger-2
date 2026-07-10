@@ -2,7 +2,14 @@ import clsx from 'clsx';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useUpdateTopic } from '../../../api/hooks/useTopics';
 import type { SessionTopic } from '../../../api/types';
-import styles from './FeedTable.module.css';
+import {
+  FEED_CELL,
+  FEED_CELL_TIME,
+  FEED_INLINE_INPUT,
+  FEED_INLINE_INPUT_MONO,
+  FEED_ROW,
+  FEED_SUMMARY_TEXTAREA,
+} from './FeedTable';
 
 interface EditState {
   session_time: string;
@@ -71,19 +78,19 @@ export function TopicsRow({ row, sessionId }: Props) {
   }, [vals.summary]);
 
   return (
-    <tr className={styles.feedRow}>
-      <td className={clsx(styles.feedCell, styles.feedCellTop, styles.feedCellTime)}>
+    <tr className={FEED_ROW}>
+      <td className={clsx(FEED_CELL, 'align-top', FEED_CELL_TIME)}>
         <input
-          className={clsx(styles.feedInlineInput, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
           onFocus={startEdit}
           onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
       </td>
-      <td className={clsx(styles.feedCell, styles.feedCellTop, styles.feedCellDuration)}>
+      <td className={clsx(FEED_CELL, 'align-top')}>
         <input
-          className={clsx(styles.feedInlineInput, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
           type="number"
           min={0}
           step={1}
@@ -93,9 +100,9 @@ export function TopicsRow({ row, sessionId }: Props) {
           onBlur={(e) => commitField('duration_sec', e.target.value)}
         />
       </td>
-      <td className={clsx(styles.feedCell, styles.feedCellTop, styles.feedCellLevel)}>
+      <td className={clsx(FEED_CELL, 'align-top')}>
         <input
-          className={clsx(styles.feedInlineInput, 'mono')}
+          className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono', 'max-w-20')}
           type="number"
           min={1}
           max={10}
@@ -106,10 +113,10 @@ export function TopicsRow({ row, sessionId }: Props) {
           onBlur={(e) => commitField('topic_level', e.target.value)}
         />
       </td>
-      <td className={clsx(styles.feedCell, styles.feedCellTop)}>
+      <td className={clsx(FEED_CELL, 'align-top')}>
         <textarea
           ref={summaryRef}
-          className={clsx(styles.feedInlineInput, styles.feedSummaryTextarea)}
+          className={clsx(FEED_INLINE_INPUT, FEED_SUMMARY_TEXTAREA)}
           rows={1}
           value={vals.summary}
           onFocus={startEdit}
