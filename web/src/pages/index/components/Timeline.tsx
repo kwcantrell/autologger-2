@@ -137,7 +137,11 @@ const NAV_MSG_TRACK = 'inline-flex items-center min-w-[max-content] translate-x-
 // the markerCurrentMsgA/B.v4NavMsgValue color under #v4-log-session is v5-muted.
 const NAV_MSG_VALUE =
   '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.8125rem] font-medium tracking-[0.02em] normal-case text-v5-muted [text-shadow:none] [text-indent:0.5em] overflow-hidden text-ellipsis whitespace-nowrap w-full';
-const NAV_MSG_GAP = 'inline';
+// `[display:inline]` NOT `inline`: the bare `inline` utility string collides with
+// chrome.css's legacy `.inline` class (font-size:.85rem, color:muted,
+// display:inline-flex!important), which would shrink/recolor the marquee overflow
+// segments — see chrome.css comment and the identical fix in SessionWorkspace.tsx.
+const NAV_MSG_GAP = '[display:inline]';
 // .markerCurrentMsgB / .markerCurrentMsgGap2 are display:none unless the wrap has the
 // scroll class; the marquee runs on the track. Handled via clsx branches below.
 
@@ -791,9 +795,11 @@ export function Timeline({
       if (!msgA || !track) return;
       const overflow = msgA.scrollWidth > cell.clientWidth;
       track.classList.toggle('animate-marker-msg-marquee', overflow);
-      msgB?.classList.toggle('inline', overflow);
+      // `[display:inline]` NOT `inline` — see NAV_MSG_GAP comment above: the bare
+      // `inline` utility collides with chrome.css's legacy `.inline` class.
+      msgB?.classList.toggle('[display:inline]', overflow);
       msgB?.classList.toggle('hidden', !overflow);
-      gap2?.classList.toggle('inline', overflow);
+      gap2?.classList.toggle('[display:inline]', overflow);
       gap2?.classList.toggle('hidden', !overflow);
     });
   }, [currentNavMarker]);
