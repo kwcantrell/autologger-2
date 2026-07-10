@@ -145,6 +145,20 @@
   box-shadow: var(--v5-panel-elevate);
 }
 
+/* CategoryButtonStrip's thin strip scrollbar — ::-webkit-scrollbar pseudo-elements
+ * can't be expressed as inline utilities, so they live in a named utility applied
+ * to the .catStrip element. `scrollbar-width: thin` pairs with it for Firefox. */
+@utility cat-strip-scrollbar {
+  scrollbar-width: thin;
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+}
+
 /* RecentSessionsList's OverlayScrollbars viewport — the flex/gap layout for the
  * session cards must live on the library-generated [data-overlayscrollbars-viewport]
  * inner element, which is not a JSX node and so can't carry utilities. Scoped to the
