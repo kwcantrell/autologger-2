@@ -438,11 +438,15 @@ assumed going in:
   it is in fact set dynamically at runtime (`SessionWorkspace.tsx`). The transport
   `@layer components` block in `tailwind.css` is therefore live styling, not a dead
   parity artifact — `tailwind.css` carries an inline comment recording this at the rule.
-- **`.inline` / `.hidden` Tailwind-core-utility collision guard (Task 4).** Converting
-  these two legacy class names to real Tailwind utilities collides with Tailwind's own
-  `inline`/`hidden` core utilities. Adopted fix: an `!important` guard on `.inline`
-  (verified as the only pair in the collision set), retired once both names became real
-  utilities rather than legacy passthrough strings.
+- **`.inline` / `.hidden` Tailwind-core-utility collision guard (Task 4).** These two
+  legacy class names collide with Tailwind's own `inline`/`hidden` core utilities,
+  which the source scanner auto-generates from the bare tokens in JSX. Adopted fix: an
+  `!important` guard on each (verified as the only pair in the collision set). The
+  guards were **not retired** — they remain in place in `tailwind.css`'s components
+  layer as the permanent mitigation: `.hidden` stays the JS-toggled canonical hide hook
+  (must beat utilities by design) and `.inline` still has a live chrome emitter
+  (NewSessionModal label chip). JSX call sites that *intend* the Tailwind utility use
+  `[display:inline]` instead (see the Task 10 marquee fix).
 - **`glass.module.css` / `ThemeProvider` glass context retired as dead (stage 0a).** The
   spec's Section 0c anticipated converting glass compound tokens through the
   `ThemeContextValue` contract (`glass.glass`, `glassStrong`, `shadowGlow` strings). In
