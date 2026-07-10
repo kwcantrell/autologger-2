@@ -18,11 +18,13 @@
     "test": "npm run test -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc --noEmit -p e2e",
     "lint": "npm run lint -w web && biome check --write e2e playwright.config.ts",
-    "e2e": "npm run build -w web && playwright test"
+    "e2e": "npm run build -w web && playwright test --project=chromium",
+    "e2e:visual": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile",
+    "e2e:visual:update": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile --update-snapshots"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "1.61.1",
     "@types/node": "^26.1.1",
     "concurrently": "^9.1.0",
     "typescript": "^5.7.2"

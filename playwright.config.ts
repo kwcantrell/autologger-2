@@ -39,5 +39,42 @@ export default defineConfig({
       ADMIN_TOKEN: '',
     },
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
+  expect: {
+    toHaveScreenshot: {
+      animations: 'disabled',
+      caret: 'hide',
+      maxDiffPixels: 0, // strict default; per-shot exceptions only, frozen with baselines
+    },
+  },
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' }, testIgnore: /visual\.spec\.ts/ },
+    {
+      name: 'visual-desktop',
+      testMatch: /visual\.spec\.ts/,
+      // Serial: one hermetic server, wiped once per invocation — cross-test
+      // interleaving would make the home shot's rail contents run-order-dependent.
+      // (workers is capped via --workers=1 in the npm scripts; it is not a
+      // per-project option.)
+      fullyParallel: false,
+      use: {
+        browserName: 'chromium',
+        viewport: { width: 1280, height: 720 },
+        launchOptions: {
+          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+        },
+      },
+    },
+    {
+      name: 'visual-mobile',
+      testMatch: /visual\.spec\.ts/,
+      fullyParallel: false,
+      use: {
+        browserName: 'chromium',
+        viewport: { width: 390, height: 844 },
+        launchOptions: {
+          args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+        },
+      },
+    },
+  ],
 });
