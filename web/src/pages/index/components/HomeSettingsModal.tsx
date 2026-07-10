@@ -251,7 +251,18 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
     <Dialog
       open={isOpen}
       onOpenChange={(o) => !o && onClose()}
-      className={styles.settingsDialog}
+      // Desktop full-screen override. `md:!` reclaims the top/left/transform/size/padding
+      // that Dialog's base utilities now own (legacy .settingsDialog would lose to them);
+      // md-scoped so the ≤767px bottom-sheet is untouched.
+      // On mobile the legacy .settingsDialog height/max-height (calc(100vh-2rem)) used to
+      // win over the sheet base max-height (88dvh) by bundle order — now the sheet's
+      // max-h-[88dvh] utility would beat it, shrinking the sheet. Re-assert the taller box
+      // for ≤767px so the baseline sheet height is preserved (`max-md:!`).
+      className={clsx(
+        styles.settingsDialog,
+        'md:!inset-4 md:!top-4 md:!left-4 md:![transform:none] md:!h-[calc(100vh-2rem)] md:!max-h-[calc(100vh-2rem)] md:!w-[calc(100vw-2rem)] md:!max-w-none md:!flex md:!flex-col md:!px-5 md:!pt-4 md:!pb-5',
+        'max-md:!h-[calc(100vh-2rem)] max-md:!max-h-[calc(100vh-2rem)] max-md:!px-5 max-md:!pt-4 max-md:!pb-5',
+      )}
       hideTitle
       title="Settings"
     >

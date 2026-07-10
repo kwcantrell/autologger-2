@@ -2,7 +2,6 @@ import * as RadixDialog from '@radix-ui/react-dialog';
 import clsx from 'clsx';
 import { type ReactNode, type PointerEvent as ReactPointerEvent, useRef } from 'react';
 import { useIsMobile } from './breakpoints';
-import styles from './Dialog.module.css';
 
 interface DialogProps {
   open: boolean;
@@ -107,13 +106,38 @@ export function Dialog({
   const isMobile = useIsMobile();
   const { contentRef, handleProps } = useSheetDrag(isMobile, () => onOpenChange(false));
 
+  // Overlay is identical for both variants (.overlay / .sheetOverlay were byte-equal).
+  const overlayClass =
+    'fixed inset-0 z-(--z-dialog-overlay) bg-[rgba(8,10,14,0.72)] animate-overlay-fade-in';
+
+  // Desktop: centered card. Sets top/left/transform/width/max-height/padding — the
+  // consumer positioning modules (NewSessionModal/HomeSettingsModal/EventOptionsModal)
+  // override these via `!`-important utilities on their own className so they beat this
+  // base within the utilities layer (legacy-layer overrides would lose to utilities).
+  // NB: centering uses the `transform` property (arbitrary utility), NOT Tailwind's
+  // `translate` utilities — the content-fade-in keyframe and the consumer positioning
+  // overrides (NewSessionModal/HomeSettingsModal) both animate/set `transform`; using
+  // the separate `translate` property here would STACK with those and double-translate.
+  const desktopContentClass =
+    'glass-panel fixed top-1/2 left-1/2 z-(--z-dialog-content) w-[min(100%,32rem)] max-h-[90vh] [transform:translate(-50%,-50%)] overflow-y-auto rounded-v5-md pt-6 px-[1.6rem] pb-[1.6rem] outline-none animate-content-fade-in focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-4';
+
+  // Mobile bottom-sheet: pinned to viewport bottom, full-width. As utilities it beats any
+  // legacy consumer positioning by layer order — that is what the old `.sheetContent.sheetContent`
+  // double-class specificity hack did within the legacy layer. `[transform:none]` is the same
+  // rest-state reset that double-class rule applied to defeat consumer `transform`/`inset`/`width`
+  // (NewSessionModal's rail-offset translate has no media query, so it would otherwise leak onto
+  // the sheet); the slide-up @keyframes still animates the entrance (animations outrank author
+  // rules) and the drag handler's inline transform still owns the gesture (inline outranks).
+  const sheetContentClass =
+    'glass-face-strong fixed inset-x-0 top-auto bottom-0 z-(--z-dialog-content) w-full max-w-none m-0 max-h-[88dvh] [transform:none] overflow-y-auto rounded-t-v5-md panel-elevate border border-v5-border-strong border-b-0 px-[1.15rem] pt-2 pb-[calc(1.4rem+env(safe-area-inset-bottom))] text-v5-text outline-none will-change-transform animate-sheet-slide-up focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-4';
+
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className={isMobile ? styles.sheetOverlay : styles.overlay} />
+        <RadixDialog.Overlay className={overlayClass} />
         <RadixDialog.Content
           ref={isMobile ? contentRef : undefined}
-          className={clsx(isMobile ? styles.sheetContent : styles.content, className)}
+          className={clsx(isMobile ? sheetContentClass : desktopContentClass, className)}
           // Radix warns on every render when no Description is rendered; opt out explicitly
           // (only when there is no description — otherwise keep Radix's generated link).
           {...(description === undefined ? { 'aria-describedby': undefined } : {})}
@@ -124,16 +148,26 @@ export function Dialog({
             if (!closeOnOverlayClick) e.preventDefault();
           }}
         >
-          {isMobile && <div className={styles.dragHandle} aria-hidden="true" {...handleProps} />}
-          <RadixDialog.Title className={clsx(styles.title, hideTitle && styles.srOnly)}>
+          {isMobile && (
+            <div
+              className="mx-0 mt-[-0.5rem] mb-[0.35rem] flex h-6 w-full shrink-0 cursor-grab touch-none items-center justify-center before:h-1 before:w-9 before:rounded-full before:bg-v5-border-strong before:content-['']"
+              aria-hidden="true"
+              {...handleProps}
+            />
+          )}
+          <RadixDialog.Title
+            className={clsx(
+              hideTitle ? 'sr-only' : 'mx-0 mt-0 mb-3 text-[1.05rem] font-semibold text-v5-text',
+            )}
+          >
             {title}
           </RadixDialog.Title>
           {description !== undefined && (
-            <RadixDialog.Description className={styles.description}>
+            <RadixDialog.Description className="mx-0 mt-0 mb-[0.85rem] text-[0.85rem] leading-[1.45] text-v5-muted">
               {description}
             </RadixDialog.Description>
           )}
-          <div className={styles.body}>{children}</div>
+          <div className="block">{children}</div>
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>
