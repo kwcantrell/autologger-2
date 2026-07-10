@@ -7,7 +7,6 @@
 
 @import './tokens.css' layer(legacy);
 @import './baseline.css' layer(legacy);
-@import './chrome.css' layer(legacy);
 @import './bgGlow.css' layer(legacy);
 
 @import 'tailwindcss/theme.css' layer(theme);
@@ -692,5 +691,480 @@
 @layer components {
   .muted {
     color: var(--v5-soft);
+  }
+}
+
+/* ============================================================
+ * Page chrome (Task 11, slice 6 — ported from the deleted chrome.css).
+ * Multi-consumer chrome vocabulary (audit B): shell/header/brand/settings/
+ * modal/btn/field/panel/profile-select/tool-row/fps/footer/developer/crumb/…
+ * All emitted class strings are unchanged; these named rules live in
+ * `@layer components` (below utilities), so per-element utility overrides from
+ * earlier slices keep winning. The `.btn` compound family (.btn / .btn.primary /
+ * .btn.danger / :disabled / (hover:hover) guards / max-md touch floor) lives here
+ * ENTIRELY as plain rules — an @utility+components split would invert layer order
+ * and flatten primary/danger to default buttons.
+ * ============================================================ */
+@layer components {
+  .shell {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 1.1rem 1.05rem 2.2rem;
+  }
+
+  .shell-v3 {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  .header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Grid lockup: logo and text column share one row; logo and headline stack share the same vertical midpoint. */
+  .brand-with-logo .brand-lockup {
+    display: grid;
+    grid-template-columns: 6rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0;
+    min-height: 0;
+  }
+
+  .brand-logo {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    justify-self: start;
+    align-self: center;
+    z-index: 0;
+    width: 6rem;
+    height: 6rem;
+    max-width: min(6rem, 42vw);
+    max-height: min(6rem, 42vw);
+    margin-left: -0.2rem;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+  }
+
+  .brand-with-logo .brand-text {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+    /* Pull text over the right part of the mark (replaces former padding-left on absolute layout). */
+    margin-left: -1.65rem;
+    padding-left: 0;
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline {
+    margin: 0.18rem 0 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+    max-width: 28rem;
+  }
+
+  .admin-settings-block {
+    margin: 1rem 0 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-panel .admin-settings-block {
+    margin-top: 0.5rem;
+  }
+
+  .settings-subheading {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .modal-dropdown-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .modal-lead {
+    margin: 0 0 1rem;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .modal-hint {
+    margin: 0 0 0.65rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+  }
+
+  .profile-select {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    margin: 0 0 1rem;
+    width: 100%;
+    cursor: pointer;
+  }
+
+  .main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.82rem 0.95rem 0.9rem;
+  }
+
+  .panel h2 {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .field span {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .num {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+    width: 4.5rem;
+    margin-left: 0.35rem;
+  }
+
+  .num.wide {
+    width: 6rem;
+  }
+
+  .mono,
+  .sheet .mono {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  /* The `.btn` compound family — plain rules, kept together in one layer. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.95rem;
+    font: inherit;
+    font-size: 0.9rem;
+    color: var(--text);
+    background: var(--surface-btn);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  /* Hover guarded behind `hover: hover` so the style does not latch after a tap
+   * on touch devices (phone-first, Phase 3) — one of only three guarded hovers
+   * in the app (audit G). Focus-visible rings are unaffected. */
+  @media (hover: hover) {
+    .btn:hover {
+      border-color: var(--accent-dim);
+      color: var(--accent);
+    }
+  }
+
+  /* Disabled: match flat neutral look (same as e.g. Record Audio when off) */
+  .btn:disabled,
+  .btn:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .btn.primary {
+    background: linear-gradient(180deg, #2a3544, #222a36);
+    border-color: #3d4a5c;
+  }
+
+  @media (hover: hover) {
+    .btn.primary:hover {
+      border-color: var(--accent);
+    }
+  }
+
+  .btn.primary:disabled,
+  .btn.primary:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .btn.danger {
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    color: var(--danger);
+  }
+
+  @media (hover: hover) {
+    .btn.danger:hover {
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+  }
+
+  .btn.danger:disabled,
+  .btn.danger:disabled:hover {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--muted);
+    border-color: var(--border);
+    background: var(--surface-btn);
+  }
+
+  .tool-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1rem;
+  }
+
+  /* `!important` mirrors `.hidden` (base layer): this global chrome class name
+   * collides with Tailwind's core `.inline{display:inline}` utility in the higher
+   * `utilities` layer, which would otherwise flatten these flex labels. Kept as the
+   * canonical `.inline` chrome hook (NewSessionModal label chips still emit it). */
+  .inline {
+    display: inline-flex !important;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .export-row {
+    margin-top: 0.75rem;
+  }
+
+  .footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .footer .mono {
+    color: var(--accent);
+  }
+
+  .developer-footer {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .developer-label {
+    margin: 0 0 0.65rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+
+  .developer-logo {
+    display: block;
+    max-width: min(288px, 92vw);
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+    opacity: 1;
+  }
+
+  .crumb {
+    margin: 0 0 0.35rem;
+    font-size: 0.9rem;
+  }
+
+  .crumb a {
+    color: var(--accent-dim);
+    text-decoration: none;
+  }
+
+  .crumb a:hover {
+    color: var(--accent);
+  }
+
+  .faint {
+    color: var(--muted);
+    font-size: 0.8rem;
+    word-break: break-all;
+  }
+
+  .new-session-form .field {
+    margin-bottom: 0.75rem;
+  }
+
+  .tool-row-session-opts {
+    align-items: flex-end;
+  }
+
+  .fps-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: min(100%, 14rem);
+  }
+
+  .fps-field-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .fps-select {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.65rem;
+    max-width: 100%;
+    cursor: pointer;
+  }
+
+  .fps-select:focus {
+    outline: 2px solid var(--accent-dim);
+    outline-offset: 1px;
+  }
+
+  .fps-custom-wrap {
+    margin-top: 0.15rem;
+  }
+
+  .fps-custom-label {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .fps-custom-input {
+    min-width: 6rem;
+  }
+
+  .fps-hint {
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.3;
+    max-width: 18rem;
+  }
+
+  .modal-export-actions {
+    margin-top: 0.25rem;
+  }
+
+  /* Phone-first cutover aligned to the md breakpoint (≤767px = md - 1). */
+  @media (max-width: 767px) {
+    .header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    /* Touch-target floor for the app-wide button (covers Dialog/sheet actions
+     * and all chrome forms). */
+    .btn {
+      min-height: 2.75rem;
+    }
+  }
+}
+
+/* Bare form-element baseline (Task 11, from the deleted chrome.css element rules).
+ * `input[type="text"], textarea` styled every plain text field app-wide; `.num`
+ * shared this box but keeps its own width/margin in the components block above.
+ * Kept in `@layer components` (NOT base) so the original single-legacy-layer
+ * cascade is preserved: `input[type=text]` (specificity 0,1,1) intentionally
+ * out-specifies `.profile-select` (0,1,0), so profile-select text inputs keep
+ * the 0.55rem padding they render with today. Moving these to `@layer base`
+ * would let `.profile-select` win by layer and shrink those inputs (~1.6px). */
+@layer components {
+  input[type='text'],
+  textarea {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 2.5rem;
   }
 }
