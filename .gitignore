@@ -19,3 +19,6 @@ e2e/.data/
 # Playwright's default artifact/report output
 test-results/
 playwright-report/
+
+# Playwright MCP session captures (page snapshots dumped during interactive use)
+.playwright-mcp/

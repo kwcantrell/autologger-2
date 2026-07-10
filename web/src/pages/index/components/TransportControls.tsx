@@ -62,8 +62,11 @@ const IS_DISABLED =
 
 // .sessionCtlIcon: img variant (src) uses 1.2rem square, contain; the base 1.7×1.4
 // non-img size never applies here (icons are always <img>). z-1 over the ::before.
+// pointer-events-none restores the original rule's `pointer-events: none` (dropped
+// in the initial conversion — the icon must not eat clicks/hover meant for the
+// parent button).
 const CTRL_ICON =
-  'inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center object-contain leading-none [.v5-session-controls-panel_&]:relative [.v5-session-controls-panel_&]:z-[1]';
+  'pointer-events-none inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center object-contain leading-none [.v5-session-controls-panel_&]:relative [.v5-session-controls-panel_&]:z-[1]';
 
 const SOLID_CLASS = {
   isSolidGrey: SOLID_GREY,
