@@ -1,9 +1,10 @@
-// SessionCore — the shared substrate every SessionDO domain store builds on:
-// the embedded-SQLite handle + helpers, the hibernatable WebSocket fan-out,
-// the events_stream_revision counter, the D1 projection, the transport row,
+// SessionCore — the shared substrate every SessionHub domain store builds on:
+// the embedded-SQLite handle + helpers, the WebSocket fan-out, the
+// events_stream_revision counter, the catalog projection, the transport row,
 // and meta key/value + alarm scheduling. Holds the two cross-domain reads
 // (transportRow, projection) so the domain stores never depend on each other.
-// Never imports `cloudflare:workers` — only SessionDO.ts does.
+// Runtime-agnostic by design: it sees only the structural SessionCtx seam
+// (SessionHub is the sole substrate since the Cloudflare SessionDO was removed).
 
 import { type TransportFields } from '../timecode';
 
