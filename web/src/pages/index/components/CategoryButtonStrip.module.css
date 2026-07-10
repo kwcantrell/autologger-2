@@ -3,36 +3,6 @@
  * studio-badge, log-form chrome, metadata-details.
  * ============================================================ */
 
-.studioBadge {
-  margin: 0.25rem 0 0;
-  font-size: 0.76rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-}
-
-.logFormPanelCompact {
-  padding-bottom: 0.75rem;
-}
-
-.logFormPanelCompact :global(.field) {
-  align-items: center;
-}
-
-.logFormHeading {
-  margin-bottom: 0.35rem !important;
-}
-
-.logFormStreamlined {
-  gap: 0.65rem;
-}
-
-.catStripLabel {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
 .catStrip {
   display: flex;
   flex-direction: row;
@@ -83,36 +53,9 @@
   filter: brightness(1.3);
 }
 
-@keyframes cat-btn-momentary-press {
-  0% {
-    transform: translateY(0) scale(1);
-  }
-  45% {
-    transform: translateY(3px) scale(0.98);
-  }
-  100% {
-    transform: translateY(0) scale(1);
-  }
-}
-
-.catBtn.catBtnMomentaryPress {
-  animation: cat-btn-momentary-press 0.26s cubic-bezier(0.22, 1, 0.32, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .catBtn.catBtnMomentaryPress {
-    animation: none;
-  }
-}
-
 .catBtn:focus-visible {
   outline: 2px solid var(--accent-dim);
   outline-offset: 2px;
-}
-
-.catBtnSelected {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cat) 72%, transparent);
-  filter: brightness(1.05);
 }
 
 /* ON/OFF latched OFF — raised "out" */
@@ -156,38 +99,10 @@
   display: none;
 }
 
-.metadataDetails {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.35rem 0.65rem;
-  background: var(--bg);
-}
-
-.metadataDetails summary {
-  cursor: pointer;
-  font-size: 0.8rem;
-  color: var(--muted);
-  user-select: none;
-}
-
-.metadataSummaryHint {
-  font-weight: 400;
-  opacity: 0.85;
-}
-
-.metadataField {
-  margin-top: 0.5rem;
-  margin-bottom: 0;
-}
-
 @supports not (color: color-mix(in srgb, white, black)) {
   .catBtn {
     background: #25272e;
     border: 5px solid var(--cat);
-  }
-
-  .catBtnSelected {
-    box-shadow: 0 0 0 2px var(--cat);
   }
 
   .catBtnToggleArmed {
@@ -254,39 +169,6 @@
 }
 
 /* ============================================================
- * v3-cue-grid-panel context (moved from SessionWorkspace.css)
- * ============================================================ */
-
-/* Log cues: fixed 6.5rem tiles, 4 per row (scrolls horizontally if needed). */
-:global(.v3-cue-grid-panel) .catStrip {
-  display: grid;
-  grid-template-columns: repeat(4, 6rem);
-  grid-auto-rows: 6rem;
-  gap: 0.35rem;
-  justify-content: center;
-  overflow-x: auto;
-  overflow-y: visible;
-}
-
-:global(.v3-cue-grid-panel) .catBtn {
-  box-sizing: border-box;
-  width: 6rem;
-  height: 6rem;
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-  padding: 0.4rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  white-space: normal;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* ============================================================
  * v5-ui.css carve-out (Phase 3, v1.12.0) — V5 live-log context overrides
  * ============================================================ */
 
@@ -304,24 +186,12 @@
   box-sizing: border-box;
 }
 
-/* V5 category buttons: stack formatted lines (JS uses .cat-btn__line; <br> is ignored in flex buttons) */
 :global(#v4-log-session) .catBtn {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   white-space: normal;
-}
-
-:global(#v4-log-session .cat-btn__line) {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: break-word;
-  word-break: normal;
-  line-height: 1.15;
-  text-align: center;
 }
 
 /* V5 category chips (live panel) — glass + category hue; square tiles, 1.2× prior scale */
@@ -364,10 +234,6 @@
   box-shadow: inset 0 4px 12px rgba(0, 0, 0, 0.42);
 }
 
-:global(#v4-log-session #cat-strip-live-slot) .catBtn.catBtnMomentaryPress {
-  animation: cat-btn-momentary-press 0.26s cubic-bezier(0.22, 1, 0.32, 1);
-}
-
 /* ON/OFF latched OFF — raised */
 :global(#v4-log-session #cat-strip-live-slot) .catBtnToggleArmed {
   transform: translateY(-1px);
@@ -386,8 +252,3 @@
   box-shadow: inset 0 5px 16px rgba(0, 0, 0, 0.5);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :global(#v4-log-session #cat-strip-live-slot) .catBtn.catBtnMomentaryPress {
-    animation: none;
-  }
-}

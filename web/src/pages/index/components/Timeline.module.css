@@ -11,10 +11,6 @@
   gap: 0.4rem;
 }
 
-.timelineShellSeekLoading .timelineTrackLayers {
-  filter: brightness(0.74) blur(2.5px);
-}
-
 .timelineTrackLayers {
   position: absolute;
   inset: 0;
@@ -34,106 +30,6 @@
   background: rgb(182 193 223 / 81%);
   pointer-events: none;
   z-index: 2;
-}
-
-.timelineTrack .timelineAudioSeekOverlay {
-  position: absolute;
-  inset: 0;
-  z-index: 100;
-  pointer-events: none;
-  border-radius: inherit;
-  overflow: hidden;
-}
-
-.timelineAudioSeekOverlay:not(:global(.hidden)) {
-  pointer-events: auto;
-}
-
-.timelineAudioSeekOverlayBackdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(6, 8, 12, 0.38);
-}
-
-.timelineAudioSeekOverlayLogoAnchor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 10050;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  padding: 0 0.35rem;
-  max-width: 100%;
-}
-
-.timelineAudioSeekOverlayLabel {
-  display: none;
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 10051;
-  margin: 0;
-  padding: 0 0.35rem;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  box-sizing: border-box;
-  text-align: center;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  line-height: 1.25;
-  color: color-mix(in srgb, var(--text) 88%, transparent);
-  word-wrap: break-word;
-  overflow-wrap: anywhere;
-  max-width: 100%;
-}
-
-.timelineAudioSeekOverlayWaveforms .timelineAudioSeekOverlayLabel {
-  display: block;
-}
-
-.autologgerLoadingVideoTimelineOverlay {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.timelineAudioSeekOverlayLogoAnchor .autologgerLoadingVideoTimelineOverlay {
-  max-width: 100%;
-  min-width: 0;
-}
-
-.autologgerLoadingVideoTimelineOverlay :global(.autologger-loading-video__media) {
-  display: block;
-  width: auto;
-  height: 3rem;
-  min-width: 4rem;
-  max-width: min(44vw, 14rem);
-  object-fit: contain;
-  will-change: transform;
-}
-
-.timelineAudioSeekOverlayLogoAnchor .autologgerLoadingVideoTimelineOverlay :global(.autologger-loading-video__media) {
-  max-width: min(100%, 44vw, 14rem);
-  min-width: 0;
-}
-
-.timelineToolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.18rem;
-}
-
-.timelineToolbar .timelineReadout {
-  margin-top: 0;
 }
 
 .timelineZoomRail {
@@ -237,19 +133,6 @@
   background-color: #2d3039;
 }
 
-.timelineMarkerNav {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 0.25rem;
-  margin-left: 0;
-  margin-right: 0;
-  width: auto;
-  justify-self: center;
-  max-width: none;
-  min-width: 34rem;
-}
-
 .timelineMarkerCurrentCat {
   display: grid;
   grid-template-columns: 30% 70%;
@@ -269,7 +152,6 @@
   text-overflow: ellipsis;
 }
 
-.markerCurrentCatCell,
 .markerCurrentMsgCell {
   display: flex;
   align-items: center;
@@ -279,11 +161,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.markerCurrentCatCell {
-  justify-content: center;
-  background: color-mix(in srgb, var(--nav-cat-col, #6b7280) 50%, transparent);
 }
 
 .markerCurrentMsgCell {
@@ -316,13 +193,6 @@
 @keyframes marker-msg-marquee {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
-}
-
-.timelineZoomBtn {
-  min-width: 2rem;
-  padding: 0.2rem 0.45rem;
-  line-height: 1.2;
-  font-size: 1rem;
 }
 
 .timelineZoomValue {
@@ -383,11 +253,6 @@ input.timelineZoomValue:focus {
   flex-shrink: 0;
 }
 
-.timelineTrackDisabled {
-  cursor: not-allowed;
-  opacity: 0.72;
-}
-
 .timelineClips {
   position: absolute;
   inset: 0;
@@ -402,16 +267,6 @@ input.timelineZoomValue:focus {
   height: 100%;
   pointer-events: none;
   z-index: 1;
-}
-
-.timelineWaveformClip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: 0;
-  overflow: hidden;
-  box-sizing: border-box;
 }
 
 .timelineWaveformFull {
@@ -660,18 +515,6 @@ body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
   line-height: 1.35;
   pointer-events: none;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-}
-
-.timelineReadout {
-  margin-top: 0;
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text);
-  font-family: var(--mono);
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  justify-self: end;
 }
 
 .timelineInner .timelineTicks {
@@ -1339,18 +1182,6 @@ body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
   box-shadow: var(--v5-panel-elevate);
 }
 
-:global(#v4-log-session) .timelineAudioSeekOverlayBackdrop {
-  background: rgba(7, 11, 20, 0.94);
-}
-
-:global(#v4-log-session) .timelineAudioSeekOverlayLabel {
-  color: var(--v5-muted);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 :global(#v4-log-session) .v4TimelineZoomRail .v4ExtTimecodeZoomRail {
   flex: 0 0 17ch;
   width: 17ch;
@@ -1426,10 +1257,6 @@ body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
 
 :global(#v4-log-session) .timelineMarker:focus-visible {
   outline-color: var(--v5-primary);
-}
-
-:global(#v4-log-session) .timelineReadout {
-  color: var(--v5-text);
 }
 
 .timelineMarkerTooltip {
@@ -1508,10 +1335,6 @@ body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
-}
-
-:global(body.perf-dbg--no-decorative-videos) .autologgerLoadingVideoTimelineOverlay {
-  display: none !important;
 }
 
 :global(body.perf-dbg--no-panel-shadows #v4-log-session) .v4TlTrackLive .timelineShell,

@@ -313,10 +313,6 @@ body {
 
 /* ---- Main shell ---- */
 
-:global(.settings-panel h2) {
-  color: var(--v5-text);
-}
-
 :global(.muted) {
   color: var(--v5-soft);
 }
@@ -327,13 +323,6 @@ body {
  * dropped as dead during the move — SessionWorkspace's Phase 5 base rule
  * for the same selector ran later in the bundle and already won. */
 
-:global(.main-v3 .new-session-panel) {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 38%),
-    linear-gradient(165deg, rgba(18, 26, 44, 0.92), rgba(8, 12, 22, 0.88));
-  border: 1px solid var(--v5-border);
-  border-radius: var(--v5-radius-md);
-  box-shadow: var(--v5-panel-elevate);
-}
 
 /* Workspace-modal button/input override rules (formerly scoped under
  * `.main-v3 .v6-workspace-modal …`) were dropped with the Phase 2 modal

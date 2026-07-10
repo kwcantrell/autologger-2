@@ -65,10 +65,6 @@
   overflow: hidden;
 }
 
-:global(.v6-app--rail-animating) .v6-rail {
-  will-change: width, padding;
-}
-
 :global(.v6-app--rail-collapsed) .v6-rail {
   width: var(--v6-rail-w-collapsed);
   padding: var(--v6-rail-pad-collapsed-y) var(--v6-rail-pad-collapsed-x);
