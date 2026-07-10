@@ -365,3 +365,238 @@
     fill: rgba(56, 189, 248, 0.4) !important;
   }
 }
+
+/* ============================================================
+ * SessionWorkspace escape hatches (Task 10, slice 5b).
+ * These SessionWorkspace-authored rules can't be inline utilities on
+ * SessionWorkspace's own JSX and so live here, each with a why-comment:
+ *   - `.main-v3` structural rules target DOM AppShell renders (converts next
+ *     commit); the session-stage layout the module carved in stays with the
+ *     class, not AppShell's local.
+ *   - `.v4-log-bottom` is FeedShell-rendered (converted Task 9) — SessionWorkspace
+ *     only sizes it structurally; those overrides live here so all emitters resolve.
+ *   - The `v5-panel-head` / `-head__main` / `-head__actions` / `-eyebrow` /
+ *     `v5-panel-main-title` groups are MULTI-EMITTER (Timeline + SessionWorkspace +
+ *     FeedShell all emit them — 3 consumers each), so a single components-layer block
+ *     resolves every emitter rather than triplicating utilities across three JSX trees.
+ *   - `body[data-v4-transport]` transport-state rules are attribute-ancestor selectors
+ *     over many descendants; converted AS-WRITTEN (parity note below).
+ *   - `.v3SessionLoading .autologger-loading-video*` targets template-string DOM
+ *     (shared/utils/loadingVideo.ts) that carries no JSX.
+ * ============================================================ */
+
+/* --- `.main-v3` session-stage structural rules (AppShell-rendered DOM) ---
+ * Three source blocks merged in bundle order: base flex column, the Phase-5
+ * overflow-clip refinement, and the app.css `display:block`/stacking pass (which
+ * runs last and wins `display`, so the resolved value is `block`). */
+@layer components {
+  .main-v3 {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    gap: 0;
+    display: block;
+    flex-direction: column;
+    overflow-x: clip;
+    overflow-y: visible;
+    position: relative;
+    align-items: start;
+  }
+}
+
+/* --- `.v4-log-bottom` (FeedShell-rendered) structural sizing ---
+ * SessionWorkspace's Phase-4/5 rules size the feed wrapper; width/overflow-x are
+ * intentionally NOT set (owned by EventLogSheet — see the deleted module comment). */
+@layer components {
+  .v4-session-workspace .v4-log-bottom {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: visible;
+    display: flex;
+    flex-direction: column;
+  }
+  .v4-log-bottom {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    min-height: 0;
+    min-width: 0;
+  }
+}
+
+/* --- Panel heads + eyebrow + main-title (MULTI-EMITTER: Timeline + SessionWorkspace + FeedShell) ---
+ * Scoped to #v4-log-session exactly as the deleted rules were. */
+@layer components {
+  #v4-log-session .v5-panel-head {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.1rem;
+  }
+  #v4-log-session .v5-panel-head__main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--v5-panel-head-main-gap);
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  #v4-log-session .v5-panel-head__actions {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+  #v4-log-session .v5-panel-head--controls {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+
+  /* Panel eyebrows straddle the glass top border. */
+  #v4-log-session .v5-session-timeline-panel .v5-panel-eyebrow,
+  #v4-log-session .v5-session-controls-panel .v5-panel-eyebrow,
+  #v4-log-session .v4-log-sheet.v5-event-feed .v5-panel-eyebrow {
+    position: absolute;
+    left: var(--v5-panel-padding);
+    top: 0;
+    transform: translateY(-50%);
+    z-index: 2;
+    margin: 0;
+    width: max-content;
+    max-width: min(calc(100% - 2 * var(--v5-panel-padding)), 22rem);
+    display: block;
+    line-height: 1;
+    padding: 0 0 0 0.28rem;
+    border-radius: 0.125rem;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(22, 31, 54, 0.98), rgba(22, 31, 54, 0.98));
+    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  /* Shared main-title base (FeedShell's --numeric size delta lives on its own JSX;
+   * SessionWorkspace's --status title consumes this base). */
+  #v4-log-session .v5-panel-main-title {
+    margin: 0;
+    width: 100%;
+    text-align: left;
+    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--v5-text);
+  }
+}
+
+/* --- Capture / playback panel show-hide (body[data-v4-transport] + [data-v5-live-log]) ---
+ * The `.v4-log-top__capture` / `.v4-log-top__playback` base `display:none` and every
+ * ancestor rule that toggles them live together here: `display` cannot be an inline
+ * utility on these elements because the utilities layer would beat these ancestor
+ * selectors, breaking the capture-vs-playback swap. Kept AS-WRITTEN per the plan.
+ * PARITY NOTE (post-migration open question): SessionWorkspace.tsx DOES set
+ * `document.body.dataset.v4Transport = effectiveTransport` on every transport change,
+ * so unlike the static `"rolling"` value the audit flagged in the Python app's
+ * index.html, here the attribute IS dynamic. */
+@layer components {
+  .v4-log-top__capture {
+    display: none;
+  }
+  .v4-log-top__playback {
+    display: none;
+  }
+  body[data-v4-transport='rolling'] .v4-log-top__capture,
+  body[data-v4-transport='recording'] .v4-log-top__capture {
+    display: flex;
+  }
+  body[data-v4-transport='play'] .v4-log-top__playback,
+  body[data-v4-transport='stop'] .v4-log-top__playback {
+    display: flex;
+  }
+
+  /* Live-log docked (rolling/recording): hide the empty capture card, hide the
+   * timeline stack, force-show the playback timeline panel. Dynamic attribute
+   * (SessionWorkspace.tsx:261 sets data-v5-live-log). */
+  #v4-log-session[data-v5-live-log='1'] .v5-session-timeline-stack {
+    display: none !important;
+  }
+  #v4-log-session[data-v5-live-log='1'] .v4-log-top__capture {
+    display: none !important;
+  }
+  #v4-log-session[data-v5-live-log='1'] .v4-log-top__playback.v5-session-timeline-panel {
+    display: flex !important;
+  }
+}
+
+/* --- Loading-video contextual sizing (template-string DOM, loadingVideo.ts) ---
+ * The `.autologger-loading-video` / `__media` nodes inside SessionWorkspace's
+ * `#v3-session-loading` overlay come from a template string, so these contextual
+ * overrides can't be inline utilities. The `.v3SessionLoading` retained class string
+ * on the overlay JSX anchors them. */
+@layer components {
+  .v3SessionLoading .autologger-loading-video {
+    min-height: 4rem;
+  }
+  .v3SessionLoading .autologger-loading-video__media {
+    height: 4.5rem;
+    max-width: min(50vw, 16rem);
+  }
+}
+
+/* --- `.btn` chrome inside the session (V5 recolor) ---
+ * `.v4-log-session .btn` recolors chrome buttons rendered by many child components
+ * (TransportControls, etc.), so it's a components-layer context rule, not inline
+ * utilities on one JSX tree. `.btn` chrome itself stays legacy until Task 11. */
+@layer components {
+  .v4-log-session .btn {
+    border-radius: var(--v5-radius-sm);
+    border: 1px solid var(--v5-border-strong);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.88);
+  }
+  .v4-log-session .btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .v4-log-session .btn.primary {
+    border-color: rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.14);
+    color: var(--v5-primary);
+  }
+  .v4-log-session .btn.primary:hover {
+    background: rgba(56, 189, 248, 0.22);
+  }
+}
+
+/* --- Feed-tabs sheet-corner flatten (reaches into FeedShell's sheet) ---
+ * SessionWorkspace's `.v5FeedTabsPanel` wraps FeedShell's `.v4-log-sheet.v5-event-feed`;
+ * flattening the sheet's TOP corners lets the tab bar sit flush (bottom corners keep
+ * their --v5-radius-lg pillow). The target is FeedShell-rendered DOM (Task 9), so this
+ * can't be an inline utility on SessionWorkspace's JSX and stays a components-layer rule
+ * scoped by the retained `v5FeedTabsPanel` ancestor class. FeedShell sets the sheet's
+ * uniform radius with the `rounded-v5-lg` UTILITY (utilities layer, above components), so
+ * the two top-radius overrides carry `!important` to beat it — the toggle-contract use of
+ * `!` the recipe sanctions for beating a later layer. */
+@layer components {
+  .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
+    border-top-left-radius: 0.95rem !important;
+    border-top-right-radius: 0.95rem !important;
+    position: relative;
+    z-index: 1;
+  }
+}

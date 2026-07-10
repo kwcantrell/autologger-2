@@ -59,9 +59,9 @@ const TL_STACK =
   'v5-session-timeline-stack flex flex-col flex-[1_1_auto] min-h-0 w-full gap-0 box-border';
 
 // The v5-panel-head / -head__main / -head__actions / -eyebrow group is a MULTI-EMITTER
-// class family (Timeline + SessionWorkspace + FeedShell all emit it) whose legacy rules
-// stay in SessionWorkspace.module.css until slice 5b — so 5a keeps emitting the bare legacy
-// class strings and lets those rules style them (no per-emitter utility duplication here).
+// class family (Timeline + SessionWorkspace + FeedShell all emit it); its rules live in a
+// commented @layer components block in tailwind.css (slice 5b) so all three emitters
+// resolve from one place. Timeline keeps emitting the bare legacy class strings.
 const PANEL_HEAD = 'v5-panel-head v5-panel-head--timeline';
 const PANEL_HEAD_MAIN = 'v5-panel-head__main';
 const PANEL_HEAD_ACTIONS = 'v5-panel-head__actions';
