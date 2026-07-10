@@ -422,3 +422,52 @@ repo's actual CSS (they had been inherited from the Python repo's docs).
 - Legacy-internal bundle-order flips in uncovered states during the hybrid (known pairs
   audited; accepted for the campaign's duration).
 - `prefers-reduced-motion` covered by checklist review, not pixels.
+
+### 2026-07-10 — Implementation deviations (recorded at completion, Task 12)
+
+Corrections and adopted deviations discovered during slices 1–11 (full detail: SDD ledger
+`.superpowers/sdd/progress.md`), recorded here because they diverge from what the spec/plan
+assumed going in:
+
+- **V6Rail audit correction (Task 7).** The stage-0a coupling audit had classified V6Rail's
+  hyphen-case local rules as dead; they were in fact ALIVE (hashed and rendered). The
+  reviewer reproduced proof during Task 7's review wave; the rules converted as ancestor
+  variants (`[#v4-log-session_&]:…` pattern) rather than being deleted. Audit corrections of
+  this shape are why the spec treats the coupling audit as re-verifiable, not gospel.
+- **`data-v4-transport` audit correction (Task 10).** Assumed static/legacy at spec time;
+  it is in fact set dynamically at runtime (`SessionWorkspace.tsx`). The transport
+  `@layer components` block in `tailwind.css` is therefore live styling, not a dead
+  parity artifact — `tailwind.css` carries an inline comment recording this at the rule.
+- **`.inline` / `.hidden` Tailwind-core-utility collision guard (Task 4).** These two
+  legacy class names collide with Tailwind's own `inline`/`hidden` core utilities,
+  which the source scanner auto-generates from the bare tokens in JSX. Adopted fix: an
+  `!important` guard on each (verified as the only pair in the collision set). The
+  guards were **not retired** — they remain in place in `tailwind.css`'s components
+  layer as the permanent mitigation: `.hidden` stays the JS-toggled canonical hide hook
+  (must beat utilities by design) and `.inline` still has a live chrome emitter
+  (NewSessionModal label chip). JSX call sites that *intend* the Tailwind utility use
+  `[display:inline]` instead (see the Task 10 marquee fix).
+- **`glass.module.css` / `ThemeProvider` glass context retired as dead (stage 0a).** The
+  spec's Section 0c anticipated converting glass compound tokens through the
+  `ThemeContextValue` contract (`glass.glass`, `glassStrong`, `shadowGlow` strings). In
+  practice this indirection was dead weight — retired in stage 0a in favor of the
+  `@utility` classes (`glass-face`, `shadow-glow-v5`, `panel-elevate`) directly, no
+  context plumbing.
+- **Preserved `:root` token twins, not a TSX rename sweep (Task 11).** The spec's end
+  state called for a repo-wide grep-gated sweep of legacy token names to final `@theme`
+  names, including in TSX `var()` inline-style consumers. The adopted approach instead
+  keeps all 85 legacy names from the old `tokens.css` alive verbatim as a non-namespace
+  `:root` block (plus two `@theme` blocks for the namespaced/utility-generating subset),
+  so the 23 `var(--v5-*)` TSX references across `Timeline`, `TimelineMarkers`,
+  `NewSessionModal`, and `EventLogRow` resolve unchanged. Verified all-resolving at
+  Task 11 review. This is why the Task 12 legacy-token sweep (all 85 audit-K names)
+  finds every name still present: the survivors are these canonical `:root`/`@theme`
+  definitions in `tailwind.css` plus the TSX `var()` references to them, not leaked
+  legacy CSS — confirmed zero matches outside `tailwind.css` and the known TSX consumer
+  set.
+- **E-1 outcome, implemented as specified.** The visual harness ships as the opt-in
+  `npm run e2e:visual` project, excluded from default `npm run e2e`, permanently (not
+  deleted, not folded into default gates). The campaign's "frozen for the whole
+  migration" baseline/tolerance/mask policy and the exact `@playwright/test` pin are both
+  lifted at completion: re-baseline freely with a reviewed diff; pin relaxed back to
+  caret (`^1.61.1`).

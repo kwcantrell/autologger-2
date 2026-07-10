@@ -211,11 +211,57 @@ curl $B/api/shows
 
 ## Frontend (web/ workspace)
 
-The React frontend lives in `web/` (Vite 8 + React 19, CSS Modules) and is canonical for
+The React frontend lives in `web/` (Vite 8 + React 19, Tailwind v4) and is canonical for
 this app. `npm run build` emits `web/dist/`; the server serves it directly — `GET /` and
 `GET /admin/users` return the built page HTML verbatim (no serve-time rewriting; the API
 root is hardcoded same-origin `/api`), and a static catch-all serves hashed `/assets/*`
 plus `/static/*` (favicon logos ship from `web/public/static/`).
+
+### Styling (Tailwind v4)
+
+All styling lives in one entry, `web/src/shared/theme/tailwind.css`, side-effect imported
+from each page's `main.tsx`. No CSS Modules, no per-component `*.css` files. Layers,
+declared in order:
+
+- **`theme`** — two `@theme` blocks emit the design-token scale. `@theme inline` holds
+  tokens whose only job is generating utilities (`--color-*`, `--radius-*`); `@theme
+  static` unconditionally emits a few tokens (`--color-text`, `--color-accent`,
+  `--font-mono`, …) into `:root` because TSX inline styles and arbitrary-value utilities
+  (`font-[family-name:var(--font-mono)]`) read them as raw `var()` strings the Tailwind
+  scanner can't see as utility candidates otherwise.
+- **non-namespace `:root` block** — tokens with no Tailwind theme category (the `--v4-*`
+  pixel-matched layout values, `--z-*` z-index scale, compound gradient/shadow stacks,
+  alpha-composited colors used only as gradient ingredients) plus **preserved legacy
+  names** (`--bg`, `--accent`, `--v5-primary`, …) kept byte-identical so the handful of
+  TSX inline-style `var()` consumers (Timeline, TimelineMarkers, NewSessionModal,
+  EventLogRow) keep resolving without a rename sweep through JSX.
+- **`base`** — body baseline, fonts, resets (formerly `baseline.css`).
+- **`components`** — chrome families ported as named `@utility` / `@layer components`
+  rules (`.btn`, `.field`, `.glass-panel`, …), multi-consumer classes, exotic-selector
+  rules Tailwind can't express inline (`::-webkit-scrollbar`, keyframes), and
+  `perfDebug`'s cross-component `body.perf-dbg--*` escape hatches.
+- **`utilities`** — Tailwind's generated utility set, used inline in JSX composed with
+  `clsx` at the existing call sites (exclusive branches per state, not toggled overrides).
+
+Two conventions worth knowing before touching component styles:
+
+- **`hover-always`** — a `@custom-variant hover-always (&:hover)` for the repo's dominant
+  hover flavor (fires on touch-tap too). Tailwind's stock `hover:` is gated behind
+  `@media (hover: hover)` in v4, which only three chrome `.btn` hovers actually want.
+- **Ancestor-scoped overrides** convert as arbitrary variants keyed off ancestor DOM,
+  e.g. `[#v4-log-session_&]:...`, rather than living in the ancestor's own file — this
+  keeps a component's look-changing rules with the component they change.
+
+Stable ID/data-attribute hooks (`#v4-log-sheet`, `tr[data-event-id]`, `#v3-session-grid`,
+`#btn-ctl-*`, `[data-category-id]`, `body[data-v4-transport]`, …) are untouched by the
+migration — e2e and Companion selectors keep working. `body[data-v4-transport]` is set
+dynamically at runtime (`SessionWorkspace.tsx`), so its `@layer components` block in
+`tailwind.css` is live styling, not dead code — the file carries a parity comment at that
+rule.
+
+Fonts (Inter/Oswald/Roboto/Poppins/League Gothic/Chivo Mono) and `animate.css` are
+vendored locally under `web/src/assets/` — no CDN requests at runtime, and the visual
+harness (below) is network-independent as a result.
 
 ### Dev flow
 
@@ -254,3 +300,21 @@ The Playwright `webServer` runs with `REQUIRE_LOGIN=0`, loopback bind, a wiped
 `e2e/.data/` DATA_DIR, and explicitly blanked OAuth/token env — your real `server/.env`
 never leaks into the suite. The wipe happens in the `webServer.command` itself, in the
 same shell invocation that starts the server, so it always runs before boot.
+
+### Visual regression harness
+
+```bash
+npm run e2e:visual          # 44 screenshots, two viewports (desktop 1280×720, mobile 390×844)
+npm run e2e:visual:update   # re-capture baselines after a reviewed, intentional UI change
+```
+
+`e2e/visual.spec.ts` is a separate Playwright **project**, excluded from default
+`npm run e2e` (gate decision E-1 from the Tailwind migration) — it's a standing opt-in
+safety net against pixel drift, not a per-PR gate. Baselines are committed PNGs, chromium
+only, masked for time-driven regions (playhead, rolling shimmer) and autoplaying video.
+**Re-baseline policy:** the "frozen for the whole campaign" rule was migration-specific
+and no longer applies — re-capture the affected shots freely for any legitimate UI
+change, with a human-reviewed before/after diff confirming only the intended change
+moved. A future Playwright/Chromium version bump will shift anti-aliasing across most
+shots and likely needs a full re-capture; that's expected and no longer gated behind an
+exact-pin policy (`@playwright/test` is back to a caret range).
