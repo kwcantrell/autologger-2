@@ -14,7 +14,7 @@ import { AudioStore } from './audioStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
-import type { SessionProjection, TimecodeCtx } from './sessionCore';
+import type { SessionCtx, SessionProjection, TimecodeCtx } from './sessionCore';
 import { TopicStore } from './topicStore';
 import { TranscriptStore } from './transcriptStore';
 import { TransportStore } from './transportStore';
@@ -35,7 +35,19 @@ export class SessionDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.core = new SessionCore(ctx);
+    this.core = new SessionCore({
+      sql: ctx.storage.sql as unknown as SessionCtx['sql'],
+      sockets: () =>
+        ctx.getWebSockets().map((ws) => ({
+          send: (data: string) => ws.send(data),
+          role:
+            ((ws.deserializeAttachment() as { role?: string } | null)?.role ?? 'browser') ===
+            'companion'
+              ? ('companion' as const)
+              : ('browser' as const),
+        })),
+      setAlarm: (atMs: number) => void ctx.storage.setAlarm(atMs),
+    });
     this.core.initSchema();
     this.events = new EventStore(this.core);
     this.transport = new TransportStore(this.core);

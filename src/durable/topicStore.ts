@@ -2,7 +2,7 @@
 // SessionDO.ts.
 
 import { isoZ } from '../timecode';
-import type { Row, SessionCore } from './sessionCore';
+import type { Row, SessionCore, SqlValue } from './sessionCore';
 
 export interface Topic {
   id: string;
@@ -65,11 +65,11 @@ export class TopicStore {
     const existing = this.core.first('SELECT * FROM session_topics WHERE id = ?', topicId);
     if (existing === null) return null;
     const cols: string[] = [];
-    const vals: SqlStorageValue[] = [];
+    const vals: SqlValue[] = [];
     for (const key of ['session_time', 'duration_sec', 'topic_level', 'summary'] as const) {
       if (patch[key] !== undefined) {
         cols.push(`${key} = ?`);
-        vals.push(patch[key] as SqlStorageValue);
+        vals.push(patch[key] as SqlValue);
       }
     }
     if (cols.length) {

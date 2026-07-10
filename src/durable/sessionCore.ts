@@ -7,7 +7,23 @@
 
 import { type TransportFields } from '../timecode';
 
-export type Row = Record<string, SqlStorageValue>;
+export type SqlValue = string | number | null;
+export type Row = Record<string, SqlValue>;
+
+export interface AttachedSocket {
+  send(data: string): void;
+  role: 'browser' | 'companion';
+}
+
+/** Runtime substrate SessionCore runs on. On Workers this wrapped
+ * DurableObjectState; on Node it wraps better-sqlite3 + the hub's socket set. */
+export interface SessionCtx {
+  readonly sql: {
+    exec<T = Row>(sql: string, ...binds: SqlValue[]): { toArray(): T[]; rowsWritten: number };
+  };
+  sockets(): Iterable<AttachedSocket>;
+  setAlarm(atMs: number): void;
+}
 
 /** Live fields the Worker mirrors onto the D1 sessions row for cheap listing. */
 export interface SessionProjection {
@@ -37,10 +53,10 @@ export interface TransportState {
 }
 
 export class SessionCore {
-  constructor(private ctx: DurableObjectState) {}
+  constructor(private ctx: SessionCtx) {}
 
-  get db(): SqlStorage {
-    return this.ctx.storage.sql;
+  get db(): SessionCtx['sql'] {
+    return this.ctx.sql;
   }
 
   initSchema(): void {
@@ -104,11 +120,11 @@ export class SessionCore {
 
   // -- small SQL helpers -------------------------------------------------------
 
-  all(query: string, ...binds: SqlStorageValue[]): Row[] {
+  all(query: string, ...binds: SqlValue[]): Row[] {
     return this.db.exec<Row>(query, ...binds).toArray();
   }
 
-  first(query: string, ...binds: SqlStorageValue[]): Row | null {
+  first(query: string, ...binds: SqlValue[]): Row | null {
     const rows = this.all(query, ...binds);
     return rows.length ? rows[0] : null;
   }
@@ -153,11 +169,11 @@ export class SessionCore {
   /** Send a JSON message to every attached socket (browser tabs + Companion). */
   broadcast(msg: Record<string, unknown>): void {
     const data = JSON.stringify(msg);
-    for (const ws of this.ctx.getWebSockets()) {
+    for (const ws of this.ctx.sockets()) {
       try {
         ws.send(data);
       } catch {
-        // socket is going away; hibernation cleanup drops it.
+        // socket is going away; owner cleanup drops it.
       }
     }
   }
@@ -166,9 +182,8 @@ export class SessionCore {
   presence(): { browsers: number; companions: number } {
     let browsers = 0;
     let companions = 0;
-    for (const ws of this.ctx.getWebSockets()) {
-      const att = ws.deserializeAttachment() as { role?: string } | null;
-      if (att?.role === 'companion') companions += 1;
+    for (const ws of this.ctx.sockets()) {
+      if (ws.role === 'companion') companions += 1;
       else browsers += 1;
     }
     return { browsers, companions };
@@ -198,11 +213,9 @@ export class SessionCore {
     this.db.exec('DELETE FROM meta WHERE key = ?', key);
   }
 
-  /** Wraps ctx.storage.setAlarm so lease logic never touches ctx directly.
-   * NOTE: setAlarm REPLACES any pending alarm (one slot per DO). The recording
-   * lease is the sole consumer today; a second consumer must coordinate through
-   * SessionDO.alarm() rather than calling this independently. */
+  /** Single alarm slot — setAlarm REPLACES any pending alarm. The recording
+   * lease is the sole consumer today. */
   setAlarm(atMs: number): void {
-    void this.ctx.storage.setAlarm(atMs);
+    this.ctx.setAlarm(atMs);
   }
 }

@@ -2,7 +2,7 @@
 // (generation is stubbed in the router). Moved verbatim out of SessionDO.ts.
 
 import { isoZ } from '../timecode';
-import type { Row, SessionCore } from './sessionCore';
+import type { Row, SessionCore, SqlValue } from './sessionCore';
 
 export interface TranscriptWord {
   id: string;
@@ -69,7 +69,7 @@ export class TranscriptStore {
     const existing = this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId);
     if (existing === null) return null;
     const cols: string[] = [];
-    const vals: SqlStorageValue[] = [];
+    const vals: SqlValue[] = [];
     for (const key of ['session_time', 'speaker', 'word'] as const) {
       if (patch[key] !== undefined) {
         cols.push(`${key} = ?`);
