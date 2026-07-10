@@ -18,5 +18,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/durable/SessionDO.int.test.ts", "src/routers/companion-ws.int.test.ts"]
+  "exclude": ["src/routers/companion-ws.int.test.ts"]
 }
