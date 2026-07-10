@@ -361,10 +361,15 @@ export function EventLogSheet({ sessionId }: Props) {
       key: 'time',
       label: viewUtc ? 'World Clock' : 'Session Time',
       sortKey: viewUtc ? 'utc' : 'timecode',
-      thModifier: 'feedThTime',
+      thClassName: feedStyles.feedThTime,
     },
-    { key: 'category', label: 'Event', sortKey: 'category', thModifier: 'feedThCategory' },
-    { key: 'message', label: 'Message', sortKey: 'message', thModifier: 'feedThMessage' },
+    {
+      key: 'category',
+      label: 'Event',
+      sortKey: 'category',
+      thClassName: feedStyles.feedThCategory,
+    },
+    { key: 'message', label: 'Message', sortKey: 'message', thClassName: feedStyles.feedThMessage },
   ];
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;

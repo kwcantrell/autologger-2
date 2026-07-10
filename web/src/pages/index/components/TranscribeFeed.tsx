@@ -17,9 +17,14 @@ type SortKey = 'session_time' | 'speaker' | 'word';
 const sortReducer = clickSortReducer<SortKey>;
 
 const COLUMNS: ColumnDef[] = [
-  { key: 'session_time', label: 'Session Time', sortKey: 'session_time', thModifier: 'feedThTime' },
-  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thModifier: 'feedThSpeaker' },
-  { key: 'word', label: 'Word(s)', sortKey: 'word', thModifier: 'feedThWord' },
+  {
+    key: 'session_time',
+    label: 'Session Time',
+    sortKey: 'session_time',
+    thClassName: styles.feedThTime,
+  },
+  { key: 'speaker', label: 'Speaker', sortKey: 'speaker', thClassName: styles.feedThSpeaker },
+  { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: styles.feedThWord },
 ];
 
 // Approximate rendered height of a single TranscribeRow (input + cell padding + border).

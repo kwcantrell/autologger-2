@@ -11,15 +11,20 @@ type SortKey = 'session_time' | 'duration_sec' | 'topic_level' | 'summary';
 const sortReducer = clickSortReducer<SortKey>;
 
 const COLUMNS: ColumnDef[] = [
-  { key: 'session_time', label: 'Session Time', sortKey: 'session_time', thModifier: 'feedThTime' },
+  {
+    key: 'session_time',
+    label: 'Session Time',
+    sortKey: 'session_time',
+    thClassName: styles.feedThTime,
+  },
   {
     key: 'duration_sec',
     label: 'Duration (s)',
     sortKey: 'duration_sec',
-    thModifier: 'feedThDuration',
+    thClassName: styles.feedThDuration,
   },
-  { key: 'topic_level', label: 'Level', sortKey: 'topic_level', thModifier: 'feedThLevel' },
-  { key: 'summary', label: 'Summary', sortKey: 'summary', thModifier: 'feedThSummary' },
+  { key: 'topic_level', label: 'Level', sortKey: 'topic_level', thClassName: styles.feedThLevel },
+  { key: 'summary', label: 'Summary', sortKey: 'summary', thClassName: styles.feedThSummary },
 ];
 
 interface Props {

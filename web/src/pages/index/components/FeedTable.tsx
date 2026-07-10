@@ -11,9 +11,8 @@ export interface ColumnDef {
   label: string;
   /** When set, the <th> renders a sort button that calls onSort(sortKey). */
   sortKey?: string;
-  /** Camel-case key into FeedTable.module.css for the per-column TH width
-   *  (e.g. `"Time"` → `styles.feedThTime`). */
-  thModifier?: keyof typeof styles;
+  /** Utility class string for the per-column <th> width, supplied by the parent. */
+  thClassName?: string;
   /** Replaces label for screen readers; use for visually hidden columns (e.g. actions). */
   ariaLabel?: string;
 }
@@ -84,7 +83,7 @@ export function FeedTable({
               const isSorted = col.sortKey && sortKey === col.sortKey;
               const thCls = clsx(
                 styles.feedTh,
-                col.thModifier && styles[col.thModifier],
+                col.thClassName,
                 isSorted && (sortDir === 'asc' ? styles.sortAsc : styles.sortDesc),
               );
               return (
