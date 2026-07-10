@@ -230,24 +230,8 @@ body {
   flex-shrink: 0;
 }
 
-/* .v4-search-input is rendered by V6Rail.tsx inside .v6-rail-search-offscreen (hidden but tab-focusable). */
-:global(.v4-search-input) {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  border: none;
-  background: transparent;
-  font-family: var(--font-poppins);
-  font-size: 0.875rem;
-  font-weight: 400;
-  color: #000000;
-}
-
-:global(.v4-search-input::placeholder) {
-  font-weight: 100;
-  color: #000000;
-  opacity: 1;
-}
+/* `.v4-search-input` base + v5-ui color rules were extracted to V6Rail.tsx's
+ * JSX (Tailwind slice 2, Task 7) — contextual overrides move with their target. */
 
 .v4Recording {
   margin: 0 var(--v4-rec-mr) 0 0;
@@ -299,13 +283,7 @@ body {
   box-sizing: border-box;
 }
 
-:global(.v4-search-input) {
-  color: var(--v5-text);
-}
-
-:global(.v4-search-input::placeholder) {
-  color: rgba(255, 255, 255, 0.35);
-}
+/* `.v4-search-input` color/placeholder overrides moved to V6Rail.tsx JSX. */
 
 .v4Recording,
 .v4Timecode {

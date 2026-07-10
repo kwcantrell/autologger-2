@@ -1,0 +1,17 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - complementary "Navigation" [ref=e5]:
+      - button "Toggle navigation" [expanded] [ref=e6] [cursor=pointer]
+      - button "New Session" [ref=e8] [cursor=pointer]
+      - button "Search logs" [ref=e12] [cursor=pointer]
+      - generic [ref=e18]:
+        - paragraph [ref=e19]: RECENT SESSIONS
+        - status "Loading" [ref=e21]
+      - searchbox "Search through logs" [ref=e24]
+      - button "Settings" [ref=e26] [cursor=pointer]
+    - main [ref=e32]:
+      - generic:
+        - status "Recording status"
+      - paragraph [ref=e36]: Select a session, or create a new one from the left rail.
+  - status
+  - button "Perf" [ref=e37] [cursor=pointer]
