@@ -21,6 +21,18 @@
   --font-poppins: 'Poppins', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-league-gothic: 'League Gothic', sans-serif;
   --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --animate-toast-enter: toast-enter 0.18s ease-out;
+  @keyframes toast-enter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 
 /* Hybrid-period aliases: values live in tokens.css (single source of truth);
