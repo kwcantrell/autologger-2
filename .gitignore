@@ -12,3 +12,6 @@ data/
 
 # graphify knowledge-graph output (regenerable via /graphify)
 graphify-out/
+
+# e2e server state — wiped by e2e/global-setup.ts each run
+e2e/.data/
