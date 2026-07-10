@@ -5,7 +5,6 @@ import { useCreateSession } from '../../../api/hooks/useSessions';
 import type { ProfilePayload } from '../../../api/types';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
-import styles from './NewSessionModal.module.css';
 import { Select } from './Select';
 
 const FPS_PRESETS: [string, string][] = [
@@ -23,6 +22,12 @@ const FPS_PRESETS: [string, string][] = [
   ['119.88', '119.88 (120000/1001)'],
   ['120', '120'],
 ];
+
+// Modal-scoped input chrome reach-in (was `.new-session-dialog :global(.profile-select|.num|
+// input)`): overrides only bg / border / color / radius over the chrome input base; font /
+// padding / width / margin stay from chrome (.profile-select / .num / input[type=text]).
+const NS_INPUT_OVERRIDE =
+  'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
 
 function fpsFloatMatchesPreset(val: number, presetStr: string): boolean {
   return Math.abs(val - Number.parseFloat(presetStr)) < 0.0001;
@@ -150,27 +155,37 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
       open
       onOpenChange={(o) => !o && onClose()}
       // Desktop rail-offset centering. `md:!` beats Dialog's base translate within the
-      // utilities layer (the legacy .newSessionDialog rule would lose to Dialog utilities);
-      // md-scoped so the ≤767px bottom-sheet keeps its own full-width positioning.
-      className={clsx(
-        styles.newSessionDialog,
-        'md:![transform:translate(calc(-50%+8.125rem),-50%)]',
-      )}
+      // utilities layer; md-scoped so the ≤767px bottom-sheet keeps its own full-width
+      // positioning. (The old .new-session-dialog base transform was identical to this and
+      // is now gone — this utility is the sole desktop-centering control.)
+      className="md:![transform:translate(calc(-50%+8.125rem),-50%)]"
       hideTitle
       title="New Session"
     >
-      <div className={styles.v6NewSessionHead}>
-        <div className={styles.v6NewSessionModalTitleRow}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-(--v6-rail-gap)">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            className="shrink-0 text-[rgba(229,238,252,0.72)]"
+          >
             <title>New session</title>
             <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
           </svg>
-          <h2>New Session</h2>
+          {/* Both `.v6-new-session-modal__title-row h2` and `.v6-new-session-head h2` matched
+              this element at equal specificity; the head-h2 rule came LATER in source so it won:
+              1rem / 600 / 0.06em / uppercase / v5-text / margin 0. */}
+          <h2 className="m-0 text-[1rem] font-semibold tracking-[0.06em] uppercase text-v5-text">
+            New Session
+          </h2>
         </div>
         <button
           type="button"
-          className={styles.v6NewSessionClose}
+          className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.04)] text-[1.25rem] leading-none text-v5-muted [transition:background_0.12s_ease,color_0.12s_ease,border-color_0.12s_ease] hover-always:border-v5-border-strong hover-always:text-v5-text"
           aria-label="Close"
           onClick={onClose}
         >
@@ -204,7 +219,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             <input
               type="text"
               id="ns-episode"
-              className="profile-select"
+              className={clsx('profile-select', NS_INPUT_OVERRIDE)}
               maxLength={80}
               autoComplete="off"
               ref={episodeRef}
@@ -222,7 +237,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             <input
               type="url"
               id="ns-yt-url"
-              className="profile-select"
+              className={clsx('profile-select', NS_INPUT_OVERRIDE)}
               placeholder="Link to YouTube video"
               autoComplete="off"
               value={ytUrl}
@@ -231,7 +246,14 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
           </label>
         </div>
         <div className="tool-row tool-row-session-opts" style={{ alignItems: 'center' }}>
-          <button type="button" className="btn" id="ns-bonus-episode" onClick={handleBonusEpisode}>
+          <button
+            type="button"
+            // Modal-scoped .btn:not(.primary) reach-in (overrides chrome .btn radius/border/bg/color;
+            // padding/font stay from chrome). Unguarded hover → hover-always.
+            className="btn rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.88)] hover-always:bg-[rgba(255,255,255,0.1)]"
+            id="ns-bonus-episode"
+            onClick={handleBonusEpisode}
+          >
             Bonus episode
           </button>
           <label
@@ -260,6 +282,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             type="text"
             id="ns-notes"
             name="notes"
+            className={NS_INPUT_OVERRIDE}
             placeholder="Session notes"
             maxLength={2000}
             autoComplete="off"
@@ -270,10 +293,15 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
         <div className="tool-row tool-row-session-opts">
           <div className="fps-field">
-            <span className="fps-field-label">Frame rate</span>
+            {/* Modal reach-in recolored the label var(--muted) → var(--v5-muted). */}
+            <span className="fps-field-label text-v5-muted">Frame rate</span>
             <Select
               id="ns-fps-preset"
-              className="fps-select"
+              // Keep the fps trigger inside the .fps-field column (legacy #ns-fps-preset width
+              // rule). The old .fps-select bg/radius reach-in already lost to the Select trigger's
+              // own glass utilities, so only the width constraint carries over. `.fps-select`
+              // retained (chrome styles it elsewhere).
+              className="fps-select max-w-[14rem] min-w-0"
               ariaLabel="Frame rate"
               value={fpsPreset}
               onChange={setFpsPreset}
@@ -292,7 +320,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
                     min="1"
                     max="120"
                     step="0.001"
-                    className="num fps-custom-input"
+                    className={clsx('num fps-custom-input', NS_INPUT_OVERRIDE)}
                     placeholder="1–120"
                     autoFocus
                     value={fpsCustom}
@@ -314,12 +342,19 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
               value={offset}
               min="0"
               step="1"
-              className="num wide"
+              className={clsx('num wide', NS_INPUT_OVERRIDE)}
               onChange={(e) => setOffset(e.target.value)}
             />
           </label>
 
-          <button type="submit" className="btn primary" id="ns-submit" disabled={isPending}>
+          <button
+            type="submit"
+            // Modal-scoped .btn.primary reach-in (overrides chrome gradient/border with the
+            // sky tint; padding/font stay from chrome). Unguarded hover → hover-always.
+            className="btn primary rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]"
+            id="ns-submit"
+            disabled={isPending}
+          >
             {isPending ? 'Creating…' : 'Create & open'}
           </button>
         </div>
