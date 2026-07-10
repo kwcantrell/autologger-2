@@ -70,7 +70,7 @@ DATA_DIR/
 ## Source layout
 
 ```
-src/
+server/src/
   main.ts                Node entry: env config → bindings → app → listen
   app.ts                 Hono app wiring: middleware chain + router mounts + static (← web/app.py)
   env.ts                 Typed env accessors                           (← auth_identity.py getters)
@@ -158,7 +158,7 @@ tight loop.
   `kid` to ride out key rotation) — `jose`'s `node:https`-based remote-JWKS helper is not
   used, since this process may run without direct outbound HTTPS in some sandboxes and the
   manual fetch+cache path is uniform across environments.
-- **Per-request bindings injection is a mutation, not a copy.** `wireApp()` in `src/app.ts`
+- **Per-request bindings injection is a mutation, not a copy.** `wireApp()` in `server/src/app.ts`
   mutates the Hono context's `env` object in place rather than replacing it, because
   `@hono/node-ws`'s upgrade handshake stashes internal state on that exact object and later
   compares object identity to decide whether to complete the upgrade. Callers (including test
@@ -186,9 +186,9 @@ npm install
 cp server/.env.example server/.env # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 # upgrading an existing checkout? your state moved: mv .env data server/
 
-npm run typecheck                  # tsc --noEmit
-npm run dev                        # tsx watch → http://127.0.0.1:8787
-npm test                           # vitest (unit + integration projects)
+npm run typecheck                  # server + web + e2e
+npm run dev                        # server (tsx watch, :8787) + Vite (:5173), concurrently
+npm test                           # server vitest (unit + integration projects)
 ```
 
 ### Verify parity
@@ -196,35 +196,61 @@ npm test                           # vitest (unit + integration projects)
 ```bash
 B=http://127.0.0.1:8787
 
-# Login gate (REQUIRE_LOGIN defaults to 1 — see .env.example):
+# Login gate (REQUIRE_LOGIN defaults to 1 — see server/.env.example):
 curl -o /dev/null -w '%{http_code}\n' $B/api/sessions                    # 401
 curl -o /dev/null -w '%{http_code}\n' $B/api/profile                     # 200 (always anonymous-safe)
 curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/sessions   # 200
 
-# Anonymous parity (set REQUIRE_LOGIN=0 in .env): profile + shows both answer.
+# Anonymous parity (set REQUIRE_LOGIN=0 in server/.env): profile + shows both answer.
 curl $B/api/profile
 curl $B/api/shows
 
-# OAuth round-trip needs real Google creds (GOOGLE_CLIENT_ID/SECRET in .env) and
+# OAuth round-trip needs real Google creds (GOOGLE_CLIENT_ID/SECRET in server/.env) and
 # PUBLIC_BASE_URL registered as an authorized callback URI.
 ```
 
-## Serving the SPA
+## Frontend (web/ workspace)
 
-The Node process serves the SPA itself from the `public/` directory. The frontend's build
-emits into that directory:
+The React frontend lives in `web/` (Vite 8 + React 19, CSS Modules) and is canonical for
+this app. `npm run build` emits `web/dist/`; the server serves it directly — `GET /` and
+`GET /admin/users` return the built page HTML verbatim (no serve-time rewriting; the API
+root is hardcoded same-origin `/api`), and a static catch-all serves hashed `/assets/*`
+plus `/static/*` (favicon logos ship from `web/public/static/`).
+
+### Dev flow
 
 ```bash
-cd ../autologger/frontend && AUTOLOGGER_CF_BUILD=1 npm run build   # → ../../autologger-cf/public
-cp ../src/autologger/web/static/logo-autologger-{transparent,app}.png \
-   ../../autologger-cf/public/static/                              # logos live outside react-dist
+npm run dev        # concurrently: server (tsx watch, :8787) + Vite (:5173)
 ```
 
-`public/` is gitignored — it is a reproducible build artifact until sub-project 2 moves the
-frontend into this repo; the frontend source currently still lives in the parent Python repo.
+Browse `http://127.0.0.1:5173/src/pages/index/index.html`. Vite proxies `/api` (incl. the
+session WebSocket) and `/auth` to :8787.
 
-`src/app.ts` routes HTML explicitly (there is no client-side router): `GET /` and
-`GET /admin/users` read their built HTML from `public/`, substitute `__API_ROOT__` → `/api`
-(the same transitional substitution Python's `_render_html` does), and return it; a static
-mount serves hashed `/assets/*` + `/static/*`. The `/api` + `/auth` routers are mounted first,
-so the API is never shadowed.
+**Dev auth is anonymous by design**: set `REQUIRE_LOGIN=0` and `HOST=127.0.0.1` in
+`server/.env`. Google OAuth cannot round-trip through the Vite proxy (the callback
+redirects to `PUBLIC_BASE_URL` on :8787 and the cookie lands on that origin) — verify
+OAuth against the production serve path instead:
+
+```bash
+npm run build && npm run start   # everything on :8787
+```
+
+If dev auth is misconfigured (login required but no session), the first symptom is an
+opaque WebSocket drop — the 401 fires before the upgrade, so the browser sees a bare
+close with no status.
+
+**Keep Vite on loopback.** `server.host` is pinned to `127.0.0.1` in `web/vite.config.ts`;
+exposing Vite to the LAN would let peers reach the API *as* 127.0.0.1, bypassing
+`IP_ALLOWLIST`. Test LAN devices against :8787.
+
+### e2e smoke
+
+```bash
+npx playwright install chromium   # one-time
+npm run e2e                       # builds web/, boots a hermetic server on :8791
+```
+
+The Playwright `webServer` runs with `REQUIRE_LOGIN=0`, loopback bind, a wiped
+`e2e/.data/` DATA_DIR, and explicitly blanked OAuth/token env — your real `server/.env`
+never leaks into the suite. The wipe happens in the `webServer.command` itself, in the
+same shell invocation that starts the server, so it always runs before boot.

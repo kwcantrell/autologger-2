@@ -8,7 +8,9 @@ this file stays short and points there rather than duplicating it.
 
 Portable Node server port of the Python AutoLogger backend (`../autologger`) — a faithful
 TypeScript reimplementation serving the **same JSON shapes** the existing React frontend
-expects. **Hono** routing + **Zod** validation + **jose** for Google ID-token verify, on:
+expects. The repo is **npm workspaces**: `server/` (Node backend) + `web/` (React frontend,
+canonical copy) + `e2e/` (Playwright smoke). **Hono** routing + **Zod** validation + **jose**
+for Google ID-token verify, on:
 
 - **better-sqlite3** — catalog DB (`DATA_DIR/catalog.db`: users/studios/shows/prefs, login
   sessions, OAuth CSRF, Companion presence, sessions index) + one DB file per session
@@ -28,15 +30,18 @@ intentionally `503` on this deployment (no external transcription integration wi
 
 ```bash
 npm install
-cp .env.example .env                           # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
+cp server/.env.example server/.env             # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 
-npm run dev                                    # tsx watch → 127.0.0.1:8787
-npm run typecheck                              # tsc --noEmit
-npm test                                       # vitest run (unit + integration projects)
+npm run dev                                    # server :8787 + Vite :5173 (concurrently)
+npm run build && npm run start                 # production: server serves web/dist
+npm run typecheck                              # server + web + e2e
+npm test                                       # server vitest (unit + integration)
+npm run e2e                                    # Playwright smoke (hermetic server on :8791)
+npm run lint                                   # biome: web src/ + e2e/
 ```
 
-- Two vitest tiers (`vitest.workspace.ts`): **unit** (`*.test.ts`, node, no bindings) and
-  **integration** (`*.int.test.ts`, node, real SQLite via `src/test/setup.int.ts`).
+- Two vitest tiers (`server/vitest.workspace.ts`): **unit** (`*.test.ts`, node, no bindings) and
+  **integration** (`*.int.test.ts`, node, real SQLite via `server/src/test/setup.int.ts`).
 
 ## Invariants (spec)
 
@@ -47,22 +52,25 @@ npm test                                       # vitest run (unit + integration 
   transaction.
 - **Idle hubs close their DB handles and reopen lazily** on next access via
   `SessionHubRegistry#get()`.
-- **Bindings injection in `src/app.ts` (`wireApp`) mutates the per-request `env` object in
-  place** rather than replacing it — `@hono/node-ws` upgrade handshakes compare that object's
-  identity to decide whether to complete the upgrade. Callers must pass a **fresh env per
-  request**; reusing one env across concurrent requests will cross-contaminate bindings.
+- **Bindings injection in `server/src/app.ts` (`wireApp`) mutates the per-request `env` object
+  in place** rather than replacing it — `@hono/node-ws` upgrade handshakes compare that
+  object's identity to decide whether to complete the upgrade. Callers must pass a **fresh env
+  per request**; reusing one env across concurrent requests will cross-contaminate bindings.
 - **Google ID-token verification** fetches Google's JWKS via global `fetch` +
   `jose`'s `createLocalJWKSet` (10-minute cache, refetch once on an unrecognized `kid`) —
   not `jose`'s `node:https`-based remote-JWKS path.
+- **Dev auth is anonymous** (`REQUIRE_LOGIN=0`, loopback); OAuth is verified on the production
+  serve path — the Vite proxy cannot round-trip the Google callback.
 
 ## Source layout
 
-Mirrors the Python backend module-for-module; each `src/` file notes its Python origin in a
-header comment. Router files live in `src/routers/`; the live per-session spine is
-`src/durable/SessionHub.ts` (+ domain stores alongside it); the catalog DB layer is
-`src/db/d1.ts` with migrations in `src/db/migrations/`; Node-specific infrastructure (config
-wiring, migrator, blob store, kv-on-sqlite, presence) lives in `src/node/`. Full annotated
-tree + endpoint→Python-parity table are in **`README.md`**.
+Server code mirrors the Python backend module-for-module under `server/src/`; each file notes
+its Python origin in a header comment. Router files live in `server/src/routers/`; the live
+per-session spine is `server/src/durable/SessionHub.ts` (+ domain stores alongside it); the
+catalog DB layer is `server/src/db/d1.ts` with migrations in `server/src/db/migrations/`;
+Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
+lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tests live under
+`e2e/`. Full annotated tree + endpoint→Python-parity table are in **`README.md`**.
 
 ## Conventions
 
@@ -78,8 +86,9 @@ tree + endpoint→Python-parity table are in **`README.md`**.
 ## Guardrails
 
 - Never commit secrets. `.env` is gitignored; real tokens never land in tracked files.
-- `public/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it. The
-  frontend source still lives in the parent Python repo until sub-project 2 moves it here.
+- `web/dist/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it.
+  Keep the Vite dev server loopback-bound (`server.host` pin in `web/vite.config.ts`); LAN
+  testing goes through :8787.
 
 ## How we work (SDLC)
 
