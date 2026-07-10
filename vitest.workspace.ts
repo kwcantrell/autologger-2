@@ -13,7 +13,6 @@ export default defineWorkspace([
     test: {
       name: 'integration',
       include: ['src/**/*.int.test.ts'],
-      exclude: ['src/routers/companion-ws.int.test.ts'],
       environment: 'node',
       setupFiles: ['./src/test/setup.int.ts'],
     },

@@ -17,6 +17,5 @@
     "noEmit": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/routers/companion-ws.int.test.ts"]
+  "include": ["src/**/*.ts"]
 }

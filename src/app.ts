@@ -35,11 +35,23 @@ export function wireApp(
 
   // Bindings injection must happen HERE, not in a serve() fetch wrapper:
   // @hono/node-ws routes WebSocket upgrades through app.request() directly,
-  // bypassing any wrapper. Spread keeps the adapter-provided incoming/outgoing.
+  // bypassing any wrapper. Mutate c.env IN PLACE — do not reassign the
+  // reference. @hono/node-ws's injectWebSocket() stashes a CONNECTION_SYMBOL_KEY
+  // onto the very `env` object it passed into app.request(), then compares that
+  // same object's property after the handler runs to decide whether to complete
+  // the upgrade. Replacing c.env with a new spread object (the previous
+  // `c.env = { ...b, ...c.env }`) breaks that identity check silently: the
+  // symbol lands on the new object, injectWebSocket() keeps checking the old
+  // one, sees a mismatch, and terminates the raw socket — the WS client sees a
+  // bare error/close(1006) with no application-level trace. Preserve identity;
+  // only backfill keys the adapter (incoming/outgoing) hasn't already set.
   if (opts.bindings) {
-    const b = opts.bindings;
+    const b = opts.bindings as unknown as Record<string, unknown>;
     app.use('*', async (c, next) => {
-      c.env = { ...b, ...c.env };
+      const target = c.env as unknown as Record<string, unknown>;
+      for (const key of Object.keys(b)) {
+        if (!(key in target)) target[key] = b[key];
+      }
       await next();
     });
   }
