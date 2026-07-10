@@ -2,6 +2,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SessionHubRegistry } from '../durable/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -10,7 +11,9 @@ import { KvStore } from './kvStore';
 import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
 
-const MIGRATIONS_DIR = join(process.cwd(), 'src/db/migrations');
+// Resolved from this file's location, not cwd — the server must work both via
+// `npm run -w server` (cwd = server/) and under test runners started elsewhere.
+const MIGRATIONS_DIR = fileURLToPath(new URL('../db/migrations', import.meta.url));
 
 export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;
