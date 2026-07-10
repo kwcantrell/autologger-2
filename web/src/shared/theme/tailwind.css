@@ -202,6 +202,38 @@
   }
 }
 
+/* EventButtonsTable's palette swatch — a native <input type=color> whose rendered swatch is
+ * a ::-webkit-color-swatch / ::-moz-color-swatch pseudo that can't carry inline utilities.
+ * The box metrics (size/radius/appearance) are set here alongside the pseudo resets. */
+@utility pal-slot {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  overflow: hidden;
+  box-sizing: border-box;
+  &:disabled {
+    cursor: default;
+    opacity: 0.92;
+  }
+  &::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+  &::-webkit-color-swatch {
+    border: none;
+    border-radius: 0.4rem;
+  }
+  &::-moz-color-swatch {
+    border: none;
+    border-radius: 0.4rem;
+  }
+}
+
 /* RecentSessionsList's OverlayScrollbars viewport — the flex/gap layout for the
  * session cards must live on the library-generated [data-overlayscrollbars-viewport]
  * inner element, which is not a JSX node and so can't carry utilities. Scoped to the
