@@ -1,7 +1,7 @@
 # Frontend adoption (sub-project 2) — design
 
 **Date:** 2026-07-09
-**Status:** Panel-reviewed 2026-07-09 (majors fixed in place) — pending owner gate (E1)
+**Status:** Approved at gate 2026-07-09 (panel-reviewed; E1 decided — see Panel & review log)
 **Parent:** `2026-07-09-node-port-and-frontend-adoption-design.md` (sub-project 1 merged as
 v0.4.0). That spec's sub-project-2 section is a direction-setting summary; this document is
 the build contract.
@@ -16,9 +16,9 @@ serve time — a mechanism the parent spec explicitly marked phase-1 transitiona
 **Goal:** move the React frontend into this repo as a `web/` npm workspace so the repo is
 self-contained — one `npm install && npm run dev` from the root, a production build the
 server serves directly, and no serve-time HTML rewriting. **Zero component/behavior
-changes** (Tailwind is sub-project 3) — sole possible exception: one line in
-`AudioRecorder.tsx`, escalated as E1 below. The Python repo's `frontend/` is left
-untouched; this repo's copy becomes canonical for this app.
+changes** (Tailwind is sub-project 3) — sole exception: one line in `AudioRecorder.tsx`
+(gate decision E1). The Python repo's `frontend/` is left untouched; this repo's copy
+becomes canonical for this app.
 
 Decisions made with the owner during brainstorming (2026-07-09):
 
@@ -117,12 +117,11 @@ edits only:
   `__API_ROOT__` sentinel check go away; `wsUrl` drops its now-dead absolute `http(s)://`
   branch **and its doc comment describing that branch** *(panel: scope #8)*. Both page
   `index.html` files lose the `data-api-root="__API_ROOT__"` body attribute
-  (`data-v4-transport` stays — unrelated). **E1 (escalated):** a second, independent
-  `dataset.apiRoot` read exists in `pages/index/components/AudioRecorder.tsx`
-  (sendBeacon lease-release). Recommended: one-line edit to import `API_ROOT` from
-  `client.ts`, honoring "deleted entirely" at the cost of a strict reading of "zero
-  component changes". Alternative: accept it as a residual (it degrades gracefully to
-  `/api`). Owner decides at the gate. *(Panel: requirements #2.)*
+  (`data-v4-transport` stays — unrelated). **Gate decision E1:** a second, independent
+  `dataset.apiRoot` read in `pages/index/components/AudioRecorder.tsx` (sendBeacon
+  lease-release) gets a one-line edit to import `API_ROOT` from `client.ts` — honoring
+  "deleted entirely"; recorded as the sole exception to "zero component changes".
+  *(Panel: requirements #2.)*
 - **`web/package.json`:** name `autologger-web`, private. Scripts: `dev`, `build`
   (`tsc --noEmit && vite build`), `typecheck` (`tsc --noEmit`, so the root fan-out doesn't
   need a full build — *panel: assumptions #6*), `lint` / `format` (biome). The `preview`
@@ -138,8 +137,8 @@ edits only:
   assumptions #7.)*
 - Dev URLs keep Python-repo parity: Vite serves pages at
   `http://localhost:5173/src/pages/<page>/index.html`. No new routing invention.
-- **Zero component changes** (E1 excepted, pending gate). Under `web/src/`, only
-  `client.ts`, the two `index.html` files, and (per E1) `AudioRecorder.tsx` are touched.
+- **Zero component changes** (E1's one line excepted). Under `web/src/`, only
+  `client.ts`, the two `index.html` files, and `AudioRecorder.tsx` are touched.
 
 ## Stage 3: server serving changes
 
@@ -268,8 +267,8 @@ requirements #3.)*
 - One manual browser pass before merge on the **production serve path** (login flow with
   real Google creds, session workspace, Companion presence if convenient) — the e2e tier
   can't cover OAuth.
-- `grep -rE '__API_ROOT__|data-api-root|dataset\.apiRoot'` over this repo returns nothing
-  (scope per the E1 gate decision). *(Panel: requirements #2.)*
+- `grep -rE '__API_ROOT__|data-api-root|dataset\.apiRoot'` over this repo returns nothing.
+  *(Panel: requirements #2; enforceable per gate decision E1.)*
 
 ## Risks
 
@@ -349,8 +348,9 @@ the non-hermetic e2e environment; two independently found the dev-auth dead end.
   "deleted entirely" decision and the "zero component changes" mandate conflict on one
   line of one component. Options: (a) one-line edit importing `API_ROOT` from `client.ts`
   (recommended — honors "deleted entirely"; DoD grep then enforceable), or (b) accept as
-  residual (it degrades gracefully to `/api`) and weaken the DoD grep. **Decision:
-  pending.**
+  residual (it degrades gracefully to `/api`) and weaken the DoD grep. **Decision (owner,
+  2026-07-09): option (a) — the one-line edit**, recorded as the sole exception to "zero
+  component changes".
 
 **Minors accepted as residual:** external-CDN dependency of the e2e render (risk-noted);
 fixed e2e port 8791 single-run limitation; `serveStatic`'s extra missing-root log line;
@@ -358,6 +358,12 @@ TypeScript/vite major-version divergence across workspaces (documented as intent
 scenario-2 fresh-DB first-run state (implementation checkpoint); Python-era dev nav warts
 (logout / `href="/"` land on `:5173/`, which Vite serves nothing at — parity, not a
 regression); logo PNGs enter git history (mitigated by pre-commit optimization).
+
+### 2026-07-09 — Post-gate consistency read (light tier)
+
+After the E1 gate decision was applied as targeted edits, a light-tier reviewer swept the
+final document for stale pre-decision language, log/body contradictions, dangling
+cross-references, and inter-section conflicts. Result: **clean** — no fixes required.
 
 **Also verified by the panel (holds):** only two `/static/*` asset references exist
 (logos) — fonts/video/icons are all bundled imports; one `ws: true` proxy entry covers the
