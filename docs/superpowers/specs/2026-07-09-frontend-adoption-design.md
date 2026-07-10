@@ -359,6 +359,23 @@ scenario-2 fresh-DB first-run state (implementation checkpoint); Python-era dev 
 (logout / `href="/"` land on `:5173/`, which Vite serves nothing at — parity, not a
 regression); logo PNGs enter git history (mitigated by pre-commit optimization).
 
+### 2026-07-09 — Implementation deviations (recorded at final whole-branch review)
+
+Two stage-4 mechanisms shipped differently than specified, both discovered and proven
+during implementation, both judged strictly more correct at the final review:
+
+1. **The e2e `.data` wipe lives in Playwright's `webServer.command`, not `globalSetup`.**
+   The installed Playwright boots the webServer *before* running `globalSetups` (verified
+   against its source), so the spec'd globalSetup wipe deleted `DATA_DIR` under the live
+   server. The wipe now runs inside the web-server command itself, reading the same
+   `DATA_DIR` env the server consumes — single source of truth, still exactly once and
+   before boot. `e2e/global-setup.ts` does not exist.
+2. **Smoke scenario 3 asserts the probe via `input[aria-label="Message"][value=…]`, not
+   `hasText`.** While a session is rolling, the event feed renders message cells as
+   inline-edit `<input>`s whose value is invisible to `textContent`/`hasText`. The
+   assertion remains passive (no interaction between POST and assert), and pins the exact
+   live value — stronger than the spec'd form.
+
 ### 2026-07-09 — Post-gate consistency read (light tier)
 
 After the E1 gate decision was applied as targeted edits, a light-tier reviewer swept the
