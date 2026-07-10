@@ -1,9 +1,6 @@
-import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import type { DropdownOption } from '../../../api/types';
 import { Dialog } from '../../../shared/ui/Dialog';
-
-import styles from './EventOptionsModal.module.css';
 
 interface Props {
   type: 'DROPDOWN' | 'ON_OFF';
@@ -56,9 +53,10 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      // Desktop widen. `md:!` beats Dialog's base w-[min(100%,32rem)] within the utilities
-      // layer; md-scoped so the ≤767px bottom-sheet stays full-width.
-      className={clsx(styles.dialogWide, 'md:!w-[min(36rem,96vw)]')}
+      // Desktop widen. `md:!` beats Dialog's base w-[min(100%,32rem)] within the utilities layer;
+      // md-scoped so the ≤767px bottom-sheet stays full-width. (The old .dialogWide base width
+      // was identical and is now gone — this utility is the sole desktop width control.)
+      className="md:!w-[min(36rem,96vw)]"
       title={type === 'DROPDOWN' ? 'Dropdown options' : 'ON / OFF labels'}
     >
       {type === 'DROPDOWN' && (
@@ -67,15 +65,20 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
             Each row is one menu choice. Check &ldquo;Needs context&rdquo; to ask for extra text
             after the user picks it (logged as <span className="mono">Option || context</span>).
           </p>
-          <div className={styles.v6EventOptionsList}>
+          {/* .v6-event-options-list */}
+          <div className="flex flex-col gap-[0.55rem] my-3 max-h-[50vh] overflow-y-auto">
             {localOpts.map((opt, idx) => (
-              <div key={opt.uid} className={styles.v6EventOptionRow}>
-                <label className="field v6-event-option-label">
+              // .v6-event-option-row (orphan v6-* literal classes dropped — no e2e/server/Companion hooks)
+              <div
+                key={opt.uid}
+                className="grid grid-cols-[1fr_auto_auto] gap-x-[0.65rem] gap-y-2 items-end"
+              >
+                <label className="field">
                   <span>Option</span>
                   <input
                     ref={idx === 0 ? firstRef : undefined}
                     type="text"
-                    className="profile-select v6-opt-label"
+                    className="profile-select"
                     maxLength={200}
                     value={opt.label}
                     onChange={(e) =>
@@ -85,10 +88,11 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
                     }
                   />
                 </label>
-                <label className={clsx('field', styles.v6EventOptionNc)}>
+                {/* .v6-event-option-nc: overrides chrome .field (flex-column) to a nowrap row;
+                    the flex-row utility beats legacy chrome by layer order. */}
+                <label className="field flex-row items-center gap-[0.35rem] whitespace-nowrap">
                   <input
                     type="checkbox"
-                    className="v6-opt-nc"
                     checked={opt.needs_context}
                     onChange={(e) =>
                       setLocalOpts((prev) =>
@@ -102,7 +106,7 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
                 </label>
                 <button
                   type="button"
-                  className="btn danger v6-opt-remove"
+                  className="btn danger"
                   onClick={() => setLocalOpts((prev) => prev.filter((o) => o.uid !== opt.uid))}
                 >
                   Remove
@@ -126,13 +130,14 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
       )}
 
       {type === 'ON_OFF' && (
-        <div className="v6-event-onoff-fields">
+        // Orphan v6-* literal classes dropped (no CSS ever, no e2e/server/Companion hooks).
+        <div>
           <label className="field">
             <span>ON label</span>
             <input
               ref={firstRef}
               type="text"
-              className="profile-select v6-onoff-on"
+              className="profile-select"
               maxLength={200}
               value={localOn}
               onChange={(e) => setLocalOn(e.target.value)}
@@ -142,7 +147,7 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
             <span>OFF label</span>
             <input
               type="text"
-              className="profile-select v6-onoff-off"
+              className="profile-select"
               maxLength={200}
               value={localOff}
               onChange={(e) => setLocalOff(e.target.value)}
