@@ -14,7 +14,8 @@ interface Net {
 
 const CIDR_RE = /^(.+)\/(\d{1,3})$/;
 
-/** Strip URL-style [ipv6], zone id (%en0), and shell quotes. */
+/** Strip URL-style [ipv6], zone id (%en0), shell quotes, and IPv4-mapped prefix (::ffff:).
+ * Node sockets report loopback as ::ffff:127.0.0.1; strip the prefix so it matches 127.0.0.1. */
 function normalizeEntry(partIn: string): string {
   let part = partIn.trim();
   if (
@@ -30,6 +31,10 @@ function normalizeEntry(partIn: string): string {
   if (addr.length >= 2 && addr.startsWith('[') && addr.endsWith(']')) addr = addr.slice(1, -1);
   if (addr.includes('%')) addr = addr.split('%', 1)[0];
   addr = addr.trim();
+  // Strip IPv4-mapped IPv6 prefix so ::ffff:127.0.0.1 normalizes to 127.0.0.1.
+  if (addr.toLowerCase().startsWith('::ffff:')) {
+    addr = addr.slice('::ffff:'.length);
+  }
   return bits !== null ? `${addr}/${bits}` : addr;
 }
 

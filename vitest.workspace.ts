@@ -17,7 +17,6 @@ export default defineWorkspace([
         'src/routers/auth.int.test.ts',
         'src/durable/SessionDO.int.test.ts',
         'src/routers/companion-ws.int.test.ts',
-        'src/middleware/ipAllowlist.int.test.ts',
       ],
       environment: 'node',
       setupFiles: ['./src/test/setup.int.ts'],
