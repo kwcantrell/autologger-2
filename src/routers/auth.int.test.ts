@@ -1,12 +1,9 @@
-import { env, fetchMock } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { putOauthState } from '../auth/identity';
-import app from '../index';
+import { app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedUser } from '../test/helpers';
 import { makeKeypair, mintIdToken, mockGoogleJwks, mockGoogleToken } from '../test/oauth';
 
-const envWith = (o: Record<string, string>): typeof env =>
-  ({ ...env, ...o }) as unknown as typeof env;
 const CLIENT = 'test-client';
 const OAUTH_ENV = envWith({
   GOOGLE_CLIENT_ID: CLIENT,
@@ -21,7 +18,6 @@ const OAUTH_ENV = envWith({
 // whose kid is absent from the cached set → verify fails → 400.)
 let KP: Awaited<ReturnType<typeof makeKeypair>>;
 beforeAll(async () => {
-  fetchMock.activate();
   KP = await makeKeypair();
 });
 
