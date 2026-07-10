@@ -4,9 +4,9 @@
 
 **Goal:** Replace every Cloudflare dependency (D1, KV, Durable Objects, R2, Workers Assets, wrangler, Miniflare) with portable Node equivalents so the same Hono app runs on any Node ≥ 22 host, per the approved spec `docs/superpowers/specs/2026-07-09-node-port-and-frontend-adoption-design.md`.
 
-**Architecture:** Additive first (Phases A: new Node modules + a structural seam refactor, all unit-tested while the existing Miniflare test tier stays green), then one cutover task (Phase B: bindings/type flip, app/main split, router edits), then the integration suites are re-pointed at a Node test harness (Phase C), then Cloudflare tooling is deleted (Phase D). Routers keep calling `stub.method(...)`; the six DO store modules and the D1 store modules are not edited except for constructor type names.
+**Architecture:** Additive first (Phases A: new Node modules + a structural seam refactor, all unit-tested while the existing Miniflare test tier stays green), then one cutover task (Phase B: bindings/type flip, app/main split, router edits), then the integration suites are re-pointed at a Node test harness (Phase C), then Cloudflare tooling is deleted (Phase D). Routers keep calling `stub.method(...)`; the six DO store modules and the D1 store modules are not edited except for **type-name-only** changes (constructor param types; `SqlStorageValue` → `SqlValue` where named).
 
-**Tech Stack:** Hono (kept), `@hono/node-server` ^2, `@hono/node-ws` ^1, `better-sqlite3` ^12 (+ `@types/better-sqlite3`), `tsx` (dev runner), `undici` (dev, fetch mocking), vitest 2 (kept), zod + jose (kept).
+**Tech Stack:** Hono (kept), `@hono/node-server` **^1.19** (pinned to `@hono/node-ws`'s peer range — v2 conflicts and npm 9 hard-fails ERESOLVE), `@hono/node-ws` ^1, `better-sqlite3` ^12 (+ `@types/better-sqlite3`), `tsx` (dev runner), `undici` (dev, fetch mocking), vitest 2 (kept), zod + jose (kept).
 
 ## Global Constraints
 
@@ -36,9 +36,11 @@
 - [ ] **Step 1: Add dependencies**
 
 ```bash
-npm install better-sqlite3 @hono/node-server @hono/node-ws
+npm install better-sqlite3 '@hono/node-server@^1.19.11' @hono/node-ws
 npm install -D @types/better-sqlite3 tsx undici
 ```
+
+(`@hono/node-ws@1.x` peer-depends on `@hono/node-server@^1.19.11`; do NOT install node-server v2 — npm 9 hard-fails the peer conflict.)
 
 - [ ] **Step 2: Enable @types/node for typecheck**
 
@@ -225,6 +227,7 @@ git commit -m "feat(node): SqlStorage-shaped SqlShim over better-sqlite3"
 **Files:**
 - Modify: `src/durable/sessionCore.ts`
 - Modify: `src/durable/SessionDO.ts`
+- Modify (type name only): `src/durable/topicStore.ts`, `src/durable/transcriptStore.ts`
 
 **Interfaces:**
 - Produces (in `sessionCore.ts`):
@@ -333,17 +336,21 @@ In the constructor, replace `this.core = new SessionCore(ctx);` with:
 
 Add `import type { SessionCtx } from './sessionCore';` to the imports.
 
-- [ ] **Step 3: Verify the DO stores still bind (binds are `SqlValue`)**
+- [ ] **Step 3: Type-name fix in the two stores that name `SqlStorageValue`**
+
+`src/durable/topicStore.ts` and `src/durable/transcriptStore.ts` each build a binds array typed `SqlStorageValue[]` (locate by content: `const vals: SqlStorageValue[] = []`, and topicStore's `patch[key] as SqlStorageValue`). Change those annotations to `SqlValue` and add `import type { SqlValue } from './sessionCore';` to each file. No logic changes — the values are strings/numbers/null.
+
+- [ ] **Step 4: Verify the DO stores still bind (binds are `SqlValue`)**
 
 The stores pass strings/numbers/null only. Run the full suite:
 
 Run: `npm run typecheck && npm test`
 Expected: green — unit tier and Miniflare tier both pass unchanged (this is the proof the refactor is behavior-preserving).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/durable/sessionCore.ts src/durable/SessionDO.ts
+git add src/durable/sessionCore.ts src/durable/SessionDO.ts src/durable/topicStore.ts src/durable/transcriptStore.ts
 git commit -m "refactor(durable): SessionCore depends on a structural SessionCtx, not DurableObjectState"
 ```
 
@@ -1404,13 +1411,16 @@ export class SessionHub {
   private transcript: TranscriptStore;
   private topics: TopicStore;
   private socketSet = new Set<HubSocket>();
-  private alarmTimer: NodeJS.Timeout | null = null;
+  // ReturnType<> (not NodeJS.Timeout): the Workers ambient types are still loaded
+  // in Phase A and their setTimeout returns number — this stays correct either way.
+  private alarmTimer: ReturnType<typeof setTimeout> | null = null;
   lastTouchedMs = Date.now();
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('foreign_keys = ON'); // spec: both catalog AND session DBs
     this.db.pragma('busy_timeout = 5000');
     const sql = new SqlShim(this.db);
     this.core = new SessionCore({
@@ -1539,7 +1549,7 @@ const DEFAULT_IDLE_MS = 10 * 60_000;
 
 export class SessionHubRegistry {
   private hubs = new Map<string, SessionHub>();
-  private sweeper: NodeJS.Timeout | null = null;
+  private sweeper: ReturnType<typeof setInterval> | null = null;
 
   constructor(private sessionsDir: string) {
     mkdirSync(sessionsDir, { recursive: true });
@@ -1629,19 +1639,33 @@ git commit -m "feat(node): SessionHub + registry replacing SessionDO (txn-per-RP
   // src/node/config.ts
   export function createBindings(procEnv: Record<string, string | undefined>): { bindings: Bindings; close(): void };
   // src/app.ts
-  export function wireApp(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSocket, opts?: { publicDir?: string }): Hono<AppEnv>;
+  export function wireApp(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSocket, opts?: { publicDir?: string; bindings?: Bindings }): Hono<AppEnv>;
   ```
+  **Why `opts.bindings` (load-bearing):** `@hono/node-ws`'s `injectWebSocket` handles the HTTP `upgrade` event itself and calls `app.request(url, { headers }, { incoming, outgoing })` — it NEVER goes through any `serve({ fetch: wrapper })`, so bindings injected only in a fetch wrapper leave every WS connection with `c.env.DB === undefined` (authContext throws, upgrade dies). When `opts.bindings` is provided, `wireApp` registers a **first** middleware that merges them into `c.env` for both the HTTP and upgrade paths. Tests that pass env via `app.request(path, init, env)` simply omit `opts.bindings`.
   End state of this task: `npm run typecheck` green, **unit tier** green, integration tier temporarily offline (excluded), `npm run dev` boots a working server.
+
+- [ ] **Step 0: Inventory gate — enumerate every CF reference before editing**
+
+```bash
+grep -rn "KVNamespace\|D1Database\|D1PreparedStatement\|DurableObject\|R2Range\|R2Bucket\|WebSocketPair\|SqlStorage\|cloudflare:\|env\.ASSETS\|: Env\b\|<Env>\|(env: Env" src/ --include='*.ts' | grep -v '.int.test.ts'
+```
+
+Every hit must map to a step below (or to Tasks 11/13 for the three test-infra files). Known inventory at plan time: `types.ts` (S2), `env.ts` (S3), `auth/identity.ts` + `middleware/auth.ts` (S4), `db/d1.ts` + four stores + `db/d1.test.ts` (S5), `middleware/ipAllowlist.ts` (S6), `routers/_helpers.ts` (S7), `routers/companion.ts` (S8), `routers/audio.ts` (S9), `routers/events.ts` (S10), `index.ts`/`SessionDO.ts` (S12), **`routers/profile.ts` — uses the previously-ambient `Env` type: add `import type { Env } from '../types';`** (do it in this step for profile.ts and any other non-test hit of the `Env`-usage patterns not already listed), `test/setup.int.ts`/`test/helpers.ts`/`test/oauth.ts` (excluded in S1, rewritten in Tasks 11/13). A hit outside this list means the plan missed a file — handle it the same way as its nearest sibling and note it in the commit message.
 
 - [ ] **Step 1: Take the int tier offline (temporarily)**
 
-`tsconfig.json`: add `"exclude": ["src/**/*.int.test.ts"]` and change `types`/`include` to drop the generated Workers types:
+`tsconfig.json`: drop the generated Workers types and exclude the int tests **plus the three CF-coupled test-infra files** (they still import `cloudflare:test` and are rewritten in Tasks 11/13):
 
 ```json
 "types": ["node"],
 ...
 "include": ["src/**/*.ts"],
-"exclude": ["src/**/*.int.test.ts"]
+"exclude": [
+  "src/**/*.int.test.ts",
+  "src/test/setup.int.ts",
+  "src/test/helpers.ts",
+  "src/test/oauth.ts"
+]
 ```
 
 `vitest.workspace.ts` — replace entirely with:
@@ -1746,7 +1770,7 @@ export function cookieSecureForRequest(env: Env, req: Request): boolean {
 }
 ```
 
-Update the call sites in `src/routers/auth.ts` (locate by content — there are two, in the callback cookie-set and logout paths): `cookieSecureForRequest(c.env, c.req.url)` → `cookieSecureForRequest(c.env, c.req.raw)`.
+Update the call site in `src/routers/auth.ts` (locate by content — `cookieSecureForRequest(c.env, c.req.url)`; grep to confirm the count): → `cookieSecureForRequest(c.env, c.req.raw)`.
 
 Update `src/env.test.ts`: the `requireLoginEnabled` cases flip (`''`/undefined → `true`; `'0'`/`'false'`/`'no'` → `false`; `'1'` → `true`), and `cookieSecureForRequest` tests construct `new Request(url)` instead of passing a string (add a case: TRUST_PROXY='1' + `x-forwarded-proto: https` on an `http://` URL → `true`; same header with TRUST_PROXY unset → `false`).
 
@@ -1916,14 +1940,25 @@ import { sessionsRouter } from './routers/sessions';
 import { showsRouter } from './routers/shows';
 import { transcribeRouter } from './routers/transcribe';
 import { ValidationError } from './studio';
-import type { AppEnv } from './types';
+import type { AppEnv, Bindings } from './types';
 
 export function wireApp(
   app: Hono<AppEnv>,
   upgradeWebSocket: UpgradeWebSocket,
-  opts: { publicDir?: string } = {},
+  opts: { publicDir?: string; bindings?: Bindings } = {},
 ): Hono<AppEnv> {
   const publicDir = opts.publicDir ?? './public';
+
+  // Bindings injection must happen HERE, not in a serve() fetch wrapper:
+  // @hono/node-ws routes WebSocket upgrades through app.request() directly,
+  // bypassing any wrapper. Spread keeps the adapter-provided incoming/outgoing.
+  if (opts.bindings) {
+    const b = opts.bindings;
+    app.use('*', async (c, next) => {
+      c.env = { ...b, ...c.env };
+      await next();
+    });
+  }
 
   // Starlette applies middleware in reverse registration order; Hono runs them
   // in registration order. So register ipAllowlist first to keep it outermost.
@@ -2003,15 +2038,13 @@ if (!loopback && !requireLoginEnabled(bindings) && !(bindings.IP_ALLOWLIST || ''
 
 const app = new Hono<AppEnv>();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
-wireApp(app, upgradeWebSocket);
+// Bindings ride in via wireApp's injection middleware — NOT a fetch wrapper —
+// because @hono/node-ws upgrades bypass serve()'s fetch entirely.
+wireApp(app, upgradeWebSocket, { bindings });
 bindings.SESSION_DO.startSweeper();
 
 const server = serve(
-  {
-    fetch: (req, honoEnv) => app.fetch(req, { ...bindings, ...(honoEnv as object) }),
-    port,
-    hostname,
-  },
+  { fetch: app.fetch, port, hostname },
   (info) => console.log(`AutoLogger (Node) listening on http://${hostname}:${info.port}`),
 );
 injectWebSocket(server);
@@ -2047,7 +2080,10 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
 } {
   const dataDir = procEnv.DATA_DIR || './data';
   mkdirSync(join(dataDir, 'sessions'), { recursive: true });
-  mkdirSync(join(dataDir, 'audio'), { recursive: true });
+  // r2 keys already start with "audio/", so the blob root is a sibling dir:
+  // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
+  // so listings/reconciliation never see partial writes.
+  mkdirSync(join(dataDir, 'blobs'), { recursive: true });
   mkdirSync(join(dataDir, 'tmp'), { recursive: true });
 
   const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
@@ -2060,7 +2096,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     DB: new CatalogDb(catalog),
     AUTH: auth,
     SESSION_DO: registry,
-    AUDIO: new BlobStore(join(dataDir, 'audio'), join(dataDir, 'tmp')),
+    AUDIO: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
     PRESENCE: new PresenceRegistry(),
     PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
     GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
@@ -2085,7 +2121,6 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
 }
 ```
 
-Note the `audio/` BlobStore root vs keys: existing r2 keys are `audio/<sid>/…`, so root must be `dataDir` — **correction**: construct `new BlobStore(dataDir, join(dataDir, 'tmp'))` is wrong too (tmp would sit under root). Keys begin with `audio/`, so: `new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'))` and files land at `DATA_DIR/blobs/audio/<sid>/…`. Use that; delete the `mkdirSync(join(dataDir, 'audio'))` line and create `blobs` instead.
 
 - [ ] **Step 12: Delete `src/index.ts` and `src/durable/SessionDO.ts`; fix imports**
 
@@ -2093,24 +2128,22 @@ Note the `audio/` BlobStore root vs keys: existing r2 keys are `audio/<sid>/…`
 
 - [ ] **Step 13: package.json scripts**
 
+Replace the entire `scripts` block with exactly these four (this removes `cf-typegen`, `deploy`, and `migrate:local` now — migrations run at startup; Task 16 only removes the CF *packages*):
+
 ```json
 "scripts": {
   "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
   "start": "tsx --env-file-if-exists=.env src/main.ts",
   "typecheck": "tsc --noEmit",
-  "test": "vitest run",
-  "migrate:local": "node -e \"const{openCatalogDb,applyMigrations}=await import('./src/node/migrate.ts');\" ",
-  ...
+  "test": "vitest run"
 }
 ```
-
-Correction: drop `migrate:local` entirely (migrations run at startup); keep `cf-typegen`/`deploy` deletion for Task 16. Final scripts for this task: `dev`, `start`, `typecheck`, `test`.
 
 - [ ] **Step 14: Verify**
 
 Run: `npm run typecheck` → green.
 Run: `npm test` → unit tier green (integration excluded).
-Run: `printf 'REQUIRE_LOGIN=0\n' > /tmp/claude-smoke.env && DATA_DIR=/tmp/claude-autolog-smoke REQUIRE_LOGIN=0 npx tsx src/main.ts &` then `sleep 2 && curl -s http://127.0.0.1:8787/api/profile | head -c 200; kill %1`
+Run: `DATA_DIR=/tmp/claude-autolog-smoke REQUIRE_LOGIN=0 npx tsx src/main.ts &` then `sleep 2 && curl -s http://127.0.0.1:8787/api/profile | head -c 200; kill %1`
 Expected: JSON profile payload (anonymous profile). Also verify the flipped default: `DATA_DIR=/tmp/claude-autolog-smoke2 npx tsx src/main.ts &` + `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/sessions` → `401`; kill it.
 
 - [ ] **Step 15: Commit**
@@ -2270,14 +2303,15 @@ export function setCompanionPresence(
   },
 ```
 
-`tsconfig.json` — narrow the exclude to the same four files:
+`tsconfig.json` — narrow the exclude: `setup.int.ts` and `helpers.ts` are rewritten in this task so they come OUT of the exclude; `oauth.ts` stays excluded until Task 13:
 
 ```json
 "exclude": [
   "src/routers/auth.int.test.ts",
   "src/durable/SessionDO.int.test.ts",
   "src/routers/companion-ws.int.test.ts",
-  "src/middleware/ipAllowlist.int.test.ts"
+  "src/middleware/ipAllowlist.int.test.ts",
+  "src/test/oauth.ts"
 ]
 ```
 
@@ -2444,7 +2478,7 @@ export function mockGoogleJwks(publicJwk: JsonWebKey): void {
 
 **Fallback (only if a test proves the dispatcher isn't shared — symptom: real network attempt / ENOTFOUND):** replace with a `vi.stubGlobal('fetch', …)` router keyed on `(method, origin+path)` that returns queued `Response` objects; keep the same two exported function signatures.
 
-- [ ] **Step 2: Re-point `auth.int.test.ts` imports** (`cloudflare:test` env → harness env, `../index` app → harness app, same as Task 11 pattern), remove the file from both exclude lists.
+- [ ] **Step 2: Re-point `auth.int.test.ts` imports** (`cloudflare:test` env → harness env, `../index` app → harness app, same as Task 11 pattern), then remove BOTH `src/routers/auth.int.test.ts` and `src/test/oauth.ts` from the tsconfig exclude and the file from the vitest exclude.
 
 - [ ] **Step 3: Run, fix, commit**
 
@@ -2594,9 +2628,10 @@ let port: number;
 beforeAll(async () => {
   const app = new Hono<AppEnv>();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
-  wireApp(app, upgradeWebSocket);
-  // env is a Proxy resolving per-test — the closure reads it at request time.
-  server = serve({ fetch: (req) => app.fetch(req, { ...env }), port: 0, hostname: '127.0.0.1' });
+  // env is a Proxy resolving per-test; wireApp's injection middleware spreads it
+  // at request time, so both HTTP and WS-upgrade paths see the current bindings.
+  wireApp(app, upgradeWebSocket, { bindings: env });
+  server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' });
   injectWebSocket(server);
   port = (server.address() as AddressInfo).port;
 });
@@ -2696,7 +2731,7 @@ npm uninstall wrangler @cloudflare/vitest-pool-workers
 git rm wrangler.jsonc worker-configuration.d.ts
 ```
 
-`tsconfig.json`: confirm `types: ["node"]`, `include: ["src/**/*.ts"]`, no stale excludes. Search for stragglers: `grep -rn "cloudflare\|wrangler\|WebSocketPair\|DurableObject\|KVNamespace\|R2Bucket\|D1Database" src/ package.json tsconfig.json vitest.workspace.ts` — every hit must be a comment describing history or must be removed (update comments that describe CF behavior as current).
+`tsconfig.json`: confirm `types: ["node"]`, `include: ["src/**/*.ts"]`, no stale excludes. Search for stragglers: `grep -rn "cloudflare\|wrangler\|WebSocketPair\|DurableObject\|KVNamespace\|R2Bucket\|R2Range\|D1Database\|SqlStorage" src/ package.json tsconfig.json vitest.workspace.ts` — every hit must be a comment describing history or must be removed (update comments that describe CF behavior as current).
 
 - [ ] **Step 3: `.env.example` + `.gitignore`**
 
@@ -2740,6 +2775,7 @@ Rewrite the architecture sections to describe the Node stack. Required content (
 - Security: client IP = socket address, `TRUST_PROXY=1` delegates to `X-Forwarded-For`/`X-Forwarded-Proto`; `REQUIRE_LOGIN` defaults ON (gate E1); startup warning on open non-loopback binds.
 - Remove: all wrangler/Miniflare/cutover/provisioning sections, the `.dev.vars` references, the "Local-only through phase 7" framing (replaced by "runs anywhere Node 22 runs").
 - Keep: transcription/YouTube import remain `503`; `restart_supported` stays `false` (gate E2); Python-parity contract statement; `public/` is still a reproducible build artifact until sub-project 2.
+- **Known parity windows** (spec — acknowledge so nobody "fixes" them with a cross-DB transaction): catalog projection can be momentarily stale after a crash; ghost metadata rows (segment row whose bytes never landed) have no reaper; uploads buffer up to 50 MB per request in one heap (operational limit — no request-body streaming, no connection cap).
 
 - [ ] **Step 5: Final verification**
 
@@ -2766,4 +2802,16 @@ git commit -m "chore!: remove Cloudflare tooling — AutoLogger is a portable No
 - **Spec coverage:** runtime/entry (T10), config surface incl. `TRUST_PROXY`+E1 (T10, T16), client-IP derivation (T10 S6, T12), D1 adapter decision (T4), migrator + fresh-start rule (T5), pragmas incl. FK (T5, T9), kv without sweep timer (T6, config purge in T10), presence registry (T8, T10 S8), SessionHub full contract — txn-per-RPC, sync invariant, single-slot timer, `expireIfStale` on open, socket roles, idle eviction for fds (T9), blob store — ranges, 416, atomic put, list shape, traversal guard (T7, T10 S9), WS route with pre-upgrade gate (T10 S10, T15), static + transitional `__API_ROOT__` (T10 S11), tests — per-test isolation, undici mock with fallback, hub-direct tests, real WS server (T11–T15), removal list + docs + E2 (T16). Out-of-scope items (transcribe 503, no clustering, no restart) require no task — they're already the code's behavior.
 - **Type consistency:** `SessionCtx`/`AttachedSocket` defined in T3, consumed in T9; `CatalogDb`/`CatalogStmt` defined T4, consumed T10 S5; `Bindings.PRESENCE` defined T10 S2, consumed T10 S8 + T11; `BlobRange`/`InvalidRangeError` defined T7, consumed T10 S9 + app.onError. `getSessionDO` keeps its name/shape.
 - **Placeholders:** none — every code step carries the code; the two "author the prose" steps (T16 S4) and "carry over scenarios from the old file" steps (T14/T15) name the exact required content/source.
-- **Known judgment calls encoded:** blob root is `DATA_DIR/blobs` (keys already start with `audio/`); the E1 default flip lives in `env.ts` with the harness pinning `REQUIRE_LOGIN=0` to preserve existing suite semantics; `HOST` env var added (analogous to `PORT`; spec's config table silence noted).
+- **Known judgment calls encoded:** blob root is `DATA_DIR/blobs` (keys already start with `audio/`); the E1 default flip lives in `env.ts` with the harness pinning `REQUIRE_LOGIN=0` to preserve existing suite semantics; `HOST` env var added (analogous to `PORT`; spec's config table silence noted); vitest lands on TWO node projects (unit + integration) rather than the spec's "single project (or deleted)" — the integration tier needs `setupFiles` the unit tier must not run.
+
+## Plan review log
+
+### 2026-07-09 — Single plan reviewer (spec coverage / buildability / decomposition), fixes applied
+
+- **B1 fixed:** `@hono/node-server` pinned to `^1.19.11` (`@hono/node-ws@1.x` peer range; npm 9 ERESOLVE hard-fails v2).
+- **B2 fixed:** bindings injection moved from a `serve()` fetch wrapper into a `wireApp({ bindings })` first-middleware — `@hono/node-ws` upgrades call `app.request()` directly and bypass any wrapper (WS would have had `c.env.DB === undefined`). `main.ts` and Task 15 updated.
+- **B3 fixed:** Task 3 now includes the `SqlStorageValue` → `SqlValue` type-name edits in `topicStore.ts`/`transcriptStore.ts` (they'd have failed Task 3's green gate).
+- **B4 fixed:** Task 10 gained a Step-0 inventory grep; tsconfig excludes extended to `setup.int.ts`/`helpers.ts`/`oauth.ts` until their rewrite tasks; `profile.ts` gets its `Env` import.
+- **Major fixed:** timer fields typed `ReturnType<typeof setTimeout/setInterval>` (Workers ambient `setTimeout` returns `number` and coexists through Phase A).
+- **Minors fixed:** session DBs get `foreign_keys=ON`; Task 10 S13 scripts block made exact; blob-root correction folded into the code; auth.ts call-site count corrected; unused smoke-env file dropped; Task 16 grep pattern gained `SqlStorage`/`R2Range`; parity-windows README note added; vitest two-project deviation recorded above.
+- **Verified clean by the reviewer:** `SqlStorage` cursor satisfies the Task 3 seam (`toArray()`/`rowsWritten` present in the generated types); better-sqlite3 import/type idioms compile under this tsconfig; `serve()` passes `{incoming}` env on the HTTP path; only `companion-ws.int.test.ts` uses `SELF`; Task 9's test literals match `EventStore.addEvent`; the harness `env` Proxy supports the suites' spreads; migration list matches disk; undici MockAgent risk properly hedged with a fallback.
