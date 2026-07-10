@@ -275,6 +275,14 @@ Update these scripts:
     "lint": "npm run lint -w web && biome check --write e2e playwright.config.ts companion/src",
 ```
 
+**Also extend `biome.json`** — its `files.includes` gates which paths biome processes, and it silently drops any CLI path not matched. Add the companion glob so the `lint` script actually checks companion source (without it, `companion/src` is filtered out and lint is a no-op for this workspace):
+```json
+  "files": {
+    "includes": ["e2e/**/*.ts", "playwright.config.ts", "companion/src/**/*.ts"]
+  }
+```
+Verify with `npm run lint` and confirm the output's "Checked N files" count includes the companion `.ts` files.
+
 - [ ] **Step 11: Install and verify the pin resolved correctly**
 
 Run: `npm install`
