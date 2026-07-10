@@ -4,9 +4,28 @@ import type { DropdownOption, Show } from '../../../api/types';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
 import { Tooltip } from '../../../shared/ui/Tooltip';
-import styles from './EventButtonsTable.module.css';
 import { EventOptionsModal } from './EventOptionsModal';
 import { Select } from './Select';
+
+// Sky-tint reach-in for `.btn.primary` inside the HomeSettings dialog (was
+// `.settings-dialog :global(.btn.primary)` — this table renders inside that dialog).
+// Kept in sync with HomeSettingsModal's HS_BTN_PRIMARY_OVERRIDE.
+const DIALOG_BTN_PRIMARY =
+  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]';
+
+// Compact event-buttons table (--v6-events-row-h/head-h were both 1.5rem = h-6). The legacy
+// `!important` flags on td/dragHandle/colColorCell metrics only beat chrome/legacy rules; as
+// utilities they win by layer order, so they are dropped. `--ev-r/g/b` were never set at runtime,
+// so the row bg resolves to the static fallback rgb(80 90 110).
+const TH_BASE =
+  'h-6 px-[0.35rem] py-0 text-left border-0 align-middle font-semibold text-[rgba(229,238,252,0.55)] text-[0.65rem] tracking-[0.08em] uppercase bg-transparent box-border';
+// Shared row-cell metrics. Padding-x is intentionally NOT here: colDrag/colColorCell need their
+// own tighter padding, and two competing px-[…] utilities on one element resolve by generated-CSS
+// order (not class order) — so each cell supplies its own px explicitly.
+const TD_BASE = 'h-6 min-h-0 max-h-6 py-0 text-left border-0 align-middle leading-none box-border';
+// Non-color / non-drag body cells: card tint + hover brighten (tr is a `group`) + the 0.4rem px.
+const TD_CARD =
+  'px-[0.4rem] bg-[rgb(80_90_110/0.16)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] group-hover:bg-[rgb(80_90_110/0.24)]';
 
 const BUTTON_TYPE_OPTIONS = [
   { value: 'BUTTON', label: 'BUTTON' },
@@ -254,16 +273,20 @@ export function EventButtonsTable({
 
   const editingBtn = editingOptsFor ? buttons.find((b) => b.id === editingOptsFor) : null;
 
+  // .tableWrapReact had no rules (reserved container); the wrapper div stays class-less.
   return (
-    <div className={styles.tableWrapReact}>
+    <div>
       {/* Palette section */}
-      <div className={clsx(styles.paletteBlock, 'admin-settings-block')}>
-        <h3 className={clsx('settings-subheading', styles.eventsSubheading)}>Event colors</h3>
-        <div className={styles.paletteToolbar}>
-          <div className={styles.paletteCluster}>
+      <div className="admin-settings-block mb-4 pb-3 border-b border-v5-border">
+        {/* .eventsSubheading overrides settings-subheading font-size/color, adds spacing/caps. */}
+        <h3 className="settings-subheading m-0 mb-2 text-[0.78rem] tracking-[0.06em] uppercase text-[rgba(229,238,252,0.72)]">
+          Event colors
+        </h3>
+        <div className="flex flex-row flex-wrap items-center justify-start gap-x-[0.85rem] gap-y-[0.6rem] w-full box-border">
+          <div className="flex flex-row flex-wrap items-center justify-start gap-x-[0.65rem] gap-y-[0.45rem] flex-[1_1_12rem] min-w-0">
             <RadioGroup
               ariaLabel="Color palette preset"
-              className={styles.palettePresets}
+              className="flex flex-wrap items-center gap-x-[0.45rem] gap-y-[0.35rem] m-0"
               value={palettePreset}
               onChange={applyPreset}
               options={(['custom', 'default', 'neon', 'desert', 'aqua'] as const).map((id) => ({
@@ -271,16 +294,21 @@ export function EventButtonsTable({
                 label: id.charAt(0).toUpperCase() + id.slice(1),
               }))}
               itemClassName={(_id, checked) =>
-                clsx(styles.presetBtn, checked && styles.presetBtnActive)
+                clsx(
+                  'px-[0.65rem] py-[0.28rem] text-[0.72rem] font-semibold tracking-[0.04em] rounded-full border cursor-pointer',
+                  checked
+                    ? 'border-[rgba(56,189,248,0.55)] bg-[rgba(56,189,248,0.18)] text-[#e8f4ff]'
+                    : 'border-[rgba(255,255,255,0.14)] bg-[rgba(255,255,255,0.06)] text-[rgba(229,238,252,0.88)] hover-always:bg-[rgba(255,255,255,0.1)]',
+                )
               }
             />
             {/* 9 palette swatches; PALETTE_SLOT_INDICES are static values, not .map() indices */}
-            <div className={styles.paletteRow}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-[0.4rem] m-0">
               {PALETTE_SLOT_INDICES.map((slotIdx) => (
                 <label key={slotIdx} title={`Slot ${slotIdx + 1}: ${normPalette[slotIdx]}`}>
                   <input
                     type="color"
-                    className={styles.palSlot}
+                    className="pal-slot"
                     value={normPalette[slotIdx]}
                     onChange={(e) => updatePaletteSlot(slotIdx, e.target.value)}
                   />
@@ -291,9 +319,10 @@ export function EventButtonsTable({
         </div>
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar. .thToolbar row/justify/min-w/flex kept as utilities; the inline style (out of
+          scope until Task 11) still supplies display/gap/wrap/items/margin-bottom. */}
       <div
-        className={styles.thToolbar}
+        className="flex-row justify-end min-w-0 flex-[1_1_auto]"
         style={{
           marginBottom: '0.5rem',
           display: 'flex',
@@ -302,10 +331,13 @@ export function EventButtonsTable({
           alignItems: 'center',
         }}
       >
-        <div className={styles.copyFromCluster}>
-          <span className={styles.copyFromLabel}>Copy Buttons From</span>
+        <div className="flex flex-row flex-wrap items-center gap-x-[0.45rem] gap-y-[0.35rem] min-w-0">
+          {/* .copyFromLabel */}
+          <span className="text-[0.62rem] font-semibold tracking-[0.06em] uppercase text-[rgba(229,238,252,0.5)] whitespace-nowrap">
+            Copy Buttons From
+          </span>
+          {/* .copyFromSelect had no live rule (its #modal-app-settings rule was purged). */}
           <Select
-            className={styles.copyFromSelect}
             value={copyFromId}
             onChange={setCopyFromId}
             disabled={!otherShows.length}
@@ -316,9 +348,10 @@ export function EventButtonsTable({
               label: s.name || s.show_code || s.id,
             }))}
           />
+          {/* .headNewBtn had no live rule; sky-tint comes from the dialog .btn.primary reach-in. */}
           <button
             type="button"
-            className={clsx('btn', 'primary', styles.headNewBtn)}
+            className={clsx('btn primary', DIALOG_BTN_PRIMARY)}
             disabled={!copyFromId}
             onClick={copyFromShow}
           >
@@ -327,7 +360,7 @@ export function EventButtonsTable({
         </div>
         <button
           type="button"
-          className={clsx('btn', 'primary', styles.headNewBtn)}
+          className={clsx('btn primary', DIALOG_BTN_PRIMARY)}
           onClick={addButton}
         >
           Add new button
@@ -335,18 +368,31 @@ export function EventButtonsTable({
       </div>
 
       {/* Event buttons table */}
-      <table className={styles.table} aria-label="Event buttons">
+      <table
+        className="w-full border-separate border-spacing-x-0 border-spacing-y-2 text-[0.75rem]"
+        aria-label="Event buttons"
+      >
         <thead>
-          <tr>
-            <th className={styles.thDrag} scope="col">
-              <span className={styles.srOnly}>Reorder</span>
+          <tr className="h-6">
+            {/* th.thDrag: width 1.85rem, centered, slim padding (!px beats TH_BASE's 0.35rem). */}
+            <th className={clsx(TH_BASE, 'w-[1.85rem] !px-[0.15rem] !text-center')} scope="col">
+              <span className="sr-only">Reorder</span>
             </th>
-            <th scope="col">Event name</th>
-            <th scope="col">Button type</th>
-            <th scope="col">Color</th>
-            <th scope="col">Options</th>
-            <th scope="col" className={styles.thActions}>
-              <span className={styles.srOnly}>Actions</span>
+            <th className={TH_BASE} scope="col">
+              Event name
+            </th>
+            <th className={TH_BASE} scope="col">
+              Button type
+            </th>
+            <th className={TH_BASE} scope="col">
+              Color
+            </th>
+            <th className={TH_BASE} scope="col">
+              Options
+            </th>
+            {/* th.thActions: width 2.5rem, centered. */}
+            <th className={clsx(TH_BASE, 'w-10 !text-center')} scope="col">
+              <span className="sr-only">Actions</span>
             </th>
           </tr>
         </thead>
@@ -363,7 +409,7 @@ export function EventButtonsTable({
             return (
               <tr
                 key={btn.id}
-                className={clsx(styles.btnRow, dragOverIdx === idx && styles.btnRowDragOver)}
+                className={clsx('group h-6', dragOverIdx === idx && 'opacity-[0.55]')}
                 draggable
                 onDragStart={() => setDragIdx(idx)}
                 onDragEnd={() => {
@@ -379,10 +425,17 @@ export function EventButtonsTable({
                   handleDrop(idx);
                 }}
               >
-                <td className={styles.colDrag}>
+                {/* colDrag (first child): own bg, centered, left rounding. */}
+                <td
+                  className={clsx(
+                    TD_BASE,
+                    // !text-center beats TD_BASE's text-left (same-property, CSS-order resolved).
+                    'w-[1.85rem] px-[0.1rem] !text-center bg-[rgba(255,255,255,0.04)] rounded-l-[0.65rem]',
+                  )}
+                >
                   <button
                     type="button"
-                    className={clsx('btn', 'btn-icon', styles.dragHandle)}
+                    className="btn btn-icon cursor-grab text-[rgba(229,238,252,0.55)] p-0 min-w-0 w-[1.45rem] h-6 max-h-6 active:cursor-grabbing"
                     aria-label="Drag to reorder"
                     draggable
                     onDragStart={(e) => {
@@ -394,10 +447,13 @@ export function EventButtonsTable({
                   </button>
                 </td>
 
-                <td className={styles.colNameWrap}>
+                {/* colNameWrap (2nd child): card cell, text-left, extra left padding. */}
+                {/* pl-2 (0.5rem, was td:nth-child(2)) must beat TD_CARD's px-[0.4rem] left;
+                    same-property utilities resolve by CSS order, so force it with `!`. */}
+                <td className={clsx(TD_BASE, TD_CARD, 'text-left !pl-2')}>
                   <input
                     type="text"
-                    className={clsx('profile-select', styles.colName)}
+                    className="profile-select"
                     value={btn.name}
                     maxLength={200}
                     placeholder="Event name"
@@ -405,9 +461,8 @@ export function EventButtonsTable({
                   />
                 </td>
 
-                <td>
+                <td className={clsx(TD_BASE, TD_CARD)}>
                   <Select
-                    className={styles.colType}
                     ariaLabel="Button type"
                     value={btn.type}
                     onChange={(value) => {
@@ -430,12 +485,13 @@ export function EventButtonsTable({
                   />
                 </td>
 
-                <td className={styles.colColorCell}>
+                {/* colColorCell: no card tint; own metrics (p-0, centered, fixed narrow width). */}
+                <td className="h-6 min-h-0 max-h-6 leading-none box-border relative w-[2.35rem] min-w-[2rem] p-0 text-center align-middle cursor-pointer border-0 focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-1 focus-visible:z-[1]">
                   <Popover
                     open={openColorFor === btn.id}
                     onOpenChange={(o) => setOpenColorFor(o ? btn.id : null)}
                     ariaLabel="Event colors"
-                    className={styles.colorPopover}
+                    className="grid grid-cols-[repeat(3,2.75rem)] gap-[0.4rem] p-[0.35rem]"
                     align="start"
                     trigger={
                       <Tooltip content="Pick color">
@@ -460,7 +516,7 @@ export function EventButtonsTable({
                       <button
                         key={hex}
                         type="button"
-                        className={styles.colorPopopt}
+                        className="w-[2.75rem] h-[2.75rem] p-0 m-0 border border-[rgba(255,255,255,0.2)] rounded-[0.4rem] cursor-pointer box-border focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-1"
                         style={{ backgroundColor: hex }}
                         aria-label={`Color ${hex}`}
                         onClick={() => {
@@ -472,10 +528,11 @@ export function EventButtonsTable({
                   </Popover>
                 </td>
 
-                <td className={styles.colOptionsWrap}>
+                {/* colOptionsWrap: card cell, text-left (.colOptionsBtn had no live rule). */}
+                <td className={clsx(TD_BASE, TD_CARD, 'text-left')}>
                   <button
                     type="button"
-                    className={clsx('btn', styles.colOptionsBtn)}
+                    className="btn"
                     disabled={!canEditOpts}
                     onClick={() => canEditOpts && setEditingOptsFor(btn.id)}
                   >
@@ -483,10 +540,12 @@ export function EventButtonsTable({
                   </button>
                 </td>
 
-                <td>
+                {/* Delete (last child): card cell, right rounding + right padding. */}
+                <td className={clsx(TD_BASE, TD_CARD, 'rounded-r-[0.65rem] pr-[0.4rem]')}>
+                  {/* .colDelete: only the svg display:block/shrink-0 rule survived. */}
                   <button
                     type="button"
-                    className={clsx('btn', 'btn-icon', 'danger', styles.colDelete)}
+                    className="btn btn-icon danger [&>svg]:block [&>svg]:shrink-0"
                     aria-label="Remove event"
                     onClick={() => deleteButton(btn.id)}
                   >

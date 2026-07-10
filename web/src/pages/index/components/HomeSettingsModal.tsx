@@ -8,14 +8,49 @@ import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
 import { FpsSelect } from './FpsSelect';
-import styles from './HomeSettingsModal.module.css';
 import { Select } from './Select';
 
-// Compact toolbar-select box (ports legacy .teamSelect/.showSelect): auto width
-// bounded 7–18rem, toolbar row height, slim horizontal padding, centered. `!` so it
-// beats the Select trigger's base utilities; drop when HomeSettingsModal converts.
+// Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width
+// bounded 7–18rem, toolbar row height (2.5rem), slim horizontal padding, centered. `!` so it
+// beats the Select trigger's base utilities.
 const TOOLBAR_SELECT_BOX =
-  '!flex-[1_1_8rem] !w-auto !min-w-[7rem] !max-w-[18rem] !h-[var(--v6-settings-toolbar-row-h)] !min-h-0 !m-0 !self-center !px-[0.65rem] !py-0';
+  '!flex-[1_1_8rem] !w-auto !min-w-[7rem] !max-w-[18rem] !h-[2.5rem] !min-h-0 !m-0 !self-center !px-[0.65rem] !py-0';
+
+// Modal-scoped input chrome reach-in (was `.settings-dialog :global(.profile-select|.num)`):
+// overrides only bg / border / color / radius over the chrome input base; font / padding /
+// width / margin stay from chrome (.profile-select / .num). Same set as NewSessionModal.
+const HS_INPUT_OVERRIDE =
+  'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
+
+// Modal-scoped .btn.primary reach-in (was `.settings-dialog :global(.btn.primary)` + hover):
+// sky tint over chrome's gradient; padding/font stay from chrome. Unguarded hover → hover-always.
+const HS_BTN_PRIMARY_OVERRIDE =
+  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]';
+
+// The `--v6-tab-*` cluster (formerly defined on `.settingsPanel`), applied as arbitrary-property
+// utilities on the settings-panel element so its `.options`/`.section` descendants resolve them.
+// Nearly-opaque panel bg so stacked overlapping tabs don't show through each other.
+const TAB_VARS = [
+  '[--v6-tab-panel-bg:linear-gradient(165deg,rgba(18,24,40,0.995)_0%,rgba(10,13,24,0.995)_100%)]',
+  '[--v6-tab-panel-border:rgba(255,255,255,0.14)]',
+  '[--v6-tab-inactive-bg:linear-gradient(180deg,rgba(26,32,48,0.98)_0%,rgba(12,15,26,0.99)_100%)]',
+  '[--v6-tab-overlap:0.55rem]',
+].join(' ');
+
+// `.section` tab-panel body (shares the panel bg/border with the active tab, radius open at
+// top-left where the tab attaches).
+const SECTION_CLASS =
+  'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-(--v6-tab-panel-border) rounded-[0_0.65rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
+
+// `.profileShowFieldsRow .profileShowField` base + the code/next-ep/fps width variants.
+const FIELD_BASE = 'flex-[1_1_0] min-w-[min(100%,8.5rem)] max-w-full';
+const FIELD_CODE_NEXTEP = 'flex-[0_1_5.5rem] min-w-16 max-w-[6.5rem]';
+const FIELD_FPS = 'flex-[1_1_12rem] min-w-[min(100%,10rem)] max-w-full';
+// `.profileShowFieldsRow` container.
+const FIELDS_ROW =
+  'flex flex-row flex-wrap items-end justify-evenly gap-x-2 gap-y-[0.65rem] w-full box-border';
+// `.profileShowFieldsHead` container.
+const FIELDS_HEAD = 'flex flex-row items-center justify-between gap-3 w-full mb-[0.55rem]';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -257,35 +292,35 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
     <Dialog
       open={isOpen}
       onOpenChange={(o) => !o && onClose()}
-      // Desktop full-screen override. `md:!` reclaims the top/left/transform/size/padding
-      // that Dialog's base utilities now own (legacy .settingsDialog would lose to them);
-      // md-scoped so the ≤767px bottom-sheet is untouched.
-      // On mobile the legacy .settingsDialog height/max-height (calc(100vh-2rem)) used to
-      // win over the sheet base max-height (88dvh) by bundle order — now the sheet's
-      // max-h-[88dvh] utility would beat it, shrinking the sheet. Re-assert the taller box
-      // for ≤767px so the baseline sheet height is preserved (`max-md:!`).
+      // Desktop full-screen override. `md:!` reclaims the top/left/transform/size/padding/flex
+      // that Dialog's base utilities now own (the deleted .settings-dialog rule used to supply
+      // them); md-scoped so the ≤767px bottom-sheet is untouched.
+      // On mobile the .settings-dialog height/max-height (calc(100vh-2rem)) used to win over the
+      // sheet base max-height (88dvh) by layer order — now the sheet's max-h-[88dvh] utility
+      // would beat it, shrinking the sheet. Re-assert the taller box + the flex-column layout
+      // + padding for ≤767px so the baseline sheet is preserved (`max-md:!`).
       className={clsx(
-        styles.settingsDialog,
         'md:!inset-4 md:!top-4 md:!left-4 md:![transform:none] md:!h-[calc(100vh-2rem)] md:!max-h-[calc(100vh-2rem)] md:!w-[calc(100vw-2rem)] md:!max-w-none md:!flex md:!flex-col md:!px-5 md:!pt-4 md:!pb-5',
-        'max-md:!h-[calc(100vh-2rem)] max-md:!max-h-[calc(100vh-2rem)] max-md:!px-5 max-md:!pt-4 max-md:!pb-5',
+        'max-md:!flex max-md:!flex-col max-md:!h-[calc(100vh-2rem)] max-md:!max-h-[calc(100vh-2rem)] max-md:!px-5 max-md:!pt-4 max-md:!pb-5',
       )}
       hideTitle
       title="Settings"
     >
       {/* Header toolbar */}
-      <div className={styles.toolbar}>
-        <div className={styles.toolbarMain}>
-          <h2 id="modal-app-settings-title" className={styles.toolbarTitle}>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] w-full mb-4 box-border min-w-0 shrink-0 items-center gap-x-5 gap-y-3">
+        <div className="flex flex-nowrap items-center justify-start gap-x-4 gap-y-[0.65rem] min-w-0 min-h-[2.5rem] overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch]">
+          <h2
+            id="modal-app-settings-title"
+            className="m-0 p-0 shrink-0 flex items-center self-center min-h-[2.5rem] text-[1rem] font-semibold leading-[1.1] tracking-[0.06em] uppercase text-v5-text"
+          >
             Settings
           </h2>
-          <div className={styles.toolbarSelects}>
+          <div className="flex flex-nowrap items-center self-center gap-x-3 gap-y-2 min-w-0 flex-[1_1_auto]">
             {/* Studio selector */}
             <Select
               id="profile-studio-select"
-              // Legacy .teamSelect/.showSelect box (auto width, toolbar row height,
-              // slim padding) is in @layer legacy and now loses to the Select trigger
-              // utilities — re-assert as `!` utilities until HomeSettingsModal converts.
-              className={clsx(styles.teamSelect, TOOLBAR_SELECT_BOX)}
+              // Compact toolbar box (the .teamSelect layout, now ported into TOOLBAR_SELECT_BOX).
+              className={TOOLBAR_SELECT_BOX}
               ariaLabel="Team"
               value={activeStudioId}
               onChange={handleStudioChange}
@@ -294,7 +329,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             {/* Show selector */}
             <Select
               id="profile-show-select"
-              className={clsx(styles.showSelect, TOOLBAR_SELECT_BOX)}
+              className={TOOLBAR_SELECT_BOX}
               ariaLabel="Show to edit"
               value={activeShowId}
               onChange={setActiveShowId}
@@ -310,85 +345,97 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             />
           </div>
         </div>
-        <div className={styles.toolbarActions}>
+        <div className="flex flex-nowrap items-center self-center shrink-0 gap-[0.2rem] min-h-[2.5rem]">
           <button
             type="button"
-            className="btn primary"
+            className={clsx('btn primary', HS_BTN_PRIMARY_OVERRIDE)}
             id="profile-save"
             disabled={mutation.isPending}
             onClick={handleSave}
           >
             {mutation.isPending ? 'Saving…' : 'Save'}
           </button>
-          <button
-            type="button"
-            className={clsx('btn', styles.toolbarClose)}
-            aria-label="Close"
-            onClick={onClose}
-          >
+          {/* .toolbarClose had no rule of its own (its only rule was purged in Task 2). */}
+          <button type="button" className="btn" aria-label="Close" onClick={onClose}>
             Close
           </button>
         </div>
       </div>
 
       {/* Tabs + content */}
-      <section className={styles.settingsPanel}>
-        <div className={styles.options} role="tablist" aria-label="Settings sections">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`v6-settings-tab-${tab.id}`}
-              className={clsx(styles.option, activeTab === tab.id && styles.optionActive)}
-              aria-selected={activeTab === tab.id}
-              aria-controls={`v6-settings-section-${tab.id}`}
-              tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+      <section className={clsx('flex-[1_1_auto] min-h-0 flex flex-col overflow-hidden', TAB_VARS)}>
+        <div
+          className="flex flex-row flex-nowrap items-end gap-0 mx-0 mt-0 mb-[-1px] px-[0.15rem] pt-[0.35rem] pb-0 relative z-[2] shrink-0 overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]"
+          role="tablist"
+          aria-label="Settings sections"
+        >
+          {tabs.map((tab, tabIdx) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                id={`v6-settings-tab-${tab.id}`}
+                // `.option` base + overlapping-folder-tab look. Per-tab z-index is positional
+                // (was .option:nth-child(n)); the active tab lifts to z-20 (was z-index:20 !important).
+                // first:ml-0 replaces .option:first-child { margin-left:0 }.
+                style={{ zIndex: isActive ? 20 : tabIdx + 1 }}
+                className={clsx(
+                  // Legacy `font: inherit` also inherited the 1.45 line-height; a bare button's UA
+                  // `normal` line-height would shrink each tab box ~2.4px → leading-[inherit].
+                  // Legacy `.option:hover` (0,2,0) outranks `.optionActive` (0,1,0), so the hover
+                  // wash applies to EVERY tab incl. the active one — put it on the base, not a branch.
+                  'relative flex-[0_1_auto] min-w-[min(7.5rem,28vw)] first:!ml-0 ml-[calc(-1*var(--v6-tab-overlap))] text-center font-[inherit] leading-[inherit] text-[0.75rem] font-semibold tracking-[0.04em] uppercase rounded-t-[0.55rem] rounded-b-none border border-b-0 cursor-pointer [transition:transform_0.12s_ease,background_0.12s_ease,color_0.12s_ease,box-shadow_0.12s_ease,border-color_0.12s_ease] hover-always:bg-[linear-gradient(180deg,rgba(34,40,58,0.99)_0%,rgba(18,22,36,0.995)_100%)] hover-always:text-[rgba(229,238,252,0.88)]',
+                  isActive
+                    ? '[transform:translateY(0)] pt-[0.52rem] pb-[0.58rem] px-4 border-[rgba(56,189,248,0.45)] bg-[image:var(--v6-tab-panel-bg)] text-v5-primary [box-shadow:inset_0_1px_0_rgba(255,255,255,0.1),0_-1px_0_0_rgba(56,189,248,0.2),4px_0_14px_rgba(0,0,0,0.28)]'
+                    : '[transform:translateY(3px)] pt-[0.42rem] pb-[0.48rem] px-4 border-(--v6-tab-panel-border) bg-[image:var(--v6-tab-inactive-bg)] text-[rgba(229,238,252,0.55)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06),2px_0_6px_rgba(0,0,0,0.22)]',
+                )}
+                aria-selected={isActive}
+                aria-controls={`v6-settings-section-${tab.id}`}
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* General tab */}
         <div
           id="v6-settings-section-general"
-          className={styles.section}
+          className={SECTION_CLASS}
           role="tabpanel"
           aria-labelledby="v6-settings-tab-general"
           hidden={activeTab !== 'general'}
         >
-          {/* Show details */}
+          {/* Show details. .profileShowFields sets border-b-0 (over admin-settings-block's border). */}
           {currentDraft ? (
-            <div
-              id="profile-show-fields"
-              className={clsx('admin-settings-block', styles.profileShowFields)}
-            >
-              <div className={styles.profileShowFieldsHead}>
-                <h2 className="settings-subheading">Show Details</h2>
+            <div id="profile-show-fields" className="admin-settings-block border-b-0">
+              <div className={FIELDS_HEAD}>
+                {/* .profileShowFieldsHead :global(.settings-subheading) forced margin:0. */}
+                <h2 className="settings-subheading !m-0">Show Details</h2>
               </div>
-              <div className={styles.profileShowFieldsRow}>
-                <label className={clsx('field', styles.profileShowField)}>
+              <div className={FIELDS_ROW}>
+                <label className={clsx('field', FIELD_BASE)}>
                   <span>Name:</span>
                   <input
                     type="text"
                     id="profile-show-name"
-                    className="profile-select"
+                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
                     maxLength={200}
                     autoComplete="off"
                     value={currentDraft.name}
                     onChange={(e) => updateShowDraft({ name: e.target.value })}
                   />
                 </label>
-                <label
-                  className={clsx('field', styles.profileShowField, styles.profileShowFieldCode)}
-                >
+                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
                   <span>Code:</span>
                   <input
                     type="text"
                     id="profile-show-code"
-                    className="profile-select mono"
+                    className={clsx('profile-select mono', HS_INPUT_OVERRIDE)}
                     maxLength={40}
                     autoComplete="off"
                     spellCheck={false}
@@ -396,14 +443,12 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
                     onChange={(e) => updateShowDraft({ show_code: e.target.value.toUpperCase() })}
                   />
                 </label>
-                <label
-                  className={clsx('field', styles.profileShowField, styles.profileShowFieldNextEp)}
-                >
+                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
                   <span>Next Ep:</span>
                   <input
                     type="number"
                     id="profile-show-next-ep"
-                    className="profile-select"
+                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
                     min={1}
                     max={999999}
                     step={1}
@@ -415,10 +460,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
                     }
                   />
                 </label>
-                <label
-                  className={clsx('field', styles.profileShowField, styles.profileShowFieldFps)}
-                  htmlFor="profile-default-fps"
-                >
+                <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">
                   <span>Default Frame Rate:</span>
                   <FpsSelect id="profile-default-fps" value={defaultFps} onChange={setDefaultFps} />
                 </label>
@@ -446,41 +488,44 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
 
           {/* Account section */}
           {profile?.auth.logged_in && profile.auth.user && (
-            <div id="v6-settings-account" className={clsx('admin-settings-block', styles.account)}>
-              <div className={styles.profileShowFieldsHead}>
-                <h2 className="settings-subheading">Account</h2>
+            <div
+              id="v6-settings-account"
+              className="admin-settings-block mt-5 pt-4 border-t border-v5-border"
+            >
+              <div className={FIELDS_HEAD}>
+                <h2 className="settings-subheading !m-0">Account</h2>
               </div>
-              <div className={styles.profileShowFieldsRow}>
-                <label className={clsx('field', styles.profileShowField)}>
+              <div className={FIELDS_ROW}>
+                <label className={clsx('field', FIELD_BASE)}>
                   <span>Account</span>
                   <input
                     type="email"
                     id="profile-account-email"
-                    className="profile-select"
+                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
                     disabled
                     autoComplete="username"
                     value={profile.auth.user.email}
                     readOnly
                   />
                 </label>
-                <label className={clsx('field', styles.profileShowField)}>
+                <label className={clsx('field', FIELD_BASE)}>
                   <span>First name</span>
                   <input
                     type="text"
                     id="profile-account-given"
-                    className="profile-select"
+                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
                     maxLength={200}
                     autoComplete="given-name"
                     value={givenName}
                     onChange={(e) => setGivenName(e.target.value)}
                   />
                 </label>
-                <label className={clsx('field', styles.profileShowField)}>
+                <label className={clsx('field', FIELD_BASE)}>
                   <span>Last name</span>
                   <input
                     type="text"
                     id="profile-account-family"
-                    className="profile-select"
+                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
                     maxLength={200}
                     autoComplete="family-name"
                     value={familyName}
@@ -489,19 +534,24 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
                 </label>
               </div>
               {profile.auth.user.teams.length > 0 && (
-                <div className={styles.accountTeams}>
+                <div className="mt-3">
                   <span className="muted">Teams you can access</span>
-                  <ul id="profile-account-teams" className={styles.accountTeamsList}>
+                  {/* .accountTeamsList: list-disc; color falls back (--v5-fg undefined). */}
+                  <ul
+                    id="profile-account-teams"
+                    className="mt-[0.35rem] mx-0 mb-0 pl-[1.2rem] list-disc text-[rgba(255,255,255,0.88)]"
+                  >
                     {profile.auth.user.teams.map((t) => (
                       <li key={t.id}>{t.name}</li>
                     ))}
                   </ul>
                 </div>
               )}
-              <div className={styles.accountActions}>
+              <div className="mt-4 flex justify-end">
+                {/* .logoutBtn tints the chrome .btn red. */}
                 <a
                   href="/auth/logout"
-                  className={clsx('btn', styles.logoutBtn)}
+                  className="btn text-[#fecaca] bg-[rgba(127,29,29,0.45)] border border-[rgba(248,113,113,0.5)] hover-always:bg-[rgba(153,27,27,0.65)]"
                   id="profile-account-logout"
                 >
                   Log out
@@ -510,8 +560,8 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             </div>
           )}
 
-          {/* Add new show */}
-          <div className={clsx('settings-actions', styles.addShowActions)}>
+          {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color. */}
+          <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
             <button
               type="button"
               className="btn"
@@ -528,14 +578,15 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
         {/* Event Buttons tab */}
         <div
           id="v6-settings-section-events"
-          className={styles.section}
+          className={SECTION_CLASS}
           role="tabpanel"
           aria-labelledby="v6-settings-tab-event-buttons"
           hidden={activeTab !== 'event-buttons'}
         >
           {currentDraft ? (
             <>
-              <p className={clsx('modal-hint', styles.eventsIntro)}>
+              {/* .eventsIntro: margin-top 0 over the .modal-hint base. */}
+              <p className="modal-hint mt-0">
                 With the Custom palette preset, slot colors save automatically. Update button colors
                 maps each event&rsquo;s color to the nearest slot color without changing the
                 palette. Drag rows to set session order (auto-saves).
@@ -564,13 +615,14 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
         {/* Auto Sync tab */}
         <div
           id="v6-settings-section-autosync"
-          className={styles.section}
+          className={SECTION_CLASS}
           role="tabpanel"
           aria-labelledby="v6-settings-tab-autosync"
           hidden={activeTab !== 'autosync'}
         >
           <p className="modal-hint muted">Coming soon.</p>
-          <p className={clsx('modal-hint', styles.autosyncHint)}>
+          {/* .autosyncHint: margin-top 0.35rem. */}
+          <p className="modal-hint mt-[0.35rem]">
             When available, options here will use the team selected in the header above.
           </p>
         </div>
@@ -578,15 +630,16 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
         {/* Debug tab */}
         <div
           id="v6-settings-section-debug"
-          className={styles.section}
+          className={SECTION_CLASS}
           role="tabpanel"
           aria-labelledby="v6-settings-tab-debug"
           hidden={activeTab !== 'debug'}
         >
-          <p className={clsx('modal-hint', styles.sectionLead)}>
+          {/* .sectionLead: margin-top 0, margin-bottom 0.65rem. */}
+          <p className="modal-hint mt-0 mb-[0.65rem]">
             Lag and layout A/B toggles (saved in this browser).
           </p>
-          <div id="v6-settings-perf-debug-mount" className={styles.perfDebugMount} />
+          <div id="v6-settings-perf-debug-mount" className="min-w-0" />
         </div>
       </section>
     </Dialog>
