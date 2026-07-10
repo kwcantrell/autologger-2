@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { useEffect, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import type { ProfilePayload, Show } from '../../../api/types';
+import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
@@ -21,11 +22,6 @@ const TOOLBAR_SELECT_BOX =
 // width / margin stay from chrome (.profile-select / .num). Same set as NewSessionModal.
 const HS_INPUT_OVERRIDE =
   'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
-
-// Modal-scoped .btn.primary reach-in (was `.settings-dialog :global(.btn.primary)` + hover):
-// sky tint over chrome's gradient; padding/font stay from chrome. Unguarded hover → hover-always.
-const HS_BTN_PRIMARY_OVERRIDE =
-  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]';
 
 // The `--v6-tab-*` cluster (formerly defined on `.settingsPanel`), applied as arbitrary-property
 // utilities on the settings-panel element so its `.options`/`.section` descendants resolve them.
@@ -348,7 +344,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
         <div className="flex flex-nowrap items-center self-center shrink-0 gap-[0.2rem] min-h-[2.5rem]">
           <button
             type="button"
-            className={clsx('btn primary', HS_BTN_PRIMARY_OVERRIDE)}
+            className={clsx('btn primary', BTN_PRIMARY_SKY)}
             id="profile-save"
             disabled={mutation.isPending}
             onClick={handleSave}

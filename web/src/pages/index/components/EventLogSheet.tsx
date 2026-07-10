@@ -500,7 +500,7 @@ export function EventLogSheet({ sessionId }: Props) {
             <td
               colSpan={3}
               className={clsx(
-                'font-[family-name:var(--mono)] text-[0.8rem] text-muted whitespace-nowrap',
+                'font-[family-name:var(--font-mono)] text-[0.8rem] text-muted whitespace-nowrap',
                 'faint',
               )}
             />

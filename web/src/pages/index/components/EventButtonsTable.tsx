@@ -1,17 +1,12 @@
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { DropdownOption, Show } from '../../../api/types';
+import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import { EventOptionsModal } from './EventOptionsModal';
 import { Select } from './Select';
-
-// Sky-tint reach-in for `.btn.primary` inside the HomeSettings dialog (was
-// `.settings-dialog :global(.btn.primary)` — this table renders inside that dialog).
-// Kept in sync with HomeSettingsModal's HS_BTN_PRIMARY_OVERRIDE.
-const DIALOG_BTN_PRIMARY =
-  'rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]';
 
 // Compact event-buttons table (--v6-events-row-h/head-h were both 1.5rem = h-6). The legacy
 // `!important` flags on td/dragHandle/colColorCell metrics only beat chrome/legacy rules; as
@@ -351,18 +346,14 @@ export function EventButtonsTable({
           {/* .headNewBtn had no live rule; sky-tint comes from the dialog .btn.primary reach-in. */}
           <button
             type="button"
-            className={clsx('btn primary', DIALOG_BTN_PRIMARY)}
+            className={clsx('btn primary', BTN_PRIMARY_SKY)}
             disabled={!copyFromId}
             onClick={copyFromShow}
           >
             Copy
           </button>
         </div>
-        <button
-          type="button"
-          className={clsx('btn primary', DIALOG_BTN_PRIMARY)}
-          onClick={addButton}
-        >
+        <button type="button" className={clsx('btn primary', BTN_PRIMARY_SKY)} onClick={addButton}>
           Add new button
         </button>
       </div>

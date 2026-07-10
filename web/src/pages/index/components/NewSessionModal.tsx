@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCreateSession } from '../../../api/hooks/useSessions';
 import type { ProfilePayload } from '../../../api/types';
+import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
 import { Select } from './Select';
@@ -265,7 +266,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
               marginLeft: 'auto',
             }}
           >
-            <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
               Use YouTube publish date
             </span>
             <input
@@ -293,7 +294,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
         <div className="tool-row tool-row-session-opts">
           <div className="fps-field">
-            {/* Modal reach-in recolored the label var(--muted) → var(--v5-muted). */}
+            {/* Modal reach-in recolored the label var(--color-muted) → var(--v5-muted). */}
             <span className="fps-field-label text-v5-muted">Frame rate</span>
             <Select
               id="ns-fps-preset"
@@ -349,9 +350,8 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
           <button
             type="submit"
-            // Modal-scoped .btn.primary reach-in (overrides chrome gradient/border with the
-            // sky tint; padding/font stay from chrome). Unguarded hover → hover-always.
-            className="btn primary rounded-v5-sm border-[rgba(56,189,248,0.35)] bg-[rgba(56,189,248,0.14)] text-v5-primary hover-always:bg-[rgba(56,189,248,0.22)]"
+            // Modal-scoped .btn.primary sky-tint reach-in (shared BTN_PRIMARY_SKY).
+            className={clsx('btn primary', BTN_PRIMARY_SKY)}
             id="ns-submit"
             disabled={isPending}
           >
