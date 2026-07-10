@@ -1,0 +1,133 @@
+/*
+ * Design tokens carved from src/autologger/web/static/app.css (Phase 5, v1.14.0).
+ * Imported as a side-effect from each page's main.tsx. Plain `.css` (not `*.module.css`)
+ * because the file's only content is a `:root` rule with no local class exports —
+ * Vite's CSS-Modules pipeline tree-shakes Module files without exports, so a
+ * plain `.css` side-effect import is the pragmatic shape.
+ */
+:root {
+  /* Matte dark slate + noise (see body::before in baseline.css) */
+  --bg: #1e2129;
+  --surface: #252830;
+  --surface-raised: #2c303a; /* feed-table / log-sheet header rows */
+  --surface-btn: #2a2d36; /* .btn base + category-strip buttons */
+  --border: #343842;
+  --text: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #7cb7ff;
+  --accent-dim: #4a8fd9;
+  --danger: #ff6b6b;
+  --radius: 10px;
+  --font: "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --mono: "SF Mono", "Consolas", "Liberation Mono", monospace;
+  /* Self-hosted Google Fonts: Poppins 100/300/400/600; League Gothic variable width */
+  --font-poppins: "Poppins", var(--font);
+  --font-league-gothic: "League Gothic", sans-serif;
+
+  /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
+  --v5-bg: #070b14;
+  --v5-text: #e5eefc;
+  --v5-muted: rgba(229, 238, 252, 0.55);
+  --v5-soft: #94a3b8;
+  --v5-primary: #38bdf8;
+  --v5-primary2: #22d3ee;
+  --v5-danger: #f87171;
+  --v5-line: rgba(148, 163, 184, 0.16);
+  /* Slightly more opaque than old "blur glass" so panels stay readable without backdrop-filter */
+  --v5-glass-top: rgba(19, 27, 48, 0.91);
+  --v5-glass-bot: rgba(11, 16, 30, 0.84);
+  --v5-glass-strong-top: rgba(22, 31, 54, 0.94);
+  --v5-glass-strong-bot: rgba(12, 18, 32, 0.9);
+  /* Stacked: specular haze + tinted body (replaces frosted blur visually) */
+  --v5-glass-face: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 44%),
+    linear-gradient(180deg, var(--v5-glass-top), var(--v5-glass-bot));
+  --v5-glass-face-strong: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
+  --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
+  --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --v5-border: rgba(255, 255, 255, 0.06);
+  --v5-border-strong: rgba(255, 255, 255, 0.1);
+  /* Mock .shadow-glow: lift + hairline + cyan/sky bloom */
+  --v5-shadow-glow:
+    0 1px 0 rgba(255, 255, 255, 0.055),
+    0 22px 60px rgba(2, 8, 23, 0.58),
+    0 0 0 1px rgba(255, 255, 255, 0.048),
+    0 0 128px -36px rgba(56, 189, 248, 0.14),
+    0 0 64px -28px rgba(14, 165, 233, 0.09);
+  --v5-panel-elevate: var(--v5-shadow-glow), var(--v5-glass-rim);
+  --v5-radius-lg: 1.875rem;
+  --v5-radius-md: 1.25rem;
+  --v5-radius-sm: 1rem;
+  --v5-aside-w: 22.5rem;
+  --v5-panel-padding: 1.5rem;
+  --v5-panel-head-main-gap: 0.1rem;
+
+  /* Timeline wave lane: 1.5× app's 3.45rem + integrated vertical margin */
+  --v5-timeline-lane-base: calc(3.45rem + 2 * var(--v4-nav-grid-my, 0.5rem));
+  --v5-timeline-lane-h: calc(var(--v5-timeline-lane-base) * 1.5);
+  --v5-timeline-lane-delta: calc(var(--v5-timeline-lane-base) * 0.5);
+
+  /* V4 design tokens (formerly scoped under `.v4-scratch`; promoted to :root in v1.15.0).
+   * Consumed by Timeline.css, SessionWorkspace.css, EventLogSheet.css, V6Rail.css,
+   * TransportControls.css, CategoryButtonStrip.css, and AppShell.css.
+   * Tokens with no remaining var() consumer were pruned in v1.23.5. */
+  --v4-bar-h: 3.17125rem;
+  --v4-rec-mr: 1.316625rem;
+  --v4-search-mx: 2.30409375rem;
+  --v4-log-top-h: 8.76125rem;
+  --v4-btn-area-pt: 0.7525rem;
+  --v4-btn-area-px: 3.511rem;
+  --v4-grid-gap-y: 0.3225rem;
+  --v4-cat-btn-w: 7.2414375rem;
+  --v4-cat-btn-h: 6.665rem;
+  --v4-ctrl-btn-w: 4.05959375rem;
+  --v4-ctrl-btn-h: 3.81625rem;
+  --v4-ctrl-btn-my: 0.80625rem;
+  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 2);
+  --v4-session-nav-btn-h: calc(var(--v4-ctrl-btn-h) / 2);
+  --v4-clock-box-h: 3.06375rem;
+  --v4-clock-box-mb: 0.5375rem;
+  --v4-clock-box-mv: var(--v4-clock-box-mb);
+  --v4-clock-inner-py: 0.2rem;
+  --v4-clock-inner-h: calc(var(--v4-clock-box-h) - 2px);
+  --v4-clock-label-straddle: 0.34rem;
+  --v4-radius-9: 0.5625rem;
+  --v4-radius-10: 0.625rem;
+  --v4-ext-row-h: 2.63375rem;
+  --v4-tl-row-h: 6.1275rem;
+  --v4-zoom-handle-w: 0.87775rem;
+  --v4-zoom-handle-h: 0.86rem;
+  --v4-nav-edge-m: 1.316625rem;
+  --v4-nav-area-h: calc(var(--v4-ext-row-h) / 2);
+  --v4-nav-grid-my: 0.5rem;
+  --v4-tl-bar-ml: 1.316625rem;
+  --v4-tl-bar-mr: 5.705375rem;
+  --v4-tl-bar-h: 3.5475rem;
+  --v4-icon-nav-back: url("../../assets/icons/icon_nav_back.png");
+  --v4-icon-nav-next: url("../../assets/icons/icon_next_nav.png");
+
+  /* Z-index scale for the floating layers (v1.23.5; rail/toast tokens added with
+   * the Phase 2 Radix normalization). Stack, bottom to top: rail scrim/drawer →
+   * dialog overlay/content → popover → top-float (tooltip, select dropdown,
+   * audio-save busy overlay) → toast. Intra-component stacking (small 1-30
+   * values and the Timeline tooltip layers) stays local to each module. */
+  --z-rail-scrim: 1500;
+  --z-rail-drawer: 1501;
+  --z-dialog-overlay: 5000;
+  --z-dialog-content: 5001;
+  --z-popover: 5300;
+  --z-top-float: 5500;
+  --z-toast: 6000;
+}
+
+/* Universal box-sizing reset (formerly `.v4-scratch *, *::before, *::after` in AppShell.css). */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Body baseline (background-color / color / font-family) and page-content
+ * stacking context live in baseline.css; baseline imports after tokens, so its
+ * v5-flavored body rule wins over the legacy `--bg` / `--text` baseline. */

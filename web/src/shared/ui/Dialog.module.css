@@ -1,0 +1,170 @@
+/* Styled wrapper for @radix-ui/react-dialog. Portal-rendered modal centered
+ * over a semi-opaque overlay. Replaces the hand-rolled .v6-workspace-modal /
+ * .modal-overlay+.modal-card patterns.
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog-overlay);
+  background: rgba(8, 10, 14, 0.72);
+  animation: overlayFadeIn 0.18s ease-out;
+}
+
+.content {
+  composes: glassPanel from '../theme/glass.module.css';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--z-dialog-content);
+  width: min(100%, 32rem);
+  max-height: 90vh;
+  padding: 1.5rem 1.6rem 1.6rem;
+  border-radius: var(--v5-radius-md);
+  overflow-y: auto;
+  outline: none;
+  animation: contentFadeIn 0.2s ease-out;
+}
+
+.content:focus-visible {
+  outline: 2px solid var(--v5-primary);
+  outline-offset: -4px;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--v5-text);
+}
+
+.description {
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--v5-muted);
+}
+
+.body {
+  display: block;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes contentFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 6px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* —— Mobile bottom-sheet variant (phone-first, ≤767px). Same Radix Dialog
+ * primitive as desktop (focus-trap / Escape / scroll-lock / a11y retained);
+ * only the presentation differs. Drag-to-dismiss is wired in Dialog.tsx. —— */
+
+.sheetOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog-overlay);
+  background: rgba(8, 10, 14, 0.72);
+  animation: overlayFadeIn 0.18s ease-out;
+}
+
+.sheetContent {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-dialog-content);
+  width: 100%;
+  max-height: 88dvh;
+  padding: 0.5rem 1.15rem calc(1.4rem + env(safe-area-inset-bottom));
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border-strong);
+  border-bottom: none;
+  border-radius: var(--v5-radius-md) var(--v5-radius-md) 0 0;
+  box-shadow: var(--v5-panel-elevate);
+  color: var(--v5-text);
+  overflow-y: auto;
+  outline: none;
+  will-change: transform;
+  animation: sheetSlideUp 0.26s cubic-bezier(0.22, 1, 0.32, 1);
+}
+
+.sheetContent:focus-visible {
+  outline: 2px solid var(--v5-primary);
+  outline-offset: -4px;
+}
+
+/* Consumer modals pass a `className` carrying desktop-centric box rules
+ * (e.g. NewSessionModal's rail-offset `transform: translate(…)`,
+ * EventOptionsModal's fixed `width`, HomeSettingsModal's `top/left`). Those
+ * are single-class (0,1,0) and land on the same Content node, so they would
+ * otherwise win by bundle order and break the sheet. Compound the class for
+ * (0,2,0) specificity to pin the sheet box. `transform` is reset to `none`
+ * here only: the entrance @keyframes still animates it (animations outrank
+ * author rules) and the drag handler's inline transform still wins (inline
+ * outranks author rules) — so neither is affected. */
+.sheetContent.sheetContent {
+  position: fixed;
+  inset: auto 0 0 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  transform: none;
+}
+
+/* Grab affordance; owns the vertical gesture so the scrollable body still
+ * scrolls. `touch-action: none` keeps the drag from panning the page. */
+.dragHandle {
+  flex-shrink: 0;
+  width: 100%;
+  height: 1.5rem;
+  margin: -0.5rem 0 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  touch-action: none;
+}
+
+.dragHandle::before {
+  content: "";
+  width: 2.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--v5-border-strong);
+}
+
+@keyframes sheetSlideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}

@@ -5,7 +5,7 @@
   "description": "AutoLogger — portable Node server + React frontend (npm workspaces)",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "workspaces": [
     "server",

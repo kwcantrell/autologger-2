@@ -1,0 +1,432 @@
+/**
+ * EventButtonsTable.tsx co-located styles: palette presets/swatches, copy-from toolbar,
+ * the buttons table itself, color popover.
+ *
+ * Extracted from HomeSettingsModal.module.css during Step 10 of the Phase 6 CSS Modules
+ * conversion. Selectors that were `#modal-app-settings .v6-events-*` lose their ID prefix
+ * here; rules that need to beat global `.profile-select` margin/padding keep
+ * `:global(#modal-app-settings)` for specificity.
+ */
+
+/* ---------------- Palette block ---------------- */
+
+.paletteBlock {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--v5-border, rgba(255, 255, 255, 0.1));
+}
+
+.eventsSubheading {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(229, 238, 252, 0.72);
+}
+
+/* Preset chips + nine swatches + New Event Button (single toolbar row when space allows) */
+.paletteToolbar {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem 0.85rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.paletteCluster {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.45rem 0.65rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.palettePresets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  margin: 0;
+}
+
+.presetBtn {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(229, 238, 252, 0.88);
+  cursor: pointer;
+}
+
+.presetBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.presetBtnActive {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(56, 189, 248, 0.18);
+  color: #e8f4ff;
+}
+
+.paletteRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.5rem;
+  margin: 0;
+}
+
+.palSlot {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.palSlot:disabled {
+  cursor: default;
+  opacity: 0.92;
+}
+
+.palSlot::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.palSlot::-webkit-color-swatch {
+  border: none;
+  border-radius: 0.4rem;
+}
+
+.palSlot::-moz-color-swatch {
+  border: none;
+  border-radius: 0.4rem;
+}
+
+/* ---------------- Copy-from toolbar (outside the table) ---------------- */
+
+.thToolbar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem 0.55rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.copyFromCluster {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  min-width: 0;
+}
+
+.copyFromLabel {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(229, 238, 252, 0.5);
+  white-space: nowrap;
+}
+
+:global(#modal-app-settings) .copyFromSelect {
+  min-width: 7.5rem;
+  max-width: 14rem;
+  flex: 1 1 8rem;
+  margin: 0;
+  height: 1.5rem;
+  min-height: 1.5rem;
+  max-height: 1.5rem;
+  padding: 0 0.35rem;
+  font-size: 0.65rem;
+  box-sizing: border-box;
+}
+
+:global(#modal-app-settings) .headNewBtn:global(.btn) {
+  flex: 0 0 auto;
+  height: 1.5rem !important;
+  min-height: 1.5rem !important;
+  max-height: 1.5rem !important;
+  margin: 0 !important;
+  padding: 0 0.55rem !important;
+  font-size: 0.62rem !important;
+  line-height: 1.5rem !important;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* ---------------- Buttons table ---------------- */
+
+.tableWrapReact {
+  /* Container reserved for future scroll/overflow tweaks; currently no rules. */
+}
+
+.table {
+  --v6-events-row-h: 1.5rem;
+  --v6-events-head-h: 1.5rem;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 0.5rem;
+  font-size: 0.75rem;
+}
+
+.table thead tr {
+  height: var(--v6-events-head-h);
+}
+
+.table th {
+  height: var(--v6-events-head-h);
+  padding: 0 0.35rem;
+  padding-block: 0;
+  text-align: left;
+  border: none;
+  vertical-align: middle;
+  font-weight: 600;
+  color: rgba(229, 238, 252, 0.55);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.table th.thDrag {
+  width: 1.85rem;
+  padding: 0 0.15rem;
+  text-align: center;
+}
+
+.table th.thActions {
+  width: 2.5rem;
+  text-align: center;
+}
+
+.table tbody tr.btnRow {
+  height: var(--v6-events-row-h);
+}
+
+.table tbody tr.btnRow td {
+  height: var(--v6-events-row-h) !important;
+  min-height: 0 !important;
+  max-height: var(--v6-events-row-h) !important;
+  padding: 0 0.4rem;
+  padding-block: 0;
+  text-align: left;
+  border: none;
+  vertical-align: middle;
+  line-height: 1;
+  box-sizing: border-box;
+}
+
+.table tbody tr.btnRow td:not(.colColorCell):not(.colDrag) {
+  background-color: rgb(var(--ev-r, 80) var(--ev-g, 90) var(--ev-b, 110) / 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.table tbody tr.btnRow:hover td:not(.colColorCell):not(.colDrag) {
+  background-color: rgb(var(--ev-r, 80) var(--ev-g, 90) var(--ev-b, 110) / 0.24);
+}
+
+.table tbody tr.btnRow td.colDrag {
+  width: 1.85rem;
+  padding: 0 0.1rem;
+  text-align: center;
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.table tbody tr.btnRow td.colDrag .dragHandle {
+  cursor: grab;
+  color: rgba(229, 238, 252, 0.55);
+  padding: 0 !important;
+  min-width: 0 !important;
+  width: 1.45rem !important;
+  height: var(--v6-events-row-h) !important;
+  max-height: var(--v6-events-row-h) !important;
+}
+
+.table tbody tr.btnRow td.colDrag .dragHandle:active {
+  cursor: grabbing;
+}
+
+.table tbody tr.btnRowDragOver {
+  opacity: 0.55;
+}
+
+.table tbody tr.btnRow td:first-child {
+  border-top-left-radius: 0.65rem;
+  border-bottom-left-radius: 0.65rem;
+}
+
+.table tbody tr.btnRow td:nth-child(2) {
+  padding-left: 0.5rem;
+}
+
+.table tbody tr.btnRow td:last-child {
+  border-top-right-radius: 0.65rem;
+  border-bottom-right-radius: 0.65rem;
+  padding-right: 0.4rem;
+}
+
+/* Beat global .profile-select padding/margin (otherwise ~40px row height) */
+:global(#modal-app-settings) .table .colName,
+:global(#modal-app-settings) .table .colType {
+  height: var(--v6-events-row-h) !important;
+  min-height: 0 !important;
+  max-height: var(--v6-events-row-h) !important;
+  margin: 0 !important;
+  padding: 0 0.35rem !important;
+  line-height: calc(var(--v6-events-row-h) - 2px) !important;
+  font-size: 0.65rem !important;
+  box-sizing: border-box !important;
+  width: 100%;
+  vertical-align: middle;
+}
+
+.table select.colType {
+  appearance: auto;
+  cursor: pointer;
+}
+
+.table .colColorCell {
+  position: relative;
+  width: 2.35rem;
+  min-width: 2rem;
+  padding: 0 !important;
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.table .colColorCell:focus-visible {
+  outline: 2px solid var(--v5-primary, #38bdf8);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+:global(#modal-app-settings) .table .colOptionsBtn:global(.btn) {
+  max-width: 100%;
+  height: var(--v6-events-row-h) !important;
+  min-height: 0 !important;
+  max-height: var(--v6-events-row-h) !important;
+  padding: 0 0.4rem !important;
+  font-size: 0.65rem !important;
+  line-height: var(--v6-events-row-h) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* Event name + options: flat control (cell keeps card bg); border when hover / focus */
+.table tbody td.colNameWrap,
+.table tbody td.colOptionsWrap {
+  text-align: left;
+}
+
+:global(#modal-app-settings) .table .colNameWrap .colName {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 0.35rem !important;
+  box-shadow: none !important;
+}
+
+:global(#modal-app-settings) .table .colNameWrap:hover .colName,
+:global(#modal-app-settings) .table .colNameWrap:focus-within .colName {
+  border-color: rgba(56, 189, 248, 0.55) !important;
+}
+
+:global(#modal-app-settings) .table .colOptionsWrap .colOptionsBtn:global(.btn) {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 0.35rem !important;
+  box-shadow: none !important;
+  justify-content: flex-start !important;
+  width: 100%;
+  text-align: left;
+}
+
+:global(#modal-app-settings) .table .colOptionsWrap:hover .colOptionsBtn:not(:disabled),
+:global(#modal-app-settings) .table .colOptionsWrap:focus-within .colOptionsBtn:not(:disabled) {
+  border-color: rgba(56, 189, 248, 0.55) !important;
+}
+
+:global(#modal-app-settings) .table .colDelete:global(.btn-icon.btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--v6-events-row-h) + 0.15rem);
+  min-width: calc(var(--v6-events-row-h) + 0.15rem);
+  height: var(--v6-events-row-h) !important;
+  min-height: 0 !important;
+  max-height: var(--v6-events-row-h) !important;
+  padding: 0 !important;
+  margin: 0;
+  line-height: 0 !important;
+  box-sizing: border-box;
+}
+
+.table .colDelete:global(.btn-icon) svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ---------------- Color picker popover ---------------- */
+
+/* Hosted inside `shared/ui/Popover` — only the swatch-grid layout lives here.
+ * Background/border/shadow come from the Popover wrapper. */
+.colorPopover {
+  display: grid;
+  grid-template-columns: repeat(3, 2.75rem);
+  gap: 0.4rem;
+  padding: 0.35rem;
+}
+
+.colorPopopt {
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.4rem;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.colorPopopt:focus-visible {
+  outline: 2px solid var(--v5-primary, #38bdf8);
+  outline-offset: 1px;
+}
+
+/* ---------------- Visually-hidden helper ---------------- */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

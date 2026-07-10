@@ -1,0 +1,45 @@
+/* Portal-mounted queue stack at bottom-right. Each entry is a glass card
+ * keyed by id; entries auto-dismiss after 3.2s unless `persistent`. */
+
+.toastQueue {
+  position: fixed;
+  z-index: var(--z-toast, 6000);
+  right: 1.25rem;
+  bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-end;
+  pointer-events: none;
+  max-width: min(90vw, 360px);
+}
+
+.toast {
+  pointer-events: auto;
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--v5-text, #e8eaed);
+  background: var(--v5-glass-face-strong, var(--surface, #252830));
+  border: 1px solid var(--v5-border, #343842);
+  border-radius: var(--v5-radius-sm, 0.65rem);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  animation: toastEnter 0.18s ease-out;
+}
+
+.toast.error {
+  border-color: var(--danger, #ff6b6b);
+  color: #ffb4b4;
+}
+
+@keyframes toastEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

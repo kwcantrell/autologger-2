@@ -1,0 +1,339 @@
+import { useCallback, useState } from 'react';
+import { API_ROOT } from '../../api/client';
+import type { AdminDataResponse, AdminStudio, AdminUser } from '../../api/types';
+import logoUrl from '../../assets/logos/logo-autologger-transparent.png';
+import { showToast, Toast } from '../../shared/components/Toast';
+import { Popover, PopoverItem } from '../../shared/ui/Popover';
+
+const TOKEN_KEY = 'autologger_admin_token';
+
+async function fetchAdmin<T>(path: string, token: string, opts: RequestInit = {}): Promise<T> {
+  const url = `${API_ROOT}/${path.replace(/^\//, '')}`;
+  const res = await fetch(url, {
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...opts.headers,
+    },
+    ...opts,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const j = (await res.json()) as { detail?: unknown };
+      if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+    } catch {
+      // ignore
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function AdminUsersPage() {
+  const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) ?? '');
+  const [studios, setStudios] = useState<AdminStudio[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [newTeamId, setNewTeamId] = useState('');
+  const [newTeamName, setNewTeamName] = useState('');
+
+  function saveToken(t: string) {
+    setToken(t);
+    sessionStorage.setItem(TOKEN_KEY, t);
+  }
+
+  const loadAll = useCallback(async () => {
+    if (!token) {
+      showToast('Enter an admin token first', true);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await fetchAdmin<AdminDataResponse>('admin/users', token);
+      setStudios(data.studios_catalog);
+      setUsers(data.users);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Load failed', true);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  async function createTeam() {
+    if (!newTeamId.trim() || !newTeamName.trim()) {
+      showToast('Team ID and name are required', true);
+      return;
+    }
+    try {
+      await fetchAdmin('admin/studios', token, {
+        method: 'POST',
+        body: JSON.stringify({ id: newTeamId.trim(), display_name: newTeamName.trim() }),
+      });
+      setNewTeamId('');
+      setNewTeamName('');
+      showToast('Team created.');
+      await loadAll();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Create failed', true);
+    }
+  }
+
+  async function deleteTeam(studioId: string) {
+    if (!confirm(`Delete team "${studioId}"? This cannot be undone.`)) return;
+    try {
+      await fetchAdmin(`admin/studios/${encodeURIComponent(studioId)}`, token, {
+        method: 'DELETE',
+      });
+      showToast('Team deleted.');
+      await loadAll();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Delete failed', true);
+    }
+  }
+
+  async function addMembership(userId: string, studioId: string) {
+    try {
+      await fetchAdmin(`admin/users/${encodeURIComponent(userId)}/memberships`, token, {
+        method: 'POST',
+        body: JSON.stringify({ studio_id: studioId }),
+      });
+      await loadAll();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed', true);
+    }
+  }
+
+  async function removeMembership(userId: string, studioId: string) {
+    try {
+      await fetchAdmin(
+        `admin/users/${encodeURIComponent(userId)}/memberships/${encodeURIComponent(studioId)}`,
+        token,
+        { method: 'DELETE' },
+      );
+      await loadAll();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed', true);
+    }
+  }
+
+  async function toggleDisabled(user: AdminUser) {
+    const action = user.disabled ? 'enable' : 'disable';
+    try {
+      await fetchAdmin(`admin/users/${encodeURIComponent(user.id)}/${action}`, token, {
+        method: 'POST',
+      });
+      await loadAll();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed', true);
+    }
+  }
+
+  return (
+    <div className="shell">
+      <header className="header header-home">
+        <div className="brand brand-with-logo">
+          <div className="brand-lockup">
+            <img className="brand-logo" src={logoUrl} width={96} height={96} alt="AutoLogger" />
+            <div className="brand-text">
+              <p className="crumb">
+                <a href="/">&larr; Sessions</a>
+              </p>
+              <h1>Admin Users</h1>
+              <p className="tagline">Manage OAuth users and team memberships.</p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="main">
+        <section className="panel settings-panel">
+          {/* Token input */}
+          <label className="field">
+            <span>Admin token</span>
+            <input
+              type="password"
+              id="admin-token"
+              className="profile-select"
+              autoComplete="off"
+              placeholder="AUTOLOGGER_ADMIN_TOKEN"
+              value={token}
+              onChange={(e) => saveToken(e.target.value)}
+            />
+          </label>
+          <div className="settings-actions" style={{ marginBottom: '1.5rem' }}>
+            <button type="button" className="btn primary" onClick={loadAll} disabled={loading}>
+              {loading ? 'Loading…' : 'Load data'}
+            </button>
+          </div>
+
+          {/* Create team */}
+          {studios.length > 0 && (
+            <div className="admin-settings-block">
+              <h2 className="settings-subheading">Create team</h2>
+              <label className="field">
+                <span>Team ID (slug)</span>
+                <input
+                  type="text"
+                  className="profile-select"
+                  placeholder="my-team"
+                  value={newTeamId}
+                  maxLength={63}
+                  onChange={(e) => setNewTeamId(e.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>Display name</span>
+                <input
+                  type="text"
+                  className="profile-select"
+                  placeholder="My Team"
+                  value={newTeamName}
+                  maxLength={200}
+                  onChange={(e) => setNewTeamName(e.target.value)}
+                />
+              </label>
+              <button type="button" className="btn" onClick={createTeam}>
+                Create team
+              </button>
+            </div>
+          )}
+
+          {/* Teams table */}
+          {studios.length > 0 && (
+            <div className="admin-settings-block">
+              <h2 className="settings-subheading">Teams</h2>
+              <table className="admin-table" id="teams-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Built-in</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody id="teams-tbody">
+                  {studios.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <code>{s.id}</code>
+                      </td>
+                      <td>{s.name}</td>
+                      <td>{s.builtin ? 'Yes' : 'No'}</td>
+                      <td>
+                        {!s.builtin && (
+                          <button
+                            type="button"
+                            className="btn danger"
+                            onClick={() => deleteTeam(s.id)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Users table */}
+          {users.length > 0 && (
+            <div className="admin-settings-block">
+              <h2 className="settings-subheading">Users</h2>
+              <table className="admin-table" id="users-table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Teams</th>
+                    <th>Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody id="users-tbody">
+                  {users.map((u) => (
+                    <tr key={u.id} style={{ opacity: u.disabled ? 0.5 : 1 }}>
+                      <td>{u.email}</td>
+                      <td>
+                        {u.given_name} {u.family_name}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {u.memberships.map((sid) => (
+                            <span
+                              key={sid}
+                              style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}
+                            >
+                              <code>{sid}</code>
+                              <button
+                                type="button"
+                                className="btn btn-icon danger"
+                                aria-label={`Remove from ${sid}`}
+                                onClick={() => removeMembership(u.id, sid)}
+                                style={{ fontSize: '10px', padding: '0 4px' }}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                          <Popover
+                            trigger={
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ fontSize: '12px' }}
+                                aria-label={`Add team membership for ${u.email}`}
+                              >
+                                + Add team
+                              </button>
+                            }
+                            align="start"
+                          >
+                            {studios
+                              .filter((s) => !u.memberships.includes(s.id))
+                              .map((s) => (
+                                <PopoverItem key={s.id} onClick={() => addMembership(u.id, s.id)}>
+                                  {s.name}
+                                </PopoverItem>
+                              ))}
+                          </Popover>
+                        </div>
+                      </td>
+                      <td>{u.disabled ? 'Disabled' : 'Active'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className={`btn ${u.disabled ? '' : 'danger'}`}
+                          onClick={() => toggleDisabled(u)}
+                        >
+                          {u.disabled ? 'Enable' : 'Disable'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </main>
+
+      <footer className="footer">
+        <div className="developer-footer">
+          <p className="developer-label">Developed by</p>
+          <img
+            className="developer-logo"
+            src={logoUrl}
+            width={320}
+            height={80}
+            alt="Enny Automations"
+          />
+        </div>
+      </footer>
+      <Toast />
+    </div>
+  );
+}

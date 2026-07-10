@@ -1,0 +1,30 @@
+/* Styled wrapper for @radix-ui/react-tooltip. Provider lives once per page
+ * (mounted in main.tsx) with delayDuration={400}. Tooltips portal to <body>.
+ */
+
+.content {
+  composes: glassPanel from '../theme/glass.module.css';
+  z-index: var(--z-top-float);
+  max-width: 22rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  border-radius: var(--v5-radius-sm);
+  animation: tooltipFadeIn 0.12s ease-out;
+}
+
+.arrow {
+  fill: var(--v5-glass-strong-bot);
+  stroke: var(--v5-border-strong);
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

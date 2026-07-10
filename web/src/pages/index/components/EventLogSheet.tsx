@@ -1,0 +1,486 @@
+import clsx from 'clsx';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useDeleteEvent, useEvents, useUpdateEvent } from '../../../api/hooks/useEvents';
+import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
+import { useShowCategories } from '../../../api/hooks/useShowCategories';
+import type { LogEvent, SessionStatus } from '../../../api/types';
+import { showToast } from '../../../shared/components/Toast';
+import { Popover, PopoverItem } from '../../../shared/ui/Popover';
+import { eventTimelineSec } from '../../../shared/utils/audioClips';
+import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
+import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
+import { EventLogRow, type RowEditValues } from './EventLogRow';
+import styles from './EventLogSheet.module.css';
+import { FeedShell } from './FeedShell';
+import { type ColumnDef, FeedTable } from './FeedTable';
+import feedStyles from './FeedTable.module.css';
+
+// ---------------------------------------------------------------------------
+// Sort
+// ---------------------------------------------------------------------------
+
+type SortKey = 'timecode' | 'utc' | 'category' | 'message';
+type SortState = SharedSortState<SortKey>;
+type SortAction = { type: 'CLICK'; key: SortKey } | { type: 'SET_VIEW_UTC'; utc: boolean };
+
+function sortReducer(state: SortState, action: SortAction): SortState {
+  switch (action.type) {
+    case 'CLICK':
+      return clickSortReducer(state, action.key);
+    case 'SET_VIEW_UTC':
+      if ((action.utc && state.key === 'timecode') || (!action.utc && state.key === 'utc')) {
+        return { key: action.utc ? 'utc' : 'timecode', dir: 'asc' };
+      }
+      return state;
+    default:
+      return state;
+  }
+}
+
+function doSortEvents(
+  events: LogEvent[],
+  sort: SortState,
+  status: SessionStatus | null | undefined,
+): LogEvent[] {
+  const { key, dir } = sort;
+  const d = dir === 'asc' ? 1 : -1;
+  return [...events].sort((a, b) => {
+    if (key === 'timecode') {
+      /* Frame-aware seconds (audioClips space) so same-second events keep frame order. */
+      const ta = eventTimelineSec(a, status);
+      const tb = eventTimelineSec(b, status);
+      if (ta !== tb) return (ta - tb) * d;
+      const ua = new Date(a.wall_time_utc ?? 0).getTime();
+      const ub = new Date(b.wall_time_utc ?? 0).getTime();
+      return (ua - ub) * d;
+    }
+    let va: string | number = '';
+    let vb: string | number = '';
+    if (key === 'utc') {
+      va = new Date(a.wall_time_utc ?? 0).getTime();
+      vb = new Date(b.wall_time_utc ?? 0).getTime();
+    } else if (key === 'category') {
+      va = (a.category_label ?? a.category ?? '').toLowerCase();
+      vb = (b.category_label ?? b.category ?? '').toLowerCase();
+    } else {
+      va = (a.message ?? '').toLowerCase();
+      vb = (b.message ?? '').toLowerCase();
+    }
+    if (va < vb) return -d;
+    if (va > vb) return d;
+    return 0;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Dropdown sub-components
+// ---------------------------------------------------------------------------
+
+function TimeDisplayDropdown({
+  viewUtc,
+  disabled,
+  onChange,
+}: {
+  viewUtc: boolean;
+  disabled: boolean;
+  onChange: (utc: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      ariaLabel="Time display"
+      trigger={
+        <button
+          type="button"
+          className={feedStyles.feedGlassBtn}
+          aria-haspopup="listbox"
+          disabled={disabled}
+        >
+          Time Display
+        </button>
+      }
+    >
+      <PopoverItem
+        role="option"
+        ariaSelected={!viewUtc}
+        selected={!viewUtc}
+        onClick={() => {
+          onChange(false);
+          setOpen(false);
+        }}
+      >
+        Session Time
+      </PopoverItem>
+      <PopoverItem
+        role="option"
+        ariaSelected={viewUtc}
+        selected={viewUtc}
+        onClick={() => {
+          onChange(true);
+          setOpen(false);
+        }}
+      >
+        World Clock
+      </PopoverItem>
+    </Popover>
+  );
+}
+
+function FilterDropdown({
+  showInternal,
+  disabled,
+  onChange,
+}: {
+  showInternal: boolean;
+  disabled: boolean;
+  onChange: (show: boolean) => void;
+}) {
+  return (
+    <Popover
+      ariaLabel="Filter events"
+      trigger={
+        <button
+          type="button"
+          className={feedStyles.feedGlassBtn}
+          aria-haspopup="menu"
+          disabled={disabled}
+        >
+          Filter
+        </button>
+      }
+    >
+      <PopoverItem
+        role="menuitemcheckbox"
+        ariaChecked={showInternal}
+        selected={showInternal}
+        onClick={() => onChange(!showInternal)}
+      >
+        Show internal events
+      </PopoverItem>
+    </Popover>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+interface Props {
+  sessionId: string;
+}
+
+export function EventLogSheet({ sessionId }: Props) {
+  // --- Transport state ---
+  const { data: status } = useSessionStatus(sessionId);
+  const isRolling = Boolean(status?.is_rolling);
+  const isRecording = Boolean(status?.audio_recording_lease_alive);
+  const isLogSheetRolling = isRolling || isRecording;
+  const canBatchEdit = !isLogSheetRolling;
+
+  // --- Data ---
+  const { data: categoriesData } = useShowCategories(sessionId);
+  const [loadedLimit, setLoadedLimit] = useState(200);
+  // Fetch-once + WS-driven invalidation (event.changed) — no polling.
+  const { data, isPending } = useEvents(sessionId, { limit: loadedLimit });
+
+  const categories = categoriesData?.categories ?? [];
+  const events = data?.events ?? [];
+  const total = data?.total ?? 0;
+  const loggedTotal = data?.logged_event_count ?? 0;
+
+  // --- View state ---
+  const [sortState, dispatchSort] = useReducer(sortReducer, { key: 'timecode', dir: 'desc' });
+  const [showInternal, setShowInternal] = useState(true);
+  const [viewUtc, setViewUtc] = useState(false);
+
+  // --- Batch edit ---
+  const [batchEditMode, setBatchEditMode] = useState(false);
+  const [batchEdits, setBatchEdits] = useState<Map<string, RowEditValues>>(new Map());
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
+  const [batchSaving, setBatchSaving] = useState(false);
+
+  // --- Mutations ---
+  const updateEvent = useUpdateEvent(sessionId);
+  const deleteEvent = useDeleteEvent(sessionId);
+
+  // --- Derived ---
+  const inlineEdit = isLogSheetRolling && !batchEditMode;
+
+  const filtered = showInternal
+    ? events
+    : events.filter((e) => e.category.toLowerCase() !== 'internal');
+  const sorted = doSortEvents(filtered, sortState, status);
+
+  // Mirror showInternal onto body so timeline markers can hide internal-cat markers via CSS.
+  useEffect(() => {
+    if (showInternal) {
+      delete document.body.dataset.hideInternal;
+    } else {
+      document.body.dataset.hideInternal = '1';
+    }
+    return () => {
+      delete document.body.dataset.hideInternal;
+    };
+  }, [showInternal]);
+
+  // --- Pagination sentinel ---
+  const sentinelRef = useRef<HTMLTableRowElement>(null);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || events.length >= total) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setLoadedLimit((prev) => prev + 200);
+        }
+      },
+      { rootMargin: '120px', threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [events.length, total]);
+
+  // --- Reset on session change ---
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is a prop, re-run when it changes
+  useEffect(() => {
+    setBatchEditMode(false);
+    setBatchEdits(new Map());
+    setPendingDeleteIds(new Set());
+    setLoadedLimit(200);
+  }, [sessionId]);
+
+  // --- Escape to cancel batch ---
+  useEffect(() => {
+    if (!batchEditMode) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      handleCancelBatch();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  });
+
+  // --- Handlers ---
+
+  const handleEnterBatchEdit = () => {
+    if (!canBatchEdit) {
+      showToast('Stop timecode and recording to use batch edit.', true);
+      return;
+    }
+    setBatchEdits(new Map());
+    setPendingDeleteIds(new Set());
+    setBatchEditMode(true);
+  };
+
+  const handleSaveBatch = async () => {
+    setBatchSaving(true);
+    try {
+      for (const [eventId, edit] of batchEdits) {
+        if (pendingDeleteIds.has(eventId)) continue;
+        await updateEvent.mutateAsync({ eventId, body: edit });
+      }
+      for (const id of pendingDeleteIds) {
+        await deleteEvent.mutateAsync(id);
+      }
+      setBatchEditMode(false);
+      setBatchEdits(new Map());
+      setPendingDeleteIds(new Set());
+      showToast('Changes saved.');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Save failed.', true);
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const handleCancelBatch = () => {
+    const anyDirty = pendingDeleteIds.size > 0 || batchEdits.size > 0;
+    if (
+      anyDirty &&
+      !window.confirm(
+        'Discard all unsaved changes to the log sheet?\n\nOK = Discard and exit edit mode\nCancel = Keep editing',
+      )
+    ) {
+      return;
+    }
+    setBatchEditMode(false);
+    setBatchEdits(new Map());
+    setPendingDeleteIds(new Set());
+  };
+
+  const handleInlineSave = useCallback(
+    async (event: LogEvent, values: RowEditValues) => {
+      try {
+        await updateEvent.mutateAsync({ eventId: event.event_id, body: values });
+        showToast('Updated.');
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Update failed.', true);
+      }
+    },
+    [updateEvent],
+  );
+
+  const handleBatchChange = useCallback((eventId: string, values: RowEditValues) => {
+    setBatchEdits((prev) => new Map(prev).set(eventId, values));
+  }, []);
+
+  const handleDelete = useCallback(
+    async (eventId: string) => {
+      if (batchEditMode) {
+        setPendingDeleteIds((prev) => new Set([...prev, eventId]));
+        return;
+      }
+      if (!window.confirm('Delete this log row?')) return;
+      try {
+        await deleteEvent.mutateAsync(eventId);
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : 'Delete failed.', true);
+      }
+    },
+    [batchEditMode, deleteEvent],
+  );
+
+  const handleUndelete = useCallback((eventId: string) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+  }, []);
+
+  const handleSetViewUtc = (utc: boolean) => {
+    setViewUtc(utc);
+    dispatchSort({ type: 'SET_VIEW_UTC', utc });
+  };
+
+  // --- Column definitions (time column label/sortKey are dynamic) ---
+  const eventColumns: ColumnDef[] = [
+    {
+      key: 'time',
+      label: viewUtc ? 'World Clock' : 'Session Time',
+      sortKey: viewUtc ? 'utc' : 'timecode',
+      thModifier: 'feedThTime',
+    },
+    { key: 'category', label: 'Event', sortKey: 'category', thModifier: 'feedThCategory' },
+    { key: 'message', label: 'Message', sortKey: 'message', thModifier: 'feedThMessage' },
+  ];
+
+  const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
+
+  const toolbar = (
+    <>
+      {!batchEditMode && (
+        <button
+          type="button"
+          className={feedStyles.feedGlassBtn}
+          disabled={!canBatchEdit}
+          title={
+            canBatchEdit
+              ? 'Edit multiple rows; changes apply when you click Save changes.'
+              : 'Available when timecode is stopped and audio is not recording.'
+          }
+          onClick={handleEnterBatchEdit}
+        >
+          Edit
+        </button>
+      )}
+      {batchEditMode && (
+        <span className={styles.v5EventFeedToolbarBatch}>
+          <button
+            type="button"
+            className={clsx(feedStyles.feedGlassBtn, feedStyles.feedGlassBtnPrimary)}
+            disabled={batchSaving}
+            onClick={() => handleSaveBatch().catch(() => {})}
+          >
+            Save changes
+          </button>
+          <button
+            type="button"
+            className={feedStyles.feedGlassBtn}
+            disabled={batchSaving}
+            onClick={handleCancelBatch}
+          >
+            Cancel
+          </button>
+        </span>
+      )}
+      <TimeDisplayDropdown viewUtc={viewUtc} disabled={batchEditMode} onChange={handleSetViewUtc} />
+      <FilterDropdown
+        showInternal={showInternal}
+        disabled={batchEditMode}
+        onChange={setShowInternal}
+      />
+    </>
+  );
+
+  const tableClassName = clsx(
+    styles.sheet,
+    styles.sheetDense,
+    batchEditMode && styles.logSheetBatchEdit,
+  );
+
+  return (
+    <FeedShell
+      countLabel={countLabel}
+      headerId="v5-event-feed-head"
+      feedAriaLabel="Event feed"
+      toolbar={toolbar}
+      toolbarAriaLabel="Event feed tools"
+      logBottomId="v4-log-bottom"
+      sheetId="v4-log-sheet"
+      after={
+        <div className={styles.v5FeedStateInputs} aria-hidden="true">
+          <input type="checkbox" id="view-utc-log" tabIndex={-1} readOnly checked={viewUtc} />
+          <input
+            type="checkbox"
+            id="show-internal-log"
+            tabIndex={-1}
+            readOnly
+            checked={showInternal}
+          />
+        </div>
+      }
+    >
+      <FeedTable
+        columns={eventColumns}
+        sortKey={sortState.key}
+        sortDir={sortState.dir}
+        onSort={(k) => dispatchSort({ type: 'CLICK', key: k as SortKey })}
+        tableClassName={tableClassName}
+        isEmpty={sorted.length === 0 && !isPending}
+        emptyMessage={events.length === 0 ? '— No logged items yet.' : '— No rows visible.'}
+        colgroup={
+          <colgroup>
+            <col className="col-timecode" />
+            <col className="col-category" />
+            <col className="col-message" />
+          </colgroup>
+        }
+      >
+        {sorted.map((ev) => (
+          <EventLogRow
+            key={ev.event_id}
+            event={ev}
+            categories={categories}
+            inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
+            batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
+            pendingDelete={pendingDeleteIds.has(ev.event_id)}
+            viewUtc={viewUtc}
+            batchValues={batchEdits.get(ev.event_id) ?? null}
+            onInlineSave={handleInlineSave}
+            onBatchChange={handleBatchChange}
+            onDelete={handleDelete}
+            onUndelete={handleUndelete}
+          />
+        ))}
+        {events.length < total && (
+          <tr ref={sentinelRef} className={styles.logSheetSentinel}>
+            <td colSpan={3} className={clsx(styles.utc, 'faint')} />
+          </tr>
+        )}
+      </FeedTable>
+    </FeedShell>
+  );
+}

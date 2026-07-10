@@ -1,0 +1,126 @@
+/* Styled wrapper for @radix-ui/react-select. Trigger consumes v5 glass tokens;
+ * Content is portal-rendered to <body>, so styling is global by virtue of the
+ * portal — hashed module classes stay scoped via Radix's `data-*` attributes.
+ */
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  color: var(--v5-text);
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border-strong);
+  border-radius: var(--v5-radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  outline: none;
+}
+
+.trigger:hover:not([data-disabled]) {
+  border-color: var(--v5-primary);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--v5-primary);
+  outline-offset: 2px;
+}
+
+.trigger[data-state="open"] {
+  border-color: var(--v5-primary);
+}
+
+.trigger[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.trigger[data-placeholder] {
+  color: var(--v5-muted);
+}
+
+.icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--v5-muted);
+  transition: transform 0.12s ease, color 0.12s ease;
+}
+
+.trigger[data-state="open"] .icon {
+  transform: rotate(180deg);
+  color: var(--v5-primary);
+}
+
+.content {
+  composes: glassPanel from '../../../shared/theme/glass.module.css';
+  /* Must sit above the Dialog content (--z-dialog-content) when
+   * a Select is used inside a Radix Dialog. Stays below `--z-toast: 6000`. */
+  z-index: var(--z-top-float);
+  min-width: var(--radix-select-trigger-width);
+  max-height: var(--radix-select-content-available-height);
+  padding: 0.35rem;
+  border-radius: var(--v5-radius-md);
+  overflow: hidden;
+}
+
+.viewport {
+  padding: 0;
+}
+
+.scrollBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.4rem;
+  font-size: 0.65rem;
+  color: var(--v5-muted);
+  background: transparent;
+  cursor: default;
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 1.75rem 0.45rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--v5-text);
+  border-radius: calc(var(--v5-radius-md) - 6px);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+
+.item[data-highlighted],
+.item[data-state="checked"] {
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--v5-primary);
+}
+
+.item[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.itemIndicator {
+  position: absolute;
+  right: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--v5-primary);
+  font-size: 0.7rem;
+}

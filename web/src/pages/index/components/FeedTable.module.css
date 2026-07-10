@@ -1,0 +1,274 @@
+/**
+ * FeedTable + row + toolbar chrome shared across the three feeds rendered inside
+ * SessionWorkspace's tab panel (Event Feed / Transcribe / Topics).
+ *
+ * Carved out of AppShell.module.css and EventLogSheet.css in Phase 6 Step 14
+ * (v1.16.0) per the Step 9 split pattern — DOM is rendered by FeedTable.tsx,
+ * TopicsRow.tsx, TranscribeRow.tsx, EventLogSheet.tsx, TopicsFeed.tsx, and
+ * TranscribeFeed.tsx, so the styles live here next to them.
+ *
+ * `:global()` is reserved for ancestor / sibling hooks that other components
+ * still own:
+ *   - `.v5-transcribe-feed` / `.v5-topics-feed` are passed as plain modifier
+ *     strings into FeedShell so each FeedShell.tsx call can flag its layout
+ *     intent without importing this module.
+ *   - `.mono` is the global font helper from `shared/theme/chrome.css`.
+ */
+
+/* ----- Feed wrapper (Transcribe/Topics flex column) ----------------------- */
+:global(.v5-transcribe-feed),
+:global(.v5-topics-feed) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ----- Toolbar status bits ------------------------------------------------ */
+.feedError {
+  font-size: 0.78rem;
+  color: var(--v5-danger);
+  margin-left: 0.5rem;
+}
+
+/* ----- Table shell -------------------------------------------------------- */
+/* OverlayScrollbars host element. Native overflow/scrollbar styling is now
+ * owned by the library — we only set the box sizing here. */
+.feedTableWrap {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Phone-first (≤767px = BP.md - 1): the workspace stacks and the page itself
+ * scrolls (see SessionWorkspace.module.css), so the zero flex-basis that
+ * fills the locked desktop viewport collapses to 0 height. Size to the rows
+ * instead, capped so a long feed scrolls internally rather than burying the
+ * end of the page. */
+@media (max-width: 767px) {
+  .feedTableWrap,
+  :global(.v5-transcribe-feed),
+  :global(.v5-topics-feed) {
+    flex: 0 0 auto;
+    max-height: 70vh;
+    max-height: 70dvh;
+  }
+}
+
+.feedTable {
+  width: 100%;
+  border-collapse: collapse;
+  /* Matches Event Feed's `.sheet-dense td { font-size: 0.84rem }` so body rows
+   * render at the same size across Event / Transcribe / Topics. */
+  font-size: 0.84rem;
+}
+
+/* ----- Header cells ------------------------------------------------------- */
+/* Header styling intentionally matches Event Feed's `.sheet th` +
+ * `.sheet-dense th` combination (EventLogSheet.css) so all three feeds render
+ * identical headers regardless of whether the table also carries the legacy
+ * `.sheet sheet-dense` classes. */
+.feedTh {
+  position: sticky;
+  top: 0;
+  padding: 0.38rem 0.55rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.feedThTime     { width: 6.5rem; }
+.feedThSpeaker  { width: 8rem; }
+.feedThWord     { min-width: 10rem; }
+.feedThDuration { width: 6rem; }
+.feedThLevel    { width: 4rem; }
+.feedThSummary  { min-width: 14rem; }
+.feedThActions  { width: 2rem; }
+.feedThCategory { width: 8rem; }
+.feedThMessage  { min-width: 12rem; }
+
+.feedTh button {
+  -moz-appearance: none;
+  appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.feedTh button:hover {
+  color: var(--v5-primary);
+}
+
+.feedTh.sortAsc button::after {
+  content: ' ↑';
+  color: var(--v5-primary);
+}
+
+.feedTh.sortDesc button::after {
+  content: ' ↓';
+  color: var(--v5-primary);
+}
+
+/* ----- Row + cells -------------------------------------------------------- */
+.feedRow:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Default cell color mirrors Event Feed's internal-row `color: var(--muted)` so
+ * Transcribe and Topics body columns render in the same light grey instead of
+ * inheriting the default `--v5-text` white. The `Time` modifier below overrides
+ * to blue (matching `.sheet .tc`). */
+.feedCell {
+  padding: 0.1rem 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  vertical-align: middle;
+  color: var(--muted);
+}
+
+/* Time column intentionally mirrors `.sheet .tc` in EventLogSheet.css so
+ * Transcribe and Topics feeds render the timecode column blue + monospaced
+ * like Event Feed. */
+.feedCellTime {
+  font-family: var(--mono);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.feedCellDuration input,
+.feedCellLevel input {
+  max-width: 5rem;
+}
+
+/* Topics-only: tall summary rows top-align their short sibling cells with the
+ * first line of the wrapped summary. Anchored to `.feedCell` so the (0,2,0)
+ * specificity beats the shared `.feedCell { vertical-align: middle }` (0,1,0)
+ * regardless of CSS-module bundle order. */
+.feedCell.feedCellTop {
+  vertical-align: top;
+}
+
+/* ----- Inline input ------------------------------------------------------- */
+.feedInlineInput {
+  width: 100%;
+  padding: 0.18rem 0.3rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.feedInlineInput[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.feedInlineInput[type="number"]::-webkit-inner-spin-button,
+.feedInlineInput[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.feedInlineInput:focus {
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.feedInlineInput:global(.mono) {
+  font-family: var(--mono-font, monospace);
+}
+
+/* Topics-only: composes with `.feedInlineInput` (transparent border, padding,
+ * focus ring) and turns the summary field into a wrapping, auto-growing
+ * textarea. JS (`TopicsRow.tsx`) sets `height` to `scrollHeight` on every text
+ * / width change, so `overflow: hidden` means the row grows instead of showing
+ * an in-cell scrollbar. `overflow-wrap: anywhere` keeps a long unbroken token
+ * (e.g. a URL) from forcing horizontal overflow. */
+.feedSummaryTextarea {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1.6rem;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* ----- Empty state row ---------------------------------------------------- */
+/* Anchored to `.feedTable` so it beats EventLogSheet.css's `.sheet td`: the
+ * anchor lifts specificity to (0,2,0), above `.sheet td` (0,1,1). Without it,
+ * bare `.feedEmpty` (0,1,0) loses to `.sheet td` and the Event Feed empty
+ * state ends up left-aligned with the small `.sheet td` padding. */
+.feedTable .feedEmpty {
+  padding: 1.35rem 1rem;
+  color: var(--v5-muted);
+  font-size: 0.85rem;
+  font-style: normal;
+  text-align: center;
+  border: 1px solid var(--v5-border);
+  border-radius: var(--v5-radius-md);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* ----- Glass action buttons (toolbar) ------------------------------------- */
+/* Rendered by EventLogSheet.tsx (Edit / Save changes / Cancel + dropdown
+ * triggers), TopicsFeed.tsx (Auto Generate / Insert), TranscribeFeed.tsx
+ * (Auto Generate / Insert). Moved out of EventLogSheet.css's `#v4-log-session`
+ * anchor — hashed class identity makes the ancestor specificity prefix
+ * unnecessary. */
+.feedGlassBtn {
+  box-sizing: border-box;
+  padding: 0.55rem 1.5rem;
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: var(--v5-radius-sm);
+  border: 1px solid var(--v5-border);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.08), rgba(15, 23, 42, 0.45));
+  color: rgba(248, 250, 252, 0.92);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.feedGlassBtn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--v5-primary) 45%, var(--v5-border));
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.1), rgba(15, 23, 42, 0.5));
+}
+
+.feedGlassBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.feedGlassBtnPrimary {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: linear-gradient(165deg, rgba(56, 189, 248, 0.16), rgba(15, 23, 42, 0.5));
+  color: var(--v5-primary);
+}
+
+.feedGlassBtnPrimary:hover:not(:disabled) {
+  background: linear-gradient(165deg, rgba(56, 189, 248, 0.24), rgba(15, 23, 42, 0.52));
+}

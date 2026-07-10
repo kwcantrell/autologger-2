@@ -1,0 +1,140 @@
+/**
+ * NewSessionModal.tsx co-located styles. Carved from v6-app-shell.css (Phase 2, v1.10.0).
+ * Converted to *.module.css in Phase 6 (v1.15.0); the single local class is hash-scoped
+ * and consumed via `styles.v6NewSessionModalTitleRow` (camelCaseOnly).
+ */
+
+/* New session modal header row: plus + gap + title */
+.v6-new-session-modal__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--v6-rail-gap);
+}
+
+.v6-new-session-modal__title-row svg {
+  flex-shrink: 0;
+  color: rgba(229, 238, 252, 0.72);
+}
+
+.v6-new-session-modal__title-row h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* Dialog override + head row (was .v6-workspace-modal__head).
+ *
+ * The legacy `.v6-workspace-modal` was `position: absolute; inset: 0` inside
+ * `.main-v3` so it centered in the workspace area (right of the V6Rail).
+ * Radix Dialog portals to `document.body` and centers in the viewport, which
+ * shifts the modal leftward over the rail. Compensate by translating the
+ * content right by half the expanded rail width so the visual center matches
+ * the pre-Phase-2 layout. */
+.new-session-dialog {
+  /* var(--v6-rail-w-expanded) is 16.25rem; halve it for the offset. */
+  transform: translate(calc(-50% + 8.125rem), -50%);
+}
+
+.v6-new-session-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.v6-new-session-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--v5-text, #eaf2ff);
+}
+
+.v6-new-session-close {
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--v5-border);
+  border-radius: var(--v5-radius-sm, 0.65rem);
+  color: var(--v5-muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.v6-new-session-close:hover {
+  color: var(--v5-text);
+  border-color: var(--v5-border-strong);
+}
+
+/* Restore the in-dialog primary button tint + input chrome that the legacy
+ * `.main-v3 .v6-workspace-modal …` rules used to provide before the Phase 2
+ * shell deletion. Scoped under `.new-session-dialog` so other primary buttons
+ * (rail, etc.) keep their existing look. */
+.new-session-dialog :global(.btn.primary) {
+  border-radius: var(--v5-radius-sm);
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--v5-primary);
+}
+
+.new-session-dialog :global(.btn.primary:hover) {
+  background: rgba(56, 189, 248, 0.22);
+}
+
+.new-session-dialog :global(.btn:not(.primary)) {
+  border-radius: var(--v5-radius-sm);
+  border: 1px solid var(--v5-border-strong);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.new-session-dialog :global(.btn:not(.primary):hover) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.new-session-dialog :global(.profile-select),
+.new-session-dialog :global(.fps-select),
+.new-session-dialog :global(.num),
+.new-session-dialog :global(.new-session-form input) {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--v5-border-strong);
+  color: var(--v5-text);
+  border-radius: 0.5rem;
+}
+
+.new-session-dialog :global(.fps-field-label) {
+  color: var(--v5-muted);
+}
+
+/* The Radix `Select` trigger is a button, so the `.btn:not(.primary)` rule
+ * above would tint the show / frame-rate selects. Knock that override out so
+ * the Select wrapper's own glass styling wins. */
+.new-session-dialog [role="combobox"] {
+  border-radius: var(--v5-radius-md);
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border-strong);
+  color: var(--v5-text);
+}
+
+.new-session-dialog [role="combobox"]:hover {
+  background: var(--v5-glass-face-strong);
+}
+
+/* Frame rate trigger: keep inside the 14rem .fps-field column instead of
+ * stretching to the full row width. The legacy native <select> sized to its
+ * label content; the Radix trigger is full-width by default. */
+.new-session-dialog :global(#ns-fps-preset) {
+  width: 100%;
+  max-width: 14rem;
+  min-width: 0;
+}

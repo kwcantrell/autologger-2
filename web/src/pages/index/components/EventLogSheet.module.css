@@ -1,0 +1,457 @@
+/**
+ * EventLogSheet.tsx + EventLogRow co-located styles. Converted from
+ * EventLogSheet.css to a true CSS Module in Phase 6 (v1.16.0). Hashed
+ * classes are owned by EventLogSheet (table + dropdown chrome) or
+ * EventLogRow (cell/row primitives — EventLogRow imports this module).
+ *
+ * `:global()` is reserved for chrome rendered by FeedShell (shared with
+ * Transcribe and Topics feeds) and the `#v4-log-session` ancestor pivot
+ * (rendered by SessionWorkspace).
+ *
+ * Original carve-outs: app.css (Phase 5, v1.14.0), v5-ui.css (Phase 3,
+ * v1.12.0), v4-scratch.css (Phase 4, v1.13.0).
+ */
+
+/* ----- Sheet table base (.sheet on <table>) ------------------------------ */
+.sheet {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.sheet th,
+.sheet td {
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.sheet th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  z-index: 1;
+  text-align: center;
+}
+
+.sheet tbody tr:hover td {
+  background: rgba(124, 183, 255, 0.06);
+}
+
+.sheet .tc {
+  font-family: var(--mono);
+  color: var(--accent);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sheet td.tc,
+.sheet td.tc * {
+  cursor: pointer !important;
+}
+
+.sheet .utc {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.sheet .msg {
+  max-width: 22rem;
+}
+
+/* ----- Sheet density modifier ------------------------------------------- */
+.sheetDense th,
+.sheetDense td {
+  padding: 0.38rem 0.55rem;
+  font-size: 0.84rem;
+}
+
+.sheetDense .msg {
+  max-width: min(28rem, 38vw);
+}
+
+/* ----- Row chrome (EventLogRow.tsx) ------------------------------------ */
+/* Table cells must stay display:table-cell — flex on <td> breaks collapsed border alignment (Actions column). */
+.rowActions {
+  white-space: nowrap;
+  text-align: center;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.rowActions .btnRow:first-child {
+  margin-left: 0;
+}
+
+.rowActions .btnRow:last-child {
+  margin-right: 0;
+}
+
+.rowMsgText {
+  display: block;
+}
+
+.rowHoverActions {
+  position: absolute;
+  right: 2rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 0.2rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.sheet tbody tr:hover .rowHoverActions,
+.sheet tbody tr:focus-within .rowHoverActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheetCat {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ----- Inline / batch edit (EventLogRow.tsx + EventLogSheet.tsx) ------- */
+/* Editable log sheet: only cell background changes; controls inherit row typography. */
+.sheet tbody tr.sheetRowEditable > td.colTcCellEdit,
+.sheet tbody tr.sheetRowEditable > td.sheetCatEdit,
+.sheet tbody tr.sheetRowEditable > td.sheetMsgCell {
+  background: var(--sheet-editable-cell-bg, rgba(255, 255, 255, 0.04));
+  vertical-align: middle;
+}
+
+.sheet tbody tr.sheetRowEditable > td.sheetCatEdit {
+  font-weight: 600;
+}
+
+.sheet tbody tr.sheetRowEditable .sheetCellControl {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: #161825;
+  box-shadow: none;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  font-family: inherit;
+  color: inherit;
+  text-align: inherit;
+  min-height: 0;
+  min-width: 0;
+}
+
+.sheet tbody tr.sheetRowEditable td.colTcCellEdit,
+.sheet tbody tr.sheetRowEditable td.colTcCellEdit .sheetCellControl {
+  text-align: center;
+}
+
+.sheet tbody tr.sheetRowEditable td.sheetCatEdit .sheetCatSelect {
+  cursor: pointer;
+  gap: 0.25rem;
+}
+
+/* Compact chevron when the Radix Select trigger sits inline as the category
+ * control (preserves row height parity with the legacy <select>). */
+.sheet tbody tr.sheetRowEditable td.sheetCatEdit .sheetCatSelect svg {
+  width: 8px;
+  height: 5px;
+}
+
+.sheetTcStack {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 0;
+}
+
+.sheetTcStackInline .sheetWall {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+
+.sheetTcStackInline .sheetTc {
+  flex: 0 0 4.75rem;
+  max-width: 5.5rem;
+  text-align: center;
+}
+
+.sheet tbody tr.sheetRowEditable .sheetCellControl:focus-visible {
+  outline: 1px solid var(--accent-dim);
+  outline-offset: -1px;
+}
+
+/* ----- Batch edit table state (EventLogSheet.tsx sets .logSheetBatchEdit on <table>) */
+/* Flat cell chrome, dirty/active states, no row-hover tint on editable cells */
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.colTcCellEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.sheetCatEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.sheetMsgCell {
+  background: var(--sheet-editable-cell-bg, rgba(255, 255, 255, 0.04)) !important;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable td.colTcCellEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable td.colTcCellEdit .sheetCellControl {
+  color: #fff;
+  cursor: text;
+}
+
+/* Per-cell hover (not whole row): hovered editable cell matches active edit color */
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.colTcCellEdit:hover,
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.sheetCatEdit:hover,
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable > td.sheetMsgCell:hover {
+  background: var(--sheet-editable-cell-bg, rgba(255, 255, 255, 0.04)) !important;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable .sheetCellControl:focus-visible {
+  outline: none;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowEditable .rowHoverActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Queued-for-delete row (batch save) — must beat tr.sheetRowEditable > td.* specificity */
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.colTcCellEdit,
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.sheetCatEdit,
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.sheetMsgCell {
+  background: #8d4545 !important;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete td.colTcCellEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete td.colTcCellEdit .sheetCellControl {
+  color: #fff;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete td.sheetCatEdit {
+  color: #fff !important;
+}
+
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.colTcCellEdit:hover,
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.sheetCatEdit:hover,
+.logSheetBatchEdit.sheet
+  tbody
+  tr.sheetRowEditable.sheetRowPendingDelete
+  > td.sheetMsgCell:hover {
+  background: #8d4545 !important;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete .rowHoverActions {
+  z-index: 8;
+}
+
+/* Queued delete: horizontal rule at row midline */
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.colTcCellEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.sheetCatEdit,
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.sheetMsgCell {
+  position: relative;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.colTcCellEdit::after {
+  content: "";
+  position: absolute;
+  left: 2rem;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.sheetCatEdit::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Wider clearance so line stops before UNDELETE (wider than trash icon) */
+.logSheetBatchEdit.sheet tbody tr.sheetRowPendingDelete > td.sheetMsgCell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 9.25rem;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* ----- Pagination sentinel row (EventLogSheet.tsx) --------------------- */
+.logSheetSentinel td {
+  text-align: center;
+  padding: 0.55rem 0.5rem;
+}
+
+/* ----- v4 log-sheet base (FeedShell sets .v4-log-sheet on the wrapper) - */
+:global(.v4-log-sheet) {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #000000;
+  --v4-log-sheet-col-min: 10.5rem;
+  --v4-log-col-tc-min: var(--v4-log-sheet-col-min);
+  --v4-log-col-event-min: var(--v4-log-sheet-col-min);
+  --v4-log-col-msg-min: var(--v4-log-sheet-col-min);
+}
+
+/* ----- v5 log sheet column — glass card (FeedShell-rendered) ---------- */
+:global(.v4-log-bottom) {
+  width: 100%;
+  gap: 1.25rem;
+  overflow-x: visible;
+  align-items: stretch;
+}
+
+:global(.v4-log-sheet) {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border);
+  border-radius: var(--v5-radius-lg);
+  box-shadow: var(--v5-panel-elevate);
+  overflow: hidden;
+}
+
+:global(#v4-log-session .v4-log-sheet.v5-event-feed) {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  margin: 0 1rem;
+  padding: 1.5rem;
+  box-sizing: border-box;
+  position: relative;
+  overflow: visible;
+}
+
+:global(#v4-log-session .v4-log-sheet.v5-event-feed > .v5-event-feed-top) {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 1.25rem;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+:global(#v4-log-session .v5-event-feed-top__titles) {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+}
+
+:global(#v4-log-session .v5-event-feed-top .v5-event-feed-head) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--v5-panel-head-main-gap);
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+:global(#v4-log-session .v5-event-feed-toolbar) {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-self: start;
+  gap: 0.5rem;
+}
+
+/* Phone-first (≤767px = BP.md - 1): the rigid toolbar row overflows the
+ * stacked panel width, so let it wrap below the feed title. */
+@media (max-width: 767px) {
+  :global(#v4-log-session .v4-log-sheet.v5-event-feed > .v5-event-feed-top) {
+    flex-wrap: wrap;
+  }
+}
+
+/* ----- Batch toolbar slot (EventLogSheet.tsx renders <span>) ----------- */
+:global(#v4-log-session) .v5EventFeedToolbarBatch {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* .v5-feed-glass-btn / --primary moved to FeedTable.module.css in Phase 6
+ * Step 14 (v1.15.1). The `.hidden` toggle for v5EventFeedToolbarBatch was
+ * dropped — the <span> is conditionally rendered by EventLogSheet.tsx so
+ * it's never present with `.hidden` set. */
+
+/* ----- Hidden CSS-compat inputs (EventLogSheet.tsx after-slot) --------- */
+:global(#v4-log-session) .v5FeedStateInputs {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+}
+
+:global(#v4-log-session) .v5FeedStateInputs input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}

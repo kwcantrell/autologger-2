@@ -1,0 +1,327 @@
+/**
+ * TransportControls.tsx co-located styles: the V5 session-control tiles
+ * (Play / Roll / Mic / Stop) rendered inside `.v5-session-controls-panel`.
+ * Phase 6 (v1.15.0) hashed via CSS Modules.
+ *
+ * State modifiers (isSolidGrey/Green/Red, toneGreen/Red/Grey/Light,
+ * isDisabled) are toggled by TransportControls.tsx via clsx.
+ *
+ * Ancestor classes — `.v4-session-ctrl`, `.v5-session-controls-panel`,
+ * `#v4-log-session` — are rendered by SessionWorkspace.tsx and wrapped
+ * as `:global()` here.
+ */
+
+/* ============================================================
+ * Base session-ctl-btn shape + tone borders (carved from app.css in
+ * Phase 5). The higher-specificity v4-scratch and v5-ui rules below
+ * override most properties — these stay for cascade order.
+ * ============================================================ */
+
+.sessionCtlBtn {
+  flex: 0 0 auto;
+  width: var(--session-ctl-size);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: calc(12px / 1.3 * 1.5 * 1.2);
+  border: 1px solid #3d404b;
+  background: #2a2f3b;
+  color: #bcc3d0;
+  cursor: pointer;
+}
+
+.sessionCtlBtn.isSolidGrey {
+  border-style: solid;
+  border-color: #4c505a;
+}
+
+.sessionCtlBtn.isSolidGreen {
+  border-style: solid;
+  border-color: #4ab442;
+}
+
+.sessionCtlBtn.isSolidRed {
+  border-style: solid;
+  border-color: #b44242;
+}
+
+.sessionCtlBtn.isDisabled {
+  border-style: dashed;
+  border-color: transparent;
+  color: #656b78;
+  opacity: 0.92;
+  cursor: not-allowed;
+}
+
+.sessionCtlBtn:not(.isDisabled):hover {
+  filter: brightness(1.5);
+}
+
+.sessionCtlIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.4rem;
+  line-height: 1;
+}
+
+.sessionCtlIcon[src] {
+  width: 1.2rem;
+  height: 1.2rem;
+  object-fit: contain;
+}
+
+:global(#btn-ctl-1-icon) {
+  font-size: 1.52rem;
+  font-weight: 600;
+}
+
+.sessionCtlBtn.toneGreen .sessionCtlIcon,
+.sessionCtlBtn.toneRed .sessionCtlIcon,
+.sessionCtlBtn.toneGrey .sessionCtlIcon,
+.sessionCtlBtn.toneLight .sessionCtlIcon,
+.sessionCtlBtn.isDisabled .sessionCtlIcon {
+  filter: none;
+}
+
+/* ============================================================
+ * v4-scratch.css carve-out (Phase 4, v1.13.0) — control-btn base shape
+ * ============================================================ */
+
+.v4CtrlBtns {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 0.35rem;
+  margin: var(--v4-ctrl-btn-my) 0;
+  min-height: var(--v4-ctrl-btn-h);
+  width: 100%;
+  min-width: 0;
+}
+
+.v4CtrlBtn {
+  flex: 0 0 var(--v4-ctrl-btn-w);
+  width: var(--v4-ctrl-btn-w);
+  height: var(--v4-ctrl-btn-h);
+  max-height: var(--v4-ctrl-btn-h);
+  padding: 0;
+  border: none;
+  border-radius: var(--v4-radius-9);
+  background: #2d3039;
+  cursor: default;
+}
+
+.v4CtrlBtn .sessionCtlIcon {
+  object-fit: contain;
+  pointer-events: none;
+}
+
+:global(.v4-session-ctrl) .v4CtrlBtn.sessionCtlBtn {
+  width: var(--v4-ctrl-btn-w);
+  height: var(--v4-ctrl-btn-h);
+  min-height: var(--v4-ctrl-btn-h);
+  max-height: var(--v4-ctrl-btn-h);
+  aspect-ratio: unset;
+  flex: 0 0 var(--v4-ctrl-btn-w);
+}
+
+/* ============================================================
+ * v5-ui.css carve-out (Phase 3, v1.12.0) — session-ctl-btn tile chrome
+ * ============================================================ */
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn {
+  --session-ctl-accent: var(--v5-primary);
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--v5-radius-md);
+  cursor: pointer;
+  box-sizing: border-box;
+  isolation: isolate;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease,
+    opacity 0.15s ease;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(19, 27, 48, 0.88), rgba(11, 16, 30, 0.78));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 4px 16px rgba(2, 8, 23, 0.42);
+}
+
+/* Hover wash — same recipe as log rows; hue from --session-ctl-accent */
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--session-ctl-accent) 22%, transparent),
+    color-mix(in srgb, var(--session-ctl-accent) 7%, transparent)
+  );
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn > .sessionCtlIcon {
+  position: relative;
+  z-index: 1;
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.55);
+  outline-offset: 2px;
+}
+
+/* Armed / idle hints on grey (stop: play+roll; rolling: mic+stop) */
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGrey.toneGreen {
+  --session-ctl-accent: rgb(52, 211, 153);
+  border-color: rgba(52, 211, 153, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(52, 211, 153, 0.1),
+    0 4px 18px rgba(2, 8, 23, 0.45),
+    0 0 22px -10px rgba(52, 211, 153, 0.22);
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGrey.toneRed {
+  --session-ctl-accent: #fb7185;
+  border-color: rgba(251, 113, 133, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 0 0 1px rgba(251, 113, 113, 0.12),
+    0 4px 18px rgba(2, 8, 23, 0.45),
+    0 0 22px -10px rgba(251, 113, 133, 0.2);
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGrey.toneGrey {
+  --session-ctl-accent: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 10px rgba(2, 8, 23, 0.35);
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGrey.toneLight {
+  --session-ctl-accent: #e2e8f0;
+  border-color: rgba(226, 232, 240, 0.32);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 4px 16px rgba(2, 8, 23, 0.4),
+    0 0 18px -10px rgba(255, 255, 255, 0.08);
+}
+
+/* Play active — cyan icon */
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGreen {
+  --session-ctl-accent: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.58);
+  background:
+    linear-gradient(180deg, rgba(56, 189, 248, 0.22) 0%, rgba(56, 189, 248, 0.06) 44%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(180deg, rgba(14, 116, 144, 0.38), rgba(11, 16, 30, 0.82));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(56, 189, 248, 0.15),
+    0 4px 22px rgba(2, 8, 23, 0.5),
+    0 0 32px -8px rgba(56, 189, 248, 0.42);
+}
+
+/* Roll TC or record hot — rose icon */
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidRed {
+  --session-ctl-accent: #fb7185;
+  border-color: rgba(251, 113, 133, 0.58);
+  background:
+    linear-gradient(180deg, rgba(251, 113, 133, 0.24) 0%, rgba(251, 113, 133, 0.07) 42%, rgba(255, 255, 255, 0) 100%),
+    linear-gradient(180deg, rgba(127, 29, 29, 0.42), rgba(11, 16, 30, 0.84));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(251, 113, 113, 0.14),
+    0 4px 22px rgba(2, 8, 23, 0.5),
+    0 0 32px -8px rgba(248, 113, 113, 0.38);
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isDisabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  border-style: dashed;
+  border-color: rgba(148, 163, 184, 0.14) !important;
+  background: rgba(7, 11, 20, 0.55) !important;
+  box-shadow: none !important;
+  filter: none;
+}
+
+/* Hover: log-row style — accent wash (::before) + border tint (no lift / bloom) */
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn:not(.isDisabled):hover {
+  border-top-color: color-mix(in srgb, var(--session-ctl-accent) 32%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--session-ctl-accent) 14%, transparent);
+  border-left-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(148, 163, 184, 0.22));
+  border-right-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(148, 163, 184, 0.22));
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidGreen:not(.isDisabled):hover {
+  border-left-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(56, 189, 248, 0.58));
+  border-right-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(56, 189, 248, 0.58));
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn.isSolidRed:not(.isDisabled):hover {
+  border-left-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(251, 113, 133, 0.58));
+  border-right-color: color-mix(in srgb, var(--session-ctl-accent) 24%, rgba(251, 113, 133, 0.58));
+}
+
+:global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn:not(.isDisabled):hover::before {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn {
+    transition: none;
+  }
+
+  :global(#v4-log-session .v5-session-controls-panel) .v4CtrlBtn.sessionCtlBtn::before {
+    transition: none;
+  }
+}
+
+/* ============================================================
+ * YouTube import status label (moved from styles/global.css).
+ * Rendered conditionally when a YouTube import is pending.
+ * ============================================================ */
+
+.ytImportStatusLabel {
+  margin: 0.35rem 0 0;
+  padding: 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--v5-muted, rgba(229, 238, 252, 0.55));
+  text-align: center;
+  width: 100%;
+  line-height: 1.4;
+  animation: wfLabelPulse 2s ease-in-out infinite;
+}
+
+/* Intentionally duplicated in Timeline + TransportControls modules: keyframes are
+ * hash-scoped per module, and a shared :global keyframe would risk collisions. */
+@keyframes wfLabelPulse {
+  0%, 100% { opacity: 0.7; }
+  50%       { opacity: 1;   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ytImportStatusLabel {
+    animation: none;
+    opacity: 0.85;
+  }
+}

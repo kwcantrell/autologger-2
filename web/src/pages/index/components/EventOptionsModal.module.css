@@ -1,0 +1,41 @@
+/**
+ * EventOptionsModal.tsx co-located styles. Carved from v6-app-shell.css (Phase 2, v1.10.0).
+ * Converted to *.module.css in Phase 6 (v1.15.0); local class names are hash-scoped and
+ * consumed via `styles.v6EventOptions…`.
+ *
+ * The original rules were anchored under `:global(#modal-event-options)`, an id that
+ * never existed once the modal moved to the Radix `<Dialog>` (portaled to <body>, no
+ * id) — so the option-list/row layout had been inert since the component was authored.
+ * The dead ancestor was dropped in v1.22.1: the hashed class identity already scopes
+ * these rules to this component (same hashed-identity-replaces-ancestor pattern as
+ * FeedTable / HomeSettingsModal). The legacy `.modal-card--wide` rule was removed —
+ * `.dialogWide` (passed to `<Dialog className>`) is the live width control.
+ */
+
+/* Widen the Radix Dialog when EventOptionsModal renders inside it. */
+.dialogWide {
+  width: min(36rem, 96vw);
+}
+
+.v6-event-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.v6-event-option-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem 0.65rem;
+  align-items: end;
+}
+
+.v6-event-option-nc {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}

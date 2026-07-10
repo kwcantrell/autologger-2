@@ -1,0 +1,163 @@
+/**
+ * Performance A/B toggles — body classes set by perfDebug.ts (localStorage + optional PERF_DEBUG_FORCE).
+ * The body.perf-dbg--* selectors target elements outside this component, so they stay :global.
+ * The .perf-debug-panel* and .perf-debug-fab classes are hashed; perfDebug.ts imports them via styles.*.
+ */
+
+/* --- 1. V5 full-page grid + radial glow ---
+   Pseudo-element rule moved to bgGlow.css (ThemeProvider renders DOM nodes in Phase 3). */
+
+/* --- 5. Brand / loading WebM loops (top of session page, overlays, etc.) --- */
+:global(body.perf-dbg--no-decorative-videos .autologger-loading-video) {
+  display: none !important;
+}
+
+/* --- 6. Large panel shadows (less composite work when scrolling) --- */
+:global(body.perf-dbg--no-panel-shadows .panel),
+:global(body.perf-dbg--no-panel-shadows .footer),
+:global(body.perf-dbg--no-panel-shadows .toast),
+:global(body.perf-dbg--no-panel-shadows .v4-top-bar),
+:global(body.perf-dbg--no-panel-shadows .v4-log-top),
+:global(body.perf-dbg--no-panel-shadows .v4-log-sheet),
+:global(body.perf-dbg--no-panel-shadows .v4-session-aside) {
+  box-shadow: none !important;
+}
+
+/* --- 7. Timeline marker/clip/playhead overrides moved to Timeline.module.css --- */
+
+/* --- Floating panel chrome --- */
+.perf-debug-panel {
+  position: fixed;
+  right: 10px;
+  /* Sits above the .perf-debug-fab toggle (bottom:10px, ~25px tall) so the
+     "Hide" button stays visible and clickable while the panel is open. */
+  bottom: 48px;
+  z-index: 2147483000;
+  max-width: min(20rem, calc(100vw - 20px));
+  max-height: min(70vh, 28rem);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.perf-debug-panel[hidden] {
+  display: none !important;
+}
+
+/* Embedded in Settings modal (no fixed corner chrome) */
+.perf-debug-panel--embedded {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  max-width: 100%;
+  max-height: none;
+  box-shadow: none;
+}
+
+.perf-debug-panel__title {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.perf-debug-panel__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin: 0.2rem 0;
+}
+
+.perf-debug-panel__row input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.perf-debug-panel__row label {
+  cursor: pointer;
+  user-select: none;
+}
+
+.perf-debug-panel__hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.65rem;
+  color: #64748b;
+}
+
+.perf-debug-panel__fieldset {
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.55rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0.4rem;
+}
+
+.perf-debug-panel__legend {
+  padding: 0 0.3rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.perf-debug-panel__row--radio {
+  margin: 0.15rem 0;
+}
+
+.perf-debug-panel__actions {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.perf-debug-panel__actions button {
+  font: inherit;
+  font-size: 0.68rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.perf-debug-panel__actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.perf-debug-fab {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  /* One above .perf-debug-panel so the toggle is never occluded by the panel. */
+  z-index: 2147483001;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.92);
+  color: #94a3b8;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.perf-debug-fab:hover {
+  color: #e2e8f0;
+}
+
+.perf-debug-fab[hidden] {
+  display: none !important;
+}

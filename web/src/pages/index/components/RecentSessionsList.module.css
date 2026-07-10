@@ -1,0 +1,278 @@
+/**
+ * RecentSessionsList.tsx co-located styles: session-card chrome, rail row layout,
+ * deck row (title/menu/runtime), meta row, menu dropdown, loading/empty states,
+ * and the rename modal. Step 9 of the Phase 6 conversion moved every RecentSessionsList-
+ * rendered class into this module so V6Rail.module.css owns only V6Rail.tsx's own DOM.
+ *
+ * The v5-ui session-card chrome rules originally lived behind `.main-v3 .session-card`
+ * for scoping; that prefix is dropped here because RecentSessionsList only renders
+ * inside `.main-v3` and the (now-local) class names already prevent leakage.
+ *
+ * `:global(.v6-workspace-modal)` pins the rename modal override against the shared
+ * page-chrome class so the rule wins regardless of bundle order (see Phase 6 note in
+ * project_css_modules_phase6 memory about module hoisting).
+ */
+
+/* ============================================================
+ * Rail session row (outer card)
+ * ============================================================ */
+
+.v6-rail-session {
+  width: 100%;
+  max-width: 100%;
+  flex-shrink: 0;
+  min-height: var(--v6-rail-session-tile-h, 2.875rem);
+  height: var(--v6-rail-session-tile-h, 2.875rem);
+  max-height: var(--v6-rail-session-tile-h, 2.875rem);
+  padding: 0.3rem 0.55rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  text-align: left;
+  border-radius: var(--v5-radius-md, 0.85rem);
+  border: 1px solid var(--v5-border, rgba(255, 255, 255, 0.06));
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.v6-rail-session[data-menu-open] {
+  overflow: visible;
+  z-index: 10;
+}
+
+.v6-rail-session:hover,
+.v6-rail-session:focus-within {
+  border-color: color-mix(in srgb, var(--v5-primary, #38bdf8) 28%, var(--v5-border));
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.session-card--open-active {
+  border-color: color-mix(in srgb, var(--v5-primary, #38bdf8) 40%, var(--v5-border));
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.12), rgba(15, 23, 42, 0.35));
+}
+
+.session-card--open-active:hover,
+.session-card--open-active:focus-within {
+  border-color: color-mix(in srgb, var(--v5-primary, #38bdf8) 45%, var(--v5-border));
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.16), rgba(15, 23, 42, 0.38));
+}
+
+/* ============================================================
+ * Inner link: fills the row, hover handled by the outer card
+ * ============================================================ */
+
+.session-card-link {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.06rem;
+  padding: 0;
+  margin: 0;
+  text-decoration: none;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.session-card-link:hover,
+.session-card-link:focus-visible,
+.session-card--open-active .session-card-link:hover {
+  background: transparent !important;
+}
+
+.session-card-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.06rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-card-active-label {
+  display: none;
+}
+
+/* ============================================================
+ * Deck row: title + trailing menu button
+ * ============================================================ */
+
+.v6-rail-deck-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.v6-rail-deck-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+.v6-rail-deck-trail {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.28rem;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.v6-rail-deck-runtime {
+  flex: 0 0 auto;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  color: var(--v5-muted, rgba(229, 238, 252, 0.55));
+  white-space: nowrap;
+}
+
+/* ============================================================
+ * Per-row "⋮" menu button (the dropdown itself is the shared,
+ * portal-rendered `shared/ui/Popover`)
+ * ============================================================ */
+
+.v6-rail-session__menu {
+  flex: 0 0 auto;
+  width: 1.2rem;
+  height: 1.2rem;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: var(--v5-radius-sm, 0.4rem);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--v5-muted, rgba(229, 238, 252, 0.55));
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.v6-rail-session:hover .v6-rail-session__menu,
+.v6-rail-session__menu[data-open] {
+  opacity: 1;
+}
+
+.v6-rail-session__menu:hover,
+.v6-rail-session__menu[data-open] {
+  border-color: var(--v5-border-strong, rgba(255, 255, 255, 0.12));
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--v5-text, #e5eefc);
+}
+
+/* ============================================================
+ * Meta row: date · events + runtime
+ * ============================================================ */
+
+.v6-rail-meta-row {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.session-card-meta {
+  display: block;
+  font-size: 0.55rem;
+  line-height: 1.2;
+  color: var(--v5-muted, rgba(229, 238, 252, 0.5));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Rolling badge is suppressed inside the rail (per pre-refactor V6Rail.css). */
+.session-rolling-badge {
+  display: none;
+}
+
+/* ============================================================
+ * List wrappers + loading/empty states
+ * ============================================================ */
+
+/* The host element OverlayScrollbars renders on. Overflow + bar styling is
+ * handled by the library; flex/gap layout for the cards lives on the viewport
+ * (the inner scroll element) since cards are not direct kids of the host. */
+.v6-rail-sessions {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.v6-rail-sessions > [data-overlayscrollbars-viewport] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.v6-rail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.5rem;
+}
+
+.v6-rail-empty {
+  margin: 0;
+  padding: 0.35rem 0.15rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+/* ============================================================
+ * Rename session modal (rendered inside `shared/ui/Dialog`)
+ * ============================================================ */
+
+.v6-rename-modal__input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.v6-rename-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

@@ -1,0 +1,1557 @@
+/* ── app.css carve-out — timeline shell, track, clips, waveforms, markers, zoom rail, ticks ── */
+
+.timelineShell {
+  position: relative;
+  width: 100%;
+  padding: 0 0.35rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.timelineShellSeekLoading .timelineTrackLayers {
+  filter: brightness(0.74) blur(2.5px);
+}
+
+.timelineTrackLayers {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+}
+
+.timelineTrackLayers::before {
+  content: "";
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  border-radius: 0;
+  background: rgb(182 193 223 / 81%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.timelineTrack .timelineAudioSeekOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.timelineAudioSeekOverlay:not(:global(.hidden)) {
+  pointer-events: auto;
+}
+
+.timelineAudioSeekOverlayBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.38);
+}
+
+.timelineAudioSeekOverlayLogoAnchor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 10050;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 0.35rem;
+  max-width: 100%;
+}
+
+.timelineAudioSeekOverlayLabel {
+  display: none;
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 10051;
+  margin: 0;
+  padding: 0 0.35rem;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  text-align: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  color: color-mix(in srgb, var(--text) 88%, transparent);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.timelineAudioSeekOverlayWaveforms .timelineAudioSeekOverlayLabel {
+  display: block;
+}
+
+.autologgerLoadingVideoTimelineOverlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timelineAudioSeekOverlayLogoAnchor .autologgerLoadingVideoTimelineOverlay {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.autologgerLoadingVideoTimelineOverlay :global(.autologger-loading-video__media) {
+  display: block;
+  width: auto;
+  height: 3rem;
+  min-width: 4rem;
+  max-width: min(44vw, 14rem);
+  object-fit: contain;
+  will-change: transform;
+}
+
+.timelineAudioSeekOverlayLogoAnchor .autologgerLoadingVideoTimelineOverlay :global(.autologger-loading-video__media) {
+  max-width: min(100%, 44vw, 14rem);
+  min-width: 0;
+}
+
+.timelineToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.18rem;
+}
+
+.timelineToolbar .timelineReadout {
+  margin-top: 0;
+}
+
+.timelineZoomRail {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.timelineZoomRail .timelineZoomTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 0.2em 0.5em;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: color-mix(in srgb, var(--text) 92%, transparent);
+  background: var(--panel, #2d3039);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.timelineZoomRail .timelineZoomRange {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  height: 1.125rem;
+  isolation: isolate;
+}
+
+.timelineZoomRange .timelineZoomBar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2.75rem;
+  height: 0.52rem;
+  transform: translateY(-50%);
+  background: color-mix(in srgb, var(--muted) 55%, var(--border));
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  border-radius: 2px;
+}
+
+.timelineZoomRange .timelineZoomBar:active {
+  cursor: grabbing;
+}
+
+.timelineZoomRange .timelineZoomHandle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate3d(-50%, -50%, 0);
+  width: 0.9rem;
+  height: 0.9rem;
+  min-width: 0.9rem;
+  min-height: 0.9rem;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  background: #2d3039;
+  background-clip: padding-box;
+  border: 2px solid color-mix(in srgb, var(--muted) 70%, var(--border));
+  box-sizing: border-box;
+  z-index: 2;
+  flex-shrink: 0;
+  touch-action: none;
+  cursor: grab;
+  appearance: none;
+  -webkit-appearance: none;
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+}
+
+.timelineZoomRange .timelineZoomHandle::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
+.timelineZoomRange .timelineZoomHandle:hover {
+  border-color: #666b7a;
+  background-color: #353942;
+}
+
+.timelineZoomRange .timelineZoomHandle:active {
+  cursor: grabbing;
+  border-color: #585d6e;
+  background-color: #2d3039;
+}
+
+.timelineMarkerNav {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.25rem;
+  margin-left: 0;
+  margin-right: 0;
+  width: auto;
+  justify-self: center;
+  max-width: none;
+  min-width: 34rem;
+}
+
+.timelineMarkerCurrentCat {
+  display: grid;
+  grid-template-columns: 30% 70%;
+  align-items: stretch;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerCurrentCatCell,
+.markerCurrentMsgCell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0.16rem 0.42rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerCurrentCatCell {
+  justify-content: center;
+  background: color-mix(in srgb, var(--nav-cat-col, #6b7280) 50%, transparent);
+}
+
+.markerCurrentMsgCell {
+  justify-content: flex-start;
+  background: #1f232c;
+  color: #fff;
+}
+
+.markerCurrentMsgTrack {
+  display: inline-flex;
+  align-items: center;
+  min-width: max-content;
+  transform: translateX(0);
+}
+
+.markerCurrentMsgB,
+.markerCurrentMsgGap2 {
+  display: none;
+}
+
+.timelineMarkerCurrentCat.markerCurrentMsgScroll .markerCurrentMsgB,
+.timelineMarkerCurrentCat.markerCurrentMsgScroll .markerCurrentMsgGap2 {
+  display: inline;
+}
+
+.timelineMarkerCurrentCat.markerCurrentMsgScroll .markerCurrentMsgTrack {
+  animation: marker-msg-marquee 15s linear infinite;
+}
+
+@keyframes marker-msg-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.timelineZoomBtn {
+  min-width: 2rem;
+  padding: 0.2rem 0.45rem;
+  line-height: 1.2;
+  font-size: 1rem;
+}
+
+.timelineZoomValue {
+  min-width: 3.2rem;
+  text-align: center;
+  font-size: 0.72rem;
+}
+
+input.timelineZoomValue {
+  appearance: none;
+  border: none;
+  padding: 0.1rem 0.2rem;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.2;
+  box-sizing: border-box;
+  border-radius: inherit;
+}
+
+input.timelineZoomValue:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.timelineViewport {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 0;
+  padding-bottom: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.timelineViewport::-webkit-scrollbar {
+  display: none;
+  height: 0;
+}
+
+.timelineInner {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.timelineTrack {
+  position: relative;
+  width: 100%;
+  height: 3.45rem;
+  border-radius: 0;
+  overflow: visible;
+  cursor: ew-resize;
+  flex-shrink: 0;
+}
+
+.timelineTrackDisabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.timelineClips {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.timelineWaveforms {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.timelineWaveformClip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.timelineWaveformFull {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+  isolation: isolate;
+  contain: paint;
+}
+
+.timelineWaveformSvg {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  shape-rendering: geometricPrecision;
+}
+
+.timelineWaveformFill {
+  fill: rgb(255 255 255 / 0.3);
+  stroke: none;
+}
+
+.timelineWaveformProgress {
+  fill: color-mix(in srgb, var(--accent) 58%, transparent);
+  stroke: none;
+}
+
+.timelineClip {
+  --timeline-clip-strip-h: max(1px, 0.0625rem);
+  position: absolute;
+  top: auto;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: calc(var(--timeline-clip-strip-h) * 1.5);
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.timelineClipActive {
+  --timeline-clip-strip-h: max(4px, 0.25rem);
+  height: calc(var(--timeline-clip-strip-h) * .8);
+  background: color-mix(in srgb, var(--accent) 100%, transparent);
+}
+
+.timelineClipMissingAudio {
+  --timeline-clip-strip-h: max(4px, 0.25rem);
+  background: rgba(220, 60, 60, 0.3);
+  box-shadow: none;
+}
+
+.timelineClipActive.timelineClipMissingAudio {
+  background: rgba(220, 60, 60, 0.3);
+}
+
+.timelineMarkers {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.timelineMarker {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0.62rem;
+  height: 0.62rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mcol);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  opacity: 0.95;
+  pointer-events: auto;
+  box-shadow: none;
+}
+
+/* Hide internal-category markers when EventLogSheet's "show internal" toggle is off. */
+body[data-hide-internal="1"] .timelineMarker[data-cat="Internal" i] {
+  display: none;
+}
+
+.timelineMarker:hover {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.12);
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 18px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 30px color-mix(in srgb, var(--mcol) 98%, transparent),
+    0 0 46px color-mix(in srgb, var(--mcol) 90%, transparent);
+}
+
+.timelineMarkerSelected {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.18);
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 22px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 36px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 54px color-mix(in srgb, var(--mcol) 92%, transparent);
+}
+
+.timelineMarkerSelected:hover {
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 26px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 42px color-mix(in srgb, var(--mcol) 100%, transparent),
+    0 0 62px color-mix(in srgb, var(--mcol) 95%, transparent);
+}
+
+.timelineMarker:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.timelineMarkerTooltip {
+  position: fixed;
+  z-index: 10060;
+  max-width: min(72vw, 440px);
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #11141b;
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.16s ease;
+}
+
+.timelineTooltipCat {
+  display: block;
+  color: var(--tooltip-cat-col, #bfc5cd);
+  font-weight: 600;
+  margin-bottom: 0.12rem;
+}
+
+.timelineTooltipMsg {
+  display: block;
+  color: var(--text);
+}
+
+.timelineMarkerTooltip.timelineMarkerTooltipVisible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.timelineHoverPlayhead {
+  position: absolute;
+  top: 50%;
+  bottom: auto;
+  left: 0;
+  width: 1px;
+  height: calc(100% - 0.85rem);
+  margin: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 72%, transparent);
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.timelineHoverPlayhead.timelineHoverPlayheadVisible {
+  opacity: 0.55;
+}
+
+.timelineMarkerPlayheadGlow {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 0.32rem;
+  height: 0.32rem;
+  margin: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  will-change: opacity, transform;
+  transition:
+    opacity 0.16s ease-out,
+    transform 0.16s ease-out,
+    left 0.05s linear;
+  background: transparent;
+  box-shadow:
+    0 0 7px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 7px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 7px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 12px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 12px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 12px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 17px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 17px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 17px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 100%, transparent),
+    0 0 24px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 98%, transparent),
+    0 0 24px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 98%, transparent),
+    0 0 24px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 98%, transparent),
+    0 0 33px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 94%, transparent),
+    0 0 33px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 94%, transparent),
+    0 0 33px color-mix(in srgb, var(--marker-glow-col, var(--accent)) 94%, transparent);
+}
+
+.timelinePlayhead {
+  position: absolute;
+  top: 50%;
+  bottom: auto;
+  left: 0;
+  width: 2px;
+  height: calc(100% - 0.85rem);
+  margin: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 2px rgba(255, 255, 255, 0.35);
+  z-index: 6;
+  pointer-events: none;
+}
+
+:global(.timeline-hover-tooltip) {
+  position: fixed;
+  z-index: 10055;
+  max-width: min(72vw, 280px);
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #11141b;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+.timelineReadout {
+  margin-top: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  font-family: var(--mono);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  justify-self: end;
+}
+
+.timelineInner .timelineTicks {
+  margin-top: 0.22rem;
+}
+
+.timelineTicks {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+/* ── v4-scratch carve-out ── */
+
+.v4ExtRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 var(--v4-ext-row-h);
+  height: var(--v4-ext-row-h);
+  min-height: var(--v4-ext-row-h);
+  max-height: var(--v4-ext-row-h);
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.v4ExtRow > .v4NavArea {
+  margin-left: var(--v4-nav-edge-m);
+}
+
+.timelineZoomTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  top: auto;
+  transform: translateX(-50%);
+  padding: 0.2em 0.5em;
+  font-family: var(--font-poppins);
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #d2d3d3;
+  background: #2d3039;
+  border: 1px solid #585d6e;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.v4ZoomRange {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: var(--v4-zoom-handle-h);
+  isolation: isolate;
+}
+
+.v4ZoomRange .v4ZoomBar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2.75rem;
+  height: 120%;
+  transform: translateY(-50%);
+  background: #a9a9a9;
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.v4ZoomRange .v4ZoomBar:active {
+  cursor: grabbing;
+}
+
+.v4ZoomRange .v4ZoomHandle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translate3d(-50%, -50%, 0);
+  width: calc(var(--v4-zoom-handle-w) * 1.2);
+  height: calc(var(--v4-zoom-handle-h) * 1.2);
+  min-width: calc(var(--v4-zoom-handle-w) * 1.2);
+  min-height: calc(var(--v4-zoom-handle-h) * 1.2);
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  background: #2d3039;
+  background-clip: padding-box;
+  border: 2px solid #585d6e;
+  box-sizing: border-box;
+  z-index: 2;
+  flex-shrink: 0;
+  touch-action: none;
+  cursor: grab;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.v4ZoomRange .v4ZoomHandle:active {
+  cursor: grabbing;
+}
+
+.v4ZoomRange button.v4ZoomHandle {
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+  background: #11141b;
+  border-color: #ffffff;
+  display: block;
+}
+
+.v4ZoomRange button.v4ZoomHandle::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
+.v4ZoomRange button.v4ZoomHandle:hover {
+  border-color: #11141b;
+  background-color: #FFFFFF;
+}
+
+.v4ZoomRange button.v4ZoomHandle:active {
+  border-color: #11141b;
+  background-color: #FFFFFF;
+}
+
+.v4NavArea {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  height: var(--v4-nav-area-h);
+  margin: 0.5rem 0;
+  overflow: visible;
+  column-gap: 0;
+}
+
+.v4NavCat {
+  width: max-content;
+  min-width: 100px;
+  max-width: none;
+  justify-self: start;
+  align-self: stretch;
+  max-height: var(--v4-nav-area-h);
+  background: #8a5c32;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.45rem;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.v4NavCatDynamic {
+  background: color-mix(in srgb, var(--nav-cat-col, #8a5c32) 78%, #2a1d12);
+}
+
+.v4NavCatTitle {
+  font-family: var(--font-league-gothic);
+  font-size: 1.1875rem;
+  font-weight: 400;
+  color: #12131b;
+  text-transform: uppercase;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.v4NavMsg {
+  min-width: 0;
+  width: 100%;
+  align-self: stretch;
+  max-height: var(--v4-nav-area-h);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.v4NavMsgValue {
+  font-family: var(--font-league-gothic);
+  font-size: 1.1875rem;
+  font-weight: 400;
+  color: #161616;
+  text-transform: uppercase;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.v4NavMsg .v4NavMarkerWrap.timelineMarkerCurrentCat {
+  display: flex !important;
+  grid-template-columns: unset !important;
+  gap: 0 !important;
+  column-gap: 0 !important;
+  row-gap: 0 !important;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.v4NavMsg .markerCurrentMsgCell {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.v4NavMsg .markerCurrentMsgA.v4NavMsgValue,
+.v4NavMsg .markerCurrentMsgB.v4NavMsgValue {
+  color: #ffffff;
+  text-indent: 0.5em;
+}
+
+.v4ExtTimecode {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  font-family: "Oswald", sans-serif;
+  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.v4ExtTimecodeZoomRail {
+  flex: 0 0 23ch;
+  width: 23ch;
+  min-width: 23ch;
+  max-width: 23ch;
+  box-sizing: content-box;
+  margin: 0 0 0 0.25rem;
+  padding-right: 0.15rem;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.v4ExtTimecodePos {
+  color: #ffffff;
+}
+
+.v4ExtTimecodeTotal {
+  color: #8f8f8f;
+}
+
+.v4TimelineRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 var(--v4-tl-row-h);
+  height: var(--v4-tl-row-h);
+  min-height: var(--v4-tl-row-h);
+  max-height: var(--v4-tl-row-h);
+  width: 100%;
+  min-width: 0;
+}
+
+.v4TlTrack {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--v4-tl-bar-h);
+  min-height: var(--v4-tl-bar-h);
+  max-height: var(--v4-tl-bar-h);
+  margin-left: var(--v4-tl-bar-ml);
+  margin-right: var(--v4-tl-bar-mr);
+  background: transparent;
+  align-self: center;
+}
+
+.v4TlTrackLive {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  align-self: center;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+  gap: 0.35rem;
+}
+
+.v4TlTrackLive .timelineShell {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  padding: 0 0.15rem;
+  box-sizing: border-box;
+}
+
+.v4TlTrackLive .timelineViewport {
+  height: auto;
+  max-height: var(--v4-tl-bar-h);
+}
+
+.v4TlTrackLive .timelineInner {
+  min-height: 0;
+}
+
+.v4TlTrackLive .timelineTicks {
+  font-size: 0.58rem;
+}
+
+.v4TimelineZoomRail {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0 0.15rem;
+  box-sizing: border-box;
+}
+
+.v4TimelineZoomRail .timelineZoomRange {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--v4-zoom-handle-h);
+  height: var(--v4-zoom-handle-h);
+  background-color: #111111;
+  border-radius: 0.5rem;
+}
+
+.v4TimelineZoomRail .v4TimelineZoomPct,
+.v4TimelineZoomRail input.timelineZoomValue {
+  flex: 0 0 3.65rem;
+  width: 3.65rem;
+  min-width: 3.65rem;
+  max-width: 3.65rem;
+  box-sizing: border-box;
+  font-family: var(--font-poppins);
+  font-size: 0.62rem;
+  font-weight: 600;
+  direction: ltr;
+  text-indent: 0;
+  background-color: #131415;
+  border-radius: 0.3rem;
+  text-align: center;
+  color: #ffffff;
+}
+
+/* ── #v4-log-session integrated session overrides ── */
+
+:global(#v4-log-session) {
+  --v4-ext-row-pad-y: 0.22rem;
+  --v4-zoom-rail-below-extra: calc(2 * (var(--v4-nav-grid-my) - var(--v4-ext-row-pad-y)));
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail {
+  padding-bottom: var(--v4-zoom-rail-below-extra);
+}
+
+:global(#v4-log-session .v4-log-top__playback) {
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
+}
+
+:global(#v4-log-session) .v4ExtRow {
+  padding: var(--v4-ext-row-pad-y) 0;
+  box-sizing: border-box;
+  flex: 0 0 calc(var(--v4-ext-row-h) + 2 * var(--v4-ext-row-pad-y));
+  height: calc(var(--v4-ext-row-h) + 2 * var(--v4-ext-row-pad-y));
+  min-height: calc(var(--v4-ext-row-h) + 2 * var(--v4-ext-row-pad-y));
+  max-height: calc(var(--v4-ext-row-h) + 2 * var(--v4-ext-row-pad-y));
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+:global(#v4-log-session) .v4ExtRow > .v4NavArea {
+  margin-left: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding-left: var(--v4-nav-edge-m);
+  padding-right: var(--v4-nav-edge-m);
+  box-sizing: border-box;
+}
+
+/* `.v4-log-top--playback` sizing is owned by SessionWorkspace.module.css
+ * (the "grow to fit" rule — V5 padding/gaps exceed the fixed V4 header
+ * height). A duplicate fixed-height clamp lived here with an identical
+ * selector and the same specificity, so the winner was decided purely by
+ * CSS-module bundle order; an unrelated import-graph change could flip it
+ * and clamp the deck, overlapping the feed panel. Removed — the timeline
+ * module must not re-clamp the outer log-top container. */
+
+:global(#v4-log-session) .v4TimelineRow {
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: calc(var(--v4-tl-row-h) + 2 * var(--v4-nav-grid-my));
+  height: auto;
+  max-height: none;
+}
+
+:global(#v4-log-session) .v4TimelineRow > .v4TlTrack {
+  flex: 100 1 0;
+  min-width: 0;
+  height: auto;
+  min-height: calc(var(--v4-tl-bar-h) + 2 * var(--v4-nav-grid-my));
+  max-height: none;
+  margin-left: 0;
+  margin-right: 0;
+  align-self: center;
+  align-items: stretch;
+  justify-content: center;
+}
+
+:global(#v4-log-session) .v4TlTrackLive {
+  overflow: visible;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineShell {
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  height: auto;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineViewport {
+  flex: 0 1 auto;
+  min-height: calc(var(--v4-tl-bar-h) + 2 * var(--v4-nav-grid-my));
+  max-height: none;
+  height: auto;
+  overflow-y: visible;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTicks {
+  color: #8f8f8f;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTrack {
+  height: calc(3.45rem + 2 * var(--v4-nav-grid-my));
+  min-height: calc(3.45rem + 2 * var(--v4-nav-grid-my));
+}
+
+/* ── v5-ui carve-out ── */
+
+:global(#v4-log-session) .v4ExtRow {
+  background: transparent;
+  border-bottom: none;
+}
+
+:global(#v4-log-session) .v4NavArea {
+  margin-top: 0.08rem;
+  margin-bottom: 0.08rem;
+}
+
+:global(#v4-log-session) .v4NavCat {
+  border-radius: var(--v5-radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 14px rgba(2, 8, 23, 0.35);
+}
+
+:global(#v4-log-session) .v4NavCat:not(.v4NavCatDynamic) {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+:global(#v4-log-session) .v4NavCat:not(.v4NavCatDynamic) .v4NavCatTitle {
+  color: var(--v5-primary);
+}
+
+:global(#v4-log-session) .v4NavCatDynamic {
+  background: color-mix(in srgb, var(--nav-cat-col, #38bdf8) 38%, rgba(15, 23, 42, 0.92));
+  border-color: color-mix(in srgb, var(--nav-cat-col, #38bdf8) 50%, transparent);
+}
+
+:global(#v4-log-session) .v4NavCatTitle {
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: none;
+}
+
+:global(#v4-log-session) .v4NavMsg {
+  border-radius: var(--v5-radius-sm);
+  border: 1px solid var(--v5-border);
+  background: rgba(0, 0, 0, 0.18);
+  padding: 0 0.5rem;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:global(#v4-log-session) .v4NavMsgValue {
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+:global(#v4-log-session) .v4NavMsg .markerCurrentMsgA.v4NavMsgValue,
+:global(#v4-log-session) .v4NavMsg .markerCurrentMsgB.v4NavMsgValue {
+  color: var(--v5-muted);
+  text-shadow: none;
+}
+
+:global(#v4-log-session) .v4TlTrackLive {
+  gap: 0.45rem;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineShell {
+  border-radius: var(--v5-radius-md);
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0.35rem 0.45rem 0.3rem;
+  box-sizing: border-box;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineViewport {
+  border-radius: 0.65rem;
+  min-height: var(--v5-timeline-lane-h);
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineInner {
+  gap: 0.32rem;
+}
+
+:global(#v4-log-session) .v4TimelineRow {
+  min-height: calc(var(--v4-tl-row-h) + 2 * var(--v4-nav-grid-my, 0.5rem) + var(--v5-timeline-lane-delta));
+}
+
+:global(#v4-log-session) .v4TimelineRow > .v4TlTrack {
+  min-height: calc(var(--v4-tl-bar-h) + 2 * var(--v4-nav-grid-my, 0.5rem) + var(--v5-timeline-lane-delta));
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTrack {
+  --v5-timeline-r: 0.65rem;
+  position: relative;
+  height: var(--v5-timeline-lane-h);
+  min-height: var(--v5-timeline-lane-h);
+  border-radius: var(--v5-timeline-r);
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(20, 28, 48, 0.76), rgba(8, 12, 22, 0.62));
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTrack::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+  background-image: linear-gradient(100deg,
+    rgba(34, 138, 179, 0.2) 0%,
+    rgba(29, 49, 61, 0.3) 17%,
+    rgba(49, 94, 143, 0.3) 36%,
+    rgba(29, 49, 61, 0.3) 56%,
+    rgba(49, 94, 143, 0.3) 75%,
+    rgba(34, 138, 179, 0.2) 94%);
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
+  animation: v5TimelineMockShimmer 12s linear infinite;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTrackLayers {
+  z-index: 1;
+  border-radius: inherit;
+}
+
+@keyframes v5TimelineMockShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(#v4-log-session) .v4TlTrackLive .timelineTrack::before {
+    animation: none;
+    background-position: 0 0;
+  }
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail {
+  padding: 0.15rem 0.35rem 0.05rem;
+  align-items: center;
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail .timelineZoomRange {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0.55rem;
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail input.timelineZoomValue {
+  background: rgba(7, 11, 20, 0.72);
+  border: 1px solid var(--v5-border-strong);
+  color: var(--v5-primary);
+  border-radius: 0.45rem;
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail .v4ExtTimecode {
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail .v4ExtTimecodePos {
+  font-size: 1.32rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--v5-text);
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail .v4ExtTimecodeTotal {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--v5-muted);
+  opacity: 0.82;
+}
+
+:global(#v4-log-session) .timelineZoomTooltip {
+  background: var(--v5-glass-face-strong);
+  border: 1px solid var(--v5-border);
+  color: var(--v5-text);
+  border-radius: 0.45rem;
+  box-shadow: var(--v5-panel-elevate);
+}
+
+:global(#v4-log-session) .timelineAudioSeekOverlayBackdrop {
+  background: rgba(7, 11, 20, 0.94);
+}
+
+:global(#v4-log-session) .timelineAudioSeekOverlayLabel {
+  color: var(--v5-muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+:global(#v4-log-session) .v4TimelineZoomRail .v4ExtTimecodeZoomRail {
+  flex: 0 0 17ch;
+  width: 17ch;
+  min-width: 17ch;
+  max-width: 17ch;
+}
+
+:global(#v4-log-session) .v4TlTrackLive .timelineTicks {
+  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(229, 238, 252, 0.36);
+}
+
+:global(#v4-log-session) .timelineWaveformFill {
+  fill: url(#timeline-wf-v5-fill);
+}
+
+:global(#v4-log-session) .timelineWaveformProgress {
+  fill: url(#timeline-wf-v5-prog);
+}
+
+:global(#v4-log-session) .timelineTrackLayers::before {
+  z-index: 3;
+  background: rgba(148, 163, 184, 0.38);
+}
+
+:global(#v4-log-session) .timelineClip,
+:global(#v4-log-session) .timelineClipActive,
+:global(#v4-log-session) .timelineClipMissingAudio {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+:global(#v4-log-session) .timelineMarker {
+  width: 0.92rem;
+  height: 0.92rem;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--mcol) 26%, transparent);
+}
+
+:global(#v4-log-session) .timelineMarker:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow: 0 0 20px color-mix(in srgb, var(--mcol) 32%, transparent);
+}
+
+:global(#v4-log-session) .timelineMarkerSelected {
+  transform: translate(-50%, -50%) scale(1.1);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--mcol) 36%, transparent);
+}
+
+:global(#v4-log-session) .timelineMarkerSelected:hover {
+  box-shadow: 0 0 24px color-mix(in srgb, var(--mcol) 40%, transparent);
+}
+
+:global(#v4-log-session) .timelineMarkerPlayheadGlow {
+  box-shadow: 0 0 14px color-mix(in srgb, var(--marker-glow-col, var(--v5-primary)) 16%, transparent);
+}
+
+:global(#v4-log-session) .timelinePlayhead {
+  background: rgba(229, 238, 252, 0.82);
+  box-shadow: none;
+}
+
+:global(#v4-log-session) .timelineHoverPlayhead.timelineHoverPlayheadVisible {
+  background: rgba(229, 238, 252, 0.28);
+}
+
+:global(#v4-log-session) .timelineMarker:focus-visible {
+  outline-color: var(--v5-primary);
+}
+
+:global(#v4-log-session) .timelineReadout {
+  color: var(--v5-text);
+}
+
+.timelineMarkerTooltip {
+  position: fixed;
+  z-index: 10060;
+  background: var(--v5-glass-face-aside);
+  border: 1px solid var(--v5-border);
+  color: var(--v5-text);
+  box-shadow: var(--v5-panel-elevate);
+}
+
+.timelineMarkerTooltip .timelineTooltipCat {
+  color: var(--v5-muted);
+}
+
+:global(.timeline-hover-tooltip) {
+  position: fixed;
+  z-index: 10055;
+  background: var(--v5-glass-face-aside);
+  border: 1px solid var(--v5-border);
+  color: var(--v5-text);
+  box-shadow: var(--v5-panel-elevate);
+}
+
+:global(#v4-log-session) .v4ZoomRange .v4ZoomBar {
+  background: linear-gradient(90deg, var(--v5-primary), var(--v5-primary2));
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+:global(#v4-log-session) .v4ZoomRange .v4ZoomHandle {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+/* ── Waveform decoding label (moved from global.css) ── */
+.timelineWaveformDecodingLabel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+  font-size: 2rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(229, 238, 252, 0.42);
+  animation: wfLabelPulse 2s ease-in-out infinite;
+}
+
+/* Intentionally duplicated in Timeline + TransportControls modules: keyframes are
+ * hash-scoped per module, and a shared :global keyframe would risk collisions. */
+@keyframes wfLabelPulse {
+  0%, 100% { opacity: 0.7; }
+  50%       { opacity: 1;   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timelineWaveformDecodingLabel {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+/* ── perf-debug overrides (moved from perfDebug.module.css) ── */
+
+:global(body.perf-dbg--no-timeline-waveform) .timelineWaveforms {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+:global(body.perf-dbg--no-playhead-glow) .timelineMarkerPlayheadGlow {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+:global(body.perf-dbg--no-decorative-videos) .autologgerLoadingVideoTimelineOverlay {
+  display: none !important;
+}
+
+:global(body.perf-dbg--no-panel-shadows #v4-log-session) .v4TlTrackLive .timelineShell,
+:global(body.perf-dbg--no-panel-shadows #v4-log-session) .v4TlTrackLive .timelineTrack {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineMarker,
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineMarker:hover,
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineMarkerSelected,
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineMarkerSelected:hover {
+  box-shadow: none !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineMarkerPlayheadGlow {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelineClipActive {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx #v4-log-session) .timelinePlayhead {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx) #timeline-shell .timelineMarker,
+:global(body.perf-dbg--no-timeline-marker-fx) #timeline-shell .timelineMarker:hover {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-timeline-marker-fx) #timeline-shell .timelinePlayhead {
+  box-shadow: none !important;
+}
+
+:global(body.perf-dbg--no-v5-waveform-gradients #v4-log-session) .timelineWaveformFill {
+  fill: rgba(148, 163, 184, 0.32) !important;
+}
+
+:global(body.perf-dbg--no-v5-waveform-gradients #v4-log-session) .timelineWaveformProgress {
+  fill: rgba(56, 189, 248, 0.4) !important;
+}

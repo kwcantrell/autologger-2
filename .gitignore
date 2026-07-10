@@ -2,7 +2,7 @@ node_modules/
 .env
 dist/
 # SPA build artifact — reproduced by the frontend build (AUTOLOGGER_CF_BUILD=1)
-public/
+/public/
 *.log
 .DS_Store
 
