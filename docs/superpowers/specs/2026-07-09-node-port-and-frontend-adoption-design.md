@@ -1,7 +1,7 @@
 # Node port & frontend adoption — design
 
 **Date:** 2026-07-09
-**Status:** Panel-reviewed — pending user gate
+**Status:** Approved at gate 2026-07-09 (panel-reviewed; E1/E2 decided — see Panel & review log)
 **Scope:** Overall refactor shape + detailed design for sub-project 1 (Node server port).
 Sub-projects 2 and 3 get their own specs later; their sections here are direction-setting
 summaries, not build contracts.
@@ -69,10 +69,12 @@ vitest tier, `@cloudflare/vitest-pool-workers`, `wrangler`, and the `cf-typegen`
     start listening.
 - Node ≥ 20.6 `--env-file=.env` replaces `.dev.vars` (same gitignore discipline; ship
   `.env.example`).
-- **Startup guard:** when the server binds a non-loopback interface with `REQUIRE_LOGIN`
-  off and no `IP_ALLOWLIST`, `main.ts` prints a loud, unmissable warning that the API is
-  open to the network. *(Whether to go further — refuse to start, or flip the default — is
-  escalated to the gate; see Panel log E1.)*
+- **Auth default (gate decision E1):** `REQUIRE_LOGIN` **defaults to `1`** on the Node
+  port — a deliberate parity break from the Python original and the Worker, decided by the
+  owner at the gate. `.env.example` ships `REQUIRE_LOGIN=1` and documents setting `0` for
+  open LAN-studio setups. When an operator explicitly sets `REQUIRE_LOGIN=0` and the
+  server binds a non-loopback interface with no `IP_ALLOWLIST`, `main.ts` still prints a
+  loud, unmissable warning that the API is open to the network.
 
 ### Configuration surface
 
@@ -85,7 +87,8 @@ Same names as today's `wrangler.jsonc` vars + `.dev.vars` secrets, plus three ne
 | `TRUST_PROXY` | — | new; default off. When on, the first `X-Forwarded-For` hop is the client IP and `X-Forwarded-Proto: https` satisfies cookie-Secure auto-detect. When off, headers are ignored entirely. |
 | `PUBLIC_BASE_URL` | wrangler var | unchanged (OAuth redirect URI is built from it, not the request URL) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | var / secret | unchanged |
-| `REQUIRE_LOGIN`, `SESSION_COOKIE`, `SESSION_DAYS`, `NEW_USER_ALL_TEAMS`, `IP_ALLOWLIST` | wrangler vars | unchanged semantics (but see client-IP derivation below) |
+| `REQUIRE_LOGIN` | wrangler var (default 0) | **default flips to `1`** (gate decision E1); semantics otherwise unchanged |
+| `SESSION_COOKIE`, `SESSION_DAYS`, `NEW_USER_ALL_TEAMS`, `IP_ALLOWLIST` | wrangler vars | unchanged semantics (but see client-IP derivation below) |
 | `COOKIE_SECURE` | wrangler var | unchanged override; the **auto** mode's `https:` detection only works behind a proxy when `TRUST_PROXY` is on — documented in `.env.example` |
 | `API_TOKEN`, `ADMIN_TOKEN` | `.dev.vars` secrets | unchanged |
 
@@ -269,6 +272,7 @@ before implementation.
 - Transcription and YouTube import remain `503` (they were CF-side stubs; a Node
   implementation is a separate future project).
 - Multi-process/cluster deployment.
+- Supervised restart (`restart_supported` stays `false` — gate decision E2).
 - Approach B (single-database re-unification) — possible later refactor, not this work.
 - Any change to JSON shapes or status codes.
 
@@ -320,20 +324,29 @@ original kv-table schema would have shipped a dead companion subsystem.
 
 **Escalated to the gate (owner decisions, not silently adopted):**
 
-- **E1 — `REQUIRE_LOGIN` default on public hosts** (failure #2): spec currently records a
-  loud startup warning when binding non-loopback with no auth perimeter. Options: warning
-  only (Python-parity default, preserves the LAN-studio workflow), refuse-to-start with an
-  explicit override flag, or flip the default. **Decision: _pending._**
+- **E1 — `REQUIRE_LOGIN` default on public hosts** (failure #2): options were warning
+  only (Python-parity default), refuse-to-start with an override flag, or flip the
+  default. **Decision (owner, 2026-07-09): flip the default to `REQUIRE_LOGIN=1`**, a
+  deliberate parity break; the loud warning is kept for explicit `0` on non-loopback
+  binds with no allowlist. Config table and Runtime & entry updated.
 - **E2 — `restart_supported: false`** (requirements #6): a Workers-era hardcode; the Python
-  original supports `serve --supervise`. Spec keeps `false` for phase 1 (recommendation:
-  revisit as a future feature, out of scope here). **Decision: _pending._**
+  original supports `serve --supervise`. **Decision (owner, 2026-07-09): keep `false` for
+  phase 1**; supervised restart is a possible future feature, out of scope here.
 
 ### 2026-07-09 — Post-panel consistency read (light tier)
 
 One reviewer swept the revised document for stale pre-panel language, log/body
 contradictions, dangling cross-references, and inter-section conflicts. Result: clean
-except one citation-style nit in log item 8, fixed in place. Both escalations correctly
-pending in the body.
+except one citation-style nit in log item 8, fixed in place. Both escalations were, at
+that point, correctly still pending in the body (they were decided at the gate afterward —
+see the E1/E2 entries above).
+
+### 2026-07-09 — Post-gate consistency read (light tier)
+
+After the E1/E2 gate decisions were applied as targeted edits, a second light-tier
+reviewer swept for stale default-off language, restart-support contradictions, and
+dangling "pending" references. Result: clean except the previous log entry's
+now-historical "pending" phrasing, annotated in place.
 
 **Minors accepted as residual:** projection-staleness window, ghost metadata rows, 50 MB
 upload buffering (all parity with CF; acknowledged in "Known parity windows" so nobody
