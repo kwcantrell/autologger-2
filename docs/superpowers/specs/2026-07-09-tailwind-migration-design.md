@@ -1,7 +1,7 @@
 # Tailwind migration — design (sub-project 3)
 
 **Date:** 2026-07-09
-**Status:** Panel-reviewed draft — pending user spec-review gate (2 escalations open)
+**Status:** Approved at the 2026-07-09 spec-review gate (escalations E-1/E-2 decided; see panel log)
 **Parent:** `2026-07-09-node-port-and-frontend-adoption-design.md` (sub-project 3 summary)
 
 ## Goal
@@ -44,8 +44,8 @@ passthrough, not a wholesale `@layer components` rewrite).
   `style` props (e.g. `AdminUsersPage.tsx` margin/opacity/flex literals) convert to
   utilities like any other static styling.
 - No cross-browser matrix: chromium only, two fixed viewports (desktop + mobile). The
-  harness is a migration safety net, not a permanent visual QA suite; its post-migration
-  fate is escalation E-1 (gate).
+  harness is a migration safety net, not a permanent visual QA suite; post-migration it
+  survives only as the opt-in `npm run e2e:visual` project (gate decision E-1).
 - `animate.css` (used for `animate__pulse` in `SessionWorkspace.tsx`) is an animation
   library, not app styling: it is **kept**, vendored locally in stage 0a (off the cdnjs
   CDN) and never converted.
@@ -312,7 +312,8 @@ audit lists the known pairs, and the harness covers the affected states.
   "Changed"); README + `CLAUDE.md` CSS-architecture sections rewritten;
   `web/src/types/css-modules.d.ts` and the Vite `css.modules` config removed; the
   `@playwright/test` exact pin relaxed back to caret.
-- Post-migration harness fate: **escalation E-1** (gate decision below).
+- Post-migration harness fate: kept as the opt-in `npm run e2e:visual` project,
+  excluded from default gates (gate decision E-1).
 
 ## Risks
 
@@ -398,20 +399,21 @@ repo's actual CSS (they had been inherited from the Python repo's docs).
     correctly labeled index-local; glass-via-ThemeProvider contract noted; static
     inline styles assigned (convert).
 
-**Escalated to the gate (open):**
+**Escalated to the gate (decided 2026-07-09):**
 
 - **E-1 — Post-migration harness fate** (scope #3): the spec's non-goal ("not a
   permanent visual QA suite") contradicted the DoD ("stays after migration"). Options:
   (a) delete at completion; **(b) keep as the opt-in `npm run e2e:visual` project,
   excluded from default gates — recommended** (it already lives outside `npm run e2e`
   per fix #4, so keeping it costs nothing at the gate line); (c) fold into default
-  `npm run e2e`. → **Decision: ___ (pending gate)**
+  `npm run e2e`. → **Decision (owner, 2026-07-09): (b) — kept as the opt-in
+  `npm run e2e:visual` project, excluded from default gates.**
 - **E-2 — Harness scope growth vs. locked brainstorm decision** (synthesis): fixes #5
   and #7 grew the harness (2 viewports, ~2× shot states) beyond the brainstorm-gate
   sketch ("one browser/viewport"). The panel judged this necessary for the parity
   mandate (the ungated mobile branch was a designated silent casualty); flagged for
-  explicit owner confirmation rather than silently adopted. → **Decision: ___ (pending
-  gate)**
+  explicit owner confirmation rather than silently adopted. → **Decision (owner,
+  2026-07-09): confirmed — two viewports and the expanded shot list stand.**
 
 **Minors accepted as residual:**
 
