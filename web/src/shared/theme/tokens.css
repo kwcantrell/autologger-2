@@ -120,13 +120,5 @@
   --z-toast: 6000;
 }
 
-/* Universal box-sizing reset (formerly `.v4-scratch *, *::before, *::after` in AppShell.css). */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-/* Body baseline (background-color / color / font-family) and page-content
- * stacking context live in baseline.css; baseline imports after tokens, so its
- * v5-flavored body rule wins over the legacy `--bg` / `--text` baseline. */
+/* The universal box-sizing reset and body baseline moved to @layer base in
+ * tailwind.css (Task 11) — this file is now tokens-only and dies in commit 4. */

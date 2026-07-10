@@ -17,9 +17,8 @@ const ThemeContext = createContext<ThemeContextValue>({
  * The legacy body classes (`has-v4-topbar`, `v6-app-layout`, `v4-scratch`,
  * `v5-ui`) were dissolved in v1.15.0; component CSS no longer scopes on them.
  *
- * `bgGlow.css` is imported from `AppShell.tsx`, not here, because Vite
- * tree-shakes side-effect imports that sit next to a CSS-Module import in the
- * same file.
+ * The `.v5-bg-glow*` rules live in `@layer base` in tailwind.css (Task 11);
+ * bgGlow.css was retired when baseline.css was folded into the theme layers.
  */
 export function ThemeProvider({
   children,
