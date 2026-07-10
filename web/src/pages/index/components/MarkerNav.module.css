@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * MarkerNav.tsx co-located styles — back/next marker jump buttons rendered
  * inside the session-aside (Session Controls panel). Moved from
@@ -92,4 +93,6 @@
 .v4-session-nav-btn {
   border-radius: var(--v5-radius-md);
   background-color: rgba(255, 255, 255, 0.06);
+}
+
 }

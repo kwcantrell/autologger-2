@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * AudioSaveOverlay.tsx co-located styles. Moved from AppShell.css (Step 12, v1.15.0)
  * — the rules originally lived in src/autologger/web/static/app.css (Phase 5, v1.14.0)
@@ -44,4 +45,6 @@
   margin: 0;
   font-size: 0.95rem;
   color: var(--muted, #9aa3af);
+}
+
 }

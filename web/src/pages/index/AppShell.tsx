@@ -12,7 +12,6 @@ import { NewSessionModal } from './components/NewSessionModal';
 import { V6Rail } from './components/V6Rail';
 import { WorkspaceStatic } from './components/WorkspaceStatic';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
-import '../../shared/theme/bgGlow.css';
 import 'overlayscrollbars/overlayscrollbars.css';
 
 declare global {

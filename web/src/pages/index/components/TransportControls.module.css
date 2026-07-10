@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * TransportControls.tsx co-located styles: the V5 session-control tiles
  * (Play / Roll / Mic / Stop) rendered inside `.v5-session-controls-panel`.
@@ -324,4 +325,6 @@
     animation: none;
     opacity: 0.85;
   }
+}
+
 }

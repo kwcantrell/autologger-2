@@ -19,9 +19,9 @@
   --danger: #ff6b6b;
   --radius: 10px;
   --mono: "SF Mono", "Consolas", "Liberation Mono", monospace;
-  /* Self-hosted Google Fonts: Poppins 100/300/400/600; League Gothic variable width */
-  --font-poppins: "Poppins", "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  --font-league-gothic: "League Gothic", sans-serif;
+  /* --font-poppins / --font-league-gothic moved into @theme (tailwind.css) — same-name
+   * namespace tokens can't be defined twice. Self-hosted Google Fonts: Poppins
+   * 100/300/400/600; League Gothic variable width. */
 
   /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */
   --v5-bg: #070b14;

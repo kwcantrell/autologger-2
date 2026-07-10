@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * AppShell.tsx co-located styles: viewport shell, `.v6-app` row layout, workspace top
  * cluster, and the `.v6-workspace-modal` base (shared by NewSessionModal /
@@ -404,4 +405,6 @@ body {
     color: var(--v5-text, #eaf2ff);
     cursor: pointer;
   }
+}
+
 }

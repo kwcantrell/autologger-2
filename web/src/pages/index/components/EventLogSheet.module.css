@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * EventLogSheet.tsx + EventLogRow co-located styles. Converted from
  * EventLogSheet.css to a true CSS Module in Phase 6 (v1.16.0). Hashed
@@ -454,4 +455,6 @@
   opacity: 0;
   width: 0;
   height: 0;
+}
+
 }

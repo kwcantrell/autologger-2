@@ -1,3 +1,4 @@
+@layer legacy {
 /* Portal-mounted queue stack at bottom-right. Each entry is a glass card
  * keyed by id; entries auto-dismiss after 3.2s unless `persistent`. */
 
@@ -42,4 +43,6 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
 }

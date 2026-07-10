@@ -1,0 +1,78 @@
+/*
+ * Tailwind v4 entry (spec stage 0c). Layer order is the hybrid-period contract:
+ * ALL legacy CSS lives in `legacy`, lowest — converted utilities always win.
+ * Preflight is intentionally absent (baseline.css is our base layer until slice 6).
+ */
+@layer legacy, theme, base, components, utilities;
+
+@import './tokens.css' layer(legacy);
+@import './baseline.css' layer(legacy);
+@import './chrome.css' layer(legacy);
+@import './bgGlow.css' layer(legacy);
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme {
+  /* md boundary matches the repo's single 767px breakpoint (max-md: ≡ max-width:767.9px). */
+  --breakpoint-md: 768px;
+
+  /* Moved out of tokens.css (same-name namespace tokens can't be defined twice): */
+  --font-poppins: 'Poppins', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-league-gothic: 'League Gothic', sans-serif;
+  --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Hybrid-period aliases: values live in tokens.css (single source of truth);
+ * `inline` makes utilities emit var(--legacy-name), resolved at the usage site.
+ * Slice 6 (Task 11) inlines the literal values and deletes tokens.css. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-btn: var(--surface-btn);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-danger: var(--danger);
+  --color-v5-bg: var(--v5-bg);
+  --color-v5-text: var(--v5-text);
+  --color-v5-muted: var(--v5-muted);
+  --color-v5-soft: var(--v5-soft);
+  --color-v5-primary: var(--v5-primary);
+  --color-v5-primary2: var(--v5-primary2);
+  --color-v5-danger: var(--v5-danger);
+  --color-v5-line: var(--v5-line);
+  --color-v5-border: var(--v5-border);
+  --color-v5-border-strong: var(--v5-border-strong);
+  --font-mono: var(--mono);
+  --radius-app: var(--radius);
+  --radius-v5-lg: var(--v5-radius-lg);
+  --radius-v5-md: var(--v5-radius-md);
+  --radius-v5-sm: var(--v5-radius-sm);
+  --radius-v4-9: var(--v4-radius-9);
+  --radius-v4-10: var(--v4-radius-10);
+}
+
+/* The repo's dominant hover flavor: fires on touch-tap too (only chrome's .btn
+ * trio is (hover:hover)-guarded — audit G). */
+@custom-variant hover-always (&:hover);
+
+/* Compound tokens that can't be single-property utilities (audit K). */
+@utility glass-face {
+  background: var(--v5-glass-face);
+}
+@utility glass-face-strong {
+  background: var(--v5-glass-face-strong);
+}
+@utility glass-face-aside {
+  background: var(--v5-glass-face-aside);
+}
+@utility shadow-glow-v5 {
+  box-shadow: var(--v5-shadow-glow);
+}
+@utility panel-elevate {
+  box-shadow: var(--v5-panel-elevate);
+}

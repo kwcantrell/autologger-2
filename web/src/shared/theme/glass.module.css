@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * V5 glass + shadow-glow utility classes — carved from v5-ui.css (Phase 3, v1.12.0).
  *
@@ -20,4 +21,6 @@
   border: 1px solid var(--v5-border-strong);
   box-shadow: var(--v5-panel-elevate);
   color: var(--v5-text);
+}
+
 }

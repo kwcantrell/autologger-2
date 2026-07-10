@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * EventButtonsTable.tsx co-located styles: palette presets/swatches, copy-from toolbar,
  * the buttons table itself, color popover.
@@ -332,4 +333,6 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
 }

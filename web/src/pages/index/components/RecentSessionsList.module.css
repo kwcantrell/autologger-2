@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * RecentSessionsList.tsx co-located styles: session-card chrome, rail row layout,
  * deck row (title/menu/runtime), meta row, menu dropdown, loading/empty states,
@@ -275,4 +276,6 @@
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
 }

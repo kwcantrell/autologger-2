@@ -1,3 +1,4 @@
+@layer legacy {
 /**
  * EventOptionsModal.tsx co-located styles. Carved from v6-app-shell.css (Phase 2, v1.10.0).
  * Converted to *.module.css in Phase 6 (v1.15.0); local class names are hash-scoped and
@@ -38,4 +39,6 @@
   align-items: center;
   gap: 0.35rem;
   white-space: nowrap;
+}
+
 }
