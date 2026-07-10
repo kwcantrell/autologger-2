@@ -471,3 +471,4 @@ assumed going in:
   migration" baseline/tolerance/mask policy and the exact `@playwright/test` pin are both
   lifted at completion: re-baseline freely with a reviewed diff; pin relaxed back to
   caret (`^1.61.1`).
+- **`css-modules.d.ts` retained, repurposed (Task 11).** The DoD said remove the file; it was kept declaring only `*.css` (TypeScript needs an ambient declaration for side-effect CSS imports — TS2882). The `*.module.css` declaration and the Vite `css.modules` config were removed as specified.

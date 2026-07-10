@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { useCallback, useState } from 'react';
 import { API_ROOT } from '../../api/client';
 import type { AdminDataResponse, AdminStudio, AdminUser } from '../../api/types';
@@ -255,7 +256,7 @@ export function AdminUsersPage() {
                 </thead>
                 <tbody id="users-tbody">
                   {users.map((u) => (
-                    <tr key={u.id} style={{ opacity: u.disabled ? 0.5 : 1 }}>
+                    <tr key={u.id} className={clsx(u.disabled && 'opacity-50')}>
                       <td>{u.email}</td>
                       <td>
                         {u.given_name} {u.family_name}
