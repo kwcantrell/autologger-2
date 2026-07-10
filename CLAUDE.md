@@ -76,6 +76,11 @@ lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tes
 
 - **Conventional commits**: `type(scope): summary` (e.g. `fix(events): …`), matching history.
 - **Commit and push only when asked.** Branch off `main` for PRs.
+- **Work on plain git branches in this checkout — never create git worktrees** (no
+  `EnterWorktree`, no `git worktree add`; this is the declared isolation preference, so
+  don't offer worktrees either). Feature work: `git checkout -b <branch>` off `main`,
+  implement, merge back. Rationale: subagents don't inherit a worktree cwd, so worktree
+  runs leak stray commits onto the primary checkout's `main`.
 - **Changes ship with tests.** Run `npm test` (and `npm run typecheck`) before calling it done.
 - **`file:line` anchors in specs/plans/briefs go stale** the moment earlier work inserts code.
   Anchors are for orientation; **locate the quoted code by content before editing**, and say
