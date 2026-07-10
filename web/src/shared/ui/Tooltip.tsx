@@ -1,7 +1,6 @@
 import * as RadixTooltip from '@radix-ui/react-tooltip';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import styles from './Tooltip.module.css';
 
 interface TooltipProps {
   content: ReactNode;
@@ -39,10 +38,13 @@ export function Tooltip({
           side={side}
           align={align}
           sideOffset={sideOffset}
-          className={clsx(styles.content, className)}
+          className={clsx(
+            'glass-panel z-(--z-top-float) max-w-[22rem] rounded-v5-sm px-[0.6rem] py-[0.4rem] text-[0.78rem] leading-[1.35] animate-tooltip-fade-in',
+            className,
+          )}
         >
           {content}
-          <RadixTooltip.Arrow className={styles.arrow} />
+          <RadixTooltip.Arrow className="fill-(--v5-glass-strong-bot) stroke-v5-border-strong" />
         </RadixTooltip.Content>
       </RadixTooltip.Portal>
     </RadixTooltip.Root>

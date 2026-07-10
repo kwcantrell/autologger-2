@@ -11,6 +11,12 @@ import { FpsSelect } from './FpsSelect';
 import styles from './HomeSettingsModal.module.css';
 import { Select } from './Select';
 
+// Compact toolbar-select box (ports legacy .teamSelect/.showSelect): auto width
+// bounded 7–18rem, toolbar row height, slim horizontal padding, centered. `!` so it
+// beats the Select trigger's base utilities; drop when HomeSettingsModal converts.
+const TOOLBAR_SELECT_BOX =
+  '!flex-[1_1_8rem] !w-auto !min-w-[7rem] !max-w-[18rem] !h-[var(--v6-settings-toolbar-row-h)] !min-h-0 !m-0 !self-center !px-[0.65rem] !py-0';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -251,7 +257,18 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
     <Dialog
       open={isOpen}
       onOpenChange={(o) => !o && onClose()}
-      className={styles.settingsDialog}
+      // Desktop full-screen override. `md:!` reclaims the top/left/transform/size/padding
+      // that Dialog's base utilities now own (legacy .settingsDialog would lose to them);
+      // md-scoped so the ≤767px bottom-sheet is untouched.
+      // On mobile the legacy .settingsDialog height/max-height (calc(100vh-2rem)) used to
+      // win over the sheet base max-height (88dvh) by bundle order — now the sheet's
+      // max-h-[88dvh] utility would beat it, shrinking the sheet. Re-assert the taller box
+      // for ≤767px so the baseline sheet height is preserved (`max-md:!`).
+      className={clsx(
+        styles.settingsDialog,
+        'md:!inset-4 md:!top-4 md:!left-4 md:![transform:none] md:!h-[calc(100vh-2rem)] md:!max-h-[calc(100vh-2rem)] md:!w-[calc(100vw-2rem)] md:!max-w-none md:!flex md:!flex-col md:!px-5 md:!pt-4 md:!pb-5',
+        'max-md:!h-[calc(100vh-2rem)] max-md:!max-h-[calc(100vh-2rem)] max-md:!px-5 max-md:!pt-4 max-md:!pb-5',
+      )}
       hideTitle
       title="Settings"
     >
@@ -265,7 +282,10 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             {/* Studio selector */}
             <Select
               id="profile-studio-select"
-              className={styles.teamSelect}
+              // Legacy .teamSelect/.showSelect box (auto width, toolbar row height,
+              // slim padding) is in @layer legacy and now loses to the Select trigger
+              // utilities — re-assert as `!` utilities until HomeSettingsModal converts.
+              className={clsx(styles.teamSelect, TOOLBAR_SELECT_BOX)}
               ariaLabel="Team"
               value={activeStudioId}
               onChange={handleStudioChange}
@@ -274,7 +294,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             {/* Show selector */}
             <Select
               id="profile-show-select"
-              className={styles.showSelect}
+              className={clsx(styles.showSelect, TOOLBAR_SELECT_BOX)}
               ariaLabel="Show to edit"
               value={activeShowId}
               onChange={setActiveShowId}

@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCreateSession } from '../../../api/hooks/useSessions';
@@ -148,7 +149,13 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      className={styles.newSessionDialog}
+      // Desktop rail-offset centering. `md:!` beats Dialog's base translate within the
+      // utilities layer (the legacy .newSessionDialog rule would lose to Dialog utilities);
+      // md-scoped so the ≤767px bottom-sheet keeps its own full-width positioning.
+      className={clsx(
+        styles.newSessionDialog,
+        'md:![transform:translate(calc(-50%+8.125rem),-50%)]',
+      )}
       hideTitle
       title="New Session"
     >

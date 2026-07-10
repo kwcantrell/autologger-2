@@ -56,7 +56,9 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
     <Dialog
       open
       onOpenChange={(o) => !o && onClose()}
-      className={styles.dialogWide}
+      // Desktop widen. `md:!` beats Dialog's base w-[min(100%,32rem)] within the utilities
+      // layer; md-scoped so the ≤767px bottom-sheet stays full-width.
+      className={clsx(styles.dialogWide, 'md:!w-[min(36rem,96vw)]')}
       title={type === 'DROPDOWN' ? 'Dropdown options' : 'ON / OFF labels'}
     >
       {type === 'DROPDOWN' && (

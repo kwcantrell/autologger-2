@@ -1,7 +1,6 @@
 import * as RadixPopover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import styles from './Popover.module.css';
 
 interface PopoverProps {
   trigger: ReactNode;
@@ -39,7 +38,10 @@ export function Popover({
           align={align}
           sideOffset={sideOffset}
           aria-label={ariaLabel}
-          className={clsx(styles.content, className)}
+          className={clsx(
+            'glass-panel z-(--z-popover) min-w-[11.5rem] rounded-v5-md p-[0.35rem] outline-none animate-popover-fade-in focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-2',
+            className,
+          )}
           collisionPadding={8}
         >
           {children}
@@ -89,9 +91,22 @@ export function PopoverItem({
       disabled={disabled}
       onClick={onClick}
       className={clsx(
-        styles.item,
-        selected && styles.itemSelected,
-        danger && styles.itemDanger,
+        // Base item chrome.
+        'm-0 block w-full cursor-pointer rounded-[calc(var(--v5-radius-md)-6px)] border-none bg-transparent px-[0.55rem] py-[0.45rem] text-left text-[0.78rem] leading-[1.45] font-medium tracking-[0.03em] outline-none transition-[background] duration-[0.12s] ease-[ease] [font-family:inherit]',
+        // Hover (unguarded → hover-always): danger swaps the base tint. :not(:disabled) guard preserved.
+        danger
+          ? 'hover-always:not-disabled:bg-[color-mix(in_srgb,var(--danger)_14%,transparent)]'
+          : 'hover-always:not-disabled:bg-[rgba(255,255,255,0.06)]',
+        // Focus-visible ring + tint.
+        'focus-visible:bg-[rgba(56,189,248,0.16)] focus-visible:outline-1 focus-visible:outline-v5-primary focus-visible:-outline-offset-1',
+        // Disabled.
+        'disabled:cursor-not-allowed disabled:opacity-45',
+        // aria-checked/aria-selected true → selected tint (mirrors .item[aria-*="true"]; wins on specificity).
+        'aria-checked:bg-[rgba(56,189,248,0.14)] aria-checked:text-v5-primary aria-selected:bg-[rgba(56,189,248,0.14)] aria-selected:text-v5-primary',
+        // Base text colour — danger / selected replace it (exclusive; danger wins over selected, matching source order).
+        danger ? 'text-danger' : selected ? 'text-v5-primary' : 'text-[rgba(248,250,252,0.92)]',
+        // Selected static background (.itemSelected).
+        selected && 'bg-[rgba(56,189,248,0.14)]',
         className,
       )}
     >
