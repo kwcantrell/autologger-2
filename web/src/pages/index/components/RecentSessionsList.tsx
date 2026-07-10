@@ -14,7 +14,44 @@ import { Tooltip } from '../../../shared/ui/Tooltip';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { showToast } from '../utils/toast';
 
-import styles from './RecentSessionsList.module.css';
+// --- converted class strings (were RecentSessionsList.module.css) ---
+
+// Outer session-card row. `group` drives the ⋮-menu reveal on card hover; the
+// data-menu-open (present when the Popover is open) makes overflow visible so the
+// portal-less trail can escape the fixed-height tile. Hover/focus-within tint the
+// border (unguarded → hover-always:). --v6-rail-session-tile-h is never defined
+// anywhere, so its 2.875rem fallback is load-bearing → inlined literally.
+const RAIL_SESSION =
+  'group relative box-border flex h-[2.875rem] max-h-[2.875rem] min-h-[2.875rem] w-full max-w-full flex-shrink-0 cursor-pointer flex-col items-stretch justify-center overflow-hidden rounded-v5-md border border-v5-border bg-[rgba(255,255,255,0.03)] px-[0.55rem] py-[0.3rem] text-left font-[inherit] text-[inherit] [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] focus-within:bg-[rgba(255,255,255,0.05)] data-menu-open:z-10 data-menu-open:overflow-visible';
+
+// Active-session variant: replaces the base border + background (recipe 3 —
+// exclusive branch), including its own heightened hover/focus-within values.
+const RAIL_SESSION_ACTIVE =
+  'border-[color-mix(in_srgb,var(--v5-primary)_40%,var(--v5-border))] bg-[linear-gradient(180deg,rgba(56,189,248,0.12),rgba(15,23,42,0.35))] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] hover-always:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] focus-within:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))]';
+
+// Inner link fills the row; always transparent (base + the former !important
+// hover/focus neutralizer collapse to a single bg-transparent by layer order).
+const CARD_LINK =
+  'flex min-h-0 min-w-0 max-h-full flex-[1_1_auto] flex-col justify-center gap-[0.06rem] overflow-hidden m-0 p-0 bg-transparent text-inherit no-underline shadow-none';
+
+const DECK_ROW = 'flex min-h-0 min-w-0 flex-[0_0_auto] flex-row items-center gap-[0.35rem]';
+const DECK_TITLE =
+  'flex-[1_1_auto] min-w-0 cursor-pointer overflow-hidden border-none bg-transparent p-0 text-left text-[0.65rem] font-semibold font-[inherit] leading-[1.2] tracking-[0.02em] text-ellipsis whitespace-nowrap text-inherit';
+const DECK_TRAIL =
+  'inline-flex min-w-0 flex-[0_0_auto] flex-row items-center justify-end gap-[0.28rem]';
+const DECK_RUNTIME =
+  'flex-[0_0_auto] text-[0.6rem] font-semibold leading-[1.2] tracking-[0.03em] whitespace-nowrap text-v5-muted';
+
+// ⋮ menu button: hidden until the card is hovered (group-hover-always:) or the
+// Popover is open (data-open:). Hover/data-open also tint the button chrome.
+const RAIL_MENU =
+  'flex-[0_0_auto] m-0 h-[1.2rem] w-[1.2rem] cursor-pointer rounded-v5-sm border border-transparent bg-transparent p-0 text-[1rem] font-bold leading-none text-v5-muted opacity-0 [transition:opacity_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] group-hover-always:opacity-100 hover-always:border-v5-border-strong hover-always:bg-[rgba(15,23,42,0.55)] hover-always:text-v5-text data-open:border-v5-border-strong data-open:bg-[rgba(15,23,42,0.55)] data-open:text-v5-text data-open:opacity-100';
+
+const META_ROW =
+  'flex min-w-0 flex-[0_0_auto] flex-row items-baseline justify-between gap-[0.25rem]';
+const CARD_META =
+  'block min-h-0 min-w-0 flex-[1_1_auto] overflow-hidden text-[0.55rem] leading-[1.2] text-ellipsis whitespace-nowrap text-v5-muted';
+const RAIL_SESSIONS = 'os-rail-sessions min-h-0 flex-[1_1_auto]';
 
 /* Shared OverlayScrollbars config for the rail's two scroll surfaces (recent
  * + archived). Bars auto-hide on pointer leave; theme is the lib's built-in
@@ -55,7 +92,7 @@ function RenameSessionModal({ initialTitle, isPending, onSave, onClose }: Rename
       <input
         ref={inputRef}
         type="text"
-        className={clsx('profile-select', styles.v6RenameModalInput)}
+        className="profile-select box-border w-full"
         maxLength={200}
         value={title}
         autoFocus
@@ -64,7 +101,7 @@ function RenameSessionModal({ initialTitle, isPending, onSave, onClose }: Rename
           if (e.key === 'Enter') handleSave();
         }}
       />
-      <div className={styles.v6RenameModalActions}>
+      <div className="flex justify-end gap-2">
         <button type="button" className="btn" onClick={onClose}>
           Cancel
         </button>
@@ -140,7 +177,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     });
   };
 
-  const rowClass = clsx(styles.v6RailSession, isActive && styles.sessionCardOpenActive);
+  const rowClass = clsx(RAIL_SESSION, isActive && RAIL_SESSION_ACTIVE);
   const runtime = (s.total_runtime_hms || '00:00:00').trim() || '00:00:00';
   const evCount = Number(s.event_count);
   const metaLine = `${fmtDateOnly(s.episode_date ?? s.created_at_utc)} · ${Number.isFinite(evCount) ? evCount : 0} events`;
@@ -156,15 +193,12 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
         if (e.key === 'Enter' || e.key === ' ') onSelect();
       }}
     >
-      <div
-        className={clsx(styles.sessionCardLink, styles.sessionCardPanel)}
-        data-start-offset={s.start_offset_frames || 0}
-      >
-        {isActive && <output className={styles.sessionCardActiveLabel}>ACTIVE SESSION</output>}
-        <div className={styles.v6RailDeckRow}>
+      <div className={CARD_LINK} data-start-offset={s.start_offset_frames || 0}>
+        {isActive && <output className="hidden">ACTIVE SESSION</output>}
+        <div className={DECK_ROW}>
           <button
             type="button"
-            className={styles.v6RailDeckTitle}
+            className={DECK_TITLE}
             onClick={(e) => {
               e.stopPropagation();
               if (!isActive) {
@@ -175,7 +209,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           >
             {s.title}
           </button>
-          <div className={styles.v6RailDeckTrail}>
+          <div className={DECK_TRAIL}>
             <Popover
               open={menuOpen}
               onOpenChange={setMenuOpen}
@@ -183,7 +217,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
               trigger={
                 <button
                   type="button"
-                  className={styles.v6RailSessionMenu}
+                  className={RAIL_MENU}
                   aria-label="Session options"
                   data-open={menuOpen || undefined}
                   onClick={(e) => e.stopPropagation()}
@@ -230,16 +264,14 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
             </Popover>
           </div>
         </div>
-        <div className={styles.v6RailMetaRow}>
-          <span className={styles.sessionCardMeta}>{metaLine}</span>
+        <div className={META_ROW}>
+          <span className={CARD_META}>{metaLine}</span>
           <Tooltip content="Total runtime">
-            <span className={clsx(styles.v6RailDeckRuntime, 'mono')}>{runtime}</span>
+            <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
           </Tooltip>
         </div>
         {s.is_rolling && (
-          <span className={styles.sessionRollingBadge}>
-            ● Rolling - {formatTimecodeHMS(s.rolling_timecode)}
-          </span>
+          <span className="hidden">● Rolling - {formatTimecodeHMS(s.rolling_timecode)}</span>
         )}
       </div>
       {editing && (
@@ -282,15 +314,11 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
   const runtime = (s.total_runtime_hms || '00:00:00').trim() || '00:00:00';
 
   return (
-    <div
-      className={styles.v6RailSession}
-      data-session-id={s.id}
-      data-menu-open={menuOpen || undefined}
-    >
-      <div className={clsx(styles.sessionCardLink, styles.sessionCardPanel)}>
-        <div className={styles.v6RailDeckRow}>
-          <span className={styles.v6RailDeckTitle}>{s.title}</span>
-          <div className={styles.v6RailDeckTrail}>
+    <div className={RAIL_SESSION} data-session-id={s.id} data-menu-open={menuOpen || undefined}>
+      <div className={CARD_LINK}>
+        <div className={DECK_ROW}>
+          <span className={DECK_TITLE}>{s.title}</span>
+          <div className={DECK_TRAIL}>
             <Popover
               open={menuOpen}
               onOpenChange={setMenuOpen}
@@ -298,7 +326,7 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
               trigger={
                 <button
                   type="button"
-                  className={styles.v6RailSessionMenu}
+                  className={RAIL_MENU}
                   aria-label="Session options"
                   data-open={menuOpen || undefined}
                   onClick={(e) => e.stopPropagation()}
@@ -327,10 +355,10 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
             </Popover>
           </div>
         </div>
-        <div className={styles.v6RailMetaRow}>
-          <span className={styles.sessionCardMeta}>{metaLine}</span>
+        <div className={META_ROW}>
+          <span className={CARD_META}>{metaLine}</span>
           <Tooltip content="Total runtime">
-            <span className={clsx(styles.v6RailDeckRuntime, 'mono')}>{runtime}</span>
+            <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
           </Tooltip>
         </div>
       </div>
@@ -356,7 +384,7 @@ export function RecentSessionsList({
   if (isLoading && !sessions) {
     return (
       <output
-        className={clsx(styles.v6RailLoading, 'muted')}
+        className="muted flex min-h-[3.5rem] items-center justify-center"
         id="session-loading"
         aria-busy="true"
         aria-live="polite"
@@ -381,7 +409,10 @@ export function RecentSessionsList({
 
   if (active.length === 0) {
     return (
-      <p className={clsx(styles.v6RailEmpty, 'muted')} id="session-empty">
+      <p
+        className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]"
+        id="session-empty"
+      >
         No sessions yet. Create one to start logging.
       </p>
     );
@@ -391,7 +422,7 @@ export function RecentSessionsList({
     <OverlayScrollbarsComponent
       element="div"
       id="session-list"
-      className={styles.v6RailSessions}
+      className={RAIL_SESSIONS}
       defer
       options={railOsOptions}
     >
@@ -413,7 +444,7 @@ export function ArchivedSessionsList({ sessions }: { sessions: Session[] }) {
     <OverlayScrollbarsComponent
       element="div"
       id="archived-list"
-      className={styles.v6RailSessions}
+      className={RAIL_SESSIONS}
       defer
       options={railOsOptions}
     >
