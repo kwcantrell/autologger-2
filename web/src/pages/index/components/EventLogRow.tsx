@@ -224,7 +224,16 @@ export function EventLogRow({
   ];
   const catSelect = editable ? (
     <Select
-      className={clsx(styles.sheetCellControl, styles.sheetCatSelect)}
+      // The legacy `.sheetRowEditable .sheetCellControl` reset (compact inline
+      // trigger: block, no padding/border/radius, flat #161825 bg, inherited
+      // font, tiny chevron) lives in @layer legacy and now LOSES to the Select
+      // trigger's converted utilities. Re-assert the compact box as `!` utilities
+      // so it wins within the utilities layer until EventLogSheet is converted.
+      className={clsx(
+        styles.sheetCellControl,
+        styles.sheetCatSelect,
+        '!block !min-h-0 !gap-1 !rounded-none !border-none !p-0 !text-inherit ![background:#161825] ![font:inherit] [&_svg]:!h-[5px] [&_svg]:!w-2',
+      )}
       ariaLabel="Category"
       disabled={dis}
       value={catVal}

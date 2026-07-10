@@ -11,6 +11,12 @@ import { FpsSelect } from './FpsSelect';
 import styles from './HomeSettingsModal.module.css';
 import { Select } from './Select';
 
+// Compact toolbar-select box (ports legacy .teamSelect/.showSelect): auto width
+// bounded 7–18rem, toolbar row height, slim horizontal padding, centered. `!` so it
+// beats the Select trigger's base utilities; drop when HomeSettingsModal converts.
+const TOOLBAR_SELECT_BOX =
+  '!flex-[1_1_8rem] !w-auto !min-w-[7rem] !max-w-[18rem] !h-[var(--v6-settings-toolbar-row-h)] !min-h-0 !m-0 !self-center !px-[0.65rem] !py-0';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -276,7 +282,10 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             {/* Studio selector */}
             <Select
               id="profile-studio-select"
-              className={styles.teamSelect}
+              // Legacy .teamSelect/.showSelect box (auto width, toolbar row height,
+              // slim padding) is in @layer legacy and now loses to the Select trigger
+              // utilities — re-assert as `!` utilities until HomeSettingsModal converts.
+              className={clsx(styles.teamSelect, TOOLBAR_SELECT_BOX)}
               ariaLabel="Team"
               value={activeStudioId}
               onChange={handleStudioChange}
@@ -285,7 +294,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
             {/* Show selector */}
             <Select
               id="profile-show-select"
-              className={styles.showSelect}
+              className={clsx(styles.showSelect, TOOLBAR_SELECT_BOX)}
               ariaLabel="Show to edit"
               value={activeShowId}
               onChange={setActiveShowId}
