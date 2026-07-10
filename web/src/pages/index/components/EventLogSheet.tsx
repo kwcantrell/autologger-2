@@ -10,7 +10,6 @@ import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventLogRow, type RowEditValues } from './EventLogRow';
-import styles from './EventLogSheet.module.css';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
 
@@ -356,20 +355,22 @@ export function EventLogSheet({ sessionId }: Props) {
   // auto-layout column widths, so we must NOT force `text-left` here (doing so reflows the
   // columns and narrows the table by ~3px). Transcribe/Topics DO pass `text-left` (no
   // `.sheet` context — their legacy `.feedTh` was left-aligned).
+  // `!static` carries the extracted SessionWorkspace override `.v4-log-sheet .sheet th
+  // { position: static }` — the Event Feed header is NOT sticky (unlike Transcribe/Topics).
   const eventColumns: ColumnDef[] = [
     {
       key: 'time',
       label: viewUtc ? 'World Clock' : 'Session Time',
       sortKey: viewUtc ? 'utc' : 'timecode',
-      thClassName: 'w-[6.5rem]',
+      thClassName: '!static w-[6.5rem]',
     },
     {
       key: 'category',
       label: 'Event',
       sortKey: 'category',
-      thClassName: 'w-32',
+      thClassName: '!static w-32',
     },
-    { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
+    { key: 'message', label: 'Message', sortKey: 'message', thClassName: '!static min-w-48' },
   ];
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
@@ -392,7 +393,9 @@ export function EventLogSheet({ sessionId }: Props) {
         </button>
       )}
       {batchEditMode && (
-        <span className={styles.v5EventFeedToolbarBatch}>
+        // `.v5EventFeedToolbarBatch` — its `#v4-log-session` ancestor prefix was a pure
+        // specificity hack; the layout applies to the span directly.
+        <span className="inline-flex flex-wrap items-center gap-[0.35rem]">
           <button
             type="button"
             className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
@@ -420,11 +423,11 @@ export function EventLogSheet({ sessionId }: Props) {
     </>
   );
 
-  const tableClassName = clsx(
-    styles.sheet,
-    styles.sheetDense,
-    batchEditMode && styles.logSheetBatchEdit,
-  );
+  // `sheet sheet-dense` stay as retained literal chrome hooks (chrome.css `.sheet .mono`;
+  // the SessionWorkspace `.v4-log-sheet .sheet th { position: static }` override is now
+  // carried on the <th> below). `.logSheetBatchEdit` is dropped — batch-edit cell styling
+  // moved onto EventLogRow via its `batchEdit`/`pendingDelete` props.
+  const tableClassName = 'sheet sheet-dense';
 
   return (
     <FeedShell
@@ -436,11 +439,22 @@ export function EventLogSheet({ sessionId }: Props) {
       logBottomId="v4-log-bottom"
       sheetId="v4-log-sheet"
       after={
-        <div className={styles.v5FeedStateInputs} aria-hidden="true">
-          <input type="checkbox" id="view-utc-log" tabIndex={-1} readOnly checked={viewUtc} />
+        // `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
+        // matches `sr-only`; the inputs collapse to 0×0 (was the `#v4-log-session`-prefixed
+        // rules; that ancestor was a specificity hack).
+        <div className="sr-only pointer-events-none" aria-hidden="true">
+          <input
+            type="checkbox"
+            id="view-utc-log"
+            className="absolute h-0 w-0 opacity-0"
+            tabIndex={-1}
+            readOnly
+            checked={viewUtc}
+          />
           <input
             type="checkbox"
             id="show-internal-log"
+            className="absolute h-0 w-0 opacity-0"
             tabIndex={-1}
             readOnly
             checked={showInternal}
@@ -481,8 +495,15 @@ export function EventLogSheet({ sessionId }: Props) {
           />
         ))}
         {events.length < total && (
-          <tr ref={sentinelRef} className={styles.logSheetSentinel}>
-            <td colSpan={3} className={clsx(styles.utc, 'faint')} />
+          // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
+          <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">
+            <td
+              colSpan={3}
+              className={clsx(
+                'font-[family-name:var(--mono)] text-[0.8rem] text-muted whitespace-nowrap',
+                'faint',
+              )}
+            />
           </tr>
         )}
       </FeedTable>
