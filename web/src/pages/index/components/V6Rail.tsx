@@ -59,6 +59,20 @@ const RAIL_ARCHIVED_SHELF =
 
 const RAIL_SESSIONS_WRAP = 'flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden';
 
+// `.v4-search-input` (formerly two separate :global(.v4-search-input) rule
+// blocks in AppShell.module.css). Base shape/typography from the first block
+// (flex/min-w-0/h-full/border-none/bg-transparent/font-poppins/text-sm/
+// font-normal; base color/placeholder #000 were themselves overridden by the
+// second block below in source order, so only the final cascade values are
+// kept). Color/placeholder from the second, later block (color: var(--v5-text);
+// ::placeholder color rgba(255,255,255,0.35), opacity 1) — later wins at equal
+// specificity. `placeholder:font-thin` restores the first block's
+// `font-weight: 100` on ::placeholder (never overridden). Retained as a literal
+// class string (not just Tailwind utilities) — perfDebug-era hooks may still
+// query it.
+const SEARCH_INPUT =
+  'v4-search-input flex min-w-0 h-full border-none bg-transparent font-poppins text-sm font-normal text-v5-text placeholder:font-thin placeholder:text-white/35 placeholder:opacity-100';
+
 // Offscreen-but-focusable search box wrapper (sr-only-style clip).
 const RAIL_SEARCH_OFFSCREEN =
   'fixed top-0 left-[-10000px] m-0 h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)] [clip-path:inset(50%)]';
@@ -214,7 +228,7 @@ export function V6Rail({
 
       <div className={RAIL_SEARCH_OFFSCREEN}>
         <input
-          className="v4-search-input"
+          className={SEARCH_INPUT}
           type="search"
           placeholder="Search through logs…"
           aria-label="Search through logs"
