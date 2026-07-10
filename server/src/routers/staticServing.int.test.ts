@@ -1,5 +1,6 @@
 // Serving contract for the built SPA (spec stage 3): HTML verbatim (no
-// __API_ROOT__ substitution), assets + /static served, API never shadowed.
+// serve-time rewrite-token substitution), assets + /static served, API never
+// shadowed.
 // Uses a fixture dist in a temp dir — `npm test` stays independent of a real
 // Vite build (the e2e tier covers that).
 
