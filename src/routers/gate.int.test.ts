@@ -1,12 +1,7 @@
-import { env } from 'cloudflare:test';
+import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 import { adminHeader, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 
-// Env vars are generated with literal types (e.g. REQUIRE_LOGIN: "0"), so
-// overrides must go through unknown.
-const envWith = (overrides: Record<string, string>): typeof env =>
-  ({ ...env, ...overrides }) as unknown as typeof env;
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 
 describe('auth gate', () => {

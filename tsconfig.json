@@ -19,9 +19,10 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": [
-    "src/**/*.int.test.ts",
-    "src/test/setup.int.ts",
-    "src/test/helpers.ts",
+    "src/routers/auth.int.test.ts",
+    "src/durable/SessionDO.int.test.ts",
+    "src/routers/companion-ws.int.test.ts",
+    "src/middleware/ipAllowlist.int.test.ts",
     "src/test/oauth.ts"
   ]
 }

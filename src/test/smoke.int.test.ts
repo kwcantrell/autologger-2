@@ -1,6 +1,5 @@
-import { env } from 'cloudflare:test';
+import { app, env } from './harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 
 describe('harness smoke', () => {
   it('migrations applied: a migrated table is queryable', async () => {

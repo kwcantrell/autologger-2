@@ -1,10 +1,6 @@
-import { env } from 'cloudflare:test';
+import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
-
-const envWith = (o: Record<string, string>): typeof env =>
-  ({ ...env, ...o }) as unknown as typeof env;
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });

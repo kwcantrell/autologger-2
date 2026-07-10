@@ -1,6 +1,5 @@
-import { env } from 'cloudflare:test';
+import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 
 async function freshSession(): Promise<string> {

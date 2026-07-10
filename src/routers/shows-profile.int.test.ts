@@ -1,6 +1,5 @@
-import { env } from 'cloudflare:test';
+import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });

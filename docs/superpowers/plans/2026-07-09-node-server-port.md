@@ -2200,7 +2200,7 @@ export function resetTestEnv(): void {
   const made = createBindings({
     DATA_DIR: dir,
     PUBLIC_BASE_URL: 'https://example.com',
-    GOOGLE_CLIENT_ID: 'test-client',
+    GOOGLE_CLIENT_ID: '', // old wrangler.jsonc test env had it empty → oauthConfigured() false; OAuth suite opts in via envWith
     GOOGLE_CLIENT_SECRET: 'test-secret',
     REQUIRE_LOGIN: '0', // mirrors the old wrangler.jsonc test default; gate tests override per-request
     SESSION_COOKIE: 'autologger_sid',
@@ -2237,6 +2237,23 @@ export const env: Bindings = new Proxy({} as Bindings, {
     value: (must() as unknown as Record<string | symbol, unknown>)[p],
   }),
 });
+
+/** Layer per-request overrides over the live per-test bindings. Safe to call
+ * at module scope — property reads resolve at request time, after setup.
+ * (Suites' old local `envWith` spread the env Proxy eagerly at import time,
+ * which crashed collection for module-scope constants — import this instead.) */
+export function envWith(overrides: Record<string, unknown>): Bindings {
+  const value = (p: string | symbol) =>
+    typeof p === 'string' && p in overrides
+      ? overrides[p]
+      : (must() as unknown as Record<string | symbol, unknown>)[p];
+  return new Proxy({} as Bindings, {
+    get: (_t, p) => value(p),
+    has: (_t, p) => (typeof p === 'string' && p in overrides) || p in must(),
+    ownKeys: () => Array.from(new Set([...Reflect.ownKeys(must()), ...Reflect.ownKeys(overrides)])),
+    getOwnPropertyDescriptor: (_t, p) => ({ enumerable: true, configurable: true, value: value(p) }),
+  });
+}
 
 const upgradeStub = ((() => async (c: { text(b: string, s: number): Response }) =>
   c.text('WebSocket unavailable in HTTP tests', 426)) as unknown) as UpgradeWebSocket;
@@ -2321,6 +2338,7 @@ In each of `d1.int.test.ts`, `gate.int.test.ts`, `flows.int.test.ts`, `sessions.
 
 - `import { env } from 'cloudflare:test';` → `import { env } from '../test/harness';` (path-adjust for `src/db/` and `src/test/`).
 - `import app from '../index';` → `import { app } from '../test/harness';`
+- Suites that define a local `const envWith = (overrides) => ({ ...env, ...overrides })` helper: delete it and import `envWith` from the harness instead (the eager spread crashes collection for module-scope constants like `withLogin`; the harness version is lazy).
 - Nothing else changes — `app.request(path, init, envWith({...}))` and all helper calls stay as written.
 
 Suites whose assertions depend on the old default (`REQUIRE_LOGIN=0` came from wrangler vars) already get it from the harness base env. If any test constructs `envWith({})` expecting `ADMIN_TOKEN` present, the harness supplies `test-admin-token` (mirrors `.dev.vars`).

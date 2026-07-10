@@ -1,11 +1,8 @@
-import { env } from 'cloudflare:test';
+import { app, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import app from '../index';
 import { adminHeader, seedUser } from '../test/helpers';
 
 const TOKEN = 'sweep-admin-token';
-const envWith = (o: Record<string, string>): typeof env =>
-  ({ ...env, ...o }) as unknown as typeof env;
 const ADMIN_ENV = envWith({ ADMIN_TOKEN: TOKEN });
 const H = { ...adminHeader(TOKEN), 'content-type': 'application/json' };
 

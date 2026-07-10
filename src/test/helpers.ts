@@ -1,4 +1,4 @@
-import { env } from 'cloudflare:test';
+import { env } from './harness';
 import { createLoginSession } from '../auth/identity';
 import { Catalog } from '../db/d1';
 import { sessionCookieName } from '../env';
@@ -90,19 +90,16 @@ export function adminHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Write a companion presence KV entry so primarySession() resolves to sessionId. */
-export async function setCompanionPresence(
+/** Register companion presence so primarySession() resolves to sessionId. */
+export function setCompanionPresence(
   clientId: string,
   sessionId: string,
   opts: { visible?: boolean; is_playing?: boolean } = {},
-): Promise<void> {
-  await env.AUTH.put(`companion:presence:${clientId}`, '1', {
-    expirationTtl: 60,
-    metadata: {
-      session_id: sessionId,
-      visible: opts.visible ?? true,
-      is_playing: opts.is_playing ?? false,
-      updated: Date.now(),
-    },
+): void {
+  env.PRESENCE.upsert(clientId, {
+    session_id: sessionId,
+    visible: opts.visible ?? true,
+    is_playing: opts.is_playing ?? false,
+    updated: Date.now(),
   });
 }

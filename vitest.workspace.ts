@@ -9,4 +9,18 @@ export default defineWorkspace([
       environment: 'node',
     },
   },
+  {
+    test: {
+      name: 'integration',
+      include: ['src/**/*.int.test.ts'],
+      exclude: [
+        'src/routers/auth.int.test.ts',
+        'src/durable/SessionDO.int.test.ts',
+        'src/routers/companion-ws.int.test.ts',
+        'src/middleware/ipAllowlist.int.test.ts',
+      ],
+      environment: 'node',
+      setupFiles: ['./src/test/setup.int.ts'],
+    },
+  },
 ]);
