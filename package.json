@@ -2,31 +2,24 @@
   "name": "autologger",
   "version": "0.4.0",
   "private": true,
-  "description": "AutoLogger — portable Node server (Hono + better-sqlite3 + filesystem blobs)",
+  "description": "AutoLogger — portable Node server + React frontend (npm workspaces)",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
-    "start": "tsx --env-file-if-exists=.env src/main.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "@hono/node-server": "^1.19.11",
-    "@hono/node-ws": "^1.3.1",
-    "@playwright/test": "^1.61.1",
-    "better-sqlite3": "^12.11.1",
-    "hono": "^4.6.14",
-    "jose": "^5.9.6",
-    "zod": "^3.24.1"
+    "dev": "npm run dev -w server",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck -w server",
+    "test": "npm run test -w server"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
-    "tsx": "^4.23.0",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.9"
+    "concurrently": "^9.1.0"
   }
 }

@@ -183,7 +183,8 @@ These are accepted operational tradeoffs, not bugs to "fix" with a cross-DB tran
 
 ```bash
 npm install
-cp .env.example .env               # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
+cp server/.env.example server/.env # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
+# upgrading an existing checkout? your state moved: mv .env data server/
 
 npm run typecheck                  # tsc --noEmit
 npm run dev                        # tsx watch → http://127.0.0.1:8787
