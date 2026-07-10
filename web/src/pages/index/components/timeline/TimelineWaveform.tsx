@@ -6,7 +6,20 @@ import {
   type WaveformProgressRect,
   waveformSvgSpec,
 } from '../../../../shared/utils/waveformSvg';
-import styles from '../Timeline.module.css';
+
+// --- converted class strings (were Timeline.module.css) ---
+// The `timelineWaveforms` / `timelineWaveformFill` / `timelineWaveformProgress` literals
+// are retained for the perf-debug @layer rules that target them. Fill/progress use the v5
+// gradient url() — the #v4-log-session override, which is always the case here. The decoding
+// label folds Timeline's former hash-scoped keyframe into the shared wf-label-pulse token.
+const WAVEFORMS = 'timelineWaveforms absolute inset-0 h-full pointer-events-none z-[1]';
+const WAVEFORM_FULL =
+  'absolute top-0 left-0 h-full w-full overflow-hidden box-border isolate [contain:paint]';
+const WAVEFORM_SVG = 'block relative w-full h-full [shape-rendering:geometricPrecision]';
+const WAVEFORM_FILL = 'timelineWaveformFill [fill:url(#timeline-wf-v5-fill)] stroke-none';
+const WAVEFORM_PROGRESS = 'timelineWaveformProgress [fill:url(#timeline-wf-v5-prog)] stroke-none';
+const WAVEFORM_DECODING_LABEL =
+  'absolute inset-0 flex items-center justify-center pointer-events-none z-[2] text-[2rem] font-medium tracking-[0.06em] uppercase text-[rgba(229,238,252,0.42)] animate-wf-label-pulse motion-reduce:animate-none motion-reduce:opacity-85';
 
 interface Props {
   mergedPeaks: Float32Array | null;
@@ -70,10 +83,10 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
 
   if (!mergedPeaks || mergedPeaks.length === 0) {
     return (
-      <div className={styles.timelineWaveforms} id="timeline-waveforms" aria-hidden={true}>
-        <div className={styles.timelineWaveformFull} aria-hidden={true} />
+      <div className={WAVEFORMS} id="timeline-waveforms" aria-hidden={true}>
+        <div className={WAVEFORM_FULL} aria-hidden={true} />
         {clips.length > 0 && (
-          <div className={styles.timelineWaveformDecodingLabel} aria-hidden={true}>
+          <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
             Generating waveform…
           </div>
         )}
@@ -82,27 +95,23 @@ export function TimelineWaveform({ mergedPeaks, isDecoding, activeSec, totalSec,
   }
 
   return (
-    <div className={styles.timelineWaveforms} id="timeline-waveforms" aria-hidden={true}>
-      <div className={styles.timelineWaveformFull} aria-hidden={true}>
+    <div className={WAVEFORMS} id="timeline-waveforms" aria-hidden={true}>
+      <div className={WAVEFORM_FULL} aria-hidden={true}>
         <svg
-          className={styles.timelineWaveformSvg}
+          className={WAVEFORM_SVG}
           viewBox={`0 0 ${w} 100`}
           preserveAspectRatio="none"
           aria-hidden={true}
         >
           <V5Defs w={w} progRect={progRect} />
-          <path className={styles.timelineWaveformFill} d={pathD} />
+          <path className={WAVEFORM_FILL} d={pathD} />
           {progRect && (
-            <path
-              className={styles.timelineWaveformProgress}
-              d={pathD}
-              clipPath="url(#timeline-wf-p-full)"
-            />
+            <path className={WAVEFORM_PROGRESS} d={pathD} clipPath="url(#timeline-wf-p-full)" />
           )}
         </svg>
       </div>
       {isDecoding && (
-        <div className={styles.timelineWaveformDecodingLabel} aria-hidden={true}>
+        <div className={WAVEFORM_DECODING_LABEL} aria-hidden={true}>
           Generating waveform…
         </div>
       )}
