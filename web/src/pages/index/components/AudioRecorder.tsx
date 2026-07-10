@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useReducer, useRef } from 'react';
+import { API_ROOT } from '../../../api/client';
 import {
   useAudioSegments,
   useClaimAudioLease,
@@ -112,9 +113,8 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         const b = new Blob([JSON.stringify({ client_id: getClientInstanceId() })], {
           type: 'application/json',
         });
-        // Use raw fetch URL — apiFetch is not available at page hide time
-        const apiRoot = (document.body.dataset.apiRoot ?? '').replace(/\/$/, '') || '/api';
-        navigator.sendBeacon(`${apiRoot}/sessions/${sessionId}/audio-recording-lease/release`, b);
+        // Use raw sendBeacon URL — apiFetch is not available at page hide time
+        navigator.sendBeacon(`${API_ROOT}/sessions/${sessionId}/audio-recording-lease/release`, b);
       } catch {
         /* ignore */
       }

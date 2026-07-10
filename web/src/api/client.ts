@@ -1,6 +1,4 @@
-const rawApiRoot = (document.body.dataset.apiRoot ?? '').trim();
-export const API_ROOT =
-  rawApiRoot === '__API_ROOT__' || rawApiRoot === '' ? '/api' : rawApiRoot.replace(/\/$/, '');
+export const API_ROOT = '/api';
 
 export class ApiError extends Error {
   constructor(
@@ -44,16 +42,10 @@ export function apiUrl(path: string): string {
 }
 
 /**
- * WebSocket URL for an API path, mirroring `apiUrl`'s API_ROOT logic:
- * an absolute API_ROOT (`http(s)://…`) swaps its scheme to `ws(s)`; a relative
- * `/api` root resolves same-origin against the current page. The cookie rides the
- * same-origin upgrade.
+ * WebSocket URL for an API path: resolves same-origin against the current
+ * page under the `/api` root. The cookie rides the same-origin upgrade.
  */
 export function wsUrl(path: string): string {
-  const suffix = `/${path.replace(/^\//, '')}`;
-  if (/^https?:\/\//i.test(API_ROOT)) {
-    return `${API_ROOT.replace(/^http/i, 'ws')}${suffix}`;
-  }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.host}${API_ROOT}${suffix}`;
+  return `${proto}://${location.host}${API_ROOT}/${path.replace(/^\//, '')}`;
 }
