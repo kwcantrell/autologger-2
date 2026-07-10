@@ -147,32 +147,6 @@
   white-space: nowrap;
 }
 
-:global(#modal-app-settings) .copyFromSelect {
-  min-width: 7.5rem;
-  max-width: 14rem;
-  flex: 1 1 8rem;
-  margin: 0;
-  height: 1.5rem;
-  min-height: 1.5rem;
-  max-height: 1.5rem;
-  padding: 0 0.35rem;
-  font-size: 0.65rem;
-  box-sizing: border-box;
-}
-
-:global(#modal-app-settings) .headNewBtn:global(.btn) {
-  flex: 0 0 auto;
-  height: 1.5rem !important;
-  min-height: 1.5rem !important;
-  max-height: 1.5rem !important;
-  margin: 0 !important;
-  padding: 0 0.55rem !important;
-  font-size: 0.62rem !important;
-  line-height: 1.5rem !important;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-
 /* ---------------- Buttons table ---------------- */
 
 .tableWrapReact {
@@ -286,21 +260,6 @@
   padding-right: 0.4rem;
 }
 
-/* Beat global .profile-select padding/margin (otherwise ~40px row height) */
-:global(#modal-app-settings) .table .colName,
-:global(#modal-app-settings) .table .colType {
-  height: var(--v6-events-row-h) !important;
-  min-height: 0 !important;
-  max-height: var(--v6-events-row-h) !important;
-  margin: 0 !important;
-  padding: 0 0.35rem !important;
-  line-height: calc(var(--v6-events-row-h) - 2px) !important;
-  font-size: 0.65rem !important;
-  box-sizing: border-box !important;
-  width: 100%;
-  vertical-align: middle;
-}
-
 .table select.colType {
   appearance: auto;
   cursor: pointer;
@@ -323,66 +282,10 @@
   z-index: 1;
 }
 
-:global(#modal-app-settings) .table .colOptionsBtn:global(.btn) {
-  max-width: 100%;
-  height: var(--v6-events-row-h) !important;
-  min-height: 0 !important;
-  max-height: var(--v6-events-row-h) !important;
-  padding: 0 0.4rem !important;
-  font-size: 0.65rem !important;
-  line-height: var(--v6-events-row-h) !important;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-
 /* Event name + options: flat control (cell keeps card bg); border when hover / focus */
 .table tbody td.colNameWrap,
 .table tbody td.colOptionsWrap {
   text-align: left;
-}
-
-:global(#modal-app-settings) .table .colNameWrap .colName {
-  background: transparent !important;
-  border: 1px solid transparent !important;
-  border-radius: 0.35rem !important;
-  box-shadow: none !important;
-}
-
-:global(#modal-app-settings) .table .colNameWrap:hover .colName,
-:global(#modal-app-settings) .table .colNameWrap:focus-within .colName {
-  border-color: rgba(56, 189, 248, 0.55) !important;
-}
-
-:global(#modal-app-settings) .table .colOptionsWrap .colOptionsBtn:global(.btn) {
-  background: transparent !important;
-  border: 1px solid transparent !important;
-  border-radius: 0.35rem !important;
-  box-shadow: none !important;
-  justify-content: flex-start !important;
-  width: 100%;
-  text-align: left;
-}
-
-:global(#modal-app-settings) .table .colOptionsWrap:hover .colOptionsBtn:not(:disabled),
-:global(#modal-app-settings) .table .colOptionsWrap:focus-within .colOptionsBtn:not(:disabled) {
-  border-color: rgba(56, 189, 248, 0.55) !important;
-}
-
-:global(#modal-app-settings) .table .colDelete:global(.btn-icon.btn) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--v6-events-row-h) + 0.15rem);
-  min-width: calc(var(--v6-events-row-h) + 0.15rem);
-  height: var(--v6-events-row-h) !important;
-  min-height: 0 !important;
-  max-height: var(--v6-events-row-h) !important;
-  padding: 0 !important;
-  margin: 0;
-  line-height: 0 !important;
-  box-sizing: border-box;
 }
 
 .table .colDelete:global(.btn-icon) svg {

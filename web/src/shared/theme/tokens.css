@@ -18,10 +18,9 @@
   --accent-dim: #4a8fd9;
   --danger: #ff6b6b;
   --radius: 10px;
-  --font: "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --mono: "SF Mono", "Consolas", "Liberation Mono", monospace;
   /* Self-hosted Google Fonts: Poppins 100/300/400/600; League Gothic variable width */
-  --font-poppins: "Poppins", var(--font);
+  --font-poppins: "Poppins", "SF Pro Text", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --font-league-gothic: "League Gothic", sans-serif;
 
   /* V5 design tokens (formerly scoped under body.v5-ui; promoted to :root in v1.15.0). */

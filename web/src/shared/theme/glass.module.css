@@ -9,26 +9,6 @@
  * Phase 6 Step 1).
  */
 
-.glass {
-  background: var(--v5-glass-face);
-  border: 1px solid var(--v5-border);
-  border-radius: var(--v5-radius-lg);
-  box-shadow: var(--v5-glass-rim);
-}
-
-.glassStrong {
-  background: var(--v5-glass-face-strong);
-}
-
-.shadowGlow {
-  box-shadow: var(--v5-shadow-glow);
-}
-
-/* `.glass.shadow-glow` together — same panel stack as `--v5-panel-elevate` */
-.glass.shadowGlow {
-  box-shadow: var(--v5-panel-elevate);
-}
-
 /* Floating-panel chrome shared by the Radix wrappers (Dialog/Popover/Tooltip
  * content + the index-local Select dropdown). Consume via
  * `composes: glassPanel from '<path>/glass.module.css';`. Only compose from

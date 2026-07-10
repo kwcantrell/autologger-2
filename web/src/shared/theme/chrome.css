@@ -122,13 +122,6 @@
   margin-bottom: 0.75rem;
 }
 
-.modal-card h2 {
-  margin: 0 0 0.65rem;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
 .modal-lead {
   margin: 0 0 1rem;
   font-size: 0.82rem;
@@ -206,12 +199,6 @@
   color: var(--muted);
 }
 
-.log-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-}
-
 .field {
   display: flex;
   flex-direction: column;
@@ -259,11 +246,6 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-}
-
-.hint {
-  font-size: 0.78rem;
-  color: var(--muted);
 }
 
 .btn {
@@ -394,14 +376,6 @@ textarea {
   word-break: break-all;
 }
 
-.new-session-panel {
-  margin-bottom: 1.25rem;
-  padding: 1rem;
-  background: var(--bg);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
 .new-session-form .field {
   margin-bottom: 0.75rem;
 }
@@ -456,17 +430,6 @@ textarea {
   color: var(--muted);
   line-height: 1.3;
   max-width: 18rem;
-}
-
-.pad {
-  padding: 0.5rem 0;
-}
-
-.table-wrap {
-  overflow: auto;
-  max-height: min(55vh, 520px);
-  margin: 0 -0.25rem;
-  border-radius: 8px;
 }
 
 .modal-export-actions {

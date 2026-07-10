@@ -212,32 +212,6 @@
   font-weight: 500;
 }
 
-/* ============================================================
- * v5-ui.css carve-out — V5 chrome overrides for the session aside clock
- * ============================================================
- *
- * `.v4-session-aside` is rendered by SessionWorkspace.tsx, so anchor via
- * :global() to preserve the cross-module selector.
- */
-
-:global(.v4-session-aside) .clock-label,
-:global(.v4-session-aside) .clock-session-timecode {
-  font-family: "Inter", var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
-  font-variant-numeric: tabular-nums;
-}
-
-:global(.v4-session-aside) .clock-label {
-  font-size: 0.58rem;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-}
-
-:global(.v4-session-aside) .clock-session-timecode {
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  font-family: inherit;
-}
-
 .v4-clock-box {
   border-radius: var(--v5-radius-md);
   border: 1px solid var(--v5-border-strong);

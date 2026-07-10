@@ -59,7 +59,6 @@ export function EventLogRow({
   const editable = !isAuto && (inlineEdit || batchEdit);
   const color = event.category_color || undefined;
   const isInternal = event.category.toLowerCase() === 'internal';
-  const rowAccent = color ? { '--log-row-accent': color } : undefined;
 
   const catStyle = color ? { color } : undefined;
   const msgStyle = isInternal ? catStyle : { color: 'var(--text)' };
@@ -288,12 +287,7 @@ export function EventLogRow({
   );
 
   return (
-    <tr
-      ref={rowRef}
-      data-event-id={event.event_id}
-      className={rowClass ?? undefined}
-      style={rowAccent as React.CSSProperties}
-    >
+    <tr ref={rowRef} data-event-id={event.event_id} className={rowClass ?? undefined}>
       {editable ? (
         <td className={clsx(styles.tc, styles.colTcCellEdit)}>{tcStack}</td>
       ) : (

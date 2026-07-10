@@ -15,7 +15,6 @@
 /* --- 6. Large panel shadows (less composite work when scrolling) --- */
 :global(body.perf-dbg--no-panel-shadows .panel),
 :global(body.perf-dbg--no-panel-shadows .footer),
-:global(body.perf-dbg--no-panel-shadows .toast),
 :global(body.perf-dbg--no-panel-shadows .v4-top-bar),
 :global(body.perf-dbg--no-panel-shadows .v4-log-top),
 :global(body.perf-dbg--no-panel-shadows .v4-log-sheet),
