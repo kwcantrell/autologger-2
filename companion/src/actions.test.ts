@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { actionDefinitions, type ActionHost } from './actions.js';
+import { type ActionHost, actionDefinitions } from './actions.js';
 import { ApiError, type AutologgerApi } from './api.js';
 
-function makeHost(api: Partial<AutologgerApi>): { host: ActionHost; logs: string[]; refreshed: () => number } {
+function makeHost(api: Partial<AutologgerApi>): {
+  host: ActionHost;
+  logs: string[];
+  refreshed: () => number;
+} {
   const logs: string[] = [];
   let refreshed = 0;
   const host: ActionHost = {
@@ -40,7 +44,10 @@ describe('log_event action', () => {
     const log = vi.fn().mockRejectedValue(new ApiError('bad_category', 'x', 400));
     const { host, logs } = makeHost({ log });
     const defs = actionDefinitions(host, null);
-    await defs.log_event.callback({ options: { category: 'c1', message: 'hi' } } as never, {} as never);
+    await defs.log_event.callback(
+      { options: { category: 'c1', message: 'hi' } } as never,
+      {} as never,
+    );
     expect(logs.some((l) => l.startsWith('warn:') && /category/i.test(l))).toBe(true);
   });
 });

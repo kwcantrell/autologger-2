@@ -11,10 +11,10 @@ import { feedbackDefinitions } from './feedbacks.js';
 import { Poller } from './poller.js';
 import { presetDefinitions } from './presets.js';
 import {
+  type ServerStatePayload,
   showIdChanged,
   toFeedbackFlags,
   toVariableValues,
-  type ServerStatePayload,
 } from './state.js';
 import { UpgradeScripts } from './upgrades.js';
 import { variableDefinitions } from './variables.js';
@@ -31,7 +31,9 @@ class AutologgerInstance extends InstanceBase<ModuleConfig> {
     this.destroyed = false;
     this.config = config;
     this.setVariableDefinitions(variableDefinitions());
-    this.setFeedbackDefinitions(feedbackDefinitions(() => toFeedbackFlags(this.lastState ?? EMPTY)));
+    this.setFeedbackDefinitions(
+      feedbackDefinitions(() => toFeedbackFlags(this.lastState ?? EMPTY)),
+    );
     this.setPresetDefinitions(presetDefinitions());
     this.rebuildActions();
     this.updateStatus(InstanceStatus.Connecting);

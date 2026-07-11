@@ -66,10 +66,7 @@ export function toFeedbackFlags(s: ServerStatePayload): {
   };
 }
 
-export function showIdChanged(
-  prev: ServerStatePayload | null,
-  next: ServerStatePayload,
-): boolean {
+export function showIdChanged(prev: ServerStatePayload | null, next: ServerStatePayload): boolean {
   const prevId = prev?.session?.show_id ?? null;
   const nextId = next.session?.show_id ?? null;
   return prevId !== nextId;

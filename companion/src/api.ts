@@ -60,7 +60,11 @@ export class AutologgerApi {
         signal: timer.signal,
       });
       if (!res.ok) {
-        throw new ApiError(statusToKind(res.status), `${method} ${path} -> ${res.status}`, res.status);
+        throw new ApiError(
+          statusToKind(res.status),
+          `${method} ${path} -> ${res.status}`,
+          res.status,
+        );
       }
       const text = await res.text();
       return (text ? JSON.parse(text) : {}) as T;

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { showIdChanged, toFeedbackFlags, toVariableValues, type ServerStatePayload } from './state.js';
+import {
+  type ServerStatePayload,
+  showIdChanged,
+  toFeedbackFlags,
+  toVariableValues,
+} from './state.js';
 
 const NONE: ServerStatePayload = {
   connected_clients: 0,
@@ -27,7 +32,13 @@ const LIVE: ServerStatePayload = {
     show_name: 'The Show',
     show_code: 'SHOW',
   },
-  last_command: { id: 'c1', type: 'record-start', ok: false, error: 'no listener', delivered_to: null },
+  last_command: {
+    id: 'c1',
+    type: 'record-start',
+    ok: false,
+    error: 'no listener',
+    delivered_to: null,
+  },
 };
 
 describe('toVariableValues', () => {
@@ -50,10 +61,20 @@ describe('toVariableValues', () => {
 
 describe('toFeedbackFlags', () => {
   it('all false when no session', () => {
-    expect(toFeedbackFlags(NONE)).toEqual({ rolling: false, recording: false, playing: false, session_active: false });
+    expect(toFeedbackFlags(NONE)).toEqual({
+      rolling: false,
+      recording: false,
+      playing: false,
+      session_active: false,
+    });
   });
   it('reflects live flags', () => {
-    expect(toFeedbackFlags(LIVE)).toEqual({ rolling: true, recording: false, playing: true, session_active: true });
+    expect(toFeedbackFlags(LIVE)).toEqual({
+      rolling: true,
+      recording: false,
+      playing: true,
+      session_active: true,
+    });
   });
 });
 

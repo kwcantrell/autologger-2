@@ -11,11 +11,17 @@ export interface ActionHost {
 function reportError(host: ActionHost, verb: string, err: unknown): void {
   if (err instanceof ApiError) {
     if (err.kind === 'no_session') {
-      host.log('warn', `${verb}: no active session — open AutoLogger in a browser and open a session.`);
+      host.log(
+        'warn',
+        `${verb}: no active session — open AutoLogger in a browser and open a session.`,
+      );
       return;
     }
     if (err.kind === 'bad_category') {
-      host.log('warn', `${verb}: unknown category for the active show — re-pick the category (the show may have changed).`);
+      host.log(
+        'warn',
+        `${verb}: unknown category for the active show — re-pick the category (the show may have changed).`,
+      );
       return;
     }
     host.log('error', `${verb}: ${err.message}`);
@@ -93,9 +99,9 @@ export function actionDefinitions(
       ],
       callback: async (action) => {
         try {
-          await host.api().command(
-            action.options.type as 'record-start' | 'record-stop' | 'record-toggle',
-          );
+          await host
+            .api()
+            .command(action.options.type as 'record-start' | 'record-stop' | 'record-toggle');
           host.refreshNow();
         } catch (err) {
           reportError(host, 'record', err);

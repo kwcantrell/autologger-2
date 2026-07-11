@@ -4,7 +4,10 @@ import { ApiError, AutologgerApi } from './api.js';
 
 let server: Server;
 let base: string;
-let handler: (req: import('node:http').IncomingMessage, body: string) => { status: number; json: unknown };
+let handler: (
+  req: import('node:http').IncomingMessage,
+  body: string,
+) => { status: number; json: unknown };
 
 beforeEach(async () => {
   server = createServer((req, res) => {
@@ -34,7 +37,10 @@ describe('AutologgerApi', () => {
     let seenAuth: string | undefined;
     handler = (req) => {
       seenAuth = req.headers.authorization;
-      return { status: 200, json: { connected_clients: 1, active_session_id: 's1', session: null, last_command: null } };
+      return {
+        status: 200,
+        json: { connected_clients: 1, active_session_id: 's1', session: null, last_command: null },
+      };
     };
     const state = await api('tok').getState();
     expect(seenAuth).toBe('Bearer tok');
@@ -45,7 +51,10 @@ describe('AutologgerApi', () => {
     let seenAuth: string | undefined = 'unset';
     handler = (req) => {
       seenAuth = req.headers.authorization;
-      return { status: 200, json: { connected_clients: 0, active_session_id: null, session: null, last_command: null } };
+      return {
+        status: 200,
+        json: { connected_clients: 0, active_session_id: null, session: null, last_command: null },
+      };
     };
     await api('').getState();
     expect(seenAuth).toBeUndefined();
@@ -63,7 +72,9 @@ describe('AutologgerApi', () => {
 
   it('maps 400 -> bad_category on log', async () => {
     handler = () => ({ status: 400, json: { detail: 'Unknown category' } });
-    await expect(api().log({ category_id: 'x', message: 'm' })).rejects.toMatchObject({ kind: 'bad_category' });
+    await expect(api().log({ category_id: 'x', message: 'm' })).rejects.toMatchObject({
+      kind: 'bad_category',
+    });
   });
 
   it('maps 500 -> http', async () => {
@@ -73,7 +84,9 @@ describe('AutologgerApi', () => {
 
   it('surfaces ApiError type', async () => {
     handler = () => ({ status: 401, json: {} });
-    const err = await api().getState().catch((e) => e);
+    const err = await api()
+      .getState()
+      .catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
   });
 });
