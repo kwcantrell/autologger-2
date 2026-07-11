@@ -1,6 +1,14 @@
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
+
+// Gate the `companion` project's test selection on the binary's presence at
+// config-load time (not just a runtime test.skip) so `npx playwright test
+// --list` reports zero tests for the project on machines without the local
+// Companion install, matching the brief's "runs only when the Companion
+// binary exists" contract.
+const COMPANION_LAUNCHER = '/home/kalen/companion-x64/companion_headless.sh';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -47,7 +55,26 @@ export default defineConfig({
     },
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' }, testIgnore: /visual\.spec\.ts/ },
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium' },
+      testIgnore: [/visual\.spec\.ts/, /companion\.e2e\.spec\.ts/],
+    },
+    {
+      name: 'companion',
+      testMatch: /companion\.e2e\.spec\.ts/,
+      // Binary-gated: no tests are collected at all when Companion isn't
+      // installed locally (see COMPANION_LAUNCHER above), rather than relying
+      // solely on the in-file test.skip().
+      testIgnore: existsSync(COMPANION_LAUNCHER) ? undefined : /companion\.e2e\.spec\.ts/,
+      fullyParallel: false,
+      // beforeAll packages the module (npm run package -w companion, an
+      // esbuild bundle) and boots real Companion before any assertion runs;
+      // the default 30s budget is too tight for that plus the multi-step
+      // admin-UI flow that follows.
+      timeout: 60_000,
+      use: { browserName: 'chromium' },
+    },
     {
       name: 'visual-desktop',
       testMatch: /visual\.spec\.ts/,

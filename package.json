@@ -1,6 +1,6 @@
 {
   "name": "autologger",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "AutoLogger — portable Node server + React frontend (npm workspaces)",
   "type": "module",
@@ -9,15 +9,16 @@
   },
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "companion"
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta --kill-others-on-fail \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
-    "test": "npm run test -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc --noEmit -p e2e",
-    "lint": "npm run lint -w web && biome check --write e2e playwright.config.ts",
+    "test": "npm run test -w server && npm run test -w companion",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w companion && tsc --noEmit -p e2e",
+    "lint": "npm run lint -w web && biome check --write e2e playwright.config.ts companion/src",
     "e2e": "npm run build -w web && playwright test --project=chromium",
     "e2e:visual": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile",
     "e2e:visual:update": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile --update-snapshots"
@@ -28,5 +29,8 @@
     "@types/node": "^26.1.1",
     "concurrently": "^9.1.0",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "@companion-module/base": "~1.14.0"
   }
 }
