@@ -1143,7 +1143,8 @@ describe('presetDefinitions', () => {
     for (const id of ids) {
       const p = presets[id];
       if (p.type !== 'button') continue;
-      expect(JSON.stringify(p.steps)).toContain('deck_title');
+      // Button text lives in style.text (NOT steps, which hold only actions).
+      expect(p.style.text).toContain('deck_title');
     }
   });
 });
@@ -1764,7 +1765,9 @@ git commit -m "test(companion): headless-Companion Playwright e2e harness (binar
 
 - [ ] **Step 1: Add a "Companion module" section to `README.md`**
 
-Place it near the existing workspace/architecture docs. Content:
+Place it near the existing workspace/architecture docs. Content (adjust to the repo's
+README voice; the key facts — packaged-not-raw loading, the `~1.14.0` pin, the `API_TOKEN`
+env name — must all be present):
 ```markdown
 ## Companion module (`companion/`)
 
@@ -1778,12 +1781,27 @@ npm run test -w companion       # vitest unit tests
 npm run package -w companion    # produce a distributable .tgz module package
 ```
 
-**Loading in Companion (dev):** point a Companion 4.3.x install at the repo with
-`--extra-module-path <repo-root>` (build `companion/dist` first). Configure the connection
-with the **Server URL** (e.g. `http://127.0.0.1:8787`) and, only if the server runs with
-`API_TOKEN` set (`REQUIRE_LOGIN=1`), the **API token**.
+**Loading in Companion 4.3.x:** you must load the **packaged** module, not the raw `tsc`
+output — under Companion's per-module Node permission sandbox the plain `companion/dist/`
+build cannot read the workspace-hoisted dependencies and fails to start. Run
+`npm run package -w companion` to produce `autologger-0.1.0.tgz` (a self-contained,
+dependency-free esbuild bundle with a correct `runtime.apiVersion`), then either import it
+via Companion's **"Import module package"**, or extract it into a directory you pass to
+`--extra-module-path`. Configure the connection with the **Server URL**
+(e.g. `http://127.0.0.1:8787`) and, only if the server runs with the `API_TOKEN` env var set
+(`REQUIRE_LOGIN=1`), the **API token**.
 
-> `@companion-module/base` is pinned to `~2.0.0` — Companion 4.3.4 rejects newer 2.1.x.
+> `@companion-module/base` is pinned to `~1.14.0` (stable 1.x). Companion 4.3.4 rejects the
+> newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
+> root `package.json` `overrides` keeps `@companion-module/tools` on the same 1.14.x base so
+> the packaged manifest's `apiVersion` is correct.
+```
+
+**e2e note (for the CONTRIBUTING/testing area if one exists, else fold into the above):**
+the headless-Companion Playwright project is binary-gated and excluded from the default
+`npm run e2e` run. To run it where a Companion install is present, use
+`npm run e2e -- --project=companion --workers=1` (it must not share workers with the
+`chromium` project — resource contention makes a shared multi-worker run flaky).
 ```
 
 - [ ] **Step 2: Add a `CHANGELOG.md` entry**
@@ -1798,7 +1816,19 @@ At the top, above the latest section:
   session-active) and variables (timecode, take, deck title, command delivery, …). Pure
   client of the existing `/api/companion/*` endpoints; polls state with post-action
   refresh. Includes a headless-Companion Playwright e2e harness.
+
+### Fixed
+- Root `package.json` `overrides` pins `@companion-module/base` to `~1.14.0` across the
+  workspace so `npm run package` bakes the correct `runtime.apiVersion` into the Companion
+  module bundle (previously a hoisted transitive `2.0.4` from `@companion-module/tools`
+  produced an unloadable package).
 ```
+
+- [ ] **Step 2b: Fix the stale failure message in `companion/scripts/check-base-version.mjs`**
+
+The guard's `console.error` still advises `Pin to ~2.0.0.` — wrong now that we pin 1.x.
+Locate the line by content and change `Pin to ~2.0.0.` → `Pin to ~1.14.0 (stable 1.x).`
+(only the message string; the range-check logic is already correct).
 
 - [ ] **Step 3: Bump the root `package.json` version**
 
