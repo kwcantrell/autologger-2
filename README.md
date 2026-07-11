@@ -318,3 +318,35 @@ change, with a human-reviewed before/after diff confirming only the intended cha
 moved. A future Playwright/Chromium version bump will shift anti-aliasing across most
 shots and likely needs a full re-capture; that's expected and no longer gated behind an
 exact-pin policy (`@playwright/test` is back to a caret range).
+
+## Companion module (`companion/`)
+
+A Bitfocus Companion (Stream Deck) module — an npm workspace that controls the active
+AutoLogger session over the existing `/api/companion/*` HTTP endpoints (log events,
+roll/stop takes, record/play), with live feedbacks and variables.
+
+```bash
+npm run build -w companion      # check base-version pin + tsc -> companion/dist/
+npm run test -w companion       # vitest unit tests
+npm run package -w companion    # produce a distributable .tgz module package
+```
+
+**Loading in Companion 4.3.x:** you must load the **packaged** module, not the raw `tsc`
+output — under Companion's per-module Node permission sandbox the plain `companion/dist/`
+build cannot read the workspace-hoisted dependencies and fails to start. Run
+`npm run package -w companion` to produce `autologger-0.1.0.tgz` (a self-contained,
+dependency-free esbuild bundle with a correct `runtime.apiVersion`), then either import it
+via Companion's **"Import module package"**, or extract it into a directory you pass to
+`--extra-module-path`. Configure the connection with the **Server URL**
+(e.g. `http://127.0.0.1:8787`) and, only if the server runs with the `API_TOKEN` env var set
+(`REQUIRE_LOGIN=1`), the **API token**.
+
+> `@companion-module/base` is pinned to `~1.14.0` (stable 1.x). Companion 4.3.4 rejects the
+> newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
+> root `package.json` `overrides` keeps `@companion-module/tools` on the same 1.14.x base so
+> the packaged manifest's `apiVersion` is correct.
+
+The headless-Companion Playwright project is binary-gated and excluded from the default
+`npm run e2e` run. To run it where a Companion install is present, use
+`npm run e2e -- --project=companion --workers=1` (it must not share workers with the
+`chromium` project — resource contention makes a shared multi-worker run flaky).

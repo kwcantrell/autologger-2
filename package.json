@@ -1,6 +1,6 @@
 {
   "name": "autologger",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "AutoLogger — portable Node server + React frontend (npm workspaces)",
   "type": "module",

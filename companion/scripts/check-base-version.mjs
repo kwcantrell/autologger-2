@@ -33,7 +33,7 @@ const ok =
 if (!ok) {
   console.error(
     `@companion-module/base ${version} is outside Companion 4.3.4's accepted range ` +
-      `(~0.6 || 1 - 1.14.x || 2 - 2.0.x). Pin to ~2.0.0.`,
+      `(~0.6 || 1 - 1.14.x || 2 - 2.0.x). Pin to ~1.14.0 (stable 1.x).`,
   );
   process.exit(1);
 }
