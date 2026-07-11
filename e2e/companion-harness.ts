@@ -24,9 +24,12 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+const require = createRequire(import.meta.url);
 
 export const COMPANION_DIR = '/home/kalen/companion-x64';
 export const COMPANION_LAUNCHER = join(COMPANION_DIR, 'companion_headless.sh');
@@ -51,37 +54,46 @@ function stagePackagedModule(companionWorkspaceDir: string, stageDir: string): v
   try {
     execFileSync('tar', ['xzf', tgz, '-C', moduleDir, '--strip-components=1'], { stdio: 'pipe' });
   } finally {
-    // The build artifact is gitignore'd but don't leave it sitting in the
-    // tracked companion/ workspace dir across runs.
+    // The build artifact is gitignore'd (companion/.gitignore: pkg/, *.tgz) but
+    // don't leave it sitting in the tracked companion/ workspace dir across runs.
     execFileSync('rm', ['-f', tgz]);
     execFileSync('rm', ['-rf', join(companionWorkspaceDir, 'pkg')]);
   }
 
-  // `npm run package`'s manifest.runtime.apiVersion is WRONG in this repo and
-  // must be corrected post-build. `companion-module-build` (from
-  // @companion-module/tools) resolves the framework package via plain
-  // require.resolve('@companion-module/base') from its own location — which
-  // is root node_modules (npm workspaces hoisted @companion-module/tools
-  // there). Root also happens to have its own hoisted, *different-major*
-  // @companion-module/base (2.0.4, pulled in transitively by tools' own
-  // deps), shadowing the workspace's explicitly pinned ~1.14.0
+  // Historical note (see task-9-report.md / task-9_5-report.md): `npm run
+  // package`'s manifest.runtime.apiVersion used to come out WRONG in this repo.
+  // `companion-module-build` (from @companion-module/tools) resolves the
+  // framework package via plain require.resolve('@companion-module/base') from
+  // its own location — which is root node_modules (npm workspaces hoist
+  // @companion-module/tools there). Root used to also carry its own hoisted,
+  // *different-major* @companion-module/base (2.0.4, pulled in transitively by
+  // tools' own deps), shadowing the workspace's explicitly pinned ~1.14.0
   // (companion/node_modules/@companion-module/base@1.14.1 — the version
   // companion/src/*.ts actually imports types from and is compiled against).
-  // Symptom verified empirically (see task-9-report.md): staging the
-  // as-built manifest (apiVersion "2.0.4") makes Companion pick the v2
-  // nodejs-ipc host (ConnectionThread.js) for a module whose bundled code
-  // still speaks the v1 runEntrypoint()/HostApiNodeJsIpc protocol, and
-  // Companion logs "Module entrypoint did not return a valid constructor
-  // function" — i.e. the manifest's declared API version, not the code, is
-  // stale/wrong. Overwrite it with the version the module was actually
-  // built against.
+  // Symptom verified empirically: staging the as-built manifest (apiVersion
+  // "2.0.4") made Companion pick the v2 nodejs-ipc host (ConnectionThread.js)
+  // for a module whose bundled code still speaks the v1
+  // runEntrypoint()/HostApiNodeJsIpc protocol, and Companion logged "Module
+  // entrypoint did not return a valid constructor function" — i.e. the
+  // manifest's declared API version, not the code, was stale/wrong.
+  //
+  // Root-caused via a root-level npm `overrides` entry (package.json) pinning
+  // @companion-module/base to ~1.14.0 workspace-wide, so the hoisted copy
+  // `companion-module-build` resolves now matches the pinned one — `npm run
+  // package -w companion` alone now produces a correct manifest. This
+  // post-build rewrite is kept as a defense-in-depth belt-and-suspenders (it's
+  // a no-op once the override holds) in case the override is ever removed or a
+  // future dependency bump re-introduces hoisting drift.
+  //
+  // Resolve via require.resolve (not a hardcoded companion/node_modules path)
+  // because the override now fully dedupes @companion-module/base to a single
+  // copy — hoisted to the workspace ROOT node_modules, same as what
+  // `companion-module-build` itself resolves — so there is no
+  // companion/node_modules/@companion-module/base directory to read anymore.
   const localBaseVersion = (
-    JSON.parse(
-      readFileSync(
-        join(companionWorkspaceDir, 'node_modules', '@companion-module', 'base', 'package.json'),
-        'utf-8',
-      ),
-    ) as { version: string }
+    JSON.parse(readFileSync(require.resolve('@companion-module/base/package.json'), 'utf-8')) as {
+      version: string;
+    }
   ).version;
 
   const manifestPath = join(moduleDir, 'companion', 'manifest.json');
