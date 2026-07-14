@@ -84,5 +84,12 @@
 ## 4. Finalize
 
 - [ ] 4.1 Full gates: `npm test`, `npm run typecheck`, `npm run lint`, `npm run e2e`.
+      e2e bar (per 3.2's main-comparison evidence): chromium, login-gate, companion,
+      and all race-fixed mobile tests green; the ONLY permitted visual failures are the
+      documented pre-existing-on-main flake set (8 desktop + 9 unmasked mobile
+      mask-edge diffs — identical test names + signatures on `main`). Any failure
+      outside that set blocks. The flake set itself is out of scope (residual; needs
+      its own fix, likely masking the random session-id region — do not rebaseline
+      here).
 - [ ] 4.2 Whole-branch review (apply-protocol final review), then
       `openspec validate add-login-screen --strict`.
