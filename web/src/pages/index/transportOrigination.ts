@@ -17,7 +17,24 @@
 
 let originatedSessionId: string | null = null;
 
-/** Call when this client successfully issues transport-start for `sessionId`. */
+/**
+ * Call when this client successfully issues transport-start for `sessionId`.
+ *
+ * Callers are responsible for confirming the client is still on `sessionId`'s
+ * route before calling this (see `TransportControls.tsx`'s call site) —
+ * `start.mutateAsync()` is awaited before that call site reaches this line,
+ * so the user may have already navigated away by the time it resolves.
+ * Marking unconditionally here would record a stale origination for a
+ * session this client is no longer viewing: the departure watcher only
+ * checks "does the flag's id match the route being left", not "was the flag
+ * just set for the route we're currently on" — a stale flag for sess-1 set
+ * while the client is already parked on sess-2's route would satisfy that
+ * check on sess-2's *next*, unrelated departure and stop sess-2's roll
+ * instead (phase-5 review finding: the async-gap origination race). This
+ * function stays a plain, unconditional setter — tests exercise it directly
+ * as a stand-in for "this client issued transport-start" without going
+ * through the real component (see AppShell.test.tsx, departureWatcher.test.tsx).
+ */
 export function markOriginated(sessionId: string): void {
   originatedSessionId = sessionId;
 }

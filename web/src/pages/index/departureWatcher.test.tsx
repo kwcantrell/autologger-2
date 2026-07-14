@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
-import { setNavigationImplForTesting } from './navigation';
+import { navigate, setNavigationImplForTesting } from './navigation';
 import {
   getOriginatedSessionId,
   markOriginated,
@@ -214,5 +214,28 @@ describe('Originator-scoped transport stop on route departure (design D4)', () =
     // effect-based, so nothing about mounting can trigger it.
     expect(stop).not.toHaveBeenCalled();
     expect(getOriginatedSessionId()).toBeNull();
+  });
+
+  // The async-gap origination race (phase-5 review: markOriginated's caller,
+  // TransportControls.tsx, awaits the transport-start mutation before calling
+  // it, so the flag write must be guarded against the client having already
+  // navigated away) is exercised at its actual call site in
+  // `TransportControls.test.tsx` — the guard lives there (mountedRef +
+  // latestSessionIdRef), not in `markOriginated` itself, which stays a plain
+  // setter here and in AppShell.test.tsx's direct-call preconditions.
+
+  it('navigating to the same session id (e.g. a replace navigation) neither fires the stop nor clears the flag', () => {
+    renderShell('/sessions/sess-1');
+    fireEvent.click(screen.getByTestId('originate'));
+    expect(getOriginatedSessionId()).toBe('sess-1');
+
+    // Mirrors phase 6's post-login stash-return replace-navigate, which goes
+    // through this same navigate() wrapper and can land on the session the
+    // client is already viewing.
+    navigate('/sessions/sess-1', { replace: true });
+
+    expect(window.location.pathname).toBe('/sessions/sess-1');
+    expect(stop).not.toHaveBeenCalled();
+    expect(getOriginatedSessionId()).toBe('sess-1');
   });
 });

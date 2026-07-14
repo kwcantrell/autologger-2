@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { eventsKeys } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useTransport } from '../../../api/hooks/useTransport';
@@ -267,6 +267,26 @@ export function TransportControls({
     configs[1] = { ...configs[1], enabled: false };
   }
 
+  // Async-gap guard (session-deep-links phase-5 review): `start.mutateAsync()`
+  // below is awaited, so this component's route may have moved on — a switch
+  // to another session (re-render with a new `sessionId` prop, no unmount) or
+  // a close/interstitial swap (unmount) — by the time it resolves. Marking
+  // origination for the stale, closed-over `sessionId` in that case would let
+  // the departure watcher misfire on a LATER, unrelated departure (see
+  // transportOrigination.ts's `markOriginated` doc comment). `latestSessionIdRef`
+  // catches the switch case (it tracks the prop across re-renders while
+  // mounted); `mountedRef` catches full unmount, which stops re-renders and
+  // would otherwise leave `latestSessionIdRef` frozen on the now-stale id.
+  const latestSessionIdRef = useRef(sessionId);
+  latestSessionIdRef.current = sessionId;
+  const mountedRef = useRef(true);
+  useEffect(
+    () => () => {
+      mountedRef.current = false;
+    },
+    [],
+  );
+
   const handleClick = useCallback(
     async (idx: number) => {
       if (busy) return;
@@ -278,8 +298,12 @@ export function TransportControls({
           await start.mutateAsync();
           // This client just issued transport-start for `sessionId` — track
           // origination (session-deep-links design D4) so the departure
-          // watcher stops it, and only it, on route departure.
-          markOriginated(sessionId);
+          // watcher stops it, and only it, on route departure. Guarded: only
+          // mark if this component is still mounted and still on `sessionId`'s
+          // route (see the async-gap comment above the refs).
+          if (mountedRef.current && latestSessionIdRef.current === sessionId) {
+            markOriginated(sessionId);
+          }
           qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
         } finally {
           setBusy(false);
