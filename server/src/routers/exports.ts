@@ -1,7 +1,7 @@
 // Export routes — ported from web/routers/exports.py + export.py. Events come from
 // the SessionDO, category labels are enriched in the Worker, then serialized to
-// CSV (columns TIMECODE/UTC/CATEGORY/MESSAGE, CRLF, csv-minimal quoting matching
-// Python's csv module) or JSONL.
+// CSV (frozen dialect: columns TIMECODE/UTC/CATEGORY/MESSAGE, CRLF, minimal quoting —
+// the Python csv-module defaults, kept from the origin) or JSONL.
 
 import { type Context, Hono } from 'hono';
 import type { EventRpc } from '../studio';
@@ -75,7 +75,8 @@ function utcYmdHms(iso: string): string {
   return `${p(d.getUTCFullYear() % 100)}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-/** Serialize to CSV matching Python's csv module: QUOTE_MINIMAL, CRLF line endings. */
+/** Serialize to CSV in the frozen dialect: QUOTE_MINIMAL-style quoting, CRLF line
+ * endings (the Python csv-module defaults, kept from the origin). */
 function toCsv(rows: Array<Record<(typeof COLUMNS)[number], string>>): string {
   const lines = [COLUMNS.map(csvField).join(',')];
   for (const r of rows) lines.push(COLUMNS.map((col) => csvField(r[col])).join(','));

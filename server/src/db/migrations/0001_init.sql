@@ -67,10 +67,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_show ON sessions(show_id);
 
--- Seed the two built-in shows so a fresh DB matches the Python server's
--- _migrate_shows_v1 / _migrate_studio2_podcast_show_v1 output. Built-in *studios*
--- are constants in studio.ts (not rows); only shows live here. Category ids are
--- fixed (the Python seed uses runtime uuids; values are otherwise identical).
+-- Seed the two built-in shows a fresh DB ships with — the same rows the Python
+-- server's _migrate_shows_v1 / _migrate_studio2_podcast_show_v1 seeded. Built-in
+-- *studios* are constants in studio.ts (not rows); only shows live here. Category ids
+-- are fixed (the Python seed used runtime uuids; values are otherwise identical).
 INSERT OR IGNORE INTO shows
     (id, studio_id, name, show_code, next_episode, categories_json,
      event_palette_json, event_palette_preset, event_palette_custom_json, created_at_utc)

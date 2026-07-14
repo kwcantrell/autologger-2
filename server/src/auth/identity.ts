@@ -1,5 +1,5 @@
 // Identity — KV-backed login sessions + OAuth CSRF state, bearer-token compare,
-// and the /api login gate. Ports src/autologger/web/auth_identity.py; the
+// and the /api login gate. Ported from src/autologger/web/auth_identity.py; the
 // login_sessions + oauth_csrf_tokens SQLite tables become KV keys with TTL.
 
 import type { AuthUser, Catalog } from '../db/d1';

@@ -3,17 +3,19 @@
 AutoLogger as a **portable Node server** — runs anywhere Node 22 runs, no cloud platform
 required.
 
-This is a faithful TypeScript port of the Python backend (`../autologger`). It authenticates
+Originally a faithful TypeScript port of the Python AutoLogger backend — this repo is now
+the canonical implementation. It authenticates
 via Google OAuth, persists the global catalog (users/studios/shows/prefs) plus login sessions
 and OAuth CSRF in a **SQLite catalog DB**, holds live per-session data (events, transport,
 audio metadata, recording lease, transcript words, topics) in an **in-process SessionHub per
 session** (embedded SQLite), keeps audio bytes on the **filesystem**, and pushes live updates
-over a **WebSocket** — all with the **same JSON shapes** the existing React frontend expects.
+over a **WebSocket** — all with the **frozen JSON shapes** the React frontend and Companion
+module consume (see Endpoints below; the contract is frozen).
 
 ## Stack
 
-- **Hono** — routing + middleware (mirrors `web/app.py` + routers)
-- **Zod** — request validation at the route boundary (ports `web/schemas.py`)
+- **Hono** — routing + middleware (ported from `web/app.py` + routers)
+- **Zod** — request validation at the route boundary (ported from `web/schemas.py`)
 - **jose** — Google ID-token verification against Google's JWKS
 - **better-sqlite3** — catalog DB + one DB file per session
 - **filesystem blobs** — audio bytes (replaces R2)
@@ -118,8 +120,15 @@ server/src/
 
 ## Endpoints
 
-| Route | Python parity |
-|-------|---------------|
+This surface is **frozen** (capability spec `api-contract-freeze`): the route column below
+is the normative inventory, and every route's observable behavior — JSON response shapes,
+status codes, export bodies (CSV/JSONL), header/range semantics, and the WebSocket messages
+listed after the table (their shapes *and* when they fire) — changes only with an
+authorizing OpenSpec delta spec. The origin column records which Python module each route
+was ported from: historical provenance, not a live parity claim.
+
+| Route | Origin (historical) |
+|-------|---------------------|
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
 | `GET /api/studio` · `GET\|PUT /api/profile` · `GET\|POST /api/shows` | `routers/profile.py`, `shows.py` |
 | `GET\|POST /api/sessions` · `PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
@@ -191,7 +200,7 @@ npm run dev                        # server (tsx watch, :8787) + Vite (:5173), c
 npm test                           # server vitest (unit + integration projects)
 ```
 
-### Verify parity
+### Verify the contract
 
 ```bash
 B=http://127.0.0.1:8787
