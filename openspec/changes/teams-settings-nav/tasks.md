@@ -44,9 +44,9 @@
 
 ## 3. E2E + gates
 
-- [ ] 3.1 Extend the teams e2e smoke: on `/teams`, Settings opens the modal; the back
+- [x] 3.1 Extend the teams e2e smoke: on `/teams`, Settings opens the modal; the back
       affordance lands on `/` with the home view rendered. Add a settings-save
       round-trip through the real server (edit a category name → Save → success toast →
       reload → name persisted). Re-bless the settings-modal visual snapshot (blank
       category names → real names) as a reviewed diff.
-- [ ] 3.2 Full gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`.
+- [x] 3.2 Full gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`.

@@ -144,4 +144,119 @@ test.describe('teams self-serve (seeded-session fixture)', () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId('teams-route')).toHaveCount(0);
   });
+
+  // teams-settings-nav, task 3.1: the rail's Settings button and the page's
+  // own back affordance both work on /teams — the two shipped-defect
+  // repros this change fixes (proposal "Why").
+  test('settings modal opens from /teams; the back affordance lands on / with the home view', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    test.skip(!baseURL, 'baseURL is required (set by the chromium project)');
+
+    const seeded = await seedSession({
+      dataDir: CHROMIUM_DATA_DIR,
+      label: 'settings-nav',
+      memberships: [{ studioId: 'test-studios', role: 'member' }],
+    });
+    await injectSessionCookie(context, baseURL as string, seeded.token);
+
+    await page.goto('/');
+    await expect(page.locator('#v6-app')).toBeVisible();
+
+    await page.locator('#v6-btn-teams').click();
+    await expect(page).toHaveURL(/\/teams$/);
+    await expect(page.getByTestId('teams-route')).toBeVisible();
+
+    // The rail Settings button is deadened pre-fix on /teams (HomeSettingsModal
+    // was mounted inside SessionRoute/WorkspaceStatic, which TeamsRoute
+    // replaces — design D1). Post-fix it is lifted to AppShell and opens here.
+    await page.locator('#v6-btn-settings').click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.locator('#modal-app-settings-title')).toHaveText('Settings');
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // Pre-fix there was no in-app way back to the home view from /teams
+    // (session rail links reach /sessions/:id only) — design D2's page-level
+    // "Back to sessions" control fixes that without relying on browser Back.
+    await page.getByRole('button', { name: 'Back to sessions' }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId('teams-route')).toHaveCount(0);
+    await expect(
+      page.getByText('Select a session, or create a new one from the left rail.'),
+    ).toBeVisible();
+  });
+
+  // teams-settings-nav, task 3.1 (design D3): a save through the REAL server
+  // proves both the read (hydrate) and write (post) directions of the
+  // name-keyed category round-trip — a mocked-fixture test alone would have
+  // masked the original bug, since the client's own type-derived `label`
+  // fixtures pass against the broken code (design D3 "Test-fixture rule").
+  //
+  // This creates an ISOLATED show rather than editing the shared "Autolog
+  // Test Show" fixture: shows are studio-scoped (not user-scoped), and this
+  // hermetic server's catalog.db is shared by every chromium-project spec
+  // file in the run, so mutating that show's categories could race other
+  // specs' `hasText: 'Scene'` locators (smoke.spec.ts). The new show's name
+  // is chosen to sort AFTER "Autolog Test Show" (listShowsForStudio orders
+  // `ORDER BY name COLLATE NOCASE ASC`) so it can never become `shows[0]`
+  // and disturb NewSessionModal's default-show preselection.
+  test('settings-save round-trip persists a renamed category through the real server', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    test.skip(!baseURL, 'baseURL is required (set by the chromium project)');
+
+    const seeded = await seedSession({
+      dataDir: CHROMIUM_DATA_DIR,
+      label: 'settings-save',
+      memberships: [{ studioId: 'test-studios', role: 'member' }],
+    });
+    await injectSessionCookie(context, baseURL as string, seeded.token);
+
+    await page.goto('/');
+    await expect(page.locator('#v6-app')).toBeVisible();
+
+    await page.locator('#v6-btn-settings').click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    const showName = `zzz-e2e-settings-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    page.once('dialog', (dialog) => dialog.accept(showName));
+    await page.locator('#profile-show-add').click();
+    await expect(page.locator('#profile-show-select')).toContainText(showName);
+
+    // The new show clones the studio's default categories (Scene / Audio
+    // issue / Note — server/src/studio.ts defaultCategoriesForNewStudio) via
+    // POST /api/shows, so this is real server data, not a client fixture.
+    await page.locator('#v6-settings-tab-event-buttons').click();
+    const firstRowNameInput = page
+      .locator('table[aria-label="Event buttons"] tbody tr')
+      .first()
+      .locator('input')
+      .first();
+    // Hydration pin: the name is visible (non-blank) — the exact pre-fix
+    // regression (D3's "the blessed visual snapshot shows the empty inputs").
+    await expect(firstRowNameInput).toHaveValue('Scene');
+    const renamed = 'Scene Renamed E2E';
+    await firstRowNameInput.fill(renamed);
+
+    await page.locator('#profile-save').click();
+    await expect(page.locator('#toast-queue >> text=Saved.')).toBeVisible();
+    // Not the pre-fix 400 — proves the outbound `name:` key is now accepted
+    // by the update validator (server/src/studio.ts validateCategoriesList).
+    await expect(page.locator('#toast-queue >> text=Each category needs a name.')).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.locator('#v6-app')).toBeVisible();
+    await page.locator('#v6-btn-settings').click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.locator('#profile-show-select')).toContainText(showName);
+    await page.locator('#v6-settings-tab-event-buttons').click();
+    await expect(
+      page.locator('table[aria-label="Event buttons"] tbody tr').first().locator('input').first(),
+    ).toHaveValue(renamed);
+  });
 });
