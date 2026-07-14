@@ -40,8 +40,8 @@ const LOG_SANITIZE_MAX_LEN = 256;
 const FORBIDDEN_LOG_CHARS =
   /[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
-function sanitizeForLog(value: string): string {
-  return value.replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
+function sanitizeForLog(value: unknown): string {
+  return String(value ?? '').replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
 }
 
 authRouter.get('/auth/google/start', async (c) => {
