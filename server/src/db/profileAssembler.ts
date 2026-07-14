@@ -23,11 +23,8 @@ export class ProfileAssembler {
     private shows: ShowsStore,
   ) {}
 
-  private async resolveActiveShowIdForStudio(
-    studioId: string,
-    preferredShowId: string,
-  ): Promise<string> {
-    const shows = await this.shows.listShowsForStudio(studioId);
+  private resolveActiveShowIdForStudio(studioId: string, preferredShowId: string): string {
+    const shows = this.shows.listShowsForStudio(studioId);
     const valid = new Set(shows.map((r) => String(r.id)));
     const raw = (preferredShowId || '').trim();
     if (raw && valid.has(raw)) return raw;
@@ -36,12 +33,12 @@ export class ProfileAssembler {
   }
 
   /** _profile_studio_for_user → [profile|null, activeShowId, allowedSet]. */
-  async profileStudioForUser(userId: string): Promise<[StudioProfile | null, string, Set<string>]> {
-    const allowed = await this.auth.authListStudioIdsForUser(userId);
+  profileStudioForUser(userId: string): [StudioProfile | null, string, Set<string>] {
+    const allowed = this.auth.authListStudioIdsForUser(userId);
     const alset = new Set(allowed);
     if (alset.size === 0) return [null, '', alset];
-    await this.auth.authEnsurePrefsRow(userId);
-    const row = await this.auth.authGetPrefs(userId);
+    this.auth.authEnsurePrefsRow(userId);
+    const row = this.auth.authGetPrefs(userId);
     const rawS = row ? String(row.active_studio_id ?? '').trim() : '';
     const rawSh = row ? String(row.active_show_id ?? '').trim() : '';
     let studioId = alset.has(rawS) ? rawS : '';
@@ -55,28 +52,22 @@ export class ProfileAssembler {
     }
     if (!studioId) studioId = DEFAULT_STUDIO_ID;
     const prefShow = rawS === studioId ? rawSh : '';
-    const activeShowId = await this.resolveActiveShowIdForStudio(studioId, prefShow);
-    return [await this.studios.loadStudioProfile(studioId), activeShowId, alset];
+    const activeShowId = this.resolveActiveShowIdForStudio(studioId, prefShow);
+    return [this.studios.loadStudioProfile(studioId), activeShowId, alset];
   }
 
-  async getEffectiveStudioForUser(
-    user: AuthUser | null,
-    oauthConfigured: boolean,
-  ): Promise<StudioProfile | null> {
+  getEffectiveStudioForUser(user: AuthUser | null, oauthConfigured: boolean): StudioProfile | null {
     if (user === null) {
       if (oauthConfigured) return null;
       return this.studios.resolveActiveStudio();
     }
-    const [prof] = await this.profileStudioForUser(user.id);
+    const [prof] = this.profileStudioForUser(user.id);
     return prof;
   }
 
-  private async authSection(
-    user: AuthUser | null,
-    oauthConfigured: boolean,
-  ): Promise<Record<string, unknown>> {
+  private authSection(user: AuthUser | null, oauthConfigured: boolean): Record<string, unknown> {
     if (user === null) return { logged_in: false, user: null, oauth_configured: oauthConfigured };
-    const allowed = new Set(await this.auth.authListStudioIdsForUser(user.id));
+    const allowed = new Set(this.auth.authListStudioIdsForUser(user.id));
     const names = this.studios.studioNamesDict();
     const teams = this.studios
       .studioOrderTuple()
@@ -98,7 +89,7 @@ export class ProfileAssembler {
 
   /** _profile_payload — frozen /api/profile JSON shape (originally byte-compatible
    * with the Python server's). */
-  async profilePayload(user: AuthUser | null, ctx: ProfileCtx): Promise<Record<string, unknown>> {
+  profilePayload(user: AuthUser | null, ctx: ProfileCtx): Record<string, unknown> {
     const { oauthConfigured, adminMeta } = ctx;
 
     if (user === null && oauthConfigured) {
@@ -107,32 +98,32 @@ export class ProfileAssembler {
         active_show_id: '',
         active_studio: emptyActiveStudioApiDict(),
         studios: [],
-        studio_settings: await this.studios.allStudioSettingsForAllowedStudios(new Set()),
+        studio_settings: this.studios.allStudioSettingsForAllowedStudios(new Set()),
         shows: [],
         new_session_defaults: { title_prefix: 'Episode ', default_frame_rate: 24.0 },
         admin: adminMeta,
-        auth: await this.authSection(user, oauthConfigured),
+        auth: this.authSection(user, oauthConfigured),
       };
     }
 
     if (user === null) {
-      const active = await this.studios.resolveActiveStudio();
-      const showsRaw = await this.shows.listShowsForStudio(active.id);
+      const active = this.studios.resolveActiveStudio();
+      const showsRaw = this.shows.listShowsForStudio(active.id);
       let activeShowId = '';
-      const rawActiveShow = String((await this.studios.getSetting(SETTING_ACTIVE_SHOW)) ?? '').trim();
+      const rawActiveShow = String(this.studios.getSetting(SETTING_ACTIVE_SHOW) ?? '').trim();
       if (rawActiveShow && showsRaw.some((r) => String(r.id) === rawActiveShow)) {
         activeShowId = rawActiveShow;
       } else if (showsRaw.length) {
         activeShowId = String(showsRaw[0].id);
-        await this.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
+        this.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
       } else {
-        await this.studios.setSetting(SETTING_ACTIVE_SHOW, '');
+        this.studios.setSetting(SETTING_ACTIVE_SHOW, '');
       }
-      const studioSettings = await this.studios.allStudioSettingsForAllowedStudios(null);
+      const studioSettings = this.studios.allStudioSettingsForAllowedStudios(null);
       const studiosForList = this.studios.listStudiosBrief();
       const showsOut: Record<string, unknown>[] = [];
       for (const s of studiosForList) {
-        for (const r of await this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
+        for (const r of this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
       }
       return {
         active_studio_id: active.id,
@@ -146,13 +137,13 @@ export class ProfileAssembler {
           default_frame_rate: active.default_frame_rate,
         },
         admin: adminMeta,
-        auth: await this.authSection(user, oauthConfigured),
+        auth: this.authSection(user, oauthConfigured),
       };
     }
 
     // Logged-in user.
-    const [active, computedShowId, alset] = await this.profileStudioForUser(user.id);
-    const studioSettings = await this.studios.allStudioSettingsForAllowedStudios(alset);
+    const [active, computedShowId, alset] = this.profileStudioForUser(user.id);
+    const studioSettings = this.studios.allStudioSettingsForAllowedStudios(alset);
     const studiosForList = this.studios.listStudiosBriefAllowed(alset);
     let shapeActiveStudio: Record<string, unknown>;
     let nsDefaults: Record<string, unknown>;
@@ -162,20 +153,20 @@ export class ProfileAssembler {
     if (active === null) {
       showsOut = [];
       activeShowId = '';
-      await this.auth.authEnsurePrefsRow(user.id);
-      await this.auth.authSetPrefs(user.id, '', '');
+      this.auth.authEnsurePrefsRow(user.id);
+      this.auth.authSetPrefs(user.id, '', '');
       shapeActiveStudio = emptyActiveStudioApiDict();
       nsDefaults = { title_prefix: 'Episode ', default_frame_rate: 24.0 };
     } else {
-      const showsRaw = await this.shows.listShowsForStudio(active.id);
+      const showsRaw = this.shows.listShowsForStudio(active.id);
       for (const s of studiosForList) {
-        for (const r of await this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
+        for (const r of this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
       }
       activeShowId = computedShowId;
       const validIds = new Set(showsRaw.map((r) => String(r.id)));
       if (!validIds.has(activeShowId)) {
         activeShowId = showsRaw.length ? String(showsRaw[0].id) : '';
-        await this.auth.authSetPrefs(user.id, active.id, activeShowId);
+        this.auth.authSetPrefs(user.id, active.id, activeShowId);
       }
       shapeActiveStudio = studioToApiDict(active);
       nsDefaults = {
@@ -193,7 +184,7 @@ export class ProfileAssembler {
       shows: showsOut,
       new_session_defaults: nsDefaults,
       admin: adminMeta,
-      auth: await this.authSection(user, oauthConfigured),
+      auth: this.authSection(user, oauthConfigured),
     };
   }
 }

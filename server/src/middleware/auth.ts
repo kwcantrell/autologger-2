@@ -14,7 +14,7 @@ import type { AppEnv } from '../types';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   const catalog = new Catalog(c.env.DB);
-  await catalog.init();
+  catalog.init();
   c.set('catalog', catalog);
 
   const cookie = getCookie(c, sessionCookieName(c.env));

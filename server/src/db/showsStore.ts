@@ -95,49 +95,44 @@ export function showCategoriesApiShape(rawCategories: unknown): Array<Record<str
 export class ShowsStore {
   constructor(private db: CatalogDb) {}
 
-  async getShowRow(showId: string): Promise<Row | null> {
-    return this.db.prepare('SELECT * FROM shows WHERE id = ?').bind(showId).first<Row>();
+  getShowRow(showId: string): Row | null {
+    return this.db.first<Row>('SELECT * FROM shows WHERE id = ?', showId);
   }
 
-  async listShowsForStudio(studioId: string): Promise<Row[]> {
-    const { results } = await this.db
-      .prepare('SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC')
-      .bind(studioId)
-      .all<Row>();
-    return results ?? [];
+  listShowsForStudio(studioId: string): Row[] {
+    return this.db.all<Row>(
+      'SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC',
+      studioId,
+    );
   }
 
-  async createShow(opts: {
+  createShow(opts: {
     studioId: string;
     name: string;
     showCode: string;
     categoriesJson: string;
     paletteJson: string;
     paletteCustomJson: string;
-  }): Promise<string> {
+  }): string {
     const sid = crypto.randomUUID();
-    await this.db
-      .prepare(
-        `INSERT INTO shows
-           (id, studio_id, name, show_code, next_episode, categories_json,
-            event_palette_json, event_palette_preset, event_palette_custom_json, created_at_utc)
-         VALUES (?, ?, ?, ?, 1, ?, ?, 'custom', ?, ?)`,
-      )
-      .bind(
-        sid,
-        opts.studioId,
-        opts.name.trim(),
-        opts.showCode.trim().toUpperCase(),
-        opts.categoriesJson,
-        opts.paletteJson,
-        opts.paletteCustomJson,
-        nowIso(),
-      )
-      .run();
+    this.db.run(
+      `INSERT INTO shows
+         (id, studio_id, name, show_code, next_episode, categories_json,
+          event_palette_json, event_palette_preset, event_palette_custom_json, created_at_utc)
+       VALUES (?, ?, ?, ?, 1, ?, ?, 'custom', ?, ?)`,
+      sid,
+      opts.studioId,
+      opts.name.trim(),
+      opts.showCode.trim().toUpperCase(),
+      opts.categoriesJson,
+      opts.paletteJson,
+      opts.paletteCustomJson,
+      nowIso(),
+    );
     return sid;
   }
 
-  async updateShowFields(
+  updateShowFields(
     showId: string,
     fields: {
       name?: string;
@@ -148,8 +143,8 @@ export class ShowsStore {
       event_palette_preset?: string;
       event_palette_custom_json?: string;
     },
-  ): Promise<boolean> {
-    const row = await this.getShowRow(showId);
+  ): boolean {
+    const row = this.getShowRow(showId);
     if (row === null) return false;
     const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
     const sc =
@@ -169,15 +164,20 @@ export class ShowsStore {
             .trim()
             .toLowerCase() || 'custom';
     const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
-    await this.db
-      .prepare(
-        `UPDATE shows
-           SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
-               event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
-         WHERE id = ?`,
-      )
-      .bind(nm, sc, ne, cj, pj, pp, pcj, showId)
-      .run();
+    this.db.run(
+      `UPDATE shows
+         SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
+             event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
+       WHERE id = ?`,
+      nm,
+      sc,
+      ne,
+      cj,
+      pj,
+      pp,
+      pcj,
+      showId,
+    );
     return true;
   }
 }

@@ -12,7 +12,7 @@ const uid = (p: string): string => `${p}-${(counter += 1)}`;
 
 export async function seedStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
   const id = opts.id ?? uid('studio');
-  await catalogFor().adminCreateStudio(id, opts.name ?? `Studio ${id}`);
+  catalogFor().studios.adminCreateStudio(id, opts.name ?? `Studio ${id}`);
   return id;
 }
 
@@ -20,14 +20,14 @@ export async function seedUser(
   opts: { email?: string; sub?: string; studios?: string[] } = {},
 ): Promise<string> {
   const cat = catalogFor();
-  const id = await cat.authCreateUserGoogle({
+  const id = cat.auth.authCreateUserGoogle({
     email: opts.email ?? `${uid('user')}@example.com`,
     googleSub: opts.sub ?? uid('sub'),
     givenName: 'Test',
     familyName: 'User',
     pictureUrl: '',
   });
-  if (opts.studios?.length) await cat.authAddMemberships(id, opts.studios);
+  if (opts.studios?.length) cat.auth.authAddMemberships(id, opts.studios);
   return id;
 }
 
@@ -52,7 +52,7 @@ export async function seedShow(opts: {
   code?: string;
   categoriesJson?: string;
 }): Promise<string> {
-  return catalogFor().createShow({
+  return catalogFor().shows.createShow({
     studioId: opts.studioId,
     name: opts.name ?? 'Test Show',
     showCode: opts.code ?? 'TS',
@@ -69,7 +69,7 @@ export async function seedSession(opts: {
   frameRate?: number;
 }): Promise<string> {
   const now = new Date().toISOString();
-  return catalogFor().createSessionIndex({
+  return catalogFor().sessions.createSessionIndex({
     showId: opts.showId,
     title: opts.title ?? 'Test Session',
     frameRate: opts.frameRate ?? 24,

@@ -25,16 +25,16 @@ adminRouter.get('/api/admin/users', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
   const builtin = new Set(BUILTIN_STUDIO_ORDER);
-  const names = catalog.studioNamesDict();
-  const studiosCatalog = catalog.studioOrderTuple().map((sid) => ({
+  const names = catalog.studios.studioNamesDict();
+  const studiosCatalog = catalog.studios.studioOrderTuple().map((sid) => ({
     id: sid,
     name: names[sid],
     builtin: builtin.has(sid),
   }));
   const usersOut: Record<string, unknown>[] = [];
-  for (const r of await catalog.authListUsersAdmin()) {
+  for (const r of catalog.auth.authListUsersAdmin()) {
     const uid = String(r.id);
-    const mids = await catalog.authListStudioIdsForUser(uid);
+    const mids = catalog.auth.authListStudioIdsForUser(uid);
     usersOut.push({
       id: uid,
       email: String(r.email),
@@ -54,13 +54,13 @@ adminRouter.post('/api/admin/studios', async (c) => {
   const body = adminStudioCreateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
   try {
-    await catalog.adminCreateStudio(body.id.trim(), body.display_name.trim());
+    catalog.studios.adminCreateStudio(body.id.trim(), body.display_name.trim());
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
   const builtin = new Set(BUILTIN_STUDIO_ORDER);
-  const names = catalog.studioNamesDict();
+  const names = catalog.studios.studioNamesDict();
   const id = body.id.trim();
   return c.json({ studio: { id, name: names[id], builtin: builtin.has(id) } });
 });
@@ -68,7 +68,7 @@ adminRouter.post('/api/admin/studios', async (c) => {
 adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
   requireAdminToken(c);
   try {
-    await c.get('catalog').adminDeleteStudio(c.req.param('studioId').trim());
+    c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
@@ -81,38 +81,38 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   const body = adminMembershipBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
   const sid = body.studio_id.trim();
-  if (!catalog.isKnownStudio(sid)) throw new ApiError(400, 'Unknown team id.');
-  const row = await catalog.authGetUserRowAny(c.req.param('userId').trim());
+  if (!catalog.studios.isKnownStudio(sid)) throw new ApiError(400, 'Unknown team id.');
+  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  await catalog.authAddMemberships(String(row.id), [sid]);
+  catalog.auth.authAddMemberships(String(row.id), [sid]);
   return c.json({ ok: true });
 });
 
 adminRouter.delete('/api/admin/users/:userId/memberships/:studioId', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = await catalog.authGetUserRowAny(c.req.param('userId').trim());
+  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  await catalog.authRemoveMembership(String(row.id), c.req.param('studioId').trim());
+  catalog.auth.authRemoveMembership(String(row.id), c.req.param('studioId').trim());
   return c.json({ ok: true });
 });
 
 adminRouter.post('/api/admin/users/:userId/disable', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = await catalog.authGetUserRowAny(c.req.param('userId').trim());
+  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   // Disabling flips disabled_at_utc; resolveSessionUser already filters disabled
   // users, so existing KV sessions stop resolving without an explicit sweep.
-  await catalog.authSetUserDisabled(String(row.id), true);
+  catalog.auth.authSetUserDisabled(String(row.id), true);
   return c.json({ ok: true });
 });
 
 adminRouter.post('/api/admin/users/:userId/enable', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = await catalog.authGetUserRowAny(c.req.param('userId').trim());
+  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  await catalog.authSetUserDisabled(String(row.id), false);
+  catalog.auth.authSetUserDisabled(String(row.id), false);
   return c.json({ ok: true });
 });

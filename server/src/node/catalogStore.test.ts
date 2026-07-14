@@ -9,30 +9,43 @@ function db(): CatalogDb {
 }
 
 describe('CatalogDb', () => {
-  it('prepare().bind().run() reports meta.changes', () => {
+  it('run() reports the affected-row count', () => {
     const d = db();
-    const r = d.prepare('INSERT INTO t (k, v) VALUES (?, ?)').bind('a', 1).run();
-    expect(r.meta.changes).toBe(1);
-    expect(d.prepare('UPDATE t SET v = 9 WHERE k = ?').bind('missing').run().meta.changes).toBe(0);
+    expect(d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 1).changes).toBe(1);
+    expect(d.run('UPDATE t SET v = 9 WHERE k = ?', 'missing').changes).toBe(0);
   });
 
-  it('all() returns { results } and first() returns row or null', () => {
+  it('all() returns rows and first() returns row or null', () => {
     const d = db();
-    d.prepare('INSERT INTO t (k, v) VALUES (?, ?)').bind('a', 1).run();
-    d.prepare('INSERT INTO t (k, v) VALUES (?, ?)').bind('b', 2).run();
-    expect(d.prepare('SELECT * FROM t ORDER BY k').all().results).toEqual([
+    d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 1);
+    d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'b', 2);
+    expect(d.all('SELECT * FROM t ORDER BY k')).toEqual([
       { k: 'a', v: 1 },
       { k: 'b', v: 2 },
     ]);
-    expect(d.prepare('SELECT * FROM t WHERE k = ?').bind('b').first()).toEqual({ k: 'b', v: 2 });
-    expect(d.prepare('SELECT * FROM t WHERE k = ?').bind('nope').first()).toBeNull();
+    expect(d.first('SELECT * FROM t WHERE k = ?', 'b')).toEqual({ k: 'b', v: 2 });
+    expect(d.first('SELECT * FROM t WHERE k = ?', 'nope')).toBeNull();
   });
 
-  it('batch() is atomic — a failing statement rolls back the earlier ones', () => {
+  it('tx() rolls back all writes when a constraint violation hits mid-transaction', () => {
     const d = db();
-    const ok = d.prepare('INSERT INTO t (k, v) VALUES (?, ?)').bind('a', 1);
-    const dup = d.prepare('INSERT INTO t (k, v) VALUES (?, ?)').bind('a', 2); // PK violation
-    expect(() => d.batch([ok, dup])).toThrow();
-    expect(d.prepare('SELECT COUNT(*) AS n FROM t').first<{ n: number }>()?.n).toBe(0);
+    expect(() =>
+      d.tx(() => {
+        d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 1);
+        d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 2); // PK violation
+      }),
+    ).toThrow();
+    expect(d.first<{ n: number }>('SELECT COUNT(*) AS n FROM t')?.n).toBe(0);
+  });
+
+  it('tx() is reentrant (db.transaction, not raw BEGIN/COMMIT)', () => {
+    const d = db();
+    d.tx(() => {
+      d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 1);
+      d.tx(() => {
+        d.run('INSERT INTO t (k, v) VALUES (?, ?)', 'b', 2);
+      });
+    });
+    expect(d.first<{ n: number }>('SELECT COUNT(*) AS n FROM t')?.n).toBe(2);
   });
 });

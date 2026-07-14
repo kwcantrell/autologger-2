@@ -24,24 +24,22 @@ export class StudioRegistry {
 
   constructor(private db: CatalogDb) {}
 
-  /** Must be awaited once per request before reads that depend on the studio registry. */
-  async init(): Promise<void> {
-    await this.refreshStudioRegistry();
+  /** Must run once per request before reads that depend on the studio registry. */
+  init(): void {
+    this.refreshStudioRegistry();
   }
 
   // -- Studio registry (built-ins merged with studio_definitions rows) ---------
 
-  async refreshStudioRegistry(): Promise<void> {
+  refreshStudioRegistry(): void {
     const names: Record<string, string> = { ...BUILTIN_STUDIO_NAMES };
     const order: string[] = [...BUILTIN_STUDIO_ORDER];
     const builtin = new Set(BUILTIN_STUDIO_ORDER);
-    const { results } = await this.db
-      .prepare(
-        'SELECT id, display_name, sort_order FROM studio_definitions ORDER BY sort_order ASC, id ASC',
-      )
-      .all<Row>();
+    const results = this.db.all<Row>(
+      'SELECT id, display_name, sort_order FROM studio_definitions ORDER BY sort_order ASC, id ASC',
+    );
     const extras: Array<[string, string, number]> = [];
-    for (const r of results ?? []) {
+    for (const r of results) {
       const sid = String(r.id);
       if (builtin.has(sid)) continue;
       extras.push([sid, String(r.display_name), Number(r.sort_order) || 0]);
@@ -67,32 +65,28 @@ export class StudioRegistry {
 
   // -- app_settings ------------------------------------------------------------
 
-  async getSetting(key: string, def: string | null = null): Promise<string | null> {
-    const row = await this.db
-      .prepare('SELECT value FROM app_settings WHERE key = ?')
-      .bind(key)
-      .first<Row>();
+  getSetting(key: string, def: string | null = null): string | null {
+    const row = this.db.first<Row>('SELECT value FROM app_settings WHERE key = ?', key);
     return row ? String(row.value) : def;
   }
 
-  async setSetting(key: string, value: string): Promise<void> {
-    await this.db
-      .prepare(
-        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      )
-      .bind(key, value)
-      .run();
+  setSetting(key: string, value: string): void {
+    this.db.run(
+      'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      key,
+      value,
+    );
   }
 
   // -- studio settings blobs ---------------------------------------------------
 
-  async getStudioSettingsBlob(studioIdIn: string): Promise<Record<string, unknown>> {
+  getStudioSettingsBlob(studioIdIn: string): Record<string, unknown> {
     let studioId = studioIdIn;
     if (!this.isKnownStudio(studioId)) studioId = DEFAULT_STUDIO_ID;
-    const raw = await this.getSetting(studioConfigKey(studioId));
+    const raw = this.getSetting(studioConfigKey(studioId));
     if (!raw) {
       const blob = defaultSettingsBlob(studioId);
-      await this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
+      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
       return blob as unknown as Record<string, unknown>;
     }
     let data: unknown;
@@ -100,12 +94,12 @@ export class StudioRegistry {
       data = JSON.parse(raw);
     } catch {
       const blob = defaultSettingsBlob(studioId);
-      await this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
+      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
       return blob as unknown as Record<string, unknown>;
     }
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
       const blob = defaultSettingsBlob(studioId);
-      await this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
+      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
       return blob as unknown as Record<string, unknown>;
     }
     const base = defaultSettingsBlob(studioId);
@@ -115,30 +109,30 @@ export class StudioRegistry {
     return merged;
   }
 
-  async saveStudioSettingsBlob(studioId: string, blob: Record<string, unknown>): Promise<void> {
+  saveStudioSettingsBlob(studioId: string, blob: Record<string, unknown>): void {
     const normalized = validateSettingsBlob(blob, studioId, this.isKnownStudio);
-    await this.setSetting(studioConfigKey(studioId), JSON.stringify(normalized));
+    this.setSetting(studioConfigKey(studioId), JSON.stringify(normalized));
   }
 
-  async loadStudioProfile(studioId: string): Promise<StudioProfile> {
-    const blob = await this.getStudioSettingsBlob(studioId);
+  loadStudioProfile(studioId: string): StudioProfile {
+    const blob = this.getStudioSettingsBlob(studioId);
     const name = this.names[studioId] ?? studioId;
     return blobToProfile(studioId, name, blob as unknown as SettingsBlob);
   }
 
-  async resolveActiveStudio(): Promise<StudioProfile> {
-    const raw = await this.getSetting(SETTING_ACTIVE_STUDIO);
+  resolveActiveStudio(): StudioProfile {
+    const raw = this.getSetting(SETTING_ACTIVE_STUDIO);
     if (raw && this.isKnownStudio(raw)) return this.loadStudioProfile(raw);
     return this.loadStudioProfile(DEFAULT_STUDIO_ID);
   }
 
-  async allStudioSettingsForAllowedStudios(
+  allStudioSettingsForAllowedStudios(
     allowedIds: Set<string> | null,
-  ): Promise<Record<string, SettingsBlob>> {
+  ): Record<string, SettingsBlob> {
     const out: Record<string, SettingsBlob> = {};
     for (const sid of this.order) {
       if (allowedIds !== null && !allowedIds.has(sid)) continue;
-      const b = await this.getStudioSettingsBlob(sid);
+      const b = this.getStudioSettingsBlob(sid);
       try {
         out[sid] = validateSettingsBlob(b, sid, this.isKnownStudio);
       } catch {
@@ -168,7 +162,7 @@ export class StudioRegistry {
   private static readonly STUDIO_ID_SLUG_RE = /^[a-z][a-z0-9-]{1,62}$/;
 
   /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
-  async adminCreateStudio(studioId: string, displayName: string): Promise<void> {
+  adminCreateStudio(studioId: string, displayName: string): void {
     const sid = (studioId || '').trim();
     const disp = (displayName || '').trim();
     if (!sid || !disp) throw new ValidationError('Team id and display name are required.');
@@ -181,39 +175,33 @@ export class StudioRegistry {
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('That team id is reserved for a built-in team.');
     }
-    const existing = await this.db
-      .prepare('SELECT 1 FROM studio_definitions WHERE id = ?')
-      .bind(sid)
-      .first<Row>();
+    const existing = this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
     if (existing !== null) throw new ValidationError('A team with that id already exists.');
-    await this.db
-      .prepare(
-        'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
-      )
-      .bind(sid, disp, nowIso())
-      .run();
-    await this.refreshStudioRegistry();
+    this.db.run(
+      'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
+      sid,
+      disp,
+      nowIso(),
+    );
+    this.refreshStudioRegistry();
   }
 
   /** admin_delete_studio — remove a user-defined team (blocks if shows exist). */
-  async adminDeleteStudio(studioId: string): Promise<void> {
+  adminDeleteStudio(studioId: string): void {
     const sid = (studioId || '').trim();
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('Cannot delete a built-in team.');
     }
-    const cntRow = await this.db
-      .prepare('SELECT COUNT(*) AS c FROM shows WHERE studio_id = ?')
-      .bind(sid)
-      .first<Row>();
+    const cntRow = this.db.first<Row>('SELECT COUNT(*) AS c FROM shows WHERE studio_id = ?', sid);
     const nshows = Number(cntRow?.c ?? 0);
     if (nshows > 0) {
       throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
     }
-    await this.db.batch([
-      this.db.prepare('DELETE FROM user_studio_memberships WHERE studio_id = ?').bind(sid),
-      this.db.prepare('DELETE FROM studio_definitions WHERE id = ?').bind(sid),
-      this.db.prepare('DELETE FROM app_settings WHERE key = ?').bind(studioConfigKey(sid)),
-    ]);
-    await this.refreshStudioRegistry();
+    this.db.tx(() => {
+      this.db.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
+      this.db.run('DELETE FROM studio_definitions WHERE id = ?', sid);
+      this.db.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
+    });
+    this.refreshStudioRegistry();
   }
 }

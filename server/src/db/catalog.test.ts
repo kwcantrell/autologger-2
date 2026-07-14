@@ -8,31 +8,16 @@ const stubDb = {} as unknown as CatalogDb;
 describe('Catalog facade', () => {
   const catalog = new Catalog(stubDb);
 
-  it('exposes the domain stores as readonly props', () => {
+  it('exposes the domain stores as readonly props (the sole API surface)', () => {
     for (const key of ['studios', 'auth', 'shows', 'sessions', 'profile'] as const) {
       expect(catalog[key]).toBeDefined();
     }
   });
 
-  it('delegates every router-called method as a function', () => {
-    const surface = [
-      'init', 'isKnownStudio', 'getSetting', 'setSetting', 'saveStudioSettingsBlob',
-      'studioNamesDict', 'studioOrderTuple', 'listStudiosBrief',
-      'adminCreateStudio', 'adminDeleteStudio',
-      'authGetUserByGoogleSub', 'authGetUserById', 'authCreateUserGoogle',
-      'authUpdateUserProfile', 'authUpdateUserNames', 'authUserHasStudio',
-      'authListStudioIdsForUser', 'authAddMemberships', 'authGetPrefs', 'authSetPrefs',
-      'authSeedPrefsFromGlobals', 'authListUsersAdmin', 'authGetUserRowAny',
-      'authSetUserDisabled', 'authRemoveMembership',
-      'getShowRow', 'createShow', 'listShowsForStudio', 'updateShowFields',
-      'createSessionIndex', 'getSessionIndexRow', 'getSessionJoinedRow',
-      'getSessionShowCategories', 'getSessionStudioId', 'listSessionsForShow',
-      'projectSessionLive', 'setSessionArchived', 'setSessionUiHidden',
-      'updateSessionIndex', 'studioProfileForSession',
-      'profilePayload', 'getEffectiveStudioForUser',
-    ] as const;
-    for (const name of surface) {
-      expect(typeof (catalog as unknown as Record<string, unknown>)[name]).toBe('function');
+  it('carries no flat delegate methods (the compat shim is gone)', () => {
+    expect(Object.keys(catalog).sort()).toEqual(['auth', 'profile', 'sessions', 'shows', 'studios']);
+    for (const legacy of ['getShowRow', 'authGetUserById', 'setSessionArchived', 'profilePayload']) {
+      expect((catalog as unknown as Record<string, unknown>)[legacy]).toBeUndefined();
     }
   });
 });

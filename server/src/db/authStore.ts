@@ -8,177 +8,158 @@ import type { Row } from './shared';
 export class AuthStore {
   constructor(private db: CatalogDb) {}
 
-  async authGetUserByGoogleSub(googleSub: string): Promise<Row | null> {
-    return this.db
-      .prepare('SELECT * FROM users WHERE google_sub = ? AND disabled_at_utc IS NULL')
-      .bind(googleSub)
-      .first<Row>();
+  authGetUserByGoogleSub(googleSub: string): Row | null {
+    return this.db.first<Row>(
+      'SELECT * FROM users WHERE google_sub = ? AND disabled_at_utc IS NULL',
+      googleSub,
+    );
   }
 
-  async authGetUserById(userId: string): Promise<Row | null> {
-    return this.db
-      .prepare('SELECT * FROM users WHERE id = ? AND disabled_at_utc IS NULL')
-      .bind(userId)
-      .first<Row>();
+  authGetUserById(userId: string): Row | null {
+    return this.db.first<Row>(
+      'SELECT * FROM users WHERE id = ? AND disabled_at_utc IS NULL',
+      userId,
+    );
   }
 
-  async authCreateUserGoogle(opts: {
+  authCreateUserGoogle(opts: {
     googleSub: string;
     email: string;
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }): Promise<string> {
+  }): string {
     const uid = crypto.randomUUID();
-    await this.db
-      .prepare(
-        `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        uid,
-        opts.googleSub,
-        opts.email,
-        opts.givenName,
-        opts.familyName,
-        opts.pictureUrl,
-        nowIso(),
-      )
-      .run();
+    this.db.run(
+      `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      uid,
+      opts.googleSub,
+      opts.email,
+      opts.givenName,
+      opts.familyName,
+      opts.pictureUrl,
+      nowIso(),
+    );
     return uid;
   }
 
-  async authUpdateUserProfile(
+  authUpdateUserProfile(
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
-  ): Promise<boolean> {
-    const row = await this.authGetUserById(userId);
+  ): boolean {
+    const row = this.authGetUserById(userId);
     if (row === null) return false;
     const em = fields.email ?? String(row.email);
     const gn = fields.givenName ?? String(row.given_name);
     const fn = fields.familyName ?? String(row.family_name);
     const pic = fields.pictureUrl ?? String(row.picture_url);
-    await this.db
-      .prepare(
-        'UPDATE users SET email = ?, given_name = ?, family_name = ?, picture_url = ? WHERE id = ?',
-      )
-      .bind(em, gn, fn, pic, userId)
-      .run();
+    this.db.run(
+      'UPDATE users SET email = ?, given_name = ?, family_name = ?, picture_url = ? WHERE id = ?',
+      em,
+      gn,
+      fn,
+      pic,
+      userId,
+    );
     return true;
   }
 
-  async authUpdateUserNames(
-    userId: string,
-    givenName: string,
-    familyName: string,
-  ): Promise<boolean> {
+  authUpdateUserNames(userId: string, givenName: string, familyName: string): boolean {
     return this.authUpdateUserProfile(userId, { givenName, familyName });
   }
 
-  async authUserHasStudio(userId: string, studioId: string): Promise<boolean> {
-    const row = await this.db
-      .prepare('SELECT 1 FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?')
-      .bind(userId, studioId)
-      .first<Row>();
+  authUserHasStudio(userId: string, studioId: string): boolean {
+    const row = this.db.first<Row>(
+      'SELECT 1 FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+      userId,
+      studioId,
+    );
     return row !== null;
   }
 
-  async authListStudioIdsForUser(userId: string): Promise<string[]> {
-    const { results } = await this.db
-      .prepare('SELECT studio_id FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id')
-      .bind(userId)
-      .all<Row>();
-    return (results ?? []).map((r) => String(r.studio_id));
+  authListStudioIdsForUser(userId: string): string[] {
+    const results = this.db.all<Row>(
+      'SELECT studio_id FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
+      userId,
+    );
+    return results.map((r) => String(r.studio_id));
   }
 
-  async authAddMemberships(userId: string, studioIds: string[]): Promise<void> {
-    const stmts = studioIds
-      .filter((sid) => sid)
-      .map((sid) =>
-        this.db
-          .prepare(
-            'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
-          )
-          .bind(userId, sid),
-      );
-    if (stmts.length) await this.db.batch(stmts);
+  authAddMemberships(userId: string, studioIds: string[]): void {
+    const ids = studioIds.filter((sid) => sid);
+    if (!ids.length) return;
+    this.db.tx(() => {
+      for (const sid of ids) {
+        this.db.run(
+          'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
+          userId,
+          sid,
+        );
+      }
+    });
   }
 
-  async authGetPrefs(userId: string): Promise<Row | null> {
-    return this.db.prepare('SELECT * FROM user_prefs WHERE user_id = ?').bind(userId).first<Row>();
+  authGetPrefs(userId: string): Row | null {
+    return this.db.first<Row>('SELECT * FROM user_prefs WHERE user_id = ?', userId);
   }
 
-  async authEnsurePrefsRow(userId: string): Promise<void> {
-    const row = await this.db
-      .prepare('SELECT 1 FROM user_prefs WHERE user_id = ?')
-      .bind(userId)
-      .first<Row>();
+  authEnsurePrefsRow(userId: string): void {
+    const row = this.db.first<Row>('SELECT 1 FROM user_prefs WHERE user_id = ?', userId);
     if (row === null) {
-      await this.db
-        .prepare(
-          "INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, '', '')",
-        )
-        .bind(userId)
-        .run();
+      this.db.run(
+        "INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, '', '')",
+        userId,
+      );
     }
   }
 
-  async authSetPrefs(userId: string, activeStudioId: string, activeShowId: string): Promise<void> {
-    await this.authEnsurePrefsRow(userId);
-    await this.db
-      .prepare('UPDATE user_prefs SET active_studio_id = ?, active_show_id = ? WHERE user_id = ?')
-      .bind(activeStudioId, activeShowId, userId)
-      .run();
+  authSetPrefs(userId: string, activeStudioId: string, activeShowId: string): void {
+    this.authEnsurePrefsRow(userId);
+    this.db.run(
+      'UPDATE user_prefs SET active_studio_id = ?, active_show_id = ? WHERE user_id = ?',
+      activeStudioId,
+      activeShowId,
+      userId,
+    );
   }
 
-  async authSeedPrefsFromGlobals(
-    userId: string,
-    activeStudioId: string,
-    activeShowId: string,
-  ): Promise<void> {
-    const row = await this.authGetPrefs(userId);
+  authSeedPrefsFromGlobals(userId: string, activeStudioId: string, activeShowId: string): void {
+    const row = this.authGetPrefs(userId);
     if (row !== null && String(row.active_studio_id ?? '').trim()) return;
-    await this.authEnsurePrefsRow(userId);
-    await this.authSetPrefs(userId, activeStudioId, activeShowId);
+    this.authEnsurePrefsRow(userId);
+    this.authSetPrefs(userId, activeStudioId, activeShowId);
   }
 
   // -- admin: users ------------------------------------------------------------
 
-  async authListUsersAdmin(): Promise<Row[]> {
-    const { results } = await this.db
-      .prepare(
-        `SELECT id, google_sub, email, given_name, family_name, picture_url,
-                created_at_utc, disabled_at_utc
-         FROM users ORDER BY created_at_utc DESC`,
-      )
-      .all<Row>();
-    return results ?? [];
+  authListUsersAdmin(): Row[] {
+    return this.db.all<Row>(
+      `SELECT id, google_sub, email, given_name, family_name, picture_url,
+              created_at_utc, disabled_at_utc
+       FROM users ORDER BY created_at_utc DESC`,
+    );
   }
 
   /** Fetch a user row including disabled accounts (admin). */
-  async authGetUserRowAny(userId: string): Promise<Row | null> {
-    return this.db.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first<Row>();
+  authGetUserRowAny(userId: string): Row | null {
+    return this.db.first<Row>('SELECT * FROM users WHERE id = ?', userId);
   }
 
-  async authSetUserDisabled(userId: string, disabled: boolean): Promise<void> {
+  authSetUserDisabled(userId: string, disabled: boolean): void {
     if (disabled) {
-      await this.db
-        .prepare('UPDATE users SET disabled_at_utc = ? WHERE id = ?')
-        .bind(nowIso(), userId)
-        .run();
+      this.db.run('UPDATE users SET disabled_at_utc = ? WHERE id = ?', nowIso(), userId);
     } else {
-      await this.db
-        .prepare('UPDATE users SET disabled_at_utc = NULL WHERE id = ?')
-        .bind(userId)
-        .run();
+      this.db.run('UPDATE users SET disabled_at_utc = NULL WHERE id = ?', userId);
     }
   }
 
-  async authRemoveMembership(userId: string, studioId: string): Promise<boolean> {
-    const res = await this.db
-      .prepare('DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?')
-      .bind(userId, studioId)
-      .run();
-    return (res.meta.changes ?? 0) > 0;
+  authRemoveMembership(userId: string, studioId: string): boolean {
+    const res = this.db.run(
+      'DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+      userId,
+      studioId,
+    );
+    return res.changes > 0;
   }
 }

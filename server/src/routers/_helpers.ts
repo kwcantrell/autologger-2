@@ -46,11 +46,11 @@ export async function requireSession(
   if (requireLoginEnabled(c.env) && !user && !c.get('apiTokenAuth')) {
     throw new ApiError(401, 'Login required.');
   }
-  const row = await catalog.getSessionIndexRow(sessionId, { includeHidden: opts.includeHidden });
+  const row = catalog.sessions.getSessionIndexRow(sessionId, { includeHidden: opts.includeHidden });
   if (row === null) throw new ApiError(404, 'Session not found');
   if (user !== null) {
-    const studioId = await catalog.getSessionStudioId(sessionId);
-    if (!studioId || !(await catalog.authUserHasStudio(user.id, studioId))) {
+    const studioId = catalog.sessions.getSessionStudioId(sessionId);
+    if (!studioId || !(catalog.auth.authUserHasStudio(user.id, studioId))) {
       throw new ApiError(404, 'Session not found');
     }
   }

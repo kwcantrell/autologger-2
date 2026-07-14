@@ -47,7 +47,7 @@ function relinkMaps(profile: StudioProfile): {
 eventsRouter.get('/api/sessions/:sessionId/show-categories', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const raw = await c.get('catalog').getSessionShowCategories(sessionId);
+  const raw = c.get('catalog').sessions.getSessionShowCategories(sessionId);
   if (raw === null) throw new ApiError(404, 'Session or show not found.');
   return c.json({
     categories: showCategoriesApiShape(raw.categories),
@@ -60,7 +60,7 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const catalog = c.get('catalog');
-  const row = await catalog.getSessionJoinedRow(sessionId, { includeHidden: false });
+  const row = catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: false });
   if (row === null) throw new ApiError(404, 'Session not found.');
   const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sessionId);
@@ -133,7 +133,7 @@ eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
   const { state, projection } = await getSessionHub(c, sessionId).startTake(timecodeCtx(row));
-  await c.get('catalog').projectSessionLive(sessionId, projection);
+  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json(state);
 });
 
@@ -141,7 +141,7 @@ eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
   const { state, projection } = await getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
-  await c.get('catalog').projectSessionLive(sessionId, projection);
+  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json(state);
 });
 
@@ -151,7 +151,7 @@ eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
   const catalog = c.get('catalog');
   const limit = clampInt(c.req.query('limit'), 200, 1, 2000);
   const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
-  const profile = await catalog.studioProfileForSession(sessionId);
+  const profile = catalog.sessions.studioProfileForSession(sessionId);
   const hub = getSessionHub(c, sessionId);
   if (offset === 0) {
     await hub.maybeRelinkOrphans(relinkMaps(profile));
@@ -171,7 +171,7 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
   const row = await requireSession(c, sessionId);
   const body = logBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
-  const profile = await catalog.studioProfileForSession(sessionId);
+  const profile = catalog.sessions.studioProfileForSession(sessionId);
   const validIds = new Set(profile.categories.map((cat) => cat.id));
   if (!validIds.has(body.category) && body.category !== 'internal') {
     throw new ApiError(400, 'Unknown category for this studio profile.');
@@ -189,7 +189,7 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     markedAtUtc: marked,
     ctx: timecodeCtx(row),
   });
-  await catalog.projectSessionLive(sessionId, projection);
+  catalog.sessions.projectSessionLive(sessionId, projection);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -199,7 +199,7 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const row = await requireSession(c, sessionId);
   const body = eventUpdateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
-  const profile = await catalog.studioProfileForSession(sessionId);
+  const profile = catalog.sessions.studioProfileForSession(sessionId);
   const catDef = profile.categories.find((cat) => cat.id === body.category) ?? null;
   if (catDef === null) throw new ApiError(400, 'Unknown category for this studio profile.');
   const dt = parseOptionalMarkedAt(body.wall_time_utc);
@@ -236,7 +236,7 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     metadataJson: JSON.stringify(meta),
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
-  await catalog.projectSessionLive(sessionId, result.projection);
+  catalog.sessions.projectSessionLive(sessionId, result.projection);
   return c.json(enrichEventRpc(result.event, profile));
 });
 
@@ -246,7 +246,7 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   await requireSession(c, sessionId);
   const { ok, projection } = await getSessionHub(c, sessionId).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
-  await c.get('catalog').projectSessionLive(sessionId, projection);
+  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json({ ok: true });
 });
 

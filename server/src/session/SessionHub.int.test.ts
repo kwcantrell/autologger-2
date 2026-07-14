@@ -29,9 +29,10 @@ describe('hub ↔ catalog projection', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const row = await env.DB.prepare('SELECT event_count FROM sessions WHERE id = ?')
-      .bind(s)
-      .first<{ event_count: number }>();
+    const row = env.DB.first<{ event_count: number }>(
+      'SELECT event_count FROM sessions WHERE id = ?',
+      s,
+    );
     expect(row?.event_count).toBe(1);
   });
 
@@ -46,9 +47,10 @@ describe('hub ↔ catalog projection', () => {
     const status = await app.request(`/api/sessions/${s}/status`, {}, env);
     expect(((await status.json()) as { is_rolling: boolean }).is_rolling).toBe(true);
 
-    const rowWhileRolling = await env.DB.prepare('SELECT is_rolling FROM sessions WHERE id = ?')
-      .bind(s)
-      .first<{ is_rolling: number }>();
+    const rowWhileRolling = env.DB.first<{ is_rolling: number }>(
+      'SELECT is_rolling FROM sessions WHERE id = ?',
+      s,
+    );
     expect(rowWhileRolling?.is_rolling).toBe(1);
 
     const stop = await app.request(`/api/sessions/${s}/transport/stop`, { method: 'POST' }, env);
@@ -57,9 +59,10 @@ describe('hub ↔ catalog projection', () => {
     expect(stopBody.stopped).toBe(true);
     expect(stopBody.is_rolling).toBe(false);
 
-    const rowAfterStop = await env.DB.prepare('SELECT is_rolling FROM sessions WHERE id = ?')
-      .bind(s)
-      .first<{ is_rolling: number }>();
+    const rowAfterStop = env.DB.first<{ is_rolling: number }>(
+      'SELECT is_rolling FROM sessions WHERE id = ?',
+      s,
+    );
     expect(rowAfterStop?.is_rolling).toBe(0);
   });
 

@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('harness smoke', () => {
   it('migrations applied: a migrated table is queryable', async () => {
-    const r = await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM studio_definitions',
-    ).first<{ n: number }>();
+    const r = env.DB.first<{ n: number }>('SELECT COUNT(*) AS n FROM studio_definitions');
     expect(typeof r?.n).toBe('number');
   });
 

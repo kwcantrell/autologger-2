@@ -85,7 +85,7 @@ export async function resolveSessionUser(
   if (!t) return null;
   const userId = await kv.get(`${SESSION_PREFIX}${await sha256Hex(t)}`);
   if (userId === null) return null;
-  const row = await catalog.authGetUserById(userId);
+  const row = catalog.auth.authGetUserById(userId);
   if (row === null) return null;
   return {
     id: String(row.id),

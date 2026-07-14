@@ -50,7 +50,7 @@ describe('OAuth callback happy path (spike)', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
     expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
-    const user = await catalogFor().authGetUserByGoogleSub('sub-spike');
+    const user = catalogFor().auth.authGetUserByGoogleSub('sub-spike');
     expect(user).not.toBeNull();
   });
 });
@@ -82,7 +82,7 @@ describe('callback — existing user', () => {
     const seededId = await seedUser({ sub });
     const res = await runCallback({ sub });
     expect(res.status).toBe(302);
-    const user = await catalogFor().authGetUserByGoogleSub(sub);
+    const user = catalogFor().auth.authGetUserByGoogleSub(sub);
     expect(user).not.toBeNull();
     expect(String(user?.id)).toBe(seededId);
   });

@@ -123,33 +123,33 @@ authRouter.get('/auth/google/callback', async (c) => {
   const pic = String(claims.picture ?? '').trim();
 
   const catalog = c.get('catalog');
-  const existing = await catalog.authGetUserByGoogleSub(googleSub);
+  const existing = catalog.auth.authGetUserByGoogleSub(googleSub);
   let uid: string;
   if (existing) {
     uid = String(existing.id);
-    await catalog.authUpdateUserProfile(uid, {
+    catalog.auth.authUpdateUserProfile(uid, {
       email,
       givenName: gn,
       familyName: fn,
       pictureUrl: pic,
     });
   } else {
-    uid = await catalog.authCreateUserGoogle({
+    uid = catalog.auth.authCreateUserGoogle({
       googleSub,
       email: email || `${googleSub}@users.noreply.invalid`,
       givenName: gn,
       familyName: fn,
       pictureUrl: pic,
     });
-    await catalog.authSeedPrefsFromGlobals(
+    catalog.auth.authSeedPrefsFromGlobals(
       uid,
-      (await catalog.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
-      (await catalog.getSetting(SETTING_ACTIVE_SHOW)) || '',
+      (catalog.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
+      (catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
     );
     if (newUserAllTeamsEnabled(c.env)) {
-      await catalog.authAddMemberships(
+      catalog.auth.authAddMemberships(
         uid,
-        catalog.listStudiosBrief().map((s) => s.id),
+        catalog.studios.listStudiosBrief().map((s) => s.id),
       );
     }
   }

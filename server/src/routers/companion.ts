@@ -37,7 +37,7 @@ function primarySession(presence: PresenceRegistry): string | null {
 
 async function requireActiveSession(c: Context<AppEnv>): Promise<string> {
   const sid = primarySession(c.env.PRESENCE);
-  if (!sid || (await c.get('catalog').getSessionIndexRow(sid, { includeHidden: true })) === null) {
+  if (!sid || (c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })) === null) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
   }
   return sid;
@@ -67,7 +67,7 @@ companionRouter.get('/api/companion/state', async (c) => {
   let sessionOut: Record<string, unknown> | null = null;
   let resolvedSid: string | null = activeSid;
   if (activeSid) {
-    const row = await catalog.getSessionJoinedRow(activeSid, { includeHidden: true });
+    const row = catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
     if (row === null) {
       resolvedSid = null;
     } else {
@@ -108,7 +108,7 @@ companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
   const sid = await requireActiveSession(c);
   const catalog = c.get('catalog');
-  const profile = await catalog.studioProfileForSession(sid);
+  const profile = catalog.sessions.studioProfileForSession(sid);
   let cat = null;
   if (body.category_id?.trim()) {
     cat = profile.categories.find((x) => x.id === body.category_id?.trim()) ?? null;
@@ -121,7 +121,7 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const row = await catalog.getSessionIndexRow(sid, { includeHidden: true });
+  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
   const { event, projection } = await getSessionHub(c, sid).addEvent({
     category: cat.id,
     message: body.message,
@@ -129,7 +129,7 @@ companionRouter.post('/api/companion/log', async (c) => {
     markedAtUtc: null,
     ctx: timecodeCtx(row as NonNullable<typeof row>),
   });
-  await catalog.projectSessionLive(sid, projection);
+  catalog.sessions.projectSessionLive(sid, projection);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -137,7 +137,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
   const sid = await requireActiveSession(c);
   const catalog = c.get('catalog');
-  const row = await catalog.getSessionIndexRow(sid, { includeHidden: true });
+  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
   const ctx = timecodeCtx(row as NonNullable<typeof row>);
   const hub = getSessionHub(c, sid);
   let action: 'start' | 'stop' = body.action === 'start' ? 'start' : 'stop';
@@ -147,7 +147,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
   }
   const { state, projection } =
     action === 'start' ? await hub.startTake(ctx) : await hub.stopTake(ctx);
-  await catalog.projectSessionLive(sid, projection);
+  catalog.sessions.projectSessionLive(sid, projection);
   return c.json({
     ok: true,
     is_rolling: Boolean(state.is_rolling),
@@ -178,9 +178,9 @@ companionRouter.post('/api/companion/command', async (c) => {
 companionRouter.get('/api/companion/categories', async (c) => {
   const sid = await requireActiveSession(c);
   const catalog = c.get('catalog');
-  const raw = await catalog.getSessionShowCategories(sid);
+  const raw = catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
-  const row = await catalog.getSessionIndexRow(sid, { includeHidden: true });
+  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
   const showId = row ? ((row.show_id as string | null) ?? null) : null;
   return c.json({
     session_id: sid,

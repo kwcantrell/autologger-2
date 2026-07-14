@@ -26,12 +26,12 @@
 
 ## 3. Phase 1c — Catalog seam reshape + facade cleanup
 
-- [ ] 3.1 **Characterization tests first** for the change-detecting `.meta.changes` readers (`authStore`, `sessionIndexStore` ×2 — removed-membership / archived-session detection)
-- [ ] 3.2 Reshape `prepare().bind().all()/first()/run()` → `all()/run()` with `run()` returning `{ changes }`; replace `batch()` with `tx()` implemented via `db.transaction()` (not raw `BEGIN/COMMIT`); update the 2 callers (authStore, studioRegistry)
-- [ ] 3.3 Add a `tx()` **rollback test** (force a constraint violation mid-transaction, assert no partial write) for the two former-`batch` sites
-- [ ] 3.4 Remove the async costume: delete the ~81 `db/` awaits, drop the `async` method signatures, and update the ~79 awaited call sites across routers + middleware
-- [ ] 3.5 Delete the `Catalog` facade's ~70 flat delegate methods; repoint callers to `catalog.<store>.<method>()`
-- [ ] 3.6 `npm run typecheck` + `npm test` green; commit
+- [x] 3.1 **Characterization tests first** for the change-detecting `.meta.changes` readers (`authStore`, `sessionIndexStore` ×2 — removed-membership / archived-session detection)
+- [x] 3.2 Reshape `prepare().bind().all()/first()/run()` → `all()/run()` with `run()` returning `{ changes }`; replace `batch()` with `tx()` implemented via `db.transaction()` (not raw `BEGIN/COMMIT`); update the 2 callers (authStore, studioRegistry)
+- [x] 3.3 Add a `tx()` **rollback test** (force a constraint violation mid-transaction, assert no partial write) for the two former-`batch` sites
+- [x] 3.4 Remove the async costume: delete the ~81 `db/` awaits, drop the `async` method signatures, and update the ~79 awaited call sites across routers + middleware
+- [x] 3.5 Delete the `Catalog` facade's ~70 flat delegate methods; repoint callers to `catalog.<store>.<method>()`
+- [x] 3.6 `npm run typecheck` + `npm test` green; commit
 
 ## 4. Phase 1d — Composition root split + auth de-dup (Phase 1 parity checkpoint)
 

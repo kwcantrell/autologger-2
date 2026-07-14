@@ -19,7 +19,7 @@ async function exportRows(
   c: Context<AppEnv>,
   sessionId: string,
 ): Promise<Array<Record<(typeof COLUMNS)[number], string>>> {
-  const profile = await c.get('catalog').studioProfileForSession(sessionId);
+  const profile = c.get('catalog').sessions.studioProfileForSession(sessionId);
   const events = await getSessionHub(c, sessionId).exportEvents();
   events.sort((a, b) => {
     const ka = a.timecode_total_frames ?? NO_TC;

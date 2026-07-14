@@ -23,15 +23,15 @@ showsRouter.get('/api/shows', async (c) => {
 
   let sid = (c.req.query('studio_id') ?? '').trim();
   if (!sid) {
-    const eff = await catalog.getEffectiveStudioForUser(user, oauthConfigured(c.env));
+    const eff = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env));
     if (eff === null) return c.json({ shows: [] });
     sid = eff.id;
   }
-  if (!catalog.isKnownStudio(sid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(await catalog.authUserHasStudio(user.id, sid))) {
+  if (!catalog.studios.isKnownStudio(sid)) return c.json({ detail: 'Unknown studio id.' }, 400);
+  if (user !== null && !(catalog.auth.authUserHasStudio(user.id, sid))) {
     return c.json({ detail: 'Unknown studio id.' }, 404);
   }
-  const out = (await catalog.listShowsForStudio(sid)).map(showApiDict);
+  const out = (catalog.shows.listShowsForStudio(sid)).map(showApiDict);
   return c.json({ shows: out });
 });
 
@@ -41,8 +41,8 @@ showsRouter.post('/api/shows', async (c) => {
   const user = c.get('user');
   if (user === null && oauthConfigured(c.env)) return c.json({ detail: 'Login required.' }, 401);
 
-  if (!catalog.isKnownStudio(body.studio_id)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(await catalog.authUserHasStudio(user.id, body.studio_id))) {
+  if (!catalog.studios.isKnownStudio(body.studio_id)) return c.json({ detail: 'Unknown studio id.' }, 400);
+  if (user !== null && !(catalog.auth.authUserHasStudio(user.id, body.studio_id))) {
     return c.json({ detail: 'Unknown studio id.' }, 404);
   }
 
@@ -58,7 +58,7 @@ showsRouter.post('/api/shows', async (c) => {
   norm = freshCategoryIds(norm);
 
   const palJson = JSON.stringify(normalizeEventPaletteNine(null));
-  const newId = await catalog.createShow({
+  const newId = catalog.shows.createShow({
     studioId: body.studio_id,
     name: body.name.trim(),
     showCode: code,
@@ -66,7 +66,7 @@ showsRouter.post('/api/shows', async (c) => {
     paletteJson: palJson,
     paletteCustomJson: palJson,
   });
-  const row = await catalog.getShowRow(newId);
+  const row = catalog.shows.getShowRow(newId);
   if (row === null) return c.json({ detail: 'Show was not created.' }, 500);
   return c.json({ show: showApiDict(row) });
 });
