@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { useRoute } from 'wouter';
 import { useSessions } from '../../../api/hooks/useSessions';
 import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -111,6 +112,10 @@ export function V6Rail({
   onMobileClose,
 }: Props) {
   const { data: sessions, isLoading } = useSessions();
+  // Same-route guard (design D2 gate decision 1, mirroring AppShell's own
+  // `onTeamsRoute` read): skip navigate when already on /teams, so repeated
+  // clicks don't stack duplicate history entries and deaden browser Back.
+  const [onTeamsRoute] = useRoute('/teams');
 
   const handleRailToggle = () => {
     // On the mobile drawer the menu button closes the off-canvas rail; on
@@ -230,7 +235,9 @@ export function V6Rail({
           type="button"
           className={RAIL_NAV}
           id="v6-btn-teams"
-          onClick={() => navigate('/teams')}
+          onClick={() => {
+            if (!onTeamsRoute) navigate('/teams');
+          }}
         >
           <span className={RAIL_NAV_ICON} aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">

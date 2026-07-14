@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
 import { useProfile } from '../../../api/hooks/useProfile';
 import type { ProfilePayload, TeamDetail, TeamMembershipBrief } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
+import { setNavigationImplForTesting } from '../navigation';
 import { TeamsRoute } from './TeamsRoute';
 
 // --- TeamsRoute page tests (teams-self-serve, task 6.2; spec:
@@ -116,8 +117,16 @@ function renderPage(profile: ProfilePayload) {
 const teamsApiCalls = () =>
   mockedApiFetch.mock.calls.filter(([path]) => String(path).startsWith('teams'));
 
+let navRecord: string[] = [];
+
 beforeEach(() => {
   mockedApiFetch.mockReset();
+  navRecord = [];
+  setNavigationImplForTesting((path) => navRecord.push(path));
+});
+
+afterEach(() => {
+  setNavigationImplForTesting(null);
 });
 
 describe('dev-anonymous mode', () => {
@@ -127,6 +136,24 @@ describe('dev-anonymous mode', () => {
     expect(screen.getByTestId('teams-route')).not.toBeNull();
     expect(document.getElementById('teams-signed-in-required')).not.toBeNull();
     expect(teamsApiCalls()).toHaveLength(0);
+  });
+});
+
+describe('back-to-sessions affordance (spec: "Teams page offers a way back in every state")', () => {
+  it('is present in the signed-in-required state and navigates to / via the shared navigate wrapper', () => {
+    renderPage(anonymousProfile());
+
+    expect(document.getElementById('teams-signed-in-required')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
+    expect(navRecord).toEqual(['/']);
+  });
+
+  it('is present in the signed-in state and navigates to / via the shared navigate wrapper', () => {
+    renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'admin' }]));
+
+    expect(screen.getByTestId('teams-list')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
+    expect(navRecord).toEqual(['/']);
   });
 });
 
