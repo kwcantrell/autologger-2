@@ -25,6 +25,19 @@ const SESSIONS_ROUTE_RE = /^\/sessions\/([^/]+)$/;
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 
 /**
+ * True iff `pathname` matches a router-known route — currently exactly
+ * `/sessions/:id` (one non-empty segment). Shared between this validator
+ * (untrusted stash input, full URL-parse recipe below) and the stash WRITE
+ * side (`loginReturnStash.ts`, which only ever inspects this tab's own
+ * trusted `window.location.pathname`) so both sides agree on "what counts
+ * as a deep link" from one definition instead of two regexes drifting apart.
+ */
+export function isSessionRoutePathname(pathname: string): boolean {
+  const match = SESSIONS_ROUTE_RE.exec(pathname);
+  return match !== null && match[1].length > 0;
+}
+
+/**
  * Validate an unknown value as a post-login return path.
  *
  * Accepts only same-origin, router-known paths (currently `/sessions/:id`,
@@ -65,8 +78,7 @@ export function validateLoginReturnPath(value: unknown): string | null {
   //    (e.g. `%2F`) are never decoded back into `/` by `URL#pathname`, so
   //    they can't be used to smuggle extra segments past this check —
   //    they just fail to match and get rejected.
-  const match = SESSIONS_ROUTE_RE.exec(url.pathname);
-  if (!match || match[1].length === 0) return null;
+  if (!isSessionRoutePathname(url.pathname)) return null;
 
   return `${url.pathname}${url.search}`;
 }

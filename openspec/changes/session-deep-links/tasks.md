@@ -102,16 +102,16 @@ before editing.
       ASCII control chars, non-strings, empty, anything not resolving to the current
       origin, and same-origin non-router paths like `/admin/users`
       (spec: web-login-experience delta, validation clause)
-- [ ] 6.2 Stash write riding the three LoginPage anchors (sign-in, create-account,
+- [x] 6.2 Stash write riding the three LoginPage anchors (sign-in, create-account,
       error-retry) via synchronous `onClick` — the anchors keep their
       `/auth/google/start` hrefs (login-gate e2e asserts them); write the current
       path+query IFF the location matches `/sessions/:id`, otherwise leave any
       existing stash untouched (design D6)
-- [ ] 6.3 Consume effect keyed explicitly on `auth.logged_in === true` (NOT on
+- [x] 6.3 Consume effect keyed explicitly on `auth.logged_in === true` (NOT on
       AppShell mounting — dev anonymous mode mounts the shell logged-out and must
       never consume): validate → `replace`-navigate via the router → clear; stash
       cleared on every exit path (valid, invalid, navigation throw)
-- [ ] 6.4 Unit tests: full round-trip (stash → consume → cleared), malicious and
+- [x] 6.4 Unit tests: full round-trip (stash → consume → cleared), malicious and
       out-of-router stash discarded without navigation, retry-from-error-page does not
       clobber the stash and the original path survives, no-stash boot navigates
       nowhere, anonymous-shell boot never consumes (spec: all post-login scenarios)

@@ -1,4 +1,5 @@
 import brandStripUrl from '../../../assets/logos/logo-autologger-transparent.png';
+import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginReturnStash';
 
 // --- LoginPage (add-login-screen, task 2.1) ---
 // Full-screen branded login view for OAuth-configured deployments. Mounted by
@@ -8,6 +9,14 @@ import brandStripUrl from '../../../assets/logos/logo-autologger-transparent.png
 // Google sign-in creates the account automatically in the callback's new-user
 // branch, so "create account" is the same navigation with different framing
 // (spec `web-login-experience`, "Google sign-in entry").
+//
+// All three sign-in affordances (Google sign-in, create-account, error-state
+// retry) share `stashLoginReturnPathIfDeepLink` as their `onClick`, which
+// synchronously stashes the current deep link before the browser follows the
+// anchor's `href` (session-deep-links, task 6.2, design D6). The anchors keep
+// their plain `href="/auth/google/start"` — the login-gate e2e asserts those
+// hrefs — the stash write rides the activation's `onClick`, which runs before
+// the browser navigates.
 
 /**
  * `?login_error=<code>` copy, grouped per design D5: three messages, not six.
@@ -133,13 +142,23 @@ export function LoginPage() {
         {errorCode !== null && (
           <div className={ERROR_BANNER} id="login-error-banner" role="alert">
             <p className={ERROR_TEXT}>{loginErrorMessage(errorCode)}</p>
-            <a className={ERROR_RETRY} href="/auth/google/start" id="login-error-retry">
+            <a
+              className={ERROR_RETRY}
+              href="/auth/google/start"
+              id="login-error-retry"
+              onClick={stashLoginReturnPathIfDeepLink}
+            >
               Try again
             </a>
           </div>
         )}
 
-        <a className={BTN_GOOGLE} href="/auth/google/start" id="login-btn-google">
+        <a
+          className={BTN_GOOGLE}
+          href="/auth/google/start"
+          id="login-btn-google"
+          onClick={stashLoginReturnPathIfDeepLink}
+        >
           <GoogleGMark />
           <span>Sign in with Google</span>
         </a>
@@ -150,7 +169,12 @@ export function LoginPage() {
           <span className={SECTION_RULE} />
         </div>
 
-        <a className={BTN_CREATE} href="/auth/google/start" id="login-btn-create-account">
+        <a
+          className={BTN_CREATE}
+          href="/auth/google/start"
+          id="login-btn-create-account"
+          onClick={stashLoginReturnPathIfDeepLink}
+        >
           Create an account with Google
         </a>
         <p className={FINE_PRINT}>

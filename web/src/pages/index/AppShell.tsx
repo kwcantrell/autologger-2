@@ -13,6 +13,7 @@ import { SessionRoute } from './components/SessionRoute';
 import { V6Rail } from './components/V6Rail';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
 import { navigate } from './navigation';
+import { useLoginReturnConsume } from './useLoginReturnConsume';
 import 'overlayscrollbars/overlayscrollbars.css';
 
 declare global {
@@ -46,6 +47,12 @@ export function AppShell() {
   const queryClient = useQueryClient();
   const { data: profile } = useProfile();
   const { mutateAsync: runYoutubeImport } = useYoutubeImport();
+
+  // Post-login deep-link return (design D6): keyed explicitly on
+  // `auth.logged_in === true`, never on this component merely mounting —
+  // dev anonymous mode mounts AppShell with `logged_in: false` and must
+  // never consume a stashed path.
+  useLoginReturnConsume(profile?.auth.logged_in === true);
 
   const closeRail = useCallback(() => setRailOpen(false), []);
 
