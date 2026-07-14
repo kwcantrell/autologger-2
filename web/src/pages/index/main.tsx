@@ -8,7 +8,7 @@ import '@/shared/theme/tailwind.css';
 import '@/shared/theme/vendor/animate.min.css';
 import { ThemeProvider } from '@/shared/theme/ThemeProvider';
 import { TooltipProvider } from '@/shared/ui/Tooltip';
-import { AppShell } from './AppShell';
+import { RootGate } from './RootGate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +20,7 @@ createRoot(document.getElementById('root') as HTMLElement).render(
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
       <TooltipProvider delayDuration={400}>
-        <AppShell />
+        <RootGate />
       </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>,
