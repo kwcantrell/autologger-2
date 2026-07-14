@@ -41,7 +41,7 @@ npm run e2e                                    # Playwright smoke (hermetic serv
 npm run lint                                   # biome: web src/ + e2e/
 ```
 
-- Two vitest tiers (`server/vitest.workspace.ts`): **unit** (`*.test.ts`, node, no bindings) and
+- Two vitest tiers (`test.projects` in `server/vitest.config.ts`): **unit** (`*.test.ts`, node, no bindings) and
   **integration** (`*.int.test.ts`, node, real SQLite via `server/src/test/setup.int.ts`).
 
 ## Invariants (spec)
