@@ -1,6 +1,5 @@
 import clsx from 'clsx';
 import { useSessions } from '../../../api/hooks/useSessions';
-import type { ProfilePayload } from '../../../api/types';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 
 // --- converted class strings (were V6Rail.module.css) ---
@@ -90,7 +89,6 @@ const RAIL_NAV_LABEL =
 
 interface Props {
   activeSessionId: string;
-  profile: ProfilePayload | undefined;
   onSelectSession: (sid: string) => void;
   onCloseSession: () => void;
   onNewSession: () => void;
