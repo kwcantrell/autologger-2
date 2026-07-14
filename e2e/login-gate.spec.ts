@@ -103,4 +103,44 @@ test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
     await expect(page.locator('#login-error-banner')).toContainText("Sign-in didn't complete.");
     expect(googleHit()).toBe(false);
   });
+
+  // session-deep-links (task 8.3, spec: web-login-experience "Anonymous deep
+  // link keeps its URL"). The gate is a render switch mounted ABOVE the
+  // router (it covers every route, not just `/`), so an anonymous visit to a
+  // session deep link must render the login view with the address bar left
+  // exactly where it landed — no redirect to `/` — and must not fetch the
+  // session (only GET /api/profile is allowed while gated). The sign-in
+  // anchors' hrefs staying `/auth/google/start` at this URL is the contract
+  // phase 6's post-login stash write depends on (a phase-6 review finding).
+  test('anonymous deep link to /sessions/<id> renders the login view without redirecting, and keeps the sign-in hrefs', async ({
+    page,
+  }) => {
+    const apiPaths: string[] = [];
+    page.on('request', (req) => {
+      const url = new URL(req.url());
+      if (url.pathname.startsWith('/api/')) apiPaths.push(url.pathname);
+    });
+    await blockGoogleNavigation(page);
+
+    await page.goto('/sessions/deep-link-e2e-probe');
+
+    await expect(page.locator('#login-wordmark')).toBeVisible();
+    await expect(page.locator('#v6-app')).toHaveCount(0);
+
+    // No redirect to `/` — the address bar stays on the deep link.
+    await expect(page).toHaveURL('/sessions/deep-link-e2e-probe');
+
+    // The sign-in affordances keep their plain hrefs at this URL — phase 6's
+    // synchronous onClick stash write rides these same anchors.
+    await expect(page.locator('#login-btn-google')).toHaveAttribute('href', '/auth/google/start');
+    await expect(page.locator('#login-btn-create-account')).toHaveAttribute(
+      'href',
+      '/auth/google/start',
+    );
+
+    // No session data is fetched while gated — only /api/profile.
+    await page.waitForTimeout(500);
+    expect(apiPaths.every((p) => p === '/api/profile')).toBe(true);
+    expect(apiPaths.length).toBeGreaterThan(0);
+  });
 });

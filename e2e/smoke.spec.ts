@@ -28,6 +28,12 @@ test('create a session, log via UI, and see an out-of-band event live (WS)', asy
   await page.locator('#ns-submit').click();
   await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
 
+  // session-deep-links (task 8.1): sessions are URL-driven — the active
+  // session lives in the address bar (`/sessions/<id>`), not in a
+  // `body.dataset.sessionId` attribute (that legacy spine was removed in
+  // phase 3; see web-session-routing "Legacy selection spine retired").
+  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+
   // Roll timecode so category buttons enable, then log via the "Scene" button.
   await page.locator('#btn-ctl-2').click();
   const sceneBtn = page
@@ -43,7 +49,7 @@ test('create a session, log via UI, and see an out-of-band event live (WS)', asy
   // Scenario 3: out-of-band POST; the row must appear with NO reload, focus
   // change, or page interaction — otherwise React Query's refetchOnWindowFocus
   // could fetch over HTTP and mask a dead WebSocket.
-  const sessionId = await page.evaluate(() => document.body.dataset.sessionId);
+  const sessionId = new URL(page.url()).pathname.split('/').pop();
   expect(sessionId).toBeTruthy();
   const categoryId = await sceneBtn.getAttribute('data-category-id');
   expect(categoryId).toBeTruthy();
@@ -68,4 +74,37 @@ test('create a session, log via UI, and see an out-of-band event live (WS)', asy
       '#v4-log-sheet tr[data-event-id] input[aria-label="Message"][value="e2e-live-probe"]',
     ),
   ).toBeVisible({ timeout: 10_000 });
+});
+
+// session-deep-links (task 8.2): deep-link smoke, same hermetic (OAuth-off)
+// server as the tests above. Covers "Deep-link reload restores the session"
+// (web-session-routing) and the not-found resolution state.
+test('deep-linking: a fresh reload on /sessions/<id> restores the session; a garbage id renders not-found', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.locator('#v6-btn-new-session').click();
+  await expect(page.locator('#new-session-form')).toBeVisible();
+  await expect(page.locator('#ns-show')).toBeEnabled();
+  await page.locator('#ns-submit').click();
+  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  const sessionUrl = page.url();
+
+  // Fresh navigation (full page load, not an in-app transition) to the exact
+  // same deep link: resolution re-runs from scratch and the workspace mounts
+  // again for the same id — the session survives the reload.
+  await page.goto(sessionUrl);
+  await expect(page).toHaveURL(sessionUrl);
+  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#session-route-not-found')).toHaveCount(0);
+
+  // An id that was never created renders the not-found state (identical for
+  // nonexistent, deleted, and unauthorized ids) — never the workspace — with
+  // a way back to `/`.
+  await page.goto('/sessions/does-not-exist-xyz');
+  await expect(page.locator('#session-route-not-found')).toBeVisible();
+  await expect(page.locator('#v3-session-grid')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Back to sessions' }).click();
+  await expect(page).toHaveURL('/');
 });
