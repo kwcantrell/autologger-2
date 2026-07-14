@@ -84,7 +84,11 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   if (!catalog.studios.isKnownStudio(sid)) throw new ApiError(400, 'Unknown team id.');
   const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  catalog.auth.authAddMemberships(String(row.id), [sid]);
+  // Upsert (not the INSERT OR IGNORE of authAddMemberships): with the role
+  // column present, a re-POST on an existing membership must update its role
+  // (defaulting to 'member' when absent) — the orphaned-team rescue path
+  // (teams-self-serve) needs promotion to actually take effect, not no-op.
+  catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
   return c.json({ ok: true });
 });
 

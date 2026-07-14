@@ -97,6 +97,17 @@ export class AuthStore {
     return results.map((r) => String(r.studio_id));
   }
 
+  /** All (studio_id, role) pairs for a user, one query — the profile assembler's
+   * `auth.user.teams[].role` field (teams-self-serve) needs role alongside id/name
+   * without an N+1 over authGetMembershipRole per team. */
+  authListMembershipsForUser(userId: string): Array<{ studioId: string; role: TeamRole }> {
+    const results = this.db.all<Row>(
+      'SELECT studio_id, role FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
+      userId,
+    );
+    return results.map((r) => ({ studioId: String(r.studio_id), role: String(r.role) as TeamRole }));
+  }
+
   authAddMemberships(userId: string, studioIds: string[]): void {
     const ids = studioIds.filter((sid) => sid);
     if (!ids.length) return;

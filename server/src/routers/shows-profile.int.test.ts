@@ -1,5 +1,6 @@
 import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
+import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
@@ -17,6 +18,28 @@ describe('GET /api/studio + /api/profile', () => {
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
     expect(typeof (await res.json())).toBe('object');
+  });
+
+  it('auth.user.teams[] entries carry role (teams-self-serve, task 4.1)', async () => {
+    const teamA = await seedStudio();
+    const teamB = await seedStudio();
+    const userId = await seedUser({});
+    catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
+    catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
+    const cookie = await loginCookie(userId);
+
+    const res = await app.request(
+      '/api/profile',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      auth: { user: { teams: Array<{ id: string; name: string; role: string }> } };
+    };
+    const byId = new Map(body.auth.user.teams.map((t) => [t.id, t.role]));
+    expect(byId.get(teamA)).toBe('admin');
+    expect(byId.get(teamB)).toBe('member');
   });
 });
 

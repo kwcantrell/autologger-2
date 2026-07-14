@@ -67,12 +67,14 @@ export class ProfileAssembler {
 
   private authSection(user: AuthUser | null, oauthConfigured: boolean): Record<string, unknown> {
     if (user === null) return { logged_in: false, user: null, oauth_configured: oauthConfigured };
-    const allowed = new Set(this.auth.authListStudioIdsForUser(user.id));
+    const roleByStudioId = new Map(
+      this.auth.authListMembershipsForUser(user.id).map((m) => [m.studioId, m.role]),
+    );
     const names = this.studios.studioNamesDict();
     const teams = this.studios
       .studioOrderTuple()
-      .filter((sid) => allowed.has(sid))
-      .map((sid) => ({ id: sid, name: names[sid] }));
+      .filter((sid) => roleByStudioId.has(sid))
+      .map((sid) => ({ id: sid, name: names[sid], role: roleByStudioId.get(sid) }));
     return {
       logged_in: true,
       oauth_configured: oauthConfigured,
