@@ -129,8 +129,16 @@ Implement tasks from an OpenSpec change.
         so); `npm run typecheck` + `npm test` green before committing; conventional
         commits; locate code by content, not stale `file:line` anchors; CLAUDE.md
         invariants bind (frozen HTTP/WS contract, synchronous hub RPCs, etc.)
-      - Model tier: cheapest that fits — light model for mechanical tasks, standard for
-        multi-file integration, most capable only for judgment-heavy work
+      - Model tier: cheapest that fits, and implementers do NOT default to the top
+        tier — by apply time the hard reasoning is done and lives in the gated
+        artifacts; implementation is execution against them. Light model for
+        mechanical units; **mid-tier (sonnet) is the default for code-bearing
+        units**, including multi-file integration. The top tier (fable/opus-class)
+        is exception-only — reserve it for a unit that genuinely needs fresh
+        judgment the artifacts can't encode (e.g. gnarly concurrent/ordering
+        semantics with no spec'd answer), and record the justification in the
+        ledger's unit line. Review tiers are unchanged: phase reviewers keep the
+        mid-tier floor; the final whole-branch review keeps the most capable model.
 
    d. Handle the returned status:
       - `DONE` → proceed to (e)

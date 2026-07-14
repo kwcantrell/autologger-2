@@ -177,7 +177,10 @@ minors *accepted as residual*.
 
 When fanning out sub-agents (here or anywhere), **match model tier to the task**:
 light models (haiku/sonnet) for fetch-and-compare verification and mechanical
-sweeps; heavyweight models for synthesis and adversarial judgment.
+sweeps; heavyweight models for synthesis and adversarial judgment. Apply-time
+implementer subagents default to **mid-tier** — the gated artifacts already carry
+the design reasoning — with the top tier an exception that must earn its ledger
+justification (decided 2026-07-14).
 
 Keep plan review as-is (single reviewer over `tasks.md`: spec coverage, decomposition,
 buildability). Only add a *lighter* adversarial pass on `tasks.md` — scoped to
