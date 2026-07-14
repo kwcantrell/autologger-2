@@ -59,7 +59,7 @@
 
 ## 3. e2e smoke
 
-- [ ] 3.1 Add a second hermetic server config (Playwright project + `webServer` entry)
+- [x] 3.1 Add a second hermetic server config (Playwright project + `webServer` entry)
       with: dummy `GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/PUBLIC_BASE_URL` (OAuth
       "configured", never contacting Google), `REQUIRE_LOGIN=1`, a distinct port, its
       **own `DATA_DIR`** (e.g. `e2e/.data-oauth`) with its own atomic wipe-then-start
