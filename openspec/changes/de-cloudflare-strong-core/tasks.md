@@ -50,8 +50,8 @@
 
 ## 6. Phase 2 — IdentityVerifier port
 
-- [ ] 6.1 Introduce an `IdentityVerifier` port wrapping JWKS verify + OAuth code exchange; move `jwksCache` to instance state (kill the module-level singleton) and read the JWKS TTL from the injected `Clock` (`oauth_google.ts` ×2)
-- [ ] 6.2 Add a fake `IdentityVerifier` and prove token verification without network; suite green
+- [x] 6.1 Introduce an `IdentityVerifier` port wrapping JWKS verify + OAuth code exchange; move `jwksCache` to instance state (kill the module-level singleton) and read the JWKS TTL from the injected `Clock` (`oauth_google.ts` ×2)
+- [x] 6.2 Add a fake `IdentityVerifier` and prove token verification without network; suite green
 - [ ] _(BlobStore port CUT at the gate — stays concrete, rename-only, handled in Phase 1a)_
 
 ## 7. Phase 2 — Consolidate authorization (safe half only)

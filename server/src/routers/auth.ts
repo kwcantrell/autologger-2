@@ -11,11 +11,6 @@ import {
   takeOauthState,
 } from '../auth/identity';
 import {
-  exchangeAuthorizationCode,
-  googleAuthorizationUrl,
-  verifyGoogleIdToken,
-} from '../auth/oauth_google';
-import {
   cookieSecureForRequest,
   googleClientId,
   googleClientSecret,
@@ -43,7 +38,7 @@ authRouter.get('/auth/google/start', async (c) => {
   }
   const state = newOauthState();
   await putOauthState(c.env.ports.kv, state);
-  const uri = googleAuthorizationUrl({
+  const uri = c.env.ports.identity.authorizationUrl({
     clientId: googleClientId(c.env.config),
     state,
     redirectUri: `${publicBaseUrl(c.env.config)}/auth/google/callback`,
@@ -93,7 +88,7 @@ authRouter.get('/auth/google/callback', async (c) => {
   const redirectUri = `${publicBaseUrl(c.env.config)}/auth/google/callback`;
   let tokens: Record<string, unknown>;
   try {
-    tokens = await exchangeAuthorizationCode({
+    tokens = await c.env.ports.identity.exchangeCode({
       code,
       redirectUri,
       clientId: googleClientId(c.env.config),
@@ -107,10 +102,10 @@ authRouter.get('/auth/google/callback', async (c) => {
   if (!idTok) return c.json({ detail: 'Missing id_token.' }, 400);
   let claims: Record<string, unknown>;
   try {
-    claims = (await verifyGoogleIdToken(String(idTok), googleClientId(c.env.config))) as Record<
-      string,
-      unknown
-    >;
+    claims = (await c.env.ports.identity.verifyIdToken(
+      String(idTok),
+      googleClientId(c.env.config),
+    )) as Record<string, unknown>;
   } catch (e) {
     return c.json({ detail: `Invalid id_token: ${(e as Error).message}` }, 400);
   }

@@ -2,6 +2,7 @@
 // context Variables.
 
 import type { Clock } from './clock';
+import type { IdentityVerifier } from './auth/oauth_google';
 import type { AuthUser, Catalog } from './db/catalog';
 import type { SessionHubRegistry } from './session/SessionHub';
 import type { BlobStore } from './node/blobStore';
@@ -12,6 +13,7 @@ import type { PresenceRegistry } from './node/presence';
 /** Constructed services, role-named. */
 export interface Ports {
   clock: Clock;
+  identity: IdentityVerifier;
   catalog: CatalogDb;
   kv: KvStore;
   sessions: SessionHubRegistry;

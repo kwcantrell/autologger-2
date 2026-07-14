@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { systemClock } from '../clock';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
@@ -39,6 +40,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const bindings: Bindings = {
     ports: {
       clock,
+      identity: new GoogleIdentityVerifier(clock),
       catalog: new CatalogDb(catalog),
       kv,
       sessions: registry,
