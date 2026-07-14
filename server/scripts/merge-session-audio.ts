@@ -1,16 +1,18 @@
-// CLI: merge a session's recorded audio segments into one WebM file.
+// CLI: merge a session's recorded audio segments into one group file per
+// probed codec family.
 //
-//   npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <file>]
+//   npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <dir>]
 //
 // Reads segment order from the session DB (DATA_DIR/sessions/<id>.db), maps
-// each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies the
-// Opus streams into a single WebM via src/node/audioMerge.ts. Read-only over
-// server state; the merged file is written outside the blob store.
+// each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies each
+// codec-family run into its own container (Opus->WebM, AAC->MP4, PCM->WAVE)
+// via src/node/audioMerge.ts. Read-only over server state; the merged files
+// are written outside the blob store.
 
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { mergeAudioFiles } from '../src/node/audioMerge';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { mergeAudioSegments } from '../src/node/audioMerge';
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`);
@@ -30,7 +32,7 @@ for (let i = 0; i < args.length; i += 1) {
 const sessionId = positional[0];
 if (!sessionId || positional.length > 1) {
   console.error(
-    'usage: npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <file>]',
+    'usage: npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <dir>]',
   );
   process.exit(2);
 }
@@ -64,11 +66,15 @@ for (const row of rows) {
 }
 if (inputs.length === 0) fail('all segment blobs are missing');
 
-const outPath = resolve(outArg ?? `${sessionId}-merged.webm`);
-mkdirSync(dirname(outPath), { recursive: true });
+const outDir = resolve(outArg ?? `${sessionId}-merged`);
 
-const result = await mergeAudioFiles(inputs, outPath);
-console.log(
-  `merged ${result.files} segment(s), ${result.packets} packets, ` +
-    `${result.durationSeconds.toFixed(2)}s -> ${outPath}`,
-);
+const { groups, skipped } = await mergeAudioSegments(inputs, outDir);
+for (const s of skipped) console.warn(`warning: skipped ${s.path} — ${s.reason}`);
+if (groups.length === 0) fail('no readable audio segments to merge');
+
+for (const group of groups) {
+  console.log(
+    `[${group.family}] ${group.segments.length} segment(s), ${group.packets} packets, ` +
+      `${group.durationSeconds.toFixed(2)}s -> ${group.outPath}`,
+  );
+}
