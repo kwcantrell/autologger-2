@@ -87,11 +87,26 @@ Implement tasks from an OpenSpec change.
    - If the ledger exists, resume from it: tasks it records complete are DONE — do not
      re-dispatch them. After compaction, trust the ledger and `git log` over memory.
 
-   **Per task (strictly sequential — never dispatch implementers in parallel):**
+   **Per phase — partition first:** at the start of each phase, before any dispatch,
+   group the phase's tasks into **dispatch units** (one unit = one implementer
+   subagent handling one or more tasks). Batch tasks into a unit when:
+   - they form a **TDD pair** — a tests-first task and the implementation it gates
+     MUST share a unit, because every commit must leave the suite green (a failing
+     test commit alone would break the gate);
+   - they touch the **same files or seam**, so a second subagent would re-derive the
+     first one's context;
+   - a later task consumes an interface the earlier one defines and splitting would
+     force a lossy handoff.
+   Keep units small (≤3 tasks), never span phases, and record the partition in the
+   ledger at phase start (`Phase <N> units: [x.1+x.2], [x.3]`). Units run strictly
+   sequentially, exactly as tasks did.
+
+   **Per dispatch unit (strictly sequential — never dispatch implementers in parallel):**
 
    a. Record `BASE=$(git rev-parse HEAD)`.
 
-   b. Classify the task, which decides whether its phase needs a review in (e):
+   b. Classify the unit (by its heaviest task), which decides whether its phase needs
+      a review in (e):
       - **mechanical** — pure renames, comment/doc sweeps, checkbox/validator runs,
         config touch-ups with no behavior change
       - **code-bearing** — anything that changes behavior, reshapes a seam, or
@@ -100,7 +115,8 @@ Implement tasks from an OpenSpec change.
    c. Dispatch an implementer subagent. The prompt contains:
       - The artifact paths from `contextFiles`, introduced as "read these first — they
         are your requirements"
-      - The task ID + its verbatim text from tasks.md
+      - The unit's task ID(s) + their verbatim text from tasks.md (a multi-task unit
+        gets every task's text and the ordering between them, e.g. RED then GREEN)
       - Any interface or decision from an earlier task the artifacts can't know
         (usually nothing — the subagent can read the code)
       - The report-file path `.apply/task-<id>-report.md`: full detail goes there —
@@ -147,9 +163,9 @@ Implement tasks from an OpenSpec change.
         correctness concern is addressed before the next dispatch, not parked until
         the phase review.
 
-   f. Bookkeeping: tick the checkbox in tasks.md (`- [ ]` → `- [x]`) and append one
-      ledger line per task, plus one per phase when its gate resolves:
-      `Task <id>: complete (commits <base7>..<head7>)`
+   f. Bookkeeping: tick every checkbox the unit covers in tasks.md (`- [ ]` → `- [x]`)
+      and append one ledger line per unit, plus one per phase when its gate resolves:
+      `Task <id(s)>: complete (commits <base7>..<head7>)`
       `Phase <N>: review clean (phase-<N>-diff.txt) | skipped-mechanical`
 
    **Pause if:**
@@ -234,7 +250,11 @@ What would you like to do?
 - **Never implement inline** — every code change goes through an implementer subagent
 - **Never read diffs, code, or full test logs into the orchestrator session** — hand them
   over as file paths
-- **Never dispatch implementer subagents in parallel** — tasks run strictly sequentially
+- **Never dispatch implementer subagents in parallel** — dispatch units run strictly
+  sequentially
+- **Partition each phase into dispatch units before its first dispatch** — TDD pairs
+  always share a unit; same-files/same-seam tasks usually should; record the partition
+  in the ledger
 - **Reviews run per phase, not per task** — one reviewer over the phase's cumulative
   diff after its last task; only the final whole-branch review is always-on
 - **Never re-dispatch a task the ledger marks complete** — check `.apply/ledger.md` (and
