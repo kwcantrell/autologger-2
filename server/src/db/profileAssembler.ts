@@ -1,5 +1,5 @@
-// Assembles the /api/profile payload (byte-compatible with the Python server)
-// from the studio registry, auth store, and shows store. Moved verbatim out of
+// Assembles the /api/profile payload (frozen JSON shape; originally byte-compatible
+// with the Python server) from the studio registry, auth store, and shows store. Moved verbatim out of
 // d1.ts (Catalog), with cross-store calls rewritten to the injected stores.
 
 import {
@@ -96,7 +96,8 @@ export class ProfileAssembler {
     };
   }
 
-  /** _profile_payload — byte-compatible with the Python server's /api/profile JSON. */
+  /** _profile_payload — frozen /api/profile JSON shape (originally byte-compatible
+   * with the Python server's). */
   async profilePayload(user: AuthUser | null, ctx: ProfileCtx): Promise<Record<string, unknown>> {
     const { oauthConfigured, adminMeta } = ctx;
 

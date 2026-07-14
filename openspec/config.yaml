@@ -2,12 +2,17 @@ schema: spec-driven
 
 # Shown to AI when creating change artifacts (proposal/spec/design/tasks).
 context: |
-  Portable TypeScript/Node port of a Python backend (../autologger). Maintain JSON
-  response-shape and status-code parity with the existing React frontend + Companion module;
-  do not invent API surface without a spec. Permanent invariant: single Node process, state
-  on local disk under DATA_DIR — no cloud account, no clustering. Stack: Hono + Zod + jose +
-  better-sqlite3. Conventional commits (type(scope): summary). Branch off main; never use git
-  worktrees. Commit/push only when asked. Changes ship with tests (npm test + npm run typecheck).
+  Portable TypeScript/Node backend + React frontend (web/) + Bitfocus Companion module
+  (companion/), all in-repo. Originally a faithful port of the Python AutoLogger backend;
+  this repo is now the canonical implementation. The published HTTP/WS contract is FROZEN
+  (capability spec api-contract-freeze; CLAUDE.md Invariants): the README endpoint table is
+  the normative route inventory, and JSON shapes, status codes, export bodies, header/range
+  semantics, and WS emission semantics may not change without an authorizing delta spec —
+  consumers (web/, Companion, e2e/) are the rationale for the freeze, not its measuring
+  stick. Permanent invariant: single Node process, state on local disk under DATA_DIR — no
+  cloud account, no clustering. Stack: Hono + Zod + jose + better-sqlite3. Conventional
+  commits (type(scope): summary). Branch off main; never use git worktrees. Commit/push only
+  when asked. Changes ship with tests (npm test + npm run typecheck).
 
 # Per-artifact rules — applied at artifact generation. These encode the repo SDLC
 # (see CLAUDE.md "How we work"). The adversarial panel + human gate remain a manual overlay:
@@ -15,7 +20,7 @@ context: |
 rules:
   proposal:
     - Include an explicit Non-Goals / out-of-scope section
-    - State the behavior-parity impact — this is a port, so call out any observable HTTP/WS/JSON change (usually "none")
+    - State the contract impact — the HTTP/WS contract is frozen, so call out any observable HTTP/WS/JSON change (usually "none")
   design:
     - Record each key decision with alternatives considered + rationale
     - Include a "Panel & review log" section with three buckets — blockers/majors fixed in place, findings escalated to the gate (with the decision), minors accepted as residual

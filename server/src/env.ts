@@ -1,4 +1,4 @@
-// Typed env accessors — mirror the AUTOLOGGER_* env getters in
+// Typed env accessors — ported from the AUTOLOGGER_* env getters in
 // src/autologger/web/auth_identity.py. `Env` is the Node Bindings alias (src/types.ts).
 
 import type { Env } from './types';
