@@ -8,6 +8,7 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
+import { HomeSettingsModal } from './components/HomeSettingsModal';
 import { NewSessionModal } from './components/NewSessionModal';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { SessionRoute } from './components/SessionRoute';
@@ -315,24 +316,31 @@ export function AppShell() {
               />
             )}
 
-            {/* Settings modal + session workspace, behind deep-link resolution:
-                SessionRoute resolves the routed id through the per-id query and
-                gates the workspace mount on it (task 4.2, design D5); the empty
-                id renders the home view unchanged. At `/teams` (teams-self-serve,
-                task 5.2), TeamsRoute mounts in SessionRoute's place instead —
-                since SessionRoute is what renders the no-session home view
+            {/* Settings modal: mounted once here, beside the route switch, so the
+                rail's Settings button works on every route (`/`, `/sessions/:id`,
+                `/teams`) — a route-branch-coupled mount was the bug class itself
+                (teams-settings-nav, design D1). Mounting is unconditional (Radix
+                Dialog renders nothing to the DOM while `open` is false), so the
+                modal survives route changes while open instead of desyncing
+                `showSettings` from what's rendered. */}
+            <HomeSettingsModal
+              isOpen={showSettings}
+              onClose={handleCloseSettings}
+              onCloseSession={handleCloseSession}
+            />
+
+            {/* Session workspace, behind deep-link resolution: SessionRoute
+                resolves the routed id through the per-id query and gates the
+                workspace mount on it (task 4.2, design D5); the empty id renders
+                the home view unchanged. At `/teams` (teams-self-serve, task 5.2),
+                TeamsRoute mounts in SessionRoute's place instead — since
+                SessionRoute is what renders the no-session home view
                 (WorkspaceStatic) for the empty id, swapping it out is what hides
                 that home view at the teams route. */}
             {onTeamsRoute ? (
               <TeamsRoute />
             ) : (
-              <SessionRoute
-                sessionId={activeSessionId}
-                showSettings={showSettings}
-                onCloseSettings={handleCloseSettings}
-                onCloseSession={handleCloseSession}
-                ytImportPending={ytImportPending}
-              />
+              <SessionRoute sessionId={activeSessionId} ytImportPending={ytImportPending} />
             )}
           </main>
         </div>

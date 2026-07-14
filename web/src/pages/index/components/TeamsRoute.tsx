@@ -3,6 +3,7 @@ import { ApiError } from '../../../api/client';
 import { useProfile } from '../../../api/hooks/useProfile';
 import { useCreateTeam } from '../../../api/hooks/useTeams';
 import type { TeamMembershipBrief } from '../../../api/types';
+import { navigate } from '../navigation';
 import { TeamCard } from './TeamCard';
 
 // --- TeamsRoute (teams-self-serve, task 6.2; design D7) ---
@@ -33,6 +34,13 @@ const STATE_COPY = 'mx-auto mb-0 mt-3 max-w-[19rem] text-[0.9rem] leading-[1.5] 
 const PAGE_WRAP = 'relative z-[1] mx-auto w-full max-w-[48rem] px-5 py-10';
 const PAGE_TITLE =
   'm-0 mb-6 font-league-gothic text-[2rem] leading-none tracking-[0.02em] uppercase text-v5-text';
+
+// Same STATE_BUTTON idiom as SessionRoute's not-found/error "Back to
+// sessions" control (design D2) — one shared control, present regardless of
+// which state above it rendered.
+const STATE_BUTTON =
+  'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
+const BACK_WRAP = 'relative z-[1] mx-auto w-full max-w-[25rem] px-5 pb-10';
 
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return err.message;
@@ -168,16 +176,28 @@ export function TeamsRoute() {
   // once the profile query has data) both render inside it.
   return (
     <div id="teams-route-placeholder" data-testid="teams-route">
-      {!profile ? null : profile.auth.user === null ? (
-        <SignedInRequiredNotice />
-      ) : (
-        <div className={PAGE_WRAP}>
-          <h1 className={PAGE_TITLE}>Teams</h1>
-          <div className="mb-6">
-            <CreateTeamForm />
+      {!profile ? null : (
+        <>
+          {profile.auth.user === null ? (
+            <SignedInRequiredNotice />
+          ) : (
+            <div className={PAGE_WRAP}>
+              <h1 className={PAGE_TITLE}>Teams</h1>
+              <div className="mb-6">
+                <CreateTeamForm />
+              </div>
+              <TeamsList teams={profile.auth.user.teams} />
+            </div>
+          )}
+          {/* One shared back-to-sessions affordance (design D2; spec: "Teams
+              page offers a way back in every state") — present whichever of
+              the two states above rendered, not duplicated per branch. */}
+          <div className={BACK_WRAP}>
+            <button type="button" className={STATE_BUTTON} onClick={() => navigate('/')}>
+              Back to sessions
+            </button>
           </div>
-          <TeamsList teams={profile.auth.user.teams} />
-        </div>
+        </>
       )}
     </div>
   );

@@ -106,7 +106,11 @@ function showToShowDraft(show: Show): ShowDraft {
     next_episode: show.next_episode ?? 1,
     categories: (show.categories ?? []).map((c) => ({
       id: c.id,
-      name: c.label ?? '',
+      // `show.categories` is wire-accurate `name`-keyed (server: `showApiDict` passes
+      // stored `CategoryRecord` JSON through verbatim — `server/src/db/showsStore.ts`);
+      // `c.label` falls back defensively should a `label`-keyed shape ever feed this
+      // (teams-settings-nav, D3).
+      name: c.name ?? c.label ?? '',
       type: c.type,
       color: c.color,
       dropdown_options: c.dropdown_options ?? [],
@@ -152,9 +156,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
 
   const [initialized, setInitialized] = useState(false);
 
-  // Reset form each time modal opens so stale drafts don't linger
+  // Reset form each time modal opens so stale drafts don't linger. `activeTab`
+  // resets here too (teams-settings-nav, D1): the modal now survives route
+  // changes while open instead of unmounting, so unmount can no longer be
+  // relied on to reset it back to General between opens.
   useEffect(() => {
-    if (isOpen) setInitialized(false);
+    if (isOpen) {
+      setInitialized(false);
+      setActiveTab('general');
+    }
   }, [isOpen]);
 
   // Initialise form once when profile first loads (or after reset above)
@@ -219,7 +229,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           next_episode: draft.next_episode,
           categories: draft.categories.map((c) => ({
             id: c.id,
-            label: c.name,
+            // The update validator requires `name` (`server/src/studio.ts`
+            // `validateCategoriesList`), matching the `name`-keyed read shape above.
+            name: c.name,
             color: c.color,
             type: c.type,
             dropdown_options: c.dropdown_options,
@@ -254,6 +266,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       window.Home_reloadSessionList?.();
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: ['session-status'] });
+      // A now-working save can rename/delete categories; without this, an open session's
+      // button strip keeps serving stale ones for its 30s staleTime (design D4).
+      queryClient.invalidateQueries({ queryKey: ['show-categories'] });
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Save failed.', true);
     }

@@ -1,32 +1,16 @@
 import { memo } from 'react';
-import { HomeSettingsModal } from './HomeSettingsModal';
 import { SessionWorkspace } from './SessionWorkspace';
 
 interface WorkspaceStaticProps {
   sessionId: string;
-  showSettings: boolean;
-  onCloseSettings: () => void;
-  /** Close the active session (AppShell's close handler — navigates home). */
-  onCloseSession: () => void;
   ytImportPending?: boolean;
 }
 
-export const WorkspaceStatic = memo(
-  ({
-    sessionId,
-    showSettings,
-    onCloseSettings,
-    onCloseSession,
-    ytImportPending,
-  }: WorkspaceStaticProps) => (
-    <>
-      <HomeSettingsModal
-        isOpen={showSettings}
-        onClose={onCloseSettings}
-        onCloseSession={onCloseSession}
-      />
-      <SessionWorkspace sessionId={sessionId} ytImportPending={ytImportPending} />
-    </>
-  ),
-);
+// Render-isolation memo over SessionWorkspace. The settings modal it used to
+// mount moved to AppShell (teams-settings-nav, design D1); this wrapper is
+// kept as-is rather than inlined into SessionRoute — a recorded deferral, not
+// an oversight.
+export const WorkspaceStatic = memo(({ sessionId, ytImportPending }: WorkspaceStaticProps) => (
+  <SessionWorkspace sessionId={sessionId} ytImportPending={ytImportPending} />
+));
 WorkspaceStatic.displayName = 'WorkspaceStatic';

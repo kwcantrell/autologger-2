@@ -3,7 +3,6 @@ import type { Session } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { navigate } from '../navigation';
-import { HomeSettingsModal } from './HomeSettingsModal';
 import { WorkspaceStatic } from './WorkspaceStatic';
 
 // --- SessionRoute (session-deep-links, task 4.2; spec: web-session-routing
@@ -37,7 +36,8 @@ import { WorkspaceStatic } from './WorkspaceStatic';
 //
 // The empty id (`/` or an unmatched path) bypasses resolution entirely and
 // renders WorkspaceStatic exactly as before this change: home placeholder
-// visible, settings modal mounted, no per-id request issued.
+// visible, no per-id request issued. (The settings modal itself is mounted
+// by AppShell, one level up — teams-settings-nav, design D1 — not here.)
 
 const STATE_PAGE = 'relative z-[1] flex w-full items-center justify-center px-5 py-16';
 const STATE_PANEL =
@@ -159,19 +159,16 @@ function ArchivedInterstitial({
 interface SessionRouteProps {
   /** Route-derived session id; empty string means the no-session home view. */
   sessionId: string;
-  showSettings: boolean;
-  onCloseSettings: () => void;
-  onCloseSession: () => void;
   ytImportPending?: boolean;
 }
 
 export function SessionRoute(props: SessionRouteProps) {
-  const { sessionId, showSettings, onCloseSettings, onCloseSession } = props;
+  const { sessionId } = props;
   const query = useSession(sessionId);
 
   if (!sessionId) {
-    // Home view: unchanged pre-resolution behavior (placeholder visible,
-    // settings modal available); useSession is disabled for the empty id.
+    // Home view: unchanged pre-resolution behavior (placeholder visible);
+    // useSession is disabled for the empty id.
     return <WorkspaceStatic {...props} />;
   }
 
@@ -181,48 +178,21 @@ export function SessionRoute(props: SessionRouteProps) {
     return <WorkspaceStatic {...props} />;
   }
 
-  // The interstitial states replace the workspace but keep the settings modal
-  // mounted (it was unconditionally mounted via WorkspaceStatic before this
-  // change), so the rail's Settings control — including its studio-switch
-  // close path — keeps working on every resolution state.
-  const settingsModal = (
-    <HomeSettingsModal
-      isOpen={showSettings}
-      onClose={onCloseSettings}
-      onCloseSession={onCloseSession}
-    />
-  );
-
   if (!resolution) {
     // Data-first branching (the RootGate idiom): the error panel is only
     // reachable while there is no resolved data at all, so a failed background
     // refetch (e.g. after a Restore invalidation) can never bounce a resolved
     // state back to loading/error.
-    return (
-      <>
-        {settingsModal}
-        {query.isError ? (
-          <ErrorState onRetry={() => void query.refetch()} retrying={query.isFetching} />
-        ) : (
-          <LoadingState />
-        )}
-      </>
+    return query.isError ? (
+      <ErrorState onRetry={() => void query.refetch()} retrying={query.isFetching} />
+    ) : (
+      <LoadingState />
     );
   }
 
   if (resolution.kind === 'not-found') {
-    return (
-      <>
-        {settingsModal}
-        <NotFoundState />
-      </>
-    );
+    return <NotFoundState />;
   }
 
-  return (
-    <>
-      {settingsModal}
-      <ArchivedInterstitial session={resolution.session} reResolving={query.isFetching} />
-    </>
-  );
+  return <ArchivedInterstitial session={resolution.session} reResolving={query.isFetching} />;
 }

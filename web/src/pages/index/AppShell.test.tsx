@@ -60,6 +60,7 @@ vi.mock('./components/V6Rail', () => ({
     onSelectSession: (sid: string) => void;
     onCloseSession: () => void;
     onNewSession: () => void;
+    onOpenSettings: () => void;
   }) => (
     <div data-testid="rail" data-active-session-id={props.activeSessionId}>
       <button
@@ -74,22 +75,42 @@ vi.mock('./components/V6Rail', () => ({
       />
       <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
       <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
+      <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
     </div>
   ),
 }));
 
 vi.mock('./components/SessionRoute', () => ({
-  SessionRoute: (props: { sessionId: string; onCloseSession: () => void }) => (
-    <div data-testid="session-route" data-session-id={props.sessionId}>
-      {/* Stand-in for HomeSettingsModal's studio-switch save branch, which
-          calls the same onCloseSession prop (threaded through WorkspaceStatic). */}
-      <button
-        type="button"
-        data-testid="studio-switch-close"
-        onClick={() => props.onCloseSession()}
-      />
-    </div>
+  SessionRoute: (props: { sessionId: string }) => (
+    <div data-testid="session-route" data-session-id={props.sessionId} />
   ),
+}));
+
+// HomeSettingsModal is the lift target (D1): AppShell now mounts it directly
+// (beside the route switch, not routed-component-owned), so this file's
+// concern is the WIRING (isOpen/onClose/onCloseSession reach the modal and
+// survive route changes) — not the modal's own internals (profile hydration,
+// save semantics), which HomeSettingsModal.test.tsx covers against the real
+// component. The mock renders a real `role="dialog"` node only while open
+// (mirroring Dialog/Radix's own mount-on-open behavior) plus a stand-in
+// button for the studio-switch save branch, rewired here from the old
+// SessionRoute-mock button (teams-settings-nav, design D1).
+vi.mock('./components/HomeSettingsModal', () => ({
+  HomeSettingsModal: (props: {
+    isOpen: boolean;
+    onClose: () => void;
+    onCloseSession: () => void;
+  }) =>
+    props.isOpen ? (
+      <div role="dialog" aria-label="Settings" data-testid="home-settings-modal">
+        <button type="button" data-testid="settings-modal-close" onClick={props.onClose} />
+        <button
+          type="button"
+          data-testid="studio-switch-close"
+          onClick={() => props.onCloseSession()}
+        />
+      </div>
+    ) : null,
 }));
 
 vi.mock('./components/NewSessionModal', () => ({
@@ -212,6 +233,10 @@ describe('AppShell routing (URL-addressed session state)', () => {
     const { memory } = renderShell('/sessions/sess-1');
     markOriginated('sess-1');
 
+    // Rewired to the AppShell-level modal (teams-settings-nav, D1): the
+    // studio-switch save branch lives inside HomeSettingsModal, now mounted
+    // directly by AppShell rather than threaded through a mocked SessionRoute.
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
     fireEvent.click(screen.getByTestId('studio-switch-close'));
 
     expect(memory.history).toEqual(['/sessions/sess-1', '/']);
@@ -277,6 +302,64 @@ describe('AppShell routing (URL-addressed session state)', () => {
     fireEvent.click(screen.getByTestId('rail-close'));
     expect(document.title).toBe('AutoLogger');
     shell.view.unmount();
+  });
+});
+
+describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)', () => {
+  it('settings opens on /teams (the rail Settings button now works there)', () => {
+    renderShell('/teams');
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+  });
+
+  it('settings still opens on /', () => {
+    renderShell('/');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+  });
+
+  it('settings still opens on /sessions/:id', () => {
+    renderShell('/sessions/sess-1');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+  });
+
+  it('an open modal survives a route change (browser Back between / and /teams)', async () => {
+    window.history.replaceState(null, '', '/');
+    renderStrict(<AppShell />);
+
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+
+    navigate('/teams');
+    await waitFor(() => expect(window.location.pathname).toBe('/teams'));
+    // Still open and functional: the shell's Settings state never
+    // desynchronizes from what is rendered (spec scenario).
+    expect(screen.getByRole('dialog')).not.toBeNull();
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(screen.getByRole('dialog')).not.toBeNull();
+  });
+
+  it('the modal mounts closed during the profile-loading window (profile still undefined)', () => {
+    // beforeEach stubs useProfile to `{ data: undefined }` — the
+    // profile-loading window (before `needsOnboarding` can resolve). The
+    // modal mounts (the mock renders null while `isOpen` is false) rather
+    // than being absent, so no dialog is present without a click.
+    renderShell('/');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('studio-switch save on /teams does not navigate (no open session to close)', () => {
+    const { memory } = renderShell('/teams');
+
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    fireEvent.click(screen.getByTestId('studio-switch-close'));
+
+    expect(memory.history).toEqual(['/teams']);
   });
 });
 

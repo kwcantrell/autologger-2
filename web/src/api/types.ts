@@ -20,13 +20,33 @@ export interface Category {
   off_label: string;
 }
 
+/**
+ * Category shape for `profile.shows[].categories` and the `show_updates[].categories`
+ * request payload — the *stored* `CategoryRecord` (server: `server/src/studio.ts`), keyed
+ * `name`. `showApiDict` (server: `server/src/db/showsStore.ts`) passes this through
+ * verbatim; only the events/Companion/`active_studio` read shapes go through the
+ * `label`-mapping shaper and keep the `Category` type above (teams-settings-nav, D3).
+ * `label` stays optional here defensively, in case a `label`-keyed shape ever feeds this
+ * type — readers should hydrate with `c.name ?? c.label ?? ''`.
+ */
+export interface ShowCategory {
+  id: string;
+  name: string;
+  label?: string;
+  color: string;
+  type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
+  dropdown_options: DropdownOption[];
+  on_label: string;
+  off_label: string;
+}
+
 export interface Show {
   id: string;
   studio_id: string;
   name: string;
   show_code: string;
   next_episode: number;
-  categories: Category[];
+  categories: ShowCategory[];
   event_palette: string[];
   event_palette_preset: string;
   event_palette_custom: string[];
@@ -332,7 +352,7 @@ export interface ShowUpdateEntry {
   name?: string | null;
   show_code?: string | null;
   next_episode?: number | null;
-  categories?: Category[] | null;
+  categories?: ShowCategory[] | null;
   event_palette?: string[] | null;
   event_palette_preset?: string | null;
   event_palette_custom?: string[] | null;

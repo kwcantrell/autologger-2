@@ -236,7 +236,9 @@ export function EventButtonsTable({
     if (!src) return;
     const newButtons: EventButtonDraft[] = (src.categories ?? []).map((c) => ({
       id: crypto.randomUUID(),
-      name: c.label ?? '',
+      // `src.categories` (from `otherShows`, i.e. `profile.shows[]`) is wire-accurate
+      // `name`-keyed; `c.label` falls back defensively (teams-settings-nav, D3).
+      name: c.name ?? c.label ?? '',
       type: c.type,
       color: c.color,
       dropdown_options: c.dropdown_options ?? [],
