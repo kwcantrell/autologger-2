@@ -37,13 +37,86 @@ export interface StudioBrief {
   name: string;
 }
 
+// ---------------------------------------------------------------------------
+// Teams (teams-self-serve)
+// ---------------------------------------------------------------------------
+
+export type TeamRole = 'admin' | 'member';
+
+/** `auth.user.teams[]` entries (profile assembler, teams-self-serve task 4.1):
+ * a StudioBrief plus the caller's role in that team. */
+export interface TeamMembershipBrief extends StudioBrief {
+  role: TeamRole;
+}
+
+export interface TeamMember {
+  id: string;
+  email: string;
+  given_name: string;
+  family_name: string;
+  role: TeamRole;
+}
+
+export interface TeamInvite {
+  email: string;
+  invited_at_utc: string;
+}
+
+/** `GET /api/teams/:id` response. `invites` is present only when `role` is
+ * `admin` (server omits the field for members — design D4). */
+export interface TeamDetail {
+  id: string;
+  name: string;
+  role: TeamRole;
+  enabled_admin_count: number;
+  members: TeamMember[];
+  invites?: TeamInvite[];
+}
+
+export interface TeamCreateBody {
+  id: string;
+  display_name: string;
+}
+
+export interface TeamCreateResponse {
+  id: string;
+  name: string;
+  role: TeamRole;
+}
+
+export interface TeamRenameBody {
+  display_name: string;
+}
+
+export interface TeamRenameResponse {
+  id: string;
+  name: string;
+}
+
+export interface TeamInviteBody {
+  email: string;
+}
+
+export interface TeamRoleChangeBody {
+  role: TeamRole;
+}
+
+export interface TeamRoleChangeResponse {
+  ok: boolean;
+  role: TeamRole;
+}
+
+export interface OkResponse {
+  ok: boolean;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
   given_name: string;
   family_name: string;
   picture_url: string | null;
-  teams: StudioBrief[];
+  teams: TeamMembershipBrief[];
 }
 
 export interface AuthSection {

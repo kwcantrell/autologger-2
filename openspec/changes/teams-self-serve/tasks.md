@@ -80,7 +80,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 6. Teams UI + onboarding
 
-- [ ] 6.1 API hooks + types for the family (`useTeam(id)`, mutations with
+- [x] 6.1 API hooks + types for the family (`useTeam(id)`, mutations with
       profile/detail invalidation — design D7); unit tests for invalidation wiring
 - [ ] 6.2 `/teams` page: teams list with roles from profile; create-team form
       (slug + display name, validation + cap errors surfaced); admin panel per team
