@@ -183,8 +183,9 @@ reflect the deprecation.
 
 ### Requirement: Zero-membership onboarding
 When an authenticated user's profile reports no team memberships, the web app SHALL
-render an onboarding state at `/` offering to create their first team (in place of a
-workspace that cannot function without a team), and completing that creation SHALL
+render an onboarding state offering to create their first team in place of the
+team-dependent views (`/`'s workspace, which cannot function without a team, and
+equivalently `/teams`), and completing that creation SHALL
 land the user in the new team as its admin with the app usable (team active,
 show-creation reachable). Users whose invites materialized at sign-in never see this
 state — they land in their invited team.
