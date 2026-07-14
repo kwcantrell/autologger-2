@@ -12,6 +12,7 @@ import type { UpgradeWebSocket } from 'hono/ws';
 import { afterAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import { env } from '../test/harness';
+import { seedSession, seedShow, seedStudio } from '../test/helpers';
 import type { AppEnv } from '../types';
 
 const upgradeStub = ((() => async (c: { text(b: string, s: number): Response }) =>
@@ -72,5 +73,42 @@ describe('static serving (fixture dist)', () => {
   it('404s unknown paths', async () => {
     const res = await app.request('/definitely-not-a-page', {}, env);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /sessions/:id — deep-link HTML route (session-deep-links delta)', () => {
+  it('serves the shell for an arbitrary id, anonymous client, no Set-Cookie', async () => {
+    const home = await app.request('/', {}, env);
+    const deepLink = await app.request('/sessions/abc-123', {}, env);
+    expect(deepLink.status).toBe(200);
+    expect(deepLink.headers.get('set-cookie')).toBeNull();
+    expect(await deepLink.text()).toBe(await home.text());
+  });
+
+  it('real vs. nonexistent id responses are byte-identical (no existence oracle)', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const sessionId = await seedSession({ showId: show });
+
+    const real = await app.request(`/sessions/${sessionId}`, {}, env);
+    const fake = await app.request('/sessions/definitely-does-not-exist', {}, env);
+    expect(real.status).toBe(200);
+    expect(fake.status).toBe(200);
+    expect(await real.text()).toBe(await fake.text());
+  });
+
+  it('GET /sessions (no id) still 404s — no asset matches', async () => {
+    const res = await app.request('/sessions', {}, env);
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /sessions/a/b (nested segments) still 404s — no asset matches', async () => {
+    const res = await app.request('/sessions/a/b', {}, env);
+    expect(res.status).toBe(404);
+  });
+
+  it('percent-encoded slash /sessions/a%2Fb is one raw segment — serves the shell, not 404', async () => {
+    const res = await app.request('/sessions/a%2Fb', {}, env);
+    expect(res.status).toBe(200);
   });
 });
