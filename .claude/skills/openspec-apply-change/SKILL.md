@@ -160,7 +160,11 @@ Implement tasks from an OpenSpec change.
         Dispatch a reviewer subagent (mid-tier model floor) with the diff path, the
         spec/design paths, and the phase's task report paths. It must return **two
         verdicts**: spec compliance (the diff does what the phase's tasks + spec
-        require — nothing missing, nothing extra) and code quality.
+        require — nothing missing, nothing extra) and code quality — plus a closing
+        **Orchestrator notes** section (≤5 bullets): forward-relevant facts only —
+        interfaces later phases will consume, seams/helpers created, residuals
+        accepted, config defaults that bind future work. The orchestrator copies
+        these into the ledger verbatim; they are the phase's compressed handoff.
         Critical/Important findings → dispatch a fix subagent (fixes + re-runs
         covering tests, appends results to the phase's reports) → re-review with a
         fresh diff file. Loop until clean. Do not pre-judge findings in the reviewer
@@ -187,9 +191,12 @@ Implement tasks from an OpenSpec change.
    Write the branch package to a file:
    `BASE=$(git merge-base main HEAD); { git log --oneline $BASE..HEAD; git diff --stat $BASE..HEAD; git diff -U10 $BASE..HEAD; } > openspec/changes/<name>/.apply/branch-diff.txt`
    Dispatch one reviewer on the **most capable model** with that path, all artifact
-   paths, and the ledger (so it can triage any minor findings accumulated there). If it
-   returns findings, dispatch **one** fix subagent with the complete list — not one per
-   finding — then re-review. When clean, suggest merge back to `main` and archive.
+   paths, and the ledger (so it can triage any minor findings accumulated there). It
+   also ends with an **Orchestrator notes** section (≤5 bullets) — here oriented at
+   merge/archive: residuals to record in the archived change, follow-on work worth a
+   roadmap note, invariants the merge must not disturb. If it returns findings,
+   dispatch **one** fix subagent with the complete list — not one per finding — then
+   re-review. When clean, suggest merge back to `main` and archive.
 
 8. **On completion or pause, show status**
 

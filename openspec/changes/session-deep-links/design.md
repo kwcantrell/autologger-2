@@ -163,6 +163,12 @@ workspace with no navigation. An open workspace is never evicted by background l
 changes (remote archive, show switch) — the panel showed the live-resolution reading
 would tear down working sessions mid-use.
 
+The latch is a **within-mount guarantee only**: every fresh route entry re-resolves
+against the server (`gcTime: 0` — no unmounted cache reuse; phase-4 review finding,
+2026-07-14). Do NOT "optimize" this by letting a cached resolution serve a re-entry:
+that reintroduces a stale window where a remotely archived/deleted session renders
+its prior state.
+
 **Bonus dissolutions:** the per-id fetch also removes the create→navigate not-found
 flash (the id the server just returned resolves immediately, no stale-list window) and
 the 5-second-staleness caveat the earlier list-based design carried.
