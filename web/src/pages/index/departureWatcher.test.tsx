@@ -178,6 +178,28 @@ describe('Originator-scoped transport stop on route departure (design D4)', () =
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  it('originator\'s departure to /teams stops the roll exactly once (teams-self-serve, spec: web-session-routing "Departure to the teams route stops the originator\'s roll")', () => {
+    renderShell('/sessions/sess-1');
+    fireEvent.click(screen.getByTestId('originate'));
+    expect(getOriginatedSessionId()).toBe('sess-1');
+
+    navigate('/teams');
+
+    expect(window.location.pathname).toBe('/teams');
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(getOriginatedSessionId()).toBeNull();
+  });
+
+  it('a non-originator navigating to /teams never stops the roll', () => {
+    renderShell('/sessions/sess-1');
+    // No "originate" click: this client never issued transport-start.
+
+    navigate('/teams');
+
+    expect(window.location.pathname).toBe('/teams');
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it('a non-originator (deep-linked into an already-rolling session) never stops the roll — close or switch', () => {
     renderShell('/sessions/sess-1');
     expect(workspaceSessionId()).toBe('sess-1');

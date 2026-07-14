@@ -6,7 +6,7 @@ import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
-import { setNavigationImplForTesting } from './navigation';
+import { navigate, setNavigationImplForTesting } from './navigation';
 import { markOriginated, resetOriginationForTesting } from './transportOrigination';
 
 // --- AppShell routing + legacy-spine-retirement tests (session-deep-links,
@@ -233,6 +233,28 @@ describe('AppShell routing (URL-addressed session state)', () => {
     window.history.back();
     await waitFor(() => expect(window.location.pathname).toBe('/'));
     await waitFor(() => expect(workspaceSessionId()).toBe(''));
+  });
+
+  it('navigating to /teams hides the session/home view and mounts TeamsRoute; browser Back restores the previous view (teams-self-serve, task 5.2)', async () => {
+    // Real jsdom history (no memory-location Router), same idiom as the
+    // "browser Back leaves the session" test above — Back needs real
+    // popstate behavior.
+    window.history.replaceState(null, '', '/');
+    renderStrict(<AppShell />);
+
+    fireEvent.click(screen.getByTestId('rail-select-s1'));
+    expect(window.location.pathname).toBe('/sessions/sess-1');
+    expect(workspaceSessionId()).toBe('sess-1');
+
+    navigate('/teams');
+    await waitFor(() => expect(window.location.pathname).toBe('/teams'));
+    await waitFor(() => expect(screen.queryByTestId('teams-route')).not.toBeNull());
+    expect(screen.queryByTestId('session-route')).toBeNull();
+
+    window.history.back();
+    await waitFor(() => expect(window.location.pathname).toBe('/sessions/sess-1'));
+    await waitFor(() => expect(workspaceSessionId()).toBe('sess-1'));
+    expect(screen.queryByTestId('teams-route')).toBeNull();
   });
 
   it('an unmatched path renders the home view without rewriting the URL', () => {

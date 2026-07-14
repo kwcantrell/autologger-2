@@ -10,6 +10,7 @@ import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { NewSessionModal } from './components/NewSessionModal';
 import { SessionRoute } from './components/SessionRoute';
+import { TeamsRoute } from './components/TeamsRoute';
 import { V6Rail } from './components/V6Rail';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
 import { navigate } from './navigation';
@@ -35,6 +36,11 @@ export function AppShell() {
   // of the active session id that could disagree with the URL.
   const [onSessionRoute, sessionRouteParams] = useRoute('/sessions/:id');
   const activeSessionId = onSessionRoute ? (sessionRouteParams?.id ?? '') : '';
+  // Teams route (teams-self-serve, design D6): a second `useRoute` alongside
+  // the session one — the wouter-pattern mirror of the shared route module.
+  // No <Route> tree (design D6's "gate above router" shape stays intact):
+  // this is a plain boolean read off the URL, same idiom as onSessionRoute.
+  const [onTeamsRoute] = useRoute('/teams');
   const [showNewSession, setShowNewSession] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [ytImportPending, setYtImportPending] = useState(false);
@@ -292,14 +298,22 @@ export function AppShell() {
             {/* Settings modal + session workspace, behind deep-link resolution:
                 SessionRoute resolves the routed id through the per-id query and
                 gates the workspace mount on it (task 4.2, design D5); the empty
-                id renders the home view unchanged. */}
-            <SessionRoute
-              sessionId={activeSessionId}
-              showSettings={showSettings}
-              onCloseSettings={handleCloseSettings}
-              onCloseSession={handleCloseSession}
-              ytImportPending={ytImportPending}
-            />
+                id renders the home view unchanged. At `/teams` (teams-self-serve,
+                task 5.2), TeamsRoute mounts in SessionRoute's place instead —
+                since SessionRoute is what renders the no-session home view
+                (WorkspaceStatic) for the empty id, swapping it out is what hides
+                that home view at the teams route. */}
+            {onTeamsRoute ? (
+              <TeamsRoute />
+            ) : (
+              <SessionRoute
+                sessionId={activeSessionId}
+                showSettings={showSettings}
+                onCloseSettings={handleCloseSettings}
+                onCloseSession={handleCloseSession}
+                ytImportPending={ytImportPending}
+              />
+            )}
           </main>
         </div>
       </div>

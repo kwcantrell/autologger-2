@@ -66,7 +66,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 5. Routing + serve-path extension
 
-- [ ] 5.1 Server: `GET /teams` HTML route beside `/sessions/:id` (int test: 200
+- [x] 5.1 Server: `GET /teams` HTML route beside `/sessions/:id` (int test: 200
       shell, no Set-Cookie, `/teams/x` unchanged); shared route-module extension
       (`/teams` in the router-known predicate) + the three lockstep mirrors in the
       same commit: AppShell wouter pattern, vite dev-middleware matcher, serve
@@ -74,7 +74,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
       rejects `/admin/users`; stash write fires on `/teams`; full consume
       round-trip for a stashed `/teams` (replace-navigate + stash cleared — the
       spec's "Teams deep link survives the sign-in round-trip" scenario)
-- [ ] 5.2 Wire `/teams` into `AppShell`; unit tests: navigate to `/teams` + Back;
+- [x] 5.2 Wire `/teams` into `AppShell`; unit tests: navigate to `/teams` + Back;
       leaving a rolling session for `/teams` fires the originator departure stop
       exactly once (the MODIFIED transport-stop scenario)
 
