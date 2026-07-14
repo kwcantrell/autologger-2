@@ -5,6 +5,8 @@ import type { CatalogDb } from '../node/catalogStore';
 import { nowIso } from './shared';
 import type { Row } from './shared';
 
+export type TeamRole = 'admin' | 'member';
+
 export class AuthStore {
   constructor(private db: CatalogDb) {}
 
@@ -161,5 +163,153 @@ export class AuthStore {
       studioId,
     );
     return res.changes > 0;
+  }
+
+  // -- teams-self-serve: role-aware memberships (design D1) --------------------
+
+  /** Create a membership with an explicit role. No-op (role preserved) if the
+   * membership already exists — used by team creation (never conflicts) and
+   * invite grants (an existing member is left untouched, per D2). */
+  authAddMembershipWithRole(userId: string, studioId: string, role: TeamRole): void {
+    this.db.run(
+      'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?)',
+      userId,
+      studioId,
+      role,
+    );
+  }
+
+  /** Insert-or-update a membership's role: creates the membership if absent,
+   * otherwise updates its role. Used by the admin rescue path (support-plane
+   * add-membership with an explicit role) and promote/demote. */
+  authUpsertMembershipRole(userId: string, studioId: string, role: TeamRole): void {
+    this.db.run(
+      `INSERT INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?)
+       ON CONFLICT (user_id, studio_id) DO UPDATE SET role = excluded.role`,
+      userId,
+      studioId,
+      role,
+    );
+  }
+
+  /** Role of (user, team), or null if no membership. */
+  authGetMembershipRole(userId: string, studioId: string): TeamRole | null {
+    const row = this.db.first<Row>(
+      'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+      userId,
+      studioId,
+    );
+    return row === null ? null : (String(row.role) as TeamRole);
+  }
+
+  /** Count of ENABLED admins for a team — the last-admin-protection invariant is
+   * over enabled admins only (a disabled admin row must not satisfy it). */
+  authCountEnabledAdmins(studioId: string): number {
+    const row = this.db.first<Row>(
+      `SELECT COUNT(*) AS n
+       FROM user_studio_memberships m
+       JOIN users u ON u.id = m.user_id
+       WHERE m.studio_id = ? AND m.role = 'admin' AND u.disabled_at_utc IS NULL`,
+      studioId,
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /** Members of a team joined with user fields, for the team detail endpoint. */
+  authListTeamMembers(
+    studioId: string,
+  ): Array<{ id: string; email: string; given_name: string; family_name: string; role: TeamRole }> {
+    const rows = this.db.all<Row>(
+      `SELECT u.id AS id, u.email AS email, u.given_name AS given_name,
+              u.family_name AS family_name, m.role AS role
+       FROM user_studio_memberships m
+       JOIN users u ON u.id = m.user_id
+       WHERE m.studio_id = ?
+       ORDER BY m.role ASC, u.email ASC`,
+      studioId,
+    );
+    return rows.map((r) => ({
+      id: String(r.id),
+      email: String(r.email),
+      given_name: String(r.given_name),
+      family_name: String(r.family_name),
+      role: String(r.role) as TeamRole,
+    }));
+  }
+
+  // -- teams-self-serve: email invites (design D2) ------------------------------
+  // emailNorm is always pre-normalized by the caller (JS toLowerCase().trim());
+  // these methods never apply SQL lower() — see 0004_team_roles_and_invites.sql.
+
+  /** Idempotent upsert of a pending invite (one row per team+email; re-inviting
+   * refreshes invited_by/invited_at). */
+  authUpsertInvite(studioId: string, emailNorm: string, invitedByUserId: string): void {
+    this.db.run(
+      `INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (studio_id, email_norm) DO UPDATE SET
+         invited_by_user_id = excluded.invited_by_user_id,
+         invited_at_utc = excluded.invited_at_utc`,
+      studioId,
+      emailNorm,
+      invitedByUserId,
+      nowIso(),
+    );
+  }
+
+  /** Pending invites for a team, for the admin-only pending-invite list. */
+  authListInvitesForTeam(studioId: string): Row[] {
+    return this.db.all<Row>(
+      'SELECT * FROM team_invites WHERE studio_id = ? ORDER BY email_norm ASC',
+      studioId,
+    );
+  }
+
+  /** Delete one invite (idempotent — returns whether a row was actually removed). */
+  authDeleteInvite(studioId: string, emailNorm: string): number {
+    return this.db.run(
+      'DELETE FROM team_invites WHERE studio_id = ? AND email_norm = ?',
+      studioId,
+      emailNorm,
+    ).changes;
+  }
+
+  /** Count of pending invites for a team, for the 200-per-team cap. */
+  authCountPendingInvites(studioId: string): number {
+    const row = this.db.first<Row>(
+      'SELECT COUNT(*) AS n FROM team_invites WHERE studio_id = ?',
+      studioId,
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /** Delete-team cascade: remove every pending invite for a team. */
+  authDeleteAllInvitesForTeam(studioId: string): void {
+    this.db.run('DELETE FROM team_invites WHERE studio_id = ?', studioId);
+  }
+
+  /** Sign-in materialization consumer: select then delete every pending invite
+   * for a normalized email, returning the consumed rows (their studio_ids are
+   * what the caller grants membership to). Plain synchronous statements — no
+   * internal tx() — so it composes inside the router's outer catalog.tx(...). */
+  authConsumeInvitesForEmail(emailNorm: string): Row[] {
+    const rows = this.db.all<Row>('SELECT * FROM team_invites WHERE email_norm = ?', emailNorm);
+    if (rows.length > 0) {
+      this.db.run('DELETE FROM team_invites WHERE email_norm = ?', emailNorm);
+    }
+    return rows;
+  }
+
+  // -- teams-self-serve: user lookup by email (design D2 multi-match) ----------
+
+  /** ALL user rows whose email of record normalizes to emailNorm, INCLUDING
+   * disabled accounts (unlike authGetUserByGoogleSub, which filters disabled) —
+   * membership is inert while disabled, and invite-matching must still see them
+   * (D2). Matching is done in JS (never SQL lower()), same as invite/sign-in
+   * normalization. */
+  authListUsersByEmailNorm(emailNorm: string): Row[] {
+    return this.db
+      .all<Row>('SELECT * FROM users')
+      .filter((u) => String(u.email).toLowerCase().trim() === emailNorm);
   }
 }
