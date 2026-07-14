@@ -121,7 +121,9 @@ but design-bearing changes get a change proposal first.
 carried explore → gate stays lean: one disposable implementer subagent per dispatch unit
 — each phase is partitioned at its start into units of 1–3 tasks that share files or
 context (TDD pairs always batch into one unit; decided 2026-07-14) — strictly
-sequential, on a plain branch, thresholded per-phase review subagents (one reviewer over
+sequential, on a plain branch **whose first commit is the gated OpenSpec artifacts
+themselves** (version-pinning the plan of record before any dispatch; decided
+2026-07-14), thresholded per-phase review subagents (one reviewer over
 each phase's cumulative diff after its last task lands; phases with only mechanical
 renames/doc sweeps skip to the final gate — decided 2026-07-14, replacing per-task
 reviews), an always-on whole-branch review at the end, and file-based handoffs (reports,

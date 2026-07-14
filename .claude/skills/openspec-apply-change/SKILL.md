@@ -83,6 +83,12 @@ Implement tasks from an OpenSpec change.
 
    **Setup (once per apply session):**
    - Be on a feature branch off `main` (plain branch — **never a worktree**, per CLAUDE.md).
+   - **Commit the gated artifacts before any dispatch** (decided 2026-07-14): if
+     `openspec/changes/<name>/` has untracked or modified files, `git add` that directory
+     (the git-ignored `.apply/` stays out automatically) and commit
+     (`docs(openspec): add <name> gated artifacts`). This version-pins the plan of record
+     implementers and reviewers read at the SHA where implementation starts; checkbox
+     ticks and post-gate disposition edits then land as diffable docs commits.
    - Scratch dir: `openspec/changes/<name>/.apply/` (git-ignored). Ledger: `.apply/ledger.md`.
    - If the ledger exists, resume from it: tasks it records complete are DONE — do not
      re-dispatch them. After compaction, trust the ledger and `git log` over memory.
@@ -262,6 +268,8 @@ What would you like to do?
 **Guardrails**
 - Keep going through tasks until done or blocked
 - Always read context files before starting (from the apply instructions output)
+- **Never execute tasks against untracked planning artifacts** — the gated artifacts are
+  committed before the first dispatch (see Setup)
 - **Never implement inline** — every code change goes through an implementer subagent
 - **Never read diffs, code, or full test logs into the orchestrator session** — hand them
   over as file paths
