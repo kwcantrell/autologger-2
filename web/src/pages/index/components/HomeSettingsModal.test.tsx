@@ -22,8 +22,11 @@ vi.mock('../../../api/hooks/useProfile', () => ({
   useCreateShow: vi.fn(),
 }));
 
+// Shared across every `useQueryClient()` call (the component calls the hook fresh each
+// render) so tests can pin `invalidateQueries` calls made from any render pass.
+const { invalidateQueriesMock } = vi.hoisted(() => ({ invalidateQueriesMock: vi.fn() }));
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
 }));
 
 vi.mock('../utils/toast', () => ({
@@ -61,7 +64,17 @@ vi.mock('./Select', () => ({
 }));
 
 vi.mock('./FpsSelect', () => ({ FpsSelect: () => null }));
-vi.mock('./EventButtonsTable', () => ({ EventButtonsTable: () => null }));
+// Renders the `buttons` prop's names so hydration (D3) is observable; `(blank)` stands in
+// for an empty name so a wrongly-blanked hydration is distinguishable from "not rendered".
+vi.mock('./EventButtonsTable', () => ({
+  EventButtonsTable: ({ buttons }: { buttons: Array<{ id: string; name: string }> }) => (
+    <ul data-testid="event-buttons-mock">
+      {buttons.map((b) => (
+        <li key={b.id}>{b.name || '(blank)'}</li>
+      ))}
+    </ul>
+  ),
+}));
 
 const mockedUseProfile = vi.mocked(useProfile);
 const mockedUseProfileMutation = vi.mocked(useProfileMutation);
@@ -80,6 +93,40 @@ const profile = {
   new_session_defaults: { title_prefix: '', default_frame_rate: 30 },
   admin: { restart_supported: false, restart_needs_token: false },
   auth: { logged_in: false, oauth_configured: true, user: null },
+} as unknown as ProfilePayload;
+
+// --- Category round-trip fixtures (teams-settings-nav, task 1.1/1.2) ---
+//
+// Wire-accurate: `profile.shows[].categories` is the raw stored `CategoryRecord`
+// (server: `showApiDict` in `server/src/db/showsStore.ts` passes `categories_json`
+// through verbatim) — keyed **`name`**, deliberately with NO `label` key, so a
+// `c.label ?? ''` reader blanks it and a `label`-keyed fixture can't paper over the bug.
+const showWithCategories = {
+  id: 'show-1',
+  studio_id: 'studio-1',
+  name: 'Morning News',
+  show_code: 'MN',
+  next_episode: 12,
+  categories: [
+    {
+      id: 'cat-1',
+      name: 'Roll Call',
+      color: '#112233',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+    },
+  ],
+  event_palette: [],
+  event_palette_preset: 'custom',
+  event_palette_custom: [],
+};
+
+const profileWithShow = {
+  ...profile,
+  active_show_id: 'show-1',
+  shows: [showWithCategories],
 } as unknown as ProfilePayload;
 
 let mutateAsync: ReturnType<typeof vi.fn>;
@@ -119,5 +166,58 @@ describe('HomeSettingsModal studio-switch save branch', () => {
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(onCloseSession).not.toHaveBeenCalled();
+  });
+});
+
+// --- Category round-trip (teams-settings-nav, D3/D4) ---
+//
+// `showToShowDraft` hydrates from `show.categories`, and `handleSave` posts
+// `show_updates[].categories` — both must use the wire key `name`, not `label`.
+describe('HomeSettingsModal category round-trip', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileWithShow,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('hydrates existing category names (non-blank) from a name-keyed show', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+
+    expect(screen.getByText('Roll Call')).not.toBeNull();
+    expect(screen.queryByText('(blank)')).toBeNull();
+  });
+
+  it('posts categories whose entries carry name (task 1.1b)', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; categories?: unknown[] }>;
+    };
+    const showUpdate = body.show_updates?.find((u) => u.show_id === 'show-1');
+    expect(showUpdate?.categories?.[0]).toEqual({
+      id: 'cat-1',
+      name: 'Roll Call',
+      color: '#112233',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+    });
+  });
+
+  it('invalidates the show-categories query on save (D4)', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['show-categories'] }),
+    );
   });
 });
