@@ -100,6 +100,15 @@ vi.mock('./components/YouTubeImportErrorModal', () => ({
   YouTubeImportErrorModal: () => null,
 }));
 
+// AppShell now mounts HomeSettingsModal directly, beside the route switch
+// (teams-settings-nav, design D1) — irrelevant to this file's departure/
+// transport-stop concern, and the real component would pull
+// useProfileMutation/useCreateShow off the useProfile module mock above,
+// which only stubs useProfile.
+vi.mock('./components/HomeSettingsModal', () => ({
+  HomeSettingsModal: () => null,
+}));
+
 function renderShell(initialPath = '/') {
   // Real jsdom history + wouter's default browser location — no
   // memory-location Router wrapper — so `navigate()` goes through real

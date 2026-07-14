@@ -16,8 +16,9 @@ import { SessionRoute } from './SessionRoute';
 // (`apiFetch`) is mocked — NOT the useSession/useRestoreSession hooks — so
 // resolution runs through a real react-query client configured with the
 // production retry policy (`retry: 1`, main.tsx; retryDelay 0 for speed).
-// WorkspaceStatic and HomeSettingsModal are shallow sentinels; navigation is
-// recorded through the navigation wrapper's test seam.
+// WorkspaceStatic is a shallow sentinel; navigation is recorded through the
+// navigation wrapper's test seam. (The settings modal is no longer mounted
+// here — AppShell owns it directly since teams-settings-nav, design D1.)
 //
 // The not-found state is a single state by construction: the server masks
 // nonexistent, deleted, and unauthorized ids behind one 404 (asserted server
@@ -33,10 +34,6 @@ vi.mock('./WorkspaceStatic', () => ({
   WorkspaceStatic: (props: { sessionId: string }) => (
     <div data-testid="workspace-static" data-session-id={props.sessionId} />
   ),
-}));
-
-vi.mock('./HomeSettingsModal', () => ({
-  HomeSettingsModal: () => null,
 }));
 
 vi.mock('../../../shared/components/Toast', () => ({
@@ -83,12 +80,7 @@ let navRecord: string[] = [];
 function renderRoute(sessionId: string, client: QueryClient = makeClient()) {
   const view = renderStrict(
     <QueryClientProvider client={client}>
-      <SessionRoute
-        sessionId={sessionId}
-        showSettings={false}
-        onCloseSettings={() => {}}
-        onCloseSession={() => {}}
-      />
+      <SessionRoute sessionId={sessionId} />
     </QueryClientProvider>,
   );
   return { view, client };

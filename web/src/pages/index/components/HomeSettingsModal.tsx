@@ -156,9 +156,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
 
   const [initialized, setInitialized] = useState(false);
 
-  // Reset form each time modal opens so stale drafts don't linger
+  // Reset form each time modal opens so stale drafts don't linger. `activeTab`
+  // resets here too (teams-settings-nav, D1): the modal now survives route
+  // changes while open instead of unmounting, so unmount can no longer be
+  // relied on to reset it back to General between opens.
   useEffect(() => {
-    if (isOpen) setInitialized(false);
+    if (isOpen) {
+      setInitialized(false);
+      setActiveTab('general');
+    }
   }, [isOpen]);
 
   // Initialise form once when profile first loads (or after reset above)

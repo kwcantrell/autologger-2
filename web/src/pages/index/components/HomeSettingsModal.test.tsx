@@ -145,6 +145,34 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useCreateShow>);
 });
 
+// --- activeTab reset (teams-settings-nav, D1) ---
+//
+// The modal now survives route changes while open (AppShell mounts it
+// unconditionally), so a tab switch can no longer be reset by unmount —
+// the reset-on-open effect now resets `activeTab` back to General itself.
+describe('HomeSettingsModal activeTab reset on reopen', () => {
+  it('reopening after switching tabs starts back on General', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    expect(screen.getByRole('tab', { name: 'Event Buttons' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+
+    // Close (isOpen: false) then reopen — no unmount in between (the modal
+    // stays mounted across route changes post-lift).
+    rerender(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    rerender(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Event Buttons' }).getAttribute('aria-selected')).toBe(
+      'false',
+    );
+  });
+});
+
 describe('HomeSettingsModal studio-switch save branch', () => {
   it('calls onCloseSession exactly once when the save changed the active studio', async () => {
     const onCloseSession = vi.fn();
