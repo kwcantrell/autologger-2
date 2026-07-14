@@ -32,7 +32,7 @@ function listRuntimeTotalFrames(row: Row, transportTotalFrames: number): number 
 sessionsRouter.get('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = c.get('user');
-  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env));
+  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env.config));
   if (active === null) return c.json({ active: [], archived: [] });
 
   const shows = catalog.shows.listShowsForStudio(active.id);
@@ -107,7 +107,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = c.get('user');
   const body = newSessionBodySchema.parse(await c.req.json());
-  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env));
+  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env.config));
   if (active === null) throw new ApiError(403, 'No team access.');
 
   const showRow = catalog.shows.getShowRow(body.show_id.trim());

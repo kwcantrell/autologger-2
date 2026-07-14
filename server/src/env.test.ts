@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Env } from './types';
+import type { Config } from './types';
 import {
   adminMeta,
   adminTokenConfigured,
@@ -12,7 +12,7 @@ import {
   sessionTtlDays,
 } from './env';
 
-const E = (o: Record<string, string | undefined>): Env => o as unknown as Env;
+const E = (o: Record<string, string | undefined>): Config => o as unknown as Config;
 
 describe('env flag parsing', () => {
   it('requireLoginEnabled defaults true; false only for 0/false/no', () => {

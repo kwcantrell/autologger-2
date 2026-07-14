@@ -4,7 +4,6 @@
 import type { Context } from 'hono';
 import type { Row } from '../db/catalog';
 import type { SessionHub } from '../session/SessionHub';
-import { requireLoginEnabled } from '../env';
 import type { AppEnv } from '../types';
 
 /** Maps to an HTTP response in app.onError — mirrors FastAPI's HTTPException. */
@@ -32,10 +31,13 @@ export function timecodeCtx(row: Row): TimecodeCtx {
 
 /** Resolve the in-process per-session hub (addressed by session id). */
 export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHub {
-  return c.env.SESSION_HUBS.get(sessionId);
+  return c.env.ports.sessions.get(sessionId);
 }
 
-/** _session_access_gate — login gate + existence + studio-membership scope. Returns the catalog row. */
+/** _session_access_gate — existence + studio-membership scope. Returns the
+ * catalog row. Authentication (the unauthenticated-401 decision) happens once,
+ * in the authContext middleware via apiRequestRequiresLogin — every caller of
+ * this helper is an /api/ route that middleware already gates. */
 export async function requireSession(
   c: Context<AppEnv>,
   sessionId: string,
@@ -43,9 +45,6 @@ export async function requireSession(
 ): Promise<Row> {
   const catalog = c.get('catalog');
   const user = c.get('user');
-  if (requireLoginEnabled(c.env) && !user && !c.get('apiTokenAuth')) {
-    throw new ApiError(401, 'Login required.');
-  }
   const row = catalog.sessions.getSessionIndexRow(sessionId, { includeHidden: opts.includeHidden });
   if (row === null) throw new ApiError(404, 'Session not found');
   if (user !== null) {

@@ -59,18 +59,17 @@ export const env: Bindings = new Proxy({} as Bindings, {
   }),
 });
 
-/** Layer per-request overrides over the live per-test bindings. Safe to call
- * at module scope — property reads resolve at request time, after setup. */
+/** Layer per-request Config overrides over the live per-test bindings. Safe to
+ * call at module scope — property reads resolve at request time, after setup. */
 export function envWith(overrides: Record<string, unknown>): Bindings {
-  const read = (p: string | symbol): unknown =>
-    typeof p === 'string' && p in overrides
-      ? overrides[p]
-      : (must() as unknown as Record<string | symbol, unknown>)[p];
+  const read = (p: string | symbol): unknown => {
+    if (p === 'config') return { ...must().config, ...overrides };
+    return (must() as unknown as Record<string | symbol, unknown>)[p];
+  };
   return new Proxy({} as Bindings, {
     get: (_t, p) => read(p),
-    has: (_t, p) => (typeof p === 'string' && p in overrides) || p in must(),
-    ownKeys: () =>
-      Array.from(new Set([...Reflect.ownKeys(must()), ...Reflect.ownKeys(overrides)])),
+    has: (_t, p) => p in must(),
+    ownKeys: () => Reflect.ownKeys(must()),
     getOwnPropertyDescriptor: (_t, p) => ({
       enumerable: true,
       configurable: true,

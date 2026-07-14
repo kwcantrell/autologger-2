@@ -1,4 +1,5 @@
-// Shared Hono generics: Node bindings + per-request context Variables.
+// Shared Hono generics: the composition root's Ports + Config + per-request
+// context Variables.
 
 import type { AuthUser, Catalog } from './db/catalog';
 import type { SessionHubRegistry } from './session/SessionHub';
@@ -7,12 +8,17 @@ import type { CatalogDb } from './node/catalogStore';
 import type { KvStore } from './node/kvStore';
 import type { PresenceRegistry } from './node/presence';
 
-export interface Bindings {
-  DB: CatalogDb;
-  AUTH: KvStore;
-  SESSION_HUBS: SessionHubRegistry;
-  AUDIO: BlobStore;
-  PRESENCE: PresenceRegistry;
+/** Constructed services, role-named. */
+export interface Ports {
+  catalog: CatalogDb;
+  kv: KvStore;
+  sessions: SessionHubRegistry;
+  audio: BlobStore;
+  presence: PresenceRegistry;
+}
+
+/** Plain configuration strings from process env. */
+export interface Config {
   PUBLIC_BASE_URL: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -25,12 +31,17 @@ export interface Bindings {
   TRUST_PROXY: string;
   API_TOKEN: string;
   ADMIN_TOKEN: string;
+}
+
+/** The per-request env object. Callers MUST pass a fresh env per request and
+ * wireApp mutates it IN PLACE (never replace/spread c.env): @hono/node-ws's
+ * upgrade handshake compares this object's identity to complete upgrades. */
+export interface Bindings {
+  ports: Ports;
+  config: Config;
   /** Injected per-request by @hono/node-server; absent in app.request() tests. */
   incoming?: import('node:http').IncomingMessage;
 }
-
-/** Alias so existing `env: Env` signatures keep compiling after the CF types go. */
-export type Env = Bindings;
 
 export interface Variables {
   catalog: Catalog;

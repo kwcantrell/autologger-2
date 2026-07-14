@@ -13,18 +13,18 @@ import { requireLoginEnabled, sessionCookieName } from '../env';
 import type { AppEnv } from '../types';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const catalog = new Catalog(c.env.DB);
+  const catalog = new Catalog(c.env.ports.catalog);
   catalog.init();
   c.set('catalog', catalog);
 
-  const cookie = getCookie(c, sessionCookieName(c.env));
-  const user = await resolveSessionUser(c.env.AUTH, catalog, cookie);
+  const cookie = getCookie(c, sessionCookieName(c.env.config));
+  const user = await resolveSessionUser(c.env.ports.kv, catalog, cookie);
   c.set('user', user);
 
-  const apiTokenAuth = requestHasValidApiToken(c.req.raw, c.env.API_TOKEN);
+  const apiTokenAuth = requestHasValidApiToken(c.req.raw, c.env.config.API_TOKEN);
   c.set('apiTokenAuth', apiTokenAuth);
 
-  if (requireLoginEnabled(c.env)) {
+  if (requireLoginEnabled(c.env.config)) {
     const path = new URL(c.req.url).pathname;
     const method = c.req.method.toUpperCase();
     if (apiRequestRequiresLogin(path, method) && !user && !apiTokenAuth) {

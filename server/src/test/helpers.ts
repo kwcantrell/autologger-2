@@ -4,7 +4,7 @@ import { Catalog } from '../db/catalog';
 import { sessionCookieName } from '../env';
 
 export function catalogFor(): Catalog {
-  return new Catalog(env.DB);
+  return new Catalog(env.ports.catalog);
 }
 
 let counter = 0;
@@ -82,8 +82,8 @@ export async function seedSession(opts: {
 }
 
 export async function loginCookie(userId: string): Promise<string> {
-  const raw = await createLoginSession(env.AUTH, userId, 14);
-  return `${sessionCookieName(env)}=${raw}`;
+  const raw = await createLoginSession(env.ports.kv, userId, 14);
+  return `${sessionCookieName(env.config)}=${raw}`;
 }
 
 export function adminHeader(token: string): Record<string, string> {
@@ -96,7 +96,7 @@ export function setCompanionPresence(
   sessionId: string,
   opts: { visible?: boolean; is_playing?: boolean } = {},
 ): void {
-  env.PRESENCE.upsert(clientId, {
+  env.ports.presence.upsert(clientId, {
     session_id: sessionId,
     visible: opts.visible ?? true,
     is_playing: opts.is_playing ?? false,

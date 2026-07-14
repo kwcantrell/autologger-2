@@ -35,10 +35,10 @@
 
 ## 4. Phase 1d — Composition root split + auth de-dup (Phase 1 parity checkpoint)
 
-- [ ] 4.1 Split `createBindings` output into `{ ports, config }`; role-name service keys (`catalog`, `kv`, `sessions`, `audio`, `presence`); delete `export type Env = Bindings`
-- [ ] 4.2 Update `wireApp`/router `c.env` access to the new shape **preserving the per-request in-place env-mutation identity** the `@hono/node-ws` upgrade compares on (do not replace/spread `c.env`); keep `companion-ws.int.test` as the acceptance gate
-- [ ] 4.3 Delete the duplicated login check in `requireSession` (middleware + retained `apiRequestRequiresLogin` already enforce it); keep existence(404) + membership scope
-- [ ] 4.4 **Parity checkpoint:** full unit + integration suites green with zero expected-response edits; confirm `503` null-adapter routes and the real WS upgrade unchanged; commit
+- [x] 4.1 Split `createBindings` output into `{ ports, config }`; role-name service keys (`catalog`, `kv`, `sessions`, `audio`, `presence`); delete `export type Env = Bindings`
+- [x] 4.2 Update `wireApp`/router `c.env` access to the new shape **preserving the per-request in-place env-mutation identity** the `@hono/node-ws` upgrade compares on (do not replace/spread `c.env`); keep `companion-ws.int.test` as the acceptance gate
+- [x] 4.3 Delete the duplicated login check in `requireSession` (middleware + retained `apiRequestRequiresLogin` already enforce it); keep existence(404) + membership scope
+- [x] 4.4 **Parity checkpoint:** full unit + integration suites green with zero expected-response edits; confirm `503` null-adapter routes and the real WS upgrade unchanged; commit
 
 ## 5. Phase 2 — Clock port (app-wide; alarm/clock one time base)
 

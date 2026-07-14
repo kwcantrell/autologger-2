@@ -21,7 +21,7 @@ describe('affected-row-count readers (characterization)', () => {
   it('waveform PUT on a missing segment → 404 and NO audio.changed broadcast', async () => {
     const s = await seeded();
     const sent: string[] = [];
-    env.SESSION_HUBS.get(s).attachSocket({ send: (d: string) => sent.push(d) }, 'browser');
+    env.ports.sessions.get(s).attachSocket({ send: (d: string) => sent.push(d) }, 'browser');
 
     const res = await app.request(
       `/api/sessions/${s}/audio/segments/no-such-segment/waveform`,
@@ -43,7 +43,7 @@ describe('affected-row-count readers (characterization)', () => {
     const seg = (await up.json()) as { id: string };
 
     const sent: string[] = [];
-    env.SESSION_HUBS.get(s).attachSocket({ send: (d: string) => sent.push(d) }, 'browser');
+    env.ports.sessions.get(s).attachSocket({ send: (d: string) => sent.push(d) }, 'browser');
 
     const res = await app.request(
       `/api/sessions/${s}/audio/segments/${seg.id}/waveform`,

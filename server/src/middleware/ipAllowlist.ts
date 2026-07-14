@@ -154,7 +154,7 @@ export function ipInAllowlist(addr: string, nets: Net[]): boolean {
 /** Client IP on Node: the socket address, unless TRUST_PROXY explicitly
  * delegates to the first X-Forwarded-For hop. CF header trust is gone. */
 function effectiveClientIp(c: Context<AppEnv>): string {
-  if (trustProxyEnabled(c.env)) {
+  if (trustProxyEnabled(c.env.config)) {
     const xff = c.req.header('x-forwarded-for');
     if (xff) return xff.split(',')[0].trim();
   }
@@ -174,7 +174,7 @@ function netsForEnv(raw: string): Net[] | null {
 
 /** Hono middleware; registered first so it runs outermost. */
 export const ipAllowlistMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const nets = netsForEnv(c.env.IP_ALLOWLIST ?? '');
+  const nets = netsForEnv(c.env.config.IP_ALLOWLIST ?? '');
   if (nets === null) return next();
   const addr = effectiveClientIp(c);
   if (ipInAllowlist(addr, nets)) return next();

@@ -36,7 +36,7 @@ async function runCallback(opts: {
   mockGoogleToken({ id_token: idToken });
   mockGoogleJwks(KP.publicJwk);
   const state = opts.state ?? 'state-spike';
-  await putOauthState(env.AUTH, state);
+  await putOauthState(env.ports.kv, state);
   return app.request(
     `/auth/google/callback?code=${opts.code ?? 'abc'}&state=${state}`,
     { method: 'GET' },
@@ -63,7 +63,7 @@ describe('GET /auth/google/start', () => {
     expect(loc.host).toBe('accounts.google.com');
     const state = loc.searchParams.get('state');
     expect(state).toBeTruthy();
-    expect(await env.AUTH.get(`csrf:${state}`)).toBe('1');
+    expect(await env.ports.kv.get(`csrf:${state}`)).toBe('1');
   });
 
   it('503 when OAuth is not configured', async () => {
@@ -123,7 +123,7 @@ describe('callback — error branches', () => {
 
   it('400 when the token exchange fails', async () => {
     mockGoogleToken({ error: 'invalid_grant' }, 400);
-    await putOauthState(env.AUTH, 'state-tokfail');
+    await putOauthState(env.ports.kv, 'state-tokfail');
     const res = await app.request(
       '/auth/google/callback?code=abc&state=state-tokfail',
       { method: 'GET' },
@@ -143,7 +143,7 @@ describe('callback — error branches', () => {
     });
     mockGoogleToken({ id_token: idToken });
     mockGoogleJwks(other.publicJwk);
-    await putOauthState(env.AUTH, 'state-badsig');
+    await putOauthState(env.ports.kv, 'state-badsig');
     const res = await app.request(
       '/auth/google/callback?code=abc&state=state-badsig',
       { method: 'GET' },

@@ -1,4 +1,5 @@
-// src/node/config.ts — bindings construction from process env.
+// src/node/config.ts — the composition root: constructs the Ports (services)
+// and Config (plain strings) the app runs on, from process env.
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,23 +35,27 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'));
 
   const bindings: Bindings = {
-    DB: new CatalogDb(catalog),
-    AUTH: auth,
-    SESSION_HUBS: registry,
-    AUDIO: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
-    PRESENCE: new PresenceRegistry(),
-    PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
-    GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
-    GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
-    REQUIRE_LOGIN: procEnv.REQUIRE_LOGIN || '',
-    SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
-    SESSION_DAYS: procEnv.SESSION_DAYS || '14',
-    NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
-    COOKIE_SECURE: procEnv.COOKIE_SECURE || '',
-    IP_ALLOWLIST: procEnv.IP_ALLOWLIST || '',
-    TRUST_PROXY: procEnv.TRUST_PROXY || '',
-    API_TOKEN: procEnv.API_TOKEN || '',
-    ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
+    ports: {
+      catalog: new CatalogDb(catalog),
+      kv: auth,
+      sessions: registry,
+      audio: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
+      presence: new PresenceRegistry(),
+    },
+    config: {
+      PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
+      GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
+      GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
+      REQUIRE_LOGIN: procEnv.REQUIRE_LOGIN || '',
+      SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
+      SESSION_DAYS: procEnv.SESSION_DAYS || '14',
+      NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
+      COOKIE_SECURE: procEnv.COOKIE_SECURE || '',
+      IP_ALLOWLIST: procEnv.IP_ALLOWLIST || '',
+      TRUST_PROXY: procEnv.TRUST_PROXY || '',
+      API_TOKEN: procEnv.API_TOKEN || '',
+      ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
+    },
   };
   return {
     bindings,

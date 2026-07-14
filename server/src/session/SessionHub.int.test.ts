@@ -29,7 +29,7 @@ describe('hub ↔ catalog projection', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const row = env.DB.first<{ event_count: number }>(
+    const row = env.ports.catalog.first<{ event_count: number }>(
       'SELECT event_count FROM sessions WHERE id = ?',
       s,
     );
@@ -47,7 +47,7 @@ describe('hub ↔ catalog projection', () => {
     const status = await app.request(`/api/sessions/${s}/status`, {}, env);
     expect(((await status.json()) as { is_rolling: boolean }).is_rolling).toBe(true);
 
-    const rowWhileRolling = env.DB.first<{ is_rolling: number }>(
+    const rowWhileRolling = env.ports.catalog.first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );
@@ -59,7 +59,7 @@ describe('hub ↔ catalog projection', () => {
     expect(stopBody.stopped).toBe(true);
     expect(stopBody.is_rolling).toBe(false);
 
-    const rowAfterStop = env.DB.first<{ is_rolling: number }>(
+    const rowAfterStop = env.ports.catalog.first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );
@@ -77,7 +77,7 @@ describe('hub ↔ catalog projection', () => {
       },
       env,
     );
-    env.SESSION_HUBS.evictIdle(0); // force-close every idle hub
+    env.ports.sessions.evictIdle(0); // force-close every idle hub
     const events = await app.request(`/api/sessions/${s}/events`, {}, env);
     const body = (await events.json()) as { events: Array<{ message: string }> };
     expect(body.events.some((e) => e.message === 'persisted')).toBe(true);

@@ -13,10 +13,10 @@ import { ApiError } from './_helpers';
 export const adminRouter = new Hono<AppEnv>();
 
 function requireAdminToken(c: Context<AppEnv>): void {
-  if (!adminTokenConfigured(c.env)) {
+  if (!adminTokenConfigured(c.env.config)) {
     throw new ApiError(503, 'Set ADMIN_TOKEN in the environment to use admin APIs.');
   }
-  if (!requestHasValidAdminToken(c.req.raw, c.env.ADMIN_TOKEN)) {
+  if (!requestHasValidAdminToken(c.req.raw, c.env.config.ADMIN_TOKEN)) {
     throw new ApiError(401, 'Invalid or missing admin token.');
   }
 }

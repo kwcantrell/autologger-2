@@ -6,7 +6,7 @@ import type { Bindings } from '../types';
 const envFrom = (remoteAddress: string, overrides: Record<string, string> = {}): Bindings =>
   ({
     ...env,
-    ...overrides,
+    config: { ...env.config, ...overrides },
     incoming: { socket: { remoteAddress } },
   }) as unknown as Bindings;
 
@@ -49,7 +49,10 @@ describe('ip allowlist on Node', () => {
     const res = await app.request(
       '/api/profile',
       {},
-      { ...env, IP_ALLOWLIST: '203.0.113.0/24' } as unknown as Bindings,
+      {
+        ...env,
+        config: { ...env.config, IP_ALLOWLIST: '203.0.113.0/24' },
+      } as unknown as Bindings,
     );
     expect(res.status).toBe(403);
   });

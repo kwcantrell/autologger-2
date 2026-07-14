@@ -36,7 +36,7 @@ function primarySession(presence: PresenceRegistry): string | null {
 }
 
 async function requireActiveSession(c: Context<AppEnv>): Promise<string> {
-  const sid = primarySession(c.env.PRESENCE);
+  const sid = primarySession(c.env.ports.presence);
   if (!sid || (c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })) === null) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
   }
@@ -47,7 +47,7 @@ companionRouter.post('/api/companion/presence', async (c) => {
   const body = companionPresenceBodySchema.parse(await c.req.json());
   const cid = body.client_id.trim();
   if (body.closing) {
-    c.env.PRESENCE.remove(cid);
+    c.env.ports.presence.remove(cid);
     return c.json({ ok: true });
   }
   const meta = {
@@ -56,14 +56,14 @@ companionRouter.post('/api/companion/presence', async (c) => {
     is_playing: body.is_playing,
     updated: Date.now(),
   };
-  c.env.PRESENCE.upsert(cid, meta);
+  c.env.ports.presence.upsert(cid, meta);
   return c.json({ ok: true });
 });
 
 companionRouter.get('/api/companion/state', async (c) => {
   const catalog = c.get('catalog');
-  const presences = c.env.PRESENCE.list();
-  const activeSid = primarySession(c.env.PRESENCE);
+  const presences = c.env.ports.presence.list();
+  const activeSid = primarySession(c.env.ports.presence);
   let sessionOut: Record<string, unknown> | null = null;
   let resolvedSid: string | null = activeSid;
   if (activeSid) {
@@ -95,7 +95,7 @@ companionRouter.get('/api/companion/state', async (c) => {
       };
     }
   }
-  const lastRaw = await c.env.AUTH.get(LAST_COMMAND_KEY);
+  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
   return c.json({
     connected_clients: presences.length,
     active_session_id: resolvedSid,
@@ -160,7 +160,7 @@ companionRouter.post('/api/companion/command', async (c) => {
   const sid = await requireActiveSession(c);
   const commandId = crypto.randomUUID();
   await getSessionHub(c, sid).broadcastCommand(body.type);
-  await c.env.AUTH.put(
+  await c.env.ports.kv.put(
     LAST_COMMAND_KEY,
     JSON.stringify({
       id: commandId,
@@ -202,14 +202,14 @@ companionRouter.get('/api/companion/commands/wait', async (c) => {
 companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   const commandId = c.req.param('commandId');
   const body = companionCommandAckBodySchema.parse(await c.req.json());
-  const lastRaw = await c.env.AUTH.get(LAST_COMMAND_KEY);
+  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
   if (lastRaw) {
     const last = JSON.parse(lastRaw) as Record<string, unknown>;
     if (last.id === commandId) {
       last.ok = body.ok;
       last.error = body.error ?? null;
       last.delivered_to = body.client_id;
-      await c.env.AUTH.put(LAST_COMMAND_KEY, JSON.stringify(last));
+      await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
       return c.json({ ok: true });
     }
   }

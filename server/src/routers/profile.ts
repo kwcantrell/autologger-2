@@ -12,31 +12,31 @@ import {
   validateCategoriesList,
   validateEventPalettePreset,
 } from '../studio';
-import type { AppEnv, Env } from '../types';
+import type { AppEnv, Config } from '../types';
 
 export const profileRouter = new Hono<AppEnv>();
 
-function ctx(env: Env): ProfileCtx {
-  return { oauthConfigured: oauthConfigured(env), adminMeta: adminMeta(env) };
+function ctx(config: Config): ProfileCtx {
+  return { oauthConfigured: oauthConfigured(config), adminMeta: adminMeta(config) };
 }
 
 profileRouter.get('/api/studio', async (c) => {
   const catalog = c.get('catalog');
-  const prof = catalog.profile.getEffectiveStudioForUser(c.get('user'), oauthConfigured(c.env));
+  const prof = catalog.profile.getEffectiveStudioForUser(c.get('user'), oauthConfigured(c.env.config));
   if (prof === null) return c.json({ detail: 'No team access.' }, 403);
   return c.json(studioToApiDict(prof));
 });
 
 profileRouter.get('/api/profile', async (c) => {
   const catalog = c.get('catalog');
-  return c.json(catalog.profile.profilePayload(c.get('user'), ctx(c.env)));
+  return c.json(catalog.profile.profilePayload(c.get('user'), ctx(c.env.config)));
 });
 
 profileRouter.put('/api/profile', async (c) => {
   const catalog = c.get('catalog');
   const body = profileUpdateBodySchema.parse(await c.req.json());
   const user = c.get('user');
-  if (user === null && oauthConfigured(c.env)) return c.json({ detail: 'Login required.' }, 401);
+  if (user === null && oauthConfigured(c.env.config)) return c.json({ detail: 'Login required.' }, 401);
 
   const rawSid = (body.active_studio_id ?? '').trim();
 
@@ -50,7 +50,7 @@ profileRouter.put('/api/profile', async (c) => {
       const fn = (body.family_name ?? user.family_name).trim().slice(0, 200);
       catalog.auth.authUpdateUserNames(user.id, gn, fn);
     }
-    return c.json(catalog.profile.profilePayload(user, ctx(c.env)));
+    return c.json(catalog.profile.profilePayload(user, ctx(c.env.config)));
   }
 
   if (!rawSid) return c.json({ detail: 'active_studio_id is required.' }, 400);
@@ -122,5 +122,5 @@ profileRouter.put('/api/profile', async (c) => {
     catalog.auth.authUpdateUserNames(user.id, gn, fn);
   }
 
-  return c.json(catalog.profile.profilePayload(user, ctx(c.env)));
+  return c.json(catalog.profile.profilePayload(user, ctx(c.env.config)));
 });

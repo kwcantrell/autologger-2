@@ -69,7 +69,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     recordingOrdinal,
   });
   try {
-    await c.env.AUDIO.put(seg.r2_key, payload, { contentType: seg.mime_type });
+    await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
     await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
@@ -85,7 +85,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
   const known: Array<{ r2_key: string; ordinal: number }> = [];
   let cursor: string | undefined;
   do {
-    const listed = await c.env.AUDIO.list({ prefix, cursor });
+    const listed = await c.env.ports.audio.list({ prefix, cursor });
     for (const obj of listed.objects) {
       const m = /\/(\d{4})_/.exec(obj.key);
       if (m) known.push({ r2_key: obj.key, ordinal: Number(m[1]) });
@@ -117,7 +117,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
     const parsed = parseRange(rangeHeader);
     let obj;
     try {
-      obj = await c.env.AUDIO.get(got.r2_key, parsed ? { range: parsed } : undefined);
+      obj = await c.env.ports.audio.get(got.r2_key, parsed ? { range: parsed } : undefined);
     } catch (e) {
       if (e instanceof InvalidRangeError) {
         throw new ApiError(416, 'Requested range not satisfiable.');
@@ -145,7 +145,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
     });
   }
 
-  const obj = await c.env.AUDIO.get(got.r2_key);
+  const obj = await c.env.ports.audio.get(got.r2_key);
   if (obj === null) throw new ApiError(404, 'Audio segment not found.');
   return new Response(obj.body, {
     headers: {

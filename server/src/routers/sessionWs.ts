@@ -17,7 +17,7 @@ export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSo
       const sessionId = c.req.param('sessionId');
       const role =
         new URL(c.req.url).searchParams.get('role') === 'companion' ? 'companion' : 'browser';
-      const hub = c.env.SESSION_HUBS.get(sessionId);
+      const hub = c.env.ports.sessions.get(sessionId);
       return {
         onOpen(_evt, ws) {
           hub.attachSocket(ws, role);

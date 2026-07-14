@@ -31,7 +31,7 @@ import type { AppEnv } from '../types';
 export const authRouter = new Hono<AppEnv>();
 
 authRouter.get('/auth/google/start', async (c) => {
-  if (!oauthConfigured(c.env)) {
+  if (!oauthConfigured(c.env.config)) {
     return c.json(
       {
         detail:
@@ -42,11 +42,11 @@ authRouter.get('/auth/google/start', async (c) => {
     );
   }
   const state = newOauthState();
-  await putOauthState(c.env.AUTH, state);
+  await putOauthState(c.env.ports.kv, state);
   const uri = googleAuthorizationUrl({
-    clientId: googleClientId(c.env),
+    clientId: googleClientId(c.env.config),
     state,
-    redirectUri: `${publicBaseUrl(c.env)}/auth/google/callback`,
+    redirectUri: `${publicBaseUrl(c.env.config)}/auth/google/callback`,
   });
   return c.redirect(uri, 302);
 });
@@ -54,7 +54,7 @@ authRouter.get('/auth/google/start', async (c) => {
 authRouter.get('/auth/google/callback', async (c) => {
   const error = c.req.query('error') ?? '';
   if (error) return c.json({ detail: error }, 400);
-  if (!oauthConfigured(c.env)) return c.json({ detail: 'Google OAuth is not configured.' }, 503);
+  if (!oauthConfigured(c.env.config)) return c.json({ detail: 'Google OAuth is not configured.' }, 503);
 
   const code = (c.req.query('code') ?? '').trim();
   const state = normalizeOauthStateParam(c.req.query('state') ?? '');
@@ -77,7 +77,7 @@ authRouter.get('/auth/google/callback', async (c) => {
     );
   }
 
-  if (!(await takeOauthState(c.env.AUTH, state))) {
+  if (!(await takeOauthState(c.env.ports.kv, state))) {
     return c.json(
       {
         detail:
@@ -90,14 +90,14 @@ authRouter.get('/auth/google/callback', async (c) => {
     );
   }
 
-  const redirectUri = `${publicBaseUrl(c.env)}/auth/google/callback`;
+  const redirectUri = `${publicBaseUrl(c.env.config)}/auth/google/callback`;
   let tokens: Record<string, unknown>;
   try {
     tokens = await exchangeAuthorizationCode({
       code,
       redirectUri,
-      clientId: googleClientId(c.env),
-      clientSecret: googleClientSecret(c.env),
+      clientId: googleClientId(c.env.config),
+      clientSecret: googleClientSecret(c.env.config),
     });
   } catch (e) {
     return c.json({ detail: `Token exchange failed: ${(e as Error).message}` }, 400);
@@ -107,7 +107,7 @@ authRouter.get('/auth/google/callback', async (c) => {
   if (!idTok) return c.json({ detail: 'Missing id_token.' }, 400);
   let claims: Record<string, unknown>;
   try {
-    claims = (await verifyGoogleIdToken(String(idTok), googleClientId(c.env))) as Record<
+    claims = (await verifyGoogleIdToken(String(idTok), googleClientId(c.env.config))) as Record<
       string,
       unknown
     >;
@@ -146,7 +146,7 @@ authRouter.get('/auth/google/callback', async (c) => {
       (catalog.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
       (catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
     );
-    if (newUserAllTeamsEnabled(c.env)) {
+    if (newUserAllTeamsEnabled(c.env.config)) {
       catalog.auth.authAddMemberships(
         uid,
         catalog.studios.listStudiosBrief().map((s) => s.id),
@@ -154,22 +154,22 @@ authRouter.get('/auth/google/callback', async (c) => {
     }
   }
 
-  const ttlDays = sessionTtlDays(c.env);
-  const rawSess = await createLoginSession(c.env.AUTH, uid, ttlDays);
-  setCookie(c, sessionCookieName(c.env), rawSess, {
+  const ttlDays = sessionTtlDays(c.env.config);
+  const rawSess = await createLoginSession(c.env.ports.kv, uid, ttlDays);
+  setCookie(c, sessionCookieName(c.env.config), rawSess, {
     httpOnly: true,
     maxAge: Math.floor(ttlDays * 86400),
     sameSite: 'Lax',
-    secure: cookieSecureForRequest(c.env, c.req.raw),
+    secure: cookieSecureForRequest(c.env.config, c.req.raw),
     path: '/',
   });
   return c.redirect('/', 302);
 });
 
 async function logout(c: Context<AppEnv>): Promise<Response> {
-  const cookie = getCookie(c, sessionCookieName(c.env));
-  if (cookie) await revokeLoginSession(c.env.AUTH, cookie);
-  deleteCookie(c, sessionCookieName(c.env), { path: '/' });
+  const cookie = getCookie(c, sessionCookieName(c.env.config));
+  if (cookie) await revokeLoginSession(c.env.ports.kv, cookie);
+  deleteCookie(c, sessionCookieName(c.env.config), { path: '/' });
   return c.redirect('/', 302);
 }
 

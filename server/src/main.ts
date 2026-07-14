@@ -25,7 +25,7 @@ if (!existsSync(webDist)) {
 // Gate decision E1: login defaults ON. If the operator explicitly opened the
 // API (REQUIRE_LOGIN=0) on a non-loopback bind with no allowlist, say so loudly.
 const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
-if (!loopback && !requireLoginEnabled(bindings) && !(bindings.IP_ALLOWLIST || '').trim()) {
+if (!loopback && !requireLoginEnabled(bindings.config) && !(bindings.config.IP_ALLOWLIST || '').trim()) {
   console.warn(
     '\n' +
       '!!! WARNING: AutoLogger is binding to a NON-LOOPBACK interface with\n' +
@@ -39,7 +39,7 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 // Bindings ride in via wireApp's injection middleware — NOT a fetch wrapper —
 // because @hono/node-ws upgrades bypass serve()'s fetch entirely.
 wireApp(app, upgradeWebSocket, { bindings, publicDir: webDist });
-bindings.SESSION_HUBS.startSweeper();
+bindings.ports.sessions.startSweeper();
 
 const server = serve(
   { fetch: app.fetch, port, hostname },
