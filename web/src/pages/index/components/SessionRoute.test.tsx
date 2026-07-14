@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
+import { sessionKeys } from '../../../api/hooks/useSessions';
 import type { Session } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { setNavigationImplForTesting } from '../navigation';
@@ -238,6 +239,39 @@ describe('SessionRoute resolution states', () => {
     expect(stateEl('archived')).toBeNull();
     // The per-id query was fetched exactly once — on route entry.
     expect(detailCalls('sess-1')).toBe(1);
+  });
+
+  it('re-resolves on every route entry — unmount then remount the same id refetches and reflects server state (gcTime 0)', async () => {
+    mockedApiFetch.mockResolvedValue(sessionFixture({ id: 'reenter-1' }));
+    const client = makeClient();
+
+    const { view } = renderRoute('reenter-1', client);
+    await waitFor(() => expect(workspace()?.getAttribute('data-session-id')).toBe('reenter-1'));
+    expect(detailCalls('reenter-1')).toBe(1);
+
+    // Navigate away: the route (and its useSession query) unmounts. With
+    // `gcTime: 0` the cache entry evaporates — asynchronously, on the same
+    // macrotask react-query schedules its gc timer on — rather than lingering
+    // for the default 5-minute window; wait for that eviction to land before
+    // re-entering, or a same-tick remount would still observe the stale entry.
+    view.unmount();
+    await waitFor(() =>
+      expect(client.getQueryData(sessionKeys.detail('reenter-1'))).toBeUndefined(),
+    );
+
+    // Server-side state changed while the route was gone — the session was
+    // deleted/became unauthorized, now masked behind a 404.
+    mockedApiFetch.mockRejectedValue(new ApiError(404, 'Session not found'));
+
+    // Re-enter the same id at a fresh mount (a real route re-entry would also
+    // get a fresh QueryClient-scoped subscription, but the cache is what's
+    // under test here — reusing `client` isolates gcTime as the variable).
+    renderRoute('reenter-1', client);
+
+    await waitFor(() => expect(stateEl('not-found')).not.toBeNull());
+    expect(workspace()).toBeNull();
+    // A second, fresh request was issued on re-entry — not served from cache.
+    expect(detailCalls('reenter-1')).toBe(2);
   });
 
   it('renders the home view for the empty id without issuing any per-id request', () => {

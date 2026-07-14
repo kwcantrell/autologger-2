@@ -31,12 +31,20 @@ export type SessionResolution = { kind: 'found'; session: Session } | { kind: 'n
  * resolution source (design D5; NOT the polled sessions list, which is
  * active-show-scoped while authorization is studio-wide).
  *
- * Latched by construction: fetched on route entry, then never spontaneously
- * refetched — no `refetchInterval`, `staleTime: Infinity` (so remounts and
- * focus/reconnect revalidation never re-resolve an open workspace out from
- * under the user), plus explicit focus/reconnect opt-outs as belt and braces.
- * Re-resolution happens only through invalidation (the Restore mutation) or an
- * explicit `refetch()` from the error state.
+ * Latched WITHIN A MOUNT by construction: fetched on route entry, then never
+ * spontaneously refetched while mounted — no `refetchInterval`,
+ * `staleTime: Infinity` (so focus/reconnect revalidation never re-resolve an
+ * open workspace out from under the user), plus explicit focus/reconnect
+ * opt-outs as belt and braces. Re-resolution while mounted happens only
+ * through invalidation (the Restore mutation) or an explicit `refetch()` from
+ * the error state.
+ *
+ * `gcTime: 0` deliberately does NOT extend that latch across route exits: the
+ * cache entry is dropped the instant the query unmounts, so every fresh route
+ * entry — including re-entering the same id — re-resolves against the server
+ * instead of reusing a stale cached result (react-query's default 5-minute
+ * gcTime would otherwise let a since-archived/deleted session keep rendering
+ * as it was for up to 5 minutes after navigating back to it).
  */
 export function useSession(sessionId: string) {
   return useQuery({
@@ -54,6 +62,7 @@ export function useSession(sessionId: string) {
       }
     },
     staleTime: Number.POSITIVE_INFINITY,
+    gcTime: 0,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     enabled: sessionId !== '',
