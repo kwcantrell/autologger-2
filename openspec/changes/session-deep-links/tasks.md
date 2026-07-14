@@ -140,7 +140,7 @@ before editing.
 
 ## 9. Final gates
 
-- [ ] 9.1 `npm run typecheck` + `npm test` + `npm run e2e` + `npm run lint` green at
+- [x] 9.1 `npm run typecheck` + `npm test` + `npm run e2e` + `npm run lint` green at
       branch tip
-- [ ] 9.2 Whole-branch review (per SDLC), then merge readiness: conventional commits,
+- [x] 9.2 Whole-branch review (per SDLC), then merge readiness: conventional commits,
       no stray worktrees, no secrets
