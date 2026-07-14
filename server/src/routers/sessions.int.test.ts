@@ -1,6 +1,6 @@
 import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
@@ -114,5 +114,103 @@ describe('tenancy', () => {
       envWith({ REQUIRE_LOGIN: '1' }),
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
+  it('200 with field-for-field shape parity vs. the list entry', async () => {
+    // A logged-in user with explicit active prefs, so the list scope is
+    // deterministic regardless of other tests' shared anonymous-mode
+    // app_settings active-show state.
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const session = await seedSession({ showId: show, episode: '042' });
+    const userId = await seedUser({ studios: [studio] });
+    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const cookie = await loginCookie(userId);
+    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+
+    const listRes = await app.request(
+      '/api/sessions',
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };
+    const listEntry = listBody.active.find((r) => r.id === session);
+    expect(listEntry).toBeTruthy();
+
+    const detailRes = await app.request(
+      `/api/sessions/${session}`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    expect(detailRes.status).toBe(200);
+    const detailBody = await detailRes.json();
+    expect(detailBody).toEqual(listEntry);
+  });
+
+  it('200 for an authorized session outside the requester’s active show/studio prefs', async () => {
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showA = await seedShow({ studioId: studioA });
+    const showB = await seedShow({ studioId: studioB });
+    const session = await seedSession({ showId: showA });
+    const userId = await seedUser({ studios: [studioA, studioB] });
+    catalogFor().auth.authSetPrefs(userId, studioB, showB);
+    const cookie = await loginCookie(userId);
+
+    const res = await app.request(
+      `/api/sessions/${session}`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; session_status: string };
+    expect(body.id).toBe(session);
+    expect(body.session_status).toBe('active');
+  });
+
+  it('200 for an archived session, reflecting its archived state', async () => {
+    const session = await seededSession();
+    const archiveRes = await app.request(
+      `/api/sessions/${session}/archive`,
+      { method: 'POST' },
+      { ...env },
+    );
+    expect(archiveRes.status).toBe(200);
+
+    const res = await app.request(`/api/sessions/${session}`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { archived: boolean; session_status: string };
+    expect(body.archived).toBe(true);
+    expect(body.session_status).toBe('archived');
+  });
+
+  it('masked 404 (identical shape) for nonexistent, ui_hidden, and foreign-studio ids', async () => {
+    const nonexistent = await app.request('/api/sessions/does-not-exist', { method: 'GET' }, { ...env });
+
+    const hiddenSession = await seededSession();
+    await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
+    const hidden = await app.request(
+      `/api/sessions/${hiddenSession}`,
+      { method: 'GET' },
+      { ...env },
+    );
+
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showB = await seedShow({ studioId: studioB });
+    const foreignSession = await seedSession({ showId: showB });
+    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
+    const foreign = await app.request(
+      `/api/sessions/${foreignSession}`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+
+    for (const res of [nonexistent, hidden, foreign]) {
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Session not found' });
+    }
   });
 });

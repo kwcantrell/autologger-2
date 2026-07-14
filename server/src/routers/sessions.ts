@@ -4,6 +4,7 @@
 // YouTube import is a 503 stub on this deployment (phase 6 decision).
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { Row } from '../db/catalog';
 import { oauthConfigured } from '../env';
 import { newSessionBodySchema, sessionUpdateBodySchema } from '../schemas';
@@ -27,6 +28,56 @@ function listRuntimeTotalFrames(row: Row, transportTotalFrames: number): number 
   if (Number(row.is_rolling ?? 0)) return Math.max(evMax, trTf);
   if (evMax > 0) return Math.max(evMax, trTf);
   return 0;
+}
+
+/** Serialize a joined session row (session cols + show_code/show_name from
+ * `getSessionJoinedRow`/`listSessionsForShow`) into a list-entry-shaped JSON
+ * object. The ONE place this shape is built — shared by `GET /api/sessions`
+ * (list) and `GET /api/sessions/:sessionId` (detail), so the two responses
+ * cannot drift (design D5/D7, api-contract-freeze delta). */
+function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unknown> {
+  const frameRate = Number(s.frame_rate ?? 24.0);
+  const startOffset = Number(s.start_offset_frames ?? 0);
+  const isRolling = Boolean(Number(s.is_rolling ?? 0));
+  const tc = transportTimecode(
+    frameRate,
+    startOffset,
+    {
+      is_rolling: isRolling,
+      elapsed_frames: Number(s.transport_elapsed_frames ?? 0),
+      roll_started_at_utc: (s.roll_started_at_utc as string | null) ?? null,
+    },
+    c.env.ports.clock.now(),
+  );
+  const trTotal = toTotalFrames(tc);
+  const rtFrames = listRuntimeTotalFrames(s, trTotal);
+  const ep = String(s.episode ?? '').trim();
+  const archived = Boolean(Number(s.archived ?? 0));
+  return {
+    id: String(s.id),
+    title: String(s.title ?? ''),
+    deck_title: sessionDeckDisplayTitle({
+      showCode: s.show_code as string | null,
+      episode: ep,
+      storedTitle: String(s.title ?? ''),
+    }),
+    show_id: (s.show_id as string | null) ?? null,
+    show_code: (s.show_code as string | null) ?? null,
+    show_name: (s.show_name as string | null) ?? null,
+    episode: ep,
+    notes: String(s.notes ?? ''),
+    session_status: sessionStatusUi(s),
+    frame_rate: frameRate,
+    start_offset_frames: startOffset,
+    created_at_utc: s.created_at_utc ? isoZ(new Date(String(s.created_at_utc))) : null,
+    episode_date: (s.episode_date as string | null) ?? null,
+    event_count: Number(s.event_count ?? 0),
+    is_rolling: isRolling,
+    current_take: Number(s.current_take ?? 0),
+    rolling_timecode: formatSmpte(tc),
+    total_runtime_hms: formatRuntimeHms(rtFrames, frameRate),
+    archived,
+  };
 }
 
 sessionsRouter.get('/api/sessions', async (c) => {
@@ -55,49 +106,8 @@ sessionsRouter.get('/api/sessions', async (c) => {
   const activeRows: Record<string, unknown>[] = [];
   const archivedRows: Record<string, unknown>[] = [];
   for (const s of catalog.sessions.listSessionsForShow(activeShowId)) {
-    const frameRate = Number(s.frame_rate ?? 24.0);
-    const startOffset = Number(s.start_offset_frames ?? 0);
-    const isRolling = Boolean(Number(s.is_rolling ?? 0));
-    const tc = transportTimecode(
-      frameRate,
-      startOffset,
-      {
-        is_rolling: isRolling,
-        elapsed_frames: Number(s.transport_elapsed_frames ?? 0),
-        roll_started_at_utc: (s.roll_started_at_utc as string | null) ?? null,
-      },
-      c.env.ports.clock.now(),
-    );
-    const trTotal = toTotalFrames(tc);
-    const rtFrames = listRuntimeTotalFrames(s, trTotal);
-    const ep = String(s.episode ?? '').trim();
-    const archived = Boolean(Number(s.archived ?? 0));
-    const row = {
-      id: String(s.id),
-      title: String(s.title ?? ''),
-      deck_title: sessionDeckDisplayTitle({
-        showCode: s.show_code as string | null,
-        episode: ep,
-        storedTitle: String(s.title ?? ''),
-      }),
-      show_id: (s.show_id as string | null) ?? null,
-      show_code: (s.show_code as string | null) ?? null,
-      show_name: (s.show_name as string | null) ?? null,
-      episode: ep,
-      notes: String(s.notes ?? ''),
-      session_status: sessionStatusUi(s),
-      frame_rate: frameRate,
-      start_offset_frames: startOffset,
-      created_at_utc: s.created_at_utc ? isoZ(new Date(String(s.created_at_utc))) : null,
-      episode_date: (s.episode_date as string | null) ?? null,
-      event_count: Number(s.event_count ?? 0),
-      is_rolling: isRolling,
-      current_take: Number(s.current_take ?? 0),
-      rolling_timecode: formatSmpte(tc),
-      total_runtime_hms: formatRuntimeHms(rtFrames, frameRate),
-      archived,
-    };
-    if (archived) archivedRows.push(row);
+    const row = serializeSessionEntry(c, s);
+    if (row.archived) archivedRows.push(row);
     else activeRows.push(row);
   }
   return c.json({ active: activeRows, archived: archivedRows });
@@ -143,6 +153,19 @@ sessionsRouter.post('/api/sessions', async (c) => {
     episode,
     notes,
   });
+});
+
+// Session detail — deep-link resolution source (spec: api-contract-freeze
+// delta, "Session detail endpoint"). Authorization matches the other
+// per-session routes (studio membership via requireSession, masked 404);
+// unlike the list, it resolves any authorized session regardless of the
+// requester's active-show/active-studio prefs or archived state.
+sessionsRouter.get('/api/sessions/:sessionId', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  await requireSession(c, sessionId);
+  const row = c.get('catalog').sessions.getSessionJoinedRow(sessionId);
+  if (row === null) throw new ApiError(404, 'Session not found');
+  return c.json(serializeSessionEntry(c, row));
 });
 
 sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
