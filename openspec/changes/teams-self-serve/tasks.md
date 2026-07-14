@@ -6,12 +6,12 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 1. Catalog: roles + invites storage
 
-- [ ] 1.1 Migration (one file): `role TEXT NOT NULL DEFAULT 'member'` on
+- [x] 1.1 Migration (one file): `role TEXT NOT NULL DEFAULT 'member'` on
       `user_studio_memberships` + backfill existing rows to `admin` EXCLUDING
       built-in studio memberships (gate ruling, design D1) + `team_invites` table
       (design D2 shape, `invited_at_utc`); migrator int test proving the
       built-in-aware backfill and fresh-DB shape
-- [ ] 1.2 `AuthStore` extensions with int tests: role-aware membership ops (create
+- [x] 1.2 `AuthStore` extensions with int tests: role-aware membership ops (create
       with role, upsert role, enabled-admin count per team), invite CRUD
       (JS-normalized upsert — never SQL `lower()`, list per team, delete,
       per-team count for the cap), lookup ALL user rows by normalized email
