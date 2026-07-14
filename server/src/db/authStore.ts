@@ -192,6 +192,21 @@ export class AuthStore {
     );
   }
 
+  /** Count of teams the user admins, excluding the given studio ids (the
+   * built-ins) — a single indexed query for the self-serve creation cap
+   * (phase-2 review: avoids an N+1 over every membership the user holds). */
+  authCountAdminTeams(userId: string, excludeStudioIds: string[]): number {
+    const placeholders = excludeStudioIds.map(() => '?').join(', ');
+    const exclude = excludeStudioIds.length > 0 ? `AND studio_id NOT IN (${placeholders})` : '';
+    const row = this.db.first<Row>(
+      `SELECT COUNT(*) AS n FROM user_studio_memberships
+       WHERE user_id = ? AND role = 'admin' ${exclude}`,
+      userId,
+      ...excludeStudioIds,
+    );
+    return Number(row?.n ?? 0);
+  }
+
   /** Role of (user, team), or null if no membership. */
   authGetMembershipRole(userId: string, studioId: string): TeamRole | null {
     const row = this.db.first<Row>(

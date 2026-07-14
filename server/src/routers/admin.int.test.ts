@@ -1,6 +1,6 @@
 import { app, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { adminHeader, seedUser } from '../test/helpers';
+import { adminHeader, catalogFor, seedUser } from '../test/helpers';
 
 const TOKEN = 'sweep-admin-token';
 const ADMIN_ENV = envWith({ ADMIN_TOKEN: TOKEN });
@@ -56,6 +56,30 @@ describe('admin studios', () => {
       ADMIN_ENV,
     );
     expect(res.status).toBe(422);
+  });
+
+  it('DELETE cascades pending team_invites (shared delete method, teams-self-serve)', async () => {
+    const create = await app.request(
+      '/api/admin/studios',
+      {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({ id: 'sweep-team-invites', display_name: 'Sweep Invites' }),
+      },
+      ADMIN_ENV,
+    );
+    expect(create.status).toBe(200);
+    const inviter = await seedUser({});
+    catalogFor().auth.authUpsertInvite('sweep-team-invites', 'pending@example.com', inviter);
+    expect(catalogFor().auth.authCountPendingInvites('sweep-team-invites')).toBe(1);
+
+    const del = await app.request(
+      '/api/admin/studios/sweep-team-invites',
+      { method: 'DELETE', headers: H },
+      ADMIN_ENV,
+    );
+    expect(del.status).toBe(200);
+    expect(catalogFor().auth.authCountPendingInvites('sweep-team-invites')).toBe(0);
   });
 });
 

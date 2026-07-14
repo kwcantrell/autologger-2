@@ -511,4 +511,31 @@ describe('GET /api/teams/:id — member vs admin visibility', () => {
     expect(typeof body.members[0].given_name).toBe('string');
     expect(typeof body.members[0].family_name).toBe('string');
   });
+
+  it('enabled_admin_count matches the number of non-disabled admins', async () => {
+    const { team, cookie } = await seedTeamWithAdmin();
+    await addToTeam(team, 'admin'); // second admin
+    await addToTeam(team, 'member');
+    const res = await req('GET', `/api/teams/${team}`, { cookie });
+    const body = (await res.json()) as { enabled_admin_count: number };
+    expect(body.enabled_admin_count).toBe(2);
+  });
+
+  it('enabled_admin_count is 0 when the team\'s only admin is disabled, while members still shows them as admin', async () => {
+    const { team, adminId } = await seedTeamWithAdmin();
+    catalogFor().auth.authSetUserDisabled(adminId, true);
+    // The disabled admin can no longer authenticate, so read via a second
+    // member instead of their own (now-invalid) session.
+    const { cookie: memberCookie } = await addToTeam(team, 'member');
+    const res = await req('GET', `/api/teams/${team}`, { cookie: memberCookie });
+    const body = (await res.json()) as {
+      enabled_admin_count: number;
+      members: Array<Record<string, unknown>>;
+    };
+    expect(body.enabled_admin_count).toBe(0);
+    const adminMember = body.members.find((m) => m.id === adminId);
+    expect(adminMember).toMatchObject({ id: adminId, role: 'admin' });
+    expect(adminMember).not.toHaveProperty('disabled');
+    expect(adminMember).not.toHaveProperty('disabled_at_utc');
+  });
 });

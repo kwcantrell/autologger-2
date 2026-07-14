@@ -93,14 +93,12 @@ function requireTeamAdmin(c: Context<AppEnv>, teamId: string): AuthUser {
 }
 
 /** Count of non-built-in teams the user currently admins — self-serve
- * creation cap (design D10). Bounded by the cap itself (at most
- * MAX_OWNED_TEAMS + a few reads), so the N+1 role lookup is cheap. */
+ * creation cap (design D10). Single indexed query (phase-2 review: replaced
+ * an N+1 over every membership the user holds, which didn't scale with a
+ * user's total membership count even though the cap only bounds admin'd
+ * teams). */
 function countOwnedNonBuiltinTeams(catalog: Catalog, userId: string): number {
-  const builtins = new Set(BUILTIN_STUDIO_ORDER);
-  return catalog.auth
-    .authListStudioIdsForUser(userId)
-    .filter((sid) => !builtins.has(sid))
-    .filter((sid) => catalog.auth.authGetMembershipRole(userId, sid) === 'admin').length;
+  return catalog.auth.authCountAdminTeams(userId, [...BUILTIN_STUDIO_ORDER]);
 }
 
 /** Last-admin protection is a global invariant (design: team-management
@@ -177,7 +175,14 @@ teamsRouter.get('/api/teams/:id', async (c) => {
   const catalog = c.get('catalog');
   const name = catalog.studios.studioNamesDict()[teamId] ?? teamId;
   const members = catalog.auth.authListTeamMembers(teamId);
-  const body: Record<string, unknown> = { id: teamId, name, role, members };
+  const enabledAdminCount = catalog.auth.authCountEnabledAdmins(teamId);
+  const body: Record<string, unknown> = {
+    id: teamId,
+    name,
+    role,
+    enabled_admin_count: enabledAdminCount,
+    members,
+  };
   if (role === 'admin') {
     body.invites = catalog.auth.authListInvitesForTeam(teamId).map((r) => ({
       email: String(r.email_norm),

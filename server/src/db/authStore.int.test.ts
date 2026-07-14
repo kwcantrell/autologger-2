@@ -90,6 +90,36 @@ describe('AuthStore: role-aware memberships (design D1)', () => {
     });
   });
 
+  it('authCountAdminTeams counts admin memberships, excluding the given studio ids', async () => {
+    const cat = catalogFor();
+    const admined1 = await seedStudio();
+    const admined2 = await seedStudio();
+    const excluded = await seedStudio();
+    const memberOnly = await seedStudio();
+    const user = await seedUser();
+    cat.auth.authAddMembershipWithRole(user, admined1, 'admin');
+    cat.auth.authAddMembershipWithRole(user, admined2, 'admin');
+    cat.auth.authAddMembershipWithRole(user, excluded, 'admin');
+    cat.auth.authAddMembershipWithRole(user, memberOnly, 'member');
+    expect(cat.auth.authCountAdminTeams(user, [excluded])).toBe(2);
+  });
+
+  it('authCountAdminTeams with no exclusions counts every admin membership', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const user = await seedUser();
+    cat.auth.authAddMembershipWithRole(user, studio, 'admin');
+    expect(cat.auth.authCountAdminTeams(user, [])).toBe(1);
+  });
+
+  it('authCountAdminTeams is 0 for a user with no admin memberships', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const user = await seedUser();
+    cat.auth.authAddMembershipWithRole(user, studio, 'member');
+    expect(cat.auth.authCountAdminTeams(user, [])).toBe(0);
+  });
+
   it('authListTeamMembers scopes to the team', async () => {
     const cat = catalogFor();
     const studioA = await seedStudio();
