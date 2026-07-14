@@ -141,7 +141,10 @@ was ported from: historical provenance, not a live parity claim.
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
+| `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
+| `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` | `routers/teams.ts` (new, teams-self-serve) |
 | `GET /sessions/:id` (SPA shell) | (app.ts page route) |
+| `GET /teams` (SPA shell) | (app.ts page route) |
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
 

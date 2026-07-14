@@ -56,12 +56,12 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 4. Profile + admin-plane additive fields
 
-- [ ] 4.1 Int tests + implementation: `auth.user.teams[]` gains `role` (profile
+- [x] 4.1 Int tests + implementation: `auth.user.teams[]` gains `role` (profile
       assembler, one site); admin add-membership body accepts optional `role`
       with **upsert semantics** (existing membership's role updated — rescue
       scenario: promote a remaining member of an orphaned team; legacy body
       unchanged, defaults member)
-- [ ] 4.2 README endpoint table rows for the `/api/teams` family + `GET /teams`
+- [x] 4.2 README endpoint table rows for the `/api/teams` family + `GET /teams`
       HTML route
 
 ## 5. Routing + serve-path extension
