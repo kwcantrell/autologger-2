@@ -11,7 +11,7 @@ Covers the render gate (including loading and profile-fetch-error states), the
 transition into and out of the login view as auth state changes, Google sign-in entry
 via the existing `GET /auth/google/start` route, rendering of `?login_error=<code>`
 failures from the OAuth callback redirect, and returning an anonymous visitor to a
-deep-linked session URL after a successful sign-in. Dev anonymous mode
+deep-linked route (`/sessions/:id` or `/teams`) after a successful sign-in. Dev anonymous mode
 (`REQUIRE_LOGIN=0`, no OAuth configured) never triggers this gate and is unaffected.
 
 ## Requirements
@@ -133,10 +133,11 @@ sign-in via `/auth/google/start`.
 
 ### Requirement: Post-login deep-link return
 When any of the login view's sign-in affordances (Google sign-in, create-account, or
-the error-state retry) is activated while the current location matches
-`/sessions/:id`, the client SHALL stash the current path-plus-query in per-tab browser
+the error-state retry) is activated while the current location matches a stashable
+router route (`/sessions/:id` or `/teams`), the client SHALL stash the current
+path-plus-query in per-tab browser
 storage (sessionStorage) before the navigation to `/auth/google/start` proceeds; when
-the current location does not match `/sessions/:id` (e.g. `/` or
+the current location does not match a stashable route (e.g. `/` or
 `/?login_error=<code>`), the affordance SHALL leave any existing stash untouched — so
 a retry from the error landing page keeps the original deep link. The affordances
 remain plain links to `/auth/google/start` (their `href` semantics are unchanged); the
@@ -153,7 +154,8 @@ than string prefix checks: the value MUST be a string starting with exactly one 
 (rejecting `//host` and `/\host` protocol-relative forms), MUST contain no `\` and no
 ASCII control characters, MUST resolve against the current origin to a URL whose
 origin equals the current origin, and its pathname MUST match a route the client
-router owns (`/sessions/:id`) — same-origin pages outside the router, such as
+router owns (`/sessions/:id` or `/teams`, sourced from the shared route-definition
+module rather than a second regex) — same-origin pages outside the router, such as
 `/admin/users`, are not valid return targets. Any invalid, absent, or non-string stash
 SHALL be discarded and the user stays on `/`. The stashed value SHALL never be sent to
 the server or embedded in the OAuth round-trip.
@@ -164,6 +166,11 @@ the server or embedded in the OAuth round-trip.
   `logged_in: true`)
 - **THEN** the app replace-navigates to `/sessions/<id>`, the stash is cleared, and
   pressing Back does not bounce through an intermediate `/` entry
+
+#### Scenario: Teams deep link survives the sign-in round-trip
+- **WHEN** an anonymous visitor lands on `/teams`, activates Google sign-in, and
+  completes the OAuth flow successfully
+- **THEN** the app replace-navigates to `/teams` and the stash is cleared
 
 #### Scenario: Malicious or out-of-router stash is discarded
 - **WHEN** the stash contains `//evil.com`, `/\evil.com`, `https://evil.com/x`, a value
@@ -176,7 +183,7 @@ the server or embedded in the OAuth round-trip.
   (`302 /?login_error=<code>`), and the visitor retries sign-in from the error state
   and succeeds
 - **THEN** the retry activation does not overwrite the stash (the error page's location
-  does not match `/sessions/:id`), and the app still returns to `/sessions/<id>` after
+  is not a stashable route), and the app still returns to `/sessions/<id>` after
   the successful attempt
 
 #### Scenario: No stash means no navigation

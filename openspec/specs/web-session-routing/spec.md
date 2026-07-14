@@ -2,14 +2,15 @@
 
 ## Purpose
 
-The web app's client-side routing for session state: a route table with exactly two app
-routes, `/` (no session selected; home/sessions view) and `/sessions/:id` (the session
-workspace for `:id`), replacing the legacy imperative selection spine. Covers how
+The web app's client-side routing for session state: a route table with exactly three
+app routes, `/` (no session selected; home/sessions view), `/sessions/:id` (the session
+workspace for `:id`), and `/teams` (the team management view; no session selected),
+replacing the legacy imperative selection spine. Covers how
 selecting, creating, and closing a session drive the URL and browser history; the five
 mutually-exclusive resolution states a deep link to `/sessions/:id` can render (loading,
 workspace, archived, not-found, error) against the `GET /api/sessions/:id` detail
 endpoint (authorized in `api-contract-freeze`); the originator-scoped rule for who stops
-a rolling transport on route departure; and retirement of
+a rolling transport on route departure (including departure to `/teams`); and retirement of
 `body.dataset.sessionId`/`window.V3_selectSession`/`window.V3_closeSession`/`syncChrome`
 in favor of route-driven rendering.
 
@@ -17,15 +18,24 @@ in favor of route-driven rendering.
 
 ### Requirement: URL-addressed session state
 The web app SHALL derive its active-session state from the URL via a client-side route
-table with exactly two app routes: `/` (no session selected; home/sessions view) and
-`/sessions/:id` (the session workspace for `:id`). Selecting a session SHALL push a
+table with exactly three app routes: `/` (no session selected; home/sessions view),
+`/sessions/:id` (the session workspace for `:id`), and `/teams` (the team management
+view; no session selected). Selecting a session SHALL push a
 history entry for `/sessions/:id`; selecting the session that is already active SHALL
 NOT push a duplicate entry (no-op or replace); closing the active session SHALL
 navigate to `/`; browser Back/Forward SHALL drive the same state transitions as in-app
 selection and close. Creating a session SHALL navigate to its `/sessions/:id` the same
-way selection does. The workspace's session id SHALL come from the route parameter —
+way selection does. Navigating to `/teams` SHALL push a history entry and leaves any
+active session (the departure semantics of the transport-stop requirement apply
+unchanged). The workspace's session id SHALL come from the route parameter —
 there SHALL be no parallel component-state copy of the active session id that can
-disagree with the URL.
+disagree with the URL. The router-known route predicate SHALL remain defined in the
+shared route-definition module, which its two runtime consumers (the post-login
+stash write and the return-path validator) import; the three sanctioned mirrors of
+the route table — `AppShell`'s wouter patterns, the vite dev-middleware matcher, and
+the server serve block — SHALL each be extended in the same change that extends the
+module (they cannot mechanically share one definition; keeping them in lockstep is
+the requirement).
 
 (Non-normative: a path matching no route — reachable today via the raw built-asset
 path the static handler serves, e.g. `/src/pages/index/index.html` — renders the
@@ -53,6 +63,12 @@ no-session home view without rewriting the address bar.)
   they can access, or pastes that URL into a new tab
 - **THEN** the session workspace for `<id>` mounts once resolution completes — the
   session survives the reload
+
+#### Scenario: Teams route is a first-class app route
+- **WHEN** an authenticated user navigates to `/teams` in-app, or reloads the browser
+  on `/teams`
+- **THEN** the team management view mounts at that URL, and browser Back returns to
+  the previous view
 
 ### Requirement: Deep-link resolution states
 The client SHALL resolve the `:id` route parameter with a per-id query against
@@ -118,7 +134,8 @@ change, on retry from the error state, or on Restore from the archived interstit
 When, and only when, the current client initiated the transport roll during the
 current workspace mount (it issued the transport-start command), a same-document
 departure from that session's `/sessions/:id` — the close control, browser
-Back/Forward within the app, or in-app navigation to `/` or to a different session id
+Back/Forward within the app, or in-app navigation to any route that does not match
+the same session id (`/`, `/teams`, or a different session's route)
 — SHALL invoke the same stop-transport-if-needed behavior the close-session control
 invokes today, exactly once per departure. A client that did NOT initiate the roll
 (it deep-linked or navigated into an already-rolling session) SHALL NOT stop the
@@ -130,6 +147,11 @@ entry) are outside this requirement's scope.
 - **WHEN** the user started the roll in this workspace and leaves `/sessions/<id>` via
   the close control, browser Back, or by selecting another session
 - **THEN** stop-transport-if-needed fires exactly once for the departure
+
+#### Scenario: Departure to the teams route stops the originator's roll
+- **WHEN** the user started the roll in this workspace and navigates to `/teams`
+- **THEN** stop-transport-if-needed fires exactly once, the same as any other
+  departure
 
 #### Scenario: Passive viewer's departure never stops the roll
 - **WHEN** a user opens `/sessions/<id>` while the transport is already rolling
