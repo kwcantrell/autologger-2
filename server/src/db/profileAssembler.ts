@@ -1,6 +1,6 @@
 // Assembles the /api/profile payload (frozen JSON shape; originally byte-compatible
 // with the Python server) from the studio registry, auth store, and shows store. Moved verbatim out of
-// d1.ts (Catalog), with cross-store calls rewritten to the injected stores.
+// catalog.ts (Catalog), with cross-store calls rewritten to the injected stores.
 
 import {
   DEFAULT_STUDIO_ID,

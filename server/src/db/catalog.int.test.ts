@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { catalogFor, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 
-describe('D1 studio + auth stores', () => {
+describe('catalog studio + auth stores', () => {
   it('creates a studio that appears in the registry after init()', async () => {
     // The StudioRegistry is in-memory: isKnownStudio/listStudiosBrief read
     // `this.names`, populated by init() from studio_definitions + built-ins.
@@ -31,7 +31,7 @@ describe('D1 studio + auth stores', () => {
   });
 });
 
-describe('D1 session index store', () => {
+describe('catalog session index store', () => {
   it('createSessionIndex bumps the show next_episode', async () => {
     const cat = catalogFor();
     const studio = await seedStudio();
@@ -51,7 +51,7 @@ describe('D1 session index store', () => {
 
   it('getSessionStudioId returns null for an unknown session', async () => {
     // The audit's "orphan via deleted show" scenario can't be reproduced here:
-    // the test-env D1 ENFORCES foreign keys, so DELETE FROM shows on a referenced
+    // the test-env catalog DB ENFORCES foreign keys, so DELETE FROM shows on a referenced
     // show fails with SQLITE_CONSTRAINT. We exercise the null path via an unknown id.
     const cat = catalogFor();
     expect(await cat.getSessionStudioId('no-such-session')).toBeNull();

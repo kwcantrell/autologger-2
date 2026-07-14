@@ -1,9 +1,9 @@
-// Integration coverage for the router -> SessionHub -> D1 catalog-projection
-// path, replacing the old Miniflare-only SessionDO.int.test.ts (which drove
-// SessionDO internals directly via runInDurableObject). The Node port has no
+// Integration coverage for the router -> SessionHub -> catalog-projection
+// path, replacing the platform-bound integration test of the original spine
+// (which drove its internals directly). The Node port has no
 // DO RPC boundary — SessionHubRegistry#get() returns the hub in-process — so
 // this suite instead exercises the same scenarios over real HTTP requests
-// through the router, asserting on the D1 projection and response payloads.
+// through the router, asserting on the catalog projection and response payloads.
 // Task 9's SessionHub.test.ts already covers hub-internal timer/lease/eviction
 // mechanics directly; this file only covers what only shows up through HTTP.
 
@@ -74,7 +74,7 @@ describe('hub ↔ catalog projection', () => {
       },
       env,
     );
-    env.SESSION_DO.evictIdle(0); // force-close every idle hub
+    env.SESSION_HUBS.evictIdle(0); // force-close every idle hub
     const events = await app.request(`/api/sessions/${s}/events`, {}, env);
     const body = (await events.json()) as { events: Array<{ message: string }> };
     expect(body.events.some((e) => e.message === 'persisted')).toBe(true);

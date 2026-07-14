@@ -1,6 +1,6 @@
 import { env } from './harness';
 import { createLoginSession } from '../auth/identity';
-import { Catalog } from '../db/d1';
+import { Catalog } from '../db/catalog';
 import { sessionCookieName } from '../env';
 
 export function catalogFor(): Catalog {

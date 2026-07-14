@@ -1,6 +1,6 @@
 // Audio-segment metadata domain — rows in session_audio_segments; the audio
-// bytes themselves live in R2 (the Worker owns the binding). Moved verbatim out
-// of SessionDO.ts.
+// bytes themselves live in the blob store (the router layer owns it). Moved
+// verbatim out of the original single-file session spine.
 
 import { isoZ } from '../timecode';
 import type { Row, SessionCore } from './sessionCore';
@@ -17,7 +17,7 @@ export interface AudioSegmentMeta {
   waveform_db_floor: number | null;
 }
 
-/** audioRowToMeta — pure segment-row → meta mapper (was SessionDO.audioRowToMeta). */
+/** audioRowToMeta — pure segment-row → meta mapper. */
 export function audioRowToMeta(r: Row): AudioSegmentMeta {
   let peaks: number[] | null = null;
   const wf = r.waveform_peaks_json;
@@ -126,8 +126,8 @@ export class AudioStore {
     return r.rowsWritten > 0;
   }
 
-  /** Reconcile metadata against the R2 keys the Worker found under the session prefix. */
-  syncAudioFromR2(known: Array<{ r2_key: string; ordinal: number }>): {
+  /** Reconcile metadata against the blob keys the router layer found under the session prefix. */
+  syncAudioFromBlobs(known: Array<{ r2_key: string; ordinal: number }>): {
     inserted: number;
   } {
     let inserted = 0;

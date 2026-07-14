@@ -83,18 +83,18 @@ server/src/
   node/
     config.ts            Bindings construction from process env (DATA_DIR layout, wiring)
     migrate.ts            Startup migrator for the catalog DB (filename-ordered .sql, transactional)
-    d1Adapter.ts          CatalogDb — better-sqlite3-backed catalog query layer
+    catalogStore.ts       CatalogDb — better-sqlite3-backed catalog query layer
     kvStore.ts            KV replacement (login sessions, OAuth CSRF, Companion presence) on the catalog DB
     blobStore.ts          Filesystem blob store: atomic put, range get, list, traversal guard
     presence.ts           In-memory Companion presence registry
-    sqlShim.ts             SqlStorage-shaped shim over better-sqlite3 (the seam SessionCore programs against)
-  durable/
-    SessionHub.ts          In-process per-session hub: registry, idle eviction, RPC surface (← SessionDO.ts)
+    sqlShim.ts             Cursor-shaped SQL shim over better-sqlite3 (the seam SessionCore programs against)
+  session/
+    SessionHub.ts          In-process per-session hub: registry, idle eviction, RPC surface
     sessionCore.ts          Shared substrate: SQLite handle, WS fan-out, events_stream_revision, lease
     eventStore.ts / transportStore.ts / audioStore.ts / leaseStore.ts / transcriptStore.ts / topicStore.ts
                             Domain stores built on SessionCore                (← storage/db.py)
   db/
-    d1.ts                  Catalog query layer + profile + sessions index + admin (← storage/db.py, deps.py)
+    catalog.ts             Catalog query layer + profile + sessions index + admin (← storage/db.py, deps.py)
     authStore.ts / profileAssembler.ts / sessionIndexStore.ts / showsStore.ts / studioRegistry.ts
     migrations/0001_init.sql                  Catalog DDL + seeded built-in shows
     migrations/0002_sessions_live_split.sql   Sessions index metadata + live projection

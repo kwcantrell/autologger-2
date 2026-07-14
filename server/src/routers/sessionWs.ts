@@ -1,5 +1,5 @@
 // Session WebSocket — browser tabs + Companion attach for live pushes. The
-// login gate + requireSession run BEFORE the upgrade (parity with the DO path).
+// login gate + requireSession run BEFORE the upgrade (same gate as the HTTP routes).
 
 import type { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
@@ -17,7 +17,7 @@ export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSo
       const sessionId = c.req.param('sessionId');
       const role =
         new URL(c.req.url).searchParams.get('role') === 'companion' ? 'companion' : 'browser';
-      const hub = c.env.SESSION_DO.get(sessionId);
+      const hub = c.env.SESSION_HUBS.get(sessionId);
       return {
         onOpen(_evt, ws) {
           hub.attachSocket(ws, role);

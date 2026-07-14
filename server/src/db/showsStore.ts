@@ -1,7 +1,7 @@
 // Shows CRUD + the pure per-show / per-category shaping functions the React
-// app's api/types.ts expects. Moved verbatim out of d1.ts (Catalog).
+// app's api/types.ts expects. Moved verbatim out of catalog.ts (Catalog).
 
-import type { CatalogDb } from '../node/d1Adapter';
+import type { CatalogDb } from '../node/catalogStore';
 import { normalizeEventPaletteNine, validateEventPalettePreset } from '../studio';
 import { nowIso } from './shared';
 import type { Row } from './shared';

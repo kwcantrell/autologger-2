@@ -76,8 +76,8 @@ npm run lint                                   # biome: web src/ + e2e/
 Server code keeps the module-for-module layout it inherited from its Python origin under
 `server/src/`; files ported from Python note their origin in a header comment. Router files
 live in `server/src/routers/`; the live
-per-session spine is `server/src/durable/SessionHub.ts` (+ domain stores alongside it); the
-catalog DB layer is `server/src/db/d1.ts` with migrations in `server/src/db/migrations/`;
+per-session spine is `server/src/session/SessionHub.ts` (+ domain stores alongside it); the
+catalog DB layer is `server/src/db/catalog.ts` with migrations in `server/src/db/migrations/`;
 Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
 lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tests live under
 `e2e/`. Full annotated tree + the normative endpoint table (with its historical Python-origin

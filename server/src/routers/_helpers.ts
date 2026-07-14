@@ -2,8 +2,8 @@
 // per-session hub resolution, timecode context, and marked-at parsing.
 
 import type { Context } from 'hono';
-import type { Row } from '../db/d1';
-import type { SessionHub } from '../durable/SessionHub';
+import type { Row } from '../db/catalog';
+import type { SessionHub } from '../session/SessionHub';
 import { requireLoginEnabled } from '../env';
 import type { AppEnv } from '../types';
 
@@ -31,11 +31,11 @@ export function timecodeCtx(row: Row): TimecodeCtx {
 }
 
 /** Resolve the in-process per-session hub (addressed by session id). */
-export function getSessionDO(c: Context<AppEnv>, sessionId: string): SessionHub {
-  return c.env.SESSION_DO.get(sessionId);
+export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHub {
+  return c.env.SESSION_HUBS.get(sessionId);
 }
 
-/** _session_access_gate — login gate + existence + studio-membership scope. Returns the D1 row. */
+/** _session_access_gate — login gate + existence + studio-membership scope. Returns the catalog row. */
 export async function requireSession(
   c: Context<AppEnv>,
   sessionId: string,

@@ -1,5 +1,5 @@
 // Topics domain — manual CRUD over session_topics. Moved verbatim out of
-// SessionDO.ts.
+// the original single-file session spine.
 
 import { isoZ } from '../timecode';
 import type { Row, SessionCore, SqlValue } from './sessionCore';

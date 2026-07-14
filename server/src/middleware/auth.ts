@@ -8,7 +8,7 @@ import {
   requestHasValidApiToken,
   resolveSessionUser,
 } from '../auth/identity';
-import { Catalog } from '../db/d1';
+import { Catalog } from '../db/catalog';
 import { requireLoginEnabled, sessionCookieName } from '../env';
 import type { AppEnv } from '../types';
 

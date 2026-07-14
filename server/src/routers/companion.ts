@@ -2,12 +2,12 @@
 // The Python CompanionHub (in-memory presence + long-poll command queue) becomes:
 //   • presence  → short-TTL KV keys (browser heartbeats), scanned to find the
 //     freshest visible tab and its active session;
-//   • commands  → broadcast over the session DO's WebSocket (the browser executes
+//   • commands  → broadcast over the session hub's WebSocket (the browser executes
 //     record/play because it owns the mic), replacing the long-poll relay.
-// The thin HTTP endpoints still drive the per-session DO.
+// The thin HTTP endpoints still drive the per-session hub.
 
 import { type Context, Hono } from 'hono';
-import { showCategoriesApiShape } from '../db/d1';
+import { showCategoriesApiShape } from '../db/catalog';
 import type { PresenceRegistry } from '../node/presence';
 import {
   companionCommandAckBodySchema,
@@ -18,7 +18,7 @@ import {
 } from '../schemas';
 import { enrichEventRpc, mergeCategoryUiSnapshotsIntoMetadata } from '../studio';
 import type { AppEnv } from '../types';
-import { ApiError, getSessionDO, timecodeCtx } from './_helpers';
+import { ApiError, getSessionHub, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 
@@ -71,10 +71,10 @@ companionRouter.get('/api/companion/state', async (c) => {
     if (row === null) {
       resolvedSid = null;
     } else {
-      const stub = getSessionDO(c, activeSid);
+      const hub = getSessionHub(c, activeSid);
       const [live, lease] = await Promise.all([
-        stub.statusLive(timecodeCtx(row)),
-        stub.leaseStatus(),
+        hub.statusLive(timecodeCtx(row)),
+        hub.leaseStatus(),
       ]);
       const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
       sessionOut = {
@@ -122,7 +122,7 @@ companionRouter.post('/api/companion/log', async (c) => {
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
   const row = await catalog.getSessionIndexRow(sid, { includeHidden: true });
-  const { event, projection } = await getSessionDO(c, sid).addEvent({
+  const { event, projection } = await getSessionHub(c, sid).addEvent({
     category: cat.id,
     message: body.message,
     metadataJson: JSON.stringify(meta),
@@ -139,14 +139,14 @@ companionRouter.post('/api/companion/transport', async (c) => {
   const catalog = c.get('catalog');
   const row = await catalog.getSessionIndexRow(sid, { includeHidden: true });
   const ctx = timecodeCtx(row as NonNullable<typeof row>);
-  const stub = getSessionDO(c, sid);
+  const hub = getSessionHub(c, sid);
   let action: 'start' | 'stop' = body.action === 'start' ? 'start' : 'stop';
   if (body.action === 'toggle') {
-    const tr = await stub.transportSnapshot(ctx);
+    const tr = await hub.transportSnapshot(ctx);
     action = tr.is_rolling ? 'stop' : 'start';
   }
   const { state, projection } =
-    action === 'start' ? await stub.startTake(ctx) : await stub.stopTake(ctx);
+    action === 'start' ? await hub.startTake(ctx) : await hub.stopTake(ctx);
   await catalog.projectSessionLive(sid, projection);
   return c.json({
     ok: true,
@@ -159,7 +159,7 @@ companionRouter.post('/api/companion/command', async (c) => {
   const body = companionCommandBodySchema.parse(await c.req.json());
   const sid = await requireActiveSession(c);
   const commandId = crypto.randomUUID();
-  await getSessionDO(c, sid).broadcastCommand(body.type);
+  await getSessionHub(c, sid).broadcastCommand(body.type);
   await c.env.AUTH.put(
     LAST_COMMAND_KEY,
     JSON.stringify({

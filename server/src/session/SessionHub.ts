@@ -1,12 +1,12 @@
-// SessionHub — the Node replacement for SessionDO. One hub per session, lazily
+// SessionHub — the in-process live spine. One hub per session, lazily
 // instantiated by SessionHubRegistry, backed by a per-session better-sqlite3
 // file (same schema; SessionCore.initSchema is idempotent).
 //
 // INVARIANT (spec): RPC bodies are SYNCHRONOUS — zero awaits. better-sqlite3
-// and WS sends are sync; this is what replaces the DO's input gates. Anything
-// async belongs in the router. Every mutating RPC runs in a transaction (the
-// DO's write-coalescing made multi-statement mutations atomic; autocommit
-// per-statement would not).
+// and WS sends are sync; a synchronous body cannot interleave, which is the
+// whole concurrency model. Anything async belongs in the router. Every mutating
+// RPC runs in a transaction (multi-statement mutations must be atomic;
+// autocommit per-statement would not be).
 
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
@@ -40,8 +40,7 @@ export class SessionHub {
   private transcript: TranscriptStore;
   private topics: TopicStore;
   private socketSet = new Set<HubSocket>();
-  // ReturnType<> (not NodeJS.Timeout): the Workers ambient types are still loaded
-  // in Phase A and their setTimeout returns number — this stays correct either way.
+  // ReturnType<> (not NodeJS.Timeout): correct under any ambient setTimeout typing.
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
   lastTouchedMs = Date.now();
 
@@ -76,7 +75,7 @@ export class SessionHub {
     return this.db.transaction(fn)();
   }
 
-  /** Single alarm slot: replaces any pending timer (DO setAlarm semantics). */
+  /** Single alarm slot: arming replaces any pending timer. */
   private armAlarm(atMs: number): void {
     if (this.alarmTimer) clearTimeout(this.alarmTimer);
     this.alarmTimer = setTimeout(
@@ -213,8 +212,8 @@ export class SessionHub {
   setAudioSegmentWaveform(input: Parameters<AudioStore['setAudioSegmentWaveform']>[0]) {
     return this.inTxn(() => this.audio.setAudioSegmentWaveform(input));
   }
-  syncAudioFromR2(known: Parameters<AudioStore['syncAudioFromR2']>[0]) {
-    return this.inTxn(() => this.audio.syncAudioFromR2(known));
+  syncAudioFromBlobs(known: Parameters<AudioStore['syncAudioFromBlobs']>[0]) {
+    return this.inTxn(() => this.audio.syncAudioFromBlobs(known));
   }
 
   // --- transcript delegates ---

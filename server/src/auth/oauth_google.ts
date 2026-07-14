@@ -8,9 +8,9 @@ const JWKS_TTL_MS = 10 * 60_000;
 
 let jwksCache: { keys: ReturnType<typeof createLocalJWKSet>; fetchedAt: number } | null = null;
 
-/** Fetch-and-cache Google's JWKS via global fetch (the Workers build of jose
- * did exactly this under the hood; the Node build uses node:https, which broke
- * both test mocking and the single-outbound-seam property). */
+/** Fetch-and-cache Google's JWKS via global fetch — NOT jose's remote-JWKS
+ * path, whose node:https transport broke both test mocking and the
+ * single-outbound-seam property (see CLAUDE.md invariant). */
 async function googleJwks(): Promise<ReturnType<typeof createLocalJWKSet>> {
   if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS) return jwksCache.keys;
   const res = await fetch(GOOGLE_JWKS_URL);

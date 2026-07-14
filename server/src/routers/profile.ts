@@ -1,7 +1,7 @@
 // Profile + studio routes — ported from src/autologger/web/routers/profile.py.
 
 import { Hono } from 'hono';
-import type { ProfileCtx } from '../db/d1';
+import type { ProfileCtx } from '../db/catalog';
 import { adminMeta, oauthConfigured } from '../env';
 import { profileUpdateBodySchema } from '../schemas';
 import {
@@ -90,8 +90,8 @@ profileRouter.put('/api/profile', async (c) => {
       }
       if (Object.keys(fields).length) {
         await catalog.updateShowFields(sid, fields);
-        // bump_events_stream_revision_for_show: the events stream lives in the phase-3
-        // SessionDO, not the D1 catalog — nothing to bump here.
+        // bump_events_stream_revision_for_show: the events stream lives in the
+        // session hub, not the catalog — nothing to bump here.
       }
     }
   }

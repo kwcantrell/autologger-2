@@ -1,4 +1,4 @@
-// Shared D1-layer types and helpers, kept dependency-free so both the Catalog
+// Shared catalog-layer types and helpers, kept dependency-free so both the Catalog
 // facade and the individual domain stores can import them without a cycle.
 
 export interface AuthUser {

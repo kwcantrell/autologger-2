@@ -64,7 +64,7 @@ export function adminTokenConfigured(env: Env): boolean {
   return Boolean((env.ADMIN_TOKEN || '').trim());
 }
 
-/** _admin_meta — restart is never supported on Workers (no supervised process). */
+/** _admin_meta — restart is not supported (no supervised process; gate decision E2). */
 export function adminMeta(env: Env): Record<string, boolean> {
   return {
     restart_supported: false,

@@ -1,7 +1,7 @@
 // Shows routes — ported from src/autologger/web/routers/shows.py.
 
 import { Hono } from 'hono';
-import { showApiDict } from '../db/d1';
+import { showApiDict } from '../db/catalog';
 import { oauthConfigured } from '../env';
 import { showCreateBodySchema } from '../schemas';
 import {

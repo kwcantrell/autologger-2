@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { CatalogDb } from './d1Adapter';
+import { CatalogDb } from './catalogStore';
 
 function db(): CatalogDb {
   const raw = new Database(':memory:');

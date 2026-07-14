@@ -1,8 +1,8 @@
-// D1 sessions index + the live projection mirrored from the SessionDO, plus
-// session→studio profile resolution. Moved verbatim out of d1.ts (Catalog),
+// Catalog sessions index + the live projection mirrored from the session hub, plus
+// session→studio profile resolution. Moved verbatim out of catalog.ts (Catalog),
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
-import type { CatalogDb } from '../node/d1Adapter';
+import type { CatalogDb } from '../node/catalogStore';
 import { blobToProfile, ValidationError } from '../studio';
 import type { SettingsBlob, StudioProfile } from '../studio';
 import type { Row } from './shared';
@@ -148,7 +148,7 @@ export class SessionIndexStore {
     return (res.meta.changes ?? 0) > 0;
   }
 
-  /** Mirror the DO's live projection onto the D1 sessions row for cheap listing. */
+  /** Mirror the hub's live projection onto the catalog sessions row for cheap listing. */
   async projectSessionLive(
     sessionId: string,
     p: {

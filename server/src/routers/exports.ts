@@ -1,5 +1,5 @@
 // Export routes — ported from web/routers/exports.py + export.py. Events come from
-// the SessionDO, category labels are enriched in the Worker, then serialized to
+// the session hub, category labels are enriched in the router layer, then serialized to
 // CSV (frozen dialect: columns TIMECODE/UTC/CATEGORY/MESSAGE, CRLF, minimal quoting —
 // the Python csv-module defaults, kept from the origin) or JSONL.
 
@@ -7,7 +7,7 @@ import { type Context, Hono } from 'hono';
 import type { EventRpc } from '../studio';
 import { enrichEventRpc } from '../studio';
 import type { AppEnv } from '../types';
-import { getSessionDO, requireSession } from './_helpers';
+import { getSessionHub, requireSession } from './_helpers';
 
 export const exportsRouter = new Hono<AppEnv>();
 
@@ -20,7 +20,7 @@ async function exportRows(
   sessionId: string,
 ): Promise<Array<Record<(typeof COLUMNS)[number], string>>> {
   const profile = await c.get('catalog').studioProfileForSession(sessionId);
-  const events = await getSessionDO(c, sessionId).exportEvents();
+  const events = await getSessionHub(c, sessionId).exportEvents();
   events.sort((a, b) => {
     const ka = a.timecode_total_frames ?? NO_TC;
     const kb = b.timecode_total_frames ?? NO_TC;

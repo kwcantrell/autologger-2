@@ -1,6 +1,6 @@
 // In-memory companion presence — the Python CompanionHub shape (nothing
 // persisted; rebuilt by browser heartbeats after a restart). Replaces the
-// KV-metadata presence keys of the Worker port (spec panel: all reviewers).
+// earlier KV-metadata presence keys (spec panel: all reviewers).
 
 export const PRESENCE_FRESH_MS = 15_000;
 

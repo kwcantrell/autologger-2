@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { CatalogDb } from '../node/d1Adapter';
-import { Catalog } from './d1';
+import type { CatalogDb } from '../node/catalogStore';
+import { Catalog } from './catalog';
 
 // A stub CatalogDb — construction must not touch it (init() is never called here).
 const stubDb = {} as unknown as CatalogDb;

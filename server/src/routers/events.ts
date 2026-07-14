@@ -1,10 +1,10 @@
 // Events + transport + status routes — ported from web/routers/events.py.
-// Each handler resolves the SessionDO, calls RPC, mirrors the returned live
-// projection onto the D1 sessions row, and enriches events in the Worker using
-// the show profile (keeping show logic out of the DO).
+// Each handler resolves the session hub, calls RPC, mirrors the returned live
+// projection onto the catalog sessions row, and enriches events in the router
+// layer using the show profile (keeping show logic out of the hub).
 
 import { Hono } from 'hono';
-import { showCategoriesApiShape } from '../db/d1';
+import { showCategoriesApiShape } from '../db/catalog';
 import { audioRecordingLeaseBodySchema, eventUpdateBodySchema, logBodySchema } from '../schemas';
 import {
   enrichEventRpc,
@@ -17,7 +17,7 @@ import { formatSmpte, fromTotalFrames, isoZ } from '../timecode';
 import type { AppEnv } from '../types';
 import {
   ApiError,
-  getSessionDO,
+  getSessionHub,
   parseOptionalMarkedAt,
   requireSession,
   timecodeCtx,
@@ -63,8 +63,8 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const row = await catalog.getSessionJoinedRow(sessionId, { includeHidden: false });
   if (row === null) throw new ApiError(404, 'Session not found.');
   const ctx = timecodeCtx(row);
-  const stub = getSessionDO(c, sessionId);
-  const [live, lease] = await Promise.all([stub.statusLive(ctx), stub.leaseStatus()]);
+  const hub = getSessionHub(c, sessionId);
+  const [live, lease] = await Promise.all([hub.statusLive(ctx), hub.leaseStatus()]);
 
   const now = new Date();
   const startedMs = row.started_at_utc ? Date.parse(String(row.started_at_utc)) : Number.NaN;
@@ -103,7 +103,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease', async (c) =>
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  const ok = await getSessionDO(c, sessionId).claimLease(body.client_id.trim());
+  const ok = await getSessionHub(c, sessionId).claimLease(body.client_id.trim());
   if (!ok) {
     throw new ApiError(
       409,
@@ -117,7 +117,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/heartbeat', as
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  const ok = await getSessionDO(c, sessionId).heartbeatLease(body.client_id.trim());
+  const ok = await getSessionHub(c, sessionId).heartbeatLease(body.client_id.trim());
   return c.json({ ok });
 });
 
@@ -125,14 +125,14 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/release', asyn
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
-  await getSessionDO(c, sessionId).releaseLease(body.client_id.trim());
+  await getSessionHub(c, sessionId).releaseLease(body.client_id.trim());
   return c.json({ ok: true });
 });
 
 eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state, projection } = await getSessionDO(c, sessionId).startTake(timecodeCtx(row));
+  const { state, projection } = await getSessionHub(c, sessionId).startTake(timecodeCtx(row));
   await c.get('catalog').projectSessionLive(sessionId, projection);
   return c.json(state);
 });
@@ -140,7 +140,7 @@ eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
 eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state, projection } = await getSessionDO(c, sessionId).stopTake(timecodeCtx(row));
+  const { state, projection } = await getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
   await c.get('catalog').projectSessionLive(sessionId, projection);
   return c.json(state);
 });
@@ -152,11 +152,11 @@ eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
   const limit = clampInt(c.req.query('limit'), 200, 1, 2000);
   const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
   const profile = await catalog.studioProfileForSession(sessionId);
-  const stub = getSessionDO(c, sessionId);
+  const hub = getSessionHub(c, sessionId);
   if (offset === 0) {
-    await stub.maybeRelinkOrphans(relinkMaps(profile));
+    await hub.maybeRelinkOrphans(relinkMaps(profile));
   }
-  const res = await stub.listEvents({ limit, offset });
+  const res = await hub.listEvents({ limit, offset });
   return c.json({
     events: res.events.map((e) => enrichEventRpc(e, profile)),
     total: res.total,
@@ -182,7 +182,7 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     if (catDef !== null) meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
   }
   const marked = parseOptionalMarkedAt(body.marked_at_utc);
-  const { event, projection } = await getSessionDO(c, sessionId).addEvent({
+  const { event, projection } = await getSessionHub(c, sessionId).addEvent({
     category: body.category,
     message: body.message,
     metadataJson: JSON.stringify(meta),
@@ -213,8 +213,8 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const fps = Math.round(Number(row.frame_rate));
   const totalFrames = (hh * 3600 + mm * 60 + ss) * fps;
 
-  const stub = getSessionDO(c, sessionId);
-  const old = await stub.getEvent(eventId);
+  const hub = getSessionHub(c, sessionId);
+  const old = await hub.getEvent(eventId);
   if (old === null) throw new ApiError(404, 'Event not found.');
   let oldMeta: Record<string, unknown> = {};
   try {
@@ -227,7 +227,7 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
   if (body.category.toLowerCase() === 'internal') meta = stripCategoryUiSnapshots(meta);
   else meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
 
-  const result = await stub.updateEvent({
+  const result = await hub.updateEvent({
     eventId,
     category: body.category,
     message: body.message,
@@ -244,7 +244,7 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
   await requireSession(c, sessionId);
-  const { ok, projection } = await getSessionDO(c, sessionId).deleteEvent(eventId);
+  const { ok, projection } = await getSessionHub(c, sessionId).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
   await c.get('catalog').projectSessionLive(sessionId, projection);
   return c.json({ ok: true });

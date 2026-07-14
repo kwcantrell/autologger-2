@@ -1,5 +1,5 @@
 // Event log domain — events table CRUD, the export feed, and the one-shot
-// orphan-relink pass. Moved verbatim out of SessionDO.ts.
+// orphan-relink pass. Moved verbatim out of the original single-file session spine.
 
 import { type EventRpc, UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
 import {
@@ -12,7 +12,7 @@ import {
 } from '../timecode';
 import type { Row, SessionCore, SessionProjection, TimecodeCtx } from './sessionCore';
 
-/** rowToRpc — pure events-row → RPC mapper (was SessionDO.rowToRpc). */
+/** rowToRpc — pure events-row → RPC mapper. */
 export function eventRowToRpc(r: Row): EventRpc {
   const tf = r.timecode_total_frames;
   const fr = Number(r.frame_rate);
@@ -93,7 +93,7 @@ export class EventStore {
     return r ? eventRowToRpc(r) : null;
   }
 
-  /** All events (unpaged) for CSV/JSONL export; the Worker sorts + enriches. */
+  /** All events (unpaged) for CSV/JSONL export; the router layer sorts + enriches. */
   exportEvents(): EventRpc[] {
     return this.core.all('SELECT * FROM events').map((r) => eventRowToRpc(r));
   }
@@ -136,7 +136,7 @@ export class EventStore {
 
   /** Relink orphan events to a category id when the snapshot label matches exactly one button.
    *  Guarded to run at most once per events_stream_revision (the only inputs are events +
-   *  the show categories the Worker passes in, both of which bump the revision). */
+   *  the show categories the router passes in, both of which bump the revision). */
   maybeRelinkOrphans(input: { validIds: string[]; labelToIds: Record<string, string[]> }): number {
     const rev = this.core.revision();
     const lastRaw = this.core.first("SELECT value FROM meta WHERE key = 'relink_checked_rev'");

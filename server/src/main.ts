@@ -39,7 +39,7 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 // Bindings ride in via wireApp's injection middleware — NOT a fetch wrapper —
 // because @hono/node-ws upgrades bypass serve()'s fetch entirely.
 wireApp(app, upgradeWebSocket, { bindings, publicDir: webDist });
-bindings.SESSION_DO.startSweeper();
+bindings.SESSION_HUBS.startSweeper();
 
 const server = serve(
   { fetch: app.fetch, port, hostname },

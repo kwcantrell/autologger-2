@@ -35,7 +35,7 @@ describe('SessionHub', () => {
     hub.close();
   });
 
-  it('state survives close + reopen (durable on disk)', () => {
+  it('state survives close + reopen (persisted on disk)', () => {
     const p = join(dir, 's1.db');
     const hub = new SessionHub(p);
     hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });

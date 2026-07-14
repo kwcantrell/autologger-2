@@ -1,7 +1,7 @@
 // Users, studio memberships, per-user prefs, and admin user operations.
-// Moved verbatim out of d1.ts (Catalog). Self-contained on this.db.
+// Moved verbatim out of catalog.ts (Catalog). Self-contained on this.db.
 
-import type { CatalogDb } from '../node/d1Adapter';
+import type { CatalogDb } from '../node/catalogStore';
 import { nowIso } from './shared';
 import type { Row } from './shared';
 

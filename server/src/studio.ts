@@ -1,6 +1,6 @@
 // Studio profiles, categories, palette helpers — ported from src/autologger/studio.py.
 // Pure functions + built-in constants only. The DB-backed studio *registry* merge
-// (built-ins + studio_definitions rows) lives in db/d1.ts.
+// (built-ins + studio_definitions rows) lives in db/catalog.ts.
 
 /** Thrown by validators on bad input; routers map this to HTTP 400. */
 export class ValidationError extends Error {
@@ -441,9 +441,9 @@ export function stripCategoryUiSnapshots(
   return out;
 }
 
-/** The event shape the SessionDO returns over RPC. Metadata crosses as a JSON
- *  *string* (metadata_json) — Cloudflare's RPC serializer rejects `unknown` and
- *  chokes on recursive JSON types, and the DO stores it as text anyway. */
+/** The event shape the session hub returns over RPC. Metadata crosses as a
+ *  JSON *string* (metadata_json) — the hub stores it as text, and a plain
+ *  string keeps the RPC shape structurally simple. */
 export interface EventRpc {
   event_id: string;
   wall_time_utc: string;

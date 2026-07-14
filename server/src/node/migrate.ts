@@ -1,7 +1,7 @@
 // src/node/migrate.ts
 // Startup migrator for the catalog DB — filename-ordered .sql files, tracked in
-// _migrations, each applied in a transaction. Mirrors wrangler's behavior on a
-// fresh database (no Miniflare data is carried over).
+// _migrations, each applied in a transaction. Applies the full ordered set on a
+// fresh database (no prior data is carried over).
 
 import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'node:fs';

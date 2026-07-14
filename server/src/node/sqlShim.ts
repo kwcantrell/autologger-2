@@ -1,4 +1,4 @@
-// SqlStorage-shaped shim over better-sqlite3 — the seam SessionCore's stores
+// Cursor-shaped SQL shim over better-sqlite3 — the seam SessionCore's stores
 // already program against (exec(sql, ...binds) → { toArray(), rowsWritten }).
 // Multi-statement SQL is supported only with zero binds (initSchema).
 

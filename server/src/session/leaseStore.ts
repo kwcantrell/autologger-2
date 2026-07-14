@@ -1,5 +1,5 @@
 // Recording-lease domain — a single-holder lease in the meta table with
-// heartbeat + alarm-driven staleness expiry. Moved verbatim out of SessionDO.ts.
+// heartbeat + alarm-driven staleness expiry. Moved verbatim out of the original single-file session spine.
 
 import type { SessionCore } from './sessionCore';
 
@@ -67,10 +67,10 @@ export class LeaseStore {
     };
   }
 
-  /** The former SessionDO.alarm body: free the lease if its heartbeat went
-   * stale, otherwise re-arm the alarm so a later death is still reaped. The DO
-   * has a single alarm slot fired once — never return without re-scheduling
-   * while a holder is still alive, or an early-firing alarm leaks the lease. */
+  /** The alarm body: free the lease if its heartbeat went stale, otherwise
+   * re-arm the alarm so a later death is still reaped. The hub has a single
+   * alarm slot fired once — never return without re-scheduling while a holder
+   * is still alive, or an early-firing alarm leaks the lease. */
   expireIfStale(): void {
     const holder = this.core.metaGet('lease_holder');
     if (holder === null) return;

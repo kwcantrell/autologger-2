@@ -1,16 +1,16 @@
 // Shared Hono generics: Node bindings + per-request context Variables.
 
-import type { AuthUser, Catalog } from './db/d1';
-import type { SessionHubRegistry } from './durable/SessionHub';
+import type { AuthUser, Catalog } from './db/catalog';
+import type { SessionHubRegistry } from './session/SessionHub';
 import type { BlobStore } from './node/blobStore';
-import type { CatalogDb } from './node/d1Adapter';
+import type { CatalogDb } from './node/catalogStore';
 import type { KvStore } from './node/kvStore';
 import type { PresenceRegistry } from './node/presence';
 
 export interface Bindings {
   DB: CatalogDb;
   AUTH: KvStore;
-  SESSION_DO: SessionHubRegistry;
+  SESSION_HUBS: SessionHubRegistry;
   AUDIO: BlobStore;
   PRESENCE: PresenceRegistry;
   PUBLIC_BASE_URL: string;

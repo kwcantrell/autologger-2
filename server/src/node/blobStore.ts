@@ -1,5 +1,5 @@
-// Filesystem blob store replacing R2 (audio bytes). r2_key strings are relative
-// paths under root. put() is atomic: write to tmpDir (outside root, so list()
+// Filesystem blob store for audio bytes. Keys (the `r2_key` column — a
+// grandfathered legacy schema name) are relative paths under root. put() is atomic: write to tmpDir (outside root, so list()
 // and reconciliation never see partials), fsync, rename. Range gets normalize
 // to {offset,length}; unsatisfiable ranges throw InvalidRangeError (→ 416).
 

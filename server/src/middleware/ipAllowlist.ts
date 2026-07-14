@@ -161,7 +161,7 @@ function effectiveClientIp(c: Context<AppEnv>): string {
   return c.env.incoming?.socket?.remoteAddress ?? '';
 }
 
-// Parse once per distinct IP_ALLOWLIST string (env is per-request on Workers, so we
+// Parse once per distinct IP_ALLOWLIST string (env is injected per-request, so we
 // can't parse at module load like the Python startup hook does).
 let cache: { raw: string; nets: Net[] | null } | null = null;
 

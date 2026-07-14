@@ -31,8 +31,8 @@ describe('events flow', () => {
   });
 });
 
-describe('audio flow (R2 round-trip)', () => {
-  it('uploads a segment, stores bytes in R2, and downloads them back', async () => {
+describe('audio flow (blob-store round-trip)', () => {
+  it('uploads a segment, stores bytes in the blob store, and downloads them back', async () => {
     const session = await freshSession();
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     const up = await app.request(

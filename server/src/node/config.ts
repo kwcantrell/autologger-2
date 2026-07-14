@@ -3,10 +3,10 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SessionHubRegistry } from '../durable/SessionHub';
+import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
-import { CatalogDb } from './d1Adapter';
+import { CatalogDb } from './catalogStore';
 import { KvStore } from './kvStore';
 import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
@@ -21,7 +21,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
 } {
   const dataDir = procEnv.DATA_DIR || './data';
   mkdirSync(join(dataDir, 'sessions'), { recursive: true });
-  // r2 keys already start with "audio/", so the blob root is a sibling dir:
+  // r2_key values already start with "audio/", so the blob root is a sibling dir:
   // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
   // so listings/reconciliation never see partial writes.
   mkdirSync(join(dataDir, 'blobs'), { recursive: true });
@@ -36,7 +36,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const bindings: Bindings = {
     DB: new CatalogDb(catalog),
     AUTH: auth,
-    SESSION_DO: registry,
+    SESSION_HUBS: registry,
     AUDIO: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
     PRESENCE: new PresenceRegistry(),
     PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

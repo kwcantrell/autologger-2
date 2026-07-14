@@ -1,8 +1,8 @@
 // Studio registry (built-ins merged with studio_definitions), app_settings,
 // per-studio settings blobs, and admin studio create/delete. Moved verbatim
-// out of d1.ts (Catalog) — this module owns the order/names registry state.
+// out of catalog.ts (Catalog) — this module owns the order/names registry state.
 
-import type { CatalogDb } from '../node/d1Adapter';
+import type { CatalogDb } from '../node/catalogStore';
 import {
   BUILTIN_STUDIO_NAMES,
   BUILTIN_STUDIO_ORDER,

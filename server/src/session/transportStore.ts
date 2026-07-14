@@ -1,6 +1,6 @@
 // Transport domain — the single session_transport row: rolling state, take
 // counter, elapsed frames, and the live timecode snapshot. Moved verbatim out
-// of SessionDO.ts.
+// of the original single-file session spine.
 
 import { formatSmpte, isoZ, parseUtcMs, toTotalFrames, transportTimecode } from '../timecode';
 import type { SessionCore, SessionProjection, TimecodeCtx, TransportState } from './sessionCore';

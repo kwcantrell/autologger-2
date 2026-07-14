@@ -1,4 +1,4 @@
-// Thin D1-shaped adapter over better-sqlite3 for the catalog stores. Only the
+// Thin prepared-statement adapter over better-sqlite3 for the catalog stores. Only the
 // surface src/db/ actually calls: prepare().bind().all()/first()/run() with
 // run().meta.changes, plus atomic batch(). Methods are synchronous; the store
 // code `await`s them, which is a no-op on plain values.
@@ -44,7 +44,7 @@ export class CatalogDb {
     return new Stmt(this.db, sql);
   }
 
-  /** D1's batch() is an implicit transaction; mirror that atomicity. */
+  /** batch() is a single implicit transaction: all statements commit atomically. */
   batch(stmts: CatalogStmt[]): Array<{ meta: { changes: number } }> {
     return this.db.transaction(() => stmts.map((s) => s.run()))();
   }

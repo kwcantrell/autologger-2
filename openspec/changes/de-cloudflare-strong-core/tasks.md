@@ -9,12 +9,12 @@
 
 ## 1. Phase 1a — Pure renames (no behavior change)
 
-- [ ] 1.1 Rename dir `server/src/durable/` → `server/src/session/`; update all imports (locate by content, anchors are stale)
-- [ ] 1.2 Rename `server/src/db/d1.ts` → `catalog.ts` and `server/src/node/d1Adapter.ts` → `catalogStore.ts`; fix imports
-- [ ] 1.3 Rename `getSessionDO`→`getSessionHub`, the `SESSION_DO` binding key, and `stub` locals → `hub`; purge "the Worker"/"the DO"/`SessionDO` live references in identifiers and comments
-- [ ] 1.4 Update header comments citing DO/D1/Worker origin to describe role, not platform; purge the `R2` **noun in comments only** — leave the `r2_key` schema column untouched (grandfathered; renaming it is a forbidden migration)
-- [ ] 1.5 Rename-sweep **beyond typecheck**: grep retired identifiers across `AUTH-API.md`, `docs/` (except frozen `docs/superpowers/**`), `companion/companion/manifest.json`, `main.ts` (`startSweeper` on the renamed key), and test fixtures that string-key `env`
-- [ ] 1.6 `npm run typecheck` + `npm test` green; commit as a pure-rename commit
+- [x] 1.1 Rename dir `server/src/durable/` → `server/src/session/`; update all imports (locate by content, anchors are stale)
+- [x] 1.2 Rename `server/src/db/d1.ts` → `catalog.ts` and `server/src/node/d1Adapter.ts` → `catalogStore.ts`; fix imports
+- [x] 1.3 Rename `getSessionDO`→`getSessionHub`, the `SESSION_DO` binding key, and `stub` locals → `hub`; purge "the Worker"/"the DO"/`SessionDO` live references in identifiers and comments
+- [x] 1.4 Update header comments citing DO/D1/Worker origin to describe role, not platform; purge the `R2` **noun in comments only** — leave the `r2_key` schema column untouched (grandfathered; renaming it is a forbidden migration)
+- [x] 1.5 Rename-sweep **beyond typecheck**: grep retired identifiers across `AUTH-API.md`, `docs/` (except frozen `docs/superpowers/**`), `companion/companion/manifest.json`, `main.ts` (`startSweeper` on the renamed key), and test fixtures that string-key `env`
+- [x] 1.6 `npm run typecheck` + `npm test` green; commit as a pure-rename commit
 
 ## 2. Phase 1b — Session seam reshape (keep seam, shed DO shape)
 

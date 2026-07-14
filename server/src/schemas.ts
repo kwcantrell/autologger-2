@@ -1,6 +1,6 @@
 // Zod request schemas — ported from the catalog-relevant Pydantic models in
 // src/autologger/web/schemas.py. Validated at the Hono route boundary; TS types inferred.
-// Response bodies stay ad-hoc dict-shaped (see db/d1.ts) to keep the JSON keys
+// Response bodies stay ad-hoc dict-shaped (see db/catalog.ts) to keep the JSON keys
 // byte-compatible with the current React app's api/types.ts.
 
 import { z } from 'zod';

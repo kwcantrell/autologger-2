@@ -1,6 +1,7 @@
 // SMPTE timecode math + UTC helpers — ported from src/autologger/models.py.
-// Pure functions shared by the SessionDO (event/transport timecodes) and the
-// Worker (master clock + cheap list-row rolling timecode from D1 projection cols).
+// Pure functions shared by the session hub (event/transport timecodes) and the
+// router layer (master clock + cheap list-row rolling timecode from catalog
+// projection cols).
 
 export interface Timecode {
   hours: number;

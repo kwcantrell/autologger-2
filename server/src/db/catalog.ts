@@ -1,10 +1,10 @@
-// Catalog — thin facade over the D1 domain stores (studioRegistry / authStore /
+// Catalog — thin facade over the catalog domain stores (studioRegistry / authStore /
 // showsStore / sessionIndexStore / profileAssembler). Preserves the per-request
 // `new Catalog(db)` + init() + method surface that routers call via c.get('catalog').
 // The flat delegate methods are a compatibility shim; the `readonly` store fields
 // are the forward-looking API. KV login sessions + OAuth CSRF live in auth/identity.ts.
 
-import type { CatalogDb } from '../node/d1Adapter';
+import type { CatalogDb } from '../node/catalogStore';
 import type { AuthUser, ProfileCtx } from './shared';
 import { AuthStore } from './authStore';
 import { ProfileAssembler } from './profileAssembler';

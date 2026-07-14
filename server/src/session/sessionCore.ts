@@ -4,7 +4,7 @@
 // and meta key/value + alarm scheduling. Holds the two cross-domain reads
 // (transportRow, projection) so the domain stores never depend on each other.
 // Runtime-agnostic by design: it sees only the structural SessionCtx seam
-// (SessionHub is the sole substrate since the Cloudflare SessionDO was removed).
+// (SessionHub is the sole substrate today; tests may supply a fake).
 
 import { type TransportFields } from '../timecode';
 
@@ -16,8 +16,8 @@ export interface AttachedSocket {
   role: 'browser' | 'companion';
 }
 
-/** Runtime substrate SessionCore runs on. On Workers this wrapped
- * DurableObjectState; on Node it wraps better-sqlite3 + the hub's socket set. */
+/** Runtime substrate SessionCore runs on: the embedded SQL handle, the hub's
+ * socket set, and the alarm scheduler. */
 export interface SessionCtx {
   readonly sql: {
     exec<T = Row>(sql: string, ...binds: SqlValue[]): { toArray(): T[]; rowsWritten: number };
@@ -26,7 +26,7 @@ export interface SessionCtx {
   setAlarm(atMs: number): void;
 }
 
-/** Live fields the Worker mirrors onto the D1 sessions row for cheap listing. */
+/** Live fields mirrored onto the catalog sessions row for cheap listing. */
 export interface SessionProjection {
   event_count: number;
   max_timecode_total_frames: number | null;

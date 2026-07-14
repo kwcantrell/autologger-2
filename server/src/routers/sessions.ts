@@ -1,15 +1,16 @@
 // Sessions routes — ported from web/routers/sessions.py. Listing + metadata are
-// pure D1 (no DO wake); create initializes the D1 index row and the SessionDO.
+// pure catalog reads (no hub wake); create initializes the catalog index row
+// and the session hub.
 // YouTube import is a 503 stub on this deployment (phase 6 decision).
 
 import { Hono } from 'hono';
-import type { Row } from '../db/d1';
+import type { Row } from '../db/catalog';
 import { oauthConfigured } from '../env';
 import { newSessionBodySchema, sessionUpdateBodySchema } from '../schemas';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
-import { ApiError, getSessionDO, requireSession } from './_helpers';
+import { ApiError, getSessionHub, requireSession } from './_helpers';
 
 export const sessionsRouter = new Hono<AppEnv>();
 
@@ -131,8 +132,8 @@ sessionsRouter.post('/api/sessions', async (c) => {
     startedAtUtc: now,
     createdAtUtc: now,
   });
-  // Instantiate the DO so its transport row exists.
-  await getSessionDO(c, id).ensure();
+  // Instantiate the hub so its transport row exists.
+  await getSessionHub(c, id).ensure();
   return c.json({
     id,
     title,
@@ -195,7 +196,7 @@ sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
   return c.json({ ok: true, hidden: true });
 });
 
-// YouTube import is unavailable on this deployment (no yt-dlp / Workers AI box).
+// YouTube import is unavailable on this deployment (no import pipeline wired up).
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   await requireSession(c, c.req.param('sessionId'));
   throw new ApiError(503, 'YouTube import is unavailable on this deployment.');

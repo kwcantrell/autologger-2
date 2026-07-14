@@ -1,5 +1,5 @@
 // Transcript-words domain — manual CRUD over session_transcript_words
-// (generation is stubbed in the router). Moved verbatim out of SessionDO.ts.
+// (generation is stubbed in the router). Moved verbatim out of the original single-file session spine.
 
 import { isoZ } from '../timecode';
 import type { Row, SessionCore, SqlValue } from './sessionCore';

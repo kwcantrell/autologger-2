@@ -1,15 +1,15 @@
-// Audio routes — ported from web/routers/audio.py. Bytes live in R2 keyed
-// `audio/<session_id>/<ordinal>_<uuid>.<ext>`; segment metadata lives in the
-// SessionDO. Upload streams to R2 then records metadata; download streams R2
-// back with HTTP range support (audio scrubbing).
+// Audio routes — ported from web/routers/audio.py. Bytes live in the blob
+// store keyed `audio/<session_id>/<ordinal>_<uuid>.<ext>`; segment metadata
+// lives in the session hub. Upload streams to the blob store then records
+// metadata; download streams back with HTTP range support (audio scrubbing).
 
 import { Hono } from 'hono';
-import type { AudioSegmentMeta } from '../durable/SessionHub';
+import type { AudioSegmentMeta } from '../session/SessionHub';
 import { InvalidRangeError } from '../node/blobStore';
 import type { BlobRange } from '../node/blobStore';
 import { audioSegmentWaveformBodySchema } from '../schemas';
 import type { AppEnv } from '../types';
-import { ApiError, getSessionDO, parseOptionalMarkedAt, requireSession } from './_helpers';
+import { ApiError, getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
 export const audioRouter = new Hono<AppEnv>();
 
@@ -40,7 +40,7 @@ export function enforceAudioByteLimit(bytes: number | null): void {
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
-  const segs = await getSessionDO(c, sessionId).listAudioSegments();
+  const segs = await getSessionHub(c, sessionId).listAudioSegments();
   return c.json({
     segments: segs.map((s) => segmentApiDict(sessionId, s)),
     has_audio: segs.length > 0,
@@ -61,7 +61,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const roRaw = c.req.query('recording_ordinal');
   const recordingOrdinal = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
 
-  const seg = await getSessionDO(c, sessionId).addAudioSegment({
+  const seg = await getSessionHub(c, sessionId).addAudioSegment({
     sessionId,
     mimeType: mime,
     startedAtUtc: started,
@@ -72,7 +72,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     await c.env.AUDIO.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
-    await getSessionDO(c, sessionId).deleteAudioSegment(seg.id);
+    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
     throw e;
   }
   return c.json(segmentApiDict(sessionId, seg));
@@ -93,9 +93,9 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 
-  const stub = getSessionDO(c, sessionId);
-  const out = await stub.syncAudioFromR2(known);
-  const segs = await stub.listAudioSegments();
+  const hub = getSessionHub(c, sessionId);
+  const out = await hub.syncAudioFromBlobs(known);
+  const segs = await hub.listAudioSegments();
   return c.json({
     inserted: out.inserted,
     updated: 0,
@@ -109,7 +109,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
   await requireSession(c, sessionId);
-  const got = await getSessionDO(c, sessionId).getAudioSegmentKey(segmentId);
+  const got = await getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
 
   const rangeHeader = c.req.header('range');
@@ -166,7 +166,7 @@ audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', a
       throw new ApiError(400, 'waveform peaks must be in [0, 1].');
     }
   }
-  const ok = await getSessionDO(c, sessionId).setAudioSegmentWaveform({
+  const ok = await getSessionHub(c, sessionId).setAudioSegmentWaveform({
     segmentId,
     peaks: body.peaks,
   });
