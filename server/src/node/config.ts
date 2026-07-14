@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { systemClock } from '../clock';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -30,17 +31,19 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
 
   const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
   applyMigrations(catalog, MIGRATIONS_DIR);
-  const auth = new KvStore(catalog);
-  auth.purgeExpired(); // startup hygiene — no sweep timer (spec)
-  const registry = new SessionHubRegistry(join(dataDir, 'sessions'));
+  const clock = systemClock;
+  const kv = new KvStore(catalog, clock);
+  kv.purgeExpired(); // startup hygiene — no sweep timer (spec)
+  const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
 
   const bindings: Bindings = {
     ports: {
+      clock,
       catalog: new CatalogDb(catalog),
-      kv: auth,
+      kv,
       sessions: registry,
       audio: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
-      presence: new PresenceRegistry(),
+      presence: new PresenceRegistry(clock),
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',

@@ -19,6 +19,7 @@ function fakeCore(initial: Partial<TRow> = {}) {
   };
   const broadcasts: unknown[] = [];
   const core = {
+    now: (): number => Date.now(), // vitest fake timers control this
     get db() {
       return {
         run: (sql: string, ...args: unknown[]): { changes: number } => {

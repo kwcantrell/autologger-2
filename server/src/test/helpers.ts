@@ -100,6 +100,6 @@ export function setCompanionPresence(
     session_id: sessionId,
     visible: opts.visible ?? true,
     is_playing: opts.is_playing ?? false,
-    updated: Date.now(),
+    updated: env.ports.clock.now(),
   });
 }

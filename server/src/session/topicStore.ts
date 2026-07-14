@@ -53,7 +53,7 @@ export class TopicStore {
       data.topic_level,
       data.summary,
       ordinal,
-      isoZ(new Date()),
+      isoZ(new Date(this.core.now())),
     );
     return topicRow(this.core.first('SELECT * FROM session_topics WHERE id = ?', id) as Row);
   }

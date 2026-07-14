@@ -54,7 +54,7 @@ companionRouter.post('/api/companion/presence', async (c) => {
     session_id: (body.session_id ?? '').trim(),
     visible: body.visible,
     is_playing: body.is_playing,
-    updated: Date.now(),
+    updated: c.env.ports.clock.now(),
   };
   c.env.ports.presence.upsert(cid, meta);
   return c.json({ ok: true });
@@ -166,7 +166,7 @@ companionRouter.post('/api/companion/command', async (c) => {
       id: commandId,
       type: body.type,
       session_id: sid,
-      created_at_utc: new Date().toISOString(),
+      created_at_utc: new Date(c.env.ports.clock.now()).toISOString(),
       delivered_to: null,
       ok: false,
       error: null,

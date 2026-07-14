@@ -42,11 +42,11 @@
 
 ## 5. Phase 2 — Clock port (app-wide; alarm/clock one time base)
 
-- [ ] 5.1 Add a synchronous `Clock` port (`now(): number`); fold it into `SessionRuntime` (real adapter = `Date.now`)
-- [ ] 5.2 Route all `durable/` decision reads through the clock: `leaseStore` staleness/expiry, `armAlarm` delay (so alarm + expiry share one time base), `transportStore` live timecode, `eventStore` wall-clock marking, `SessionHub` idle-eviction
-- [ ] 5.3 Fake-clock test: claim a lease, advance the clock past the threshold, trigger expiry **through the hub** — lease frees with no real time, no busy-refire / no missed fire
-- [ ] 5.4 Thread the same `Clock` into `KvStore` TTL (`kvStore.ts` ×2 decisions), `PresenceRegistry` freshness, and the `companion.ts`/`sessions.ts` timestamp stamps; fake-clock tests for KV/CSRF expiry + presence staleness
-- [ ] 5.5 `npm run typecheck` + `npm test` green
+- [x] 5.1 Add a synchronous `Clock` port (`now(): number`); fold it into `SessionRuntime` (real adapter = `Date.now`)
+- [x] 5.2 Route all `durable/` decision reads through the clock: `leaseStore` staleness/expiry, `armAlarm` delay (so alarm + expiry share one time base), `transportStore` live timecode, `eventStore` wall-clock marking, `SessionHub` idle-eviction
+- [x] 5.3 Fake-clock test: claim a lease, advance the clock past the threshold, trigger expiry **through the hub** — lease frees with no real time, no busy-refire / no missed fire
+- [x] 5.4 Thread the same `Clock` into `KvStore` TTL (`kvStore.ts` ×2 decisions), `PresenceRegistry` freshness, and the `companion.ts`/`sessions.ts` timestamp stamps; fake-clock tests for KV/CSRF expiry + presence staleness
+- [x] 5.5 `npm run typecheck` + `npm test` green
 
 ## 6. Phase 2 — IdentityVerifier port
 

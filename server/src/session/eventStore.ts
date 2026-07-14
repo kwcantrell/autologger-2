@@ -39,8 +39,8 @@ export class EventStore {
     markedAtUtc: string | null;
     ctx: TimecodeCtx;
   }): { event: EventRpc; projection: SessionProjection } {
-    const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : Date.now();
-    const wallMs = Number.isNaN(markMs) ? Date.now() : markMs;
+    const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();
+    const wallMs = Number.isNaN(markMs) ? this.core.now() : markMs;
     const tr = this.core.transportRow();
     const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
     const totalFrames = toTotalFrames(tc);

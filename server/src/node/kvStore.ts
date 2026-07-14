@@ -3,16 +3,21 @@
 // startup — no background sweep (spec: scope #3).
 
 import type { Database } from 'better-sqlite3';
+import { systemClock } from '../clock';
+import type { Clock } from '../clock';
 
 export class KvStore {
-  constructor(private db: Database) {}
+  constructor(
+    private db: Database,
+    private clock: Clock = systemClock,
+  ) {}
 
   get(key: string): string | null {
     const row = this.db.prepare('SELECT value, expires_at FROM kv WHERE key = ?').get(key) as
       | { value: string; expires_at: number | null }
       | undefined;
     if (!row) return null;
-    if (row.expires_at !== null && row.expires_at <= Date.now()) {
+    if (row.expires_at !== null && row.expires_at <= this.clock.now()) {
       this.delete(key);
       return null;
     }
@@ -20,7 +25,7 @@ export class KvStore {
   }
 
   put(key: string, value: string, opts: { expirationTtl?: number } = {}): void {
-    const expiresAt = opts.expirationTtl ? Date.now() + opts.expirationTtl * 1000 : null;
+    const expiresAt = opts.expirationTtl ? this.clock.now() + opts.expirationTtl * 1000 : null;
     this.db
       .prepare(
         'INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?) ' +
@@ -35,7 +40,7 @@ export class KvStore {
 
   purgeExpired(): void {
     this.db.prepare('DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?').run(
-      Date.now(),
+      this.clock.now(),
     );
   }
 }

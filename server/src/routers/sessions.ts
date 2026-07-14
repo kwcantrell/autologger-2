@@ -66,7 +66,7 @@ sessionsRouter.get('/api/sessions', async (c) => {
         elapsed_frames: Number(s.transport_elapsed_frames ?? 0),
         roll_started_at_utc: (s.roll_started_at_utc as string | null) ?? null,
       },
-      Date.now(),
+      c.env.ports.clock.now(),
     );
     const trTotal = toTotalFrames(tc);
     const rtFrames = listRuntimeTotalFrames(s, trTotal);
@@ -121,7 +121,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
   const showCode = String(showRow.show_code ?? '').trim();
   const title =
     (body.title ?? '').trim() || sessionDeckDisplayTitle({ showCode, episode, storedTitle: '' });
-  const now = isoZ(new Date());
+  const now = isoZ(new Date(c.env.ports.clock.now()));
   const id = catalog.sessions.createSessionIndex({
     showId: body.show_id.trim(),
     title,

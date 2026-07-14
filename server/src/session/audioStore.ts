@@ -81,7 +81,7 @@ export class AudioStore {
       input.mimeType || 'audio/webm',
       r2Key,
       ro,
-      isoZ(new Date()),
+      isoZ(new Date(this.core.now())),
     );
     this.core.broadcast({ type: 'audio.changed' });
     return {
@@ -131,7 +131,7 @@ export class AudioStore {
     inserted: number;
   } {
     let inserted = 0;
-    const now = isoZ(new Date());
+    const now = isoZ(new Date(this.core.now()));
     for (const k of known) {
       const exists = this.core.first(
         'SELECT 1 AS x FROM session_audio_segments WHERE r2_key = ?',

@@ -66,7 +66,7 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const hub = getSessionHub(c, sessionId);
   const [live, lease] = await Promise.all([hub.statusLive(ctx), hub.leaseStatus()]);
 
-  const now = new Date();
+  const now = new Date(c.env.ports.clock.now());
   const startedMs = row.started_at_utc ? Date.parse(String(row.started_at_utc)) : Number.NaN;
   const sec = Number.isNaN(startedMs) ? 0 : Math.max(0, (now.getTime() - startedMs) / 1000);
   const masterTc = fromTotalFrames(Math.round(sec * ctx.frameRate), ctx.frameRate);

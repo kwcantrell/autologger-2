@@ -10,7 +10,7 @@ export class TransportStore {
 
   private transportStateDict(ctx: TimecodeCtx): TransportState {
     const tr = this.core.transportRow();
-    const tc = transportTimecode(ctx.frameRate, ctx.startOffsetFrames, tr, Date.now());
+    const tc = transportTimecode(ctx.frameRate, ctx.startOffsetFrames, tr, this.core.now());
     return {
       is_rolling: tr.is_rolling,
       current_take: tr.current_take,
@@ -37,7 +37,7 @@ export class TransportStore {
     this.core.db.run(
       'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
       nextTake,
-      isoZ(new Date()),
+      isoZ(new Date(this.core.now())),
     );
     this.core.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
     const st = this.transportStateDict(ctx);
@@ -56,7 +56,7 @@ export class TransportStore {
     if (tr.roll_started_at_utc) {
       const started = parseUtcMs(tr.roll_started_at_utc);
       if (!Number.isNaN(started)) {
-        extra = Math.max(0, Math.trunc(((Date.now() - started) / 1000) * ctx.frameRate));
+        extra = Math.max(0, Math.trunc(((this.core.now() - started) / 1000) * ctx.frameRate));
       }
     }
     const totalElapsed = tr.elapsed_frames + extra;

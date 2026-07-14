@@ -11,6 +11,8 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { systemClock } from '../clock';
+import type { Clock } from '../clock';
 import { AudioStore } from './audioStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
@@ -61,9 +63,13 @@ export class SessionHub {
   private socketSet = new Set<HubSocket>();
   // ReturnType<> (not NodeJS.Timeout): correct under any ambient setTimeout typing.
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
-  lastTouchedMs = Date.now();
+  lastTouchedMs: number;
 
-  constructor(dbPath: string) {
+  constructor(
+    dbPath: string,
+    private clock: Clock = systemClock,
+  ) {
+    this.lastTouchedMs = clock.now();
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
@@ -71,6 +77,7 @@ export class SessionHub {
     this.db.pragma('busy_timeout = 5000');
     this.core = new SessionCore({
       sql: sqliteSessionSql(this.db),
+      clock: this.clock,
       sockets: () => this.socketSet,
       setAlarm: (atMs) => this.armAlarm(atMs),
     });
@@ -90,7 +97,9 @@ export class SessionHub {
     return this.db.transaction(fn)();
   }
 
-  /** Single alarm slot: arming replaces any pending timer. */
+  /** Single alarm slot: arming replaces any pending timer. The delay is
+   * computed from the injected clock so the alarm and the lease-expiry reads
+   * share one time base (no real-setTimeout-vs-fake-clock skew). */
   private armAlarm(atMs: number): void {
     if (this.alarmTimer) clearTimeout(this.alarmTimer);
     this.alarmTimer = setTimeout(
@@ -98,7 +107,7 @@ export class SessionHub {
         this.alarmTimer = null;
         this.inTxn(() => this.lease.expireIfStale());
       },
-      Math.max(0, atMs - Date.now()),
+      Math.max(0, atMs - this.clock.now()),
     );
     this.alarmTimer.unref?.();
   }
@@ -270,7 +279,10 @@ export class SessionHubRegistry {
   private hubs = new Map<string, SessionHub>();
   private sweeper: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private sessionsDir: string) {
+  constructor(
+    private sessionsDir: string,
+    private clock: Clock = systemClock,
+  ) {
     mkdirSync(sessionsDir, { recursive: true });
   }
 
@@ -280,16 +292,16 @@ export class SessionHubRegistry {
     }
     let hub = this.hubs.get(sessionId);
     if (!hub) {
-      hub = new SessionHub(join(this.sessionsDir, `${sessionId}.db`));
+      hub = new SessionHub(join(this.sessionsDir, `${sessionId}.db`), this.clock);
       this.hubs.set(sessionId, hub);
     }
-    hub.lastTouchedMs = Date.now();
+    hub.lastTouchedMs = this.clock.now();
     return hub;
   }
 
   /** Close hubs holding nothing live — fd hygiene, everything is on disk. */
   evictIdle(idleMs: number = DEFAULT_IDLE_MS): void {
-    const now = Date.now();
+    const now = this.clock.now();
     for (const [id, hub] of this.hubs) {
       if (hub.socketCount === 0 && !hub.hasArmedAlarm && now - hub.lastTouchedMs > idleMs) {
         hub.close();

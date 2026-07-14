@@ -55,7 +55,7 @@ export class TranscriptStore {
       data.speaker,
       data.word,
       ordinal,
-      isoZ(new Date()),
+      isoZ(new Date(this.core.now())),
     );
     return wordRow(
       this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', id) as Row,

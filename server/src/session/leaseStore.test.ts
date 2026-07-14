@@ -7,6 +7,7 @@ function fakeCore() {
   const alarms: number[] = [];
   const broadcasts: unknown[] = [];
   const core = {
+    now: (): number => Date.now(), // vitest fake timers control this
     metaGet: (k: string): string | null => (meta.has(k) ? (meta.get(k) as string) : null),
     metaSet: (k: string, v: string): void => void meta.set(k, v),
     metaDelete: (k: string): void => void meta.delete(k),

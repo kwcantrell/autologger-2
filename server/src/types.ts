@@ -1,6 +1,7 @@
 // Shared Hono generics: the composition root's Ports + Config + per-request
 // context Variables.
 
+import type { Clock } from './clock';
 import type { AuthUser, Catalog } from './db/catalog';
 import type { SessionHubRegistry } from './session/SessionHub';
 import type { BlobStore } from './node/blobStore';
@@ -10,6 +11,7 @@ import type { PresenceRegistry } from './node/presence';
 
 /** Constructed services, role-named. */
 export interface Ports {
+  clock: Clock;
   catalog: CatalogDb;
   kv: KvStore;
   sessions: SessionHubRegistry;

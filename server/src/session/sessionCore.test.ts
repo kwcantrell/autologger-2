@@ -15,19 +15,22 @@ function fakeRuntime(): {
   sent: string[];
   alarms: number[];
   sockets: Set<AttachedSocket>;
+  time: { now: number };
 } {
   const sent: string[] = [];
   const alarms: number[] = [];
+  const time = { now: 1_000_000 };
   const sockets = new Set<AttachedSocket>();
   sockets.add({ send: (d) => sent.push(d), role: 'browser' });
   const runtime: SessionRuntime = {
     sql: sqliteSessionSql(new Database(':memory:')),
+    clock: { now: () => time.now },
     sockets: () => sockets,
     setAlarm: (atMs) => alarms.push(atMs),
   };
   const core = new SessionCore(runtime);
   core.initSchema();
-  return { core, sent, alarms, sockets };
+  return { core, sent, alarms, sockets, time };
 }
 
 describe('SessionCore on a fake runtime', () => {

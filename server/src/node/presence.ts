@@ -11,8 +11,13 @@ export interface PresenceMeta {
   updated: number;
 }
 
+import { systemClock } from '../clock';
+import type { Clock } from '../clock';
+
 export class PresenceRegistry {
   private map = new Map<string, PresenceMeta>();
+
+  constructor(private clock: Clock = systemClock) {}
 
   upsert(clientId: string, meta: PresenceMeta): void {
     this.map.set(clientId, meta);
@@ -24,7 +29,7 @@ export class PresenceRegistry {
 
   /** Fresh entries only (≤15s old); stale ones are pruned as a side effect. */
   list(): PresenceMeta[] {
-    const now = Date.now();
+    const now = this.clock.now();
     const out: PresenceMeta[] = [];
     for (const [cid, meta] of this.map) {
       if (now - meta.updated <= PRESENCE_FRESH_MS) out.push(meta);

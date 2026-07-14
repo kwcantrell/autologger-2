@@ -6,6 +6,7 @@
 // Runtime-agnostic by design: it sees only the structural SessionRuntime seam
 // (SessionHub is the sole substrate today; tests may supply a fake).
 
+import type { Clock } from '../clock';
 import { type TransportFields } from '../timecode';
 
 export type SqlValue = string | number | null;
@@ -31,6 +32,7 @@ export interface SessionSql {
  * fake runtime without touching SessionCore. */
 export interface SessionRuntime {
   readonly sql: SessionSql;
+  readonly clock: Clock;
   sockets(): Iterable<AttachedSocket>;
   setAlarm(atMs: number): void;
 }
@@ -67,6 +69,11 @@ export class SessionCore {
 
   get db(): SessionSql {
     return this.ctx.sql;
+  }
+
+  /** Current time from the injected Clock — never Date.now() in domain code. */
+  now(): number {
+    return this.ctx.clock.now();
   }
 
   initSchema(): void {

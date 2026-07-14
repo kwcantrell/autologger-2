@@ -19,7 +19,7 @@ export class LeaseStore {
   claimLease(clientId: string): boolean {
     const cid = clientId.trim();
     if (!cid) return false;
-    const now = Date.now();
+    const now = this.core.now();
     const holder = this.core.metaGet('lease_holder');
     const seen = this.finiteMs('lease_seen_ms');
     if (holder === null || holder === cid || now - seen >= LeaseStore.LEASE_STALE_MS) {
@@ -36,7 +36,7 @@ export class LeaseStore {
     const cid = clientId.trim();
     if (!cid) return false;
     if (this.core.metaGet('lease_holder') !== cid) return false;
-    const now = Date.now();
+    const now = this.core.now();
     this.core.metaSet('lease_seen_ms', String(now));
     this.core.setAlarm(now + LeaseStore.LEASE_STALE_MS);
     return true;
@@ -59,7 +59,7 @@ export class LeaseStore {
     const holder = this.core.metaGet('lease_holder');
     if (holder === null) return { holder_client_id: null, lease_alive: false, lease_age_sec: null };
     const seen = this.finiteMs('lease_seen_ms');
-    const age = Math.max(0, (Date.now() - seen) / 1000);
+    const age = Math.max(0, (this.core.now() - seen) / 1000);
     return {
       holder_client_id: holder,
       lease_alive: age < LeaseStore.LEASE_STALE_MS / 1000,
@@ -75,7 +75,7 @@ export class LeaseStore {
     const holder = this.core.metaGet('lease_holder');
     if (holder === null) return;
     const seen = this.finiteMs('lease_seen_ms');
-    if (Date.now() - seen >= LeaseStore.LEASE_STALE_MS) {
+    if (this.core.now() - seen >= LeaseStore.LEASE_STALE_MS) {
       this.core.metaDelete('lease_holder');
       this.core.metaDelete('lease_seen_ms');
       this.core.broadcast({ type: 'lease.changed' });
