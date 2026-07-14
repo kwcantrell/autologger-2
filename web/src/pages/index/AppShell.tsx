@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState } from 'react';
+import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { Toast, toast } from '../../shared/components/Toast';
@@ -11,12 +12,11 @@ import { NewSessionModal } from './components/NewSessionModal';
 import { V6Rail } from './components/V6Rail';
 import { WorkspaceStatic } from './components/WorkspaceStatic';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
+import { navigate } from './navigation';
 import 'overlayscrollbars/overlayscrollbars.css';
 
 declare global {
   interface Window {
-    V3_selectSession?: (sid: string) => Promise<void>;
-    V3_closeSession?: () => void;
     AutoLogger_closeSettingsModal?: () => void;
     Home_reloadSessionList?: () => void;
     Home_clearSessionList?: () => void;
@@ -26,23 +26,14 @@ declare global {
   }
 }
 
-function syncChrome() {
-  const sid = (document.body.dataset.sessionId ?? '').trim();
-  const hasSession = Boolean(sid);
-  const placeholder = document.getElementById('v3-session-placeholder');
-  const grid = document.getElementById('v3-session-grid');
-  const sessionLoading = document.getElementById('v3-session-loading');
-  if (placeholder) placeholder.classList.toggle('hidden', hasSession);
-  if (grid) grid.classList.toggle('hidden', !hasSession);
-  if (sessionLoading) sessionLoading.classList.add('hidden');
-  // Sync page title
-  if (!hasSession) {
-    document.title = 'AutoLogger';
-  }
-}
-
 export function AppShell() {
-  const [activeSessionId, setActiveSessionId] = useState('');
+  // Active session is URL-derived (design D2): `/sessions/:id` is the session
+  // workspace; anything else — `/` or an unmatched path (e.g. the raw dev
+  // entry `/src/pages/index/index.html`) — is the no-session home view, with
+  // the address bar left as-is. There is deliberately no component-state copy
+  // of the active session id that could disagree with the URL.
+  const [onSessionRoute, sessionRouteParams] = useRoute('/sessions/:id');
+  const activeSessionId = onSessionRoute ? (sessionRouteParams?.id ?? '') : '';
   const [showNewSession, setShowNewSession] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [ytImportPending, setYtImportPending] = useState(false);
@@ -73,31 +64,16 @@ export function AppShell() {
     return () => document.removeEventListener('keydown', onKey);
   }, [isMobile, railOpen]);
 
-  // Sync body dataset and chrome whenever active session changes
+  // syncChrome's title-reset behavior, now route-driven (design D9): with no
+  // active session the tab title returns to the app name. (Nothing currently
+  // sets a per-session title; this keeps the reset observable regardless.)
   useEffect(() => {
-    document.body.dataset.sessionId = activeSessionId;
-    syncChrome();
+    if (!activeSessionId) document.title = 'AutoLogger';
   }, [activeSessionId]);
 
   // Set up window globals and one-time boot tasks — runs once on mount
   useEffect(() => {
     const refetchSessions = () => queryClient.invalidateQueries({ queryKey: ['sessions'] });
-
-    window.V3_selectSession = async (sid: string) => {
-      document.body.dataset.sessionId = sid;
-      setActiveSessionId(sid);
-      requestAnimationFrame(syncChrome);
-    };
-
-    window.V3_closeSession = () => {
-      window.AutoLogger_stopTransportIfNeeded?.();
-      document.body.dataset.sessionId = '';
-      setActiveSessionId('');
-      requestAnimationFrame(() => {
-        syncChrome();
-        refetchSessions();
-      });
-    };
 
     window.AutoLogger_closeSettingsModal = () => {
       setShowSettings(false);
@@ -130,9 +106,12 @@ export function AppShell() {
 
   const handleSelectSession = useCallback(
     (sid: string, ytUrl?: string, useYtPublishDate?: boolean) => {
-      document.body.dataset.sessionId = sid;
-      setActiveSessionId(sid);
-      requestAnimationFrame(syncChrome);
+      // Select (and create) push `/sessions/:id`; re-selecting the already
+      // active session is a no-op so unguarded card clicks can't stack
+      // duplicate history entries and deaden Back (design D3).
+      if (sid !== activeSessionId) {
+        navigate(`/sessions/${encodeURIComponent(sid)}`);
+      }
       if (ytUrl) {
         setYtImportPending(true);
         runYoutubeImport({ sessionId: sid, url: ytUrl, usePublishDate: useYtPublishDate ?? false })
@@ -144,18 +123,20 @@ export function AppShell() {
           });
       }
     },
-    [runYoutubeImport],
+    [activeSessionId, runYoutubeImport],
   );
 
   const handleCloseSession = useCallback(() => {
+    // Close stops the roll (behavior preserved from the legacy spine; a later
+    // phase replaces this direct call with the originator-scoped departure
+    // watcher — design D4).
     window.AutoLogger_stopTransportIfNeeded?.();
-    document.body.dataset.sessionId = '';
-    setActiveSessionId('');
-    requestAnimationFrame(() => {
-      syncChrome();
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    });
-  }, [queryClient]);
+    // Navigate home only when a session is actually open, so callers reachable
+    // without one (the settings modal's studio-switch branch) can't stack
+    // duplicate `/` entries (design D3).
+    if (activeSessionId) navigate('/');
+    queryClient.invalidateQueries({ queryKey: ['sessions'] });
+  }, [activeSessionId, queryClient]);
 
   const handleOpenSettings = useCallback(() => {
     setShowSettings(true);
@@ -305,6 +286,7 @@ export function AppShell() {
               sessionId={activeSessionId}
               showSettings={showSettings}
               onCloseSettings={handleCloseSettings}
+              onCloseSession={handleCloseSession}
               ytImportPending={ytImportPending}
             />
           </main>

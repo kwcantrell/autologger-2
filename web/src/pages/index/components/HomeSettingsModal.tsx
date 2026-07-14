@@ -53,6 +53,12 @@ const FIELDS_HEAD = 'flex flex-row items-center justify-between gap-3 w-full mb-
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * Close the active session (AppShell's close handler). Called by the save
+   * path when the active studio changed — same behavior as the close-session
+   * control, navigating to `/` (session-deep-links spec).
+   */
+  onCloseSession: () => void;
 }
 
 interface ShowDraft {
@@ -130,7 +136,7 @@ function getDefaultFps(profile: ProfilePayload, studioId: string): number {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function HomeSettingsModal({ isOpen, onClose }: Props) {
+export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   const { data: profile } = useProfile();
   const mutation = useProfileMutation();
   const createShow = useCreateShow();
@@ -243,7 +249,7 @@ export function HomeSettingsModal({ isOpen, onClose }: Props) {
       await mutation.mutateAsync(body);
       showToast('Saved.');
       if (activeStudioId !== prevStudioId) {
-        window.V3_closeSession?.();
+        onCloseSession();
       }
       window.Home_reloadSessionList?.();
       queryClient.invalidateQueries({ queryKey: ['events'] });

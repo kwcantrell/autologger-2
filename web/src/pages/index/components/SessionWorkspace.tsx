@@ -251,9 +251,16 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
         id="v3-session-active"
         className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
       >
+        {/* Placeholder ↔ grid visibility swap, route-driven off the sessionId
+            prop (design D9 — replaces the imperative syncChrome classList
+            toggling). Both elements stay in the DOM with their ids (e2e
+            asserts on them); `hidden` wins over the display utilities. */}
         <div
           id="v3-session-placeholder"
-          className="flex items-center justify-center min-h-[calc(100vh-4rem)] px-6 py-8 text-center"
+          className={clsx(
+            'flex items-center justify-center min-h-[calc(100vh-4rem)] px-6 py-8 text-center',
+            sessionId && 'hidden',
+          )}
         >
           <p
             className={clsx(
@@ -271,7 +278,10 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
             desktop flex column, max-md plain block. */}
         <div
           id="v3-session-grid"
-          className="v4-session-workspace hidden flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
+          className={clsx(
+            'v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto',
+            !sessionId && 'hidden',
+          )}
         >
           {/* #v4-log-session — ancestor id retained (drives descendant [#v4-log-session_&]
               variants + [data-v5-live-log] variants; perfDebug/e2e hooks target it).

@@ -6,13 +6,25 @@ interface WorkspaceStaticProps {
   sessionId: string;
   showSettings: boolean;
   onCloseSettings: () => void;
+  /** Close the active session (AppShell's close handler — navigates home). */
+  onCloseSession: () => void;
   ytImportPending?: boolean;
 }
 
 export const WorkspaceStatic = memo(
-  ({ sessionId, showSettings, onCloseSettings, ytImportPending }: WorkspaceStaticProps) => (
+  ({
+    sessionId,
+    showSettings,
+    onCloseSettings,
+    onCloseSession,
+    ytImportPending,
+  }: WorkspaceStaticProps) => (
     <>
-      <HomeSettingsModal isOpen={showSettings} onClose={onCloseSettings} />
+      <HomeSettingsModal
+        isOpen={showSettings}
+        onClose={onCloseSettings}
+        onCloseSession={onCloseSession}
+      />
       <SessionWorkspace sessionId={sessionId} ytImportPending={ytImportPending} />
     </>
   ),
