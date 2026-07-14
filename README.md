@@ -1,4 +1,4 @@
-# autologger-cf
+# autologger
 
 AutoLogger as a **portable Node server** — runs anywhere Node 22 runs, no cloud platform
 required.
@@ -79,9 +79,10 @@ server/src/
   schemas.ts             Zod request schemas                           (← web/schemas.py)
   studio.ts              Studios + palette/category + event enrichment (← studio.py)
   timecode.ts            SMPTE timecode math + UTC helpers             (← models.py)
-  types.ts               Shared Hono generics (Bindings + Variables)
+  clock.ts               Clock port — the single injected time source (leases, TTLs, timecodes)
+  types.ts               Shared Hono generics (Ports + Config + Variables)
   node/
-    config.ts            Bindings construction from process env (DATA_DIR layout, wiring)
+    config.ts            Composition root: Ports + Config from process env (DATA_DIR layout, wiring)
     migrate.ts            Startup migrator for the catalog DB (filename-ordered .sql, transactional)
     catalogStore.ts       CatalogDb — better-sqlite3-backed catalog query layer
     kvStore.ts            KV replacement (login sessions, OAuth CSRF, Companion presence) on the catalog DB
@@ -98,7 +99,7 @@ server/src/
     migrations/0001_init.sql                  Catalog DDL + seeded built-in shows
     migrations/0002_sessions_live_split.sql   Sessions index metadata + live projection
   auth/
-    oauth_google.ts        Authorize URL, code exchange, ID-token verify (← oauth_google.py)
+    oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
     identity.ts             Login sessions + CSRF, bearer compare, gate rule (← auth_identity.py)
   middleware/
     auth.ts                 Per-request context + REQUIRE_LOGIN gate      (← app.py auth_identity_and_gate)

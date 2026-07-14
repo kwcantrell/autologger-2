@@ -1,4 +1,4 @@
-# CLAUDE.md — autologger-cf
+# CLAUDE.md — autologger
 
 Guidance for Claude Code in this repo. Read at the start of every session.
 For deep architecture, the endpoint inventory, and storage layout see **`README.md`** —

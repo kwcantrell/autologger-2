@@ -64,6 +64,6 @@
 
 ## 8. Docs + closeout
 
-- [ ] 8.1 Repo identity: drop `— autologger-cf` from the titles of `README.md`, `CLAUDE.md`, `AUTH-API.md` (canonical name `autologger`, keep the "portable Node server" descriptor); fix the placeholder repo/bugs URLs in `companion/companion/manifest.json` (`github.com/local/autologger-cf` → `…/autologger`). **Leave `docs/superpowers/**` untouched** (frozen migration records)
+- [x] 8.1 Repo identity: drop `— autologger-cf` from the titles of `README.md`, `CLAUDE.md`, `AUTH-API.md` (canonical name `autologger`, keep the "portable Node server" descriptor); fix the placeholder repo/bugs URLs in `companion/companion/manifest.json` (`github.com/local/autologger-cf` → `…/autologger`). **Leave `docs/superpowers/**` untouched** (frozen migration records)
 - [ ] 8.2 Post-gate consistency read: one light-tier reviewer over the final artifacts + docs for stale pre-decision language and broken cross-references (CLAUDE.md SDLC)
 - [ ] 8.3 Run `openspec validate de-cloudflare-strong-core --strict`; then `/opsx:archive` when merged

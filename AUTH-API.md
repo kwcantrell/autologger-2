@@ -1,4 +1,4 @@
-# Auth model & API map — autologger-cf
+# Auth model & API map — autologger
 
 Reference for the HTTP/WS surface and how each route is authenticated.
 Source of truth: `server/src/middleware/auth.ts`, `server/src/middleware/ipAllowlist.ts`,
