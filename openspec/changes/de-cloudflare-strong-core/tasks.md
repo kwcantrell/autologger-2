@@ -52,15 +52,15 @@
 
 - [x] 6.1 Introduce an `IdentityVerifier` port wrapping JWKS verify + OAuth code exchange; move `jwksCache` to instance state (kill the module-level singleton) and read the JWKS TTL from the injected `Clock` (`oauth_google.ts` ×2)
 - [x] 6.2 Add a fake `IdentityVerifier` and prove token verification without network; suite green
-- [ ] _(BlobStore port CUT at the gate — stays concrete, rename-only, handled in Phase 1a)_
+- [x] _(BlobStore port CUT at the gate — stays concrete, rename-only, handled in Phase 1a)_
 
 ## 7. Phase 2 — Consolidate authorization (safe half only)
 
-- [ ] 7.1 **New integration test first:** the `API_TOKEN` cross-studio path under `REQUIRE_LOGIN=1` (currently untested) — a machine client reaches a session in a studio it isn't a member of
-- [ ] 7.2 Refactor `requireSession` to resolve + authorize (existence + membership + admin) behind the identity middleware already resolved; **retain** `apiRequestRequiresLogin` (the per-route-policy rework is deferred)
-- [ ] 7.3 Preserve exactly, each with a locking test: `API_TOKEN` bypasses membership; cross-studio ⇒ 404 (not 403); admin 503-unset vs 401-wrong; session cookie grants no admin
-- [ ] 7.4 Gate/auth integration tests green
-- [ ] _(Show/enrichment domain-service extraction DEFERRED at the gate — no second caller today)_
+- [x] 7.1 **New integration test first:** the `API_TOKEN` cross-studio path under `REQUIRE_LOGIN=1` (currently untested) — a machine client reaches a session in a studio it isn't a member of
+- [x] 7.2 Refactor `requireSession` to resolve + authorize (existence + membership + admin) behind the identity middleware already resolved; **retain** `apiRequestRequiresLogin` (the per-route-policy rework is deferred)
+- [x] 7.3 Preserve exactly, each with a locking test: `API_TOKEN` bypasses membership; cross-studio ⇒ 404 (not 403); admin 503-unset vs 401-wrong; session cookie grants no admin
+- [x] 7.4 Gate/auth integration tests green
+- [x] _(Show/enrichment domain-service extraction DEFERRED at the gate — no second caller today)_
 
 ## 8. Docs + closeout
 
