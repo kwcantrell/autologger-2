@@ -224,6 +224,14 @@ requests. Mutations SHALL be reflected in the UI without a manual reload. Errors
 surfaced by the last-admin protection, caps, and validation rules SHALL be presented
 as actionable messages, not silent failures.
 
+The `/teams` route SHALL remain a full citizen of the app shell: the shell's settings
+affordance SHALL open and close the settings modal while on `/teams`, on desktop and
+mobile, and the page SHALL provide an explicit affordance that returns to the sessions
+home view (`/`) via the shared navigation wrapper — present in every state the page
+renders (the signed-in page and the signed-in-required notice alike). A settings save
+that switches the active studio while on `/teams` SHALL NOT navigate (the close-session
+path's no-open-session guard applies).
+
 #### Scenario: Admin sees controls, member does not
 - **WHEN** a user who is admin of team A and member of team B opens `/teams`
 - **THEN** team A shows the full management controls (including pending invites) and
@@ -244,3 +252,19 @@ as actionable messages, not silent failures.
 - **WHEN** `/teams` is loaded on a dev-anonymous deployment (no OAuth, no user)
 - **THEN** a signed-in-required notice renders and no `/api/teams/*` request is
   issued
+
+#### Scenario: Settings opens from the teams route
+- **WHEN** a user on `/teams` activates the shell's Settings affordance
+- **THEN** the settings modal opens, and its close control dismisses it
+
+#### Scenario: Teams page offers a way back in every state
+- **WHEN** `/teams` renders the signed-in page, and separately when it renders the
+  signed-in-required notice
+- **THEN** in both states an on-page affordance is present that navigates to `/` (the
+  sessions home view) without relying on browser Back
+
+#### Scenario: Open modal survives route changes
+- **WHEN** the settings modal is open and the route changes (e.g. browser Back between
+  `/` and `/teams`)
+- **THEN** the modal remains open and functional, and the shell's Settings state never
+  desynchronizes from what is rendered
