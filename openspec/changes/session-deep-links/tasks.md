@@ -82,14 +82,14 @@ before editing.
 
 ## 5. Originator-scoped transport stop on departure
 
-- [ ] 5.1 Track roll origination: set a flag when THIS client issues transport-start
+- [x] 5.1 Track roll origination: set a flag when THIS client issues transport-start
       during the current workspace mount (cleared on departure/unmount); departure
       watcher on the navigation wrapper + a raw `popstate` listener (never wouter's
       hook — design D4) fires `window.AutoLogger_stopTransportIfNeeded?.()` exactly
       once when leaving `/sessions/:id` IFF the flag is set; remove the direct calls
       in the close handlers; `SessionWorkspace`'s global definition/cleanup stays
       untouched
-- [ ] 5.2 Unit tests: mock the global; originator's departure fires exactly once for
+- [x] 5.2 Unit tests: mock the global; originator's departure fires exactly once for
       close, popstate, and session-switch; a non-originator (deep-linked into a
       rolling session) never fires on any departure; no stop on mount under
       StrictMode double-invoke (spec: web-session-routing, transport-stop requirement)
