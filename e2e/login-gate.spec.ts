@@ -143,4 +143,41 @@ test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
     expect(apiPaths.every((p) => p === '/api/profile')).toBe(true);
     expect(apiPaths.length).toBeGreaterThan(0);
   });
+
+  // teams-self-serve (task 7.3, spec: web-login-experience "Teams deep link
+  // survives the sign-in round-trip" generalizes the same "Anonymous deep
+  // link keeps its URL" contract to `/teams` — the stashable-route set now
+  // includes `/teams` alongside `/sessions/:id` (task 5.1's shared
+  // route-definition module). Mirrors the /sessions/<id> test above.
+  test('anonymous visit to /teams renders the login view without redirecting, and keeps the sign-in hrefs', async ({
+    page,
+  }) => {
+    const apiPaths: string[] = [];
+    page.on('request', (req) => {
+      const url = new URL(req.url());
+      if (url.pathname.startsWith('/api/')) apiPaths.push(url.pathname);
+    });
+    await blockGoogleNavigation(page);
+
+    await page.goto('/teams');
+
+    await expect(page.locator('#login-wordmark')).toBeVisible();
+    await expect(page.locator('#v6-app')).toHaveCount(0);
+
+    // No redirect to `/` — the address bar stays on /teams.
+    await expect(page).toHaveURL('/teams');
+
+    // The sign-in affordances keep their plain hrefs at this URL — the
+    // synchronous onClick stash write rides these same anchors.
+    await expect(page.locator('#login-btn-google')).toHaveAttribute('href', '/auth/google/start');
+    await expect(page.locator('#login-btn-create-account')).toHaveAttribute(
+      'href',
+      '/auth/google/start',
+    );
+
+    // No teams data is fetched while gated — only /api/profile.
+    await page.waitForTimeout(500);
+    expect(apiPaths.every((p) => p === '/api/profile')).toBe(true);
+    expect(apiPaths.length).toBeGreaterThan(0);
+  });
 });

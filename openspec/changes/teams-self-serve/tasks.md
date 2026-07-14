@@ -98,16 +98,16 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 7. e2e
 
-- [ ] 7.1 Seeded-session harness fixture (gate ruling, design/panel S2): e2e setup
+- [x] 7.1 Seeded-session harness fixture (gate ruling, design/panel S2): e2e setup
       seeds a user row + hashed login-session token directly into the hermetic
       server's catalog DB (KV-on-sqlite) and injects the cookie into the browser
       context — test-side only, no server surface; prove it with a trivial
       authenticated profile assertion
-- [ ] 7.2 Teams smoke (authenticated via 7.1's fixture): create team → rename →
+- [x] 7.2 Teams smoke (authenticated via 7.1's fixture): create team → rename →
       invite an email → pending invite visible → revoke; zero-membership
       onboarding covered if the fixture can seed a zero-team user cheaply (else
       unit-tier coverage stands — note in report)
-- [ ] 7.3 Login-gate project: anonymous `/teams` renders the login view with URL
+- [x] 7.3 Login-gate project: anonymous `/teams` renders the login view with URL
       preserved and sign-in hrefs intact (mirrors the sessions deep-link test)
 
 ## 8. Final gates
