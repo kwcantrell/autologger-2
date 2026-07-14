@@ -191,19 +191,6 @@ describe('AuthStore: email invites (design D2)', () => {
     expect(cat.auth.authCountPendingInvites(studio)).toBe(2);
   });
 
-  it('authDeleteAllInvitesForTeam cascades every invite for a team, leaves other teams alone', async () => {
-    const cat = catalogFor();
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const inviter = await seedUser();
-    cat.auth.authUpsertInvite(studioA, 'a@example.com', inviter);
-    cat.auth.authUpsertInvite(studioA, 'b@example.com', inviter);
-    cat.auth.authUpsertInvite(studioB, 'c@example.com', inviter);
-    cat.auth.authDeleteAllInvitesForTeam(studioA);
-    expect(cat.auth.authCountPendingInvites(studioA)).toBe(0);
-    expect(cat.auth.authCountPendingInvites(studioB)).toBe(1);
-  });
-
   it('authConsumeInvitesForEmail selects+deletes every invite for a normalized email across teams', async () => {
     const cat = catalogFor();
     const studioA = await seedStudio();

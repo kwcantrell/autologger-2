@@ -14,6 +14,7 @@ import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AuthUser, Catalog, Row } from '../db/catalog';
 import type { TeamRole } from '../db/authStore';
+import { normalizeEmail } from '../db/shared';
 import {
   teamCreateBodySchema,
   teamInviteBodySchema,
@@ -46,13 +47,6 @@ const MAX_OWNED_TEAMS = 20;
 const MAX_PENDING_INVITES = 200;
 
 const EMAIL_SHAPE_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/** Invite normalization (design D2): JS toLowerCase().trim() only, identically
- * at invite time and sign-in time — never SQL lower(), whose ASCII-only
- * folding diverges on non-ASCII local parts. */
-function normalizeEmail(raw: string): string {
-  return raw.toLowerCase().trim();
-}
 
 function isPlausibleEmail(email: string): boolean {
   return email.length > 0 && email.length <= 254 && EMAIL_SHAPE_RE.test(email);

@@ -146,7 +146,7 @@ was ported from: historical provenance, not a live parity claim.
 | `GET /sessions/:id` (SPA shell) | (app.ts page route) |
 | `GET /teams` (SPA shell) | (app.ts page route) |
 
-**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
+**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
 
 WebSocket messages broadcast by the SessionHub: `event.changed` · `transport.changed` ·
 `audio.changed` · `lease.changed` · `command` (Companion → browser). The frontend consumes

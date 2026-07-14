@@ -169,11 +169,7 @@ export function AppShell() {
   // still-loading profile (`profile === undefined`). A team-less logged-in
   // user has no active studio to drive the rail/workspace, so this replaces
   // the whole shell rather than degrading part of it.
-  const needsOnboarding =
-    profile !== undefined &&
-    profile.auth.logged_in &&
-    profile.auth.user !== null &&
-    profile.auth.user.teams.length === 0;
+  const needsOnboarding = profile?.auth.logged_in && profile.auth.user?.teams.length === 0;
 
   if (needsOnboarding) {
     return (

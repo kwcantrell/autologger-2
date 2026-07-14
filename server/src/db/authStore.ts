@@ -2,7 +2,7 @@
 // Moved verbatim out of catalog.ts (Catalog). Self-contained on this.db.
 
 import type { CatalogDb } from '../node/catalogStore';
-import { nowIso } from './shared';
+import { normalizeEmail, nowIso } from './shared';
 import type { Row } from './shared';
 
 export type TeamRole = 'admin' | 'member';
@@ -318,11 +318,6 @@ export class AuthStore {
     return Number(row?.n ?? 0);
   }
 
-  /** Delete-team cascade: remove every pending invite for a team. */
-  authDeleteAllInvitesForTeam(studioId: string): void {
-    this.db.run('DELETE FROM team_invites WHERE studio_id = ?', studioId);
-  }
-
   /** Sign-in materialization consumer: select then delete every pending invite
    * for a normalized email, returning the consumed rows (their studio_ids are
    * what the caller grants membership to). Plain synchronous statements — no
@@ -345,6 +340,6 @@ export class AuthStore {
   authListUsersByEmailNorm(emailNorm: string): Row[] {
     return this.db
       .all<Row>('SELECT * FROM users')
-      .filter((u) => String(u.email).toLowerCase().trim() === emailNorm);
+      .filter((u) => normalizeEmail(String(u.email)) === emailNorm);
   }
 }

@@ -10,6 +10,7 @@ import {
   revokeLoginSession,
   takeOauthState,
 } from '../auth/identity';
+import { normalizeEmail } from '../db/shared';
 import {
   cookieSecureForRequest,
   googleClientId,
@@ -41,15 +42,6 @@ const FORBIDDEN_LOG_CHARS =
 
 function sanitizeForLog(value: unknown): string {
   return String(value ?? '').replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
-}
-
-/** Invite-matching normalization (design D2) — JS toLowerCase().trim() only,
- * identically at invite time and sign-in time, never SQL lower(). Duplicated
- * from routers/teams.ts's identical helper rather than imported: teams.ts is
- * out of scope for this change (apply-scope guard), and the algorithm is a
- * one-line primitive with no state to diverge. */
-function normalizeEmail(raw: string): string {
-  return raw.toLowerCase().trim();
 }
 
 authRouter.get('/auth/google/start', async (c) => {

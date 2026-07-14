@@ -19,7 +19,8 @@ import { TeamCard } from './TeamCard';
 // ENTIRE self-serve management surface server-side (team-management spec,
 // "Built-ins rejected on every management route") — rendering them as
 // expandable TeamCards would 400/404 on first expand, so they get their own
-// static, non-expandable row instead.
+// static, non-expandable row instead. Mirrors `BUILTIN_STUDIO_ORDER` in
+// `server/src/studio.ts` — extend both if a third built-in lands.
 const BUILTIN_TEAM_IDS = ['test-studios', 'test-studio-2'];
 
 const STATE_PAGE = 'relative z-[1] flex w-full items-center justify-center px-5 py-16';
