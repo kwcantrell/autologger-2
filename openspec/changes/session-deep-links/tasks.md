@@ -65,16 +65,16 @@ before editing.
 
 ## 4. Deep-link resolution states
 
-- [ ] 4.1 `useSession(id)` per-id react-query hook against `GET /api/sessions/:id` —
+- [x] 4.1 `useSession(id)` per-id react-query hook against `GET /api/sessions/:id` —
       fetch on route entry, NO polling (latched by construction; design D5)
-- [ ] 4.2 Resolution component rendering the five states: loading (brand treatment) →
+- [x] 4.2 Resolution component rendering the five states: loading (brand treatment) →
       workspace (200, not archived) / archived interstitial (200 archived: identifies
       the session, existing Restore mutation — whose success invalidates the per-id
       query so the same URL re-resolves to the workspace — and a way to leave) /
       not-found (404; identical for nonexistent, deleted, unauthorized; way to leave)
       / retryable error (non-404; distinct from not-found). Workspace mount is gated
       on resolution (arbitrary ids must not drive per-session fetches)
-- [ ] 4.3 Unit tests for all five states plus: no not-found flash while loading;
+- [x] 4.3 Unit tests for all five states plus: no not-found flash while loading;
       created-session navigation resolves without not-found; transient failure shows
       error (not not-found) and retry re-issues the query; a mounted workspace is not
       evicted when the session vanishes from the polled list (spec:

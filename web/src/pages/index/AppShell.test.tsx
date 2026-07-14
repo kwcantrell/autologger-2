@@ -14,12 +14,14 @@ import { setNavigationImplForTesting } from './navigation';
 //
 // These are routing/state tests, not integration tests: heavy children are
 // mocked at the module boundary (the RootGate.test.tsx idiom). The V6Rail mock
-// exposes buttons that fire the selection callbacks; the WorkspaceStatic mock
-// reports the sessionId it received (the "workspace mount" observable) and a
-// button standing in for HomeSettingsModal's studio-switch save branch (its
-// own branch logic is covered in HomeSettingsModal.test.tsx). Location is
-// driven by `wouter/memory-location` (recorded history) except for the
-// browser-Back test, which uses jsdom's real history.
+// exposes buttons that fire the selection callbacks; the SessionRoute mock
+// (the deep-link resolution layer that now wraps WorkspaceStatic — task 4.2;
+// its own resolution states are covered in SessionRoute.test.tsx) reports the
+// sessionId it received (the "workspace mount" observable) and a button
+// standing in for HomeSettingsModal's studio-switch save branch (its own
+// branch logic is covered in HomeSettingsModal.test.tsx). Location is driven
+// by `wouter/memory-location` (recorded history) except for the browser-Back
+// test, which uses jsdom's real history.
 
 vi.mock('../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
@@ -75,9 +77,9 @@ vi.mock('./components/V6Rail', () => ({
   ),
 }));
 
-vi.mock('./components/WorkspaceStatic', () => ({
-  WorkspaceStatic: (props: { sessionId: string; onCloseSession: () => void }) => (
-    <div data-testid="workspace-static" data-session-id={props.sessionId}>
+vi.mock('./components/SessionRoute', () => ({
+  SessionRoute: (props: { sessionId: string; onCloseSession: () => void }) => (
+    <div data-testid="session-route" data-session-id={props.sessionId}>
       {/* Stand-in for HomeSettingsModal's studio-switch save branch, which
           calls the same onCloseSession prop (threaded through WorkspaceStatic). */}
       <button
@@ -118,7 +120,7 @@ function renderShell(initialPath = '/') {
 }
 
 const workspaceSessionId = () =>
-  screen.getByTestId('workspace-static').getAttribute('data-session-id');
+  screen.getByTestId('session-route').getAttribute('data-session-id');
 
 beforeEach(() => {
   mockedUseProfile.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useProfile>);

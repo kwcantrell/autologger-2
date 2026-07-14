@@ -9,8 +9,8 @@ import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { NewSessionModal } from './components/NewSessionModal';
+import { SessionRoute } from './components/SessionRoute';
 import { V6Rail } from './components/V6Rail';
-import { WorkspaceStatic } from './components/WorkspaceStatic';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
 import { navigate } from './navigation';
 import 'overlayscrollbars/overlayscrollbars.css';
@@ -281,8 +281,11 @@ export function AppShell() {
               />
             )}
 
-            {/* Settings modal + session workspace */}
-            <WorkspaceStatic
+            {/* Settings modal + session workspace, behind deep-link resolution:
+                SessionRoute resolves the routed id through the per-id query and
+                gates the workspace mount on it (task 4.2, design D5); the empty
+                id renders the home view unchanged. */}
+            <SessionRoute
               sessionId={activeSessionId}
               showSettings={showSettings}
               onCloseSettings={handleCloseSettings}
