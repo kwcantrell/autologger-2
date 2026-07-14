@@ -25,6 +25,25 @@ import type { AppEnv } from '../types';
 
 export const authRouter = new Hono<AppEnv>();
 
+// Log-sanitization for request/provider-derived values written to
+// console.warn on callback failure branches (design D4). A response body is
+// auto-escaped JSON, but a terminal log line is a new injection sink, so any
+// value derived from the request or from Google's responses is sanitized
+// before logging: strip C0 controls (U+0000-U+001F), U+007F (DEL), C1
+// controls (U+0080-U+009F -- covers 8-bit CSI, which C0-only stripping
+// misses), line/paragraph separators (U+2028/U+2029), and bidi overrides
+// (U+202A-U+202E, U+2066-U+2069); cap at 256 characters. Forbidden code
+// points are removed outright -- never re-encoded as a reversible escape
+// (e.g. `\u`-style), which would just re-expand to live control bytes
+// downstream.
+const LOG_SANITIZE_MAX_LEN = 256;
+const FORBIDDEN_LOG_CHARS =
+  /[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+function sanitizeForLog(value: string): string {
+  return value.replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
+}
+
 authRouter.get('/auth/google/start', async (c) => {
   if (!oauthConfigured(c.env.config)) {
     return c.json(
@@ -46,10 +65,25 @@ authRouter.get('/auth/google/start', async (c) => {
   return c.redirect(uri, 302);
 });
 
+// Callback failure classes redirect 302 -> /?login_error=<code> instead of
+// the former JSON 400/503 bodies (specs/api-contract-freeze/spec.md). The
+// former `detail` strings (including operator guidance such as the
+// PUBLIC_BASE_URL mismatch hint) move to console.warn, with request/
+// provider-derived values sanitized first (design D4). This is a boundary
+// rule, not a blanket conversion: only these explicit branch returns and the
+// two existing try/catches (token exchange, id_token verification) are
+// reclassified — any other throw (KV, catalog, other infrastructure) keeps
+// propagating to the app's ordinary 500 handler (see app.ts `onError`).
 authRouter.get('/auth/google/callback', async (c) => {
   const error = c.req.query('error') ?? '';
-  if (error) return c.json({ detail: error }, 400);
-  if (!oauthConfigured(c.env.config)) return c.json({ detail: 'Google OAuth is not configured.' }, 503);
+  if (error) {
+    console.warn('OAuth callback: provider returned an error', sanitizeForLog(error));
+    return c.redirect('/?login_error=provider_error', 302);
+  }
+  if (!oauthConfigured(c.env.config)) {
+    console.warn('OAuth callback: Google OAuth is not configured.');
+    return c.redirect('/?login_error=oauth_not_configured', 302);
+  }
 
   const code = (c.req.query('code') ?? '').trim();
   const state = normalizeOauthStateParam(c.req.query('state') ?? '');
@@ -61,28 +95,23 @@ authRouter.get('/auth/google/callback', async (c) => {
       .filter(([, v]) => !v)
       .map(([n]) => n)
       .join(', ');
-    return c.json(
-      {
-        detail:
-          `Missing OAuth query parameters: ${missing}. Start sign-in from this app ` +
-          '(/auth/google/start), complete Google’s screen, and let Google redirect back here — ' +
-          'do not open /auth/google/callback manually.',
-      },
-      400,
+    console.warn(
+      `OAuth callback: missing OAuth query parameters: ${sanitizeForLog(missing)}. Start ` +
+        'sign-in from this app (/auth/google/start), complete Google’s screen, and let Google ' +
+        'redirect back here — do not open /auth/google/callback manually.',
     );
+    return c.redirect('/?login_error=missing_params', 302);
   }
 
   if (!(await takeOauthState(c.env.ports.kv, state))) {
-    return c.json(
-      {
-        detail:
-          'Invalid or expired OAuth state. Start again from Sign in with Google on this site, ' +
-          'complete Google within 30 minutes, and avoid the browser Back button after Google. If ' +
-          'this persists, confirm PUBLIC_BASE_URL matches the URL you use in the browser and in ' +
-          'Google Cloud redirect URIs.',
-      },
-      400,
+    console.warn(
+      'OAuth callback: invalid or expired OAuth state',
+      sanitizeForLog(state),
+      '— start again from Sign in with Google on this site, complete Google within 30 minutes, ' +
+        'and avoid the browser Back button after Google. If this persists, confirm ' +
+        'PUBLIC_BASE_URL matches the URL you use in the browser and in Google Cloud redirect URIs.',
     );
+    return c.redirect('/?login_error=state_invalid', 302);
   }
 
   const redirectUri = `${publicBaseUrl(c.env.config)}/auth/google/callback`;
@@ -95,11 +124,15 @@ authRouter.get('/auth/google/callback', async (c) => {
       clientSecret: googleClientSecret(c.env.config),
     });
   } catch (e) {
-    return c.json({ detail: `Token exchange failed: ${(e as Error).message}` }, 400);
+    console.warn('OAuth callback: token exchange failed', sanitizeForLog((e as Error).message));
+    return c.redirect('/?login_error=exchange_failed', 302);
   }
 
   const idTok = tokens.id_token;
-  if (!idTok) return c.json({ detail: 'Missing id_token.' }, 400);
+  if (!idTok) {
+    console.warn('OAuth callback: token response is missing id_token.');
+    return c.redirect('/?login_error=token_invalid', 302);
+  }
   let claims: Record<string, unknown>;
   try {
     claims = (await c.env.ports.identity.verifyIdToken(
@@ -107,11 +140,18 @@ authRouter.get('/auth/google/callback', async (c) => {
       googleClientId(c.env.config),
     )) as Record<string, unknown>;
   } catch (e) {
-    return c.json({ detail: `Invalid id_token: ${(e as Error).message}` }, 400);
+    // A failed JWKS fetch also surfaces here as a verifyIdToken throw; this
+    // log line is what tells the operator it was infrastructure, not the
+    // token itself.
+    console.warn('OAuth callback: id_token invalid', sanitizeForLog((e as Error).message));
+    return c.redirect('/?login_error=token_invalid', 302);
   }
 
   const googleSub = String(claims.sub ?? '');
-  if (!googleSub) return c.json({ detail: 'Missing subject.' }, 400);
+  if (!googleSub) {
+    console.warn('OAuth callback: id_token is missing the subject claim.');
+    return c.redirect('/?login_error=token_invalid', 302);
+  }
   const email = String(claims.email ?? '').trim();
   const gn = String(claims.given_name ?? '').trim();
   const fn = String(claims.family_name ?? '').trim();
