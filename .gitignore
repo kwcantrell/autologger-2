@@ -10,6 +10,9 @@ data/
 # editor swap files
 *.swp
 
+# opsx:apply scratch (per-task subagent reports, diff files, progress ledger)
+openspec/changes/*/.apply/
+
 # graphify knowledge-graph output (regenerable via /graphify)
 graphify-out/
 
