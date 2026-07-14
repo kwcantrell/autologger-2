@@ -281,8 +281,12 @@ harness (below) is network-independent as a result.
 npm run dev        # concurrently: server (tsx watch, :8787) + Vite (:5173)
 ```
 
-Browse `http://127.0.0.1:5173/src/pages/index/index.html`. Vite proxies `/api` (incl. the
-session WebSocket) and `/auth` to :8787.
+Browse `http://127.0.0.1:5173/`. Deep links (`/sessions/<id>`) also work in dev — a small
+Vite dev-only middleware (`web/vite.config.ts`) serves the transformed index shell for `/`
+and `/sessions/<id>`, mirroring the production serve block. The raw entry path
+(`http://127.0.0.1:5173/src/pages/index/index.html`) still works too. Vite proxies `/api`
+(incl. the session WebSocket) and `/auth` to :8787. The admin page keeps its own dev URL:
+`http://127.0.0.1:5173/src/pages/admin-users/index.html`.
 
 **Dev auth is anonymous by design**: set `REQUIRE_LOGIN=0` and `HOST=127.0.0.1` in
 `server/.env`. Google OAuth cannot round-trip through the Vite proxy (the callback

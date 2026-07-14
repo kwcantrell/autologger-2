@@ -118,12 +118,12 @@ before editing.
 
 ## 7. Dev-server parity + docs
 
-- [ ] 7.1 Vite dev-only middleware serving the index entry for exactly `/` and
+- [x] 7.1 Vite dev-only middleware serving the index entry for exactly `/` and
       `/sessions/<single-segment>` — precise matcher (must not touch `/admin/users`,
       the `/api`+`/auth` proxies, `/@vite/*`, `/src/*`, `/assets`), and must return
       `server.transformIndexHtml` output, not raw file bytes (the source HTML's
       relative `./main.tsx` would otherwise 404 at nested paths — design D7)
-- [ ] 7.2 README dev instructions: browse `http://127.0.0.1:5173/` (replacing the raw
+- [x] 7.2 README dev instructions: browse `http://127.0.0.1:5173/` (replacing the raw
       entry path), note deep links work in dev
 
 ## 8. e2e
