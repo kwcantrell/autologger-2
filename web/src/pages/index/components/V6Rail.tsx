@@ -84,17 +84,9 @@ const RAIL_NAV = clsx(
   'box-border inline-flex h-(--v6-rail-btn-h) w-full flex-row items-center justify-center gap-[0.55rem] rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-(--v6-rail-btn-pad-x) cursor-pointer text-[0.8125rem] font-semibold tracking-[0.04em] normal-case text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:text-v5-text hover-always:border-v5-border-strong hover-always:bg-[rgba(255,255,255,0.05)] focus-visible:text-v5-text focus-visible:border-v5-border-strong focus-visible:bg-[rgba(255,255,255,0.05)]',
 );
 
-// Google sign-in variant: light surface. Its own hover/focus wash replaces the
-// base nav hover (exclusive branch — but the light-surface bg/border are distinct
-// properties so they compose; the shared border/bg values are overridden here).
-const RAIL_NAV_GOOGLE =
-  'justify-center gap-[0.55rem] px-(--v6-rail-btn-pad-x) rounded-v5-sm border border-[#747775] bg-white text-[#1f1f1f] [font-family:"Roboto",ui-sans-serif,system-ui,-apple-system,"Segoe_UI",sans-serif] text-[0.8125rem] font-semibold leading-[1.2] tracking-[0.04em] shadow-[0_1px_2px_rgba(0,0,0,0.12)] hover-always:bg-[#f8f9fa] hover-always:text-[#1f1f1f] hover-always:border-[#5f6368] hover-always:shadow-[0_1px_3px_rgba(0,0,0,0.16)] focus-visible:bg-[#f8f9fa] focus-visible:text-[#1f1f1f] focus-visible:border-[#5f6368] focus-visible:shadow-[0_0_0_2px_#e8f0fe,0_1px_3px_rgba(0,0,0,0.16)]';
-
 const RAIL_NAV_ICON = 'inline-flex flex-shrink-0';
-const RAIL_NAV_ICON_GOOGLE = 'items-center justify-center';
 const RAIL_NAV_LABEL =
   '[.v6-app--rail-collapsed_&]:hidden max-md:[.v6-app--rail-collapsed_&]:[display:revert]';
-const RAIL_NAV_LABEL_GOOGLE = 'min-w-0 overflow-hidden text-center text-ellipsis whitespace-nowrap';
 
 interface Props {
   activeSessionId: string;
@@ -111,7 +103,6 @@ interface Props {
 
 export function V6Rail({
   activeSessionId,
-  profile,
   onSelectSession,
   onCloseSession,
   onNewSession,
@@ -121,12 +112,6 @@ export function V6Rail({
   onMobileClose,
 }: Props) {
   const { data: sessions, isLoading } = useSessions();
-
-  const auth = profile?.auth;
-  const oauthConfigured = Boolean(auth?.oauth_configured);
-  const loggedIn = Boolean(auth?.logged_in);
-  const showLogin = oauthConfigured && !loggedIn;
-  const showSettings = !oauthConfigured || loggedIn;
 
   const handleRailToggle = () => {
     // On the mobile drawer the menu button closes the off-canvas rail; on
@@ -238,51 +223,7 @@ export function V6Rail({
       </div>
 
       <div className={RAIL_FOOTER}>
-        <button
-          type="button"
-          className={clsx(RAIL_NAV, RAIL_NAV_GOOGLE, !showLogin && 'hidden')}
-          id="v6-btn-login"
-          aria-label="Sign in with Google"
-          onClick={() => {
-            window.location.href = '/auth/google/start';
-          }}
-        >
-          <span className={clsx(RAIL_NAV_ICON, RAIL_NAV_ICON_GOOGLE)} aria-hidden="true">
-            <svg
-              className={'v6-google-mark block'}
-              width="20"
-              height="20"
-              viewBox="0 0 48 48"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <path
-                fill="#EA4335"
-                d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-              />
-              <path
-                fill="#4285F4"
-                d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6C44.98 37.03 48 31.06 48 24c0-1.67-.14-3.29-.41-4.84z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M6.99 29.16c-.65-1.95-1-4.02-1-6.16 0-2.15.35-4.22 1-6.16l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.35L6.99 29.16z"
-              />
-              <path
-                fill="#34A853"
-                d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.35 0-11.72-4.27-13.59-10.08l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-              />
-            </svg>
-          </span>
-          <span className={clsx(RAIL_NAV_LABEL, RAIL_NAV_LABEL_GOOGLE)}>Sign in with Google</span>
-        </button>
-
-        <button
-          type="button"
-          className={clsx(RAIL_NAV, !showSettings && 'hidden')}
-          id="v6-btn-settings"
-          onClick={onOpenSettings}
-        >
+        <button type="button" className={RAIL_NAV} id="v6-btn-settings" onClick={onOpenSettings}>
           <span className={RAIL_NAV_ICON} aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path

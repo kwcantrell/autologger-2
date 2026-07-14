@@ -3,7 +3,7 @@
 
 ## 1. Server — authorized callback failure redirect (delta: api-contract-freeze)
 
-- [ ] 1.1 Rewrite the callback failure tests in `server/src/routers/auth.int.test.ts`
+- [x] 1.1 Rewrite the callback failure tests in `server/src/routers/auth.int.test.ts`
       (tests first — red against current behavior). The seven existing status assertions
       in the `callback — error branches` block (incl. the existing unconfigured-callback
       503 test) flip to: `302`, `Location: /?login_error=<code>` per the delta table,
@@ -18,7 +18,7 @@
       write — e.g. the login-session KV put — to throw; assert 500, no `Location`, no
       cookie); and log sanitization (a hostile `?error=` carrying C0/C1 controls is
       logged stripped and capped per design D4; capture via `vi.spyOn(console, 'warn')`).
-- [ ] 1.2 Rework the failure branches in `server/src/routers/auth.ts` (locate by
+- [x] 1.2 Rework the failure branches in `server/src/routers/auth.ts` (locate by
       content): replace JSON `400`/`503` responses with `302 /?login_error=<code>`
       redirects; move former `detail` strings (incl. the `PUBLIC_BASE_URL` operator
       hint) to `console.warn`, sanitizing every request/provider-derived value per
@@ -28,12 +28,12 @@
       propagating to the app's 500 handler — no catch-all; `state_invalid` only on a
       completed lookup reporting the state absent. Success path untouched. Gate:
       `npm test` + `npm run typecheck`.
-- [ ] 1.3 Update the README endpoint table's auth row note to record the callback
+- [x] 1.3 Update the README endpoint table's auth row note to record the callback
       failure-redirect semantics (README is the normative inventory).
 
 ## 2. Web — login page and root gate
 
-- [ ] 2.1 Build `LoginPage` under `web/src/pages/index/components/`: branded full-screen
+- [x] 2.1 Build `LoginPage` under `web/src/pages/index/components/`: branded full-screen
       view (existing dark theme tokens + brand assets, Google-branded sign-in button
       navigating to `/auth/google/start`), a distinct create-account affordance also
       navigating to `/auth/google/start` (copy: account creation happens automatically
@@ -42,7 +42,7 @@
       → cancelled-or-refused; all else incl. unknown codes → generic) and a retry
       control. No deployment-config copy. Apply the frontend-design skill for the
       visual pass.
-- [ ] 2.2 Add the root switch in `pages/index/main.tsx` (design D2): `useProfile()` →
+- [x] 2.2 Add the root switch in `pages/index/main.tsx` (design D2): `useProfile()` →
       brand loading treatment (in flight) / retryable error state (initial-load failure
       only; retry disabled while in flight) / `LoginPage` (`oauth_configured &&
       !logged_in`) / `AppShell`. Build it as a self-contained wrapper component (D2
@@ -52,7 +52,7 @@
       refetch error with data present keeps the shell. Verify no authenticated `/api/*`
       or WebSocket traffic fires in the loading, error, or login states. Gate:
       `npm run typecheck` + `npm run lint`.
-- [ ] 2.3 Remove the now-unreachable sign-in button from `V6Rail` (its render predicate
+- [x] 2.3 Remove the now-unreachable sign-in button from `V6Rail` (its render predicate
       is identical to the gate's, so it can never render post-change) and simplify the
       `showSettings` complement in the same edit (it becomes constant-true); confirm dev
       anonymous mode renders identically to before (manual check; e2e guard is 3.2).
