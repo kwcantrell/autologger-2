@@ -74,7 +74,14 @@ WS + Companion long-poll driving adapters are both legitimate and are not merged
   caller).
 
 ### Modified Capabilities
-<!-- None. openspec/specs/ is empty; no pre-existing requirement specs to delta. -->
+<!-- None modified. openspec/specs/ was empty when this change was drafted; the durable
+`api-contract-freeze` baseline has since landed (retire-python-port-framing, archived
+2026-07-14) and freezes the same HTTP/WS surface this change's parity requirement
+re-asserts. At /opsx:archive, reconcile the change-scoped "HTTP/WS surface parity is
+preserved and verified" requirement (anchored on AUTH-API.md) with that baseline during
+the sync, so openspec/specs/ doesn't end up with two differently-anchored freeze
+definitions (hand-off recorded in
+openspec/changes/archive/2026-07-14-retire-python-port-framing/design.md). -->
 
 ## Impact
 
