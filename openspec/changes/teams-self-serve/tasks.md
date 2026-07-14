@@ -41,7 +41,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 3. Sign-in materialization + callback fixes
 
-- [ ] 3.1 Integration tests first — new-user branch: pending invites for the
+- [x] 3.1 Integration tests first — new-user branch: pending invites for the
       normalized Google email materialize into `member` memberships atomically
       (single catalog tx wrapping create + prefs + materialization, design D2) and
       consume the rows — ONLY when `email_verified: true` (absent/false → user
@@ -49,7 +49,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
       sign-in does not re-scan; `NEW_USER_ALL_TEAMS=1` grants nothing; **disabled
       user signs in → 302 `/?login_error=account_disabled`, no cookie, no writes
       (replacing the latent 500 — design D11)**
-- [ ] 3.2 Implement: transactional materialization in the callback's new-user
+- [x] 3.2 Implement: transactional materialization in the callback's new-user
       branch (replacing the `NEW_USER_ALL_TEAMS` grant; KV login-session write
       stays outside the tx), disabled-account redirect, one-time startup
       deprecation warning (design D5); README env docs + `.env.example` updated
