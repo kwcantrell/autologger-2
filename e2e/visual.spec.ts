@@ -102,6 +102,15 @@ const FEED_MASK = (page: Page): Locator[] => [
  * this is a no-op on the desktop viewport.
  */
 async function openRailIfMobile(page: Page): Promise<void> {
+  // The root gate (task 2.2) blocks first paint of the shell-or-login switch on
+  // an async `/api/profile` round-trip, so the shell (and this toggle, which
+  // lives inside it — see AppShell.tsx `#v6-app`) may not be in the DOM yet
+  // when this helper runs. `isVisible()` is a non-waiting snapshot check, so
+  // without this wait it races the boot and silently reports "not visible" —
+  // wait for the shell mount first, THEN take the (deliberately non-waiting)
+  // visibility snapshot to distinguish mobile (toggle visible) from desktop
+  // (toggle present but `display:none`, hence not visible).
+  await page.locator('#v6-app').waitFor({ state: 'attached' });
   const toggle = page.getByRole('button', { name: 'Open navigation' });
   if (await toggle.isVisible()) {
     await toggle.click();

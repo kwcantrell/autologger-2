@@ -186,7 +186,6 @@ export function AppShell() {
           )}
           <V6Rail
             activeSessionId={activeSessionId}
-            profile={profile}
             isMobile={isMobile}
             mobileOpen={railOpen}
             onMobileClose={closeRail}
