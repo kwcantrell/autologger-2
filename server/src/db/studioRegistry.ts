@@ -186,7 +186,10 @@ export class StudioRegistry {
     this.refreshStudioRegistry();
   }
 
-  /** admin_delete_studio — remove a user-defined team (blocks if shows exist). */
+  /** admin_delete_studio — remove a user-defined team (blocks if shows exist).
+   * Shared by BOTH the admin plane (admin.ts) and the self-serve teams router
+   * (teams.ts, design D4) so both cascades stay identical — including
+   * team_invites, which the admin plane previously didn't know about. */
   adminDeleteStudio(studioId: string): void {
     const sid = (studioId || '').trim();
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
@@ -198,10 +201,26 @@ export class StudioRegistry {
       throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
     }
     this.db.tx(() => {
+      this.db.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
       this.db.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
       this.db.run('DELETE FROM studio_definitions WHERE id = ?', sid);
       this.db.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
     });
+    this.refreshStudioRegistry();
+  }
+
+  /** teams-self-serve (design D4): display-name-only rename, sharing
+   * `adminCreateStudio`'s display-name validation. Ids are immutable after
+   * creation — this never touches `studio_definitions.id`. */
+  renameStudio(studioId: string, displayName: string): void {
+    const sid = (studioId || '').trim();
+    const disp = (displayName || '').trim();
+    if (!disp) throw new ValidationError('Display name is required.');
+    if (disp.length > 200) throw new ValidationError('Display name is too long.');
+    if (BUILTIN_STUDIO_ORDER.includes(sid)) {
+      throw new ValidationError('Cannot rename a built-in team.');
+    }
+    this.db.run('UPDATE studio_definitions SET display_name = ? WHERE id = ?', disp, sid);
     this.refreshStudioRegistry();
   }
 }
