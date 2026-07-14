@@ -112,7 +112,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 8. Final gates
 
-- [ ] 8.1 `npm run typecheck` + `npm test` + `npm run e2e` +
+- [x] 8.1 `npm run typecheck` + `npm test` + `npm run e2e` +
       `npx playwright test --project=login-gate` + `npm run lint` green at branch
       tip
 - [ ] 8.2 Whole-branch review (per SDLC), then merge readiness
