@@ -35,9 +35,10 @@ function sessionDeepLinkDevShell(): Plugin {
       // `src/pages/index/index.html`), so Vite's own built-in index-fallback
       // middleware 404s on `/` before a post-hook would ever run — verified
       // empirically. A pre-hook runs first in the chain instead, which is
-      // safe here specifically because the matcher below is exact (`/` or
-      // `/sessions/<single-segment>` only): every other path — `/@vite/*`,
-      // `/src/*`, `/assets`, the `/api`+`/auth` proxies, `/admin/users`, real
+      // safe here specifically because the matcher below is exact (`/`,
+      // `/sessions/<single-segment>`, or `/teams` only): every other path —
+      // `/@vite/*`, `/src/*`, `/assets`, the `/api`+`/auth` proxies,
+      // `/admin/users`, real
       // files — falls through to `next()` and reaches Vite's internals
       // completely untouched.
       server.middlewares.use(async (req, res, next) => {

@@ -82,7 +82,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 - [x] 6.1 API hooks + types for the family (`useTeam(id)`, mutations with
       profile/detail invalidation — design D7); unit tests for invalidation wiring
-- [ ] 6.2 `/teams` page: teams list with roles from profile; create-team form
+- [x] 6.2 `/teams` page: teams list with roles from profile; create-team form
       (slug + display name, validation + cap errors surfaced); admin panel per team
       (rename, members with promote/demote/remove, invite form, pending invites
       with revoke, delete); member view (read-only + leave); built-in memberships

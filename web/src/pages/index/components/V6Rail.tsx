@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { useSessions } from '../../../api/hooks/useSessions';
+import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 
 // --- converted class strings (were V6Rail.module.css) ---
@@ -76,7 +77,7 @@ const SEARCH_INPUT =
 const RAIL_SEARCH_OFFSCREEN =
   'fixed top-0 left-[-10000px] m-0 h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)] [clip-path:inset(50%)]';
 
-const RAIL_FOOTER = 'mt-auto flex w-full flex-shrink-0 justify-center';
+const RAIL_FOOTER = 'mt-auto flex w-full flex-shrink-0 justify-center gap-2';
 
 const RAIL_NAV = clsx(
   COLLAPSE_TILE,
@@ -221,6 +222,36 @@ export function V6Rail({
       </div>
 
       <div className={RAIL_FOOTER}>
+        {/* Shell affordance to reach `/teams` (teams-self-serve, task 6.2;
+            team-management spec: "Teams management UI" — "reachable from the
+            app shell"). Uses the navigation wrapper ONLY, same as every other
+            in-app navigation (design D1/D4) — no direct history/wouter call. */}
+        <button
+          type="button"
+          className={RAIL_NAV}
+          id="v6-btn-teams"
+          onClick={() => navigate('/teams')}
+        >
+          <span className={RAIL_NAV_ICON} aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="8.5" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.6" />
+              <circle cx="16" cy="9.5" r="2.25" stroke="currentColor" strokeWidth="1.6" />
+              <path
+                d="M3.75 18.25C3.75 15.35 5.9 13 8.75 13C11.24 13 13.3 14.79 13.66 17.15"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+              <path
+                d="M14.25 13.4C16.85 13.7 18.85 15.75 19.05 18.3"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <span className={RAIL_NAV_LABEL}>Teams</span>
+        </button>
         <button type="button" className={RAIL_NAV} id="v6-btn-settings" onClick={onOpenSettings}>
           <span className={RAIL_NAV_ICON} aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
