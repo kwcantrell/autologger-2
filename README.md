@@ -131,7 +131,7 @@ was ported from: historical provenance, not a live parity claim.
 |-------|---------------------|
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
 | `GET /api/studio` · `GET\|PUT /api/profile` · `GET\|POST /api/shows` | `routers/profile.py`, `shows.py` |
-| `GET\|POST /api/sessions` · `PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
+| `GET\|POST /api/sessions` · `GET\|PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
 | `GET\|POST /api/sessions/{id}/events` · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
@@ -141,6 +141,7 @@ was ported from: historical provenance, not a live parity claim.
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
+| `GET /sessions/:id` (SPA shell) | (app.ts page route) |
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
 
@@ -223,8 +224,8 @@ curl $B/api/shows
 ## Frontend (web/ workspace)
 
 The React frontend lives in `web/` (Vite 8 + React 19, Tailwind v4) and is canonical for
-this app. `npm run build` emits `web/dist/`; the server serves it directly — `GET /` and
-`GET /admin/users` return the built page HTML verbatim (no serve-time rewriting; the API
+this app. `npm run build` emits `web/dist/`; the server serves it directly — `GET /`,
+`GET /sessions/:id`, and `GET /admin/users` return the built page HTML verbatim (no serve-time rewriting; the API
 root is hardcoded same-origin `/api`), and a static catch-all serves hashed `/assets/*`
 plus `/static/*` (favicon logos ship from `web/public/static/`).
 
