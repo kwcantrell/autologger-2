@@ -164,9 +164,10 @@ silent ignoring — a warning beats silence for a behavior change this consequen
 `/teams` and exports the router-known predicate consumed by its two runtime
 consumers — the stash write and the return-path validator. The three sanctioned
 mirrors (AppShell's wouter patterns, the vite dev-middleware matcher, the server
-serve block) are each extended in the same commit; they cannot mechanically share
-one definition, so lockstep-by-review is the mechanism (the routing delta states
-this honestly rather than overclaiming "one place"). Serve block:
+serve block) are each extended within the same phase (every intermediate commit
+individually green); they cannot mechanically share one definition, so
+lockstep-by-review is the mechanism (the routing delta states this honestly rather
+than overclaiming "one place"). Serve block:
 `app.get('/teams', …serveHtml index…)` beside the session route.
 
 ### D7 — Teams UI: one `/teams` page; team list from profile, detail on demand
