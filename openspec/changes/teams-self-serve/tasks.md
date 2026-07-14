@@ -19,7 +19,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
 
 ## 2. Teams router (the endpoint family)
 
-- [ ] 2.1 Integration tests first — the full family per the api-contract-freeze
+- [x] 2.1 Integration tests first — the full family per the api-contract-freeze
       delta table + default-behaviors clause: 401 anonymous; masked 404 non-member
       vs nonexistent (indistinguishable); 403 member-on-admin-route; **built-in id
       rejected 400 on every management route**; create (shared `STUDIO_ID_SLUG_RE`
@@ -34,7 +34,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
       disabled admin rows don't count; count+mutate in one transaction); role
       change to held role idempotent 200; unknown `:userId` member target 404;
       GET detail (members for members, invites only for admins)
-- [ ] 2.2 Implement `server/src/routers/teams.ts` (helpers per design D3 incl. the
+- [x] 2.2 Implement `server/src/routers/teams.ts` (helpers per design D3 incl. the
       wholesale built-in guard, shared delete method with the admin path per D4,
       transactional last-admin checks, caps per D10) + Zod schemas; wire into
       `app.ts`

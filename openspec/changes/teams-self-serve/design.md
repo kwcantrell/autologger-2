@@ -144,8 +144,11 @@ rule and cascades memberships + **invites** + definition + settings blob via a
 shared store method used by BOTH the self-serve and admin paths (the admin path
 today doesn't know about invites; the shared method is what keeps the planes
 identical); last-admin count + mutation share one transaction (normative, not just
-design); invite-of-existing-member is a no-op. Zod schemas alongside the existing
-ones in `server/src/schemas.ts`.
+design); invite-of-existing-member is a no-op. `GET` detail carries
+`enabled_admin_count` (phase-2 review finding: the members array deliberately
+exposes no per-member disabled flag, so the orphaned-team UI state needs a
+server-computed signal). Zod schemas alongside the existing ones in
+`server/src/schemas.ts`.
 
 ### D5 — NEW_USER_ALL_TEAMS: ignored with a one-time startup warning
 

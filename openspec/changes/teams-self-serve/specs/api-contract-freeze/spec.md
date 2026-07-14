@@ -13,7 +13,7 @@ additive-open (clients tolerate unknown fields).
 | Route | Auth | Behavior |
 |---|---|---|
 | `POST /api/teams` `{id, display_name}` | any user | create team, caller becomes `admin`; validation errors `400` |
-| `GET /api/teams/:id` | member | team detail: `{id, name, role, members: [{id, email, given_name, family_name, role}]}`; `invites: [{email, invited_at_utc}]` present only when caller is `admin` |
+| `GET /api/teams/:id` | member | team detail: `{id, name, role, enabled_admin_count, members: [{id, email, given_name, family_name, role}]}` (`enabled_admin_count` = admins whose accounts are not disabled — the client's orphaned-team signal; per-member disabled status is deliberately not exposed); `invites: [{email, invited_at_utc}]` present only when caller is `admin` |
 | `PATCH /api/teams/:id` `{display_name}` | admin | rename (display name only) |
 | `DELETE /api/teams/:id` | admin | delete; `400` while shows exist |
 | `POST /api/teams/:id/invites` `{email}` | admin | immediate membership for existing users, else pending invite; idempotent per team+email |
