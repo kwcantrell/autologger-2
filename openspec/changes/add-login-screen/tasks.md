@@ -71,8 +71,15 @@
       fail any navigation to `accounts.google.com`); `/?login_error=state_invalid`
       shows the expired message; an unknown code shows the generic message; no
       authenticated `/api/*` requests and no WebSocket connections while gated.
-- [ ] 3.2 Confirm the existing OAuth-unconfigured e2e suites (smoke + visual) pass
-      unchanged — the dev-anonymous regression guard.
+- [x] 3.2 Confirm the existing OAuth-unconfigured e2e suites (smoke + visual) pass —
+      the dev-anonymous regression guard. Implementation-revealed adjustment (3.1's
+      full run): the visual suite's `openRailIfMobile` helper does a non-waiting
+      `isVisible()` that races task 2.2's now-async boot — fix the HELPER to wait for
+      the shell/toggle (test-only accommodation; visual BASELINES must not change —
+      identical pixels post-mount is exactly what this guard proves). Separately verify
+      the 8 desktop mask-edge diffs against `main`: if they fail there too they are
+      pre-existing flake (record as residual, do not rebaseline silently); if not, they
+      are branch-caused and must be fixed.
 
 ## 4. Finalize
 

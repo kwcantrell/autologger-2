@@ -19,6 +19,20 @@ async function blockGoogleNavigation(page: Page): Promise<void> {
   await page.route('https://accounts.google.com/**', (route) => route.abort());
 }
 
+/**
+ * Belt-and-braces alongside `blockGoogleNavigation`: a `request` listener that
+ * flags any hit to accounts.google.com, so a future click-through regression
+ * fails on an explicit assertion even if the route-abort itself were ever
+ * loosened or bypassed.
+ */
+function trackGoogleHit(page: Page): () => boolean {
+  let googleHit = false;
+  page.on('request', (req) => {
+    if (new URL(req.url()).hostname === 'accounts.google.com') googleHit = true;
+  });
+  return () => googleHit;
+}
+
 test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
   test('renders the login view instead of the app shell; sign-in/create-account hrefs; no authenticated traffic', async ({
     page,
@@ -66,6 +80,7 @@ test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
   });
 
   test('?login_error=state_invalid shows the expired message', async ({ page }) => {
+    const googleHit = trackGoogleHit(page);
     await blockGoogleNavigation(page);
     await page.goto('/?login_error=state_invalid');
 
@@ -74,9 +89,11 @@ test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
       'This sign-in attempt expired.',
     );
     await expect(page.locator('#login-error-retry')).toHaveAttribute('href', '/auth/google/start');
+    expect(googleHit()).toBe(false);
   });
 
   test('an unrecognized login_error code shows the generic message', async ({ page }) => {
+    const googleHit = trackGoogleHit(page);
     await blockGoogleNavigation(page);
     // Not one of the server's six known codes — the client must treat it
     // identically to the generic group (spec "Login-error rendering").
@@ -84,5 +101,6 @@ test.describe('login gate (REQUIRE_LOGIN=1, OAuth dummy-configured)', () => {
 
     await expect(page.locator('#login-wordmark')).toBeVisible();
     await expect(page.locator('#login-error-banner')).toContainText("Sign-in didn't complete.");
+    expect(googleHit()).toBe(false);
   });
 });
