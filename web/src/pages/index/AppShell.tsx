@@ -127,13 +127,14 @@ export function AppShell() {
   );
 
   const handleCloseSession = useCallback(() => {
-    // Close stops the roll (behavior preserved from the legacy spine; a later
-    // phase replaces this direct call with the originator-scoped departure
-    // watcher — design D4).
-    window.AutoLogger_stopTransportIfNeeded?.();
     // Navigate home only when a session is actually open, so callers reachable
     // without one (the settings modal's studio-switch branch) can't stack
-    // duplicate `/` entries (design D3).
+    // duplicate `/` entries (design D3). The `navigate()` call itself is what
+    // stops the roll — the originator-scoped departure watcher (design D4)
+    // hangs off the navigation wrapper and fires
+    // `window.AutoLogger_stopTransportIfNeeded` iff this client originated
+    // it; closing a roll started by another client no longer stops it (the
+    // accepted behavior change from the gate — see design D4).
     if (activeSessionId) navigate('/');
     queryClient.invalidateQueries({ queryKey: ['sessions'] });
   }, [activeSessionId, queryClient]);

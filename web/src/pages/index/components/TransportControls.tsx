@@ -13,6 +13,7 @@ import recordOffIcon from '../../../assets/icons/record_off_icon.png';
 import recordOnIcon from '../../../assets/icons/record_on_icon.png';
 import stopOffIcon from '../../../assets/icons/stop_off_icon.png';
 import stopOnIcon from '../../../assets/icons/stop_on_icon.png';
+import { markOriginated } from '../transportOrigination';
 
 // --- converted class strings (were TransportControls.module.css) ---
 // The whole tile stylesheet is anchored on SessionWorkspace-rendered ancestors:
@@ -275,6 +276,10 @@ export function TransportControls({
         setBusy(true);
         try {
           await start.mutateAsync();
+          // This client just issued transport-start for `sessionId` — track
+          // origination (session-deep-links design D4) so the departure
+          // watcher stops it, and only it, on route departure.
+          markOriginated(sessionId);
           qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
         } finally {
           setBusy(false);

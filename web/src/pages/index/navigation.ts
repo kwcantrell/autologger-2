@@ -9,6 +9,7 @@
 // from the location; it is never the mechanism for navigation side-effects.
 
 import { navigate as browserNavigate } from 'wouter/use-browser-location';
+import { handleWrapperNavigation } from './departureWatcher';
 
 export interface NavigateOptions {
   replace?: boolean;
@@ -24,8 +25,14 @@ let impl: NavigateImpl = defaultImpl;
  * Navigate the SPA to `path` (pushes a history entry; `{ replace: true }`
  * replaces the current one). wouter's location hooks observe the change and
  * re-render route-derived state.
+ *
+ * The originator-scoped departure watcher (design D4) hangs off this
+ * function: `handleWrapperNavigation` runs synchronously, before `impl`, so
+ * an in-flight transport-stop fires before React observes the location
+ * change.
  */
 export function navigate(path: string, options?: NavigateOptions): void {
+  handleWrapperNavigation(path);
   impl(path, options);
 }
 

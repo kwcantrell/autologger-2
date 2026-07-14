@@ -7,6 +7,7 @@ import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
 import { setNavigationImplForTesting } from './navigation';
+import { markOriginated, resetOriginationForTesting } from './transportOrigination';
 
 // --- AppShell routing + legacy-spine-retirement tests (session-deep-links,
 // task 3.3; spec: web-session-routing "URL-addressed session state" +
@@ -133,6 +134,7 @@ afterEach(() => {
   setNavigationImplForTesting(null);
   window.AutoLogger_stopTransportIfNeeded = undefined;
   window.history.replaceState(null, '', '/');
+  resetOriginationForTesting();
   vi.clearAllMocks();
 });
 
@@ -172,11 +174,12 @@ describe('AppShell routing (URL-addressed session state)', () => {
     expect(memory.history).toEqual(['/sessions/deep-1']);
   });
 
-  it('closing pushes / , unmounts the workspace, and still stops the transport', () => {
+  it('closing pushes / , unmounts the workspace, and stops the transport this client originated (design D4 — full origination matrix in departureWatcher.test.tsx)', () => {
     const stop = vi.fn();
     window.AutoLogger_stopTransportIfNeeded = stop;
     const { memory } = renderShell('/sessions/sess-1');
     expect(workspaceSessionId()).toBe('sess-1');
+    markOriginated('sess-1');
 
     fireEvent.click(screen.getByTestId('rail-close'));
 
@@ -203,10 +206,11 @@ describe('AppShell routing (URL-addressed session state)', () => {
     expect(workspaceSessionId()).toBe('created-1');
   });
 
-  it('the studio-switch save path navigates to / like the close control', () => {
+  it('the studio-switch save path navigates to / like the close control, stopping an originated roll', () => {
     const stop = vi.fn();
     window.AutoLogger_stopTransportIfNeeded = stop;
     const { memory } = renderShell('/sessions/sess-1');
+    markOriginated('sess-1');
 
     fireEvent.click(screen.getByTestId('studio-switch-close'));
 
