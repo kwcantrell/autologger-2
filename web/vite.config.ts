@@ -60,6 +60,17 @@ function sessionDeepLinkDevShell(): Plugin {
             /((?:src|href)=")\.\//g,
             `$1${INDEX_HTML_DIR}`,
           );
+          // Fail loudly rather than silently no-op: if the entry HTML's
+          // shape ever changes (renamed src, absolute path, different
+          // quote style) and the regex above stops matching, serving the
+          // untransformed relative `src="./main.tsx"` at `/sessions/<id>`
+          // resolves against the request URL and 404s — a quietly dead dev
+          // app. Catch that at request time instead.
+          if (rootAbsoluteHtml === rawHtml || rootAbsoluteHtml.includes('src="./')) {
+            throw new Error(
+              'sessionDeepLinkDevShell: entry HTML shape changed — relative-src rewrite matched nothing; update the middleware',
+            );
+          }
           const html = await server.transformIndexHtml(url, rootAbsoluteHtml);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'text/html');
