@@ -112,3 +112,18 @@ describe('GET /sessions/:id — deep-link HTML route (session-deep-links delta)'
     expect(res.status).toBe(200);
   });
 });
+
+describe('GET /teams — team management HTML route (teams-self-serve delta)', () => {
+  it('serves the shell for an anonymous client, no Set-Cookie', async () => {
+    const home = await app.request('/', {}, env);
+    const teams = await app.request('/teams', {}, env);
+    expect(teams.status).toBe(200);
+    expect(teams.headers.get('set-cookie')).toBeNull();
+    expect(await teams.text()).toBe(await home.text());
+  });
+
+  it('GET /teams/x (a segment below /teams) still 404s — no asset matches', async () => {
+    const res = await app.request('/teams/x', {}, env);
+    expect(res.status).toBe(404);
+  });
+});

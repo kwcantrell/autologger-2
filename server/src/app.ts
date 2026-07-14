@@ -89,8 +89,9 @@ export function wireApp(
   app.route('/', adminRouter);
 
   // Static hosting: explicit page routes (the SPA client-side router owns
-  // rendering under `/` and `/sessions/:id`; this block only decides which
-  // HTML shell to serve) + a catch-all for hashed /assets/* and /static/*.
+  // rendering under `/`, `/sessions/:id`, and `/teams`; this block only
+  // decides which HTML shell to serve) + a catch-all for hashed /assets/*
+  // and /static/*.
   // publicDir is the web/ workspace's Vite build output, passed by main.ts
   // (tests pass a fixture dir).
   async function serveHtml(c: Context<AppEnv>, assetPath: string) {
@@ -110,6 +111,11 @@ export function wireApp(
   // catch-all below and keep 404ing. Serves the shell unconditionally on
   // session existence/authorization — no existence oracle at the HTML layer.
   app.get('/sessions/:id', (c) => serveHtml(c, 'src/pages/index/index.html'));
+  // Teams management route (api-contract-freeze delta, teams-self-serve
+  // change; design D6 — one of the three sanctioned lockstep mirrors of the
+  // router-known route table): unconditional on auth, no cookies — the
+  // login gate renders client-side, same as `/` and `/sessions/:id`.
+  app.get('/teams', (c) => serveHtml(c, 'src/pages/index/index.html'));
   app.get('/admin/users', (c) => serveHtml(c, 'src/pages/admin-users/index.html'));
   app.get('*', serveStatic({ root: publicDir }));
 

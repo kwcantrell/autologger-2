@@ -4,22 +4,27 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Mirrors `isSessionRoutePathname` in web/src/shared/utils/loginReturnPath.ts —
-// same "exactly one non-empty segment after /sessions/" rule, kept as a
-// second regex here (rather than importing the app source) because this file
-// runs under Vite/Node config-loading, not the app's module graph.
+// Mirrors `isSessionRoutePathname`/`isTeamsRoutePathname` in
+// web/src/shared/utils/loginReturnPath.ts — same route rules ("exactly one
+// non-empty segment after /sessions/", "exactly /teams"), kept as second
+// checks here (rather than importing the app source) because this file runs
+// under Vite/Node config-loading, not the app's module graph. Extended for
+// `/teams` by teams-self-serve, design D6 — one of the three sanctioned
+// lockstep mirrors of the router-known route table.
 const SESSIONS_ROUTE_RE = /^\/sessions\/([^/]+)$/;
+const TEAMS_ROUTE_PATHNAME = '/teams';
 const INDEX_HTML_DIR = '/src/pages/index/';
 const INDEX_HTML_PATH = path.resolve(__dirname, 'src/pages/index/index.html');
 
 // Dev-only SPA-shell middleware (session-deep-links, design D7): serves the
-// index entry's transformed HTML for exactly `/` and `/sessions/<id>` so the
-// client-side router's deep links work at :5173 with HMR, matching the
-// production serve block in server/src/app.ts (`app.get('/sessions/:id', …)`).
-// PRECISE matcher — anything else (the `/admin/users` MPA entry, `/api` +
-// `/auth` proxies, `/@vite/*`, `/src/*`, `/assets`, real files) falls through
-// to `next()` untouched. `apply: 'serve'` plus registering only a
-// `configureServer` hook means this has zero effect on `vite build`/`dist/`.
+// index entry's transformed HTML for exactly `/`, `/sessions/<id>`, and
+// `/teams` so the client-side router's deep links work at :5173 with HMR,
+// matching the production serve block in server/src/app.ts
+// (`app.get('/sessions/:id', …)`, `app.get('/teams', …)`). PRECISE matcher —
+// anything else (the `/admin/users` MPA entry, `/api` + `/auth` proxies,
+// `/@vite/*`, `/src/*`, `/assets`, real files) falls through to `next()`
+// untouched. `apply: 'serve'` plus registering only a `configureServer` hook
+// means this has zero effect on `vite build`/`dist/`.
 function sessionDeepLinkDevShell(): Plugin {
   return {
     name: 'session-deep-link-dev-shell',
@@ -39,7 +44,8 @@ function sessionDeepLinkDevShell(): Plugin {
         const url = req.url ?? '/';
         const pathname = url.split('?')[0].split('#')[0];
         const isSessionRoute = SESSIONS_ROUTE_RE.test(pathname);
-        if (pathname !== '/' && !isSessionRoute) {
+        const isTeamsRoute = pathname === TEAMS_ROUTE_PATHNAME;
+        if (pathname !== '/' && !isSessionRoute && !isTeamsRoute) {
           next();
           return;
         }

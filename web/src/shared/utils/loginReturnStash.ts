@@ -7,18 +7,18 @@
 // sessionStorage value — untrusted the moment it's read back, per that
 // module's own reasoning about surviving a write bug or a future caller).
 
-import { isSessionRoutePathname, validateLoginReturnPath } from './loginReturnPath';
+import { isRouterKnownPathname, validateLoginReturnPath } from './loginReturnPath';
 
 export const LOGIN_RETURN_STASH_KEY = 'autologger:login-return';
 
 /**
  * Stash the current path+query for post-login return IFF the current
- * location is a session deep link (`/sessions/:id`). Call synchronously
- * from a LoginPage anchor's `onClick`, before the browser follows the
- * anchor's `href` to `/auth/google/start` — the write completes before
- * navigation begins.
+ * location is a stashable router route (`/sessions/:id` or `/teams`). Call
+ * synchronously from a LoginPage anchor's `onClick`, before the browser
+ * follows the anchor's `href` to `/auth/google/start` — the write completes
+ * before navigation begins.
  *
- * When the current location is NOT a session deep link (e.g. `/` or
+ * When the current location is NOT a stashable route (e.g. `/` or
  * `/?login_error=<code>`), this is a deliberate no-op: any existing stash
  * is left untouched, so retrying sign-in from the error landing page can't
  * clobber a previously stashed deep link (spec: "Failed attempt keeps the
@@ -26,7 +26,7 @@ export const LOGIN_RETURN_STASH_KEY = 'autologger:login-return';
  */
 export function stashLoginReturnPathIfDeepLink(): void {
   const { pathname, search } = window.location;
-  if (!isSessionRoutePathname(pathname)) return;
+  if (!isRouterKnownPathname(pathname)) return;
   try {
     sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, `${pathname}${search}`);
   } catch {

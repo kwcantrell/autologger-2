@@ -42,6 +42,15 @@ describe('useLoginReturnConsume', () => {
     expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
   });
 
+  it('consumes a valid /teams stash on loggedIn=true: replace-navigates and clears it (teams-self-serve, design D6)', () => {
+    sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, '/teams');
+
+    renderStrict(<Host loggedIn={true} />);
+
+    expect(navigateCalls).toEqual([['/teams', { replace: true }]]);
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+  });
+
   it('no-stash logged-in boot navigates nowhere', () => {
     renderStrict(<Host loggedIn={true} />);
 

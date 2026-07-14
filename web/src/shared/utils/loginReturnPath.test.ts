@@ -25,6 +25,14 @@ describe('validateLoginReturnPath', () => {
     it('a session id containing URL-safe punctuation', () => {
       expect(validateLoginReturnPath('/sessions/abc-123_def')).toBe('/sessions/abc-123_def');
     });
+
+    it('the teams route (teams-self-serve, design D6)', () => {
+      expect(validateLoginReturnPath('/teams')).toBe('/teams');
+    });
+
+    it('the teams route with a query string, preserving it', () => {
+      expect(validateLoginReturnPath('/teams?x=1')).toBe('/teams?x=1');
+    });
   });
 
   describe('rejects: non-string / empty / structural', () => {
@@ -62,6 +70,14 @@ describe('validateLoginReturnPath', () => {
 
     it('a path not starting with a slash', () => {
       expect(validateLoginReturnPath('sessions/abc')).toBeNull();
+    });
+
+    it('/teams/x — a segment under /teams is not a router-known route (teams-self-serve)', () => {
+      expect(validateLoginReturnPath('/teams/x')).toBeNull();
+    });
+
+    it('/teams/ with a trailing slash', () => {
+      expect(validateLoginReturnPath('/teams/')).toBeNull();
     });
   });
 

@@ -65,6 +65,24 @@ describe('stashLoginReturnPathIfDeepLink', () => {
     stashLoginReturnPathIfDeepLink();
     expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
   });
+
+  it('stashes the teams route (teams-self-serve, design D6)', () => {
+    setLocation('/teams');
+    stashLoginReturnPathIfDeepLink();
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBe('/teams');
+  });
+
+  it('stashes the teams route with a query string, preserving it', () => {
+    setLocation('/teams?x=1');
+    stashLoginReturnPathIfDeepLink();
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBe('/teams?x=1');
+  });
+
+  it('does not stash /teams/x (not a router-known route)', () => {
+    setLocation('/teams/x');
+    stashLoginReturnPathIfDeepLink();
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+  });
 });
 
 describe('consumeLoginReturnStash', () => {
@@ -79,11 +97,23 @@ describe('consumeLoginReturnStash', () => {
     expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
   });
 
+  it('full round-trip for a stashed /teams: replace-navigates and clears the stash (spec: "Teams deep link survives the sign-in round-trip")', () => {
+    sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, '/teams');
+    const navigateFn = vi.fn();
+
+    consumeLoginReturnStash(navigateFn);
+
+    expect(navigateFn).toHaveBeenCalledTimes(1);
+    expect(navigateFn).toHaveBeenCalledWith('/teams', { replace: true });
+    expect(sessionStorage.getItem(LOGIN_RETURN_STASH_KEY)).toBeNull();
+  });
+
   it.each([
     ['//evil.com', '//evil.com'],
     ['/\\evil.com', '/\\evil.com'],
     ['https://evil.com/x', 'https://evil.com/x'],
     ['a same-origin non-router path', '/admin/users'],
+    ['a segment under /teams', '/teams/x'],
   ])('discards a malicious/out-of-router stash (%s) without navigating, and clears it', (_label, value) => {
     sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, value);
     const navigateFn = vi.fn();
