@@ -22,6 +22,7 @@ import { profileRouter } from './routers/profile';
 import { mountSessionWs } from './routers/sessionWs';
 import { sessionsRouter } from './routers/sessions';
 import { showsRouter } from './routers/shows';
+import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
 import { ValidationError } from './studio';
 import type { AppEnv, Bindings } from './types';
@@ -78,6 +79,7 @@ export function wireApp(
   app.route('/', authRouter);
   app.route('/', profileRouter);
   app.route('/', showsRouter);
+  app.route('/', teamsRouter);
   app.route('/', sessionsRouter);
   app.route('/', eventsRouter);
   app.route('/', audioRouter);

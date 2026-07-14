@@ -151,6 +151,29 @@ export const companionCommandAckBodySchema = z.object({
 });
 export type CompanionCommandAckBody = z.infer<typeof companionCommandAckBodySchema>;
 
+// -- teams-self-serve (design D4): the /api/teams family bodies ---------------
+
+export const teamCreateBodySchema = z.object({
+  id: z.string().min(1).max(120),
+  display_name: z.string().min(1).max(200),
+});
+export type TeamCreateBody = z.infer<typeof teamCreateBodySchema>;
+
+export const teamRenameBodySchema = z.object({
+  display_name: z.string().min(1).max(200),
+});
+export type TeamRenameBody = z.infer<typeof teamRenameBodySchema>;
+
+export const teamInviteBodySchema = z.object({
+  email: z.string().min(1).max(320),
+});
+export type TeamInviteBody = z.infer<typeof teamInviteBodySchema>;
+
+export const teamRoleChangeBodySchema = z.object({
+  role: z.enum(['admin', 'member']),
+});
+export type TeamRoleChangeBody = z.infer<typeof teamRoleChangeBodySchema>;
+
 export const profileUpdateBodySchema = z.object({
   active_studio_id: z.string().max(120).nullish(),
   active_show_id: z.string().min(1).max(120).nullish(),
