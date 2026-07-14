@@ -92,7 +92,7 @@ commit. `file:line` anchors are orientation only — locate quoted code by conte
       `/teams` (navigation wrapper only). Unit tests: admin vs member affordances,
       invite round-trip without reload, last-admin 409 surfaced as an actionable
       message, built-in read-only, orphaned-team notice, dev-anonymous no-fetch
-- [ ] 6.3 Zero-membership onboarding state at `/` (design D8): renders for
+- [x] 6.3 Zero-membership onboarding state at `/` (design D8): renders for
       logged-in zero-team profiles, create-first-team lands the user in the team;
       unit tests incl. dev-anonymous unaffected
 

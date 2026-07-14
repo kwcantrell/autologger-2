@@ -9,6 +9,7 @@ import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
 import { NewSessionModal } from './components/NewSessionModal';
+import { OnboardingPanel } from './components/OnboardingPanel';
 import { SessionRoute } from './components/SessionRoute';
 import { TeamsRoute } from './components/TeamsRoute';
 import { V6Rail } from './components/V6Rail';
@@ -159,6 +160,29 @@ export function AppShell() {
   const handleCloseSettings = useCallback(() => {
     setShowSettings(false);
   }, []);
+
+  // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
+  // render switch INSIDE the authed shell, keyed on `logged_in && teams
+  // .length === 0` — never on `studios` emptiness alone, so this can't
+  // misfire for dev-anonymous (whose profile always reports the built-in
+  // studio in `studios` but has `logged_in: false` / `user: null`) or for a
+  // still-loading profile (`profile === undefined`). A team-less logged-in
+  // user has no active studio to drive the rail/workspace, so this replaces
+  // the whole shell rather than degrading part of it.
+  const needsOnboarding =
+    profile !== undefined &&
+    profile.auth.logged_in &&
+    profile.auth.user !== null &&
+    profile.auth.user.teams.length === 0;
+
+  if (needsOnboarding) {
+    return (
+      <>
+        <Toast />
+        <OnboardingPanel />
+      </>
+    );
+  }
 
   return (
     <>
