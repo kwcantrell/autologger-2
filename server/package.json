@@ -10,7 +10,8 @@
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
     "start": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
+    "mediabunny": "^1.50.8",
     "tsx": "^4.23.0",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
