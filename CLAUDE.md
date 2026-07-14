@@ -97,16 +97,35 @@ lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tes
 
 ## How we work (SDLC)
 
-Non-trivial work follows the superpowers SDLC — **don't jump straight to code**:
+Non-trivial work follows the superpowers SDLC, captured as **OpenSpec changes** — **don't
+jump straight to code**:
 
-**brainstorm → spec (`docs/superpowers/specs/`) → plan (`docs/superpowers/plans/`) →
-implement.** Small, obvious fixes can skip ahead, but design-bearing changes get a
-spec first.
+**brainstorm (`opsx:explore`) → propose (`opsx:propose`) → adversarial panel + gate →
+implement (`opsx:apply`) → archive (`opsx:archive`).** Small, obvious fixes can skip ahead,
+but design-bearing changes get a change proposal first.
+
+Artifacts live in `openspec/changes/<name>/`: `proposal.md` (why/what + Non-Goals),
+`spec.md` (normative capability requirements — SHALL + WHEN/THEN scenarios), `design.md`
+(how + decisions + the **Panel & review log**), and `tasks.md` (**the plan of record** —
+the phased, test-gated implementation breakdown; put TDD-step detail in `design.md` when a
+change is complex enough to need it). On archive, delta specs sync into the durable
+`openspec/specs/` baseline. `openspec validate <name> --strict` is a mechanical pre-gate
+check. The legacy `docs/superpowers/specs|plans/` are **frozen historical records** — new
+work goes through OpenSpec, not there. Repo conventions are also encoded as
+`openspec/config.yaml` `context` + per-artifact `rules`, so generated artifacts inherit them.
+
+**`opsx:propose` ordering — do not skip the gate.** `opsx:propose` drafts *all four*
+artifacts at once, and OpenSpec treats a change as apply-ready the moment `tasks.md` exists
+— it has **no notion of the gate**. So `tasks.md` is **provisional** until the panel + gate
+pass: run the panel on `proposal.md` + `spec.md` + `design.md`, gate it, fold the rulings
+back across **all four** artifacts (tasks included), run the consistency read, *then*
+`opsx:apply`. (`openspec/changes/de-cloudflare-strong-core` is the reference example.)
 
 ### Adversarial review of the spec
 
-Before `spec → plan`, run an **adversarial panel on the spec** — the earliest,
-least-reversible artifact, where catching a wrong assumption is cheapest. A flawed
+Before implementation (`opsx:apply`) — i.e. while `tasks.md` is still provisional — run an
+**adversarial panel on the `proposal.md` + `spec.md` + `design.md`** — the earliest,
+least-reversible artifacts, where catching a wrong assumption is cheapest. A flawed
 spec makes a *perfect* plan build the wrong thing.
 
 Fan out (via `dispatching-parallel-agents`) reviewers with **distinct** mandates —
@@ -134,9 +153,10 @@ When fanning out sub-agents (here or anywhere), **match model tier to the task**
 light models (haiku/sonnet) for fetch-and-compare verification and mechanical
 sweeps; heavyweight models for synthesis and adversarial judgment.
 
-Keep plan review as-is (single reviewer: spec coverage, decomposition, buildability).
-Only add a *lighter* adversarial pass on the plan — scoped to architecture/decomposition,
-**not** requirements — if real design decisions leak downstream into the plan.
+Keep plan review as-is (single reviewer over `tasks.md`: spec coverage, decomposition,
+buildability). Only add a *lighter* adversarial pass on `tasks.md` — scoped to
+architecture/decomposition, **not** requirements — if real design decisions leak
+downstream into the tasks.
 
 ### Research artifacts feed specs — verify them first
 
@@ -147,15 +167,16 @@ claims against primary sources / live code) and a final consistency +
 completeness review. They're complementary — per-claim refuters can't see
 stale copies of corrected claims; a consistency pass can't detect false
 facts. Record both as dated entries in the artifact's log; design judgments
-stay unverified and go to the spec panel. Mechanics:
-`.agents/skills/agent-sdlc/authoring.md`.
+stay unverified and go to the spec panel. Mechanics: OpenSpec artifact
+instructions (`openspec instructions <artifact> --change <name> --json`) plus
+the `openspec/config.yaml` rules.
 
 ### Post-gate edits get a consistency read, not a re-panel
 
 The same complementarity applies downstream: when gate decisions or review
 fixes are applied as **targeted edits** to an already-reviewed artifact (a
-spec after its gate, a plan after its review), run one **light-tier
-consistency reviewer** over the final document before it feeds the next
+`spec.md`/`design.md` after its gate, `tasks.md` after its review), run one
+**light-tier consistency reviewer** over the final document before it feeds the next
 stage — stale pre-decision language, contradictions between dispositions and
 normative sections, broken cross-references. A full re-panel is warranted
 only for **structural rework**; disposition-recording prose is not that.

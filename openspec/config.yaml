@@ -1,0 +1,29 @@
+schema: spec-driven
+
+# Shown to AI when creating change artifacts (proposal/spec/design/tasks).
+context: |
+  Portable TypeScript/Node port of a Python backend (../autologger). Maintain JSON
+  response-shape and status-code parity with the existing React frontend + Companion module;
+  do not invent API surface without a spec. Permanent invariant: single Node process, state
+  on local disk under DATA_DIR — no cloud account, no clustering. Stack: Hono + Zod + jose +
+  better-sqlite3. Conventional commits (type(scope): summary). Branch off main; never use git
+  worktrees. Commit/push only when asked. Changes ship with tests (npm test + npm run typecheck).
+
+# Per-artifact rules — applied at artifact generation. These encode the repo SDLC
+# (see CLAUDE.md "How we work"). The adversarial panel + human gate remain a manual overlay:
+# tasks.md is provisional until the panel on proposal+spec+design has passed its gate.
+rules:
+  proposal:
+    - Include an explicit Non-Goals / out-of-scope section
+    - State the behavior-parity impact — this is a port, so call out any observable HTTP/WS/JSON change (usually "none")
+  design:
+    - Record each key decision with alternatives considered + rationale
+    - Include a "Panel & review log" section with three buckets — blockers/majors fixed in place, findings escalated to the gate (with the decision), minors accepted as residual
+    - Note deliberate invariants a future reader might "helpfully" undo (e.g. the synchronous-hub / single-process posture)
+  specs:
+    - Normative SHALL/MUST, avoid should/may; every requirement has at least one WHEN/THEN scenario using exactly four hashtags
+    - Any seam without covering tests gets a characterization test before it is reshaped ("existing suites pass" is not sufficient for an untested seam)
+  tasks:
+    - This is the plan of record — group by phase, order by dependency, each task independently verifiable
+    - Each reshape/commit is gated by npm run typecheck + npm test; keep pure renames in separate commits from semantic reshapes
+    - file:line anchors are orientation only — locate code by content before editing
