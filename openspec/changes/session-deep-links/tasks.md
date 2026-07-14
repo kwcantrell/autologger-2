@@ -128,13 +128,13 @@ before editing.
 
 ## 8. e2e
 
-- [ ] 8.1 Flip the `smoke.spec.ts` session assertion from `body.dataset.sessionId` to
+- [x] 8.1 Flip the `smoke.spec.ts` session assertion from `body.dataset.sessionId` to
       the URL (`/sessions/<id>`); confirm the existing `#v3-session-grid` visibility
       assertions in `smoke.spec.ts` and `visual.spec.ts` stay green (design D9)
-- [ ] 8.2 Deep-link smoke: create a session via the UI, capture its URL, `page.goto`
+- [x] 8.2 Deep-link smoke: create a session via the UI, capture its URL, `page.goto`
       it fresh, assert the workspace mounts; a garbage-id visit renders the not-found
       state
-- [ ] 8.3 Login-gate project: anonymous visit to `/sessions/<id>` renders the login
+- [x] 8.3 Login-gate project: anonymous visit to `/sessions/<id>` renders the login
       view with the address bar still at `/sessions/<id>` (spec: web-login-experience
       "Anonymous deep link keeps its URL")
 
