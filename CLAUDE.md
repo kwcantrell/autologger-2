@@ -1,15 +1,16 @@
 # CLAUDE.md — autologger-cf
 
 Guidance for Claude Code in this repo. Read at the start of every session.
-For deep architecture, endpoint parity, and storage layout see **`README.md`** —
+For deep architecture, the endpoint inventory, and storage layout see **`README.md`** —
 this file stays short and points there rather than duplicating it.
 
 ## Project overview
 
-Portable Node server port of the Python AutoLogger backend (`../autologger`) — a faithful
-TypeScript reimplementation serving the **same JSON shapes** the existing React frontend
-expects. The repo is **npm workspaces**: `server/` (Node backend) + `web/` (React frontend,
-canonical copy) + `e2e/` (Playwright smoke). **Hono** routing + **Zod** validation + **jose**
+Portable TypeScript/Node backend for AutoLogger — originally a faithful port of the Python
+AutoLogger backend; this repo is now the canonical implementation, serving the **frozen JSON
+shapes** the React frontend expects. The repo is **npm workspaces**: `server/` (Node backend)
++ `web/` (React frontend, canonical copy) + `companion/` (Bitfocus Companion module), plus
+`e2e/` (Playwright smoke, not a workspace). **Hono** routing + **Zod** validation + **jose**
 for Google ID-token verify, on:
 
 - **better-sqlite3** — catalog DB (`DATA_DIR/catalog.db`: users/studios/shows/prefs, login
@@ -45,6 +46,14 @@ npm run lint                                   # biome: web src/ + e2e/
 
 ## Invariants (spec)
 
+- **The published HTTP/WS contract is frozen** (capability spec `api-contract-freeze`):
+  the endpoint inventory (the README endpoint table is the normative route list), JSON
+  response shapes, status codes, non-JSON export bodies (CSV/JSONL), header/range semantics,
+  and WebSocket message shapes *and emission semantics*. Any observable change requires an
+  OpenSpec change whose delta spec authorizes it — shape/status-code edits are **never**
+  "small, obvious fixes". Non-loopholes: surface with no current in-repo caller stays frozen
+  (it exists for stale/external clients), and co-mutating `web/`/`companion/` in the same
+  change does not exempt the server delta (deployed Companion installs lag the repo).
 - **Single Node process** — no clustering, no multi-worker fan-out.
 - **SessionHub RPC bodies are synchronous** — zero `await`s inside a hub method; async work
   (fetch, streaming) belongs in the router layer.
@@ -64,13 +73,15 @@ npm run lint                                   # biome: web src/ + e2e/
 
 ## Source layout
 
-Server code mirrors the Python backend module-for-module under `server/src/`; each file notes
-its Python origin in a header comment. Router files live in `server/src/routers/`; the live
+Server code keeps the module-for-module layout it inherited from its Python origin under
+`server/src/`; files ported from Python note their origin in a header comment. Router files
+live in `server/src/routers/`; the live
 per-session spine is `server/src/durable/SessionHub.ts` (+ domain stores alongside it); the
 catalog DB layer is `server/src/db/d1.ts` with migrations in `server/src/db/migrations/`;
 Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
 lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tests live under
-`e2e/`. Full annotated tree + endpoint→Python-parity table are in **`README.md`**.
+`e2e/`. Full annotated tree + the normative endpoint table (with its historical Python-origin
+column) are in **`README.md`**.
 
 ## Conventions
 
@@ -85,8 +96,10 @@ lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tes
 - **`file:line` anchors in specs/plans/briefs go stale** the moment earlier work inserts code.
   Anchors are for orientation; **locate the quoted code by content before editing**, and say
   so in any prompt you hand a sub-agent.
-- **Maintain Python parity.** This is a port — match the existing JSON response shapes and
-  status codes the React frontend expects; don't invent new API surface without a spec.
+- **The API contract is frozen.** See Invariants — don't change observable HTTP/WS behavior
+  or add API surface without an authorizing OpenSpec delta spec.
+- **Origin headers are deliberate past-tense provenance** ("ported from `events.py`") —
+  don't strip them, and don't turn them back into present-tense obligations.
 
 ## Guardrails
 

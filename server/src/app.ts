@@ -1,5 +1,5 @@
 // src/app.ts — Hono app wiring: middleware chain + router mounts + static
-// serving. Mirrors src/autologger/web/app.py. The caller supplies
+// serving. Ported from src/autologger/web/app.py. The caller supplies
 // upgradeWebSocket (from @hono/node-ws in main.ts; a 426 stub in HTTP tests).
 
 import { serveStatic } from '@hono/node-server/serve-static';

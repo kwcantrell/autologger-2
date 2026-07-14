@@ -8,8 +8,8 @@ import { z } from 'zod';
 export const MAX_METADATA_BYTES = 8000; // matches the message length cap.
 
 // Pydantic `X | None = None` ⇒ field is optional and may be null. `.nullish()`
-// folds both "absent" and explicit `null` to `null | undefined`, matching the
-// Python routers' `is not None` checks.
+// folds both "absent" and explicit `null` to `null | undefined`, preserving the
+// origin Python routers' `is not None` semantics.
 
 export const showUpdateEntrySchema = z.object({
   show_id: z.string().min(1).max(120),
