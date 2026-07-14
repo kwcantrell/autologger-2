@@ -21,7 +21,7 @@ function fakeCore(initial: Partial<TRow> = {}) {
   const core = {
     get db() {
       return {
-        exec: (sql: string, ...args: unknown[]): unknown => {
+        run: (sql: string, ...args: unknown[]): { changes: number } => {
           if (sql.includes('is_rolling = 1')) {
             row.is_rolling = true;
             row.current_take = args[0] as number;
@@ -31,7 +31,7 @@ function fakeCore(initial: Partial<TRow> = {}) {
             row.roll_started_at_utc = null;
             row.elapsed_frames = args[0] as number;
           }
-          return undefined;
+          return { changes: 1 };
         },
       };
     },

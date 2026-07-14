@@ -47,7 +47,7 @@ export class EventStore {
     const id = crypto.randomUUID();
     const wallIso = isoZ(new Date(wallMs));
     const metaJson = input.metadataJson || '{}';
-    this.core.db.exec(
+    this.core.db.run(
       `INSERT INTO events (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id,
@@ -108,7 +108,7 @@ export class EventStore {
   }): { event: EventRpc; projection: SessionProjection } | null {
     const old = this.core.first('SELECT * FROM events WHERE id = ?', input.eventId);
     if (old === null) return null;
-    this.core.db.exec(
+    this.core.db.run(
       `UPDATE events SET category = ?, message = ?, wall_time_utc = ?,
          timecode_total_frames = ?, metadata_json = ? WHERE id = ?`,
       input.category,
@@ -127,7 +127,7 @@ export class EventStore {
   deleteEvent(eventId: string): { ok: boolean; projection: SessionProjection } {
     const existed = this.core.first('SELECT 1 AS x FROM events WHERE id = ?', eventId) !== null;
     if (existed) {
-      this.core.db.exec('DELETE FROM events WHERE id = ?', eventId);
+      this.core.db.run('DELETE FROM events WHERE id = ?', eventId);
       this.core.bumpRevision();
       this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
     }
@@ -141,7 +141,7 @@ export class EventStore {
     const rev = this.core.revision();
     const lastRaw = this.core.first("SELECT value FROM meta WHERE key = 'relink_checked_rev'");
     if (lastRaw !== null && Number(lastRaw.value) === rev) return 0;
-    this.core.db.exec(
+    this.core.db.run(
       "INSERT INTO meta (key, value) VALUES ('relink_checked_rev', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
       String(rev),
     );
@@ -172,7 +172,7 @@ export class EventStore {
       if (candidates.length !== 1) continue;
       delete meta[UI_SNAPSHOT_LABEL_KEY];
       delete meta[UI_SNAPSHOT_COLOR_KEY];
-      this.core.db.exec(
+      this.core.db.run(
         'UPDATE events SET category = ?, metadata_json = ? WHERE id = ?',
         candidates[0],
         JSON.stringify(meta),

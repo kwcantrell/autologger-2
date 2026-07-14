@@ -70,7 +70,7 @@ export class AudioStore {
       const ri = Math.trunc(input.recordingOrdinal);
       if (ri >= 1) ro = ri;
     }
-    this.core.db.exec(
+    this.core.db.run(
       `INSERT INTO session_audio_segments
          (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -103,7 +103,7 @@ export class AudioStore {
   }
 
   deleteAudioSegment(segmentId: string): void {
-    this.core.db.exec('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
+    this.core.db.run('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
   }
 
   getAudioSegmentKey(segmentId: string): { r2_key: string; mime_type: string } | null {
@@ -116,14 +116,14 @@ export class AudioStore {
 
   setAudioSegmentWaveform(input: { segmentId: string; peaks: number[] }): boolean {
     const blob = JSON.stringify(input.peaks);
-    const r = this.core.db.exec(
+    const r = this.core.db.run(
       'UPDATE session_audio_segments SET waveform_peaks_json = ?, waveform_db_floor = ? WHERE id = ?',
       blob,
       -48.0,
       input.segmentId,
     );
-    if (r.rowsWritten > 0) this.core.broadcast({ type: 'audio.changed' });
-    return r.rowsWritten > 0;
+    if (r.changes > 0) this.core.broadcast({ type: 'audio.changed' });
+    return r.changes > 0;
   }
 
   /** Reconcile metadata against the blob keys the router layer found under the session prefix. */
@@ -150,7 +150,7 @@ export class AudioStore {
             : ext === 'm4a'
               ? 'audio/mp4'
               : 'audio/webm';
-      this.core.db.exec(
+      this.core.db.run(
         `INSERT INTO session_audio_segments
            (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
          VALUES (?, ?, NULL, NULL, ?, ?, NULL, ?)`,

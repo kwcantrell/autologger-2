@@ -3,7 +3,7 @@
 // events_stream_revision counter, the catalog projection, the transport row,
 // and meta key/value + alarm scheduling. Holds the two cross-domain reads
 // (transportRow, projection) so the domain stores never depend on each other.
-// Runtime-agnostic by design: it sees only the structural SessionCtx seam
+// Runtime-agnostic by design: it sees only the structural SessionRuntime seam
 // (SessionHub is the sole substrate today; tests may supply a fake).
 
 import { type TransportFields } from '../timecode';
@@ -16,12 +16,21 @@ export interface AttachedSocket {
   role: 'browser' | 'companion';
 }
 
-/** Runtime substrate SessionCore runs on: the embedded SQL handle, the hub's
- * socket set, and the alarm scheduler. */
-export interface SessionCtx {
-  readonly sql: {
-    exec<T = Row>(sql: string, ...binds: SqlValue[]): { toArray(): T[]; rowsWritten: number };
-  };
+/** The SQL seam the session domain programs against: reads return rows,
+ * writes return an affected-row count, and a distinct void multi-statement
+ * path serves schema init (zero binds only). */
+export interface SessionSql {
+  all<T = Row>(sql: string, ...binds: SqlValue[]): T[];
+  run(sql: string, ...binds: SqlValue[]): { changes: number };
+  /** Multi-statement DDL (initSchema); zero binds, no result. */
+  exec(multiStatementSql: string): void;
+}
+
+/** Runtime substrate SessionCore runs on: the embedded SQL seam, the hub's
+ * socket set, and the alarm scheduler. An interface so tests can supply a
+ * fake runtime without touching SessionCore. */
+export interface SessionRuntime {
+  readonly sql: SessionSql;
   sockets(): Iterable<AttachedSocket>;
   setAlarm(atMs: number): void;
 }
@@ -54,9 +63,9 @@ export interface TransportState {
 }
 
 export class SessionCore {
-  constructor(private ctx: SessionCtx) {}
+  constructor(private ctx: SessionRuntime) {}
 
-  get db(): SessionCtx['sql'] {
+  get db(): SessionSql {
     return this.ctx.sql;
   }
 
@@ -122,7 +131,7 @@ export class SessionCore {
   // -- small SQL helpers -------------------------------------------------------
 
   all(query: string, ...binds: SqlValue[]): Row[] {
-    return this.db.exec<Row>(query, ...binds).toArray();
+    return this.db.all<Row>(query, ...binds);
   }
 
   first(query: string, ...binds: SqlValue[]): Row | null {
@@ -141,7 +150,7 @@ export class SessionCore {
   }
 
   bumpRevision(): void {
-    this.db.exec(
+    this.db.run(
       "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'events_stream_revision'",
     );
   }
@@ -203,7 +212,7 @@ export class SessionCore {
   }
 
   metaSet(key: string, value: string): void {
-    this.db.exec(
+    this.db.run(
       'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       key,
       value,
@@ -211,7 +220,7 @@ export class SessionCore {
   }
 
   metaDelete(key: string): void {
-    this.db.exec('DELETE FROM meta WHERE key = ?', key);
+    this.db.run('DELETE FROM meta WHERE key = ?', key);
   }
 
   /** Single alarm slot — setAlarm REPLACES any pending alarm. The recording

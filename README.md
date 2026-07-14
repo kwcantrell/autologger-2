@@ -87,7 +87,6 @@ server/src/
     kvStore.ts            KV replacement (login sessions, OAuth CSRF, Companion presence) on the catalog DB
     blobStore.ts          Filesystem blob store: atomic put, range get, list, traversal guard
     presence.ts           In-memory Companion presence registry
-    sqlShim.ts             Cursor-shaped SQL shim over better-sqlite3 (the seam SessionCore programs against)
   session/
     SessionHub.ts          In-process per-session hub: registry, idle eviction, RPC surface
     sessionCore.ts          Shared substrate: SQLite handle, WS fan-out, events_stream_revision, lease

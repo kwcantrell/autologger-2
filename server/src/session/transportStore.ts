@@ -34,7 +34,7 @@ export class TransportStore {
       };
     }
     const nextTake = tr.current_take + 1;
-    this.core.db.exec(
+    this.core.db.run(
       'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
       nextTake,
       isoZ(new Date()),
@@ -60,7 +60,7 @@ export class TransportStore {
       }
     }
     const totalElapsed = tr.elapsed_frames + extra;
-    this.core.db.exec(
+    this.core.db.run(
       'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
       totalElapsed,
     );
@@ -77,7 +77,7 @@ export class TransportStore {
   stopTakeWithDuration(input: { durationS: number; ctx: TimecodeCtx }): SessionProjection {
     const tr = this.core.transportRow();
     const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
-    this.core.db.exec(
+    this.core.db.run(
       'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
       tr.elapsed_frames + extra,
     );

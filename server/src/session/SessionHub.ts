@@ -11,12 +11,18 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { SqlShim } from '../node/sqlShim';
 import { AudioStore } from './audioStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
-import type { AttachedSocket, SessionProjection, TimecodeCtx } from './sessionCore';
+import type {
+  AttachedSocket,
+  Row,
+  SessionProjection,
+  SessionSql,
+  SqlValue,
+  TimecodeCtx,
+} from './sessionCore';
 import { TopicStore } from './topicStore';
 import { TranscriptStore } from './transcriptStore';
 import { TransportStore } from './transportStore';
@@ -28,6 +34,19 @@ export type { Topic } from './topicStore';
 
 interface HubSocket extends AttachedSocket {
   raw: { send(data: string): void };
+}
+
+/** The real SessionSql adapter: prepared statements over better-sqlite3.
+ * Reads return rows, writes return the affected-row count, and exec() is the
+ * distinct multi-statement DDL path (initSchema; zero binds). */
+export function sqliteSessionSql(db: Database.Database): SessionSql {
+  return {
+    all: <T = Row>(sql: string, ...binds: SqlValue[]) => db.prepare(sql).all(...binds) as T[],
+    run: (sql: string, ...binds: SqlValue[]) => ({ changes: db.prepare(sql).run(...binds).changes }),
+    exec: (multiStatementSql: string) => {
+      db.exec(multiStatementSql);
+    },
+  };
 }
 
 export class SessionHub {
@@ -50,12 +69,8 @@ export class SessionHub {
     this.db.pragma('synchronous = NORMAL');
     this.db.pragma('foreign_keys = ON'); // spec: both catalog AND session DBs
     this.db.pragma('busy_timeout = 5000');
-    // SqlShim's SqlValue (string | number | null | Buffer) is intentionally wider
-    // than SessionCtx['sql']'s (string | number | null); the wider exec is
-    // structurally assignable to the narrower seam, so this narrows on purpose.
-    const sql = new SqlShim(this.db);
     this.core = new SessionCore({
-      sql,
+      sql: sqliteSessionSql(this.db),
       sockets: () => this.socketSet,
       setAlarm: (atMs) => this.armAlarm(atMs),
     });

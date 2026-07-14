@@ -44,7 +44,7 @@ export class TopicStore {
     const ordinal = Number(
       this.core.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_topics')?.n ?? 0,
     );
-    this.core.db.exec(
+    this.core.db.run(
       `INSERT INTO session_topics (id, session_time, duration_sec, topic_level, summary, ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id,
@@ -73,7 +73,7 @@ export class TopicStore {
       }
     }
     if (cols.length) {
-      this.core.db.exec(
+      this.core.db.run(
         `UPDATE session_topics SET ${cols.join(', ')} WHERE id = ?`,
         ...vals,
         topicId,
@@ -83,7 +83,7 @@ export class TopicStore {
   }
 
   deleteTopic(topicId: string): boolean {
-    const r = this.core.db.exec('DELETE FROM session_topics WHERE id = ?', topicId);
-    return r.rowsWritten > 0;
+    const r = this.core.db.run('DELETE FROM session_topics WHERE id = ?', topicId);
+    return r.changes > 0;
   }
 }

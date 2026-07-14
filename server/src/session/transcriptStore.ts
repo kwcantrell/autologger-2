@@ -47,7 +47,7 @@ export class TranscriptStore {
         'SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_transcript_words',
       )?.n ?? 0,
     );
-    this.core.db.exec(
+    this.core.db.run(
       `INSERT INTO session_transcript_words (id, session_time, speaker, word, ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?)`,
       id,
@@ -77,7 +77,7 @@ export class TranscriptStore {
       }
     }
     if (cols.length) {
-      this.core.db.exec(
+      this.core.db.run(
         `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE id = ?`,
         ...vals,
         wordId,
@@ -89,7 +89,7 @@ export class TranscriptStore {
   }
 
   deleteTranscriptWord(wordId: string): boolean {
-    const r = this.core.db.exec('DELETE FROM session_transcript_words WHERE id = ?', wordId);
-    return r.rowsWritten > 0;
+    const r = this.core.db.run('DELETE FROM session_transcript_words WHERE id = ?', wordId);
+    return r.changes > 0;
   }
 }

@@ -18,11 +18,11 @@
 
 ## 2. Phase 1b — Session seam reshape (keep seam, shed DO shape)
 
-- [ ] 2.1 **Characterization tests first:** pin the three `rowsWritten` readers — `setAudioSegmentWaveform` (404 + `audio.changed` broadcast), `deleteTopic` (404), `deleteTranscriptWord` (404) — asserting current status + broadcast behavior on missing ids
-- [ ] 2.2 Reshape `SessionCtx.sql` (→ `SessionRuntime.sql`, an interface) from `exec()→{toArray,rowsWritten}` to `all(sql,...binds)` (rows) and `run(sql,...binds)` returning `{ changes }`; rewire the three readers to `run().changes`
-- [ ] 2.3 Keep a distinct `void` multi-statement `exec` path for `initSchema` (zero-bind); keep the schema-init test covering it
-- [ ] 2.4 Collapse `SqlShim` into `SessionHub`'s constructor or a ~5-line adapter; update `SessionCore.all/first/db.exec` and every `core.db.exec` write site
-- [ ] 2.5 Confirm hub RPC bodies remain zero-`await` and transactional; add a fake-runtime `SessionCore` test (in-mem sql + fake sockets); `npm run typecheck` + `npm test` green
+- [x] 2.1 **Characterization tests first:** pin the three `rowsWritten` readers — `setAudioSegmentWaveform` (404 + `audio.changed` broadcast), `deleteTopic` (404), `deleteTranscriptWord` (404) — asserting current status + broadcast behavior on missing ids
+- [x] 2.2 Reshape `SessionCtx.sql` (→ `SessionRuntime.sql`, an interface) from `exec()→{toArray,rowsWritten}` to `all(sql,...binds)` (rows) and `run(sql,...binds)` returning `{ changes }`; rewire the three readers to `run().changes`
+- [x] 2.3 Keep a distinct `void` multi-statement `exec` path for `initSchema` (zero-bind); keep the schema-init test covering it
+- [x] 2.4 Collapse `SqlShim` into `SessionHub`'s constructor or a ~5-line adapter; update `SessionCore.all/first/db.exec` and every `core.db.exec` write site
+- [x] 2.5 Confirm hub RPC bodies remain zero-`await` and transactional; add a fake-runtime `SessionCore` test (in-mem sql + fake sockets); `npm run typecheck` + `npm test` green
 
 ## 3. Phase 1c — Catalog seam reshape + facade cleanup
 
