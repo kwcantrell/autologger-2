@@ -119,10 +119,11 @@ but design-bearing changes get a change proposal first.
 
 **`opsx:apply` executes via subagents, never inline.** The orchestrating session that
 carried explore → gate stays lean: one disposable implementer subagent per task (strictly
-sequential, on a plain branch), thresholded per-task review subagents (code-bearing tasks
-reviewed, mechanical renames/doc sweeps skip to the final gate), an always-on whole-branch
-review at the end, and file-based handoffs (reports, diff files, progress ledger under
-`openspec/changes/<name>/.apply/`, git-ignored). The gated OpenSpec artifacts are the task
+sequential, on a plain branch), thresholded per-phase review subagents (one reviewer over
+each phase's cumulative diff after its last task lands; phases with only mechanical
+renames/doc sweeps skip to the final gate — decided 2026-07-14, replacing per-task
+reviews), an always-on whole-branch review at the end, and file-based handoffs (reports,
+diff files, progress ledger under `openspec/changes/<name>/.apply/`, git-ignored). The gated OpenSpec artifacts are the task
 briefs — dispatch prompts point at them rather than pasting context. Full protocol lives in
 `.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); re-apply that customization if
 the `openspec` CLI regenerates the skill.

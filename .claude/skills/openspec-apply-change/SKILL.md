@@ -91,7 +91,7 @@ Implement tasks from an OpenSpec change.
 
    a. Record `BASE=$(git rev-parse HEAD)`.
 
-   b. Classify the task, which sets the review gate in (e):
+   b. Classify the task, which decides whether its phase needs a review in (e):
       - **mechanical** — pure renames, comment/doc sweeps, checkbox/validator runs,
         config touch-ups with no behavior change
       - **code-bearing** — anything that changes behavior, reshapes a seam, or
@@ -125,22 +125,32 @@ Implement tasks from an OpenSpec change.
         split, or escalate to the user if the artifacts themselves are wrong. Never
         retry unchanged.
 
-   e. **Review gate (thresholded):**
-      - **code-bearing** → write the diff to a file this session never reads:
-        `{ git log --oneline $BASE..HEAD; git diff --stat $BASE..HEAD; git diff -U10 $BASE..HEAD; } > openspec/changes/<name>/.apply/task-<id>-diff.txt`
+   e. **Review gate (per phase, thresholded):** reviews run once per numbered phase
+      (a `## N.` heading in tasks.md), after the phase's LAST task clears — not per
+      task.
+      - When the last task of a phase completes and the phase contained **any
+        code-bearing task** → write the phase's cumulative diff to a file this
+        session never reads (PHASE_BASE = HEAD before the phase's first task, from
+        the ledger):
+        `{ git log --oneline $PHASE_BASE..HEAD; git diff --stat $PHASE_BASE..HEAD; git diff -U10 $PHASE_BASE..HEAD; } > openspec/changes/<name>/.apply/phase-<N>-diff.txt`
         Dispatch a reviewer subagent (mid-tier model floor) with the diff path, the
-        spec/design paths, and the report path. It must return **two verdicts**: spec
-        compliance (the diff does what the task + spec require — nothing missing,
-        nothing extra) and code quality. Critical/Important findings → dispatch a fix
-        subagent (fixes + re-runs covering tests, appends results to the same report
-        file) → re-review with a fresh diff file. Loop until clean. Do not pre-judge
-        findings in the reviewer prompt ("don't flag X" is a red flag).
-      - **mechanical** → skip the per-task reviewer; step 7's whole-branch review
-        covers it.
+        spec/design paths, and the phase's task report paths. It must return **two
+        verdicts**: spec compliance (the diff does what the phase's tasks + spec
+        require — nothing missing, nothing extra) and code quality.
+        Critical/Important findings → dispatch a fix subagent (fixes + re-runs
+        covering tests, appends results to the phase's reports) → re-review with a
+        fresh diff file. Loop until clean. Do not pre-judge findings in the reviewer
+        prompt ("don't flag X" is a red flag).
+      - Phase with **only mechanical tasks** → skip the phase reviewer; step 7's
+        whole-branch review covers it.
+      - Mid-phase, tasks still get no individual reviewer — but a `DONE_WITH_CONCERNS`
+        correctness concern is addressed before the next dispatch, not parked until
+        the phase review.
 
    f. Bookkeeping: tick the checkbox in tasks.md (`- [ ]` → `- [x]`) and append one
-      ledger line:
-      `Task <id>: complete (commits <base7>..<head7>, review clean | skipped-mechanical)`
+      ledger line per task, plus one per phase when its gate resolves:
+      `Task <id>: complete (commits <base7>..<head7>)`
+      `Phase <N>: review clean (phase-<N>-diff.txt) | skipped-mechanical`
 
    **Pause if:**
    - Task is unclear → ask for clarification
@@ -172,12 +182,13 @@ Implement tasks from an OpenSpec change.
 
 Working on task 3/7: <task description> [code-bearing]
 [dispatch implementer → DONE, 2 commits, "14/14 passing"]
-[diff → .apply/task-3-diff.txt; dispatch reviewer → spec ✅, quality approved]
 ✓ Task complete (ledger + checkbox updated)
 
-Working on task 4/7: <task description> [mechanical]
+Working on task 4/7: <task description> [mechanical — last task of phase 2]
 [dispatch implementer → DONE, 1 commit, "typecheck + suite green"]
-✓ Task complete (per-task review skipped; covered by final branch review)
+[phase 2 contained code-bearing work → diff → .apply/phase-2-diff.txt;
+ dispatch reviewer → spec ✅, quality approved]
+✓ Phase 2 complete (ledger + checkboxes updated)
 ```
 
 **Output On Completion**
@@ -224,6 +235,8 @@ What would you like to do?
 - **Never read diffs, code, or full test logs into the orchestrator session** — hand them
   over as file paths
 - **Never dispatch implementer subagents in parallel** — tasks run strictly sequentially
+- **Reviews run per phase, not per task** — one reviewer over the phase's cumulative
+  diff after its last task; only the final whole-branch review is always-on
 - **Never re-dispatch a task the ledger marks complete** — check `.apply/ledger.md` (and
   `git log`) after any compaction or resume
 - If task is ambiguous, pause and ask before dispatching
