@@ -96,7 +96,7 @@ before editing.
 
 ## 6. Post-login deep-link return
 
-- [ ] 6.1 Validator util in `web/src/shared/utils/` (URL-parse, reject-by-default,
+- [x] 6.1 Validator util in `web/src/shared/utils/` (URL-parse, reject-by-default,
       router-known paths only) with exhaustive unit tests: accepts `/sessions/abc?x=1`;
       rejects `//evil.com`, `/\evil.com`, `https://evil.com/x`, values with `\` or
       ASCII control chars, non-strings, empty, anything not resolving to the current
