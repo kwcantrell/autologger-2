@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { systemClock } from '../clock';
+import { newUserAllTeamsEnabled } from '../env';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -62,6 +63,19 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
     },
   };
+  // Design D5: NEW_USER_ALL_TEAMS is deprecated -- the callback's new-user
+  // branch no longer consults it (teams-self-serve change, "NEW_USER_ALL_TEAMS
+  // deprecated"). The key stays parsed (no env-shape break); a truthy value
+  // only produces this one-time startup warning, never a per-request log (this
+  // runs once here at boot, not inside the callback handler).
+  if (newUserAllTeamsEnabled(bindings.config)) {
+    console.warn(
+      'NEW_USER_ALL_TEAMS is deprecated and ignored: new users receive exactly the ' +
+        'memberships materialized from pending invites (possibly none). Remove this ' +
+        'variable from your environment.',
+    );
+  }
+
   return {
     bindings,
     close: () => {

@@ -162,6 +162,10 @@ tight loop.
   unless this process sits behind a proxy you control.
 - **`REQUIRE_LOGIN` defaults ON** (gate decision E1) — every `/api` route requires a session
   or bearer token unless you explicitly set `REQUIRE_LOGIN=0`.
+- **`NEW_USER_ALL_TEAMS` is deprecated and ignored** (teams-self-serve) — a new user's Google
+  sign-in receives exactly the memberships materialized from pending email invites (possibly
+  none), never a blanket grant. The key stays parsed (no env-shape break); a truthy value logs
+  one deprecation warning at startup and otherwise changes nothing.
 - **Startup warning on open binds** — if the process binds to a non-loopback host with
   `REQUIRE_LOGIN=0` and no `IP_ALLOWLIST`, `main.ts` prints a loud warning: every `/api` route
   is reachable from the network.

@@ -17,6 +17,15 @@ export class AuthStore {
     );
   }
 
+  /** Fetch a user row by Google sub, INCLUDING disabled accounts (design D11) —
+   * the OAuth callback resolves the sub against ALL rows before the
+   * existing/new split so a disabled match can redirect (account_disabled)
+   * instead of falling into the new-user branch and tripping the unique
+   * `google_sub` constraint (the former latent 500). */
+  authGetUserByGoogleSubAny(googleSub: string): Row | null {
+    return this.db.first<Row>('SELECT * FROM users WHERE google_sub = ?', googleSub);
+  }
+
   authGetUserById(userId: string): Row | null {
     return this.db.first<Row>(
       'SELECT * FROM users WHERE id = ? AND disabled_at_utc IS NULL',

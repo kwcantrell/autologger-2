@@ -14,7 +14,6 @@ import {
   cookieSecureForRequest,
   googleClientId,
   googleClientSecret,
-  newUserAllTeamsEnabled,
   oauthConfigured,
   publicBaseUrl,
   sessionCookieName,
@@ -42,6 +41,15 @@ const FORBIDDEN_LOG_CHARS =
 
 function sanitizeForLog(value: unknown): string {
   return String(value ?? '').replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
+}
+
+/** Invite-matching normalization (design D2) — JS toLowerCase().trim() only,
+ * identically at invite time and sign-in time, never SQL lower(). Duplicated
+ * from routers/teams.ts's identical helper rather than imported: teams.ts is
+ * out of scope for this change (apply-scope guard), and the algorithm is a
+ * one-line primitive with no state to diverge. */
+function normalizeEmail(raw: string): string {
+  return raw.toLowerCase().trim();
 }
 
 authRouter.get('/auth/google/start', async (c) => {
@@ -156,12 +164,26 @@ authRouter.get('/auth/google/callback', async (c) => {
   const gn = String(claims.given_name ?? '').trim();
   const fn = String(claims.family_name ?? '').trim();
   const pic = String(claims.picture ?? '').trim();
+  // JWTPayload carries an index signature, so unlisted claims (email_verified
+  // is not one of jose's typed fields) flow through `claims` already -- no
+  // change to verifyIdToken/oauth_google.ts is needed to surface it.
+  const emailVerified = claims.email_verified === true;
 
   const catalog = c.get('catalog');
-  const existing = catalog.auth.authGetUserByGoogleSub(googleSub);
+
+  // Design D11: resolve the sub against ALL rows (not just enabled ones)
+  // before the existing/new split. A disabled match must redirect here --
+  // falling through to the new-user branch would trip the unique google_sub
+  // constraint (the former latent 500).
+  const anyExisting = catalog.auth.authGetUserByGoogleSubAny(googleSub);
+  if (anyExisting && Boolean(anyExisting.disabled_at_utc)) {
+    console.warn('OAuth callback: disabled account attempted sign-in', sanitizeForLog(googleSub));
+    return c.redirect('/?login_error=account_disabled', 302);
+  }
+
   let uid: string;
-  if (existing) {
-    uid = String(existing.id);
+  if (anyExisting) {
+    uid = String(anyExisting.id);
     catalog.auth.authUpdateUserProfile(uid, {
       email,
       givenName: gn,
@@ -169,24 +191,38 @@ authRouter.get('/auth/google/callback', async (c) => {
       pictureUrl: pic,
     });
   } else {
-    uid = catalog.auth.authCreateUserGoogle({
-      googleSub,
-      email: email || `${googleSub}@users.noreply.invalid`,
-      givenName: gn,
-      familyName: fn,
-      pictureUrl: pic,
-    });
-    catalog.auth.authSeedPrefsFromGlobals(
-      uid,
-      (catalog.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
-      (catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
-    );
-    if (newUserAllTeamsEnabled(c.env.config)) {
-      catalog.auth.authAddMemberships(
-        uid,
-        catalog.studios.listStudiosBrief().map((s) => s.id),
+    // Design D2: the whole new-user branch -- creation, pref seeding, and
+    // invite materialization + consumption -- runs inside one catalog
+    // transaction (CatalogDb.tx nests as savepoints; every store call below
+    // is synchronous). The async KV login-session write below stays outside.
+    uid = c.env.ports.catalog.tx(() => {
+      const newUid = catalog.auth.authCreateUserGoogle({
+        googleSub,
+        email: email || `${googleSub}@users.noreply.invalid`,
+        givenName: gn,
+        familyName: fn,
+        pictureUrl: pic,
+      });
+      catalog.auth.authSeedPrefsFromGlobals(
+        newUid,
+        (catalog.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
+        (catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
       );
-    }
+      // Materialize pending invites ONLY when the id_token asserts a
+      // verified email (team-management delta, "Email invites") -- the
+      // email claim becomes an authorization join key here, so an
+      // unverified or absent claim must not match. `email` (the raw claim,
+      // pre-fallback) is guarded non-empty so the synthesized
+      // `<sub>@users.noreply.invalid` address can never be normalized into
+      // a match.
+      if (emailVerified && email) {
+        const consumed = catalog.auth.authConsumeInvitesForEmail(normalizeEmail(email));
+        for (const invite of consumed) {
+          catalog.auth.authAddMembershipWithRole(newUid, String(invite.studio_id), 'member');
+        }
+      }
+      return newUid;
+    });
   }
 
   const ttlDays = sessionTtlDays(c.env.config);

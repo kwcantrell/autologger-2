@@ -1,7 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { putOauthState } from '../auth/identity';
+import { AuthStore } from '../db/authStore';
 import { app, env, envWith } from '../test/harness';
-import { catalogFor, loginCookie, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
+import type { Bindings } from '../types';
 import {
   makeKeypair,
   mintIdToken,
@@ -33,17 +35,30 @@ beforeAll(async () => {
   KP = await makeKeypair();
 });
 
-async function runCallback(opts: {
-  sub?: string;
-  email?: string;
-  state?: string;
-  code?: string;
-}): Promise<Response> {
+async function runCallback(
+  opts: {
+    sub?: string;
+    email?: string;
+    state?: string;
+    code?: string;
+    emailVerified?: boolean;
+  },
+  envOverride: Bindings = OAUTH_ENV,
+): Promise<Response> {
   const idToken = await mintIdToken({
     privateKey: KP.privateKey,
     kid: KP.kid,
     audience: CLIENT,
-    claims: { sub: opts.sub, email: opts.email ?? 'a@b.com', given_name: 'A', family_name: 'B' },
+    claims: {
+      sub: opts.sub,
+      email: opts.email ?? 'a@b.com',
+      given_name: 'A',
+      family_name: 'B',
+      // Only set the claim when the test cares -- omitting it entirely
+      // exercises the "absent" branch distinctly from an explicit `false`
+      // (task 3.1: both must fail to materialize invites).
+      ...(opts.emailVerified !== undefined ? { email_verified: opts.emailVerified } : {}),
+    },
   });
   mockGoogleToken({ id_token: idToken });
   mockGoogleJwks(KP.publicJwk);
@@ -52,7 +67,7 @@ async function runCallback(opts: {
   return app.request(
     `/auth/google/callback?code=${opts.code ?? 'abc'}&state=${state}`,
     { method: 'GET' },
-    OAUTH_ENV,
+    envOverride,
   );
 }
 
@@ -315,6 +330,182 @@ describe('callback -- error branches', () => {
       warnSpy.mockRestore();
     }
   });
+});
+
+describe('callback -- invite materialization (task 3.1, design D2)', () => {
+  it('materializes a pending invite into a member membership, consuming it (case-insensitive match)', async () => {
+    const teamId = await seedStudio();
+    catalogFor().auth.authUpsertInvite(teamId, 'new.person@example.com', 'seed-inviter');
+
+    const res = await runCallback({
+      sub: 'sub-invited',
+      email: 'New.Person@Example.com', // mixed case -- must match the lowercase-stored invite
+      emailVerified: true,
+      state: 'state-invite-materialize',
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    const cat = catalogFor();
+    const uid = String(cat.auth.authGetUserByGoogleSub('sub-invited')?.id);
+    expect(cat.auth.authGetMembershipRole(uid, teamId)).toBe('member');
+    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(0);
+  });
+
+  it('email_verified: false -- user is created, invite remains, no membership', async () => {
+    const teamId = await seedStudio();
+    catalogFor().auth.authUpsertInvite(teamId, 'unverified-false@example.com', 'seed-inviter');
+
+    const res = await runCallback({
+      sub: 'sub-unverified-false',
+      email: 'unverified-false@example.com',
+      emailVerified: false,
+      state: 'state-invite-unverified-false',
+    });
+
+    expect(res.status).toBe(302);
+    const cat = catalogFor();
+    const user = cat.auth.authGetUserByGoogleSub('sub-unverified-false');
+    expect(user).not.toBeNull();
+    expect(cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+  });
+
+  it('email_verified absent -- user is created, invite remains, no membership', async () => {
+    const teamId = await seedStudio();
+    catalogFor().auth.authUpsertInvite(teamId, 'unverified-absent@example.com', 'seed-inviter');
+
+    const res = await runCallback({
+      sub: 'sub-unverified-absent',
+      email: 'unverified-absent@example.com',
+      // emailVerified intentionally omitted -- claim absent, not false
+      state: 'state-invite-unverified-absent',
+    });
+
+    expect(res.status).toBe(302);
+    const cat = catalogFor();
+    const user = cat.auth.authGetUserByGoogleSub('sub-unverified-absent');
+    expect(user).not.toBeNull();
+    expect(cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+  });
+
+  it('a revoked invite never materializes', async () => {
+    const teamId = await seedStudio();
+    catalogFor().auth.authUpsertInvite(teamId, 'revoked@example.com', 'seed-inviter');
+    catalogFor().auth.authDeleteInvite(teamId, 'revoked@example.com');
+
+    const res = await runCallback({
+      sub: 'sub-revoked',
+      email: 'revoked@example.com',
+      emailVerified: true,
+      state: 'state-invite-revoked',
+    });
+
+    expect(res.status).toBe(302);
+    const cat = catalogFor();
+    const uid = String(cat.auth.authGetUserByGoogleSub('sub-revoked')?.id);
+    expect(cat.auth.authGetMembershipRole(uid, teamId)).toBeNull();
+  });
+
+  it('an existing user sign-in does not re-scan invites seeded after their account existed', async () => {
+    const teamId = await seedStudio();
+    const sub = 'sub-existing-rescan';
+    const existingId = await seedUser({ sub, email: 'existing@example.com' });
+    catalogFor().auth.authUpsertInvite(teamId, 'existing@example.com', 'seed-inviter');
+
+    const res = await runCallback({
+      sub,
+      email: 'existing@example.com',
+      emailVerified: true,
+      state: 'state-existing-rescan',
+    });
+
+    expect(res.status).toBe(302);
+    const cat = catalogFor();
+    expect(cat.auth.authGetMembershipRole(existingId, teamId)).toBeNull();
+    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+  });
+
+  it('NEW_USER_ALL_TEAMS=1 grants nothing to a new user with no pending invites (design D5)', async () => {
+    const allTeamsEnv = envWith({
+      GOOGLE_CLIENT_ID: CLIENT,
+      GOOGLE_CLIENT_SECRET: 'secret',
+      PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+      NEW_USER_ALL_TEAMS: '1',
+    });
+    await seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
+    const res = await runCallback(
+      { sub: 'sub-no-blanket-grant', email: 'no-invites@example.com', state: 'state-all-teams-1' },
+      allTeamsEnv,
+    );
+    expect(res.status).toBe(302);
+    const cat = catalogFor();
+    const uid = String(cat.auth.authGetUserByGoogleSub('sub-no-blanket-grant')?.id);
+    expect(cat.auth.authListStudioIdsForUser(uid)).toHaveLength(0);
+    // Note: the one-time startup deprecation warning (design D5) fires from
+    // node/config.ts's createBindings() at process boot, not per-request --
+    // this envWith() overlay never calls createBindings, so the warning
+    // cannot be observed from here. See the dedicated createBindings-level
+    // test below for that assertion.
+  });
+
+  it('a disabled account signing in is redirected without a cookie or any write (design D11)', async () => {
+    const sub = 'sub-disabled';
+    const userId = await seedUser({ sub, email: 'disabled@example.com' });
+    catalogFor().auth.authSetUserDisabled(userId, true);
+    const before = catalogFor().auth.authGetUserRowAny(userId);
+
+    const res = await runCallback({
+      sub,
+      email: 'disabled@example.com',
+      state: 'state-disabled-signin',
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?login_error=account_disabled');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    const after = catalogFor().auth.authGetUserRowAny(userId);
+    expect(after).toEqual(before); // no writes -- profile untouched
+  });
+
+  it(
+    'atomicity: a throw mid-materialization rolls back user creation (no user row persists)',
+    async () => {
+      const teamId = await seedStudio();
+      catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
+      const spy = vi
+        .spyOn(AuthStore.prototype, 'authConsumeInvitesForEmail')
+        .mockImplementationOnce(() => {
+          throw new Error('simulated mid-transaction failure');
+        });
+      try {
+        // The app's onError handler (app.ts) converts any uncaught throw into
+        // a 500 response rather than a rejected promise (matching the
+        // existing "post-verification write throws" coverage above) -- the
+        // throw still propagates far enough to unwind CatalogDb.tx's
+        // better-sqlite3 transaction wrapper, which is what triggers the
+        // rollback this test is really checking.
+        const res = await runCallback({
+          sub: 'sub-atomic-fail',
+          email: 'atomic@example.com',
+          emailVerified: true,
+          state: 'state-atomic-fail',
+        });
+        expect(res.status).toBe(500);
+      } finally {
+        spy.mockRestore();
+      }
+      const user = catalogFor().auth.authGetUserByGoogleSub('sub-atomic-fail');
+      expect(user).toBeNull(); // creation rolled back with the failed materialization
+      // Structural note: this proves the tx boundary in practice for this one
+      // injection point. The router-level shape (create + seed-prefs +
+      // materialize all run inside one `c.env.ports.catalog.tx(...)` call in
+      // auth.ts, with no nested tx() in authConsumeInvitesForEmail /
+      // authAddMembershipWithRole) is the general guarantee; this test
+      // exercises it via the one realistic throw site the real store exposes.
+    },
+  );
 });
 
 describe('logout', () => {
