@@ -28,13 +28,22 @@ session: a generate request arriving while another run is in flight (same or dif
 session) SHALL respond `409` with an actionable detail and MUST NOT issue a provider
 request. Before issuing the provider request, the pipeline SHALL check whether the
 originating HTTP request has been aborted and, if so, abandon the run without provider
-spend. A run whose client disconnects after the provider request was issued SHALL still
-complete server-side (words persist; a later `GET …/transcript-words` shows them).
+spend, responding `400` with a detail distinct from the other `400` conditions (no-audio,
+all-unreadable, no-speech) — **not** an unauthorized status code outside the
+api-contract-freeze delta's table (gate decision 2026-07-14; see design.md). A run whose
+client disconnects after the provider request was issued SHALL still complete server-side
+(words persist; a later `GET …/transcript-words` shows them).
 
 #### Scenario: Concurrent generate is rejected cheaply
 - **WHEN** a second generate request arrives for a session that already has a run in
   flight
 - **THEN** it receives `409` and no additional provider request is made
+
+#### Scenario: Pre-provider-call abort is abandoned cheaply with a distinct 400
+- **WHEN** the originating HTTP request is already aborted before any provider request
+  would be issued
+- **THEN** the run is abandoned, no provider request is made, and the response is `400`
+  with a detail distinct from the other `400` conditions
 
 #### Scenario: Disconnected client does not lose the completed run
 - **WHEN** the client's connection drops after the provider request was issued and the

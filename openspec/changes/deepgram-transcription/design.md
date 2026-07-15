@@ -196,6 +196,13 @@ revert the branch. README endpoint table + `.env.example` updated in the same ch
    tests, fixtures, script, and mediabunny dep land on this change's branch.
 6. `nova-3` default model: confirm at implementation time (env-overridable regardless) —
    unchanged.
+7. **Pre-provider-call abort status code** (phase 4 review escalation): responds `400
+   {detail}` with a distinct aborted detail — added to the `api-contract-freeze` delta
+   table post-review. `499` (the implementer's original choice, flagged in the task 4.3
+   report's self-review as outside the delta's enumerated table) is **rejected** as an
+   unauthorized expansion of the frozen surface; `400` reuses an already-authorized status
+   code for this endpoint, distinguished only by detail text, which keeps the delta's
+   status-code set closed.
 
 ## Panel & review log
 
