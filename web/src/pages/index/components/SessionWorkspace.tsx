@@ -15,6 +15,7 @@ import { useAudioClips } from '../hooks/useAudioClips';
 import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
 import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
 import { useWaveforms } from '../hooks/useWaveforms';
+import { AiPanel } from './AiPanel';
 import type { AudioPlayerHandle } from './AudioPlayer';
 import { AudioPlayer } from './AudioPlayer';
 import type { AudioRecorderHandle } from './AudioRecorder';
@@ -23,11 +24,10 @@ import { AudioSaveOverlay } from './AudioSaveOverlay';
 import { CategoryButtonStrip } from './CategoryButtonStrip';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportModal } from './ExportModal';
+import { feedTabButtonClassName } from './feedTabStyles';
 import { MarkerNav } from './MarkerNav';
 import { TimecodeDisplay } from './TimecodeDisplay';
 import { Timeline } from './Timeline';
-import { TopicsFeed } from './TopicsFeed';
-import { TranscribeFeed } from './TranscribeFeed';
 import { getTransportState, TransportControls } from './TransportControls';
 
 declare global {
@@ -90,7 +90,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   }, [effectiveTransport]);
 
   const [showExport, setShowExport] = useState(false);
-  const [feedTab, setFeedTab] = useState<'events' | 'transcribe' | 'topics'>('events');
+  const [feedTab, setFeedTab] = useState<'events' | 'ai'>('events');
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
     setOnOffState((prev) => {
@@ -483,8 +483,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                   {(
                     [
                       { id: 'events', label: 'Event Feed' },
-                      { id: 'transcribe', label: 'Transcribe Feed' },
-                      { id: 'topics', label: 'Topics Feed' },
+                      { id: 'ai', label: 'AI' },
                     ] as const
                   ).map((tab) => {
                     const active = feedTab === tab.id;
@@ -494,32 +493,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                         type="button"
                         role="tab"
                         aria-selected={active}
-                        className={clsx(
-                          // Base tab chrome (shared by active + inactive). The source
-                          // `font: inherit` also inherited line-height (resolved 17.168px);
-                          // `font-[inherit]` only sets font-family, so `leading-[inherit]`
-                          // restores the inherited line-height (else it falls to `normal`
-                          // and the tabs grow ~3px taller — the 5a font-shorthand pitfall).
-                          'relative px-[1.15rem] pt-[0.55rem] font-[inherit] leading-[inherit] text-[0.74rem] font-semibold tracking-[0.07em] uppercase',
-                          'border border-v5-border border-b-0 rounded-t-[0.85rem] cursor-pointer',
-                          'transition-[transform,color,background,border-color,box-shadow] duration-[0.18s] ease',
-                          active
-                            ? // Active: lifts flush, adopts the sheet glass surface, cyan stripe via ::before.
-                              'z-[3] [transform:translateY(0)] text-v5-text pb-[0.85rem] border-v5-border-strong ' +
-                                '[background:linear-gradient(180deg,rgba(255,255,255,0.08)_0%,rgba(255,255,255,0)_70%),linear-gradient(180deg,var(--v5-glass-strong-top)_0%,var(--v5-glass-strong-top)_100%)] ' +
-                                '[box-shadow:inset_0_1px_0_rgba(255,255,255,0.085),-3px_0_8px_-4px_rgba(0,0,0,0.35),3px_0_8px_-4px_rgba(0,0,0,0.35),0_-6px_18px_-6px_rgba(56,189,248,0.18)] ' +
-                                'before:content-[""] before:absolute before:inset-x-[0.55rem] before:inset-y-auto before:top-0 before:h-0.5 before:rounded-[2px] ' +
-                                'before:[background:linear-gradient(90deg,rgba(34,211,238,0)_0%,var(--v5-primary2,#22d3ee)_18%,var(--v5-primary,#38bdf8)_82%,rgba(56,189,248,0)_100%)] ' +
-                                'before:[box-shadow:0_0_12px_rgba(56,189,248,0.55)]'
-                            : // Inactive: recessed 4px, hover lifts to 2px (unguarded → hover-always).
-                              'pb-[0.7rem] text-[rgba(229,238,252,0.48)] [transform:translateY(4px)] ' +
-                                '[background:linear-gradient(180deg,rgba(20,27,46,0.82)_0%,rgba(10,15,28,0.78)_100%)] ' +
-                                '[box-shadow:inset_0_1px_0_rgba(255,255,255,0.035),0_-2px_4px_rgba(0,0,0,0.18)] ' +
-                                'hover-always:[transform:translateY(2px)] hover-always:text-[rgba(229,238,252,0.88)] hover-always:border-v5-border-strong ' +
-                                'hover-always:[background:linear-gradient(180deg,rgba(28,38,62,0.9)_0%,rgba(14,20,36,0.85)_100%)]',
-                          // Focus ring (both states).
-                          'focus-visible:outline-2 focus-visible:outline focus-visible:[outline-color:rgba(56,189,248,0.55)] focus-visible:outline-offset-2 focus-visible:z-[4]',
-                        )}
+                        className={feedTabButtonClassName(active)}
                         onClick={() => setFeedTab(tab.id)}
                       >
                         {tab.label}
@@ -527,9 +501,27 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     );
                   })}
                 </div>
-                {feedTab === 'events' && <EventLogSheet sessionId={sessionId} />}
-                {feedTab === 'transcribe' && <TranscribeFeed sessionId={sessionId} />}
-                {feedTab === 'topics' && <TopicsFeed sessionId={sessionId} />}
+                {/* Both top-level panels stay mounted (hidden via the `hidden`
+                    attribute), not conditionally rendered: switching to Event
+                    Feed must not unmount AiPanel's hoisted chat state/stream
+                    (design D9 — a conditional mount here would abort an
+                    in-flight turn per the subprocess lifecycle rule). */}
+                <div
+                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'events' && 'hidden')}
+                  hidden={feedTab !== 'events'}
+                  role="tabpanel"
+                  aria-label="Event Feed"
+                >
+                  <EventLogSheet sessionId={sessionId} />
+                </div>
+                <div
+                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'ai' && 'hidden')}
+                  hidden={feedTab !== 'ai'}
+                  role="tabpanel"
+                  aria-label="AI"
+                >
+                  <AiPanel sessionId={sessionId} />
+                </div>
               </div>
             )}
           </section>
