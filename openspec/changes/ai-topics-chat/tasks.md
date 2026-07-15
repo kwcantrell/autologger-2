@@ -95,7 +95,7 @@
       budget vars, open-network refusal, security posture — no operator hooks/plugins/
       CLAUDE.md, MCP-only, no host shell, run-as-logged-in-operator + node-on-PATH/proxy
       notes, minimum tested CLI version) (spec: Egress and spend disclosure).
-- [ ] 5.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`
+- [x] 5.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`
       (chromium + login-gate) with a hermetic happy-path chat e2e (`CLAUDE_CLI_PATH` →
       fixture, real SSE over real HTTP), and `npm run e2e:visual` — the tab restructure
       legitimately alters workspace UI, so re-bless the affected visual baselines in this
