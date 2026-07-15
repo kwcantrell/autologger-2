@@ -31,4 +31,5 @@ rules:
   tasks:
     - This is the plan of record — group by phase, order by dependency, each task independently verifiable
     - Each reshape/commit is gated by npm run typecheck + npm test; keep pure renames in separate commits from semantic reshapes
+    - The final-gates task runs npm run e2e (chromium + login-gate projects) AND npm run e2e:visual — baselines are current as of 2026-07-14, so visual diffs are branch-induced signal; a change that legitimately alters UI re-blesses baselines in its own diff instead of deferring drift
     - file:line anchors are orientation only — locate code by content before editing
