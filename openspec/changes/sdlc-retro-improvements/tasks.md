@@ -87,12 +87,12 @@ post-gate plan of record.
 
 ## 4. Coherence + final gates
 
-- [ ] 4.1 Consistency read (light tier) of the full edited set — CLAUDE.md, SKILL.md,
+- [x] 4.1 Consistency read (light tier) of the full edited set — CLAUDE.md, SKILL.md,
   config.yaml, the marker spec, and this change's artifacts: no stale pre-gate language
   (especially remnants of the cut rulebook or the old audit charter), no contradiction
   between D1–D11 and the encoding edits, cross-references resolve. Record the outcome as a
   dated line in design.md's Panel & review log per D4.
-- [ ] 4.2 Final verification set (D11): `openspec validate sdlc-retro-improvements
+- [x] 4.2 Final verification set (D11): `openspec validate sdlc-retro-improvements
   --strict` passes; config.yaml still parses and injects rules (run `openspec instructions
   proposal --change sdlc-retro-improvements --json` and confirm the rules appear); the
   apply skill still loads (frontmatter intact); `npm run typecheck` + `npm test` green

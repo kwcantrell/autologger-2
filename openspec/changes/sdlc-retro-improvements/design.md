@@ -417,3 +417,16 @@ D5→2.2, D6→2.3, D7/D8/D10→2.5, D9→1.3, D11→header/4.2) with matching s
 spec matches D9 and the proposal's Capabilities section; fact-check-corrected figures are
 consistent across artifacts; the four gate dispositions match D9/D1/D11/D10.
 `openspec validate --strict` passes.
+
+### 2026-07-14 — Apply-stage consistency read (light tier, task 4.1)
+
+**CLEAN** — documents read: `CLAUDE.md`, `.claude/skills/openspec-apply-change/SKILL.md`,
+`openspec/config.yaml`, and this change's four artifacts. Verified: every encoding edit
+matches its design decision with equal substance (D1→CLAUDE.md summary + SKILL step 7 +
+guardrails; D2→CLAUDE.md fact-check block; D3→SKILL 6d/6c; D4→CLAUDE.md recorded-outcome
+rule; D5→SKILL partition block; D6→SKILL 6c/6f/guardrails; D7/D8→SKILL verification
+discipline; D9→CLAUDE.md normative-home sentence + marker spec; D10→SKILL 6c +
+guardrails); no live instruction still describes the cumulative re-read, single
+`branch-diff.txt` packaging, or reports-only draft charter (all remaining mentions are
+dated provenance); SKILL.md steps and Guardrails correspond 1:1; config.yaml parses as
+YAML with each rule a single-line list item.
