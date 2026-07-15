@@ -38,15 +38,28 @@ const ALL_UNREADABLE_DETAIL =
 const NO_SPEECH_DETAIL =
   "DeepGram detected no speech in this session's audio; the existing transcript was left unchanged.";
 const UPSTREAM_FAILURE_DETAIL = 'DeepGram transcription failed or timed out.';
-const ABORTED_DETAIL = 'The request was aborted before transcription completed; no provider request was made.';
+const ABORTED_DETAIL =
+  'Transcript generation request was aborted before transcription started; no provider request was made.';
 
 /** DeepGram's documented pre-recorded upload limit (2 GB = 2×10⁹ bytes; design
  * D2 / the phase-1 spike's size-limit math — a 3h stereo PCM session is the
  * real case that crosses it). */
-const DEEPGRAM_MAX_GROUP_BYTES = 2_000_000_000;
+export const DEEPGRAM_MAX_GROUP_BYTES = 2_000_000_000;
 
 function sizeLimitDetail(bytes: number): string {
   return `Combined audio for one codec group is ${bytes} bytes, over DeepGram's ${DEEPGRAM_MAX_GROUP_BYTES}-byte (2 GB) upload limit.`;
+}
+
+/** Pure predicate so the group-size cutoff is unit-testable without spooling
+ * a real 2 GB file (design D2 / spike task 1.1's size-limit math). */
+export function exceedsGroupSizeLimit(bytes: number): boolean {
+  return bytes > DEEPGRAM_MAX_GROUP_BYTES;
+}
+
+export function enforceGroupSizeLimit(bytes: number): void {
+  if (exceedsGroupSizeLimit(bytes)) {
+    throw new ApiError(502, sizeLimitDetail(bytes));
+  }
 }
 
 /** Single process-wide slot (design D9): at most one generation run at a
@@ -103,7 +116,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     }
 
     if (c.req.raw.signal?.aborted) {
-      throw new ApiError(499, ABORTED_DETAIL);
+      throw new ApiError(400, ABORTED_DETAIL);
     }
 
     const apiKey = c.env.config.DEEPGRAM_API_KEY;
@@ -111,11 +124,9 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     const groupWords: GroupWords[] = [];
     for (const group of groups) {
       const { size } = await stat(group.outPath);
-      if (size > DEEPGRAM_MAX_GROUP_BYTES) {
-        throw new ApiError(502, sizeLimitDetail(size));
-      }
+      enforceGroupSizeLimit(size);
       if (c.req.raw.signal?.aborted) {
-        throw new ApiError(499, ABORTED_DETAIL);
+        throw new ApiError(400, ABORTED_DETAIL);
       }
       let words: DeepgramWord[];
       try {

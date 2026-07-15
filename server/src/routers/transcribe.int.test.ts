@@ -289,7 +289,9 @@ describe('transcript generation', () => {
     controller.abort();
 
     const res = await generate(s, { signal: controller.signal });
-    expect(res.status).not.toBe(200);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { detail: string };
+    expect(body.detail).toMatch(/aborted/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
