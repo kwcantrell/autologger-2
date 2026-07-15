@@ -6,14 +6,22 @@
 // Anthropic credentials or network access are used anywhere in the test suite.
 //
 // Recording (so the characterization test — task 3.2 — can pin the lockdown
-// verbatim): if set, each of these env vars gets one file written before the
-// canned behavior runs:
-//   FAKE_CLAUDE_ARGV_OUT  — JSON array of argv (process.argv.slice(2))
-//   FAKE_CLAUDE_ENV_OUT   — JSON object of this process's full env (proves the
+// verbatim): four files are ALWAYS written before the canned behavior runs,
+// each defaulting to a fixed name inside this process's OWN cwd (so a test
+// only needs to know the cwd it told the runner to use — no extra env var
+// needs to survive the runner's minimal-env whitelist, which is itself under
+// test). Each path is overridable via env var for callers that want them
+// elsewhere:
+//   FAKE_CLAUDE_ARGV_OUT  (default <cwd>/.fixture-argv.json)
+//                         — JSON array of argv (process.argv.slice(2))
+//   FAKE_CLAUDE_ENV_OUT   (default <cwd>/.fixture-env.json)
+//                         — JSON object of this process's full env (proves the
 //                           runner's minimal-env whitelist reached the child —
 //                           whatever's NOT in this dump was correctly stripped)
-//   FAKE_CLAUDE_CWD_OUT   — process.cwd() (proves the stable per-session cwd)
-//   FAKE_CLAUDE_STDIN_OUT — the full stdin text this process drained (proves
+//   FAKE_CLAUDE_CWD_OUT   (default <cwd>/.fixture-cwd.txt)
+//                         — process.cwd() (proves the stable per-session cwd)
+//   FAKE_CLAUDE_STDIN_OUT (default <cwd>/.fixture-stdin.txt)
+//                         — the full stdin text this process drained (proves
 //                           the user message arrived via stdin, never argv)
 //
 // Mode select via FAKE_CLAUDE_MODE (default "success"):
@@ -52,9 +60,9 @@ async function drainStdin() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function writeIfSet(envVar, contents) {
-  const path = process.env[envVar];
-  if (path) writeFileSync(path, contents);
+function writeIfSet(envVar, defaultName, contents) {
+  const path = process.env[envVar] || `${process.cwd()}/${defaultName}`;
+  writeFileSync(path, contents);
 }
 
 function line(obj) {
@@ -172,9 +180,9 @@ function emitSuccessTurn(sessionId) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  writeIfSet('FAKE_CLAUDE_ARGV_OUT', JSON.stringify(argv));
-  writeIfSet('FAKE_CLAUDE_ENV_OUT', JSON.stringify(process.env));
-  writeIfSet('FAKE_CLAUDE_CWD_OUT', process.cwd());
+  writeIfSet('FAKE_CLAUDE_ARGV_OUT', '.fixture-argv.json', JSON.stringify(argv));
+  writeIfSet('FAKE_CLAUDE_ENV_OUT', '.fixture-env.json', JSON.stringify(process.env));
+  writeIfSet('FAKE_CLAUDE_CWD_OUT', '.fixture-cwd.txt', process.cwd());
 
   const mode = process.env.FAKE_CLAUDE_MODE || 'success';
   const sessionId = resumeSessionId(argv) || DEFAULT_SESSION_ID;
@@ -185,7 +193,7 @@ async function main() {
     // never exit on our own — task 3.4's guaranteed-timeout-kill test relies
     // on the parent SIGTERM/SIGKILL-ing this process, never a self-exit.
     const stdin = await drainStdin();
-    writeIfSet('FAKE_CLAUDE_STDIN_OUT', stdin);
+    writeIfSet('FAKE_CLAUDE_STDIN_OUT', '.fixture-stdin.txt', stdin);
     emitInit(sessionId);
     // A bare unresolved Promise does NOT keep Node's event loop alive on its
     // own — with stdin already drained and no other handles open, the process
@@ -197,7 +205,7 @@ async function main() {
   }
 
   const stdin = await drainStdin();
-  writeIfSet('FAKE_CLAUDE_STDIN_OUT', stdin);
+  writeIfSet('FAKE_CLAUDE_STDIN_OUT', '.fixture-stdin.txt', stdin);
 
   switch (mode) {
     case 'exit-nonzero': {
