@@ -41,10 +41,33 @@ module consume (see Endpoints below; the contract is frozen).
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
-- **Transcription + YouTube import are unavailable** on this deployment (no external
-  transcription box wired up): the `…/generate`, `…/youtube-import`, and `transcribe.csv`
-  endpoints return a clean `503 {detail}` the frontend toasts. Manual transcript-word/topic
+- **Transcript generation is configuration-gated; YouTube import stays unavailable.**
+  `POST …/transcript-words/generate` returns a clean `503 {detail}` (the frontend toasts it)
+  unless `DEEPGRAM_API_KEY` is set, in which case it combines the session's recorded audio
+  and returns `200 {words}` from DeepGram's speech-to-text API — see "Transcript generation
+  (DeepGram)" below. The `…/youtube-import` and `transcribe.csv` endpoints remain
+  unconditional `503 {detail}` (no external integration wired up). Manual transcript-word/topic
   CRUD still works.
+
+### Transcript generation (DeepGram)
+
+`POST …/transcript-words/generate` is gated by `DEEPGRAM_API_KEY` (see
+`server/.env.example`): unset/blank keeps the endpoint's frozen `503`. When set, the server
+groups the session's recorded audio segments by probed codec (Opus/AAC/PCM), concatenates
+each group without re-encoding, sends each group to DeepGram's pre-recorded speech-to-text
+API (`DEEPGRAM_MODEL`, default `nova-3`), and — only once every group succeeds — replaces the
+session's transcript words with the result (`200 {words}`). Failure modes: no recorded audio
+or no readable segments (`400`, distinct details), a run that succeeds upstream but finds no
+speech (`400`, existing transcript untouched), the request aborted before any provider call
+(`400`, no spend), a concurrent run already in flight (`409`, no spend), and upstream
+failure/timeout or a group over DeepGram's 2 GB upload limit (`502`). At most one generation
+run is in flight per process at a time.
+
+**Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
+billed, metered calls — every generate request is a paid request.** Under `REQUIRE_LOGIN=0`
+(open LAN-studio box) any client that can reach the server can trigger those calls; there is
+no additional auth gate beyond `REQUIRE_LOGIN`. Only set the key on a box you operate and are
+prepared to pay for.
 
 ### Storage map
 
@@ -137,7 +160,8 @@ was ported from: historical provenance, not a live parity claim.
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
 | `GET\|POST …/audio/segments` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
-| `…/transcript-words/generate` · `…/topics/generate` · `transcribe.csv` · `youtube-import` → **503** | (unavailable) |
+| `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
+| `…/topics/generate` · `transcribe.csv` · `youtube-import` → **503** | (unavailable) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
