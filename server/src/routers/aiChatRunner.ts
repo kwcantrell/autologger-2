@@ -246,6 +246,13 @@ export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
 
   // Message on stdin, never argv (spec: "Message cannot smuggle a CLI
   // flag") — a single write then end, since this is one turn's prompt.
+  // A dead/misbehaving CLI (bad CLAUDE_CLI_PATH, or a binary that exits
+  // before draining stdin) can make this write land against an
+  // already-closed pipe (EPIPE); an unlistened 'error' on a stream throws
+  // and crashes the whole single Node process (D8). Swallow it here — the
+  // real failure is already surfaced as a scrubbed terminal `error` event via
+  // the ChildProcess-level `error`/nonzero-exit path in `relayAiChatTurn`.
+  child.stdin.on('error', () => {});
   child.stdin.write(opts.message);
   child.stdin.end();
 

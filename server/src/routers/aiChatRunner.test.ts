@@ -39,6 +39,15 @@ const FIXTURE_PATH = fileURLToPath(
   new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
 );
 
+/** Phase 3 fix wave (D8 critical defect): a double that exits BEFORE
+ * draining stdin — every mode in `fake-claude.mjs` drains stdin first, so
+ * none of them can reach the `child.stdin` EPIPE crash this fixture targets.
+ * Selected directly via `cliPath` (never `FAKE_CLAUDE_MODE`, which the env
+ * whitelist strips) so the real `spawnAiChatTurn` code path is exercised. */
+const EXIT_BEFORE_STDIN_FIXTURE_PATH = fileURLToPath(
+  new URL('../test/fixtures/fake-claude-exit-before-stdin.mjs', import.meta.url),
+);
+
 // The fixture is a `#!/usr/bin/env node` shebang script (matching a real
 // globally-installed `claude`); actually exec-ing it under the restricted
 // child env needs a PATH that resolves BOTH `env` and `node` on this
@@ -327,6 +336,57 @@ describe('spawnAiChatTurn — characterization: real spawn against the fake-clau
     await waitForExit(r2.child);
     r2.cleanupConfig();
     expect(r1.cwd).toBe(r2.cwd);
+  });
+});
+
+describe('spawnAiChatTurn — child.stdin EPIPE does not crash the process (Phase 3 fix wave, D8)', () => {
+  it('a CLI that exits before draining stdin yields one scrubbed terminal error, ' +
+    'never an uncaught exception that would crash the whole single Node process', async () => {
+    // A large message maximizes the chance the buffered stdin write actually
+    // lands against the already-closed pipe (small writes can slip through
+    // before the kernel tears the pipe down) — this is what makes the crash
+    // reproduce deterministically without the fix.
+    const bigMessage = 'x'.repeat(5 * 1024 * 1024);
+
+    const uncaught: unknown[] = [];
+    const onUncaughtException = (err: unknown) => uncaught.push(err);
+    process.on('uncaughtException', onUncaughtException);
+    try {
+      const spawned = spawnAiChatTurn({
+        cliPath: EXIT_BEFORE_STDIN_FIXTURE_PATH,
+        sessionId,
+        message: bigMessage,
+        mcpTurn: { url: 'http://127.0.0.1:9999/mcp', token: 't' },
+        maxBudgetUsd: 0.5,
+        procEnv: TEST_PROC_ENV,
+      });
+
+      const events: AiChatSseEvent[] = [];
+      const outcome = await runAiChatTurn({
+        child: spawned.child,
+        emit: (event) => void events.push(event),
+        timeoutMs: 10_000,
+      });
+      spawned.cleanupConfig();
+
+      // Exactly one terminal error, from the fixed scrubbed set — never the
+      // raw EPIPE/ENOENT/path text.
+      expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
+      expect(events).toEqual([{ event: 'error', data: { detail: 'upstream-failed' } }]);
+      const wire = JSON.stringify(events);
+      expect(wire).not.toMatch(/EPIPE|ENOENT|write/i);
+
+      // Give the event loop a chance to surface any deferred unhandled
+      // 'error' event before asserting none fired — this is the actual
+      // process-survival proof (an unlistened stdin 'error' throws
+      // synchronously within the same tick it's emitted, which vitest
+      // reports as an uncaughtException on `process`, not as a normal
+      // rejected assertion).
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener('uncaughtException', onUncaughtException);
+    }
   });
 });
 
