@@ -46,14 +46,14 @@
 
 ## 4. Remapping, replace RPC, endpoint (server)
 
-- [ ] 4.1 TDD anchor resolution + word remapping: 3-step chain (ordinal match → index
+- [x] 4.1 TDD anchor resolution + word remapping: 3-step chain (ordinal match → index
       pairing → anchorless), anchor seconds from the start event's
       `timecode_total_frames / frame_rate` (no SMPTE parsing), `session_time` via
       `formatSmpte`, `start_sec`/`end_sec` = remapped seconds (0 when anchorless),
       ordering/ordinal assignment per spec (anchored by position, then anchorless by
       segment ordinal); unit tests cover the two-recordings-with-gap and anchorless
       scenarios.
-- [ ] 4.2 TDD new `replaceTranscriptWords` hub RPC (`TranscriptStore` + `SessionHub`):
+- [x] 4.2 TDD new `replaceTranscriptWords` hub RPC (`TranscriptStore` + `SessionHub`):
       synchronous body, one transaction, delete-then-insert with `start_sec`/`end_sec`,
       contiguous ordinals from 0.
 - [ ] 4.3 Implement the generate route body in `server/src/routers/transcribe.ts`:
