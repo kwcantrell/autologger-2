@@ -6,7 +6,7 @@
 
 ## 1. Spike — the genuinely unknown legs (gates everything downstream)
 
-- [ ] 1.1 Adopt the in-tree `server/src/node/audioMerge.ts` module (+ tests, fixtures,
+- [x] 1.1 Adopt the in-tree `server/src/node/audioMerge.ts` module (+ tests, fixtures,
       `merge-session-audio.ts` script, mediabunny dep) onto this change's branch (gate
       decision 5). Then a throwaway, env-gated spike script (real `DEEPGRAM_API_KEY`, one paid
       call) proving: (a) DeepGram accepts a mediabunny-written concatenated WebM;
@@ -19,18 +19,18 @@
 
 ## 2. Concat module (server)
 
-- [ ] 2.1 TDD generalize `audioMerge.ts`: per-segment cumulative offsets in the result;
+- [x] 2.1 TDD generalize `audioMerge.ts`: per-segment cumulative offsets in the result;
       probed-codec+params classification (mediabunny `Input`; stored mime is a hint
       only); skip-unreadable posture; sub-grouping on param mismatch (replacing the
       current fail-fast throw); unit tests cover homogeneous Opus (webm+ogg), skip of a
       corrupt fixture, and PCM param-mismatch sub-grouping.
-- [ ] 2.2 TDD MP4 (AAC) and WAVE (PCM) output legs on the same packet loop, with temp-file
+- [x] 2.2 TDD MP4 (AAC) and WAVE (PCM) output legs on the same packet loop, with temp-file
       spooling under `DATA_DIR` (no `BufferTarget`); unit tests assert container choice
       and offsets per group (gate decision 1: per-codec concat kept).
 
 ## 3. DeepGram client + config (server)
 
-- [ ] 3.1 TDD `server/src/node/deepgram.ts`: pre-recorded request streaming a spooled
+- [x] 3.1 TDD `server/src/node/deepgram.ts`: pre-recorded request streaming a spooled
       file (content type per group), `diarize`/`punctuate`/model params (`smart_format`
       unset, `language` unset, channel 0), explicit timeout above the 10-minute provider
       ceiling (undici dispatcher — the 300 s default is insufficient), key only in the
