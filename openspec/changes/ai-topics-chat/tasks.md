@@ -74,13 +74,13 @@
 
 ## 4. Web workspace (design D9)
 
-- [ ] 4.1 Tab restructure in `SessionWorkspace.tsx`: top-level `Event Feed | AI`,
+- [x] 4.1 Tab restructure in `SessionWorkspace.tsx`: top-level `Event Feed | AI`,
       nested `Chat | Transcribe | Topics` (default Chat) with panels **mounted-hidden**
       (not conditional-mount) and chat state/stream hoisted to the AI-panel level so
       switching preserves the turn; `TranscribeFeed`/`TopicsFeed` unchanged (spec: AI tab
       and subtab arrangement) — component tests cover switching mid-turn without unmount
       and feed presence.
-- [ ] 4.2 `AiChat` component: ephemeral message state, `fetch` + ReadableStream SSE
+- [x] 4.2 `AiChat` component: ephemeral message state, `fetch` + ReadableStream SSE
       parsing (ignoring unknown event types + comments), `claude_session_id` echo of the
       latest `done`, tool-activity chips, topics query invalidation on a `tool` event
       naming `create_topic`, a Stop control (`AbortController.abort()`), plain-text
@@ -90,7 +90,7 @@
 
 ## 5. Docs + final gates
 
-- [ ] 5.1 README + `.env.example`: endpoint-table row for `POST …/ai/chat`; AI chat
+- [x] 5.1 README + `.env.example`: endpoint-table row for `POST …/ai/chat`; AI chat
       section (egress + spend/bounds disclosure, `CLAUDE_CLI_PATH`/timeout/concurrency/
       budget vars, open-network refusal, security posture — no operator hooks/plugins/
       CLAUDE.md, MCP-only, no host shell, run-as-logged-in-operator + node-on-PATH/proxy

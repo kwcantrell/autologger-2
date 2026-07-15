@@ -69,6 +69,87 @@ billed, metered calls — every generate request is a paid request.** Under `REQ
 no additional auth gate beyond `REQUIRE_LOGIN`. Only set the key on a box you operate and are
 prepared to pay for.
 
+### AI chat (Claude CLI)
+
+`POST /api/sessions/:sessionId/ai/chat` turns a session's transcript into topics
+conversationally, instead of a one-shot generate button (`…/topics/generate` keeps its
+intentional, unconditional `503`). A chat panel in the session workspace drives the
+operator's local `claude` CLI, which reads the session's transcript and creates topics
+through a locked-down, session-scoped toolset.
+
+Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
+the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte
+unchanged. When set, the endpoint spawns `claude -p --output-format stream-json` per turn
+and responds `200 Content-Type: text/event-stream`, relaying the CLI's reply as SSE events:
+`delta {text}` (assistant text fragments only — model reasoning/thinking is never relayed),
+`tool {name}` (an MCP tool invocation, short name only — one of `get_transcript_words`,
+`list_topics`, `create_topic`), and exactly one terminal event per server-completed
+stream — `done {claude_session_id}` (echo this back as `claude_session_id` on the next turn
+to resume the conversation) or `error {detail}`, where `detail` is one of a fixed,
+secret-free set (`upstream-failed`, `not-logged-in`, `timeout`, `internal-error`) — never
+raw CLI stdout/stderr, environment values, credentials, or device-login URLs. The event
+vocabulary is additive-open: new event types or payload fields may appear without a further
+delta spec; clients ignore event types and fields they don't recognize.
+
+**Egress and spend disclosure.** Enabling this feature sends the session's transcript and
+topic content to Anthropic, over the operator's own `claude login` credentials — every chat
+turn is a real, billed Anthropic API call against the operator's account/quota. Spend is
+bounded three ways: at most one turn in flight per autologger session (a second concurrent
+request for the same session gets `409`, spawning nothing), a process-wide ceiling on
+concurrent turns across all sessions (`AI_CHAT_MAX_CONCURRENT`, default `2` — turns beyond
+the ceiling are rejected with `409` and never spawned), and a per-turn CLI cost ceiling
+(`AI_CHAT_MAX_BUDGET_USD`, default `0.5`, passed to the CLI as `--max-budget-usd`). A turn
+that runs long is killed after `AI_CHAT_TIMEOUT_SEC` (default `300` seconds) — the
+guaranteed backstop; a client disconnect (Stop button or closed tab) also kills the
+subprocess but is best-effort only.
+
+**Open-network refusal.** Because a turn spends the operator's Anthropic credentials, the
+endpoint additionally refuses to serve turns (`503`, independent of the general auth gate)
+when `REQUIRE_LOGIN` is disabled **and** the server is bound to a non-loopback address **and**
+no `IP_ALLOWLIST` is set — the same "open LAN-studio box" scenario the DeepGram warning
+above calls out, closed off specifically for this paid endpoint. A loopback-bound anonymous
+dev server is unaffected.
+
+**Security posture.** The spawned CLI is locked down to exactly the autologger toolset and
+nothing else:
+
+- `--setting-sources ""` — no operator hooks, plugins, or user/project/local
+  `CLAUDE.md`/`settings.json` load in the child. This is the primary control: lifecycle
+  hooks run shell commands unconditionally on events and are not governed by tool
+  allow/deny lists. `claude login` credentials still work under this flag.
+- `--strict-mcp-config` with a generated, per-turn `--mcp-config` — only the autologger MCP
+  server (an in-process, loopback-only listener) loads; any MCP servers configured in the
+  operator's own `~/.claude` are ignored.
+- `--tools ""` (deny every built-in tool) plus `--allowedTools` naming exactly the three MCP
+  tools (`mcp__autologger__get_transcript_words`, `mcp__autologger__list_topics`,
+  `mcp__autologger__create_topic`) — positive denial plus an explicit allowlist, not a
+  name-keyed denylist that would drift as the CLI's built-in tool inventory grows.
+- `shell: false` with an argument array; the chat message is delivered on **stdin**, never
+  as an argv positional, so a message starting with `-` can never be parsed as a CLI flag.
+- No host shell, filesystem, or general web access is reachable from a chat turn — the MCP
+  toolset is session-scoped (`get_transcript_words`/`list_topics`/`create_topic`, each
+  hard-bound to the requesting `:sessionId` by the turn's own registration, not by a tool
+  parameter) and is the CLI's only capability in the child.
+
+**Operational notes.** Run the server process as the operator account that ran
+`claude login` — the child inherits only `HOME` and `PATH` from the server's environment
+(plus `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`/`NODE_EXTRA_CA_CERTS` when the parent process
+actually has them set). If `claude` is installed as an npm-global rather than a native
+binary, make sure `node` is on the service's `PATH` too, or the spawn will fail. Networks
+behind a proxy or a custom TLS root need the relevant proxy/TLS vars set in the server's own
+environment so they pass through to the child. Minimum tested CLI version: **2.1.202** (the
+version the lockdown flag set and the JSONL stream taxonomy were empirically verified
+against, 2026-07-14 spike). An older or different CLI is not blocked at startup — the gate
+is configuration presence, not a version probe — but may fail per-turn with a scrubbed
+`error` event.
+
+**Chat history is ephemeral.** The server persists no chat conversation content: no chat
+tables in the catalog or session DBs, no chat blobs under `DATA_DIR`, and no history-read
+endpoint — conversation state lives only in the browser tab's page state, so a refresh
+clears it. The `claude` CLI keeps its own per-session files outside `DATA_DIR`, under the
+operator's `~/.claude`; those accumulate across turns independent of this server-side
+ephemerality, the same as any local `claude` usage.
+
 ### Storage map
 
 ```
@@ -162,6 +243,7 @@ was ported from: historical provenance, not a live parity claim.
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
 | `…/topics/generate` · `transcribe.csv` · `youtube-import` → **503** | (unavailable) |
+| `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
