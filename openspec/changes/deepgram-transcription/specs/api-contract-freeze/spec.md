@@ -14,6 +14,7 @@
 | configured, segments exist but none is readable | `400 {detail}` (distinct detail) |
 | configured, provider succeeds but returns zero words | `400 {detail}` (no-speech detail); existing words preserved |
 | configured, another generation run in flight | `409 {detail}`; no provider request issued |
+| configured, request aborted before any provider call | `400 {detail}` — a distinct aborted detail, not `200`/`503`; no provider request issued |
 | configured, upstream STT failure/timeout, or a group file over the provider size limit | `502 {detail}` |
 
 Existing route semantics are otherwise unchanged: unknown session → the existing
@@ -35,6 +36,12 @@ behavior.
 #### Scenario: Concurrent run maps to 409
 - **WHEN** a generate request arrives while another run is already in flight
 - **THEN** the response is `409 {detail}` and no provider spend occurs for it
+
+#### Scenario: Pre-provider-call abort maps to 400, not a new status code
+- **WHEN** the originating HTTP request is already aborted before any DeepGram request
+  would be issued
+- **THEN** the response is `400 {detail}` with a detail distinct from the no-audio and
+  all-unreadable `400` details, and no provider spend occurs
 
 #### Scenario: Sibling stubs stay frozen
 - **WHEN** a configured deployment receives `POST /api/sessions/:id/topics/generate` or

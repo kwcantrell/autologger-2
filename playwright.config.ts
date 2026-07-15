@@ -46,6 +46,12 @@ export default defineConfig({
         IP_ALLOWLIST: '',
         API_TOKEN: '',
         ADMIN_TOKEN: '',
+        // Same hermeticity rule applies to transcription (deepgram-transcription,
+        // task 5.2): a developer's real DEEPGRAM_API_KEY in server/.env would
+        // otherwise flip deepgramConfigured() true for this "hermetic" server,
+        // both breaking the 503-path smoke assertion and risking a real billed
+        // DeepGram call if a spec ever exercises the generate endpoint.
+        DEEPGRAM_API_KEY: '',
       },
     },
     {
@@ -80,6 +86,10 @@ export default defineConfig({
         IP_ALLOWLIST: '',
         API_TOKEN: '',
         ADMIN_TOKEN: '',
+        // See the hermeticity comment on the server above (deepgram-transcription
+        // task 5.2): keeps this server's transcript generate endpoint off even if
+        // server/.env carries a real key.
+        DEEPGRAM_API_KEY: '',
       },
     },
   ],

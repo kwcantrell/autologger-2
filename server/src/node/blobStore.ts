@@ -38,6 +38,22 @@ export class BlobStore {
     return p;
   }
 
+  /** Absolute filesystem path for a stored key — existence is NOT checked.
+   * For callers that need to open a blob directly as a real file (e.g.
+   * mediabunny's `FilePathSource` in the transcript-generation pipeline,
+   * which cannot work off a stream). A missing/unreadable file surfaces as
+   * that caller's own open/read failure, not here. */
+  resolveKeyPath(key: string): string {
+    return this.pathFor(key);
+  }
+
+  /** The store's scratch directory (outside the blob root, already created
+   * at startup) for spooling temporary work files a caller must clean up
+   * itself — e.g. transcript generation's per-run concat output. */
+  scratchRoot(): string {
+    return this.tmpDir;
+  }
+
   async put(
     key: string,
     bytes: ArrayBuffer | Uint8Array,

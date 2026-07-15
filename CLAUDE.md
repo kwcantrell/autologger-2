@@ -23,9 +23,12 @@ for Google ID-token verify, on:
 - **`@hono/node-ws`** for WebSocket upgrades, served by **`@hono/node-server`**.
 
 **Runs anywhere Node 22 runs.** No cloud account, no login, no remote provisioning — a single
-Node process, state on local disk under `DATA_DIR`. Transcription + YouTube import are
-intentionally `503` on this deployment (no external transcription integration wired up).
-`restart_supported` stays `false` (gate decision E2).
+Node process, state on local disk under `DATA_DIR`. Transcript generation
+(`…/transcript-words/generate`) is configuration-gated: `503` unless `DEEPGRAM_API_KEY` is
+set, in which case it sends recorded session audio to DeepGram's cloud STT API (see README
+"Transcript generation (DeepGram)" — audio egress + spend disclosure). YouTube import,
+`topics/generate`, and `transcribe.csv` stay intentionally `503` (no external integration
+wired up). `restart_supported` stays `false` (gate decision E2).
 
 ## Setup & commands
 

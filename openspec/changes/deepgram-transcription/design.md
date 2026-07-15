@@ -196,6 +196,13 @@ revert the branch. README endpoint table + `.env.example` updated in the same ch
    tests, fixtures, script, and mediabunny dep land on this change's branch.
 6. `nova-3` default model: confirm at implementation time (env-overridable regardless) —
    unchanged.
+7. **Pre-provider-call abort status code** (phase 4 review escalation): responds `400
+   {detail}` with a distinct aborted detail — added to the `api-contract-freeze` delta
+   table post-review. `499` (the implementer's original choice, flagged in the task 4.3
+   report's self-review as outside the delta's enumerated table) is **rejected** as an
+   unauthorized expansion of the frozen surface; `400` reuses an already-authorized status
+   code for this endpoint, distinguished only by detail text, which keeps the delta's
+   status-code set closed.
 
 ## Panel & review log
 
@@ -239,3 +246,66 @@ transcripts returned without a warning channel (stated in spec); sessions crossi
 of timeline alias in SMPTE rendering (frame arithmetic unaffected); cross-request speaker
 consistency premise unverifiable from provider docs (industry-standard conservative
 assumption, and the concat design is exactly the hedge).
+
+**2026-07-14 — whole-branch final review (post-implementation).** Verdict: mergeable
+after one docs fix (stale `transcribe.ts` header — fixed in place). Ruled: no e2e toast
+spec required (503 asserted byte-identically at integration tier; `web/` untouched by
+this change). Minors accepted as residual: (1) codec grouping partitions by *contiguous*
+runs, so interleaved-codec sessions (e.g. opus/aac/opus) produce one group per run —
+extra provider requests and split speaker ids on such rare sessions; (2) the abort-check
+runs before *each* group's provider call, so a multi-group run whose client disconnects
+mid-run is abandoned after the earlier groups' spend — single-group runs (the common
+case) fully honor the disconnect-completes semantics; (3) the delta's "sibling stubs
+stay frozen" scenario has no dedicated test (true by inspection — those handlers never
+consult DeepGram config).
+
+## Spike findings (2026-07-14, task 1.1)
+
+`audioMerge.ts`/tests/fixtures/script/mediabunny were adopted onto this branch
+(commit `e01be7e`); `npm run typecheck` and `npm test` are green with the
+adopted files in place. A throwaway spike script (deleted after this note, per
+the task) exercised legs (a)–(d) against the real DeepGram API
+(`/v1/listen?model=nova-3&diarize=true&punctuate=true`, key from `server/.env`
+sent only in the `Authorization` header, two paid requests total). Fixtures
+were ~3 s TTS speech clips generated dev-time-only with `ffmpeg`+`flite` (not
+a runtime or package dependency). Note: the first spike attempt failed with
+`401 UNAUTHORIZED` on every call — the original `.env` key was bad; the owner
+replaced it and the rerun succeeded. Worth remembering: a misconfigured key
+surfaces as a DeepGram 401 at request time, which the pipeline maps to `502`
+(upstream failure), not `503` (unconfigured).
+
+**(a) DeepGram accepts a mediabunny-written concatenated WebM — PROVEN.**
+Two WebM/Opus segments (2.961 s + 3.281 s, measured via mediabunny) merged by
+the adopted `mergeAudioFiles`: `{ files: 2, packets: 314, durationSeconds:
+6.242 }`, 28,426 bytes. DeepGram responded `200` with **18 words**, all text
+correct across both segments' sentences, one diarized speaker (`speaker: 0`)
+throughout.
+
+**(b) Word timestamps stay aligned across the concat seam — PROVEN.**
+Expected segment-2 offset = segment 1's duration = 2.961 s (the merge rebases
+back-to-back). Segment 2's first word ("Pack") came back at `start=3.200 s` —
+**delta +0.239 s, i.e. AT/AFTER the offset**; the feared negative skew from
+Opus pre-skip/priming did not materialize. (The +0.24 s is speech-onset lag —
+segment 1's last word also ended at 3.200 s and segment 2 has leading silence
+— not container skew; DeepGram word boundaries land on coarse ~0.02 s quanta.)
+The assertion required by the task ("segment-2 words ≥ its offset") holds.
+
+**(c) fMP4/AAC (Safari-style) remuxes to plain MP4 and DeepGram accepts it —
+PROVEN.** Fixture: `ffmpeg -c:a aac -movflags
+frag_keyframe+empty_moov+default_base_moof` (verified genuinely fragmented via
+`ffprobe -v trace`: `moov` + `moof`/`mfra` boxes present). Packet-copy remux
+through mediabunny `Mp4OutputFormat` (same loop shape as `audioMerge.ts`, no
+re-encode): `{ packets: 133, duration: 3.088 s }` matching the source exactly,
+38,768 bytes. DeepGram responded `200` with **7 words**, text fully correct.
+
+**(d) Size-limit math — RECORDED.**
+- 3 h Opus @ 128 kbps (typical unconfigured `MediaRecorder` bitrate) ≈
+  **172.8 MB** — comfortably under DeepGram's 2 GB (2×10⁹ byte) cap.
+- 3 h PCM 48 kHz/16-bit/stereo (legacy `.wav` worst case): 48,000 × 2 B ×
+  2 ch × 10,800 s = 2,073,600,000 B ≈ **2.07 GB** — **over** the cap → such
+  sessions take the documented `502`-naming-the-limit path (D2 / spec
+  "Failure mapping"). Confirmed a real case, not hypothetical.
+
+**Gate decision 6 — `nova-3` CONFIRMED**: both requests used `model=nova-3`
+and returned `200` with correct transcription; the default stands
+(env-overridable via `DEEPGRAM_MODEL` regardless).

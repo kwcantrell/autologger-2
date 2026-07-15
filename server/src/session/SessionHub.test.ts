@@ -110,6 +110,62 @@ describe('SessionHub', () => {
   });
 });
 
+describe('SessionHub.replaceTranscriptWords', () => {
+  it('inserts words with start_sec/end_sec and contiguous ordinals from 0', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const result = hub.replaceTranscriptWords([
+      { session_time: '00:00:01:00', speaker: '0', word: 'hello', start_sec: 1, end_sec: 1.4 },
+      { session_time: '00:00:02:00', speaker: '1', word: 'world', start_sec: 2, end_sec: 2.5 },
+    ]);
+    expect(result.map((w) => ({ ...w, id: undefined, created_at_utc: undefined }))).toEqual([
+      {
+        id: undefined,
+        session_time: '00:00:01:00',
+        speaker: '0',
+        word: 'hello',
+        start_sec: 1,
+        end_sec: 1.4,
+        ordinal: 0,
+        created_at_utc: undefined,
+      },
+      {
+        id: undefined,
+        session_time: '00:00:02:00',
+        speaker: '1',
+        word: 'world',
+        start_sec: 2,
+        end_sec: 2.5,
+        ordinal: 1,
+        created_at_utc: undefined,
+      },
+    ]);
+    expect(hub.listTranscriptWords()).toEqual(result);
+    hub.close();
+  });
+
+  it('deletes the prior word set atomically (delete-then-insert replaces, not merges)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.insertTranscriptWord({ session_time: '00:00:00:00', speaker: '0', word: 'stale' });
+    const result = hub.replaceTranscriptWords([
+      { session_time: '00:00:05:00', speaker: '0', word: 'fresh', start_sec: 5, end_sec: 5.5 },
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].word).toBe('fresh');
+    expect(result[0].ordinal).toBe(0);
+    expect(hub.listTranscriptWords().map((w) => w.word)).toEqual(['fresh']);
+    hub.close();
+  });
+
+  it('replacing with an empty list clears all existing words', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.insertTranscriptWord({ session_time: '00:00:00:00', speaker: '0', word: 'gone' });
+    const result = hub.replaceTranscriptWords([]);
+    expect(result).toEqual([]);
+    expect(hub.listTranscriptWords()).toEqual([]);
+    hub.close();
+  });
+});
+
 describe('SessionHubRegistry', () => {
   it('returns the same hub per session id and isolates sessions', () => {
     const reg = new SessionHubRegistry(dir);

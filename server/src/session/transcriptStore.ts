@@ -92,4 +92,40 @@ export class TranscriptStore {
     const r = this.core.db.run('DELETE FROM session_transcript_words WHERE id = ?', wordId);
     return r.changes > 0;
   }
+
+  /** Replace the entire transcript-words set in one delete-then-insert pass
+   * (design D10 / spec "Regeneration replaces the transcript atomically").
+   * The caller (SessionHub) wraps this in a transaction; this method's body
+   * itself has no transaction boundary of its own. Ordinals are assigned
+   * contiguously from 0 in `words` array order — callers that need a
+   * particular final order (e.g. the transcript-generation remapper) must
+   * pass `words` pre-sorted. */
+  replaceTranscriptWords(
+    words: Array<{
+      session_time: string;
+      speaker: string;
+      word: string;
+      start_sec: number;
+      end_sec: number;
+    }>,
+  ): TranscriptWord[] {
+    this.core.db.run('DELETE FROM session_transcript_words');
+    const createdAt = isoZ(new Date(this.core.now()));
+    words.forEach((w, ordinal) => {
+      this.core.db.run(
+        `INSERT INTO session_transcript_words
+           (id, session_time, speaker, word, start_sec, end_sec, ordinal, created_at_utc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(),
+        w.session_time,
+        w.speaker,
+        w.word,
+        w.start_sec,
+        w.end_sec,
+        ordinal,
+        createdAt,
+      );
+    });
+    return this.listTranscriptWords();
+  }
 }

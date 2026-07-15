@@ -35,6 +35,8 @@ export interface Config {
   TRUST_PROXY: string;
   API_TOKEN: string;
   ADMIN_TOKEN: string;
+  DEEPGRAM_API_KEY: string;
+  DEEPGRAM_MODEL: string;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

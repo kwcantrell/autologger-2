@@ -256,6 +256,12 @@ export class SessionHub {
   deleteTranscriptWord(wordId: string) {
     return this.inTxn(() => this.transcript.deleteTranscriptWord(wordId));
   }
+  /** Replace the entire transcript-words set atomically (design D10):
+   * synchronous body, one transaction, delete-then-insert with
+   * start_sec/end_sec, contiguous ordinals from 0 in `words` order. */
+  replaceTranscriptWords(words: Parameters<TranscriptStore['replaceTranscriptWords']>[0]) {
+    return this.inTxn(() => this.transcript.replaceTranscriptWords(words));
+  }
 
   // --- topic delegates ---
   listTopics() {

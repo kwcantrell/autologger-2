@@ -4,6 +4,8 @@ import {
   adminMeta,
   adminTokenConfigured,
   cookieSecureForRequest,
+  deepgramConfigured,
+  deepgramModel,
   newUserAllTeamsEnabled,
   oauthConfigured,
   publicBaseUrl,
@@ -76,5 +78,18 @@ describe('env flag parsing', () => {
       restart_supported: false,
       restart_needs_token: true,
     });
+  });
+
+  it('deepgramConfigured is true only when DEEPGRAM_API_KEY is set to a non-blank value', () => {
+    expect(deepgramConfigured(E({}))).toBe(false);
+    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: '' }))).toBe(false);
+    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: '   ' }))).toBe(false);
+    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: 'dg-key' }))).toBe(true);
+  });
+
+  it('deepgramModel defaults to nova-3 and is overridable via DEEPGRAM_MODEL', () => {
+    expect(deepgramModel(E({}))).toBe('nova-3');
+    expect(deepgramModel(E({ DEEPGRAM_MODEL: '' }))).toBe('nova-3');
+    expect(deepgramModel(E({ DEEPGRAM_MODEL: 'nova-2' }))).toBe('nova-2');
   });
 });
