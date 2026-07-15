@@ -26,17 +26,19 @@
 // This listener is loopback-internal infrastructure — it adds NOTHING to the
 // public :8787 HTTP/WS contract.
 //
-// Scope split: this file owns the listener + registration + bearer/session
-// resolution (task 2.1). Task 2.2 (Session-scoped MCP toolset) owns the final
-// tool-output contract (row-field shaping), `create_topic`'s topicCreateSchema
-// validation and `SessionHub.insertTopic` write path, and the tool int tests —
-// see the TODO(2.2) markers in `buildSessionMcpServer`.
+// Scope: this file owns the listener + registration + bearer/session resolution
+// (task 2.1) AND the session-scoped MCP toolset (task 2.2) — the three tools'
+// bodies in `buildSessionMcpServer`: `get_transcript_words` and `list_topics`
+// read hub rows at call time; `create_topic` validates with `topicCreateSchema`
+// and writes through the transactional `SessionHub.insertTopic` path.
 
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
+import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { topicCreateSchema } from '../schemas';
 import type { SessionHubRegistry } from '../session/SessionHub';
 
 const LOOPBACK = '127.0.0.1';
@@ -74,15 +76,38 @@ interface TurnRegistration {
 }
 
 /**
- * Build the per-request McpServer bound to one autologger session. The three
+ * The `create_topic` parameter surface advertised to the model. This declares
+ * only field NAMES/TYPES for discoverability — the authoritative BOUNDS
+ * (`session_time` ≤ 20, `duration_sec` ≥ 0, `topic_level` 1–10 int, `summary`
+ * ≤ 8000) are NOT re-derived here: they live solely in `topicCreateSchema`,
+ * applied inside the handler so a violation returns an `isError` tool result to
+ * the model rather than a thrown JSON-RPC error (SDK schema validation throws
+ * `McpError` before the handler runs — spec: "a violation SHALL return a tool
+ * error to the model, no insert, no crash"). Fields are optional because
+ * `topicCreateSchema` defaults each one.
+ */
+const createTopicToolShape = {
+  session_time: z
+    .string()
+    .optional()
+    .describe('Timecode into the session, HH:MM:SS-style (≤ 20 chars).'),
+  duration_sec: z.number().optional().describe('Topic duration in seconds (≥ 0).'),
+  topic_level: z.number().optional().describe('Topic depth/level, integer 1–10.'),
+  summary: z.string().optional().describe('Concise topic summary (≤ 8000 chars).'),
+};
+
+/**
+ * Build the per-request McpServer bound to one autologger session. All three
  * tools resolve the hub at call time via the registry (never held across an
- * await) and can address ONLY `sessionId` — no tool parameter names a session.
+ * await, so the idle-eviction sweeper can't close it underneath a long turn)
+ * and can address ONLY `sessionId` — no tool parameter names a session.
  *
- * Task 2.2 replaces the tool bodies with the spec'd contract (row-field shaping;
- * `create_topic` topicCreateSchema validation + `SessionHub.insertTopic` write
- * path). The two read tools are wired here as the minimal call-time-resolution
- * seam so this task's no-cross-talk test can exercise the full HTTP → transport
- * → auth → registration → hub-resolution path end to end.
+ * `get_transcript_words` / `list_topics` return the hub row fields verbatim;
+ * `get_transcript_words` therefore OMITS the per-word `session_id` the HTTP read
+ * surface adds (redundant here — the session is fixed by the registration).
+ * `create_topic` validates with `topicCreateSchema` and writes through the
+ * transactional, ordinal-assigning `SessionHub.insertTopic` — the identical code
+ * path a manual insert takes (no WS emission: topics have none).
  */
 function buildSessionMcpServer(registry: SessionHubRegistry, sessionId: string): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
@@ -92,7 +117,9 @@ function buildSessionMcpServer(registry: SessionHubRegistry, sessionId: string):
     "Returns this session's transcript words (the DeepGram output).",
     {},
     async () => {
-      // Hub resolved at call time (D3) — never held across an await.
+      // Hub resolved at call time (D3) — never held across an await. Hub rows
+      // carry no per-word session_id (that's the HTTP surface's addition), so
+      // the spec's omission is satisfied by returning the rows verbatim.
       const words = registry.get(sessionId).listTranscriptWords();
       return { content: [{ type: 'text', text: JSON.stringify(words) }] };
     },
@@ -106,16 +133,31 @@ function buildSessionMcpServer(registry: SessionHubRegistry, sessionId: string):
 
   server.tool(
     'create_topic',
-    'Create one topic on this session.',
-    {},
-    async () => {
-      // TODO(2.2): validate input with topicCreateSchema bounds (tool error on
-      // violation, no insert) and write through SessionHub.insertTopic (the
-      // transactional, server-assigned-ordinal manual-insert code path).
-      return {
-        content: [{ type: 'text', text: 'create_topic is not yet implemented (task 2.2).' }],
-        isError: true,
-      };
+    'Create one topic on this session. The ordinal is assigned by the server.',
+    createTopicToolShape,
+    async (args) => {
+      // Bounds enforced ONLY by topicCreateSchema (no re-derivation). On
+      // violation return an isError tool result — NOT a thrown crash — and do
+      // not insert (spec: "Out-of-bounds tool input is rejected safely").
+      const parsed = topicCreateSchema.safeParse(args);
+      if (!parsed.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Invalid topic input: ${parsed.error.issues
+                .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+                .join('; ')}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      // Hub resolved at call time (D3). insertTopic is the transactional,
+      // server-assigned-ordinal manual-insert path; topics have no WS emission,
+      // and this path introduces none.
+      const topic = registry.get(sessionId).insertTopic(parsed.data);
+      return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
     },
   );
 

@@ -30,20 +30,29 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Drive one `list_topics` MCP call over real HTTP with the given bearer. */
-async function listTopicsViaMcp(url: string, token: string): Promise<unknown[]> {
+type ToolResult = { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+/** Open an MCP client over real HTTP with the given bearer; caller closes. */
+async function connectMcp(
+  url: string,
+  token: string,
+): Promise<{ client: Client; close: () => Promise<void> }> {
   const client = new Client({ name: 'test', version: '0.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   });
+  await client.connect(transport);
+  return { client, close: () => transport.close() };
+}
+
+/** Drive one `list_topics` MCP call over real HTTP with the given bearer. */
+async function listTopicsViaMcp(url: string, token: string): Promise<unknown[]> {
+  const { client, close } = await connectMcp(url, token);
   try {
-    await client.connect(transport);
-    const res = (await client.callTool({ name: 'list_topics', arguments: {} })) as {
-      content: Array<{ type: string; text: string }>;
-    };
+    const res = (await client.callTool({ name: 'list_topics', arguments: {} })) as ToolResult;
     return JSON.parse(res.content[0].text) as unknown[];
   } finally {
-    await transport.close();
+    await close();
   }
 }
 
@@ -169,5 +178,147 @@ describe('AiMcpListener — no cross-talk between concurrent turns', () => {
 
     turnA.dispose();
     turnB.dispose();
+  });
+});
+
+describe('AiMcpListener — get_transcript_words returns hub rows (no session_id)', () => {
+  it('omits the per-word session_id the HTTP surface adds', async () => {
+    registry.get('sessA').replaceTranscriptWords([
+      { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
+    ]);
+    const turn = listener.registerTurn('sessA');
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      const words = JSON.parse(res.content[0].text) as Array<Record<string, unknown>>;
+      expect(words).toHaveLength(1);
+      // Hub row fields present…
+      expect(words[0].word).toBe('hello');
+      expect(words[0].start_sec).toBe(1);
+      // …and the HTTP surface's per-word session_id is NOT present.
+      expect(words[0]).not.toHaveProperty('session_id');
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+});
+
+describe('AiMcpListener — create_topic writes through SessionHub.insertTopic', () => {
+  /** Drive one create_topic MCP call; returns the raw tool result. */
+  async function createTopicViaMcp(
+    url: string,
+    token: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolResult> {
+    const { client, close } = await connectMcp(url, token);
+    try {
+      return (await client.callTool({ name: 'create_topic', arguments: args })) as ToolResult;
+    } finally {
+      await close();
+    }
+  }
+
+  it('produces a row indistinguishable from a manual insert (server ordinal, no WS)', async () => {
+    // Manual reference: two inserts straight through the hub.
+    const manualHub = registry.get('manual');
+    const payloads = [
+      { session_time: '00:00:01', duration_sec: 5, topic_level: 2, summary: 'first' },
+      { session_time: '00:00:09', duration_sec: 8, topic_level: 3, summary: 'second' },
+    ];
+    for (const p of payloads) manualHub.insertTopic(p);
+
+    // AI path: same two payloads via the MCP create_topic tool on session 'ai'.
+    // Attach a spy socket to prove create_topic emits NO WS message.
+    const sent: string[] = [];
+    registry.get('ai').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    const turn = listener.registerTurn('ai');
+    for (const p of payloads) {
+      const res = await createTopicViaMcp(turn.url, turn.token, p);
+      expect(res.isError).toBeFalsy();
+    }
+    turn.dispose();
+
+    // No WS emission for topics — matching manual-insert behavior (topics have
+    // no fan-out; the MCP path introduces none).
+    expect(sent).toEqual([]);
+
+    // Byte-identical rows apart from the non-deterministic id/created_at_utc:
+    // both paths get server-assigned contiguous ordinals from 0.
+    const strip = (t: { id: string; created_at_utc: string }): Record<string, unknown> => {
+      const { id: _id, created_at_utc: _c, ...rest } = t;
+      return rest;
+    };
+    const manualRows = manualHub.listTopics().map(strip);
+    const aiRows = registry.get('ai').listTopics().map(strip);
+    expect(aiRows).toEqual(manualRows);
+    // Ordinals are server-assigned (0,1), not supplied by the tool caller.
+    expect(aiRows.map((r) => r.ordinal)).toEqual([0, 1]);
+  });
+
+  it('rejects out-of-bounds input safely: isError, no insert, turn continues', async () => {
+    const turn = listener.registerTurn('ai');
+    // topic_level 99 violates topicCreateSchema's 1–10 bound.
+    const bad = await createTopicViaMcp(turn.url, turn.token, {
+      session_time: '00:00:01',
+      duration_sec: 1,
+      topic_level: 99,
+      summary: 'too deep',
+    });
+    expect(bad.isError).toBe(true);
+    expect(registry.get('ai').listTopics()).toHaveLength(0);
+
+    // The turn continues — a subsequent valid call still works.
+    const ok = await createTopicViaMcp(turn.url, turn.token, {
+      session_time: '00:00:02',
+      duration_sec: 2,
+      topic_level: 5,
+      summary: 'ok now',
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(registry.get('ai').listTopics()).toHaveLength(1);
+    turn.dispose();
+  });
+
+  it('create_topic exposes no session parameter (cannot address another session)', async () => {
+    const turn = listener.registerTurn('ai');
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      const createTopic = tools.find((t) => t.name === 'create_topic');
+      expect(createTopic).toBeDefined();
+      const props = (createTopic?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+      // The parameter surface is exactly the topic fields — no session id knob.
+      expect(Object.keys(props).sort()).toEqual([
+        'duration_sec',
+        'session_time',
+        'summary',
+        'topic_level',
+      ]);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('writes only the bound session, never a sibling (turn A cannot reach B)', async () => {
+    registry.get('sessA'); // materialize
+    registry.get('sessB');
+    const turnA = listener.registerTurn('sessA');
+    const res = await createTopicViaMcp(turnA.url, turnA.token, {
+      session_time: '00:00:01',
+      duration_sec: 1,
+      topic_level: 1,
+      summary: 'for A',
+    });
+    expect(res.isError).toBeFalsy();
+    turnA.dispose();
+
+    expect(registry.get('sessA').listTopics()).toHaveLength(1);
+    // Session B is untouched — the write is hard-bound to the registration.
+    expect(registry.get('sessB').listTopics()).toHaveLength(0);
   });
 });
