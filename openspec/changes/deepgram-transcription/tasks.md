@@ -69,11 +69,11 @@
 
 ## 5. Docs + gates
 
-- [ ] 5.1 Update the README endpoint table row for `…/transcript-words/generate`
+- [x] 5.1 Update the README endpoint table row for `…/transcript-words/generate`
       (503-unconditional → configuration-gated per the delta) and the "intentionally
       503" prose in README/CLAUDE.md; add the audio-egress + spend disclosure sentence
       to the README (gate decisions 3–4); verify `topics/generate` + `transcribe.csv`
       rows stay marked 503.
-- [ ] 5.2 Full gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`
+- [x] 5.2 Full gates: `npm run typecheck`, `npm test`, `npm run lint`, `npm run e2e`
       (e2e stays hermetic — no DeepGram key in the e2e env, asserting the 503 path still
       renders its toast).
