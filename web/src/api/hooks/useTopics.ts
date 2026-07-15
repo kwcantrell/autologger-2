@@ -4,6 +4,12 @@ import type { SessionTopic } from '../types';
 
 const key = (sessionId: string) => ['topics', sessionId];
 
+/** Public topics query key, for callers outside this module that need to
+ * invalidate the same cache entry (e.g. `AiChat`'s `create_topic` tool-event
+ * liveness refresh — ai-topics-chat design D9). Keep this the single source
+ * of truth for the key shape so it can't drift from the internal `key()`. */
+export const topicsQueryKey = key;
+
 export function useTopics(sessionId: string | null) {
   return useQuery({
     queryKey: key(sessionId ?? ''),
