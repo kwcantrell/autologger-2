@@ -18,11 +18,11 @@
 
 ## 1. Gate + endpoint skeleton (server)
 
-- [ ] 1.1 Config wiring: add `CLAUDE_CLI_PATH`, `AI_CHAT_TIMEOUT_SEC` (default 300),
+- [x] 1.1 Config wiring: add `CLAUDE_CLI_PATH`, `AI_CHAT_TIMEOUT_SEC` (default 300),
       `AI_CHAT_MAX_CONCURRENT` (small default), and the per-turn budget var to the server
       config layer (`server/src/node/`) and `server/.env.example` with comments; unset/
       blank/whitespace `CLAUDE_CLI_PATH` means feature off.
-- [ ] 1.2 TDD the route shell (spec: Configuration-gated endpoint; Open-network refusal;
+- [x] 1.2 TDD the route shell (spec: Configuration-gated endpoint; Open-network refusal;
       Chat request contract): int tests first for the check order — auth → session `404`
       → open-network/config `503` → body `422`/`400` → single-flight `409` — asserting an
       unauthorized session masks as `404` before `503`/`409`, an anonymous non-loopback
@@ -31,13 +31,13 @@
 
 ## 2. In-process MCP server (design D3)
 
-- [ ] 2.1 Add `@modelcontextprotocol/sdk` to the server workspace; implement the
+- [x] 2.1 Add `@modelcontextprotocol/sdk` to the server workspace; implement the
       loopback-only ephemeral-port Streamable-HTTP listener with per-connection transport,
       per-turn registration (session id + ≥128-bit bearer, dropped on turn end), and
       bearer validation at the HTTP layer before dispatch; unit tests: rejects
       missing/stale/expired tokens, never binds non-loopback, two concurrent turns on
       distinct sessions don't cross-talk.
-- [ ] 2.2 TDD the three tools (spec: Session-scoped MCP toolset): `get_transcript_words`
+- [x] 2.2 TDD the three tools (spec: Session-scoped MCP toolset): `get_transcript_words`
       and `list_topics` read via `registry.get()` at call time (never held across an
       `await`) with hub row fields; `create_topic` validates with `topicCreateSchema`
       bounds (tool error on violation, no insert) and writes through
@@ -47,11 +47,11 @@
 
 ## 3. CLI turn runner (design D4–D6, D8)
 
-- [ ] 3.1 Build the hermetic fake-`claude` fixture (design D10): records argv to a file,
+- [x] 3.1 Build the hermetic fake-`claude` fixture (design D10): records argv to a file,
       reads the prompt from stdin, emits canned stream-json matching the 0.1-captured
       taxonomy (init/session_id, partial text, `tool_use`, result), supports failure modes
       (nonzero exit, garbage output, not-logged-in, hang for timeout tests).
-- [ ] 3.2 TDD spawn + lockdown (spec: Subprocess security lockdown): characterization test
+- [x] 3.2 TDD spawn + lockdown (spec: Subprocess security lockdown): characterization test
       pins the full argv verbatim — `-p --output-format stream-json`, `--setting-sources
       ""`, built-in denial + `--allowedTools` with exactly the three `mcp__autologger__*`
       tools, `--strict-mcp-config --mcp-config <generated>`, `--append-system-prompt`
