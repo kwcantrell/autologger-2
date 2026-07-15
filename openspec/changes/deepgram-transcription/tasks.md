@@ -56,7 +56,7 @@
 - [x] 4.2 TDD new `replaceTranscriptWords` hub RPC (`TranscriptStore` + `SessionHub`):
       synchronous body, one transaction, delete-then-insert with `start_sec`/`end_sec`,
       contiguous ordinals from 0.
-- [ ] 4.3 Implement the generate route body in `server/src/routers/transcribe.ts`:
+- [x] 4.3 Implement the generate route body in `server/src/routers/transcribe.ts`:
       unconfigured → existing 503 untouched; configured → single-flight guard (409, no
       spend), abort-check before the provider call, pipeline in the router layer,
       re-acquire the hub via the registry after awaits, replace only after ALL groups
