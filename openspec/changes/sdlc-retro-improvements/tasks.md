@@ -16,43 +16,43 @@ post-gate plan of record.
 
 ## 1. CLAUDE.md — propose-side process rules
 
-- [ ] 1.1 In "Adversarial review of the spec", add the pre-panel fact-check pass per D2:
+- [x] 1.1 In "Adversarial review of the spec", add the pre-panel fact-check pass per D2:
   light-tier fetch-and-compare over stated checkable claims in proposal/spec/design,
   per-claim method + evidence recorded, CONFIRMED restricted to mechanically checkable
   facts, corrections folded into the draft, dated Panel & review log entry. The panel
   prompt says stated claims were pre-checked and points at the log, **and explicitly
   preserves the reviewers' full skeptical mandate including implicit-premise hunting** —
   aid, never warrant. Never phrase it as "not re-verification".
-- [ ] 1.2 In "Post-gate edits get a consistency read, not a re-panel", make outcome
+- [x] 1.2 In "Post-gate edits get a consistency read, not a re-panel", make outcome
   recording mandatory per D4: a dated log line, "clean" (naming documents read) or findings
   + fixes; note that claims introduced during fold-back are covered by this read.
-- [ ] 1.3 In the "How we work (SDLC)" summary paragraph, replace "an always-on whole-branch
+- [x] 1.3 In the "How we work (SDLC)" summary paragraph, replace "an always-on whole-branch
   review at the end" with the layered scoped-audit phrasing (D1, one sentence) and note
   that process rules live normatively in the three encodings (D9), with the `sdlc-process`
   marker spec recording that ruling.
 
 ## 2. Apply skill — execution-side process rules
 
-- [ ] 2.1 In `.claude/skills/openspec-apply-change/SKILL.md` step 6d, add the frozen-surface
+- [x] 2.1 In `.claude/skills/openspec-apply-change/SKILL.md` step 6d, add the frozen-surface
   fast-path per D3: a `DONE_WITH_CONCERNS` concern touching the frozen HTTP/WS contract is
   escalated to the owner and resolved before the next dispatch — never parked for the phase
   review (decided 2026-07-14; deepgram-499 evidence, one parenthetical). In step 6c's
   dispatch-prompt requirements, add the affirmative self-check line for units touching
   frozen-surface-adjacent code ("emits only statuses/shapes/headers in the authorized
   delta: yes/no + list").
-- [ ] 2.2 In step 6 "Per phase — partition first", add shared-helper preassignment per D5:
+- [x] 2.2 In step 6 "Per phase — partition first", add shared-helper preassignment per D5:
   at each partition, scan for nontrivial logic shared with already-landed code AND later
   planned tasks (especially auth/correctness-relevant); name the shared home (file +
   export) in the ledger and affected dispatch prompts at the earliest partition where
   visible; revisit each phase; implementers extract there instead of duplicating and never
   write scope comments that misstate scope.
-- [ ] 2.3 In step 6c (report contents) and 6f (ledger bookkeeping), encode the report diet
+- [x] 2.3 In step 6c (report contents) and 6f (ledger bookkeeping), encode the report diet
   per D6: reports keep everything unit-specific — decisions, deviations, files changed,
   RED/GREEN evidence, self-review findings, concerns, interfaces, and a one-line per-unit
   gate assertion — while repeated boilerplate (full suite tails, known pre-existing
   warnings, branch-hygiene recitals) becomes one ledger line per phase, reports saying
   "gates green (see ledger)" beyond their assertion line.
-- [ ] 2.4 Rewrite step 7 as the layered scoped audit per D1. The audit package ALWAYS
+- [x] 2.4 Rewrite step 7 as the layered scoped audit per D1. The audit package ALWAYS
   includes: full diffs of deferred/mechanical phases; contract/seam-relevant diffs of every
   phase touching the observable surface or cross-phase interfaces (regardless of tier or
   outcome); full diffs of clean phases sharing files/state with deferred phases; full
@@ -64,7 +64,7 @@ post-gate plan of record.
   contract- or seam-touching hunks. Keep: always-on, most-capable model, contract-delta
   audit end-to-end, ledger triage, residual/invariant cataloguing, single fix subagent,
   Orchestrator notes.
-- [ ] 2.5 Add the verification-discipline rules to step 6/setup per D7 + D8 + D10:
+- [x] 2.5 Add the verification-discipline rules to step 6/setup per D7 + D8 + D10:
   (a) single controlled diagnosis — one experiment, verdict + method + conditions recorded
   in the ledger, later steps cite it; reviewers may reject an unsound experiment (one
   re-run, re-record); (b) paid-API spike pre-flight — one minimal probe (unmetered
@@ -73,12 +73,12 @@ post-gate plan of record.
   (c) gate-intent verification — in every phase including mechanical/deferred, the
   implementer verifies each gate's intent (the property it exists to establish), not just
   its exit code, and records findings.
-- [ ] 2.6 Update the Guardrails list to mirror 2.1–2.5, keeping it consistent with the
+- [x] 2.6 Update the Guardrails list to mirror 2.1–2.5, keeping it consistent with the
   step bodies.
 
 ## 3. config.yaml — generated-artifact rules
 
-- [ ] 3.1 In `openspec/config.yaml`: add to the `design` rules that the Panel & review log
+- [x] 3.1 In `openspec/config.yaml`: add to the `design` rules that the Panel & review log
   also records the pre-panel fact-check entry (per-claim method/evidence) and the
   consistency-read outcome line. Add to the `tasks` rules that docs-only changes state
   which final gates are skipped and why (no runtime surface), and that changes editing

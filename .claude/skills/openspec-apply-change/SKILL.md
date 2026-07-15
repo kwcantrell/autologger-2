@@ -111,6 +111,32 @@ Implement tasks from an OpenSpec change.
    ledger at phase start (`Phase <N> units: [x.1+x.2], [x.3]`). Units run strictly
    sequentially, exactly as tasks did.
 
+   **Shared-helper preassignment (decided 2026-07-14):** at each partition, scan for
+   nontrivial logic shared with already-landed code AND later planned tasks (tasks.md
+   is known up front) — especially auth/authorization- or correctness-relevant logic.
+   Name the shared home (file + export) in the ledger partition entry and the affected
+   dispatch prompts at the earliest partition where the need is visible; revisit at
+   every subsequent partition. Implementers extract to the named home instead of
+   duplicating, and never write scope comments that misstate what was in scope
+   (evidence: `normalizeEmail` triplicated across three phases, including a factually
+   false "out of scope" comment, cleaned up only at branch review).
+
+   **Verification discipline (applies throughout the apply session):**
+   - **Single controlled diagnosis (decided 2026-07-14):** a gate failure suspected to
+     be environmental (snapshot drift, credential/toolchain issues, flaky infra) gets
+     exactly one controlled experiment to assign causality; the ledger records the
+     verdict **with the experiment's method and conditions**. Later steps and reviewers
+     cite the recorded verdict instead of re-deriving it — but any reviewer may reject
+     a verdict whose recorded experiment doesn't meet the identical-conditions bar, or
+     when concrete new evidence contradicts it: then one re-run, re-record. A verdict
+     is challengeable with cause, never frozen.
+   - **Paid-API pre-flight (decided 2026-07-14):** before dispatching any unit that
+     will call a paid external API, validate credentials/reachability with one minimal
+     probe — prefer an unmetered auth/reachability endpoint over a billable call. The
+     ledger records **only PASS/FAIL + endpoint** (never response bodies, tokens, or
+     credential material). Re-probe after credential rotation or any auth failure;
+     "validated earlier this session" does not survive a 401.
+
    **Per dispatch unit (strictly sequential — never dispatch implementers in parallel):**
 
    a. Record `BASE=$(git rev-parse HEAD)`.
@@ -129,9 +155,25 @@ Implement tasks from an OpenSpec change.
         gets every task's text and the ordering between them, e.g. RED then GREEN)
       - Any interface or decision from an earlier task the artifacts can't know
         (usually nothing — the subagent can read the code)
-      - The report-file path `.apply/task-<id>-report.md`: full detail goes there —
-        what was implemented, files changed, test commands + output, TDD RED/GREEN
-        evidence when the task orders tests first, self-review findings
+      - The report-file path `.apply/task-<id>-report.md`: everything **unit-specific**
+        goes there — what was implemented and why, files changed, deviations from
+        tasks.md, TDD RED/GREEN evidence when the task orders tests first, self-review
+        findings, concerns, interfaces produced, and a one-line per-unit gate assertion
+        ("full suite green: N passed, typecheck clean"). **Report diet (decided
+        2026-07-14):** repeated boilerplate — full suite tails, known pre-existing
+        warnings, branch-hygiene recitals — does NOT go in reports; it lives as one
+        ledger line per phase, and beyond its assertion line the report says "gates
+        green (see ledger)"
+      - **Gate-intent verification (decided 2026-07-14):** in every phase — including
+        mechanical and deferred-tier ones — verify each gate's *intent* (the property
+        the gate exists to establish: hermeticity, isolation, contract byte-identity),
+        not just its exit code, and record findings in the report (evidence: the
+        DEEPGRAM key leaking into "hermetic" e2e servers was the period's highest-value
+        catch, found exactly this way in a phase with no reviewer)
+      - **Frozen-surface self-check:** a unit touching frozen-surface-adjacent code adds
+        one affirmative line to its report — "emits only statuses/shapes/headers in the
+        authorized delta: yes/no + list" — so silence is a checked assertion, not an
+        omission
       - The return contract: **≤15 lines** — STATUS (`DONE` | `DONE_WITH_CONCERNS` |
         `BLOCKED` | `NEEDS_CONTEXT`), commits (short SHA + subject), one-line test
         summary, concerns, report path
@@ -152,8 +194,16 @@ Implement tasks from an OpenSpec change.
 
    d. Handle the returned status:
       - `DONE` → proceed to (e)
-      - `DONE_WITH_CONCERNS` → read the concerns (not the report body); address
-        correctness/scope concerns before review, note observations in the ledger
+      - `DONE_WITH_CONCERNS` → read the concerns (not the report body). **A concern
+        touching the frozen HTTP/WS contract surface (a status code, JSON shape,
+        header/range semantic, export body, or WS emission absent from the change's
+        authorized delta) is a gate question: escalate to the owner and resolve it —
+        including any delta amendment — before the next dispatch; never park it for
+        the phase review** (decided 2026-07-14; the deepgram 499, self-flagged at
+        commit time, still cost a phase-review FAIL + fix wave + three artifact edits
+        to adjudicate). This is a latency fast-path, not a guard — detection stays
+        with the phase reviews and the audit's contract feed. Other correctness/scope
+        concerns are addressed before review; observations noted in the ledger
       - `NEEDS_CONTEXT` → supply what's missing, re-dispatch
       - `BLOCKED` → change something: more context, a more capable model, a smaller
         split, or escalate to the user if the artifacts themselves are wrong. Never
@@ -204,9 +254,12 @@ Implement tasks from an OpenSpec change.
         the phase review.
 
    f. Bookkeeping: tick every checkbox the unit covers in tasks.md (`- [ ]` → `- [x]`)
-      and append one ledger line per unit, plus one per phase when its gate resolves:
+      and append one ledger line per unit, plus two per phase when its gate resolves —
+      the review line and the phase gate tail (the single home for suite counts, known
+      pre-existing warnings, and branch-hygiene state that reports no longer repeat):
       `Task <id(s)>: complete (commits <base7>..<head7>)`
       `Phase <N>: review clean (phase-<N>-diff.txt) | skipped-mechanical`
+      `Phase <N> gates: <suite counts, typecheck, known warnings, hygiene>`
 
    **Pause if:**
    - Task is unclear → ask for clarification
@@ -214,17 +267,39 @@ Implement tasks from an OpenSpec change.
    - A blocker you cannot resolve → report and wait for guidance
    - User interrupts
 
-7. **Final whole-branch review (always, after all tasks)**
+7. **Final whole-branch review (always, after all tasks) — a layered scoped audit,
+   not a cumulative re-read** (decided 2026-07-14, replacing the full-branch-diff
+   re-read: its internal-quality yield on full-tier-reviewed code was 0/4 across the
+   first applied changes, but its contract/seam inputs are irreplaceable)
 
-   Write the branch package to a file:
-   `BASE=$(git merge-base main HEAD); { git log --oneline $BASE..HEAD; git diff --stat $BASE..HEAD; git diff -U10 $BASE..HEAD; } > openspec/changes/<name>/.apply/branch-diff.txt`
-   Dispatch one reviewer on the **most capable model** with that path, all artifact
-   paths, and the ledger (so it can triage any minor findings accumulated there). It
-   also ends with an **Orchestrator notes** section (≤5 bullets) — here oriented at
-   merge/archive: residuals to record in the archived change, follow-on work worth a
-   roadmap note, invariants the merge must not disturb. If it returns findings,
-   dispatch **one** fix subagent with the complete list — not one per finding — then
-   re-review. When clean, suggest merge back to `main` and archive.
+   Build the audit package from the ledger's recorded PHASE_BASE SHAs. It ALWAYS
+   includes:
+   - the **full diffs of deferred and mechanical phases** — the audit is their sole
+     reviewer;
+   - the **contract/seam-relevant diffs of every phase** that touched the observable
+     HTTP/WS surface or produced/consumed a cross-phase interface, regardless of the
+     phase's tier or review outcome;
+   - the **full diffs of clean phases that share files or state with deferred
+     phases** (emergent shared-state interactions aren't declared interfaces);
+   - a **full re-read of any phase whose code was modified after its review closed**
+     (later fix waves re-open the phase for the audit).
+   Reports + reviewer notes stand in ONLY for the internal-quality re-read of
+   non-contract code in full-tier phases that **closed clean** — clean means no open
+   Critical/Important findings; accepted minors carry to the audit's triage list.
+   **Exclusion may never drop contract- or seam-touching hunks from the package** —
+   when partitioning the diffs is ambiguous, include the phase's full diff.
+
+   Write the package to `.apply/audit-package-*.txt` files this session never reads.
+   Dispatch one reviewer on the **most capable model** with those paths, all artifact
+   paths, and the ledger. Its charter, beyond the package: audit the branch's complete
+   observable HTTP/WS surface delta against the authorized delta specs end-to-end;
+   triage every minor and carry-note accumulated in the ledger; catalogue residuals
+   and invariants for archive. It ends with an **Orchestrator notes** section (≤5
+   bullets) — oriented at merge/archive: residuals to record in the archived change,
+   follow-on work worth a roadmap note, invariants the merge must not disturb. If it
+   returns findings, dispatch **one** fix subagent with the complete list — not one
+   per finding — then re-review (fix-diff-scoped, as with phase reviews). When clean,
+   suggest merge back to `main` and archive.
 
 8. **On completion or pause, show status**
 
@@ -299,11 +374,28 @@ What would you like to do?
   sequentially
 - **Partition each phase into dispatch units before its first dispatch** — TDD pairs
   always share a unit; same-files/same-seam tasks usually should; record the partition
-  in the ledger
+  in the ledger, and preassign the shared home for any logic multiple units (or
+  landed code + a later task) will need — implementers never duplicate it or write
+  scope comments that misstate scope
 - **Reviews run per phase, not per task, and only for full-tier phases** — one reviewer
   over the phase's cumulative diff after its last task; deferred/mechanical phases skip
-  to the whole-branch review, which is the only always-on review; when in doubt about a
+  to the whole-branch audit, which is the only always-on review; when in doubt about a
   phase's tier, review it
+- **A frozen-surface `DONE_WITH_CONCERNS` goes to the owner before the next dispatch**
+  — never parked for the phase review; units touching frozen-surface-adjacent code
+  include the affirmative authorized-delta self-check line in their report
+- **Verify gate intent, not just exit codes, in every phase** — including mechanical
+  and deferred-tier phases; record findings in the report
+- **One controlled diagnosis per suspected-environmental failure** — verdict + method
+  + conditions in the ledger; rejectable with cause, never frozen
+- **Probe paid-API credentials before dispatching the unit** — unmetered endpoint
+  preferred; ledger records PASS/FAIL + endpoint only, never response bodies or
+  credential material
+- **Reports carry unit-specific content plus a one-line gate assertion** — repeated
+  suite tails, known warnings, and hygiene recitals live once per phase in the ledger
+- **The whole-branch audit's package may never exclude contract- or seam-touching
+  hunks** — reports stand in only for the internal-quality re-read of non-contract
+  code in full-tier phases that closed clean (no open Critical/Important findings)
 - **Never re-dispatch a task the ledger marks complete** — check `.apply/ledger.md` (and
   `git log`) after any compaction or resume
 - If task is ambiguous, pause and ask before dispatching
