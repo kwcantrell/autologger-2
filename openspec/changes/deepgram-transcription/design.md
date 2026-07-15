@@ -247,6 +247,18 @@ of timeline alias in SMPTE rendering (frame arithmetic unaffected); cross-reques
 consistency premise unverifiable from provider docs (industry-standard conservative
 assumption, and the concat design is exactly the hedge).
 
+**2026-07-14 — whole-branch final review (post-implementation).** Verdict: mergeable
+after one docs fix (stale `transcribe.ts` header — fixed in place). Ruled: no e2e toast
+spec required (503 asserted byte-identically at integration tier; `web/` untouched by
+this change). Minors accepted as residual: (1) codec grouping partitions by *contiguous*
+runs, so interleaved-codec sessions (e.g. opus/aac/opus) produce one group per run —
+extra provider requests and split speaker ids on such rare sessions; (2) the abort-check
+runs before *each* group's provider call, so a multi-group run whose client disconnects
+mid-run is abandoned after the earlier groups' spend — single-group runs (the common
+case) fully honor the disconnect-completes semantics; (3) the delta's "sibling stubs
+stay frozen" scenario has no dedicated test (true by inspection — those handlers never
+consult DeepGram config).
+
 ## Spike findings (2026-07-14, task 1.1)
 
 `audioMerge.ts`/tests/fixtures/script/mediabunny were adopted onto this branch

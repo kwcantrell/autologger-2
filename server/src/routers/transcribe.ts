@@ -1,7 +1,8 @@
 // Transcript words + topics — ported from web/routers/transcribe.py. Manual CRUD
-// is backed by the session hub; transcript generation and the legacy CSV
-// download are unavailable on this deployment, so they return a clean 503 that the
-// frontend surfaces as a toast (phase 6 decision — no transcription integration).
+// is backed by the session hub; transcript generation is env-gated on
+// DEEPGRAM_API_KEY, returning a clean 503 that the frontend surfaces as a toast
+// when unconfigured. topics/generate and the legacy transcribe.csv download
+// remain intentionally unavailable on this deployment and always return 503.
 
 import { Hono } from 'hono';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
