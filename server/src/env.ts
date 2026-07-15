@@ -78,6 +78,48 @@ export function deepgramModel(env: Config): string {
   return (env.DEEPGRAM_MODEL || '').trim() || 'nova-3';
 }
 
+// ── AI topics chat (ai-topics-chat, design D5/D8) ───────────────────────────
+
+/** Gate (design D8): the AI chat runs only when CLAUDE_CLI_PATH names the claude
+ * CLI executable. Unset/blank/whitespace-only ⇒ feature off (frozen 503). */
+export function aiChatConfigured(env: Config): boolean {
+  return Boolean((env.CLAUDE_CLI_PATH || '').trim());
+}
+
+/** Per-turn server-side timeout backstop in seconds (spec Subprocess lifecycle);
+ * default 300. Non-numeric / non-positive falls back to the default. */
+export function aiChatTimeoutSec(env: Config): number {
+  const n = Number((env.AI_CHAT_TIMEOUT_SEC || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 300;
+}
+
+/** Process-wide concurrent-turn ceiling (spec Spend and concurrency bounds); a
+ * small default (2) so a paid endpoint can't fan out unbounded turns. */
+export function aiChatMaxConcurrent(env: Config): number {
+  const n = Number((env.AI_CHAT_MAX_CONCURRENT || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : 2;
+}
+
+/** Per-turn CLI cost ceiling in USD (spec Spend and concurrency bounds; the CLI
+ * --max-budget-usd flag, design D5); default 0.5. */
+export function aiChatMaxBudgetUsd(env: Config): number {
+  const n = Number((env.AI_CHAT_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 0.5;
+}
+
+/** Open-network refusal (spec "Open-network refusal", design D8): refuse to spend
+ * the operator's Anthropic credentials when auth is disabled on a reachable
+ * network — REQUIRE_LOGIN disabled AND a non-loopback bind AND no IP allowlist.
+ * Mirrors the boot-time warning in main.ts; unset HOST defaults to 0.0.0.0
+ * (non-loopback), matching the serve() default. */
+export function aiChatOpenNetworkRefused(env: Config): boolean {
+  if (requireLoginEnabled(env)) return false;
+  if ((env.IP_ALLOWLIST || '').trim()) return false;
+  const hostname = (env.HOST || '').trim() || '0.0.0.0';
+  const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+  return !loopback;
+}
+
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */
 export function adminMeta(env: Config): Record<string, boolean> {
   return {

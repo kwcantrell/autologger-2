@@ -24,6 +24,9 @@ export interface Ports {
 /** Plain configuration strings from process env. */
 export interface Config {
   PUBLIC_BASE_URL: string;
+  /** Bind interface (also read directly by main.ts for serve()); surfaced here so
+   * the AI-chat open-network refusal can see the bind without a second env read. */
+  HOST: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   REQUIRE_LOGIN: string;
@@ -37,6 +40,12 @@ export interface Config {
   ADMIN_TOKEN: string;
   DEEPGRAM_API_KEY: string;
   DEEPGRAM_MODEL: string;
+  /** AI topics chat (ai-topics-chat). Unset/blank/whitespace CLAUDE_CLI_PATH ⇒
+   * feature off (503). The rest tune spend/lifecycle bounds. */
+  CLAUDE_CLI_PATH: string;
+  AI_CHAT_TIMEOUT_SEC: string;
+  AI_CHAT_MAX_CONCURRENT: string;
+  AI_CHAT_MAX_BUDGET_USD: string;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

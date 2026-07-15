@@ -50,6 +50,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
+      HOST: procEnv.HOST || '',
       GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       REQUIRE_LOGIN: procEnv.REQUIRE_LOGIN || '',
@@ -63,6 +64,10 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
       DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
       DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
+      CLAUDE_CLI_PATH: procEnv.CLAUDE_CLI_PATH || '',
+      AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
+      AI_CHAT_MAX_CONCURRENT: procEnv.AI_CHAT_MAX_CONCURRENT || '',
+      AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
     },
   };
   // Design D5: NEW_USER_ALL_TEAMS is deprecated -- the callback's new-user
