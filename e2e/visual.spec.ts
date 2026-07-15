@@ -344,11 +344,16 @@ test('feed pending-delete', async ({ page }) => {
 
 test('transcribe-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
-  await page.getByRole('tab', { name: 'Transcribe Feed' }).click();
-  await expect(page.getByRole('tab', { name: 'Transcribe Feed' })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  // ai-topics-chat (task 4.1) moved Transcribe under the AI top-level tab as
+  // a subtab (former top-level "Transcribe Feed" tab is gone).
+  await page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'AI' }).click();
+  await page
+    .getByRole('tablist', { name: 'AI tabs' })
+    .getByRole('tab', { name: 'Transcribe' })
+    .click();
+  await expect(
+    page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Transcribe' }),
+  ).toHaveAttribute('aria-selected', 'true');
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('transcribe-feed.png', {
     mask: FEED_MASK(page),
@@ -357,11 +362,13 @@ test('transcribe-feed tab', async ({ page }) => {
 
 test('topics-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
-  await page.getByRole('tab', { name: 'Topics Feed' }).click();
-  await expect(page.getByRole('tab', { name: 'Topics Feed' })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
+  // ai-topics-chat (task 4.1) moved Topics under the AI top-level tab as a
+  // subtab (former top-level "Topics Feed" tab is gone).
+  await page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'AI' }).click();
+  await page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }).click();
+  await expect(
+    page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }),
+  ).toHaveAttribute('aria-selected', 'true');
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('topics-feed.png', {
     mask: FEED_MASK(page),
