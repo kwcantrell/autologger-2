@@ -126,10 +126,15 @@ carried explore → gate stays lean: one disposable implementer subagent per dis
 context (TDD pairs always batch into one unit; decided 2026-07-14) — strictly
 sequential, on a plain branch **whose first commit is the gated OpenSpec artifacts
 themselves** (version-pinning the plan of record before any dispatch; decided
-2026-07-14), thresholded per-phase review subagents (one reviewer over
-each phase's cumulative diff after its last task lands; phases with only mechanical
-renames/doc sweeps skip to the final gate — decided 2026-07-14, replacing per-task
-reviews), an always-on whole-branch review at the end, and file-based handoffs (reports,
+2026-07-14), risk-tiered per-phase review subagents (one reviewer over each phase's
+cumulative diff after its last task lands — but only for phases touching the frozen
+contract surface, auth/security-sensitive validation, concurrency/caching/transaction
+semantics, or destructive data ops; other phases defer to the whole-branch review,
+and fix-wave re-reviews scope to the fix diff rather than a cumulative re-read —
+decided 2026-07-14, replacing the code-bearing/mechanical threshold), an always-on
+whole-branch review at the end, one change in flight per checkout (commit spike/side
+artifacts to their own branch before starting an apply; decided 2026-07-14), and
+file-based handoffs (reports,
 diff files, progress ledger under `openspec/changes/<name>/.apply/`, git-ignored). The gated OpenSpec artifacts are the task
 briefs — dispatch prompts point at them rather than pasting context. Full protocol lives in
 `.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); re-apply that customization if

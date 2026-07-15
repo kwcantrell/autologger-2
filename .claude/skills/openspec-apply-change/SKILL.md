@@ -83,6 +83,10 @@ Implement tasks from an OpenSpec change.
 
    **Setup (once per apply session):**
    - Be on a feature branch off `main` (plain branch — **never a worktree**, per CLAUDE.md).
+   - **One change in flight per checkout** (decided 2026-07-14): before branching, the
+     working tree must be clean of other work — commit spike/side artifacts to their own
+     branch (or stash them). Uncommitted alien files force every reviewer to re-verify
+     staging hygiene and risk contaminating this change's commits.
    - **Commit the gated artifacts before any dispatch** (decided 2026-07-14): if
      `openspec/changes/<name>/` has untracked or modified files, `git add` that directory
      (the git-ignored `.apply/` stays out automatically) and commit
@@ -155,11 +159,23 @@ Implement tasks from an OpenSpec change.
         split, or escalate to the user if the artifacts themselves are wrong. Never
         retry unchanged.
 
-   e. **Review gate (per phase, thresholded):** reviews run once per numbered phase
+   e. **Review gate (per phase, risk-tiered):** reviews run once per numbered phase
       (a `## N.` heading in tasks.md), after the phase's LAST task clears — not per
-      task.
-      - When the last task of a phase completes and the phase contained **any
-        code-bearing task** → write the phase's cumulative diff to a file this
+      task. At phase partition time, record the phase's review tier in the ledger
+      (decided 2026-07-14, replacing the code-bearing/mechanical threshold —
+      evidence: across the first 4 applied changes, every Important+ phase finding
+      was in a full-tier category; all other phases reviewed uniformly clean):
+      - **full** — any task in the phase touches the frozen HTTP/WS contract
+        surface, auth/authorization or security-sensitive validation (redirect
+        targets, session cookies, input that gates access), concurrency/caching/
+        transaction/ordering semantics, or destructive data ops (migrations, bulk
+        rewrites/deletes). **When in doubt, tier full.**
+      - **deferred** — code-bearing but none of the above (pure UI with tests,
+        e2e/test-harness-only work, docs+config): skip the phase reviewer; the
+        always-on whole-branch review covers it. Ledger:
+        `Phase <N>: review deferred (risk-tier: <one-line reason>)`.
+      - **mechanical** — only mechanical tasks: skip, as before.
+      - For a **full**-tier phase → write the phase's cumulative diff to a file this
         session never reads (PHASE_BASE = HEAD before the phase's first task, from
         the ledger):
         `{ git log --oneline $PHASE_BASE..HEAD; git diff --stat $PHASE_BASE..HEAD; git diff -U10 $PHASE_BASE..HEAD; } > openspec/changes/<name>/.apply/phase-<N>-diff.txt`
@@ -172,11 +188,17 @@ Implement tasks from an OpenSpec change.
         accepted, config defaults that bind future work. The orchestrator copies
         these into the ledger verbatim; they are the phase's compressed handoff.
         Critical/Important findings → dispatch a fix subagent (fixes + re-runs
-        covering tests, appends results to the phase's reports) → re-review with a
-        fresh diff file. Loop until clean. Do not pre-judge findings in the reviewer
-        prompt ("don't flag X" is a red flag).
-      - Phase with **only mechanical tasks** → skip the phase reviewer; step 7's
-        whole-branch review covers it.
+        covering tests, appends results to the phase's reports) → re-review. Loop
+        until clean. Do not pre-judge findings in the reviewer prompt ("don't flag
+        X" is a red flag).
+      - **Fix-wave re-reviews are scoped to the fix diff** (decided 2026-07-14 —
+        4/4 cumulative re-reads across the first applied changes found nothing
+        new): write `git diff -U10 <pre-fix HEAD>..HEAD` to
+        `.apply/phase-<N>-fix-diff.txt`; the re-reviewer gets that path, the
+        original findings, and the original reviewer's notes, and verifies each
+        finding is closed and the fix introduces no regressions — NOT a full
+        cumulative re-read. Escalate to a fresh cumulative re-review only if the
+        fix wave reshaped the phase beyond the findings themselves.
       - Mid-phase, tasks still get no individual reviewer — but a `DONE_WITH_CONCERNS`
         correctness concern is addressed before the next dispatch, not parked until
         the phase review.
@@ -223,7 +245,7 @@ Working on task 3/7: <task description> [code-bearing]
 
 Working on task 4/7: <task description> [mechanical — last task of phase 2]
 [dispatch implementer → DONE, 1 commit, "typecheck + suite green"]
-[phase 2 contained code-bearing work → diff → .apply/phase-2-diff.txt;
+[phase 2 tiered full (touches frozen contract) → diff → .apply/phase-2-diff.txt;
  dispatch reviewer → spec ✅, quality approved]
 ✓ Phase 2 complete (ledger + checkboxes updated)
 ```
@@ -278,8 +300,10 @@ What would you like to do?
 - **Partition each phase into dispatch units before its first dispatch** — TDD pairs
   always share a unit; same-files/same-seam tasks usually should; record the partition
   in the ledger
-- **Reviews run per phase, not per task** — one reviewer over the phase's cumulative
-  diff after its last task; only the final whole-branch review is always-on
+- **Reviews run per phase, not per task, and only for full-tier phases** — one reviewer
+  over the phase's cumulative diff after its last task; deferred/mechanical phases skip
+  to the whole-branch review, which is the only always-on review; when in doubt about a
+  phase's tier, review it
 - **Never re-dispatch a task the ledger marks complete** — check `.apply/ledger.md` (and
   `git log`) after any compaction or resume
 - If task is ambiguous, pause and ask before dispatching
