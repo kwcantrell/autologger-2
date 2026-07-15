@@ -12,6 +12,14 @@ const COMPANION_LAUNCHER = '/home/kalen/companion-x64/companion_headless.sh';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+// ai-topics-chat (task 5.2): the hermetic fake-`claude` CLI fixture (design D10,
+// task 3.1) — same file server/src/routers/ai.int.test.ts points CLAUDE_CLI_PATH
+// at. Pointing the chromium project's server at it flips aiChatConfigured() true
+// with NO real Anthropic credentials or network access anywhere in the process
+// (the fixture is a plain Node script that prints canned stream-json). This is
+// what keeps ai-chat.spec.ts's happy-path chat e2e hermetic.
+const FAKE_CLAUDE_CLI = join(here, 'server', 'src', 'test', 'fixtures', 'fake-claude.mjs');
+
 export default defineConfig({
   testDir: './e2e',
   use: {
@@ -52,6 +60,9 @@ export default defineConfig({
         // both breaking the 503-path smoke assertion and risking a real billed
         // DeepGram call if a spec ever exercises the generate endpoint.
         DEEPGRAM_API_KEY: '',
+        // ai-topics-chat (task 5.2): fixture stands in for the real `claude` CLI —
+        // see the FAKE_CLAUDE_CLI comment above. Hermetic, no real credentials.
+        CLAUDE_CLI_PATH: FAKE_CLAUDE_CLI,
       },
     },
     {

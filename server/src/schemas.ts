@@ -119,6 +119,17 @@ export const topicUpdateSchema = z.object({
 });
 export type TopicUpdate = z.infer<typeof topicUpdateSchema>;
 
+// -- ai-topics-chat: the chat turn request body -------------------------------
+// `message` is 1–8000 chars AFTER trimming (whitespace-only ⇒ invalid); the
+// trimmed value is what the turn runner delivers to the CLI via stdin.
+// `claude_session_id`, when present, is a non-empty string (ownership is checked
+// against the per-session issued-id set in the turn runner — Phase 3).
+export const chatRequestSchema = z.object({
+  message: z.string().trim().min(1).max(8000),
+  claude_session_id: z.string().min(1).optional(),
+});
+export type ChatRequest = z.infer<typeof chatRequestSchema>;
+
 export const companionPresenceBodySchema = z.object({
   client_id: z.string().min(1).max(256),
   session_id: z.string().max(120).nullish(),

@@ -13,6 +13,7 @@ import { ipAllowlistMiddleware } from './middleware/ipAllowlist';
 import { InvalidRangeError } from './node/blobStore';
 import { ApiError } from './routers/_helpers';
 import { adminRouter } from './routers/admin';
+import { aiRouter } from './routers/ai';
 import { audioRouter } from './routers/audio';
 import { authRouter } from './routers/auth';
 import { companionRouter } from './routers/companion';
@@ -85,6 +86,7 @@ export function wireApp(
   app.route('/', audioRouter);
   app.route('/', companionRouter);
   app.route('/', transcribeRouter);
+  app.route('/', aiRouter);
   app.route('/', exportsRouter);
   app.route('/', adminRouter);
 
