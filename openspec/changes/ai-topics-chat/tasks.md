@@ -60,7 +60,7 @@
       generated config content written `0600` and cleaned up. Scenario tests: prompt-
       injected shell request executes nothing; a `--`-prefixed message is prompt text, not
       a flag; operator hooks/plugins do not fire.
-- [ ] 3.3 TDD stream relay (spec: SSE reply stream shape; Multi-turn continuity):
+- [x] 3.3 TDD stream relay (spec: SSE reply stream shape; Multi-turn continuity):
       JSONL → SSE mapping with the D6 dedup rule (`delta`/`tool` with short tool names/
       `done` with `claude_session_id`/scrubbed `error` from the fixed string set), exactly
       one terminal event per completed stream, unknown-event forward-compat, `--resume`
