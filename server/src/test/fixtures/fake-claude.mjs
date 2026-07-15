@@ -43,6 +43,18 @@
 // `--resume <id>` in argv is honored: the emitted session_id echoes the
 // resumed id instead of the fixture's default, so multi-turn continuity tests
 // (task 3.3) can assert the id stayed stable across two spawns.
+//
+// PID recording (task 3.4): `.fixture-pid.txt` (default; override via
+// FAKE_CLAUDE_PID_OUT) is always written FIRST, before anything else — real
+// proof for the no-orphan-process assertions that this specific OS process is
+// gone after the parent's kill ladder runs (`process.kill(pid, 0)` throwing
+// ESRCH once the recorded pid is confirmed dead).
+//
+// FAKE_CLAUDE_IGNORE_SIGTERM=1 (hang mode only, task 3.4): installs a no-op
+// SIGTERM handler so the process survives SIGTERM and can ONLY be reaped by
+// SIGKILL — lets the kill-ladder tests prove the SIGKILL escalation rung
+// actually fires (uncatchable, cannot be ignored) rather than merely
+// asserting a fast, uninteresting default-SIGTERM-terminates-it path.
 
 import { writeFileSync } from 'node:fs';
 
@@ -180,6 +192,7 @@ function emitSuccessTurn(sessionId) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  writeIfSet('FAKE_CLAUDE_PID_OUT', '.fixture-pid.txt', String(process.pid));
   writeIfSet('FAKE_CLAUDE_ARGV_OUT', '.fixture-argv.json', JSON.stringify(argv));
   writeIfSet('FAKE_CLAUDE_ENV_OUT', '.fixture-env.json', JSON.stringify(process.env));
   writeIfSet('FAKE_CLAUDE_CWD_OUT', '.fixture-cwd.txt', process.cwd());
@@ -188,6 +201,9 @@ async function main() {
   const sessionId = resumeSessionId(argv) || DEFAULT_SESSION_ID;
 
   if (mode === 'hang') {
+    if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
+      process.on('SIGTERM', () => {}); // uncatchable SIGKILL is the only way out
+    }
     // Drain stdin (spec: message arrives via stdin) so the parent's
     // child.stdin.end() doesn't itself hang, then emit only the init line and
     // never exit on our own — task 3.4's guaranteed-timeout-kill test relies

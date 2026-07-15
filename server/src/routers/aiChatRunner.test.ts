@@ -11,16 +11,20 @@
 // options object (`shell`, `cwd`, `env`) the runner passes, in addition to
 // the fixture's own recording of what it actually received.
 
-import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AiChatSseEvent } from './aiChatRelay';
 import { AI_MCP_TOOL_NAMES } from './aiMcpServer';
 import {
   AI_CHAT_SYSTEM_PROMPT_BRIEF,
   buildAiChatArgv,
   buildAiChatChildEnv,
+  killAiChatProcessGroup,
+  runAiChatTurn,
   spawnAiChatTurn,
   stableSessionCwd,
 } from './aiChatRunner';
@@ -170,6 +174,10 @@ describe('spawnAiChatTurn — characterization: real spawn against the fake-clau
     expect(optsArg?.shell).toBe(false);
     expect(optsArg?.cwd).toBe(stableSessionCwd(sessionId));
     expect(optsArg?.env).toEqual({ HOME: '/home/op', PATH: TEST_PATH });
+    // Process-group leader (task 3.4): `-child.pid` must address the whole
+    // group so the kill ladder can terminate the CLI and any MCP-helper
+    // children it spawns, not just the one pid (spec "Subprocess lifecycle").
+    expect(optsArg?.detached).toBe(true);
 
     // ── 0600 config, present while the turn runs ──
     const configStat = statSync(result.configPath);
@@ -319,5 +327,201 @@ describe('spawnAiChatTurn — characterization: real spawn against the fake-clau
     await waitForExit(r2.child);
     r2.cleanupConfig();
     expect(r1.cwd).toBe(r2.cwd);
+  });
+});
+
+// ── Task 3.4 — process-group kill ladder + turn lifecycle orchestration ────
+// These tests spawn the fixture DIRECTLY (bypassing `spawnAiChatTurn`'s
+// minimal-env whitelist on purpose — the same technique `aiChatRelay.test.ts`
+// established for reaching failure modes `FAKE_CLAUDE_MODE` can't survive):
+// `hang` mode can't be reached through the real HTTP path at all, since
+// `buildAiChatChildEnv` deliberately strips `FAKE_CLAUDE_MODE` along with
+// everything else non-essential (apply ledger, Phase 3 orchestrator notes).
+// The full-route guaranteed-timeout and best-effort-disconnect scenarios are
+// covered end-to-end in `ai.int.test.ts` instead, using mechanisms that
+// don't need `hang` mode (an impossibly-short `AI_CHAT_TIMEOUT_SEC`, and a
+// pre-aborted request signal) — see that file for the route-level wiring
+// proof; these tests are the rigorous proof that the KILL MECHANISM itself
+// is correct (SIGTERM→SIGKILL ladder, genuinely no orphan).
+
+const directSpawnCwds: string[] = [];
+
+/** Spawn the fixture directly (never through `spawnAiChatTurn`), in its own
+ * throwaway cwd, `detached: true` (mirroring what `spawnAiChatTurn` now
+ * does) so `killAiChatProcessGroup`'s `-pid` group-kill can be exercised
+ * against a REAL OS process group. */
+function spawnFixtureDirect(extraEnv: Record<string, string>): ChildProcess {
+  const cwd = mkdtempSync(join(tmpdir(), 'autologger-fixture-direct-'));
+  directSpawnCwds.push(cwd);
+  const child = spawn(FIXTURE_PATH, [], {
+    cwd,
+    detached: true,
+    env: { ...process.env, PATH: TEST_PATH, ...extraEnv },
+  });
+  child.stdin.end();
+  return child;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false; // ESRCH — genuinely gone.
+  }
+}
+
+/** Poll until the fixture has written its pid file (proves the process
+ * actually started before we try to kill it) — deterministic, not a fixed
+ * sleep. */
+async function waitForPidFile(child: ChildProcess): Promise<number> {
+  const cwd = directSpawnCwds[directSpawnCwds.length - 1];
+  const path = join(cwd, '.fixture-pid.txt');
+  for (let i = 0; i < 200; i++) {
+    if (existsSync(path)) return Number(readFileSync(path, 'utf8'));
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`fixture never wrote a pid file for child ${child.pid}`);
+}
+
+afterEach(() => {
+  for (const cwd of directSpawnCwds.splice(0)) {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () => {
+  it('kills a hung child via SIGTERM alone when it respects the signal', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    const pid = await waitForPidFile(child);
+    expect(isProcessAlive(pid)).toBe(true);
+
+    await killAiChatProcessGroup(child, 2000);
+
+    expect(child.signalCode).toBe('SIGTERM');
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  it('escalates to SIGKILL when the child ignores SIGTERM — the ladder\'s second rung ' +
+    'genuinely fires, not just a fast SIGTERM-always-works path', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang', FAKE_CLAUDE_IGNORE_SIGTERM: '1' });
+    const pid = await waitForPidFile(child);
+    expect(isProcessAlive(pid)).toBe(true);
+
+    await killAiChatProcessGroup(child, 250);
+
+    expect(child.signalCode).toBe('SIGKILL');
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  it('is a fast no-op once the child has already exited on its own', async () => {
+    const child = spawnFixtureDirect({}); // default success mode — exits quickly on its own
+    await new Promise((resolve) => child.once('exit', resolve));
+    expect(child.exitCode).not.toBeNull();
+
+    const start = Date.now();
+    await killAiChatProcessGroup(child, 5000); // a grace window this call must NOT wait out
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it('is a no-op (never throws) when the child has no pid', async () => {
+    await expect(killAiChatProcessGroup({ pid: undefined, exitCode: null, signalCode: null } as unknown as ChildProcess)).resolves.toBeUndefined();
+  });
+});
+
+describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event, kill on every path', () => {
+  function collector(): { events: AiChatSseEvent[]; emit: (event: AiChatSseEvent) => void } {
+    const events: AiChatSseEvent[] = [];
+    return { events, emit: (event) => void events.push(event) };
+  }
+
+  it('normal completion: relays the real fixture events and returns the relay outcome', async () => {
+    // Default mode (success) doesn't need FAKE_CLAUDE_MODE at all, so this
+    // can go through the real `spawnAiChatTurn` (env whitelist is a non-issue).
+    const spawned = spawnAiChatTurn({
+      cliPath: FIXTURE_PATH,
+      sessionId,
+      message: 'hi',
+      mcpTurn: { url: 'http://127.0.0.1:9999/mcp', token: 't' },
+      maxBudgetUsd: 0.5,
+      procEnv: TEST_PROC_ENV,
+    });
+    const { events, emit } = collector();
+
+    const outcome = await runAiChatTurn({ child: spawned.child, emit, timeoutMs: 10_000 });
+
+    expect(outcome).toEqual({ ok: true, claudeSessionId: 'fixture-cli-session-id' });
+    expect(events.map((e) => e.event)).toEqual(['tool', 'delta', 'done']);
+    expect(spawned.child.exitCode).toBe(0); // exited on its own — the kill call was a no-op
+    spawned.cleanupConfig();
+  });
+
+  it('guaranteed timeout: kills a hung child and emits EXACTLY ONE error{timeout} event, ' +
+    'nothing else — proving the relay\'s own post-kill terminal attempt is suppressed', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    const pid = await waitForPidFile(child);
+    const { events, emit } = collector();
+
+    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 1000 });
+
+    expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+    expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  it('guaranteed timeout still terminates a child that ignores SIGTERM (SIGKILL escalation)', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang', FAKE_CLAUDE_IGNORE_SIGTERM: '1' });
+    const pid = await waitForPidFile(child);
+    const { events, emit } = collector();
+
+    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 250 });
+
+    expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+    expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
+    expect(child.signalCode).toBe('SIGKILL');
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  it('best-effort disconnect: kills a hung child and emits NOTHING (no one is listening)', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    const pid = await waitForPidFile(child);
+    const { events, emit } = collector();
+    const controller = new AbortController();
+
+    const promise = runAiChatTurn({
+      child,
+      emit,
+      timeoutMs: 10_000,
+      abortSignal: controller.signal,
+      killGraceMs: 1000,
+    });
+    controller.abort(); // registered synchronously before runAiChatTurn's first await
+
+    const outcome = await promise;
+
+    expect(outcome).toEqual({ ok: false, detail: 'aborted' });
+    expect(events).toEqual([]);
+    expect(isProcessAlive(pid)).toBe(false);
+  });
+
+  it('an already-aborted signal wins immediately, even against a fixture that would ' +
+    'otherwise complete', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    const pid = await waitForPidFile(child);
+    const { events, emit } = collector();
+    const controller = new AbortController();
+    controller.abort();
+
+    const outcome = await runAiChatTurn({
+      child,
+      emit,
+      timeoutMs: 10_000,
+      abortSignal: controller.signal,
+      killGraceMs: 1000,
+    });
+
+    expect(outcome).toEqual({ ok: false, detail: 'aborted' });
+    expect(events).toEqual([]);
+    expect(isProcessAlive(pid)).toBe(false);
   });
 });

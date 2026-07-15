@@ -60,6 +60,8 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { AiChatRelayOutcome, AiChatSseEvent } from './aiChatRelay';
+import { relayAiChatTurn } from './aiChatRelay';
 import { AI_MCP_TOOL_NAMES } from './aiMcpServer';
 
 /** D7 system prompt brief — guidance, not a security boundary (the boundary
@@ -216,10 +218,12 @@ export interface AiChatSpawnResult {
  *
  * Scope (task 3.2): spawn + lockdown only. The caller (task 3.3) reads
  * `child.stdout` and parses the JSONL→SSE relay; the caller (task 3.4) owns
- * the timeout/kill ladder and process-group signaling. This function does
- * NOT set `detached`/process-group options itself — TODO(3.4): spawn with
- * `detached: true` (or platform equivalent) so the timeout/kill ladder can
- * signal the whole process group, matching spec "Subprocess lifecycle".
+ * the timeout/kill ladder and process-group signaling — see
+ * `killAiChatProcessGroup`/`runAiChatTurn` below. Spawned with
+ * `detached: true` (task 3.4) so the child is its OWN process-group leader:
+ * `process.kill(-child.pid, signal)` then signals the whole group (the CLI
+ * and any MCP/helper children it spawns), not just the one pid, matching
+ * spec "Subprocess lifecycle" ("terminate it (and its MCP child)").
  */
 export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
   const cwd = stableSessionCwd(opts.sessionId);
@@ -237,6 +241,7 @@ export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
     shell: false,
     cwd,
     env: buildAiChatChildEnv(opts.procEnv ?? process.env),
+    detached: true,
   });
 
   // Message on stdin, never argv (spec: "Message cannot smuggle a CLI
@@ -252,4 +257,164 @@ export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
   };
 
   return { child, cwd, configPath, cleanupConfig };
+}
+
+// ── Task 3.4 — process-group kill ladder + turn lifecycle orchestration ────
+// (design D5 "Turn lifecycle, single-flight, and spend bounds"; spec
+// "Subprocess lifecycle"). The child is spawned above with `detached: true`,
+// so it is its own process-group leader; `-child.pid` addresses the whole
+// group (POSIX only — this deployment target is Linux, matching every other
+// process-spawning path in this change).
+
+/** Grace window between SIGTERM and the uncatchable SIGKILL escalation.
+ * Exported so tests can pass a short override; production callers rely on
+ * the default. */
+export const DEFAULT_KILL_GRACE_MS = 3000;
+
+function childAlreadyExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+/**
+ * Terminate `child`'s entire process group: SIGTERM first, escalating to
+ * SIGKILL only if the group hasn't exited within `graceMs` (spec: "SIGTERM,
+ * SIGKILL after grace"). A no-op — resolves immediately, no signal sent — if
+ * the child has no pid or has already exited (the common case: on normal
+ * completion `relayAiChatTurn` only resolves once the child has genuinely
+ * exited, so this call is a fast confirmation, not a real kill). Resolves
+ * once the process group is confirmed gone. Never throws: `process.kill` on
+ * an already-dead group raises ESRCH, which is swallowed — killing a group
+ * that's already gone is exactly the no-orphan outcome we want.
+ */
+export async function killAiChatProcessGroup(
+  child: ChildProcess,
+  graceMs: number = DEFAULT_KILL_GRACE_MS,
+): Promise<void> {
+  if (child.pid == null || childAlreadyExited(child)) return;
+  const exited = new Promise<void>((resolve) => {
+    if (childAlreadyExited(child)) {
+      resolve();
+      return;
+    }
+    child.once('exit', () => resolve());
+  });
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    return; // ESRCH: the group is already gone.
+  }
+  const stillAlive = await Promise.race([
+    exited.then(() => false),
+    new Promise<boolean>((resolve) => {
+      setTimeout(() => resolve(true), graceMs);
+    }),
+  ]);
+  if (stillAlive && !childAlreadyExited(child) && child.pid != null) {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // Already gone between the check above and this signal — fine.
+    }
+    await exited;
+  }
+}
+
+export type AiChatTurnOutcome = AiChatRelayOutcome | { ok: false; detail: 'timeout' | 'aborted' };
+
+export interface RunAiChatTurnOptions {
+  child: ChildProcess;
+  /** Forwarded to the client as SSE events; NEVER called more than once with
+   * a terminal (`done`/`error`) event — see the "exactly one terminal event"
+   * guard below. */
+  emit: (event: AiChatSseEvent) => Promise<void> | void;
+  /** `aiChatTimeoutSec(config) * 1000` — the GUARANTEED backstop (spec
+   * "Subprocess lifecycle"). */
+  timeoutMs: number;
+  /** The SSE request's abort signal — best-effort client-disconnect
+   * detection (spec: "on a best-effort basis when the SSE client
+   * disconnects"). Optional so unit tests can omit it entirely. */
+  abortSignal?: AbortSignal;
+  /** Override for tests; production callers use `killAiChatProcessGroup`'s
+   * own default. */
+  killGraceMs?: number;
+}
+
+/**
+ * Orchestrate one turn's full lifecycle (design D5, spec "Subprocess
+ * lifecycle"): race the JSONL→SSE relay against the guaranteed turn timeout
+ * and a best-effort client-disconnect signal, and — on EVERY path, including
+ * normal completion — terminate the child's process group before resolving,
+ * so no `claude` (or MCP-helper) process ever survives a turn. Guarantees
+ * exactly one terminal SSE event is ever emitted: whichever of "the relay
+ * produced its own done/error" or "the timeout fired first" happens first
+ * wins; a relay terminal event arriving AFTER a timeout already fired (e.g.
+ * because killing the group makes the relay observe a nonzero exit) is
+ * silently dropped, never double-emitted. On a best-effort disconnect, no
+ * terminal event is emitted at all (spec: a stream the server doesn't
+ * complete "MAY end with no terminal event") — the caller has already lost
+ * its audience.
+ */
+export async function runAiChatTurn(opts: RunAiChatTurnOptions): Promise<AiChatTurnOutcome> {
+  let terminalSent = false;
+  const guardedEmit = async (event: AiChatSseEvent): Promise<void> => {
+    if (terminalSent) return;
+    if (event.event === 'done' || event.event === 'error') terminalSent = true;
+    await opts.emit(event);
+  };
+
+  const relayPromise = relayAiChatTurn(opts.child, guardedEmit);
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<'timeout'>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve('timeout'), opts.timeoutMs);
+  });
+
+  const abortPromise = new Promise<'abort'>((resolve) => {
+    const signal = opts.abortSignal;
+    if (!signal) return; // never resolves — Promise.race simply never picks it.
+    if (signal.aborted) {
+      resolve('abort');
+      return;
+    }
+    signal.addEventListener('abort', () => resolve('abort'), { once: true });
+  });
+
+  const winner = await Promise.race([
+    relayPromise.then((outcome) => ({ kind: 'relay' as const, outcome })),
+    timeoutPromise.then(() => ({ kind: 'timeout' as const })),
+    abortPromise.then(() => ({ kind: 'abort' as const })),
+  ]);
+  clearTimeout(timeoutHandle);
+
+  if (winner.kind === 'timeout') {
+    // Emit the timeout terminal event BEFORE killing — guardedEmit's
+    // terminalSent flag is now set, so the relay's own eventual (post-kill)
+    // terminal emit attempt below is a guaranteed no-op.
+    await guardedEmit({ event: 'error', data: { detail: 'timeout' } });
+  } else if (winner.kind === 'abort') {
+    // Best-effort disconnect: emit nothing (spec: a stream the server
+    // doesn't complete "MAY end with no terminal event" — nobody's
+    // listening) but still suppress the relay's own eventual (post-kill)
+    // terminal emit attempt, the same way the timeout branch does.
+    terminalSent = true;
+  }
+
+  // Every path — including normal completion — kills the group. On a normal
+  // relay outcome the child has (per relayAiChatTurn's own contract) already
+  // exited by the time its promise resolves, so this is a fast confirmation,
+  // not a real kill (see killAiChatProcessGroup's no-op-when-already-exited
+  // guard) — the happy path pays no latency for this call.
+  await killAiChatProcessGroup(opts.child, opts.killGraceMs);
+
+  // Drain the relay to completion regardless of which path won, so its
+  // listeners settle before this function returns (relayAiChatTurn itself
+  // never throws per its own contract; the catch is defensive only).
+  const relayOutcome = await relayPromise.catch(
+    (): AiChatRelayOutcome => ({ ok: false, detail: 'internal-error' }),
+  );
+
+  if (winner.kind === 'relay') return winner.outcome;
+  if (winner.kind === 'timeout') return { ok: false, detail: 'timeout' };
+  void relayOutcome; // best-effort disconnect: the relay's own outcome is moot — nobody's listening.
+  return { ok: false, detail: 'aborted' };
 }

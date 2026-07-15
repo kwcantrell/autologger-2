@@ -66,7 +66,7 @@
       one terminal event per completed stream, unknown-event forward-compat, `--resume`
       passed only for a `claude_session_id` issued for this `:sessionId` (foreign id →
       `422`, no spawn).
-- [ ] 3.4 TDD spend + lifecycle (spec: Spend and concurrency bounds; Subprocess
+- [x] 3.4 TDD spend + lifecycle (spec: Spend and concurrency bounds; Subprocess
       lifecycle): per-session `409`, process-wide `AI_CHAT_MAX_CONCURRENT` rejection,
       per-turn budget flag passed, process-group SIGTERM→SIGKILL on done/timeout/
       best-effort-disconnect (fixture hang mode is the guaranteed-path test), registration

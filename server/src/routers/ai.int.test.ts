@@ -1,21 +1,12 @@
 // ai-topics-chat — POST /api/sessions/:sessionId/ai/chat route shell (tasks
-// 1.1/1.2) + the real turn runner and JSONL→SSE relay (task 3.3). Locks the
-// guard ORDER and the "spawns nothing on a rejected turn" property:
+// 1.1/1.2) + the real turn runner, JSONL→SSE relay (task 3.3), and spend/
+// lifecycle bounds (task 3.4). Locks the guard ORDER and the "spawns nothing
+// on a rejected turn" property:
 //   auth (401) → session resolution/scoping (404) → config / open-network gate
 //   (503) → body validation (422/400) → foreign claude_session_id (422) →
 //   single-flight & concurrency (409).
-// Every guard-rejection case below still points CLAUDE_CLI_PATH at a bogus
-// path (`CLI`, never invoked, since the rejection fires before the spawn) —
-// only the "guards pass" describe block near the bottom points at the real
-// hermetic fake-claude fixture (task 3.1), because that's the only path that
-// actually spawns. The various CLI FAILURE MODES (exit-nonzero/garbage/
-// not-logged-in) are covered at the relay-unit level (`aiChatRelay.test.ts`)
-// rather than here: `spawnAiChatTurn`'s env whitelist (design D4) strips
-// `FAKE_CLAUDE_MODE` along with everything else non-essential, so this
-// end-to-end HTTP path can only ever drive the fixture's `success` mode —
-// which is itself proof the lockdown reaches even test-selection env vars.
 //
-// SPAWN OBSERVATION (discovered while writing this task's tests): the
+// SPAWN OBSERVATION (discovered while writing task 3.3's tests): the
 // pre-existing `vi.mock('node:child_process', …)` below does NOT actually
 // intercept the spawn `spawnAiChatTurn` makes through the shared `app`
 // singleton — `../test/harness` is imported by the `setupFiles` entry
@@ -23,29 +14,46 @@
 // `aiChatRunner.ts`'s module-level `spawn` binding resolves to the REAL
 // function by the time this file's mock factory runs (verified empirically:
 // injecting a probe into `spawnAiChatTurn` shows the `spawn` it calls has no
-// `.mock` property). Every existing `expect(spawnSpy).not.toHaveBeenCalled()`
-// in the guard-rejection describes below is therefore VACUOUS through this
-// harness — it always passes, whether or not a real spawn happened — a
-// latent gap predating this task (Phase 1's placeholder never spawned
-// either way, so the gap was invisible). Left AS-IS here (fixing it is a
-// shared-test-infrastructure change beyond this task's scope), but this
-// task's OWN new assertions do NOT rely on `spawnSpy` for anything — they
-// use the fixture's own on-disk recording (`stableSessionCwd` +
-// `.fixture-argv.json`, the same independent-observation technique task 3.2
-// established) for real proof of spawn-happened/spawn-args, and file
-// presence/absence for real proof of no-spawn.
+// `.mock` property). Every `expect(spawnSpy).not.toHaveBeenCalled()` in the
+// guard-rejection describes below is therefore VACUOUS through this harness
+// — it always passes, whether or not a real spawn happened. Kept (harmless,
+// zero-cost) alongside the REAL assertion every guard-rejection test now
+// makes: `neverSpawned(sessionId)`, backed by the fixture's own on-disk
+// recording (`stableSessionCwd` + `.fixture-argv.json`) — and, as of task
+// 3.4, EVERY guard-rejection test below (except the two that test the
+// config-gate's OWN blank/whitespace `CLAUDE_CLI_PATH` value, where a blank
+// path IS the scenario) points `CLAUDE_CLI_PATH` at the REAL fixture
+// (`fixtureEnv()`/`FIXTURE_CLI`), not the bogus never-resolvable `CLI` path
+// task 1.1/1.2 originally used. This is deliberate and load-bearing: with a
+// bogus path, `neverSpawned` would be true unconditionally (spawn against a
+// nonexistent binary can never write the fixture's recording, whether or not
+// the guard even ran) — a false sense of security. Pointing at a CLI that
+// WOULD actually run and record its argv if invoked is what makes
+// `neverSpawned` a GENUINE test of "this guard, specifically, is what
+// stopped the subprocess" rather than an assertion that can't fail. The
+// various CLI FAILURE MODES (exit-nonzero/garbage/not-logged-in/hang) are
+// covered at the relay/runner-unit level (`aiChatRelay.test.ts`,
+// `aiChatRunner.test.ts`) rather than here: `spawnAiChatTurn`'s env
+// whitelist (design D4) strips `FAKE_CLAUDE_MODE` along with everything else
+// non-essential, so this end-to-end HTTP path can only ever drive the
+// fixture's `success` mode — which is itself proof the lockdown reaches even
+// test-selection env vars. Task 3.4's guaranteed-timeout test instead uses
+// an impossibly-short `AI_CHAT_TIMEOUT_SEC` against the (fast) `success`
+// fixture — deterministic (a real OS process spawn cannot complete within a
+// few milliseconds) without needing `hang` mode to survive the whitelist.
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { aiChatOpenNetworkRefused } from '../env';
 import type { Config } from '../types';
-import { app, envWith } from '../test/harness';
+import { app, env, envWith } from '../test/harness';
 import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
+import { getAiMcpListener } from './aiMcpServer';
 import { __resetAiChatIssuedSessionIdsForTests } from './ai';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
@@ -73,6 +81,43 @@ function recordedArgv(sessionId: string): string[] {
  * else — so the recording's absence is absence of a spawn. */
 function neverSpawned(sessionId: string): boolean {
   return !existsSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'));
+}
+
+// ── Task 3.4 — lifecycle: no-orphan / cleanup-on-every-path helpers ────────
+
+/** The generated `--mcp-config` file's path (mirrors `spawnAiChatTurn`'s own
+ * `join(cwd, 'mcp-config.json')`) — real proof the config is removed. */
+function fixtureConfigPath(sessionId: string): string {
+  return join(stableSessionCwd(sessionId), 'mcp-config.json');
+}
+
+/**
+ * Real, TIMING-INDEPENDENT proof no process spawned for `sessionId` survives:
+ * scans `/proc/*\/cwd` for any live process whose cwd is this session's
+ * stable per-session directory. Deliberately NOT based on the fixture's own
+ * self-reported pid file — an artificially tiny `AI_CHAT_TIMEOUT_SEC` (this
+ * suite's guaranteed-timeout test) can legitimately kill the child SO early
+ * that it never reaches the line that writes that file (measured on this
+ * machine: the fixture takes ~25-35ms to even start writing recordings,
+ * and its whole `success` run completes in ~30-40ms — too narrow a window to
+ * straddle reliably). Scanning `/proc` sidesteps that race entirely: it's
+ * true or false regardless of how far the killed child's own JS got.
+ */
+function anyProcessInCwd(cwd: string): boolean {
+  let pidDirs: string[];
+  try {
+    pidDirs = readdirSync('/proc').filter((p) => /^\d+$/.test(p));
+  } catch {
+    return false; // non-Linux — best effort, nothing to scan.
+  }
+  for (const pid of pidDirs) {
+    try {
+      if (readlinkSync(`/proc/${pid}/cwd`) === cwd) return true;
+    } catch {
+      // process exited between readdir and readlink, or no permission — not a match.
+    }
+  }
+  return false;
 }
 
 /** Parse Hono's `streamSSE` wire format (`event: <t>\ndata: <json>\n\n`, no
@@ -127,18 +172,27 @@ function fixtureEnv(overrides: Record<string, unknown> = {}) {
   return loopbackEnv({ CLAUDE_CLI_PATH: FIXTURE_CLI, ...overrides });
 }
 
-function post(sessionId: string, body: unknown, env = loopbackEnv(), headers: Record<string, string> = J) {
+function post(
+  sessionId: string,
+  body: unknown,
+  reqEnv = loopbackEnv(),
+  headers: Record<string, string> = J,
+  signal?: AbortSignal,
+) {
   return app.request(
     `/api/sessions/${sessionId}/ai/chat`,
-    { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) },
-    env,
+    { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body), signal },
+    reqEnv,
   );
 }
 
 describe('ai/chat — auth gate (first)', () => {
   it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
     const s = await seededSession();
-    const res = await post(s, { message: 'hi' }, loopbackEnv({ REQUIRE_LOGIN: '1' }));
+    // fixtureEnv (not loopbackEnv's bogus CLI): a real, resolvable CLI, so
+    // `neverSpawned` genuinely proves the auth guard — not a misconfigured
+    // path — is what stopped the subprocess (see SPAWN OBSERVATION note).
+    const res = await post(s, { message: 'hi' }, fixtureEnv({ REQUIRE_LOGIN: '1' }));
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -147,7 +201,7 @@ describe('ai/chat — auth gate (first)', () => {
 
 describe('ai/chat — session resolution masks before 503/409', () => {
   it('404 for a nonexistent session even when configured', async () => {
-    const res = await post('no-such-session', { message: 'hi' });
+    const res = await post('no-such-session', { message: 'hi' }, fixtureEnv());
     expect(res.status).toBe(404);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned('no-such-session')).toBe(true);
@@ -188,16 +242,21 @@ describe('ai/chat — configuration gate (503)', () => {
     const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '   ' }));
     expect(res.status).toBe(503);
     expect(((await res.json()) as { detail: string }).detail).toMatch(/not configured/i);
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(neverSpawned(s)).toBe(true);
   });
 });
 
 describe('ai/chat — open-network refusal (503)', () => {
   it('503 for anonymous + non-loopback + no allowlist, with a distinct detail, spawning nothing', async () => {
     const s = await seededSession();
+    // fixture-backed (not CLI's bogus path) — see the header note: a real,
+    // resolvable CLI path is what makes `neverSpawned` prove THIS guard
+    // stopped the subprocess, not just that a bogus path never resolves.
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ CLAUDE_CLI_PATH: CLI, REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' }),
+      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' }),
     );
     expect(res.status).toBe(503);
     const detail = ((await res.json()) as { detail: string }).detail;
@@ -257,7 +316,7 @@ describe('ai/chat — open-network refusal (503)', () => {
 describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
   it('422 when message is missing', async () => {
     const s = await seededSession();
-    const res = await post(s, {});
+    const res = await post(s, {}, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -265,7 +324,7 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
 
   it('422 when message is whitespace-only (trimmed to empty)', async () => {
     const s = await seededSession();
-    const res = await post(s, { message: '   ' });
+    const res = await post(s, { message: '   ' }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -273,14 +332,14 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
 
   it('422 when message exceeds 8000 chars', async () => {
     const s = await seededSession();
-    const res = await post(s, { message: 'x'.repeat(8001) });
+    const res = await post(s, { message: 'x'.repeat(8001) }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(neverSpawned(s)).toBe(true);
   });
 
   it('422 when claude_session_id is an empty string', async () => {
     const s = await seededSession();
-    const res = await post(s, { message: 'hi', claude_session_id: '' });
+    const res = await post(s, { message: 'hi', claude_session_id: '' }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -288,7 +347,7 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
 
   it('400 on malformed JSON, spawning nothing', async () => {
     const s = await seededSession();
-    const res = await post(s, 'not json{');
+    const res = await post(s, 'not json{', fixtureEnv());
     expect(res.status).toBe(400);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -358,7 +417,7 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
     const slot = aiChatTurns.tryAcquire(s, 2);
     expect(slot.ok).toBe(true);
     try {
-      const res = await post(s, { message: 'hi' });
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
       expect(res.status).toBe(409);
       expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
       expect(spawnSpy).not.toHaveBeenCalled();
@@ -375,7 +434,7 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
     const slot = aiChatTurns.tryAcquire(other, 1);
     expect(slot.ok).toBe(true);
     try {
-      const res = await post(s, { message: 'hi' }, loopbackEnv({ AI_CHAT_MAX_CONCURRENT: '1' }));
+      const res = await post(s, { message: 'hi' }, fixtureEnv({ AI_CHAT_MAX_CONCURRENT: '1' }));
       expect(res.status).toBe(409);
       const detail = ((await res.json()) as { detail: string }).detail;
       expect(detail).toMatch(/capacity|concurrent|limit|busy/i);
@@ -384,5 +443,100 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
     } finally {
       if (slot.ok) slot.release();
     }
+  });
+});
+
+describe('ai/chat — guaranteed turn timeout kills the subprocess (task 3.4, spec "Subprocess lifecycle")', () => {
+  it('an impossibly-short AI_CHAT_TIMEOUT_SEC forces termination even though the CLI would otherwise ' +
+    'succeed, ending the stream with EXACTLY ONE error{timeout} event and cleaning up every resource', async () => {
+    const s = await seededSession();
+    // A real OS process spawn (fork+exec+Node startup) cannot complete within
+    // 10ms — measured on this machine at ~25-40ms even for the trivial fixture
+    // — so this timeout deterministically wins the race against the (fast)
+    // `success` fixture, without needing `hang` mode (unreachable through the
+    // real HTTP path — see the header note).
+    const res = await post(s, { message: 'hi' }, fixtureEnv({ AI_CHAT_TIMEOUT_SEC: '0.01' }));
+    expect(res.status).toBe(200); // accepted — the guard order already passed; the failure is mid-stream.
+    // Draining fully waits for the route's ENTIRE `finally` (kill, dispose,
+    // cleanup, release) to complete — see the resume test's note above on why
+    // this ordering is safe, not a race.
+    const events = parseSse(await res.text());
+    expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
+
+    // No orphan (timing-independent — see anyProcessInCwd's doc comment).
+    expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
+    // Generated MCP config removed.
+    expect(existsSync(fixtureConfigPath(s))).toBe(false);
+    // MCP registration count back to 0 — the process-wide singleton, so this
+    // is real proof `mcpTurn.dispose()` ran (not just "the route returned").
+    const listener = await getAiMcpListener(env.ports.sessions);
+    expect(listener.registrationCount).toBe(0);
+    // The slot is released — a follow-up turn on the SAME session succeeds
+    // normally (proves release-on-timeout, not just release-on-success).
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    const second = await post(s, { message: 'again' }, fixtureEnv());
+    expect(second.status).toBe(200);
+    const secondEvents = parseSse(await second.text());
+    expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
+  });
+});
+
+describe('ai/chat — best-effort client disconnect kills the subprocess (task 3.4, spec "Subprocess lifecycle")', () => {
+  it('an already-aborted request signal kills the spawned CLI process group and cleans up every ' +
+    'resource, ending the stream with NO terminal event (nobody is listening)', async () => {
+    const s = await seededSession();
+    const controller = new AbortController();
+    controller.abort(); // simulates the client having already disconnected
+    const res = await post(s, { message: 'hi' }, fixtureEnv(), J, controller.signal);
+    // Guard order already accepted the turn (auth/404/503/422/409 all passed)
+    // before the abort race inside the stream callback ever runs.
+    expect(res.status).toBe(200);
+    const events = parseSse(await res.text());
+    // Best-effort disconnect: spec permits (and this design chooses) NO
+    // terminal event at all — the client that would receive it is gone.
+    expect(events).toEqual([]);
+
+    expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
+    expect(existsSync(fixtureConfigPath(s))).toBe(false);
+    const listener = await getAiMcpListener(env.ports.sessions);
+    expect(listener.registrationCount).toBe(0);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    const second = await post(s, { message: 'again' }, fixtureEnv());
+    expect(second.status).toBe(200);
+    const secondEvents = parseSse(await second.text());
+    expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
+  });
+});
+
+describe('ai/chat — setup failures never leak the raw exception (task 3.4 concern B)', () => {
+  it('when spawnAiChatTurn itself throws (a real, hermetic failure — not a mock), the client ' +
+    "sees the SCRUBBED internal-error detail, never the raw exception's text or paths", async () => {
+    const s = await seededSession();
+    // A REAL, hermetic way to force spawnAiChatTurn's mkdirSync to throw
+    // (EEXIST) — no mocking of shared infra: pre-occupy the exact path
+    // `stableSessionCwd(s)` with a FILE instead of a directory, so
+    // `mkdirSync(cwd, {recursive:true})` cannot create it.
+    const cwd = stableSessionCwd(s);
+    mkdirSync(dirname(cwd), { recursive: true });
+    writeFileSync(cwd, 'not-a-directory — forces spawnAiChatTurn to throw EEXIST');
+
+    const res = await post(s, { message: 'hi' }, fixtureEnv());
+    expect(res.status).toBe(200); // guards already passed; the failure is inside the stream callback.
+    const events = parseSse(await res.text());
+    expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
+
+    // The raw exception (EEXIST, the tmp path, the sessionId-derived cwd) never
+    // reaches the client — only the fixed, scrubbed detail string.
+    const wire = JSON.stringify(events);
+    expect(wire).not.toMatch(/EEXIST|ENOENT|mkdir|not-a-directory/i);
+    expect(wire).not.toContain(cwd);
+    expect(wire).not.toContain(s);
+
+    // Cleanup still ran on this path: the MCP turn WAS registered (before the
+    // throw) and its dispose() still fired in `finally` — registration count
+    // returns to 0 even when spawnAiChatTurn itself fails.
+    const listener = await getAiMcpListener(env.ports.sessions);
+    expect(listener.registrationCount).toBe(0);
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
   });
 });
