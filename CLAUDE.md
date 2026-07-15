@@ -132,13 +132,21 @@ contract surface, auth/security-sensitive validation, concurrency/caching/transa
 semantics, or destructive data ops; other phases defer to the whole-branch review,
 and fix-wave re-reviews scope to the fix diff rather than a cumulative re-read —
 decided 2026-07-14, replacing the code-bearing/mechanical threshold), an always-on
-whole-branch review at the end, one change in flight per checkout (commit spike/side
-artifacts to their own branch before starting an apply; decided 2026-07-14), and
-file-based handoffs (reports,
+whole-branch review at the end that runs as a **layered scoped audit** (its package always
+includes contract/seam-relevant diffs of every surface-touching phase, full diffs of
+deferred/mechanical phases, diffs of clean phases sharing files/state with deferred ones,
+and re-reads of phases modified after their review closed; it skips only the
+internal-quality re-read of non-contract code in full-tier phases that closed clean —
+decided 2026-07-14, replacing the cumulative re-read), one change in flight per checkout
+(commit spike/side artifacts to their own branch before starting an apply; decided
+2026-07-14), and file-based handoffs (reports,
 diff files, progress ledger under `openspec/changes/<name>/.apply/`, git-ignored). The gated OpenSpec artifacts are the task
 briefs — dispatch prompts point at them rather than pasting context. Full protocol lives in
 `.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); re-apply that customization if
-the `openspec` CLI regenerates the skill.
+the `openspec` CLI regenerates the skill. Process rules live **normatively in the three
+operational encodings** — this file, that skill, and `openspec/config.yaml` — with no
+parallel process rulebook (gate ruling 2026-07-14, recorded durably as the `sdlc-process`
+marker spec); process-rule changes are design-bearing, never "small, obvious fixes".
 
 Artifacts live in `openspec/changes/<name>/`: `proposal.md` (why/what + Non-Goals),
 `spec.md` (normative capability requirements — SHALL + WHEN/THEN scenarios), `design.md`
@@ -163,6 +171,20 @@ Before implementation (`opsx:apply`) — i.e. while `tasks.md` is still provisio
 **adversarial panel on the `proposal.md` + `spec.md` + `design.md`** — the earliest,
 least-reversible artifacts, where catching a wrong assumption is cheapest. A flawed
 spec makes a *perfect* plan build the wrong thing.
+
+**Before the panel, run a light-tier fact-check pass** (decided 2026-07-14): a mechanical
+fetch-and-compare reviewer verifies the *stated* checkable claims in
+`proposal.md`/`spec.md`/`design.md` against the live repo (symbol existence, caller
+counts, wire shapes, "X is dead/unused" claims, file inventories), recording per-claim
+method and evidence. CONFIRMED is reserved for mechanically checkable facts —
+judgment-laden claims stay "unverified" and reach the panel un-vouched. Corrections land
+in the draft; the pass gets a dated Panel & review log entry (claims checked / corrected /
+left unverified). The pass is an **aid, never a warrant**: the panel prompt says stated
+claims were pre-checked and points at the log, and **explicitly preserves the reviewers'
+full skeptical mandate** — reviewers verify anything they doubt and remain the only
+mechanism that can surface *implicit* premises the pass structurally cannot enumerate.
+Never phrase the panel prompt as "don't re-verify". Claims introduced later, when rulings
+are folded back, are covered by the post-gate consistency read.
 
 Fan out (via `dispatching-parallel-agents`) reviewers with **distinct** mandates —
 not clones:
@@ -219,6 +241,13 @@ fixes are applied as **targeted edits** to an already-reviewed artifact (a
 stage — stale pre-decision language, contradictions between dispositions and
 normative sections, broken cross-references. A full re-panel is warranted
 only for **structural rework**; disposition-recording prose is not that.
+
+**The read's outcome is always recorded** (decided 2026-07-14): a dated line in the Panel
+& review log — either "clean", naming the documents read, or the findings and their fixes
+— so a clean read is distinguishable from a read that never ran. (Evidence: the read found
+real fixes in both documented runs, then silently lapsed for three consecutive changes;
+one undocumented "clean" run missed a stale line. Recording closes both the accountability
+hole and the measurement hole.)
 
 ### Docs-only exception
 

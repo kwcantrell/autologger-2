@@ -24,6 +24,7 @@ rules:
   design:
     - Record each key decision with alternatives considered + rationale
     - Include a "Panel & review log" section with three buckets — blockers/majors fixed in place, findings escalated to the gate (with the decision), minors accepted as residual
+    - The Panel & review log also carries the pre-panel fact-check entry (dated; claims checked / corrected / left unverified, with per-claim method and evidence) and the post-gate consistency read's outcome line (dated; "clean" naming the documents read, or findings + fixes)
     - Note deliberate invariants a future reader might "helpfully" undo (e.g. the synchronous-hub / single-process posture)
   specs:
     - Normative SHALL/MUST, avoid should/may; every requirement has at least one WHEN/THEN scenario using exactly four hashtags
@@ -32,4 +33,6 @@ rules:
     - This is the plan of record — group by phase, order by dependency, each task independently verifiable
     - Each reshape/commit is gated by npm run typecheck + npm test; keep pure renames in separate commits from semantic reshapes
     - The final-gates task runs npm run e2e (chromium + login-gate projects) AND npm run e2e:visual — baselines are current as of 2026-07-14, so visual diffs are branch-induced signal; a change that legitimately alters UI re-blesses baselines in its own diff instead of deferring drift
+    - Docs-only changes state explicitly which final gates are skipped and why (no runtime surface) — proportionality is declared, never silently assumed
+    - A change that edits machine-parsed governance files (openspec/config.yaml, skill frontmatter) includes a parse/load verification step — these are tooling inputs, and a malformed edit fails silently, not visibly
     - file:line anchors are orientation only — locate code by content before editing
