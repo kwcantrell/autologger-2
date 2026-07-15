@@ -37,7 +37,7 @@
       `Authorization` header, error mapping (non-2xx/timeout → typed upstream error, no
       key or upstream body verbatim); extract `{punctuated_word ?? word, start, end,
       speaker}`; unit tests with mocked `fetch`.
-- [ ] 3.2 Wire `DEEPGRAM_API_KEY` / `DEEPGRAM_MODEL` (default `nova-3`) through
+- [x] 3.2 Wire `DEEPGRAM_API_KEY` / `DEEPGRAM_MODEL` (default `nova-3`) through
       `server/src/env.ts` config; update `server/.env.example` with the key/model
       entries and a prominent warning beside `DEEPGRAM_API_KEY`: setting it sends
       recorded session audio to DeepGram's cloud and lets any client who can reach the

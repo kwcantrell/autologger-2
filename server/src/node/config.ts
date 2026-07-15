@@ -61,6 +61,8 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       TRUST_PROXY: procEnv.TRUST_PROXY || '',
       API_TOKEN: procEnv.API_TOKEN || '',
       ADMIN_TOKEN: procEnv.ADMIN_TOKEN || '',
+      DEEPGRAM_API_KEY: procEnv.DEEPGRAM_API_KEY || '',
+      DEEPGRAM_MODEL: procEnv.DEEPGRAM_MODEL || '',
     },
   };
   // Design D5: NEW_USER_ALL_TEAMS is deprecated -- the callback's new-user
