@@ -74,7 +74,7 @@ describe('PROVIDER_TIMEOUT_MS', () => {
 });
 
 describe('transcribeGroup', () => {
-  it('requests diarize/punctuate/model with smart_format and language unset, key only in Authorization', async () => {
+  it('requests diarize/smart_format/paragraphs/sentiment/language/model, key only in Authorization', async () => {
     const fetchMock = mockFetch(
       () => new Response(JSON.stringify(deepgramResponse([])), { status: 200 }),
     );
@@ -92,9 +92,11 @@ describe('transcribeGroup', () => {
     expect(requestUrl.origin + requestUrl.pathname).toBe('https://api.deepgram.com/v1/listen');
     expect(requestUrl.searchParams.get('model')).toBe('nova-3');
     expect(requestUrl.searchParams.get('diarize')).toBe('true');
-    expect(requestUrl.searchParams.get('punctuate')).toBe('true');
-    expect(requestUrl.searchParams.has('smart_format')).toBe(false);
-    expect(requestUrl.searchParams.has('language')).toBe(false);
+    expect(requestUrl.searchParams.get('smart_format')).toBe('true');
+    expect(requestUrl.searchParams.get('paragraphs')).toBe('true');
+    expect(requestUrl.searchParams.get('sentiment')).toBe('true');
+    expect(requestUrl.searchParams.get('language')).toBe('en');
+    expect(requestUrl.searchParams.has('punctuate')).toBe(false);
 
     // Key must never appear in the URL/query string.
     expect(requestUrl.toString()).not.toContain('secret-key-123');

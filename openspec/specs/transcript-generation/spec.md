@@ -126,10 +126,11 @@ Anchorless words SHALL still be stored, with empty `session_time` and `start_sec
   and are not silently dropped
 
 ### Requirement: Word content, ordering, and provider parameters
-Provider requests SHALL set `diarize=true`, `punctuate=true`, and the configured model;
-`smart_format` SHALL NOT be set, `language` SHALL be left to the provider default, and
-words SHALL be read from the first/only audio channel. The stored `word` text SHALL be the
-provider's `punctuated_word`, falling back to `word` when absent. Words SHALL be stored
+Provider requests SHALL set `diarize=true`, `smart_format=true`, `paragraphs=true`,
+`sentiment=true`, `language=en`, and the configured model; `punctuate` SHALL NOT be set
+explicitly (`smart_format=true` implies punctuation, keeping `punctuated_word` populated),
+and words SHALL be read from the first/only audio channel. The stored `word` text SHALL be
+the provider's `punctuated_word`, falling back to `word` when absent. Words SHALL be stored
 with contiguous ordinals from 0 in this order: anchored words by remapped timeline
 position (ties by within-group order), followed by anchorless segments' words grouped by
 segment ordinal in within-segment time order. The `200 {words}` response array SHALL be in

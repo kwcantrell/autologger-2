@@ -1,8 +1,9 @@
 // DeepGram pre-recorded transcription client (server/src/node — Node-specific
 // infrastructure). Streams a spooled group file (an audioMerge.ts MergedGroup
 // output — never buffered whole in memory) to DeepGram's /v1/listen endpoint
-// with diarization and punctuation enabled; extracts `{word, start, end,
-// speaker}` from the first/only channel's transcript.
+// with diarization, smart formatting, sentiment, and paragraphs enabled;
+// extracts `{word, start, end, speaker}` from the first/only channel's
+// transcript.
 //
 // Security posture (design D7): the API key is sent ONLY in the
 // `Authorization` header — never a query param, so it cannot leak into logs
@@ -101,9 +102,10 @@ interface DeepgramListenResponse {
 type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
 
 /** Send one group file to DeepGram's pre-recorded API and return its words.
- * Sets `diarize=true`, `punctuate=true`, and the configured `model`;
- * `smart_format` and `language` are deliberately left unset (spec: "Word
- * content, ordering, and provider parameters"). The request body streams
+ * Sets `diarize=true`, `smart_format=true` (implies punctuation, so
+ * `punctuated_word` stays populated), `paragraphs=true`, `sentiment=true`,
+ * `language=en`, and the configured `model` (spec: "Word content, ordering,
+ * and provider parameters"). The request body streams
  * from disk (never buffered whole). The API key goes only in the
  * `Authorization` header. Non-2xx responses and network/timeout failures
  * both map to `DeepgramUpstreamError` with a generic detail — never the
@@ -112,8 +114,11 @@ export async function transcribeGroup(params: TranscribeGroupParams): Promise<De
   const { outPath, family, apiKey, model } = params;
   const url = new URL(DEEPGRAM_LISTEN_URL);
   url.searchParams.set('model', model);
+  url.searchParams.set('language', 'en');
+  url.searchParams.set('sentiment', 'true');
+  url.searchParams.set('smart_format', 'true');
   url.searchParams.set('diarize', 'true');
-  url.searchParams.set('punctuate', 'true');
+  url.searchParams.set('paragraphs', 'true');
 
   const init: RequestInit = {
     method: 'POST',
