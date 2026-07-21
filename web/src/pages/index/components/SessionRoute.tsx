@@ -3,6 +3,7 @@ import type { Session } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { navigate } from '../navigation';
+import { HomeRoute } from './HomeRoute';
 import { WorkspaceStatic } from './WorkspaceStatic';
 
 // --- SessionRoute (session-deep-links, task 4.2; spec: web-session-routing
@@ -35,9 +36,11 @@ import { WorkspaceStatic } from './WorkspaceStatic';
 // Restore from the archived interstitial.
 //
 // The empty id (`/` or an unmatched path) bypasses resolution entirely and
-// renders WorkspaceStatic exactly as before this change: home placeholder
-// visible, no per-id request issued. (The settings modal itself is mounted
-// by AppShell, one level up — teams-settings-nav, design D1 — not here.)
+// renders the dedicated home route component (`HomeRoute`, design D10 —
+// GATE-OVERRIDDEN vs the spike, which rendered the same visuals inside
+// SessionWorkspace's now-retired `#v3-session-placeholder`): no per-id
+// request is issued. (The settings modal itself is mounted by AppShell, one
+// level up — teams-settings-nav, design D1 — not here.)
 
 const STATE_PAGE = 'relative z-[1] flex w-full items-center justify-center px-5 py-16';
 const STATE_PANEL =
@@ -160,22 +163,24 @@ interface SessionRouteProps {
   /** Route-derived session id; empty string means the no-session home view. */
   sessionId: string;
   ytImportPending?: boolean;
+  /** Opens the AppShell-owned New Session modal (design D10); threaded to HomeRoute. */
+  onNewSession: () => void;
 }
 
-export function SessionRoute(props: SessionRouteProps) {
-  const { sessionId } = props;
+export function SessionRoute({ sessionId, ytImportPending, onNewSession }: SessionRouteProps) {
   const query = useSession(sessionId);
 
   if (!sessionId) {
-    // Home view: unchanged pre-resolution behavior (placeholder visible);
-    // useSession is disabled for the empty id.
-    return <WorkspaceStatic {...props} />;
+    // Home view (design D10): the dedicated route component, not the
+    // workspace — useSession is disabled for the empty id, so this issues no
+    // per-id request.
+    return <HomeRoute onNewSession={onNewSession} />;
   }
 
   const resolution = query.data;
 
   if (resolution?.kind === 'found' && !resolution.session.archived) {
-    return <WorkspaceStatic {...props} />;
+    return <WorkspaceStatic sessionId={sessionId} ytImportPending={ytImportPending} />;
   }
 
   if (!resolution) {

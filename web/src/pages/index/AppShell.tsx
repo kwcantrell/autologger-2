@@ -158,6 +158,13 @@ export function AppShell() {
     setShowSettings(true);
   }, []);
 
+  // Stable callback for the home launch surface's New Session action (design
+  // D10), threaded AppShell -> SessionRoute -> HomeRoute, so a fresh closure
+  // on every AppShell render doesn't defeat memoization downstream.
+  const handleOpenNewSession = useCallback(() => {
+    setShowNewSession(true);
+  }, []);
+
   const handleCloseSettings = useCallback(() => {
     setShowSettings(false);
   }, []);
@@ -350,15 +357,19 @@ export function AppShell() {
             {/* Session workspace, behind deep-link resolution: SessionRoute
                 resolves the routed id through the per-id query and gates the
                 workspace mount on it (task 4.2, design D5); the empty id renders
-                the home view unchanged. At `/teams` (teams-self-serve, task 5.2),
-                TeamsRoute mounts in SessionRoute's place instead — since
-                SessionRoute is what renders the no-session home view
-                (WorkspaceStatic) for the empty id, swapping it out is what hides
-                that home view at the teams route. */}
+                the dedicated home route component (design D10). At `/teams`
+                (teams-self-serve, task 5.2), TeamsRoute mounts in SessionRoute's
+                place instead — since SessionRoute is what renders the no-session
+                home view (HomeRoute) for the empty id, swapping it out is what
+                hides that home view at the teams route. */}
             {onTeamsRoute ? (
               <TeamsRoute />
             ) : (
-              <SessionRoute sessionId={activeSessionId} ytImportPending={ytImportPending} />
+              <SessionRoute
+                sessionId={activeSessionId}
+                ytImportPending={ytImportPending}
+                onNewSession={handleOpenNewSession}
+              />
             )}
           </main>
         </div>

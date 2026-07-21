@@ -4,16 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import { SessionWorkspace } from './SessionWorkspace';
 
-// --- SessionWorkspace visibility-swap tests (session-deep-links, task 3.3;
-// spec: web-session-routing "Legacy selection spine retired" — "Workspace
-// visibility swap survives the removal") ---
+// --- SessionWorkspace tests (mounted-hidden tab discipline) ---
 //
-// The placeholder ↔ grid swap used to be imperative classList toggling in
-// AppShell's syncChrome(); it is now render-driven off the sessionId prop
-// (design D9). These tests pin the two observable halves the e2e suite
-// asserts on (`#v3-session-placeholder` / `#v3-session-grid`), with every
-// data/socket/audio hook and heavy child mocked at the module boundary —
-// this is a rendering test, not an integration test.
+// SessionWorkspace only ever mounts with a session id now (design D10,
+// GATE-OVERRIDDEN): the old empty-id placeholder branch and its
+// `#v3-session-placeholder` ↔ `#v3-session-grid` visibility-swap tests are
+// retired along with it — SessionRoute mount tests (home vs. workspace) and
+// HomeRoute's own component tests cover that swap now (task 5.1;
+// SessionRoute.test.tsx, HomeRoute.test.tsx). Every data/socket/audio hook
+// and heavy child below is mocked at the module boundary — this is a
+// rendering test, not an integration test.
 
 vi.mock('../../../api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue({}),
@@ -122,41 +122,6 @@ vi.mock('./TransportControls', () => ({
   TransportControls: () => null,
 }));
 
-function regions(container: HTMLElement) {
-  const placeholder = container.querySelector('#v3-session-placeholder');
-  const grid = container.querySelector('#v3-session-grid');
-  expect(placeholder).not.toBeNull();
-  expect(grid).not.toBeNull();
-  return { placeholder: placeholder as HTMLElement, grid: grid as HTMLElement };
-}
-
-describe('SessionWorkspace visibility swap', () => {
-  it('shows the placeholder and hides the grid when no session is active', () => {
-    const { container } = renderStrict(<SessionWorkspace sessionId="" />);
-    const { placeholder, grid } = regions(container);
-
-    expect(placeholder.classList.contains('hidden')).toBe(false);
-    expect(grid.classList.contains('hidden')).toBe(true);
-  });
-
-  it('reveals the grid and hides the placeholder when a session is active', () => {
-    const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    const { placeholder, grid } = regions(container);
-
-    expect(placeholder.classList.contains('hidden')).toBe(true);
-    expect(grid.classList.contains('hidden')).toBe(false);
-  });
-
-  it('swaps back when the session id prop is cleared (close path)', () => {
-    const { container, rerender } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    rerender(<SessionWorkspace sessionId="" />);
-    const { placeholder, grid } = regions(container);
-
-    expect(placeholder.classList.contains('hidden')).toBe(false);
-    expect(grid.classList.contains('hidden')).toBe(true);
-  });
-});
-
 // --- AI tab / subtab restructure + mount discipline (ai-topics-chat, task
 // 4.1; spec: "AI tab and subtab arrangement") ---
 //
@@ -169,10 +134,8 @@ describe('SessionWorkspace visibility swap', () => {
 // lands) survive every switch. AiChat/AiPanel are exercised for real here
 // (not mocked) — proving genuine no-unmount requires the real DOM node.
 //
-// No `@testing-library/jest-dom` matchers in this workspace (see
-// SessionWorkspace visibility swap tests above using `classList.contains`
-// directly) — these tests read the `hidden` attribute/`aria-selected` via
-// plain DOM APIs for the same reason.
+// No `@testing-library/jest-dom` matchers in this workspace — these tests
+// read the `hidden` attribute/`aria-selected` via plain DOM APIs.
 
 function isHidden(el: Element | null): boolean {
   expect(el).not.toBeNull();

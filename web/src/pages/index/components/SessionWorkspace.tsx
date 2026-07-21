@@ -285,37 +285,16 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
         id="v3-session-active"
         className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
       >
-        {/* Placeholder ↔ grid visibility swap, route-driven off the sessionId
-            prop (design D9 — replaces the imperative syncChrome classList
-            toggling). Both elements stay in the DOM with their ids (e2e
-            asserts on them); `hidden` wins over the display utilities. */}
-        <div
-          id="v3-session-placeholder"
-          className={clsx(
-            'flex items-center justify-center min-h-[calc(100vh-4rem)] px-6 py-8 text-center',
-            sessionId && 'hidden',
-          )}
-        >
-          <p
-            className={clsx(
-              'max-w-[22rem] m-0 leading-[1.45] text-v5-muted',
-              'muted',
-              'animate__animated',
-              'animate__pulse',
-            )}
-          >
-            Select a session, or create a new one from the left rail.
-          </p>
-        </div>
-
-        {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet member;
-            desktop flex column, max-md plain block. */}
+        {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet
+            member; desktop flex column, max-md plain block. The empty-id
+            placeholder branch (`#v3-session-placeholder`) that used to swap
+            against this element is retired (design D10, GATE-OVERRIDDEN):
+            SessionRoute now gates the workspace mount on a resolved session,
+            so SessionWorkspace only ever mounts with a session id and this
+            grid no longer needs the `!sessionId` hidden toggle. */}
         <div
           id="v3-session-grid"
-          className={clsx(
-            'v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto',
-            !sessionId && 'hidden',
-          )}
+          className="v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
         >
           {/* #v4-log-session — ancestor id retained (drives descendant [#v4-log-session_&]
               variants + [data-v5-live-log] variants; perfDebug/e2e hooks target it).

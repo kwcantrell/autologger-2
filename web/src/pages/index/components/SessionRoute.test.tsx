@@ -36,6 +36,16 @@ vi.mock('./WorkspaceStatic', () => ({
   ),
 }));
 
+vi.mock('./HomeRoute', () => ({
+  HomeRoute: (props: { onNewSession: () => void }) => (
+    <div id="home-launch" data-testid="home-route">
+      <button type="button" data-testid="home-route-new-session" onClick={props.onNewSession}>
+        mock new session
+      </button>
+    </div>
+  ),
+}));
+
 vi.mock('../../../shared/components/Toast', () => ({
   toast: { error: vi.fn() },
 }));
@@ -77,10 +87,14 @@ function makeClient() {
 
 let navRecord: string[] = [];
 
-function renderRoute(sessionId: string, client: QueryClient = makeClient()) {
+function renderRoute(
+  sessionId: string,
+  client: QueryClient = makeClient(),
+  onNewSession: () => void = () => {},
+) {
   const view = renderStrict(
     <QueryClientProvider client={client}>
-      <SessionRoute sessionId={sessionId} />
+      <SessionRoute sessionId={sessionId} onNewSession={onNewSession} />
     </QueryClientProvider>,
   );
   return { view, client };
@@ -269,7 +283,45 @@ describe('SessionRoute resolution states', () => {
   it('renders the home view for the empty id without issuing any per-id request', () => {
     renderRoute('');
 
-    expect(workspace()?.getAttribute('data-session-id')).toBe('');
+    expect(screen.getByTestId('home-route')).not.toBeNull();
+    expect(workspace()).toBeNull();
     expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+});
+
+// --- SessionRoute mount tests (ui-refresh, task 5.1; design D10,
+// GATE-OVERRIDDEN) ---
+//
+// Replaces the old SessionWorkspace "visibility swap" tests (which pinned
+// the retired `#v3-session-placeholder` element toggling against
+// `#v3-session-grid`): with the home view promoted to its own route
+// component, the swap this file's resolution-state tests already exercise
+// (found/non-archived -> WorkspaceStatic, everything else that resolves to
+// "no active session" -> HomeRoute) is what these two tests pin directly —
+// `#home-launch` renders with no workspace mounted, and vice versa.
+
+describe('SessionRoute mount (home vs workspace)', () => {
+  it('renders #home-launch for the empty id, with no workspace mounted', () => {
+    renderRoute('');
+
+    expect(document.querySelector('#home-launch')).not.toBeNull();
+    expect(workspace()).toBeNull();
+  });
+
+  it('renders the workspace for a resolved, non-archived session, with no #home-launch', async () => {
+    mockedApiFetch.mockResolvedValue(sessionFixture({ id: 'sess-1' }));
+
+    renderRoute('sess-1');
+
+    await waitFor(() => expect(workspace()?.getAttribute('data-session-id')).toBe('sess-1'));
+    expect(document.querySelector('#home-launch')).toBeNull();
+  });
+
+  it('threads onNewSession through to the home route', () => {
+    const onNewSession = vi.fn();
+    renderRoute('', makeClient(), onNewSession);
+
+    fireEvent.click(screen.getByTestId('home-route-new-session'));
+    expect(onNewSession).toHaveBeenCalledTimes(1);
   });
 });
