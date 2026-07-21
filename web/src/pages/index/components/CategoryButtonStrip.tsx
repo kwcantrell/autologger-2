@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLogEvent } from '../../../api/hooks/useEvents';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type { Category, DropdownOption } from '../../../api/types';
@@ -193,6 +193,21 @@ function momentaryPress(el: HTMLElement | null) {
   setTimeout(() => el.classList.remove('cat-btn-press'), 120);
 }
 
+/** Hotkey badge on the live-log tiles (ui-refresh: 1–9 log the first nine
+ *  categories while the live dock is shown). Hidden outside the live slot — the
+ *  horizontal strip's disabled buttons have no hotkeys to advertise. */
+const CAT_HOTKEY_BADGE =
+  // `[display:none]`/`[display:flex]` (NOT the `hidden` class): the legacy
+  // `.hidden` chrome hook is `display:none !important` and would beat the
+  // live-slot ancestor variant.
+  '[display:none] [#cat-strip-live-slot_&]:[display:flex] absolute top-[0.3rem] right-[0.35rem] h-[1.05rem] min-w-[1.05rem] items-center justify-center rounded-[0.35rem] border border-white/[0.16] bg-black/[0.35] px-[0.2rem] text-[0.6rem] font-semibold leading-none text-white/[0.78] [font-variation-settings:normal]';
+
+function isTypingTarget(el: EventTarget | null): boolean {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  const t = el.tagName;
+  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable;
+}
+
 export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle }: Props) {
   const { data, isLoading } = useShowCategories(sessionId);
   const logEvent = useLogEvent(sessionId);
@@ -219,10 +234,12 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
     [logEvent],
   );
 
-  const handleButtonClick = useCallback(
-    async (e: React.MouseEvent<HTMLButtonElement>, cat: Category) => {
+  // Shared trigger for pointer clicks AND the 1–9 hotkeys (ui-refresh): `btn`
+  // is only used for the momentary press animation, so the hotkey path can pass
+  // the tile it finds by data-category-id (or null).
+  const triggerCategory = useCallback(
+    async (cat: Category, btn: HTMLElement | null) => {
       if (!isRolling) return;
-      const btn = e.currentTarget;
       const typ = (cat.type || 'BUTTON').toUpperCase();
 
       if (typ === 'BUTTON') {
@@ -257,6 +274,40 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
     },
     [isRolling, handleLog, onOffState, onToggle],
   );
+
+  const handleButtonClick = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>, cat: Category) =>
+      triggerCategory(cat, e.currentTarget),
+    [triggerCategory],
+  );
+
+  // 1–9 hotkeys while the live dock is shown (ui-refresh): the fastest input
+  // path for the core loop. Full guard set per the spec: at most once per
+  // physical keypress (`event.repeat` auto-repeat ignored); never while typing
+  // (input/textarea/select/contenteditable); never while any dialog
+  // (log-note/dropdown/settings/export) is open; Ctrl/Meta/Alt excluded but
+  // Shift deliberately permitted (digits require Shift on some layouts).
+  const categoriesForKeys = data?.categories ?? [];
+  useEffect(() => {
+    if (!isRolling) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      const n = Number(e.key);
+      if (!Number.isInteger(n) || n < 1 || n > 9) return;
+      const cat = categoriesForKeys[n - 1];
+      if (!cat) return;
+      e.preventDefault();
+      const btn = document.querySelector<HTMLElement>(
+        `#cat-strip-live-slot [data-category-id="${cat.id}"]`,
+      );
+      void triggerCategory(cat, btn);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isRolling, categoriesForKeys, triggerCategory]);
 
   const handleDropdownLog = useCallback(
     async (message: string) => {
@@ -312,17 +363,28 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
                 : cat.off_label?.trim() || cat.label
               : cat.label;
 
+          const idx = categories.indexOf(cat);
           return (
             <button
               key={cat.id}
               type="button"
-              className={clsx(CAT_BTN, isOn && CAT_BTN_ON, isArmed && CAT_BTN_ARMED)}
+              className={clsx(
+                CAT_BTN,
+                '[#cat-strip-live-slot_&]:relative',
+                isOn && CAT_BTN_ON,
+                isArmed && CAT_BTN_ARMED,
+              )}
               style={{ '--cat': cat.color } as React.CSSProperties}
               data-category-id={cat.id}
               disabled={!isRolling}
               onClick={(e) => handleButtonClick(e, cat)}
             >
               {label}
+              {isRolling && idx < 9 && (
+                <span className={CAT_HOTKEY_BADGE} aria-hidden="true">
+                  {idx + 1}
+                </span>
+              )}
             </button>
           );
         })}
