@@ -112,9 +112,10 @@ words/topics tables.
 want row-per-segment/paragraph for timeline range queries.
 
 ### D4 — One atomic replace RPC covering words + enrichment
-The existing atomic-replace hub RPC (today `replaceTranscriptWords`) is extended to accept
-`{ words, paragraphs, sentiments }` and, in **one transaction**, delete-then-insert all three
-tables. It stays a synchronous hub body (invariant); the router assembles the remapped
+The existing atomic-replace hub RPC (today `replaceTranscriptWords`) is extended to
+`replaceTranscriptWords(words, enrichment)` where `enrichment = { paragraphs, sentiment }`
+(singular; defaults to empty so the pre-wire single-arg caller keeps compiling) and, in
+**one transaction**, delete-then-inserts all three tables. It stays a synchronous hub body (invariant); the router assembles the remapped
 enrichment before the single call, exactly as it assembles remapped words today. There is
 **exactly one writer** — enrichment is never persisted by a second out-of-transaction path
 (spec: "MUST NOT be a second writer"), so a crash can't leave words persisted with

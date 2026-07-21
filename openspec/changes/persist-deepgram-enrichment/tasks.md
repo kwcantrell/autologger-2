@@ -59,9 +59,10 @@
       prior enrichment; failure/rollback leaves prior words **and** enrichment untouched (no
       second writer). Add `listTranscriptEnrichment()` returning `{ paragraphs, sentiment }`
       in deterministic ordinal order, empty when never-generated.
-- [x] 3.3 Extend the atomic-replace hub RPC to accept `{ words, paragraphs, sentiments }` and
-      persist all three in the single existing transaction (synchronous hub body invariant
-      preserved); implement `listTranscriptEnrichment`. Gate: typecheck + test.
+- [x] 3.3 Extend the atomic-replace hub RPC to `replaceTranscriptWords(words, enrichment)` with
+      `enrichment = { paragraphs, sentiment }` (singular; defaults to empty) and persist all three
+      in the single existing transaction (synchronous hub body invariant preserved); implement
+      `listTranscriptEnrichment`. Gate: typecheck + test.
 
 ## 4. Router wire-through (transcribe.ts)
 
