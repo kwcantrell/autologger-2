@@ -34,7 +34,7 @@
 
 ## 2. Remap — resolve enrichment onto the session timeline, per-group (transcriptRemap.ts)
 
-- [ ] 2.1 Write failing tests (characterization anchor for this seam) over the real fixture
+- [x] 2.1 Write failing tests (characterization anchor for this seam) over the real fixture
       **and a synthetic 2-group composition** (built by duplicating + time-offsetting the real
       single-group response): a sentiment segment resolves to the remapped positions of its
       `start_word`/`end_word` words; a paragraph's group-file seconds remap as a single-anchor
@@ -43,7 +43,7 @@
       clamp; `end_word < start_word` normalizes; a zero-word group yields no segments; the
       **index-base guard** degrades a segment whose leading text token ≠ `words[start_word]`
       to NULL; ordinals follow the anchored-then-anchorless two-bucket order deterministically.
-- [ ] 2.2 Implement the enrichment remap (sibling of `remapTranscriptWords`, reusing the
+- [x] 2.2 Implement the enrichment remap (sibling of `remapTranscriptWords`, reusing the
       per-group anchor context) returning session-timeline paragraph + sentiment records with
       **nullable** `start_sec`/`end_sec` and the index-base guard; enrichment is resolved
       **before** the global word sort and never throws. Gate: typecheck + test.
