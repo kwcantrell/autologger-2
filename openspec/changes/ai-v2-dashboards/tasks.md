@@ -255,7 +255,7 @@ that does not exist.
 
 ## 6. Docs + final gates
 
-- [ ] 6.1 README: endpoint rows in the normative route table; document the egress/spend posture,
+- [x] 6.1 README: endpoint rows in the normative route table; document the egress/spend posture,
       the auth fallback behaviour, and the sandboxing guarantee.
 - [ ] 6.2 Hermetic e2e over real SSE: a design turn, one question answered, a dashboard rendered.
 - [ ] 6.3 Final gates: `npm run typecheck` + `npm test`, then `npm run e2e` (chromium +
