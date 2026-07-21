@@ -77,7 +77,7 @@
 
 ## 5. Final gates
 
-- [ ] 5.1 `npm run typecheck` + `npm test` green across server.
-- [ ] 5.2 `npm run e2e` (chromium + login-gate) — sanity only; **`e2e:visual` skipped**
+- [x] 5.1 `npm run typecheck` + `npm test` green across server.
+- [x] 5.2 `npm run e2e` (chromium + login-gate) — sanity only; **`e2e:visual` skipped**
       (backend-only change, no user-visible surface, so no baseline can move).
-- [ ] 5.3 `openspec validate persist-deepgram-enrichment --strict` passes.
+- [x] 5.3 `openspec validate persist-deepgram-enrichment --strict` passes.
