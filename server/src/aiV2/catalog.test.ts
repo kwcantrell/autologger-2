@@ -11,6 +11,10 @@ import { describe, expect, it } from 'vitest';
 import {
   dashboardConfigSchema,
   interactionKindSchema,
+  MAX_CONFIG_SERIALIZED_BYTES,
+  MAX_DASHBOARDS_PER_SESSION,
+  MAX_INTERACTIONS_PER_DASHBOARD,
+  MAX_WIDGETS_PER_DASHBOARD,
   validateDashboardConfig,
   widgetTypeSchema,
   WIDGET_TYPES,
@@ -140,5 +144,108 @@ describe('layout and interaction vocabulary', () => {
   it('the exported schema mirrors validateDashboardConfig for direct Zod use by callers', () => {
     const parsed = dashboardConfigSchema.safeParse({ widgets: [widget()], interactions: [] });
     expect(parsed.success).toBe(true);
+  });
+});
+
+// --- ai-v2-dashboards Phase 5 (task 5.1/5.3): whole-config write validation
+// (design D5a) + authoritative bounds (design D5b). `validateDashboardConfig`
+// is the SAME function the persistence write path (task 5.2) and the future
+// propose_dashboard tool (task 5.4) both call — these tests exercise it
+// directly, exactly as any consumer would.
+describe('dashboard persistence — whole-config content validation (design D5a)', () => {
+  it('stores a widget title containing HTML tags as plain text (not rejected — it renders inert, task 4.5)', () => {
+    const result = validateDashboardConfig({
+      widgets: [widget({ title: '<b>Quarterly Review</b> <img src=x>' })],
+      interactions: [],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.widgets[0].title).toBe('<b>Quarterly Review</b> <img src=x>');
+    }
+  });
+
+  it('rejects a title carrying a javascript: URI', () => {
+    const result = validateDashboardConfig({
+      widgets: [widget({ title: 'javascript:alert(document.cookie)' })],
+      interactions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a title carrying a data: URI', () => {
+    const result = validateDashboardConfig({
+      widgets: [widget({ title: 'data:text/html,<script>alert(1)</script>' })],
+      interactions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a title carrying an inline event-handler attribute pattern', () => {
+    const result = validateDashboardConfig({
+      widgets: [widget({ title: 'Nice title" onerror="alert(1)' })],
+      interactions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a title carrying a <script> tag', () => {
+    const result = validateDashboardConfig({
+      widgets: [widget({ title: '<script>alert(1)</script>' })],
+      interactions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('dashboard persistence — authoritative bounds (design D5b, task 5.3)', () => {
+  it('MAX_WIDGETS_PER_DASHBOARD/MAX_INTERACTIONS_PER_DASHBOARD are enforced by the shared schema (no second cap elsewhere)', () => {
+    const tooManyWidgets = Array.from({ length: MAX_WIDGETS_PER_DASHBOARD + 1 }, (_, i) =>
+      widget({ id: `w${i}`, x: i % 100 }),
+    );
+    expect(validateDashboardConfig({ widgets: tooManyWidgets, interactions: [] }).success).toBe(
+      false,
+    );
+    expect(
+      validateDashboardConfig({
+        widgets: Array.from({ length: MAX_WIDGETS_PER_DASHBOARD }, (_, i) =>
+          widget({ id: `w${i}`, x: i % 100 }),
+        ),
+        interactions: [],
+      }).success,
+    ).toBe(true);
+    expect(MAX_INTERACTIONS_PER_DASHBOARD).toBeGreaterThan(0);
+  });
+
+  it('rejects a config whose serialized size exceeds MAX_CONFIG_SERIALIZED_BYTES while every individual widget stays within its own field bounds', () => {
+    const hugeTitle = 'x'.repeat(200); // MAX_TITLE_LEN
+    const longId = (i: number) => `widget-id-padded-to-near-max-length-${i}`.padEnd(64, '-');
+    // Each widget here is independently VALID (max-length id, valid type,
+    // max-length title, in-bounds layout) — this proves the byte-size check
+    // is a genuine THIRD bound, not a restatement of the widget-count or
+    // per-field-length caps: it must bind before MAX_WIDGETS_PER_DASHBOARD
+    // does, on a config that individually passes every other check.
+    const perWidgetBytes = new TextEncoder().encode(
+      JSON.stringify(widget({ id: longId(0), title: hugeTitle })),
+    ).length;
+    const widgetsNeeded = Math.ceil(MAX_CONFIG_SERIALIZED_BYTES / perWidgetBytes) + 3;
+    expect(widgetsNeeded).toBeLessThanOrEqual(MAX_WIDGETS_PER_DASHBOARD); // sanity: bound is reachable before the count cap
+    const widgets = Array.from({ length: widgetsNeeded }, (_, i) =>
+      widget({ id: longId(i), title: hugeTitle, x: i % 100 }),
+    );
+    const serializedBytes = new TextEncoder().encode(JSON.stringify({ widgets, interactions: [] }))
+      .length;
+    expect(serializedBytes).toBeGreaterThan(MAX_CONFIG_SERIALIZED_BYTES);
+
+    const result = validateDashboardConfig({ widgets, interactions: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a config comfortably under the serialized-size limit', () => {
+    const result = validateDashboardConfig({ widgets: [widget()], interactions: [] });
+    expect(result.success).toBe(true);
+  });
+
+  it('MAX_DASHBOARDS_PER_SESSION is exported for the session-DB store to import (design D5b: per-session count bound)', () => {
+    expect(MAX_DASHBOARDS_PER_SESSION).toBeGreaterThan(0);
   });
 });

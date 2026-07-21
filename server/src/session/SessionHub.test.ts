@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MAX_DASHBOARDS_PER_SESSION } from '../aiV2/catalog';
+import { DashboardBoundsError, DashboardValidationError } from './dashboardStore';
 import { SessionHub, SessionHubRegistry } from './SessionHub';
 
 let dir: string;
@@ -261,6 +263,166 @@ describe('SessionHub enrichment persistence (single atomic replace)', () => {
 
     expect(hub.listTranscriptWords()).toEqual(priorWords);
     expect(hub.listTranscriptEnrichment()).toEqual(priorEnrichment);
+    hub.close();
+  });
+});
+
+// --- ai-v2-dashboards task 5.1/5.2/5.3: dashboard persistence (design D5
+// ruled session DB, D5a whole-config validation, D5b write-authz/bounds) ---
+describe('SessionHub dashboard persistence', () => {
+  function validConfig(overrides: Partial<{ title: string }> = {}) {
+    return {
+      widgets: [
+        {
+          id: 'w1',
+          type: 'session_duration',
+          title: overrides.title ?? 'Duration',
+          x: 0,
+          y: 0,
+          w: 4,
+          h: 2,
+        },
+      ],
+      interactions: [],
+    };
+  }
+
+  it('getDashboard returns null for a session with nothing saved', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    expect(hub.getDashboard('primary')).toBeNull();
+    hub.close();
+  });
+
+  it('saveDashboard then getDashboard round-trips the exact config and records created_by + turn', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const saved = hub.saveDashboard({
+      id: 'primary',
+      config: validConfig(),
+      createdBy: 'user-1',
+      createdByTurnId: 'turn-1',
+    });
+    expect(saved.config).toEqual(validConfig());
+    expect(saved.createdBy).toBe('user-1');
+    expect(saved.createdByTurnId).toBe('turn-1');
+
+    const loaded = hub.getDashboard('primary');
+    expect(loaded?.config).toEqual(validConfig());
+    expect(loaded?.createdBy).toBe('user-1');
+    expect(loaded?.createdByTurnId).toBe('turn-1');
+    hub.close();
+  });
+
+  it('a direct edit (re-save of the same id) updates the config but PRESERVES the original created_by/turn', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.saveDashboard({
+      id: 'primary',
+      config: validConfig(),
+      createdBy: 'user-1',
+      createdByTurnId: 'turn-1',
+    });
+    // A direct-manipulation edit carries no principal/turn of its own in
+    // this test (mirrors the route's turnId:null default) — provenance must
+    // still point at the ORIGINAL creator, not this edit.
+    const edited = hub.saveDashboard({
+      id: 'primary',
+      config: validConfig({ title: 'Renamed' }),
+      createdBy: null,
+      createdByTurnId: null,
+    });
+    expect(edited.config.widgets[0].title).toBe('Renamed');
+    expect(edited.createdBy).toBe('user-1');
+    expect(edited.createdByTurnId).toBe('turn-1');
+    hub.close();
+  });
+
+  it('deleteDashboard removes it (removable/replaceable through the interface, design D5b)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.saveDashboard({
+      id: 'primary',
+      config: validConfig(),
+      createdBy: 'user-1',
+      createdByTurnId: null,
+    });
+    expect(hub.deleteDashboard('primary')).toBe(true);
+    expect(hub.getDashboard('primary')).toBeNull();
+    expect(hub.deleteDashboard('primary')).toBe(false); // already gone
+    hub.close();
+  });
+
+  it('rejects (throws DashboardValidationError) an unknown widget type — nothing is stored', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    expect(() =>
+      hub.saveDashboard({
+        id: 'primary',
+        config: { widgets: [{ ...validConfig().widgets[0], type: 'custom_widget' }], interactions: [] },
+        createdBy: 'user-1',
+        createdByTurnId: null,
+      }),
+    ).toThrow(DashboardValidationError);
+    expect(hub.getDashboard('primary')).toBeNull();
+    hub.close();
+  });
+
+  it('rejects (throws DashboardValidationError) a javascript: URI title — nothing is stored', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    expect(() =>
+      hub.saveDashboard({
+        id: 'primary',
+        config: validConfig({ title: 'javascript:alert(1)' }),
+        createdBy: 'user-1',
+        createdByTurnId: null,
+      }),
+    ).toThrow(DashboardValidationError);
+    expect(hub.getDashboard('primary')).toBeNull();
+    hub.close();
+  });
+
+  it('stores an HTML-bearing title as literal text (allowed — renders inert, task 4.5)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const saved = hub.saveDashboard({
+      id: 'primary',
+      config: validConfig({ title: '<b>Bold</b> title' }),
+      createdBy: 'user-1',
+      createdByTurnId: null,
+    });
+    expect(saved.config.widgets[0].title).toBe('<b>Bold</b> title');
+    hub.close();
+  });
+
+  it('enforces the per-session dashboard-COUNT bound (design D5b): the (MAX+1)th distinct id is rejected, nothing new is stored', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    for (let i = 0; i < MAX_DASHBOARDS_PER_SESSION; i += 1) {
+      hub.saveDashboard({
+        id: `dash-${i}`,
+        config: validConfig(),
+        createdBy: 'user-1',
+        createdByTurnId: null,
+      });
+    }
+    expect(hub.listDashboards()).toHaveLength(MAX_DASHBOARDS_PER_SESSION);
+
+    expect(() =>
+      hub.saveDashboard({
+        id: 'one-too-many',
+        config: validConfig(),
+        createdBy: 'user-1',
+        createdByTurnId: null,
+      }),
+    ).toThrow(DashboardBoundsError);
+    expect(hub.getDashboard('one-too-many')).toBeNull();
+    expect(hub.listDashboards()).toHaveLength(MAX_DASHBOARDS_PER_SESSION);
+
+    // Re-saving an EXISTING id, though, is an update — never counted as a
+    // new dashboard, so it must NOT trip the count bound even at capacity.
+    expect(() =>
+      hub.saveDashboard({
+        id: 'dash-0',
+        config: validConfig({ title: 'Updated at capacity' }),
+        createdBy: 'user-1',
+        createdByTurnId: null,
+      }),
+    ).not.toThrow();
+    expect(hub.getDashboard('dash-0')?.config.widgets[0].title).toBe('Updated at capacity');
     hub.close();
   });
 });

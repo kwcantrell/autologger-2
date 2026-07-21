@@ -57,16 +57,80 @@ export const widgetTypeSchema = z.enum(WIDGET_TYPES);
 
 // -- layout (grid position + size) -----------------------------------------------
 
-/** Generous but bounded grid extents. This is a structural sanity bound, not
- * the authoritative per-dashboard/per-session cap — design D5b's dashboard
- * count / widget count / serialized-size bounds are enforced at the
- * persistence write path (Phase 5), which layers on top of this schema. */
+/** Generous but bounded grid extents. `MAX_WIDGETS_PER_DASHBOARD` and
+ * `MAX_INTERACTIONS_PER_DASHBOARD` are the AUTHORITATIVE per-dashboard bounds
+ * (design D5b, task 5.3 — these replaced an earlier "structural sanity bound
+ * only" framing; Phase 5's persistence write path enforces them by calling
+ * `validateDashboardConfig`, the same function this module already exports,
+ * rather than re-checking counts itself). `MAX_DASHBOARDS_PER_SESSION` and
+ * `MAX_CONFIG_SERIALIZED_BYTES` round out D5b's three bounds
+ * ("per-session dashboard count, per-dashboard widget count, and the
+ * serialized size of a configuration SHALL each be bounded"); the
+ * serialized-size check lives in this same schema's `.superRefine` below (a
+ * config-content property, checkable with no session context), while the
+ * per-session count is necessarily enforced by the session-DB store
+ * (server/src/session/dashboardStore.ts), which needs to know how many
+ * dashboards already exist for the session — these constants are exported so
+ * that store imports the SAME numbers rather than re-deriving them,
+ * preserving this module as the single source of truth for every ai-v2
+ * bound. */
 const GRID_MAX_COORD = 1000;
 const GRID_MAX_EXTENT = 1000;
-const MAX_WIDGETS_PER_DASHBOARD = 64;
-const MAX_INTERACTIONS_PER_DASHBOARD = 128;
+export const MAX_WIDGETS_PER_DASHBOARD = 64;
+export const MAX_INTERACTIONS_PER_DASHBOARD = 128;
 const MAX_WIDGET_ID_LEN = 64;
 const MAX_TITLE_LEN = 200;
+
+/** Design D5b: "the serialized size of a configuration SHALL each be
+ * bounded". Deliberately set BELOW the theoretical maximum a fully-populated
+ * config could reach under the widget/interaction/id/title bounds above
+ * (~48KB at 64 max-length widgets + 128 max-length interactions) — a size
+ * cap that could never bind before those structural caps do would be dead
+ * code, not an independent bound. 12KB is generous for realistic dashboards
+ * (a dozen widgets with normal-length titles is a couple KB) while still
+ * catching a maximal-shape-valid-but-bloated config, and bounding a
+ * `restart_supported: false` deployment's exposure to a scripted write loop. */
+export const MAX_CONFIG_SERIALIZED_BYTES = 12_000;
+
+/** Design D5b: "the number of dashboards per session... SHALL be bounded".
+ * Enforced in server/src/session/dashboardStore.ts, which imports this
+ * constant rather than defining its own. */
+export const MAX_DASHBOARDS_PER_SESSION = 20;
+
+/** Design D5a: "no field of a stored dashboard is ever interpolated into
+ * HTML, a URL, a style, or an event handler — text only, everywhere." This is
+ * a defense-in-depth content check, NOT a markup filter: plain HTML tags in a
+ * title (e.g. "<b>Q3 Review</b>") are NOT rejected here — this app never
+ * interprets a title as anything but a JSX text child (spec "No
+ * agent-authored markup is ever rendered", enforced by the repo-wide
+ * dangerouslySetInnerHTML audit, task 4.5), so an HTML-bearing title is
+ * simply stored as literal text and renders inert (spec scenario: "A widget
+ * title containing markup renders as inert text"). What this DOES reject is
+ * content that would be dangerous specifically IF a future consumer ever
+ * interpolated it into an href/src/style/event-handler attribute — the
+ * categories the spec names ("a URL, or code"): a `javascript:`/`data:`/
+ * `vbscript:` URI scheme, an inline event-handler attribute pattern
+ * (`onerror=`, `onclick=`, ...), a CSS `expression(...)`/`@import` construct,
+ * or a `<script>` tag. Applied to every free-text string field a widget
+ * carries (currently just `title`). */
+const DANGEROUS_CONTENT_RE =
+  /javascript:|data:text\/html|vbscript:|on\w+\s*=|expression\s*\(|@import\b|<script\b/i;
+
+function rejectDangerousContent(
+  value: string,
+  ctx: z.RefinementCtx,
+  path: (string | number)[],
+): void {
+  if (DANGEROUS_CONTENT_RE.test(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'Field contains content that would be interpreted as a URL, an event handler, or code ' +
+        '(e.g. a javascript: URI, an inline event-handler attribute, or a <script> tag) and is rejected.',
+      path,
+    });
+  }
+}
 
 export const widgetLayoutSchema = z.object({
   /** Instance id, unique within one dashboard (checked in `dashboardConfigSchema`,
@@ -144,6 +208,11 @@ export const dashboardConfigSchema = z
       }
       seen.add(w.id);
       widgetIds.add(w.id);
+      // Design D5a whole-config content check (task 5.1) — every free-text
+      // field, not only type/shape. HTML in a title is allowed through (it
+      // renders inert, see the constant's doc comment above); a dangerous
+      // URL/handler/code pattern is rejected here, before anything is stored.
+      rejectDangerousContent(w.title, ctx, ['widgets', i, 'title']);
     });
 
     cfg.interactions.forEach((interaction, i) => {
@@ -162,6 +231,19 @@ export const dashboardConfigSchema = z
         });
       }
     });
+
+    // Design D5b: "the serialized size of a configuration SHALL... be
+    // bounded". A config-content property (no session context needed), so it
+    // lives in the shared schema rather than the store — checked on the
+    // already-typed value, matching what the store will actually persist.
+    const serializedBytes = new TextEncoder().encode(JSON.stringify(cfg)).length;
+    if (serializedBytes > MAX_CONFIG_SERIALIZED_BYTES) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Serialized dashboard configuration is ${serializedBytes} bytes, exceeding the ${MAX_CONFIG_SERIALIZED_BYTES}-byte limit.`,
+        path: [],
+      });
+    }
   });
 export type DashboardConfig = z.infer<typeof dashboardConfigSchema>;
 

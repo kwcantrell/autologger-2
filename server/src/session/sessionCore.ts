@@ -151,6 +151,15 @@ export class SessionCore {
         created_at_utc TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_sentiment_ordinal ON session_transcript_sentiment(ordinal);
+      CREATE TABLE IF NOT EXISTS session_dashboards (
+        id TEXT PRIMARY KEY,
+        config_json TEXT NOT NULL,
+        created_by TEXT,
+        created_by_turn_id TEXT,
+        created_at_utc TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dashboards_created ON session_dashboards(created_at_utc);
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       INSERT OR IGNORE INTO meta (key, value) VALUES ('events_stream_revision', '0');
     `);

@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { systemClock } from '../clock';
 import type { Clock } from '../clock';
 import { AudioStore } from './audioStore';
+import { DashboardStore } from './dashboardStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import { SessionCore } from './sessionCore';
@@ -33,6 +34,8 @@ export type { SessionProjection, TransportState } from './sessionCore';
 export type { AudioSegmentMeta } from './audioStore';
 export type { TranscriptWord } from './transcriptStore';
 export type { Topic } from './topicStore';
+export type { StoredDashboard } from './dashboardStore';
+export { DashboardBoundsError, DashboardValidationError } from './dashboardStore';
 
 interface HubSocket extends AttachedSocket {
   raw: { send(data: string): void };
@@ -60,6 +63,7 @@ export class SessionHub {
   private lease: LeaseStore;
   private transcript: TranscriptStore;
   private topics: TopicStore;
+  private dashboards: DashboardStore;
   private socketSet = new Set<HubSocket>();
   // ReturnType<> (not NodeJS.Timeout): correct under any ambient setTimeout typing.
   private alarmTimer: ReturnType<typeof setTimeout> | null = null;
@@ -88,6 +92,7 @@ export class SessionHub {
     this.lease = new LeaseStore(this.core);
     this.transcript = new TranscriptStore(this.core);
     this.topics = new TopicStore(this.core);
+    this.dashboards = new DashboardStore(this.core);
     // A lease that went stale while the process was down: clean it up now and
     // re-arm the timer if it is still live (spec: expireIfStale on open).
     this.inTxn(() => this.lease.expireIfStale());
@@ -288,6 +293,26 @@ export class SessionHub {
   }
   deleteTopic(topicId: string) {
     return this.inTxn(() => this.topics.deleteTopic(topicId));
+  }
+
+  // --- dashboard delegates (ai-v2-dashboards task 5.1/5.2, design D5) ---
+  /** Synchronous read — never wrapped in `inTxn` (matches listTopics/
+   * listTranscriptWords: reads don't need transactional isolation here). */
+  getDashboard(id: string) {
+    return this.dashboards.getDashboard(id);
+  }
+  listDashboards() {
+    return this.dashboards.listDashboards();
+  }
+  /** Whole-config validated + bounds-checked (design D5a/D5b) inside the
+   * transaction — throws DashboardValidationError/DashboardBoundsError,
+   * which the router maps to 422; nothing is written on a throw
+   * (better-sqlite3's `db.transaction()` rolls back on an exception). */
+  saveDashboard(input: Parameters<DashboardStore['saveDashboard']>[0]) {
+    return this.inTxn(() => this.dashboards.saveDashboard(input));
+  }
+  deleteDashboard(id: string) {
+    return this.inTxn(() => this.dashboards.deleteDashboard(id));
   }
 }
 
