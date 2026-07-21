@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
@@ -138,6 +139,31 @@ function getDefaultFps(profile: ProfilePayload, studioId: string): number {
   return typeof s.default_frame_rate === 'number' ? s.default_frame_rate : 24;
 }
 
+// Which show to select for a studio: the profile's actually-active show when the studio in
+// question IS the profile's active studio, else that studio's first show. Shared by the init
+// effect and handleStudioChange so re-selecting the originally-active studio reproduces the
+// exact initial selection (D11: view-only selection round-tripping back must not read dirty).
+function pickShowIdForStudio(profile: ProfilePayload, studioId: string): string {
+  const showsForStudio = profile.shows.filter((s) => s.studio_id === studioId);
+  const isActiveStudio = studioId === (profile.active_studio_id ?? profile.studios[0]?.id ?? '');
+  const preferredShow = isActiveStudio
+    ? (showsForStudio.find((s) => s.id === profile.active_show_id) ?? showsForStudio[0])
+    : showsForStudio[0];
+  return preferredShow?.id ?? '';
+}
+
+// Shape compared to derive dirtiness (D11: DERIVED, not hand-armed — a forgotten setDirty
+// call at some future callsite fails in the dangerous direction, so dirtiness is instead
+// computed from the initialized snapshot vs. current form state on every render).
+interface FormSnapshot {
+  activeStudioId: string;
+  activeShowId: string;
+  defaultFps: number;
+  showDrafts: Record<string, ShowDraft>;
+  givenName: string;
+  familyName: string;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
@@ -155,6 +181,14 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   const [familyName, setFamilyName] = useState('');
 
   const [initialized, setInitialized] = useState(false);
+  // The initialized snapshot dirtiness is derived against (D11). `null` until the init effect
+  // below runs; a `null` snapshot always reads clean regardless of form state.
+  const [initialSnapshot, setInitialSnapshot] = useState<FormSnapshot | null>(null);
+
+  // ui-refresh: unsaved-changes tracking. Save is a no-op until something changed, and Close
+  // warns before discarding edits — the old header offered Save + Close with no hint which
+  // edits were already committed.
+  const { confirm, confirmElement } = useConfirm();
 
   // Themed replacement for the window.prompt Add-Show flow (ui-refresh, D2).
   const [addShowOpen, setAddShowOpen] = useState(false);
@@ -167,25 +201,38 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   useEffect(() => {
     if (isOpen) {
       setInitialized(false);
+      setInitialSnapshot(null);
       setActiveTab('general');
     }
   }, [isOpen]);
 
-  // Initialise form once when profile first loads (or after reset above)
+  // Initialise form once when profile first loads (or after reset above), and record the
+  // snapshot dirtiness is compared against.
   useEffect(() => {
     if (!profile || initialized) return;
     const sid = profile.active_studio_id ?? profile.studios[0]?.id ?? '';
+    const fps = getDefaultFps(profile, sid);
+    const drafts = initDraftsForStudio(profile.shows, sid);
+    const showId = pickShowIdForStudio(profile, sid);
+    const given = profile.auth.user?.given_name ?? '';
+    const family = profile.auth.user?.family_name ?? '';
+
     setActiveStudioId(sid);
-    setDefaultFps(getDefaultFps(profile, sid));
-    setShowDrafts(initDraftsForStudio(profile.shows, sid));
-    const showsForStudio = profile.shows.filter((s) => s.studio_id === sid);
-    const preferredShow =
-      showsForStudio.find((s) => s.id === profile.active_show_id) ?? showsForStudio[0];
-    setActiveShowId(preferredShow?.id ?? '');
+    setDefaultFps(fps);
+    setShowDrafts(drafts);
+    setActiveShowId(showId);
     if (profile.auth.user) {
-      setGivenName(profile.auth.user.given_name ?? '');
-      setFamilyName(profile.auth.user.family_name ?? '');
+      setGivenName(given);
+      setFamilyName(family);
     }
+    setInitialSnapshot({
+      activeStudioId: sid,
+      activeShowId: showId,
+      defaultFps: fps,
+      showDrafts: drafts,
+      givenName: given,
+      familyName: family,
+    });
     setInitialized(true);
   }, [profile, initialized]);
 
@@ -193,15 +240,45 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     if (!profile) return;
     setActiveStudioId(studioId);
     setDefaultFps(getDefaultFps(profile, studioId));
-    const drafts = initDraftsForStudio(profile.shows, studioId);
-    setShowDrafts(drafts);
-    const showsForStudio = profile.shows.filter((s) => s.studio_id === studioId);
-    setActiveShowId(showsForStudio[0]?.id ?? '');
+    setShowDrafts(initDraftsForStudio(profile.shows, studioId));
+    setActiveShowId(pickShowIdForStudio(profile, studioId));
   }
 
   const showsForStudio = (profile?.shows ?? []).filter((s) => s.studio_id === activeStudioId);
   const currentDraft = activeShowId ? showDrafts[activeShowId] : undefined;
   const otherShows = showsForStudio.filter((s) => s.id !== activeShowId);
+
+  // Derived dirtiness (D11, panel-revised — the spike hand-armed a per-callsite `dirty` flag;
+  // that fails in the dangerous direction if a future edit path forgets to arm it, both
+  // bricking Save and skipping the discard guard). Deep-compare against the initialized
+  // snapshot instead; JSON.stringify of this stable-shaped object is an acceptable deep
+  // comparison since both sides are built by the same functions from the same source data.
+  const dirty = useMemo(() => {
+    if (!initialSnapshot) return false;
+    const current: FormSnapshot = {
+      activeStudioId,
+      activeShowId,
+      defaultFps,
+      showDrafts,
+      givenName,
+      familyName,
+    };
+    return JSON.stringify(current) !== JSON.stringify(initialSnapshot);
+  }, [initialSnapshot, activeStudioId, activeShowId, defaultFps, showDrafts, givenName, familyName]);
+
+  async function handleRequestClose() {
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Discard changes',
+        message: 'You have unsaved settings changes. Discard them?',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    onClose();
+  }
 
   function updateShowDraft(patch: Partial<ShowDraft>) {
     if (!activeShowId) return;
@@ -263,6 +340,16 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
 
     try {
       await mutation.mutateAsync(body);
+      // Rebaseline: every field just submitted is now the saved state, so re-snapshot from
+      // current form state to return Save to disabled/"Saved" (D11).
+      setInitialSnapshot({
+        activeStudioId,
+        activeShowId,
+        defaultFps,
+        showDrafts,
+        givenName,
+        familyName,
+      });
       showToast('Saved.');
       if (activeStudioId !== prevStudioId) {
         onCloseSession();
@@ -287,6 +374,13 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       const draft = showToShowDraft(show as Show);
       setShowDrafts((prev) => ({ ...prev, [show.id]: draft }));
       setActiveShowId(show.id);
+      // The new show is already persisted by this mutation (not by Save), so patch it into
+      // the snapshot too — otherwise it would read as an unsaved edit even though there's
+      // nothing to save. Only this key is patched: any other genuinely-unsaved draft edits
+      // stay dirty against their original snapshot values.
+      setInitialSnapshot((prev) =>
+        prev ? { ...prev, showDrafts: { ...prev.showDrafts, [show.id]: draft } } : prev,
+      );
       setAddShowOpen(false);
       setNewShowName('');
     } catch (err) {
@@ -320,7 +414,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   return (
     <Dialog
       open={isOpen}
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => {
+        if (!o) void handleRequestClose();
+      }}
       // Desktop full-screen override. `md:!` reclaims the top/left/transform/size/padding/flex
       // that Dialog's base utilities now own (the deleted .settings-dialog rule used to supply
       // them); md-scoped so the ≤767px bottom-sheet is untouched.
@@ -379,13 +475,21 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             type="button"
             className={clsx('btn primary', BTN_PRIMARY_SKY)}
             id="profile-save"
-            disabled={mutation.isPending}
+            // ui-refresh: disabled until something changed, so "is this saved?" is answerable
+            // from the header at a glance (D11).
+            disabled={mutation.isPending || !dirty}
+            title={dirty ? undefined : 'No unsaved changes'}
             onClick={handleSave}
           >
-            {mutation.isPending ? 'Saving…' : 'Save'}
+            {mutation.isPending ? 'Saving…' : dirty ? 'Save' : 'Saved'}
           </button>
           {/* .toolbarClose had no rule of its own (its only rule was purged in Task 2). */}
-          <button type="button" className="btn" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="btn"
+            aria-label="Close"
+            onClick={() => void handleRequestClose()}
+          >
             Close
           </button>
         </div>
@@ -614,11 +718,14 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
         >
           {currentDraft ? (
             <>
-              {/* .eventsIntro: margin-top 0 over the .modal-hint base. */}
+              {/* .eventsIntro: margin-top 0 over the .modal-hint base.
+                  ui-refresh: the old copy claimed slot colors and drag order "save
+                  automatically" — they don't; every edit in this tab is a draft applied by
+                  Save (updateShowDraft). Copy now matches the actual save model (D11). */}
               <p className="modal-hint mt-0">
-                With the Custom palette preset, slot colors save automatically. Update button colors
-                maps each event&rsquo;s color to the nearest slot color without changing the
-                palette. Drag rows to set session order (auto-saves).
+                Update button colors maps each event&rsquo;s color to the nearest slot color
+                without changing the palette. Drag rows to set session order. Changes here apply
+                when you click <strong>Save</strong>.
               </p>
               <EventButtonsTable
                 buttons={currentDraft.categories}
@@ -671,6 +778,8 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           <div id="v6-settings-perf-debug-mount" className="min-w-0" />
         </div>
       </section>
+
+      {confirmElement}
 
       {/* Themed Add-Show dialog (ui-refresh: was window.prompt). */}
       <Dialog

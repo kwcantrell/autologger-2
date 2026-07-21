@@ -129,6 +129,33 @@ const profileWithShow = {
   shows: [showWithCategories],
 } as unknown as ProfilePayload;
 
+// --- Derived-dirty fixtures (ui-refresh D11) ---
+//
+// Two studios (so a studio round-trip is observable) with a show on studio-1 (so a draft
+// field is editable) and a logged-in user (so an account field is editable).
+const secondShow = {
+  ...showWithCategories,
+  id: 'show-2',
+  name: 'Evening News',
+  show_code: 'EN',
+};
+
+const profileFull = {
+  ...profile,
+  active_show_id: 'show-1',
+  shows: [showWithCategories, secondShow],
+  auth: {
+    logged_in: true,
+    oauth_configured: true,
+    user: {
+      email: 'ada@example.com',
+      given_name: 'Ada',
+      family_name: 'Lovelace',
+      teams: [],
+    },
+  },
+} as unknown as ProfilePayload;
+
 let mutateAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -178,6 +205,8 @@ describe('HomeSettingsModal studio-switch save branch', () => {
     const onCloseSession = vi.fn();
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={onCloseSession} />);
 
+    // Save starts disabled (D11: derived dirty, nothing edited yet); switching Team is
+    // itself the edit that arms it.
     fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -187,13 +216,82 @@ describe('HomeSettingsModal studio-switch save branch', () => {
   });
 
   it('does not call onCloseSession when the active studio is unchanged', async () => {
+    // ui-refresh D11: Save is disabled until form state diverges from the initialized
+    // snapshot, and re-selecting the originally-active studio round-trips back to that
+    // snapshot (view-only selection must not read dirty) — so arming Save here without
+    // touching the active studio requires a real fixture with an editable show/account field.
+    mockedUseProfile.mockReturnValue({
+      data: profileFull,
+    } as unknown as ReturnType<typeof useProfile>);
     const onCloseSession = vi.fn();
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={onCloseSession} />);
 
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ active_studio_id: 'studio-1' });
     expect(onCloseSession).not.toHaveBeenCalled();
+  });
+});
+
+// --- Derived dirty tracking (ui-refresh D11) ---
+//
+// Save is disabled + labeled "Saved" until form state diverges from the initialized
+// snapshot (comparing current vs. init, NOT a hand-armed per-callsite flag). A round-trip
+// back to the initial value (studio/show re-selection) must read clean again.
+describe('HomeSettingsModal derived dirty tracking', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileFull,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('starts with Save disabled and labeled "Saved"', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    const save = screen.getByRole('button', { name: 'Saved' });
+    expect(save.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('editing a draft field (show name) enables Save; a successful save returns it to Saved', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true),
+    );
+  });
+
+  it('editing an account field (first name) enables Save', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('re-selecting the originally-active studio round-trips back to clean (view-only selection)', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-1' } });
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('re-selecting the originally-active show round-trips back to clean (view-only selection)', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Show to edit'), { target: { value: 'show-2' } });
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('Show to edit'), { target: { value: 'show-1' } });
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
   });
 });
 
@@ -220,6 +318,9 @@ describe('HomeSettingsModal category round-trip', () => {
   it('posts categories whose entries carry name (task 1.1b)', async () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
+    // ui-refresh D11: Save is disabled until something changed — arm it with a draft edit
+    // that doesn't touch the categories under test.
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
@@ -241,6 +342,7 @@ describe('HomeSettingsModal category round-trip', () => {
   it('invalidates the show-categories query on save (D4)', async () => {
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
