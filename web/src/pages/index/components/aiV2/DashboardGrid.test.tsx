@@ -126,3 +126,41 @@ describe('DashboardGrid — highlight_speaker interaction', () => {
     expect(screen.getByTestId('aiv2-widget-transcript_excerpt')).toBeTruthy();
   });
 });
+
+// --- ai-v2-dashboards task 5.3: render-side guard against an absurd stored
+// widget count (spec "Dashboard persistence"). The server's write-time
+// validation already caps widgets-per-dashboard, but this component has no
+// way to know a config it's handed actually passed through that path — this
+// proves a maliciously/accidentally oversized `widgets` array does not
+// translate into an unbounded number of DOM nodes. ---
+describe('DashboardGrid — render-side guard on an absurd widget count (task 5.3)', () => {
+  it('caps the number of rendered widgets rather than mapping an unbounded array', () => {
+    const ABSURD_COUNT = 5000;
+    const widgets = Array.from({ length: ABSURD_COUNT }, (_, i) =>
+      talkTimeWidget(`w${i}`, 0, 0, 1, 1),
+    );
+    const widgetData = Object.fromEntries(widgets.map((w) => [w.id, talkTimeData]));
+
+    const start = Date.now();
+    renderStrict(<DashboardGrid widgets={widgets} widgetData={widgetData} />);
+    const elapsedMs = Date.now() - start;
+
+    const rendered = screen.getAllByTestId('aiv2-widget-talk_time_by_speaker');
+    expect(rendered.length).toBeLessThan(ABSURD_COUNT);
+    expect(rendered.length).toBeGreaterThan(0);
+    // The gate-intent assertion: this must render in test-suite time, not
+    // hang — a genuinely unbounded `.map` over 5000 widgets would be slow
+    // enough to make this assertion meaningful, not just decorative.
+    expect(elapsedMs).toBeLessThan(5000);
+
+    expect(screen.getByTestId('aiv2-dashboard-truncated').textContent).toContain(
+      String(ABSURD_COUNT),
+    );
+  });
+
+  it('does not show the truncation notice for a normal, in-bounds widget count', () => {
+    const widgets = [talkTimeWidget('w1', 0, 0, 6, 2)];
+    renderStrict(<DashboardGrid widgets={widgets} widgetData={{ w1: talkTimeData }} />);
+    expect(screen.queryByTestId('aiv2-dashboard-truncated')).toBeNull();
+  });
+});

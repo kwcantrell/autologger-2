@@ -33,7 +33,25 @@ interface Props {
   widgetData: Record<string, CatalogWidgetData>;
 }
 
+/** Render-side backstop (ai-v2-dashboards task 5.3, spec "Dashboard
+ * persistence"). The server's write-time validation
+ * (`validateDashboardConfig`, server/src/aiV2/catalog.ts) already caps a
+ * dashboard at `MAX_WIDGETS_PER_DASHBOARD` (64) widgets, but this component
+ * has no way to KNOW a config it's handed actually passed through that path
+ * — a stored row edited directly on disk, an older row from before a bound
+ * tightened, or a future second write path are all reachable without going
+ * through the route. Mapping an unbounded `widgets` array straight into DOM
+ * nodes would let any of those hang the browser; this cap makes that
+ * impossible regardless of how the array got this large, independent of
+ * whatever the server currently enforces. Mirrors
+ * `MAX_WIDGETS_PER_DASHBOARD` in server/src/aiV2/catalog.ts (kept as a
+ * literal, not an import — web never imports from server/src, see
+ * widgetTypes.ts's module header on the two staying in sync by hand). */
+const MAX_RENDERED_WIDGETS = 64;
+
 export function DashboardGrid({ widgets, interactions = [], widgetData }: Props) {
+  const truncated = widgets.length > MAX_RENDERED_WIDGETS;
+  const renderedWidgets = truncated ? widgets.slice(0, MAX_RENDERED_WIDGETS) : widgets;
   // Shared `highlight_speaker` state: any configured source widget setting it
   // affects every configured target widget (deliberately shared/simple — see
   // module header). No dashboard in v1 is expected to need per-interaction
@@ -48,54 +66,65 @@ export function DashboardGrid({ widgets, interactions = [], widgetData }: Props)
   );
 
   return (
-    <ul
-      className="grid list-none gap-3.5 p-0 m-0"
-      style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gridAutoRows: '5.4rem' }}
-      aria-label="Dashboard widgets"
-      data-testid="aiv2-dashboard-grid"
-    >
-      {widgets.map((widget) => {
-        // Defensive: reject/ignore an unrecognized type. Can't occur when
-        // driven by a config that already passed `validateDashboardConfig`
-        // server-side, but the grid never assumes its input was validated.
-        if (!KNOWN_WIDGET_TYPES.has(widget.type)) {
-          console.warn(`DashboardGrid: skipping unknown widget type "${widget.type}"`);
-          return null;
-        }
+    <>
+      {truncated ? (
+        <p
+          role="status"
+          data-testid="aiv2-dashboard-truncated"
+          className="m-0 shrink-0 rounded-v5-md border border-dashed border-v5-border-strong px-3 py-2 text-[0.8rem] text-v5-soft"
+        >
+          Showing the first {MAX_RENDERED_WIDGETS} of {widgets.length} widgets in this dashboard.
+        </p>
+      ) : null}
+      <ul
+        className="grid list-none gap-3.5 p-0 m-0"
+        style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gridAutoRows: '5.4rem' }}
+        aria-label="Dashboard widgets"
+        data-testid="aiv2-dashboard-grid"
+      >
+        {renderedWidgets.map((widget) => {
+          // Defensive: reject/ignore an unrecognized type. Can't occur when
+          // driven by a config that already passed `validateDashboardConfig`
+          // server-side, but the grid never assumes its input was validated.
+          if (!KNOWN_WIDGET_TYPES.has(widget.type)) {
+            console.warn(`DashboardGrid: skipping unknown widget type "${widget.type}"`);
+            return null;
+          }
 
-        const data = widgetData[widget.id];
-        const style = {
-          gridColumn: `${widget.x + 1} / span ${widget.w}`,
-          gridRow: `${widget.y + 1} / span ${widget.h}`,
-        };
+          const data = widgetData[widget.id];
+          const style = {
+            gridColumn: `${widget.x + 1} / span ${widget.w}`,
+            gridRow: `${widget.y + 1} / span ${widget.h}`,
+          };
 
-        if (!data || data.widgetType !== widget.type) {
+          if (!data || data.widgetType !== widget.type) {
+            return (
+              <li
+                key={widget.id}
+                style={style}
+                className="flex items-center justify-center rounded-v5-md border border-dashed border-v5-border-strong p-3 text-[0.8rem] text-v5-soft"
+                data-testid="aiv2-widget-no-data"
+              >
+                No data provided for this widget.
+              </li>
+            );
+          }
+
+          const wired = wireInteractions(data, widget.id, {
+            highlightSources,
+            highlightTargets,
+            highlightedSpeaker,
+            setHighlightedSpeaker,
+          });
+
           return (
-            <li
-              key={widget.id}
-              style={style}
-              className="flex items-center justify-center rounded-v5-md border border-dashed border-v5-border-strong p-3 text-[0.8rem] text-v5-soft"
-              data-testid="aiv2-widget-no-data"
-            >
-              No data provided for this widget.
+            <li key={widget.id} style={style} className="min-h-0 min-w-0">
+              <CatalogWidget title={widget.title} data={wired} />
             </li>
           );
-        }
-
-        const wired = wireInteractions(data, widget.id, {
-          highlightSources,
-          highlightTargets,
-          highlightedSpeaker,
-          setHighlightedSpeaker,
-        });
-
-        return (
-          <li key={widget.id} style={style} className="min-h-0 min-w-0">
-            <CatalogWidget title={widget.title} data={wired} />
-          </li>
-        );
-      })}
-    </ul>
+        })}
+      </ul>
+    </>
   );
 }
 
