@@ -255,7 +255,7 @@ export function AiChat({
           data-testid="ai-chat-not-configured"
         >
           <p className="m-0 text-sm">
-            AI chat isn't configured on this deployment. Ask an operator to set{' '}
+            Assistant isn't configured on this deployment. Ask an operator to set{' '}
             <code>CLAUDE_CLI_PATH</code> to the <code>claude</code> CLI to enable it.
           </p>
         </div>

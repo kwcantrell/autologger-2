@@ -116,7 +116,7 @@
 - [x] 7.3 NewSessionModal: progressive disclosure (YouTube + timecode-settings sections with
       value summaries), Bonus as a true `aria-pressed` toggle; TeamsRoute anonymous-mode
       notice names `REQUIRE_LOGIN=1`; FEED_GLASS_BTN `max-md:px-4`.
-- [ ] 7.4 Finish the vocabulary rename in copy (panel finding): AiV2Design's "AI v2 isn't
+- [x] 7.4 Finish the vocabulary rename in copy (panel finding): AiV2Design's "AI v2 isn't
       configured…" and AiChat's not-configured strings updated to the Dashboards/Assistant
       vocabulary; README's session-workspace tab sentence updated (docs line in the same
       change).

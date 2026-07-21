@@ -154,7 +154,7 @@ ephemerality, the same as any local `claude` usage.
 
 `POST /api/sessions/:sessionId/ai/v2/design` (+ `.../ai/v2/answer` for its question round trip,
 + `GET|PUT|DELETE .../ai/v2/dashboard` for persistence) is a second, independent AI feature: an
-AI v2 tab where the operator designs a dashboard conversationally rather than assembling one by
+Dashboards tab where the operator designs a dashboard conversationally rather than assembling one by
 hand. A design turn proposes a **starting** dashboard — the agent reads the session's aggregates,
 asks the user catalog-widget questions (with real previews) through the same interactive-question
 mechanism as the round trip below, then commits its proposal by calling an in-process

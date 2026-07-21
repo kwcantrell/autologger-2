@@ -467,7 +467,7 @@ export function AiV2Design({
           data-testid="aiv2-design-not-configured"
         >
           <p className="m-0 text-sm">
-            AI v2 isn't configured on this deployment. Ask an operator to set{' '}
+            Dashboard designer isn't configured on this deployment. Ask an operator to set{' '}
             <code>AI_V2_ENABLED=1</code> and an <code>AI_V2_API_KEY</code> (or run loopback with the
             operator login) to enable it.
           </p>
