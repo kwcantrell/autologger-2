@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import { SessionWorkspace } from './SessionWorkspace';
@@ -425,6 +426,105 @@ describe('SessionWorkspace AI v2 tab', () => {
       deliverChunk('event: delta\ndata: {"text":" More."}\n\n');
       await waitFor(() => expect(screen.getByText('Built an overview. More.')).toBeTruthy());
       expect(capturedSignal?.aborted).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // Whole-branch audit fix wave (Fix 1): `useSession`'s `staleTime: Infinity`
+  // means navigating between two already-cached sessions updates this
+  // `sessionId` prop WITHOUT unmounting `SessionWorkspace` itself (unlike
+  // the placeholder<->grid swap tests above, which cover mount/unmount on
+  // session presence, not identity). Before the fix, `<AiV2Panel
+  // sessionId={sessionId} />` had no `key`, so AiV2Panel's own hoisted state
+  // (messages/editingDashboard/proposedDashboard/proposedDashboardTurnId/
+  // pendingQuestion) survived a session-to-session `rerender` untouched — a
+  // not-yet-Kept proposal from session A could be Kept onto session B. The
+  // fix adds `key={sessionId}` at the mount site so a SESSION change (not a
+  // tab change — the test above already proves tab switches never remount)
+  // forces a fresh AiV2Panel instance.
+  it('navigating from session A (with a pending, un-kept proposal) to session B shows a clean AiV2 panel', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/ai/v2/dashboard')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ config: null }),
+          } as unknown as Response);
+        }
+        if (url.includes('/ai/v2/design')) {
+          const encoder = new TextEncoder();
+          let delivered = false;
+          return Promise.resolve({
+            status: 200,
+            ok: true,
+            body: {
+              getReader() {
+                return {
+                  read: async () => {
+                    if (delivered) return { done: true, value: undefined };
+                    delivered = true;
+                    return {
+                      done: false,
+                      value: encoder.encode(
+                        'event: dashboard\ndata: {"config":{"widgets":[{"id":"w1","type":"session_duration","title":"X","x":0,"y":0,"w":4,"h":3}],"interactions":[]},"turnId":"turn-a"}\n\n',
+                      ),
+                    };
+                  },
+                  cancel: async () => {},
+                };
+              },
+            },
+            json: async () => ({}),
+          } as unknown as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        } as unknown as Response);
+      }),
+    );
+    try {
+      const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
+      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+
+      const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
+      fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
+      fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+      // Session A: proposal offered, not yet kept; the user's own message is
+      // visible in the (hoisted) conversation.
+      await screen.findByTestId('aiv2-dashboard-proposal-banner');
+      expect(screen.getByText('Give me an overview')).toBeTruthy();
+
+      // Navigate to a different, already-cached session — same top-level
+      // `SessionWorkspace` instance (feedTab state survives), only the
+      // `sessionId` prop changes, exactly as a real nav-without-remount would.
+      // Re-wrapped in the SAME `<StrictMode>` the initial `renderStrict` used
+      // (rather than a bare `rerender(<SessionWorkspace .../>)`): the root
+      // element's TYPE must stay identical across the two `rerender` calls,
+      // or React treats it as a full tree replacement and remounts
+      // `SessionWorkspace` itself — which would make this test pass
+      // regardless of whether `AiV2Panel`'s own `key={sessionId}` fix is
+      // present, since everything below it would remount either way.
+      rerender(
+        <StrictMode>
+          <SessionWorkspace sessionId="sess-b" />
+        </StrictMode>,
+      );
+
+      // Clean slate for session B: no leaked proposal banner, no leaked
+      // conversation message; session B's own (null) saved dashboard loads
+      // fresh, showing the empty-state entry points.
+      await waitFor(() =>
+        expect(screen.queryByTestId('aiv2-dashboard-proposal-banner')).toBeNull(),
+      );
+      expect(screen.queryByText('Give me an overview')).toBeNull();
+      expect(await screen.findByTestId('aiv2-start-blank')).toBeTruthy();
     } finally {
       vi.unstubAllGlobals();
     }

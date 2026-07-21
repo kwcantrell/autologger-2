@@ -481,11 +481,14 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   // SyntaxError), same as the design/answer routes.
   const body = await c.req.json();
   // Optional provenance for a write that originates from a design turn's
-  // committed proposal (task 5.4/5.5, not yet wired — the port's
-  // `save(sessionId, config)` signature carries no turnId today, so every
-  // CURRENT caller omits this and the write records createdByTurnId: null).
-  // Carried out-of-band (query param, not a body field) so this route never
-  // needs a second config-shaped schema alongside `validateDashboardConfig`.
+  // committed proposal (task 5.4/5.5, wired: the port's `save(sessionId,
+  // config, turnId?)` carries it, `AiV2Panel.keepProposedDashboard` passes
+  // the proposal's originating turnId, and the `dashboard` SSE event is the
+  // source of that turnId). A direct-manipulation save (`handleDashboardChange`)
+  // or a "Start blank" save never has one, so those calls omit this and the
+  // write records createdByTurnId: null. Carried out-of-band (query param,
+  // not a body field) so this route never needs a second config-shaped
+  // schema alongside `validateDashboardConfig`.
   const turnIdRaw = c.req.query('turnId');
   const turnId = turnIdRaw && turnIdRaw.trim() ? turnIdRaw.trim().slice(0, 64) : null;
 

@@ -170,9 +170,12 @@ describe('useAiV2WidgetData — real fixtures render real data', () => {
       wrapper: wrapperFor(makeClient()),
     });
 
-    // Every widget has AN entry immediately (memoized over `[] | undefined`
-    // defaults before the queries settle) — wait for the queries to actually
-    // resolve by polling for the real, settled duration value specifically.
+    // Whole-branch audit fix wave (Fix 5): a widget's entry is now WITHHELD
+    // while its underlying query is still loading (see the dedicated
+    // "loading vs. empty" describe block below) rather than appearing
+    // immediately off a `[] | undefined` default — wait for the queries to
+    // actually resolve by polling for the real, settled duration value
+    // specifically.
     await waitFor(() =>
       expect(result.current['w-duration']).toEqual({
         widgetType: 'session_duration',
@@ -312,7 +315,112 @@ describe('useAiV2WidgetData — degraded/absent data never renders as zero', () 
       eventDensity: { available: false, eventsPerMinute: null },
     });
   });
+});
 
+// Whole-branch audit fix wave (Fix 5): before this fix, `words ?? []`/
+// `topics ?? []`/`events ?? []` coalesced "the fetch hasn't returned yet"
+// with "the fetch returned a genuinely empty result" — so a widget like
+// `topic_timeline`/`event_count_by_category` briefly rendered its settled
+// "No topics/events recorded for this session." text during the loading
+// window, misleadingly asserting the session had been measured and found
+// empty. These tests use a controllable (never-auto-resolving) `apiFetch`
+// promise to hold a query in its loading state on purpose, so the
+// still-loading and now-settled assertions are checking two genuinely
+// different points in time, not a coincidentally-fast resolution.
+describe('useAiV2WidgetData — loading is distinguished from a genuinely empty result', () => {
+  it("withholds topic_timeline's entry while topics are still loading, then supplies the real (empty) result once settled", async () => {
+    let resolveTopics: ((value: { topics: SessionTopic[] }) => void) | undefined;
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path.includes('transcript-words')) return Promise.resolve({ words: [] });
+      if (path.includes('topics')) {
+        return new Promise((resolve) => {
+          resolveTopics = resolve;
+        });
+      }
+      if (path.includes('show-categories')) {
+        return Promise.resolve({ categories: [], show_name: 'Show', show_code: 'SH' });
+      }
+      if (path.includes('events')) {
+        return Promise.resolve({
+          events: [],
+          total: 0,
+          logged_event_count: 0,
+          offset: 0,
+          limit: 2000,
+        });
+      }
+      return Promise.reject(new Error(`unexpected apiFetch path: ${path}`));
+    });
+
+    const { result } = renderHook(
+      () => useAiV2WidgetData('sess-1', [ALL_WIDGETS[5]]), // topic_timeline only
+      { wrapper: wrapperFor(makeClient()) },
+    );
+
+    // Still loading: NO entry at all — never the settled "no topics" shape
+    // synthesized off the `topics ?? []` default. `DashboardGrid`'s existing
+    // "no data provided" fallback covers the gap in the meantime (not a new
+    // zeros-as-data path — this widget simply has no entry yet).
+    expect(result.current['w-topics']).toBeUndefined();
+
+    // The fetch now settles — genuinely empty (no topics recorded).
+    resolveTopics?.({ topics: [] });
+
+    await waitFor(() =>
+      expect(result.current['w-topics']).toEqual({
+        widgetType: 'topic_timeline',
+        topicTimeline: { entries: [] },
+      }),
+    );
+  });
+
+  it("withholds session_duration's entry while words are still loading, then supplies the real (unavailable) result once settled", async () => {
+    let resolveWords: ((value: { words: TranscriptWord[] }) => void) | undefined;
+    mockedApiFetch.mockImplementation((path: string) => {
+      if (path.includes('transcript-words')) {
+        return new Promise((resolve) => {
+          resolveWords = resolve;
+        });
+      }
+      if (path.includes('topics')) return Promise.resolve({ topics: [] });
+      if (path.includes('show-categories')) {
+        return Promise.resolve({ categories: [], show_name: 'Show', show_code: 'SH' });
+      }
+      if (path.includes('events')) {
+        return Promise.resolve({
+          events: [],
+          total: 0,
+          logged_event_count: 0,
+          offset: 0,
+          limit: 2000,
+        });
+      }
+      return Promise.reject(new Error(`unexpected apiFetch path: ${path}`));
+    });
+
+    const { result } = renderHook(
+      () => useAiV2WidgetData('sess-1', [ALL_WIDGETS[0]]), // session_duration only
+      { wrapper: wrapperFor(makeClient()) },
+    );
+
+    expect(result.current['w-duration']).toBeUndefined();
+
+    resolveWords?.({ words: [] });
+
+    await waitFor(() =>
+      expect(result.current['w-duration']).toEqual({
+        widgetType: 'session_duration',
+        sessionDuration: {
+          available: false,
+          reason: 'This session has no transcript words yet.',
+          durationSec: null,
+        },
+      }),
+    );
+  });
+});
+
+describe('useAiV2WidgetData — real fixtures render real data (degraded/absent)', () => {
   it('an empty transcript (no words at all) renders unavailable, not zeros', async () => {
     mockResponses({ words: [], topics: [], events: [], categories: [] });
 

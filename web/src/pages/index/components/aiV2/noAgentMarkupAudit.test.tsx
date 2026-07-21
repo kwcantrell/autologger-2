@@ -22,7 +22,8 @@ import { WIDGET_TYPES, type WidgetType } from './widgetTypes';
 // are structurally different from a plain string prop and are exactly the
 // kind of thing a title-only test would miss.
 
-const PAYLOAD = '<img src=x onerror="alert(1)"><a href="javascript:alert(1)">x</a>';
+const PAYLOAD =
+  '<img src=x onerror="alert(1)"><a href="javascript:alert(1)">x</a>;background:url(javascript:alert(1));width:expression(alert(1))';
 
 function assertNoInjection(container: HTMLElement) {
   // No markup-bearing element was ever created from rendered content.
@@ -35,6 +36,21 @@ function assertNoInjection(container: HTMLElement) {
     const src = el.getAttribute('src');
     if (href) expect(href.toLowerCase()).not.toContain('javascript:');
     if (src) expect(src).not.toBe(PAYLOAD);
+  }
+  // Whole-branch audit fix wave (Fix 4): the inline-`style` sink — e.g.
+  // `TalkTimeBySpeakerWidget`/`TranscriptExcerptWidget` build a `style`
+  // object from a free-text field (`speaker`) via `speakerColorVar`. Today
+  // that always resolves to a bounded `var(--viz-series-N)` slot (never the
+  // raw string), but nothing structurally prevented a future widget from
+  // interpolating a free-text value straight into `style` — assert no
+  // element's `style` attribute ever carries the payload itself, a
+  // `javascript:` URI (CSS `url(javascript:...)`), or a CSS-expression
+  // injection (`expression(...)`).
+  for (const el of Array.from(container.querySelectorAll('[style]'))) {
+    const style = el.getAttribute('style') ?? '';
+    expect(style).not.toContain(PAYLOAD);
+    expect(style.toLowerCase()).not.toContain('javascript:');
+    expect(style.toLowerCase()).not.toContain('expression(');
   }
 }
 

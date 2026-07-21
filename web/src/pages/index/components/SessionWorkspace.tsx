@@ -532,7 +532,18 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                   role="tabpanel"
                   aria-label="AI v2"
                 >
-                  <AiV2Panel sessionId={sessionId} />
+                  {/* `key={sessionId}` (whole-branch audit fix wave, Fix 1):
+                      forces a remount on SESSION change only — orthogonal to
+                      the tab-mount discipline above, which never remounts on
+                      a tab switch. Without it, `useSession`'s
+                      `staleTime: Infinity` lets navigating between two
+                      already-cached sessions update this `sessionId` prop
+                      without remounting, leaking `editingDashboard`/
+                      `proposedDashboard`/`proposedDashboardTurnId`/
+                      `messages`/`pendingQuestion` from the prior session
+                      (a not-yet-Kept proposal from session A could be Kept
+                      onto session B). */}
+                  <AiV2Panel key={sessionId} sessionId={sessionId} />
                 </div>
               </div>
             )}

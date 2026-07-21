@@ -90,6 +90,20 @@ export function useAiV2WidgetData(
   const events = eventsQuery.data?.events;
   const categories = categoriesQuery.data?.categories;
 
+  // Whole-branch audit fix wave (Fix 5): "still loading" and "genuinely
+  // empty" are different facts that the old `words ?? []`/`topics ?? []`/
+  // `events ?? []` coalescing collapsed into one — during the FIRST fetch
+  // (no cached data yet) a widget would briefly render its real "No X
+  // recorded"/unavailable text, as though the session had been measured and
+  // found empty, rather than "the fetch hasn't returned yet". `isLoading`
+  // (react-query v5: no data AND actively fetching) is the honest per-source
+  // signal; once a query has EVER resolved, `isLoading` stays `false` even
+  // during a later background refetch, so an already-loaded widget's real
+  // data (including a genuinely empty result) is never withheld.
+  const wordsLoading = wordsQuery.isLoading;
+  const topicsLoading = topicsQuery.isLoading;
+  const eventsLoading = eventsQuery.isLoading;
+
   return useMemo(() => {
     const wordsSafe = words ?? [];
     const topicsSafe = topics ?? [];
@@ -110,24 +124,31 @@ export function useAiV2WidgetData(
     for (const w of widgets) {
       switch (w.type) {
         case 'session_duration':
+          if (wordsLoading) break;
           out[w.id] = { widgetType: 'session_duration', sessionDuration: duration };
           break;
         case 'talk_time_by_speaker':
+          if (wordsLoading) break;
           out[w.id] = { widgetType: 'talk_time_by_speaker', talkTimeBySpeaker: talkTime };
           break;
         case 'utterance_counts':
+          // No live fetch backs this (see module header — always `[]`), so
+          // there is no "loading" window to distinguish from "unavailable".
           out[w.id] = { widgetType: 'utterance_counts', utteranceCounts: utterance };
           break;
         case 'question_counts':
           out[w.id] = { widgetType: 'question_counts', questionCounts: utterance };
           break;
         case 'filler_counts':
+          if (wordsLoading) break;
           out[w.id] = { widgetType: 'filler_counts', fillerCounts: filler };
           break;
         case 'topic_timeline':
+          if (topicsLoading) break;
           out[w.id] = { widgetType: 'topic_timeline', topicTimeline };
           break;
         case 'event_count_by_category':
+          if (eventsLoading) break;
           out[w.id] = {
             widgetType: 'event_count_by_category',
             eventCountByCategory: eventCounts,
@@ -135,9 +156,12 @@ export function useAiV2WidgetData(
           };
           break;
         case 'event_density':
+          // Depends on both the event count AND the word-derived duration.
+          if (eventsLoading || wordsLoading) break;
           out[w.id] = { widgetType: 'event_density', eventDensity };
           break;
         case 'transcript_excerpt':
+          if (wordsLoading) break;
           out[w.id] = { widgetType: 'transcript_excerpt', transcriptExcerpt: excerpt };
           break;
         default:
@@ -149,5 +173,5 @@ export function useAiV2WidgetData(
       }
     }
     return out;
-  }, [widgets, words, topics, events, categories]);
+  }, [widgets, words, topics, events, categories, wordsLoading, topicsLoading, eventsLoading]);
 }

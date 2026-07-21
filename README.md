@@ -171,8 +171,9 @@ Gated by `AI_V2_ENABLED` (see `server/.env.example`) — unlike the AI chat's im
 `CLAUDE_CLI_PATH` gate, this is an **explicit** opt-in flag: unset/off keeps every `ai/v2` route,
 including dashboard persistence, at the endpoint's frozen `503 {detail}`.
 
-**Egress and spend disclosure.** A design turn sends the session's computed aggregates (never raw
-transcript rows) to Anthropic through the Claude Agent SDK, and is a real, billed API call. If
+**Egress and spend disclosure.** A design turn sends the session's computed aggregates, plus
+bounded transcript-word excerpts when the agent calls its `transcript_excerpt` tool (never whole
+raw transcript tables), to Anthropic through the Claude Agent SDK, and is a real, billed API call. If
 `AI_V2_API_KEY` is set, that workspace-scoped key pays for it; otherwise the turn falls back to the
 operator's interactive `claude login` session — spending the **operator's personal** subscription —
 and that fallback is permitted only on a loopback bind (`HOST=127.0.0.1`), logged loudly at
