@@ -178,9 +178,9 @@ that does not exist.
       streaming/abort state **hoisted** above the panel. Test: switching tabs mid-stream neither
       aborts the turn nor clears the conversation.
 - [x] 4.2 Question view modelled on the demo's `QuestionView`: option cards + free-text fallback.
-- [ ] 4.3 Catalog widget components — one per type — and the grid renderer driven by the layout
+- [x] 4.3 Catalog widget components — one per type — and the grid renderer driven by the layout
       DSL.
-- [ ] 4.4 Previews render through the **real** components with sample data (spec: *Previews
+- [x] 4.4 Previews render through the **real** components with sample data (spec: *Previews
       reflect the rendered result*). Test: preview and rendered widget resolve to the same
       component.
 - [ ] 4.5 Assert **no `dangerouslySetInnerHTML` exists anywhere in the repo** (spec: *No
@@ -190,7 +190,7 @@ that does not exist.
 - [ ] 4.6 Direct-manipulation editing (spec: *Dashboards are edited directly*): add, remove,
       resize, reposition, retitle — persisted without running a design turn. Test: a saved
       dashboard is modified end-to-end with no agent turn.
-- [ ] 4.7 Degraded-state rendering per widget (spec: *Data unavailability is a rendered state*):
+- [x] 4.7 Degraded-state rendering per widget (spec: *Data unavailability is a rendered state*):
       each component renders an explicit unavailable state naming the missing data. Test against a
       manually-entered transcript fixture (no timings) and an anchorless fixture — assert **no
       zeros are rendered as data**.
