@@ -22,8 +22,11 @@ import { showToast } from '../utils/toast';
 // portal-less trail can escape the fixed-height tile. Hover/focus-within tint the
 // border (unguarded → hover-always:). --v6-rail-session-tile-h is never defined
 // anywhere, so its 2.875rem fallback is load-bearing → inlined literally.
+// ui-refresh: tile grew 2.875rem → 3.15rem so the title/meta type could step up
+// to legible sizes (the 0.55rem meta line measured 8.8px — unreadable in the
+// dim rooms this product targets).
 const RAIL_SESSION =
-  'group relative box-border flex h-[2.875rem] max-h-[2.875rem] min-h-[2.875rem] w-full max-w-full flex-shrink-0 cursor-pointer flex-col items-stretch justify-center overflow-hidden rounded-v5-md border border-v5-border bg-[rgba(255,255,255,0.03)] px-[0.55rem] py-[0.3rem] text-left font-[inherit] text-[inherit] [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] focus-within:bg-[rgba(255,255,255,0.05)] data-menu-open:z-10 data-menu-open:overflow-visible';
+  'group relative box-border flex h-[3.15rem] max-h-[3.15rem] min-h-[3.15rem] w-full max-w-full flex-shrink-0 cursor-pointer flex-col items-stretch justify-center overflow-hidden rounded-v5-md border border-v5-border bg-[rgba(255,255,255,0.03)] px-[0.55rem] py-[0.3rem] text-left font-[inherit] text-[inherit] [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_28%,var(--v5-border))] focus-within:bg-[rgba(255,255,255,0.05)] data-menu-open:z-10 data-menu-open:overflow-visible';
 
 // Active-session variant: replaces the base border + background (recipe 3 —
 // exclusive branch), including its own heightened hover/focus-within values.
@@ -37,21 +40,21 @@ const CARD_LINK =
 
 const DECK_ROW = 'flex min-h-0 min-w-0 flex-[0_0_auto] flex-row items-center gap-[0.35rem]';
 const DECK_TITLE =
-  'flex-[1_1_auto] min-w-0 cursor-pointer overflow-hidden border-none bg-transparent p-0 text-left text-[0.65rem] font-semibold font-[inherit] leading-[1.2] tracking-[0.02em] text-ellipsis whitespace-nowrap text-inherit';
+  'flex-[1_1_auto] min-w-0 cursor-pointer overflow-hidden border-none bg-transparent p-0 text-left text-[0.72rem] font-semibold font-[inherit] leading-[1.2] tracking-[0.02em] text-ellipsis whitespace-nowrap text-inherit';
 const DECK_TRAIL =
   'inline-flex min-w-0 flex-[0_0_auto] flex-row items-center justify-end gap-[0.28rem]';
 const DECK_RUNTIME =
-  'flex-[0_0_auto] text-[0.6rem] font-semibold leading-[1.2] tracking-[0.03em] whitespace-nowrap text-v5-muted';
+  'flex-[0_0_auto] text-[0.62rem] font-semibold leading-[1.2] tracking-[0.03em] whitespace-nowrap text-v5-muted';
 
 // ⋮ menu button: hidden until the card is hovered (group-hover-always:) or the
 // Popover is open (data-open:). Hover/data-open also tint the button chrome.
 const RAIL_MENU =
-  'flex-[0_0_auto] m-0 h-[1.2rem] w-[1.2rem] cursor-pointer rounded-v5-sm border border-transparent bg-transparent p-0 text-[1rem] font-bold leading-none text-v5-muted opacity-0 [transition:opacity_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] group-hover-always:opacity-100 hover-always:border-v5-border-strong hover-always:bg-[rgba(15,23,42,0.55)] hover-always:text-v5-text data-open:border-v5-border-strong data-open:bg-[rgba(15,23,42,0.55)] data-open:text-v5-text data-open:opacity-100';
+  'flex-[0_0_auto] m-0 h-[1.2rem] w-[1.2rem] cursor-pointer rounded-v5-sm border border-transparent bg-transparent p-0 text-[1rem] font-bold leading-none text-v5-muted opacity-0 [transition:opacity_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] group-hover-always:opacity-100 hover-always:border-v5-border-strong hover-always:bg-[rgba(15,23,42,0.55)] hover-always:text-v5-text focus-visible:opacity-100 focus-visible:border-v5-border-strong focus-visible:bg-[rgba(15,23,42,0.55)] focus-visible:text-v5-text data-open:border-v5-border-strong data-open:bg-[rgba(15,23,42,0.55)] data-open:text-v5-text data-open:opacity-100';
 
 const META_ROW =
   'flex min-w-0 flex-[0_0_auto] flex-row items-baseline justify-between gap-[0.25rem]';
 const CARD_META =
-  'block min-h-0 min-w-0 flex-[1_1_auto] overflow-hidden text-[0.55rem] leading-[1.2] text-ellipsis whitespace-nowrap text-v5-muted';
+  'block min-h-0 min-w-0 flex-[1_1_auto] overflow-hidden text-[0.62rem] leading-[1.2] text-ellipsis whitespace-nowrap text-v5-muted';
 const RAIL_SESSIONS = 'os-rail-sessions min-h-0 flex-[1_1_auto]';
 
 /* Shared OverlayScrollbars config for the rail's two scroll surfaces (recent
@@ -393,12 +396,21 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
   );
 }
 
+/** Rail search match (ui-refresh): case-insensitive on the session title. */
+function matchesFilter(s: Session, filter: string): boolean {
+  const q = filter.trim().toLowerCase();
+  if (!q) return true;
+  return s.title.toLowerCase().includes(q);
+}
+
 interface Props {
   sessions: SessionsResponse | undefined;
   isLoading: boolean;
   activeSessionId: string;
   onSelectSession: (sid: string) => void;
   onCloseSession: () => void;
+  /** Rail search query; empty shows everything. */
+  filter?: string;
 }
 
 export function RecentSessionsList({
@@ -407,6 +419,7 @@ export function RecentSessionsList({
   activeSessionId,
   onSelectSession,
   onCloseSession,
+  filter = '',
 }: Props) {
   if (isLoading && !sessions) {
     return (
@@ -445,6 +458,19 @@ export function RecentSessionsList({
     );
   }
 
+  const visible = active.filter((s) => matchesFilter(s, filter));
+
+  if (visible.length === 0) {
+    return (
+      <p
+        className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]"
+        id="session-empty"
+      >
+        No sessions match “{filter.trim()}”.
+      </p>
+    );
+  }
+
   return (
     <OverlayScrollbarsComponent
       element="div"
@@ -453,7 +479,7 @@ export function RecentSessionsList({
       defer
       options={railOsOptions}
     >
-      {active.map((s) => (
+      {visible.map((s) => (
         <SessionCard
           key={s.id}
           session={s}
@@ -466,7 +492,24 @@ export function RecentSessionsList({
   );
 }
 
-export function ArchivedSessionsList({ sessions }: { sessions: Session[] }) {
+export function ArchivedSessionsList({
+  sessions,
+  filter = '',
+}: {
+  sessions: Session[];
+  /** Rail search query; empty shows everything. */
+  filter?: string;
+}) {
+  const visible = sessions.filter((s) => matchesFilter(s, filter));
+
+  if (visible.length === 0) {
+    return (
+      <p className="muted m-0 px-[0.15rem] py-[0.35rem] text-[0.72rem] leading-[1.35]">
+        No archived sessions match “{filter.trim()}”.
+      </p>
+    );
+  }
+
   return (
     <OverlayScrollbarsComponent
       element="div"
@@ -475,7 +518,7 @@ export function ArchivedSessionsList({ sessions }: { sessions: Session[] }) {
       defer
       options={railOsOptions}
     >
-      {sessions.map((s) => (
+      {visible.map((s) => (
         <ArchivedSessionCard key={s.id} session={s} />
       ))}
     </OverlayScrollbarsComponent>

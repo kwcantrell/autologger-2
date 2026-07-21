@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { useRef, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useSessions } from '../../../api/hooks/useSessions';
 import { navigate } from '../navigation';
@@ -60,23 +61,38 @@ const RAIL_ARCHIVED_SHELF =
 
 const RAIL_SESSIONS_WRAP = 'flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden';
 
-// `.v4-search-input` (formerly two separate :global(.v4-search-input) rule
-// blocks in AppShell.module.css). Base shape/typography from the first block
-// (flex/min-w-0/h-full/border-none/bg-transparent/font-poppins/text-sm/
-// font-normal; base color/placeholder #000 were themselves overridden by the
-// second block below in source order, so only the final cascade values are
-// kept). Color/placeholder from the second, later block (color: var(--v5-text);
-// ::placeholder color rgba(255,255,255,0.35), opacity 1) — later wins at equal
-// specificity. `placeholder:font-thin` restores the first block's
-// `font-weight: 100` on ::placeholder (never overridden). Retained as a literal
-// class string (not just Tailwind utilities) — perfDebug-era hooks may still
-// query it.
-const SEARCH_INPUT =
-  'v4-search-input flex min-w-0 h-full border-none bg-transparent font-poppins text-sm font-normal text-v5-text placeholder:font-thin placeholder:text-white/35 placeholder:opacity-100';
+// ui-refresh: the fake "Search logs" affordance (a button that focused an input
+// parked at left:-10000px) is replaced by a REAL inline session search. The
+// field shares RAIL_PRIMARY's glass chrome; the input hides when the rail is
+// collapsed (icon stays, click/keyboard expands + focuses), and the mobile
+// drawer reverts it to visible like every other rail label. The legacy
+// `v4-search-input` literal + offscreen `#top-bar-search` markup are gone with
+// the dead affordance they served.
+const RAIL_SEARCH_BOX = clsx(
+  COLLAPSE_TILE,
+  'box-border flex w-full min-h-[2.5rem] max-h-(--v6-rail-btn-h) flex-row items-center justify-start gap-(--v6-rail-gap) rounded-v5-sm border border-v5-border-strong bg-transparent bg-[linear-gradient(165deg,rgba(255,255,255,0.05),rgba(15,23,42,0.4))] px-(--v6-rail-btn-pad-x) mt-2 cursor-text [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border-strong))] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border-strong))] focus-within:bg-[linear-gradient(165deg,rgba(255,255,255,0.07),rgba(15,23,42,0.46))] [.v6-app--rail-collapsed_&]:justify-center [.v6-app--rail-collapsed_&]:gap-0 [.v6-app--rail-collapsed_&]:min-h-[unset] [.v6-app--rail-collapsed_&]:max-h-none [.v6-app--rail-collapsed_&]:cursor-pointer',
+);
 
-// Offscreen-but-focusable search box wrapper (sr-only-style clip).
-const RAIL_SEARCH_OFFSCREEN =
-  'fixed top-0 left-[-10000px] m-0 h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)] [clip-path:inset(50%)]';
+// The collapsed-rail affordance must be a REAL focusable control (panel
+// finding — the spike's `div onClick` wrapping only a decorative, aria-hidden
+// icon span was keyboard-unreachable once the input itself hid via
+// `[.v6-app--rail-collapsed_&]:hidden`). The icon becomes a genuine `<button>`
+// — visible and functionally identical in both rail states, so there is one
+// code path rather than a collapsed-only extra element — Tab reaches it and
+// Enter/Space fire its onClick like any other button, which expands the rail
+// (if collapsed) and focuses the visible input either way. The RAIL_SEARCH_BOX
+// div keeps its own onClick below purely as a click-anywhere-in-the-box
+// convenience for pointer users; it is not a substitute for this button.
+const RAIL_SEARCH_ICON_BTN = clsx(
+  RAIL_PRIMARY_ICON,
+  'cursor-pointer rounded-v5-sm border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]',
+);
+
+const RAIL_SEARCH_INPUT =
+  'min-w-0 flex-[1_1_auto] border-none bg-transparent p-0 font-[inherit] text-[0.8125rem] font-medium text-v5-text outline-none placeholder:text-[rgba(229,238,252,0.55)] placeholder:font-normal [&::-webkit-search-cancel-button]:[-webkit-appearance:none] [.v6-app--rail-collapsed_&]:hidden max-md:[.v6-app--rail-collapsed_&]:[display:revert]';
+
+const RAIL_SEARCH_CLEAR =
+  'inline-flex h-5 w-5 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-v5-muted hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] [.v6-app--rail-collapsed_&]:hidden max-md:[.v6-app--rail-collapsed_&]:[display:revert]';
 
 const RAIL_FOOTER = 'mt-auto flex w-full flex-shrink-0 justify-center gap-2';
 
@@ -116,6 +132,9 @@ export function V6Rail({
   // `onTeamsRoute` read): skip navigate when already on /teams, so repeated
   // clicks don't stack duplicate history entries and deaden browser Back.
   const [onTeamsRoute] = useRoute('/teams');
+  // Real session search (ui-refresh): filters the Recent/Archived shelves.
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const handleRailToggle = () => {
     // On the mobile drawer the menu button closes the off-canvas rail; on
@@ -132,12 +151,16 @@ export function V6Rail({
     if (main) main.classList.toggle('v6-workspace--rail-collapsed', isNowCollapsed);
   };
 
-  const handleSearchClick = () => {
-    const inp = document.getElementById('top-bar-search') as HTMLInputElement | null;
-    if (inp) {
-      inp.removeAttribute('tabindex');
-      inp.focus({ preventScroll: true });
+  const handleSearchBoxClick = () => {
+    // Collapsed desktop rail: the box is icon-only — expand first so the input
+    // exists to type into, then focus it. Same action whether reached by
+    // pointer (this handler and the box's own onClick) or keyboard (the real
+    // button rendered inside the box, below) — the spec scenario requires
+    // both paths to expand + focus identically.
+    if (!isMobile && document.body.classList.contains('v6-app--rail-collapsed')) {
+      handleRailToggle();
     }
+    searchInputRef.current?.focus({ preventScroll: true });
   };
 
   return (
@@ -173,13 +196,21 @@ export function V6Rail({
         <span className={RAIL_PRIMARY_LABEL}>New Session</span>
       </button>
 
-      <button
-        type="button"
-        className={RAIL_PRIMARY}
-        id="v6-btn-search-logs"
-        onClick={handleSearchClick}
-      >
-        <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus convenience around the real <input>/<button>; keyboard users reach the button below directly */}
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the wrapped <button>/<input> are the keyboard surfaces; the div click only forwards focus */}
+      <div className={RAIL_SEARCH_BOX} id="v6-btn-search-logs" onClick={handleSearchBoxClick}>
+        {/* Real, always-focusable control (not a decorative span) — see
+            RAIL_SEARCH_ICON_BTN's comment: this is what makes the collapsed
+            state's search affordance keyboard-reachable. */}
+        <button
+          type="button"
+          className={RAIL_SEARCH_ICON_BTN}
+          aria-label="Search sessions"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleSearchBoxClick();
+          }}
+        >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="10.5" cy="10.5" r="6.25" stroke="currentColor" strokeWidth="1.75" />
             <path
@@ -189,9 +220,45 @@ export function V6Rail({
               strokeLinecap="round"
             />
           </svg>
-        </span>
-        <span className={RAIL_PRIMARY_LABEL}>Search logs</span>
-      </button>
+        </button>
+        <input
+          ref={searchInputRef}
+          type="search"
+          className={RAIL_SEARCH_INPUT}
+          id="top-bar-search"
+          placeholder="Search sessions…"
+          aria-label="Search sessions"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && searchQuery) {
+              e.stopPropagation();
+              setSearchQuery('');
+            }
+          }}
+        />
+        {searchQuery !== '' && (
+          <button
+            type="button"
+            className={RAIL_SEARCH_CLEAR}
+            aria-label="Clear search"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSearchQuery('');
+              searchInputRef.current?.focus({ preventScroll: true });
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M6 6L18 18M18 6L6 18"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        )}
+      </div>
 
       <div className={RAIL_RECENT_SHELF}>
         <p className={RAIL_SECTION_TITLE}>RECENT SESSIONS</p>
@@ -202,6 +269,7 @@ export function V6Rail({
             activeSessionId={activeSessionId}
             onSelectSession={onSelectSession}
             onCloseSession={onCloseSession}
+            filter={searchQuery}
           />
         </div>
       </div>
@@ -210,21 +278,10 @@ export function V6Rail({
         <div className={RAIL_ARCHIVED_SHELF}>
           <p className={RAIL_SECTION_TITLE}>ARCHIVED</p>
           <div className={RAIL_SESSIONS_WRAP}>
-            <ArchivedSessionsList sessions={sessions?.archived ?? []} />
+            <ArchivedSessionsList sessions={sessions?.archived ?? []} filter={searchQuery} />
           </div>
         </div>
       )}
-
-      <div className={RAIL_SEARCH_OFFSCREEN}>
-        <input
-          className={SEARCH_INPUT}
-          type="search"
-          placeholder="Search through logs…"
-          aria-label="Search through logs"
-          id="top-bar-search"
-          tabIndex={-1}
-        />
-      </div>
 
       <div className={RAIL_FOOTER}>
         {/* Shell affordance to reach `/teams` (teams-self-serve, task 6.2;
