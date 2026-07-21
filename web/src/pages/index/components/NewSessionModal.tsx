@@ -30,6 +30,11 @@ const FPS_PRESETS: [string, string][] = [
 const NS_INPUT_OVERRIDE =
   'bg-[rgba(255,255,255,0.05)] border border-v5-border-strong text-v5-text rounded-[0.5rem]';
 
+// Disclosure toggle (ui-refresh progressive disclosure): quiet text affordance
+// with a rotating chevron; aria-expanded carries the state.
+const DISCLOSURE_BTN =
+  'inline-flex cursor-pointer items-center gap-[0.4rem] self-start border-0 bg-transparent p-0 text-[0.78rem] font-semibold text-v5-muted [transition:color_0.15s_ease] hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
+
 function fpsFloatMatchesPreset(val: number, presetStr: string): boolean {
   return Math.abs(val - Number.parseFloat(presetStr)) < 0.0001;
 }
@@ -62,6 +67,12 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
   const [fpsPreset, setFpsPreset] = useState(initPreset);
   const [fpsCustom, setFpsCustom] = useState(initCustom);
   const [offset, setOffset] = useState('0');
+  // Progressive disclosure (ui-refresh): the modal used to present 8 inputs at
+  // once. YouTube import and the timecode plumbing (frame rate / start offset)
+  // are behind collapsed sections with safe defaults; the core flow is
+  // show → episode → notes → create.
+  const [showYt, setShowYt] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const episodeRef = useRef<HTMLInputElement>(null);
 
   const { mutate: createSession, isPending } = useCreateSession();
@@ -78,10 +89,17 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
     setEpisodeEdited(false);
   };
 
+  // True toggle (ui-refresh): the old button always re-applied the BONUS
+  // prefix and its on/off state was unreadable; it now flips the prefix and
+  // renders pressed (aria-pressed) while active.
+  const isBonus = /^\s*BONUS\b/i.test(episode);
   const handleBonusEpisode = () => {
     const v = episode.trim();
-    const core = v.toUpperCase().startsWith('BONUS') ? v.replace(/^\s*BONUS\s+/i, '').trim() : v;
-    setEpisode(core ? `BONUS ${core}` : 'BONUS ');
+    if (isBonus) {
+      setEpisode(v.replace(/^\s*BONUS\s*/i, '').trim());
+    } else {
+      setEpisode(v ? `BONUS ${v}` : 'BONUS ');
+    }
     setEpisodeEdited(true);
     episodeRef.current?.focus();
   };
@@ -213,9 +231,9 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
         <div
           className="tool-row tool-row-session-opts"
-          style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}
+          style={{ flexWrap: 'nowrap', alignItems: 'flex-end' }}
         >
-          <label className="field inline" style={{ flex: '0 0 auto', width: '8rem' }}>
+          <label className="field inline" style={{ flex: '1 1 0', minWidth: 0 }}>
             <span>Episode</span>
             <input
               type="text"
@@ -231,50 +249,20 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
               }}
             />
           </label>
-          <label className="field inline" style={{ flex: '1 1 0', minWidth: 0 }}>
-            <span>
-              YouTube video <span className="field-optional">(optional)</span>
-            </span>
-            <input
-              type="url"
-              id="ns-yt-url"
-              className={clsx('profile-select', NS_INPUT_OVERRIDE)}
-              placeholder="Link to YouTube video"
-              autoComplete="off"
-              value={ytUrl}
-              onChange={(e) => setYtUrl(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="tool-row tool-row-session-opts" style={{ alignItems: 'center' }}>
           <button
             type="button"
-            // Modal-scoped .btn:not(.primary) reach-in (overrides chrome .btn radius/border/bg/color;
-            // padding/font stay from chrome). Unguarded hover → hover-always.
-            className="btn rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.88)] hover-always:bg-[rgba(255,255,255,0.1)]"
+            className={clsx(
+              'btn mb-4 shrink-0 rounded-v5-sm',
+              isBonus
+                ? 'border-[rgba(56,189,248,0.5)] bg-[rgba(56,189,248,0.16)] text-[#e0f2fe]'
+                : 'border border-v5-border-strong bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.88)] hover-always:bg-[rgba(255,255,255,0.1)]',
+            )}
             id="ns-bonus-episode"
+            aria-pressed={isBonus}
             onClick={handleBonusEpisode}
           >
-            Bonus episode
+            Bonus
           </button>
-          <label
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: '6px',
-              marginLeft: 'auto',
-            }}
-          >
-            <span style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-              Use YouTube publish date
-            </span>
-            <input
-              type="checkbox"
-              checked={useYtPublishDate}
-              onChange={(e) => setUseYtPublishDate(e.target.checked)}
-            />
-          </label>
         </div>
 
         <label className="field">
@@ -292,62 +280,152 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
           />
         </label>
 
-        <div className="tool-row tool-row-session-opts">
-          <div className="fps-field">
-            {/* Modal reach-in recolored the label var(--color-muted) → var(--v5-muted). */}
-            <span className="fps-field-label text-v5-muted">Frame rate</span>
-            <Select
-              id="ns-fps-preset"
-              // Keep the fps trigger inside the .fps-field column (legacy #ns-fps-preset width
-              // rule). The old .fps-select bg/radius reach-in already lost to the Select trigger's
-              // own glass utilities, so only the width constraint carries over. `.fps-select`
-              // retained (chrome styles it elsewhere).
-              className="fps-select max-w-[14rem] min-w-0"
-              ariaLabel="Frame rate"
-              value={fpsPreset}
-              onChange={setFpsPreset}
-              options={[
-                ...FPS_PRESETS.map(([value, label]) => ({ value, label })),
-                { value: 'other', label: 'Other…' },
-              ]}
-            />
-            {fpsPreset === 'other' && (
-              <div id="ns-fps-custom-wrap" className="fps-custom-wrap">
-                <label className="inline fps-custom-label">
-                  Custom fps
-                  <input
-                    type="number"
-                    id="ns-fps-custom"
-                    min="1"
-                    max="120"
-                    step="0.001"
-                    className={clsx('num fps-custom-input', NS_INPUT_OVERRIDE)}
-                    placeholder="1–120"
-                    autoFocus
-                    value={fpsCustom}
-                    onChange={(e) => setFpsCustom(e.target.value)}
-                  />
-                </label>
+        {/* Progressive disclosure (ui-refresh): YouTube import + timecode
+            plumbing collapse behind toggles with safe defaults; the summaries
+            keep the current values readable while closed. */}
+        <div className="mt-1 flex flex-col gap-2">
+          <button
+            type="button"
+            className={DISCLOSURE_BTN}
+            id="ns-toggle-yt"
+            aria-expanded={showYt || Boolean(ytUrl.trim())}
+            onClick={() => setShowYt((v) => !v)}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+              className={clsx(
+                '[transition:transform_0.15s_ease]',
+                (showYt || Boolean(ytUrl.trim())) && 'rotate-90',
+              )}
+            >
+              <path
+                d="M9 5L16 12L9 19"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Import audio from YouTube{ytUrl.trim() ? ' — link added' : ''}
+          </button>
+          {(showYt || Boolean(ytUrl.trim())) && (
+            <div className="flex flex-col gap-2 pl-5">
+              <label className="field">
+                <span>YouTube video link</span>
+                <input
+                  type="url"
+                  id="ns-yt-url"
+                  className={clsx('profile-select', NS_INPUT_OVERRIDE)}
+                  placeholder="https://www.youtube.com/watch?v=…"
+                  autoComplete="off"
+                  value={ytUrl}
+                  onChange={(e) => setYtUrl(e.target.value)}
+                />
+              </label>
+              <label className="flex flex-row items-center gap-[6px]">
+                <input
+                  type="checkbox"
+                  checked={useYtPublishDate}
+                  onChange={(e) => setUseYtPublishDate(e.target.checked)}
+                />
+                <span className="text-[0.85rem] text-v5-muted">
+                  Use the video&apos;s publish date as the session date
+                </span>
+              </label>
+            </div>
+          )}
+
+          <button
+            type="button"
+            className={DISCLOSURE_BTN}
+            id="ns-toggle-advanced"
+            aria-expanded={showAdvanced}
+            onClick={() => setShowAdvanced((v) => !v)}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+              className={clsx('[transition:transform_0.15s_ease]', showAdvanced && 'rotate-90')}
+            >
+              <path
+                d="M9 5L16 12L9 19"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Timecode settings — {fpsPreset === 'other' ? fpsCustom || '?' : fpsPreset} fps · offset{' '}
+            {offset || '0'}
+          </button>
+          {showAdvanced && (
+            <div className="flex flex-col gap-3 pl-5">
+              <div className="fps-field">
+                {/* Modal reach-in recolored the label var(--color-muted) → var(--v5-muted). */}
+                <span className="fps-field-label text-v5-muted">Frame rate</span>
+                <Select
+                  id="ns-fps-preset"
+                  // Keep the fps trigger inside the .fps-field column (legacy #ns-fps-preset width
+                  // rule). The old .fps-select bg/radius reach-in already lost to the Select
+                  // trigger's own glass utilities, so only the width constraint carries over.
+                  // `.fps-select` retained (chrome styles it elsewhere).
+                  className="fps-select max-w-[14rem] min-w-0"
+                  ariaLabel="Frame rate"
+                  value={fpsPreset}
+                  onChange={setFpsPreset}
+                  options={[
+                    ...FPS_PRESETS.map(([value, label]) => ({ value, label })),
+                    { value: 'other', label: 'Other…' },
+                  ]}
+                />
+                {fpsPreset === 'other' && (
+                  <div id="ns-fps-custom-wrap" className="fps-custom-wrap">
+                    <label className="inline fps-custom-label">
+                      Custom fps
+                      <input
+                        type="number"
+                        id="ns-fps-custom"
+                        min="1"
+                        max="120"
+                        step="0.001"
+                        className={clsx('num fps-custom-input', NS_INPUT_OVERRIDE)}
+                        placeholder="1–120"
+                        autoFocus
+                        value={fpsCustom}
+                        onChange={(e) => setFpsCustom(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                )}
+                <span id="ns-fps-hint" className="fps-hint">
+                  NTSC fractional rates use SMPTE-true values.
+                </span>
               </div>
-            )}
-            <span id="ns-fps-hint" className="fps-hint">
-              NTSC fractional rates use SMPTE-true values.
-            </span>
-          </div>
 
-          <label className="inline">
-            Start offset (frames)
-            <input
-              type="number"
-              id="ns-offset"
-              value={offset}
-              min="0"
-              step="1"
-              className={clsx('num wide', NS_INPUT_OVERRIDE)}
-              onChange={(e) => setOffset(e.target.value)}
-            />
-          </label>
+              <label className="inline">
+                Start offset (frames)
+                <input
+                  type="number"
+                  id="ns-offset"
+                  value={offset}
+                  min="0"
+                  step="1"
+                  className={clsx('num wide', NS_INPUT_OVERRIDE)}
+                  onChange={(e) => setOffset(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
+        </div>
 
+        <div className="modal-actions">
           <button
             type="submit"
             // Modal-scoped .btn.primary sky-tint reach-in (shared BTN_PRIMARY_SKY).

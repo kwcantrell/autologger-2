@@ -48,11 +48,19 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 function SignedInRequiredNotice() {
+  // Reachable only in anonymous mode (the production serve path gates AppShell behind the
+  // login page — RootGate — so a logged-out user never lands here). ui-refresh: say WHY
+  // there is no sign-in button instead of dead-ending on "sign in required" with nothing to
+  // click.
   return (
     <div className={STATE_PAGE}>
       <div className={STATE_PANEL} id="teams-signed-in-required" role="status">
         <h1 className={STATE_TITLE}>Sign in required</h1>
-        <p className={STATE_COPY}>Sign in to view and manage your teams.</p>
+        <p className={STATE_COPY}>
+          Teams need a signed-in account, and this server is running in anonymous mode — there is no
+          sign-in here. Run the server with Google OAuth configured (<code>REQUIRE_LOGIN=1</code>)
+          to manage teams.
+        </p>
       </div>
     </div>
   );
