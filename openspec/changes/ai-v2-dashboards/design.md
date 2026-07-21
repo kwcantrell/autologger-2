@@ -223,17 +223,21 @@ Three omissions the panel found in the persistence requirement, all now normativ
 as tightly as read; per-session dashboard count, per-dashboard widget count, and serialized config
 size are all bounded and rejected on write; a delete/replace path exists.
 
-### D5 — Dashboard persistence — OPEN, for the gate
+### D5 — Dashboard persistence — RULED: session DB (apply-time owner ruling, 2026-07-21)
 
-A saved dashboard is validated JSON. Where it lives is a real fork:
+A saved dashboard is validated JSON. Where it lives was a real fork:
 
 - **(a) Session DB** (`DATA_DIR/sessions/<id>.db`) — travels with the session, deleted with it,
   matches the "one session's data per dashboard" scope. Cannot be reused across sessions.
 - **(b) Catalog DB** — reusable as a template across sessions, survives session deletion, but
   needs its own scoping story against studios/teams and outlives the data it describes.
 
-**Recommendation: (a) for v1**, matching the stated scope; a "save as template" feature can add
-(b) later as an additive change. Flagged for the gate rather than assumed.
+**Ruled (a) Session DB for v1** (owner, 2026-07-21, at the Phase 5 check-in): it matches the stated
+"one session's data per dashboard" scope, is deleted with the session, and fits the
+`DashboardPersistencePort`'s `load(sessionId)`/`save(sessionId, config)` shape that Phase 4 already
+built. A "save as template" feature can add (b) later as a purely additive change. Session DBs have no
+migration files — the new table is an idempotent `CREATE TABLE IF NOT EXISTS` in `sessionCore.ts`'s
+`initSchema`, mirroring how the enrichment tables were added.
 
 ### D6 — Answer channel is a POST, not a WebSocket
 
