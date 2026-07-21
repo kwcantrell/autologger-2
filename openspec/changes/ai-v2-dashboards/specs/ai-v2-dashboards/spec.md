@@ -234,8 +234,10 @@ both unnecessary and a markup path this capability does not permit.
 Configuration-directory isolation SHALL NOT be relied upon to contain settings reached through the
 working directory: agent sessions run non-interactively and therefore skip workspace trust
 verification, so a settings file in the working directory can execute hook commands, merge
-permission grants, and inject environment variables with no prompt. The pinned working directory
-is what addresses that path, and it SHALL be a directory the deployment controls.
+permission grants, and inject environment variables with no prompt. Disabling the filesystem
+settings tiers (`settingSources: []`) closes that path on its own, and the pinned working
+directory closes it independently as defense-in-depth; the working directory SHALL be a directory
+the deployment controls.
 
 A **closed-world** characterization test SHALL pin the resolved option set: it SHALL assert the
 enumerated keys and values, **and** assert that options capable of widening the child — programmatic

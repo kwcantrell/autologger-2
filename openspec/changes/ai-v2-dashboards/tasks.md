@@ -4,9 +4,10 @@
 > **Gated 2026-07-21** — four-mandate adversarial panel (~20 blockers) + owner gate passed;
 > rulings folded across all four artifacts. See the design's "Panel & review log".
 >
-> **Still blocking, not yet run:** Phase 0 (the SDK option set and lifecycle remain unverified
-> hypotheses) and Phase 0b (the data work is sequenced ahead of the catalog). A red result on
-> 0.4 or 0.5 returns the transport choice to the gate.
+> **Phase 0 ran green** — 0.4 and 0.5, the potentially-fatal spikes, both passed; the SDK option
+> set and lifecycle are confirmed, not hypotheses (see design.md "Resolved by the spike" and the
+> `.apply` reports). **Still blocking, not yet run:** Phase 0b (the data work is sequenced ahead
+> of the catalog).
 >
 > **Gate rulings that reshaped this plan:** the custom-widget iframe is **cut from v1**; the
 > built-in tool set is **exactly the interactive question tool** (`tools: []` would strip it and
@@ -20,29 +21,30 @@
 ## 0. De-risking spike — BLOCKING
 
 The predecessor change (`ai-session-analyst`) established the SDK lockdown mapping but was
-superseded before its spike ran, so **the option set remains an unverified hypothesis** and the
-lifecycle question is open. Lock nothing until this phase is green. A red result on 0.3 or 0.5
-returns the transport choice to the gate.
+superseded before its spike ran, so the option set was an unverified hypothesis and the
+lifecycle question was open. **The spike has since run and come back green** — 0.4 and 0.5, the
+potentially-fatal tasks, both passed, confirming the option set and lifecycle; see design.md
+"Resolved by the spike".
 
 Every spike task MUST be falsifiable: state the attempt and the expected refusal, never
 "confirm X is safe" — which an implementer discharges as a checkbox.
 
-- [ ] 0.1 Add `@anthropic-ai/claude-agent-sdk` to the server workspace, **pinned exactly** (not
+- [x] 0.1 Add `@anthropic-ai/claude-agent-sdk` to the server workspace, **pinned exactly** (not
       `^`). Record the repo-resolved version in `design.md` and verify the load-bearing docstrings
       (`tools`, `allowedTools`, `strictMcpConfig`, `maxBudgetUsd`, `cwd`, `managedSettings`)
       against the pinned copy; correct D8 if they differ.
-- [ ] 0.2 Spike the tool surface **by attempting escape**: with `tools: []` plus the analyst
+- [x] 0.2 Spike the tool surface **by attempting escape**: with `tools: []` plus the analyst
       allowlist, have the agent attempt a shell call and a filesystem read and assert **both are
       refused**. Dump the init event's available-tools list and assert it contains exactly our MCP
       tools plus `AskUserQuestion` and the named SDK-infrastructure tools. Record whether
       `canUseTool` fires for an allowlisted tool — if it does not, D8's layering is observability
       only and the design must say so.
-- [ ] 0.3 Spike the hook holes **with control arms**: (a) user tier — assert the operator's real
+- [x] 0.3 Spike the hook holes **with control arms**: (a) user tier — assert the operator's real
       `UserPromptSubmit` hook writes no sentinel under `settingSources: []` **and** does fire under
       `settingSources: ['user']`; (b) project tier — plant a hook in a `.claude/settings.json`
       inside a candidate `cwd`, assert it fires there and **does not** fire under our pinned `cwd`.
       Without the control arms a spike that fails for an unrelated reason reads as green.
-- [ ] 0.4 Spike `AskUserQuestion` under **our** option set — **potentially fatal, run this first
+- [x] 0.4 Spike `AskUserQuestion` under **our** option set — **potentially fatal, run this first
       among 0.2–0.6.** `AskUserQuestion` appears nowhere in `sdk.d.ts` as a type, constant, or
       tool-name literal (checked in both v0.2.72 and v0.3.216) — it is a CLI-side built-in. Our
       design sets `tools: []` (disable all built-ins) while the demo set
@@ -55,25 +57,25 @@ Every spike task MUST be falsifiable: state the attempt and the expected refusal
       which SDK-infrastructure tools must pass `canUseTool`; confirm `managedSettings` accepts
       `disableClaudeAiConnectors` without its restrictive-only filter dropping it; and pin
       `previewFormat` at the `'markdown'` default plus an explicit `askUserQuestionTimeout`.
-- [ ] 0.5 Spike the orphan case: abort mid-turn against a child that **ignores SIGTERM**, then
+- [x] 0.5 Spike the orphan case: abort mid-turn against a child that **ignores SIGTERM**, then
       assert via `ps` that no agent process from that turn survives. Repeat for the timeout path.
       Determine whether the streaming-input prompt form is required for `interrupt()` to exist.
       **If no-orphan cannot be guaranteed, stop and re-gate.**
 - [ ] 0.6 *(removed — the custom-widget iframe was cut from v1 at the 2026-07-21 gate.)*
-- [ ] 0.7 Resolve the inherited **`safeMode` conflict** (design D8b): it was an *unresolved
+- [x] 0.7 Resolve the inherited **`safeMode` conflict** (design D8b): it was an *unresolved
       escalation* in the predecessor, not a settled item, and supersession cannot discharge it.
       Determine whether `settingSources: []` + `strictMcpConfig: true` + pinned `cwd` already close
       what `--safe-mode` closes; if not, whether a named exact-match `extraArgs` exception is
       workable against the closed-world test; and whether it would disable our own MCP tools.
-- [ ] 0.8 Use `resolveSettings()` to verify the effective settings cascade **without spawning** —
+- [x] 0.8 Use `resolveSettings()` to verify the effective settings cascade **without spawning** —
       cheaper than a live spike for several D8 claims, including whether `managedSettings` actually
       carries `disableClaudeAiConnectors` through its restrictive-only filter (it is not in an
       enumerated allowlist category, and the documented failure mode is *silent* dropping).
-- [ ] 0.9 Establish an observable **no-spawn assertion on the SDK path**. The recorded
+- [x] 0.9 Establish an observable **no-spawn assertion on the SDK path**. The recorded
       test-infra workaround (`fake-claude` fixture argv recording) was built for the CLI transport;
       it is not established that it reaches the SDK's own transport. The spec asserts "no guard
       path SHALL spawn" and must be testable.
-- [ ] 0.10 Record results in `design.md` under "Resolved by the spike"; rewrite D7/D8 to cite
+- [x] 0.10 Record results in `design.md` under "Resolved by the spike"; rewrite D7/D8 to cite
       observed behaviour, and drop the hypothesis framing only when they do.
 
 ## 0b. Data-first prerequisites (owner ruling — sequenced AHEAD of the catalog)
@@ -119,11 +121,16 @@ that does not exist.
       config/open-network `503` → body `422`/`400` → slot `409` — asserting an unauthorized session
       masks as `404` and that **no guard path spawns**. Reuse `requireSession` and `ApiError`.
 - [ ] 2.3 **Closed-world** characterization test on the resolved SDK options (spec: *Subprocess
-      security lockdown*): assert `tools: []`, `settingSources: []`, `strictMcpConfig: true`,
-      pinned `cwd`, isolated config dir, `maxBudgetUsd`, fail-closed permission mode,
-      `forkSession: false`, pinned system prompt, minimal env, and the allowlist including
-      `AskUserQuestion` — **and** assert `hooks`/`plugins`/`agents`/`extraArgs`/
-      `additionalDirectories`/permission-bypass are **absent**.
+      security lockdown*): assert `tools: ['AskUserQuestion']` (the one-element closed base set —
+      **not** `tools: []`, which Spike 0.4 proved strips the tool and kills the feature),
+      `permissionMode: 'plan'` (**not** `'dontAsk'`, which bypasses `canUseTool`),
+      `settingSources: []`, `strictMcpConfig: true`, pinned `cwd`, isolated config dir,
+      `maxBudgetUsd`, `forkSession: false`, pinned system prompt, minimal env,
+      `settings.askUserQuestionTimeout` (**not** via `managedSettings`),
+      `managedSettings.disableClaudeAiConnectors`, and `previewFormat` at its `'markdown'` default
+      — **and** assert `hooks`/`plugins`/`agents`/`extraArgs`/`additionalDirectories`/
+      permission-bypass are **absent**. Do **not** hard-code `ToolSearch`/`ExitPlanMode` as
+      required `canUseTool`-passers — Spike 0.4 found they don't request passage in minimal turns.
 - [ ] 2.4 In-process MCP aggregate tools (spec: *Session-scoped aggregate toolset*): `sessionId`
       captured in the closure, **never** a parameter; hub resolved at call time, never held across
       an `await`; server instance built **per turn**, never module-scoped. Test: two concurrent
