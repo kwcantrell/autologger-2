@@ -67,7 +67,7 @@
       removes the class** (panel finding — stale-strip leak); AppShell top-bar strip markup
       styled (pulse dot, duration) with the duration excluded from live-region announcement
       (aria-quiet per spec).
-- [ ] 4.4 Global-key dialog guards (D14, panel BLOCKER): AudioPlayer's Space handler and
+- [x] 4.4 Global-key dialog guards (D14, panel BLOCKER): AudioPlayer's Space handler and
       useZoomRail's +/− handler bail when any `[role="dialog"]` is open or the event target
       is an interactive element consuming the key; unit-test the Space-on-focused-button
       case.
