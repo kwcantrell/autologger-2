@@ -129,10 +129,10 @@ that does not exist.
 
 ## 2. Design-turn endpoint + agent (server)
 
-- [ ] 2.1 Config wiring: the AI v2 enable flag, the auth pair (key preferred; login fallback
+- [x] 2.1 Config wiring: the AI v2 enable flag, the auth pair (key preferred; login fallback
       loopback-only + loud startup log), and the per-turn budget, in the server config layer and
       `server/.env.example`. AI v2 off must not affect the AI chat.
-- [ ] 2.2 TDD the route shell (spec: *Configuration-gated*, *Open-network refusal*, *Design turn
+- [x] 2.2 TDD the route shell (spec: *Configuration-gated*, *Open-network refusal*, *Design turn
       contract*): integration tests first for the guard order — auth → session `404` →
       config/open-network `503` → body `422`/`400` → slot `409` — asserting an unauthorized session
       masks as `404` and that **no guard path spawns**. Reuse `requireSession` and `ApiError`.
