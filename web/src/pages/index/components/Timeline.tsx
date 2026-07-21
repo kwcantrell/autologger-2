@@ -132,7 +132,11 @@ const NAV_MARKER_WRAP =
 // transparent bg, left-aligned).
 const NAV_MSG_CELL =
   'flex items-center min-w-0 h-full px-[0.42rem] py-[0.16rem] whitespace-nowrap overflow-hidden text-ellipsis flex-[1_1_auto] bg-transparent justify-start text-left';
-const NAV_MSG_TRACK = 'inline-flex items-center min-w-[max-content] translate-x-0';
+// ui-refresh: `motion-reduce:animate-none!` guards the marker-message marquee
+// (the toggled `animate-marker-msg-marquee` class below) — under reduced motion
+// the overflow message stays static and simply truncates in the wrap.
+const NAV_MSG_TRACK =
+  'inline-flex items-center min-w-[max-content] translate-x-0 motion-reduce:animate-none!';
 // .v4NavMsgValue base (League Gothic) fully overridden by #v4-log-session (Inter 0.8125rem);
 // the markerCurrentMsgA/B.v4NavMsgValue color under #v4-log-session is v5-muted.
 const NAV_MSG_VALUE =

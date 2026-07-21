@@ -25,7 +25,9 @@ export function feedTabButtonClassName(active: boolean): string {
           'before:[background:linear-gradient(90deg,rgba(34,211,238,0)_0%,var(--v5-primary2,#22d3ee)_18%,var(--v5-primary,#38bdf8)_82%,rgba(56,189,248,0)_100%)] ' +
           'before:[box-shadow:0_0_12px_rgba(56,189,248,0.55)]'
       : // Inactive: recessed 4px, hover lifts to 2px (unguarded → hover-always).
-        'pb-[0.7rem] text-[rgba(229,238,252,0.48)] [transform:translateY(4px)] ' +
+        // ui-refresh: inactive label 0.48 → 0.6 alpha (measured 4.43:1, a hair
+        // under AA for this small uppercase type; 0.6 clears it).
+        'pb-[0.7rem] text-[rgba(229,238,252,0.6)] [transform:translateY(4px)] ' +
           '[background:linear-gradient(180deg,rgba(20,27,46,0.82)_0%,rgba(10,15,28,0.78)_100%)] ' +
           '[box-shadow:inset_0_1px_0_rgba(255,255,255,0.035),0_-2px_4px_rgba(0,0,0,0.18)] ' +
           'hover-always:[transform:translateY(2px)] hover-always:text-[rgba(229,238,252,0.88)] hover-always:border-v5-border-strong ' +
