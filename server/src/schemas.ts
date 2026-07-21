@@ -4,6 +4,7 @@
 // byte-compatible with the current React app's api/types.ts.
 
 import { z } from 'zod';
+import { widgetTypeSchema } from './aiV2/catalog';
 
 export const MAX_METADATA_BYTES = 8000; // matches the message length cap.
 
@@ -142,6 +143,36 @@ export const aiV2DesignRequestSchema = z.object({
   claude_session_id: z.string().min(1).optional(),
 });
 export type AiV2DesignRequest = z.infer<typeof aiV2DesignRequestSchema>;
+
+// -- ai-v2-dashboards: the design-question answer request body (task 3.2) ----
+// spec "Design question round trip" + "Previews reflect the rendered result".
+// A discriminated union so a chosen catalog option and the free-text fallback
+// are STRUCTURALLY different shapes, never conflated:
+//   - `kind: 'option'` carries a catalog widget-type identifier, validated
+//     against the SAME closed enum `widgetTypeSchema` already enforces for
+//     stored dashboards (`server/src/aiV2/catalog.ts`) — an option naming a
+//     type outside the catalog fails validation here (422), so "resolving an
+//     option to its component is an exact lookup" never depends on matching
+//     agent-authored display text.
+//   - `kind: 'text'` is the free-text fallback the user typed instead.
+// `turnId`/`requestId` are the ≥128-bit CSPRNG ids minted server-side
+// (server/src/routers/aiV2PendingQuestions.ts) and echoed back by the client
+// verbatim; the bound is generous (they're hex strings) but finite so a
+// malformed body fails schema validation rather than reaching the registry.
+export const aiV2QuestionAnswerItemSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('option'), widgetType: widgetTypeSchema }),
+  z.object({ kind: z.literal('text'), text: z.string().trim().min(1).max(2000) }),
+]);
+export type AiV2AnswerItem = z.infer<typeof aiV2QuestionAnswerItemSchema>;
+
+export const aiV2AnswerRequestSchema = z.object({
+  turnId: z.string().min(1).max(64),
+  requestId: z.string().min(1).max(64),
+  // AskUserQuestion asks 1-4 questions per call (SDK bound); one answer per
+  // question, matched by array position.
+  answers: z.array(aiV2QuestionAnswerItemSchema).min(1).max(4),
+});
+export type AiV2AnswerRequest = z.infer<typeof aiV2AnswerRequestSchema>;
 
 export const companionPresenceBodySchema = z.object({
   client_id: z.string().min(1).max(256),
