@@ -84,11 +84,20 @@ Design D2b. These are schema/ingest concerns, each warranting its own change and
 being smuggled in here. Listed so the dependency is explicit and the catalog is not built on data
 that does not exist.
 
-- [ ] 0b.1 **Separate change** — persist DeepGram `paragraphs` (already requested and paid for,
-      currently discarded by `extractWords`), giving utterances a real boundary. Without it,
-      `utterance_counts` has no definition.
-- [ ] 0b.2 **Separate change** — persist DeepGram `sentiment` (same situation), which unblocks the
-      sentiment widgets the reference dashboard shows.
+- [x] 0b.1 **SHIPPED via `persist-deepgram-enrichment`** (archived
+      `openspec/changes/archive/2026-07-21-persist-deepgram-enrichment`, merged to `main`
+      2026-07-21; folded into this branch by the 2026-07-21 sync-to-main rebase). Persists DeepGram
+      `paragraphs` in `session_transcript_paragraphs` (nullable timeline `start_sec`/`end_sec`;
+      NULL ≠ 0 preserved for anchorless rows), read via synchronous
+      `SessionHub.listTranscriptEnrichment()` — no HTTP route, non-contract-bearing. `utterance_counts`
+      now has a real boundary. Superseded here, not re-implemented.
+- [x] 0b.2 **SHIPPED via `persist-deepgram-enrichment`** (same change). Persists DeepGram `sentiment`
+      segments in `session_transcript_sentiment` (nullable timeline secs, malformed indices
+      clamped/dropped). **Note:** the session-level sentiment *average* was **deferred** at that
+      change's gate (DeepGram returns one average per codec group with no defined multi-group
+      combination) — a consumer computes any roll-up from the stored segments. Superseded here, not
+      re-implemented. The spec's `catalog` still bars a `sentiment` widget type until this data is
+      wired into a widget (D2/D2b): 0b.2 unblocks the *data*, not the widget registration.
 - [ ] 0b.3 **Separate change** — populate word timings on the manual-entry path, or derive them;
       and resolve speaker **names** rather than diarization indices.
 - [ ] 0b.4 Create the reference session from `https://www.youtube.com/watch?v=BQP0QejCmxw` so the
@@ -96,8 +105,11 @@ that does not exist.
       `503` in this repo, so this needs a route — import the audio manually and run the existing
       DeepGram path, or wire the import as its own change. Decide before relying on it.
 
-> Until 0b.1–0b.3 land, the affected widgets render their **unavailable state** (task 4.7) rather
-> than being offered as working tiles. That is the degraded-state ruling working as intended.
+> 0b.1/0b.2 have landed (see above). Until **0b.3** lands, widgets depending on word timings (talk
+> time, duration) and on resolved speaker names render their **unavailable state** (task 4.7) on
+> manual/anchorless transcripts rather than showing zeros — and DeepGram-anchored sessions render
+> real timings. That is the degraded-state ruling working as intended, and it is what lets 0b.3 be
+> sequenced independently of the catalog rather than blocking it.
 
 ## 1. Aggregates + catalog schema (server, no agent yet)
 
