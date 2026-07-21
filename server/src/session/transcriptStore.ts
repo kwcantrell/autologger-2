@@ -29,6 +29,84 @@ export function wordRow(r: Row): TranscriptWord {
   };
 }
 
+/** A generation-run paragraph (spec "Enrichment persistence and internal
+ * read", design D3). `start_sec`/`end_sec` are nullable — NULL means "no
+ * timeline position" (anchorless), distinct from a genuine `0`. */
+export interface TranscriptParagraph {
+  id: string;
+  start_sec: number | null;
+  end_sec: number | null;
+  speaker: string;
+  text: string;
+  ordinal: number;
+  created_at_utc: string;
+}
+
+/** A generation-run sentiment segment (spec "Enrichment persistence and
+ * internal read", design D3). Same nullable-seconds convention as
+ * `TranscriptParagraph`. */
+export interface TranscriptSentimentSegment {
+  id: string;
+  start_sec: number | null;
+  end_sec: number | null;
+  sentiment: string;
+  sentiment_score: number;
+  text: string;
+  ordinal: number;
+  created_at_utc: string;
+}
+
+/** paragraphRow — pure row → TranscriptParagraph mapper. NULL-preserving:
+ * a NULL start_sec/end_sec column reads back as `null`, never coerced to 0
+ * (the never-zeros-as-data contract; `Number(x ?? 0)` would break it). */
+export function paragraphRow(r: Row): TranscriptParagraph {
+  return {
+    id: String(r.id),
+    start_sec: r.start_sec === null || r.start_sec === undefined ? null : Number(r.start_sec),
+    end_sec: r.end_sec === null || r.end_sec === undefined ? null : Number(r.end_sec),
+    speaker: String(r.speaker ?? ''),
+    text: String(r.text ?? ''),
+    ordinal: Number(r.ordinal ?? 0),
+    created_at_utc: String(r.created_at_utc ?? ''),
+  };
+}
+
+/** sentimentRow — pure row → TranscriptSentimentSegment mapper. Same
+ * NULL-preserving convention as `paragraphRow`. */
+export function sentimentRow(r: Row): TranscriptSentimentSegment {
+  return {
+    id: String(r.id),
+    start_sec: r.start_sec === null || r.start_sec === undefined ? null : Number(r.start_sec),
+    end_sec: r.end_sec === null || r.end_sec === undefined ? null : Number(r.end_sec),
+    sentiment: String(r.sentiment ?? ''),
+    sentiment_score: Number(r.sentiment_score ?? 0),
+    text: String(r.text ?? ''),
+    ordinal: Number(r.ordinal ?? 0),
+    created_at_utc: String(r.created_at_utc ?? ''),
+  };
+}
+
+/** Enrichment payload accepted by `replaceTranscriptWords` (design D4/D5).
+ * Keys match the hub-read shape (`sentiment`, singular) so a router can pass
+ * `remapTranscriptEnrichment(...)`'s output straight through. */
+export interface TranscriptEnrichmentInput {
+  paragraphs: Array<{
+    start_sec: number | null;
+    end_sec: number | null;
+    speaker: string;
+    text: string;
+  }>;
+  sentiment: Array<{
+    start_sec: number | null;
+    end_sec: number | null;
+    sentiment: string;
+    sentiment_score: number;
+    text: string;
+  }>;
+}
+
+const EMPTY_ENRICHMENT: TranscriptEnrichmentInput = { paragraphs: [], sentiment: [] };
+
 export class TranscriptStore {
   constructor(private core: SessionCore) {}
 
@@ -93,13 +171,18 @@ export class TranscriptStore {
     return r.changes > 0;
   }
 
-  /** Replace the entire transcript-words set in one delete-then-insert pass
-   * (design D10 / spec "Regeneration replaces the transcript atomically").
+  /** Replace the entire transcript-words set **and its persisted
+   * enrichment** in one delete-then-insert pass across all three tables
+   * (design D4/D10 / spec "Regeneration replaces the transcript atomically").
    * The caller (SessionHub) wraps this in a transaction; this method's body
-   * itself has no transaction boundary of its own. Ordinals are assigned
-   * contiguously from 0 in `words` array order — callers that need a
-   * particular final order (e.g. the transcript-generation remapper) must
-   * pass `words` pre-sorted. */
+   * itself has no transaction boundary of its own — it is the **only**
+   * writer for enrichment (spec: "MUST NOT be a second writer"). Ordinals
+   * are assigned contiguously from 0 by **array position** within each of
+   * `words`/`enrichment.paragraphs`/`enrichment.sentiment` — callers (the
+   * transcript-generation remapper) must pass each pre-sorted into its
+   * final order; this method never re-sorts. `enrichment` defaults to empty,
+   * so a replace with no enrichment argument clears any prior enrichment
+   * (correct: enrichment is a snapshot of the run that produced it). */
   replaceTranscriptWords(
     words: Array<{
       session_time: string;
@@ -108,8 +191,11 @@ export class TranscriptStore {
       start_sec: number;
       end_sec: number;
     }>,
+    enrichment: TranscriptEnrichmentInput = EMPTY_ENRICHMENT,
   ): TranscriptWord[] {
     this.core.db.run('DELETE FROM session_transcript_words');
+    this.core.db.run('DELETE FROM session_transcript_paragraphs');
+    this.core.db.run('DELETE FROM session_transcript_sentiment');
     const createdAt = isoZ(new Date(this.core.now()));
     words.forEach((w, ordinal) => {
       this.core.db.run(
@@ -126,6 +212,54 @@ export class TranscriptStore {
         createdAt,
       );
     });
+    enrichment.paragraphs.forEach((p, ordinal) => {
+      this.core.db.run(
+        `INSERT INTO session_transcript_paragraphs
+           (id, start_sec, end_sec, speaker, text, ordinal, created_at_utc)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(),
+        p.start_sec,
+        p.end_sec,
+        p.speaker,
+        p.text,
+        ordinal,
+        createdAt,
+      );
+    });
+    enrichment.sentiment.forEach((s, ordinal) => {
+      this.core.db.run(
+        `INSERT INTO session_transcript_sentiment
+           (id, start_sec, end_sec, sentiment, sentiment_score, text, ordinal, created_at_utc)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(),
+        s.start_sec,
+        s.end_sec,
+        s.sentiment,
+        s.sentiment_score,
+        s.text,
+        ordinal,
+        createdAt,
+      );
+    });
     return this.listTranscriptWords();
+  }
+
+  /** Synchronous read of the last generation run's persisted enrichment
+   * (design D5 / spec "Enrichment persistence and internal read"). Both
+   * arrays are already in deterministic ordinal order; a never-generated
+   * session (or one whose last run produced no enrichment) reads as empty
+   * arrays, never an error. */
+  listTranscriptEnrichment(): {
+    paragraphs: TranscriptParagraph[];
+    sentiment: TranscriptSentimentSegment[];
+  } {
+    return {
+      paragraphs: this.core
+        .all('SELECT * FROM session_transcript_paragraphs ORDER BY ordinal')
+        .map(paragraphRow),
+      sentiment: this.core
+        .all('SELECT * FROM session_transcript_sentiment ORDER BY ordinal')
+        .map(sentimentRow),
+    };
   }
 }

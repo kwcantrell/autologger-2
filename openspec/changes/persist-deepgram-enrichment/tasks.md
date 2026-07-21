@@ -50,16 +50,16 @@
 
 ## 3. Storage + atomic replace (sessionCore.ts, transcriptStore.ts, SessionHub) — per-phase review
 
-- [ ] 3.1 Add idempotent DDL to `sessionCore.ts initSchema`: `session_transcript_paragraphs`
+- [x] 3.1 Add idempotent DDL to `sessionCore.ts initSchema`: `session_transcript_paragraphs`
       and `session_transcript_sentiment` (columns per design D3, **nullable** `start_sec`/
       `end_sec`) + their `idx_*_ordinal` indexes. Schema-init test confirms existing session
       DBs gain them empty on next open.
-- [ ] 3.2 Write failing tests for the extended atomic-replace RPC: one transaction
+- [x] 3.2 Write failing tests for the extended atomic-replace RPC: one transaction
       delete-then-inserts words + paragraphs + sentiment rows; a run with no enrichment clears
       prior enrichment; failure/rollback leaves prior words **and** enrichment untouched (no
       second writer). Add `listTranscriptEnrichment()` returning `{ paragraphs, sentiment }`
       in deterministic ordinal order, empty when never-generated.
-- [ ] 3.3 Extend the atomic-replace hub RPC to accept `{ words, paragraphs, sentiments }` and
+- [x] 3.3 Extend the atomic-replace hub RPC to accept `{ words, paragraphs, sentiments }` and
       persist all three in the single existing transaction (synchronous hub body invariant
       preserved); implement `listTranscriptEnrichment`. Gate: typecheck + test.
 

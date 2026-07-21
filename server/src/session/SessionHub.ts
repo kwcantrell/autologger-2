@@ -256,11 +256,24 @@ export class SessionHub {
   deleteTranscriptWord(wordId: string) {
     return this.inTxn(() => this.transcript.deleteTranscriptWord(wordId));
   }
-  /** Replace the entire transcript-words set atomically (design D10):
-   * synchronous body, one transaction, delete-then-insert with
-   * start_sec/end_sec, contiguous ordinals from 0 in `words` order. */
-  replaceTranscriptWords(words: Parameters<TranscriptStore['replaceTranscriptWords']>[0]) {
-    return this.inTxn(() => this.transcript.replaceTranscriptWords(words));
+  /** Replace the entire transcript-words set **and its persisted
+   * enrichment** atomically (design D4/D10): synchronous body, ONE
+   * transaction covering words + paragraphs + sentiment (delete-then-insert
+   * on all three), contiguous ordinals from 0 by array position. `enrichment`
+   * defaults to empty, so a call with words only (the pre-enrichment call
+   * shape) still compiles and clears any prior enrichment. This is the
+   * **only** writer for enrichment — never a second RPC/transaction. */
+  replaceTranscriptWords(
+    words: Parameters<TranscriptStore['replaceTranscriptWords']>[0],
+    enrichment?: Parameters<TranscriptStore['replaceTranscriptWords']>[1],
+  ) {
+    return this.inTxn(() => this.transcript.replaceTranscriptWords(words, enrichment));
+  }
+
+  /** Synchronous read of the last generation run's persisted enrichment
+   * (design D5). In-process only — no HTTP route. */
+  listTranscriptEnrichment() {
+    return this.transcript.listTranscriptEnrichment();
   }
 
   // --- topic delegates ---

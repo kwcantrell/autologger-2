@@ -166,6 +166,105 @@ describe('SessionHub.replaceTranscriptWords', () => {
   });
 });
 
+const WORDS = [
+  { session_time: '00:00:01:00', speaker: '0', word: 'hello', start_sec: 1, end_sec: 1.4 },
+];
+const PARAGRAPHS = [{ start_sec: 1, end_sec: 5, speaker: '0', text: 'hello there' }];
+const SENTIMENT = [
+  { start_sec: 1, end_sec: 5, sentiment: 'positive', sentiment_score: 0.9, text: 'hello there' },
+];
+
+describe('SessionHub enrichment persistence (single atomic replace)', () => {
+  it('never-generated session reads listTranscriptEnrichment as empty arrays, not error', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    expect(hub.listTranscriptEnrichment()).toEqual({ paragraphs: [], sentiment: [] });
+    hub.close();
+  });
+
+  it('one call delete-then-inserts words + paragraphs + sentiment together', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
+    expect(hub.listTranscriptWords()).toHaveLength(1);
+    const enrichment = hub.listTranscriptEnrichment();
+    expect(enrichment.paragraphs).toMatchObject(PARAGRAPHS);
+    expect(enrichment.sentiment).toMatchObject(SENTIMENT);
+    expect(enrichment.paragraphs[0].ordinal).toBe(0);
+    expect(enrichment.sentiment[0].ordinal).toBe(0);
+    hub.close();
+  });
+
+  it('a replace with EMPTY enrichment (default) clears prior enrichment', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
+    hub.replaceTranscriptWords(WORDS); // no enrichment arg — must default to empty
+    expect(hub.listTranscriptEnrichment()).toEqual({ paragraphs: [], sentiment: [] });
+    hub.close();
+  });
+
+  it('preserves NULL start_sec/end_sec through the round trip (never coerced to 0)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.replaceTranscriptWords(WORDS, {
+      paragraphs: [{ start_sec: null, end_sec: null, speaker: '0', text: 'unanchored' }],
+      sentiment: [
+        { start_sec: null, end_sec: null, sentiment: 'neutral', sentiment_score: 0, text: 'x' },
+      ],
+    });
+    const enrichment = hub.listTranscriptEnrichment();
+    expect(enrichment.paragraphs[0].start_sec).toBeNull();
+    expect(enrichment.paragraphs[0].end_sec).toBeNull();
+    expect(enrichment.sentiment[0].start_sec).toBeNull();
+    expect(enrichment.sentiment[0].end_sec).toBeNull();
+    hub.close();
+  });
+
+  it('lists enrichment in ordinal order (array-position order, not re-sorted)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const paragraphs = [
+      { start_sec: 5, end_sec: 6, speaker: '0', text: 'second' },
+      { start_sec: 1, end_sec: 2, speaker: '0', text: 'first' },
+    ];
+    hub.replaceTranscriptWords(WORDS, { paragraphs, sentiment: [] });
+    expect(hub.listTranscriptEnrichment().paragraphs.map((p) => p.text)).toEqual([
+      'second',
+      'first',
+    ]);
+    hub.close();
+  });
+
+  it('rolls back words, paragraphs, AND sentiment together when an insert throws mid-transaction (single writer, no partial write)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    hub.replaceTranscriptWords(WORDS, { paragraphs: PARAGRAPHS, sentiment: SENTIMENT });
+    const priorWords = hub.listTranscriptWords();
+    const priorEnrichment = hub.listTranscriptEnrichment();
+
+    // `sentiment: null as unknown as string` violates the NOT NULL column
+    // constraint on session_transcript_sentiment.sentiment, throwing partway
+    // through the single transaction — after words + paragraphs would
+    // already have been deleted-and-reinserted.
+    expect(() =>
+      hub.replaceTranscriptWords(
+        [{ session_time: '00:00:09:00', speaker: '0', word: 'new', start_sec: 9, end_sec: 9.5 }],
+        {
+          paragraphs: [{ start_sec: 9, end_sec: 10, speaker: '0', text: 'new para' }],
+          sentiment: [
+            {
+              start_sec: 9,
+              end_sec: 10,
+              sentiment: null as unknown as string,
+              sentiment_score: 0.1,
+              text: 'bad row',
+            },
+          ],
+        },
+      ),
+    ).toThrow();
+
+    expect(hub.listTranscriptWords()).toEqual(priorWords);
+    expect(hub.listTranscriptEnrichment()).toEqual(priorEnrichment);
+    hub.close();
+  });
+});
+
 describe('SessionHubRegistry', () => {
   it('returns the same hub per session id and isolates sessions', () => {
     const reg = new SessionHubRegistry(dir);
