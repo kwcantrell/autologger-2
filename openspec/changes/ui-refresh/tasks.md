@@ -74,7 +74,7 @@
 
 ## 5. Home launch + rail search (web-home-launch)
 
-- [ ] 5.1 Dedicated home route (D10 as gate-overridden): `HomeRoute`/`HomeLaunch` component
+- [x] 5.1 Dedicated home route (D10 as gate-overridden): `HomeRoute`/`HomeLaunch` component
       (stable region id `#home-launch`; wordmark, tagline, resume card via `useSessions`,
       New Session) rendered by SessionRoute for the empty id in WorkspaceStatic's place;
       `onNewSession` threads AppShell → SessionRoute → HomeRoute (stable callback). Retire
@@ -82,7 +82,7 @@
       replace the visibility-swap unit tests with SessionRoute mount tests (home for empty
       id, workspace for found session) + HomeRoute tests (resume card, no-active copy,
       New Session opens the shared modal).
-- [ ] 5.2 V6Rail: replace the fake search button + offscreen input with the inline search
+- [x] 5.2 V6Rail: replace the fake search button + offscreen input with the inline search
       field (glass box, collapse-aware, clear button, Escape clears; ids retained per D3;
       the collapsed-state affordance is a REAL focusable control — panel finding); pass
       `filter` to RecentSessionsList/ArchivedSessionsList; filtered-empty states; rail tile
