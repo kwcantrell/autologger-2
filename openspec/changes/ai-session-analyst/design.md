@@ -643,3 +643,13 @@ and analyst replies must not broadcast. Awaiting the operator's ruling.
 correct when written but would have read as stale the moment this entry was recorded. Replaced
 with a gated-2026-07-20 header that carries forward what is still genuinely open — Phase 0 is
 blocking, and D1/D7 remain unverified hypotheses.
+
+### 2026-07-21 — Superseding sequencing ruling (ui-refresh gate)
+
+The `ui-refresh` change's gate ruled that **ui-refresh lands first**. Its five-tab flat IA
+(Event Feed | Transcript | Topics | Assistant | Dashboards, single owner:
+`web-session-console`) dissolves the AiPanel subtab structure this change's plan of record
+builds on ("`Chat | Analyst | Transcribe | Topics` subtabs"). Before this change's apply, its
+artifacts MUST be re-planned via `opsx:update` against the post-ui-refresh IA (likely shapes:
+Analyst as a sixth top-level tab, or a sub-surface of the Assistant tab) with a consistency
+read. Until then, `tasks.md` here is stale as written — do not dispatch from it.
