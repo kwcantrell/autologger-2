@@ -257,7 +257,7 @@ that does not exist.
 
 - [x] 6.1 README: endpoint rows in the normative route table; document the egress/spend posture,
       the auth fallback behaviour, and the sandboxing guarantee.
-- [ ] 6.2 Hermetic e2e over real SSE: a design turn, one question answered, a dashboard rendered.
+- [x] 6.2 Hermetic e2e over real SSE: a design turn, one question answered, a dashboard rendered.
 - [ ] 6.3 Final gates: `npm run typecheck` + `npm test`, then `npm run e2e` (chromium +
       login-gate) **and** `npm run e2e:visual`. A new tab changes the strip, so visual diffs are
       expected branch-induced signal — **re-bless baselines in this branch's diff**, do not defer.

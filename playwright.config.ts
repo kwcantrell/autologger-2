@@ -20,6 +20,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 // what keeps ai-chat.spec.ts's happy-path chat e2e hermetic.
 const FAKE_CLAUDE_CLI = join(here, 'server', 'src', 'test', 'fixtures', 'fake-claude.mjs');
 
+// ai-v2-dashboards (task 6.2): a protocol-faithful fake agent for the AI v2
+// design turn's Agent-SDK transport (`pathToClaudeCodeExecutable` — a
+// pre-existing "test seam, never set in production" field on
+// `BuildDesignTurnOptionsParams`, aiV2SdkSpawn.ts). Different transport from
+// the AI chat's CLI-argv fake above: this one speaks the SDK's own
+// bidirectional stdio control protocol (initialize handshake, `can_use_tool`,
+// `mcp_message`) so a hermetic e2e can drive a real design turn — delta text,
+// one AskUserQuestion, one propose_dashboard MCP call — with zero Anthropic
+// spend. See server/src/test/fixtures/ai-v2-fake-agent.mjs for the protocol
+// notes and e2e/ai-v2-dashboards.spec.ts for the driving test.
+const FAKE_AI_V2_AGENT = join(here, 'server', 'src', 'test', 'fixtures', 'ai-v2-fake-agent.mjs');
+
 export default defineConfig({
   testDir: './e2e',
   use: {
@@ -63,6 +75,16 @@ export default defineConfig({
         // ai-topics-chat (task 5.2): fixture stands in for the real `claude` CLI —
         // see the FAKE_CLAUDE_CLI comment above. Hermetic, no real credentials.
         CLAUDE_CLI_PATH: FAKE_CLAUDE_CLI,
+        // ai-v2-dashboards (task 6.2): AI v2 is off by default (design D9,
+        // "defaults OFF") — flip it on for this hermetic server only, and
+        // point the SDK transport at the fake agent above so no design turn
+        // here ever reaches a real `claude` binary or Anthropic network call.
+        // No AI_V2_API_KEY: this server binds 127.0.0.1, so
+        // aiV2CredentialsRefused() takes the loopback-fallback branch rather
+        // than refusing — irrelevant anyway since the fake agent never
+        // authenticates for real.
+        AI_V2_ENABLED: '1',
+        AI_V2_SDK_EXECUTABLE_PATH: FAKE_AI_V2_AGENT,
       },
     },
     {

@@ -292,6 +292,13 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         }),
         abortController,
         spawnClaudeCodeProcess: spawner.spawnClaudeCodeProcess,
+        // Test seam (task 6.2): `pathToClaudeCodeExecutable` (aiV2SdkSpawn.ts,
+        // "Never set in production") wired from an env var so the hermetic
+        // e2e server can point the SDK at the scripted fake agent
+        // (server/src/test/fixtures/ai-v2-fake-agent.mjs) instead of the real
+        // `claude` CLI. Unset in every real deployment — playwright.config.ts
+        // is the only place that sets AI_V2_SDK_EXECUTABLE_PATH.
+        pathToClaudeCodeExecutable: process.env.AI_V2_SDK_EXECUTABLE_PATH || undefined,
       });
       const turn = attemptDesignTurnSpawn(body.message, options);
       await runDesignTurn({

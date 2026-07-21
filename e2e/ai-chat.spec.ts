@@ -55,9 +55,13 @@ test('hermetic chat turn: send a message, see the streamed reply, and the AI-cre
   await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
   // Top-level Feed tabs → AI (SessionWorkspace.tsx: role="tablist" aria-label
-  // "Feed tabs").
+  // "Feed tabs"). `exact: true` — ai-v2-dashboards (task 6.2) added a
+  // sibling "AI v2" tab, and Playwright's default `name` match is a
+  // case-insensitive substring, so an unqualified "AI" would resolve to both
+  // tabs (strict-mode violation) now that the AI v2 tab actually renders in
+  // a fresh `web/dist` build.
   const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
-  await feedTabs.getByRole('tab', { name: 'AI' }).click();
+  await feedTabs.getByRole('tab', { name: 'AI', exact: true }).click();
 
   // AI subtabs default to Chat (AiPanel.tsx: role="tablist" aria-label "AI
   // tabs") — click it anyway for an explicit, order-independent assertion.
