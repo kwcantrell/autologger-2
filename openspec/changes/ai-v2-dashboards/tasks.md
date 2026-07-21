@@ -98,12 +98,16 @@ that does not exist.
       combination) — a consumer computes any roll-up from the stored segments. Superseded here, not
       re-implemented. The spec's `catalog` still bars a `sentiment` widget type until this data is
       wired into a widget (D2/D2b): 0b.2 unblocks the *data*, not the widget registration.
-- [ ] 0b.3 **Separate change** — populate word timings on the manual-entry path, or derive them;
-      and resolve speaker **names** rather than diarization indices.
-- [ ] 0b.4 Create the reference session from `https://www.youtube.com/watch?v=BQP0QejCmxw` so the
-      catalog is exercised against real transcript data. **Open:** YouTube import is deliberately
-      `503` in this repo, so this needs a route — import the audio manually and run the existing
-      DeepGram path, or wire the import as its own change. Decide before relying on it.
+- [ ] 0b.3 **DEFERRED to its own post-v1 change** (owner decision 2026-07-21). Populate word timings
+      on the manual-entry path (or derive them) and resolve speaker **names** rather than diarization
+      indices. Not v1-blocking: DeepGram-anchored sessions already carry real timings from the
+      enrichment remap; manual/anchorless transcripts render the degraded "unavailable" state (task
+      4.7); v1 shows honest `Speaker N` labels for unresolved diarization indices — never zeros.
+- [ ] 0b.4 **DEFERRED to Phase 6 QA** (owner decision 2026-07-21). Create a live reference session
+      via the **DeepGram path** (a key in `server/.env` + real audio) — YouTube import stays `503`,
+      so no URL import. Phase 1 aggregate tests use **synthetic** fixtures (task 1.1) plus the real
+      captured DeepGram fixture already shipped with `persist-deepgram-enrichment`, so a live session
+      is a demo/QA artifact, not a Phase 1 prerequisite.
 
 > 0b.1/0b.2 have landed (see above). Until **0b.3** lands, widgets depending on word timings (talk
 > time, duration) and on resolved speaker names render their **unavailable state** (task 4.7) on
