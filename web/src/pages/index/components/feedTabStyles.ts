@@ -1,11 +1,11 @@
 import clsx from 'clsx';
 
-// Shared glass-tab button chrome (design D9): used by both SessionWorkspace's
-// top-level Event Feed | AI tablist and AiPanel's nested Chat | Transcribe |
-// Topics tablist, so the new AI subtabs read as the same tab affordance
-// rather than inventing a second visual language. Lives in its own module
-// (not re-exported from SessionWorkspace.tsx) so AiPanel importing it doesn't
-// create a SessionWorkspace <-> AiPanel import cycle.
+// Shared glass-tab button chrome: used by SessionWorkspace's top-level Feed
+// tabs tablist (Event Feed | Transcript | Topics | Assistant | Dashboards,
+// design D5 — ui-refresh flattened the former nested AI subtabs into this
+// same top-level list). Lives in its own module (not re-exported from
+// SessionWorkspace.tsx) so other consumers importing it don't create an
+// import cycle with SessionWorkspace.
 export function feedTabButtonClassName(active: boolean): string {
   return clsx(
     // Base tab chrome (shared by active + inactive). The source
@@ -13,7 +13,10 @@ export function feedTabButtonClassName(active: boolean): string {
     // `font-[inherit]` only sets font-family, so `leading-[inherit]`
     // restores the inherited line-height (else it falls to `normal`
     // and the tabs grow ~3px taller — the 5a font-shorthand pitfall).
-    'relative px-[1.15rem] pt-[0.55rem] font-[inherit] leading-[inherit] text-[0.74rem] font-semibold tracking-[0.07em] uppercase',
+    // whitespace-nowrap + shrink-0 (ui-refresh): with five tabs the mobile
+    // tablist scrolls horizontally; without these the squeezed tabs wrapped
+    // their labels onto two lines instead.
+    'relative shrink-0 whitespace-nowrap px-[1.15rem] pt-[0.55rem] font-[inherit] leading-[inherit] text-[0.74rem] font-semibold tracking-[0.07em] uppercase',
     'border border-v5-border border-b-0 rounded-t-[0.85rem] cursor-pointer',
     'transition-[transform,color,background,border-color,box-shadow] duration-[0.18s] ease',
     active

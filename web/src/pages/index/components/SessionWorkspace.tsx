@@ -31,6 +31,8 @@ import { MarkerNav } from './MarkerNav';
 import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TimecodeDisplay } from './TimecodeDisplay';
 import { Timeline } from './Timeline';
+import { TopicsFeed } from './TopicsFeed';
+import { TranscribeFeed } from './TranscribeFeed';
 import { getTransportState, TransportControls } from './TransportControls';
 
 declare global {
@@ -109,7 +111,12 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, []);
-  const [feedTab, setFeedTab] = useState<'events' | 'ai' | 'ai-v2'>('events');
+  // ui-refresh IA: Transcript/Topics were nested under an "AI" tab; they are
+  // session DATA, so they sit beside the Event Feed now. The two agent
+  // surfaces carry human names (Assistant, Dashboards) instead of "AI"/"AI v2".
+  const [feedTab, setFeedTab] = useState<
+    'events' | 'transcript' | 'topics' | 'assistant' | 'dashboards'
+  >('events');
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
     setOnOffState((prev) => {
@@ -580,15 +587,17 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
               // @layer components rule scoped by this ancestor class.
               <div className="v5FeedTabsPanel flex flex-col flex-[1_1_0] min-h-0">
                 <div
-                  className="flex shrink-0 items-end gap-[0.18rem] mx-4 -mb-px px-[0.65rem] pt-[0.45rem] relative z-[2]"
+                  className="flex shrink-0 items-end gap-[0.18rem] mx-4 -mb-px px-[0.65rem] pt-[0.45rem] relative z-[2] max-md:overflow-x-auto max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]"
                   role="tablist"
                   aria-label="Feed tabs"
                 >
                   {(
                     [
                       { id: 'events', label: 'Event Feed' },
-                      { id: 'ai', label: 'AI' },
-                      { id: 'ai-v2', label: 'AI v2' },
+                      { id: 'transcript', label: 'Transcript' },
+                      { id: 'topics', label: 'Topics' },
+                      { id: 'assistant', label: 'Assistant' },
+                      { id: 'dashboards', label: 'Dashboards' },
                     ] as const
                   ).map((tab) => {
                     const active = feedTab === tab.id;
@@ -606,13 +615,16 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     );
                   })}
                 </div>
-                {/* All three top-level panels stay mounted (hidden via the
+                {/* All five top-level panels stay mounted (hidden via the
                     `hidden` attribute), not conditionally rendered: switching
                     tabs must not unmount AiPanel's hoisted chat state/stream
                     or AiV2Panel's hoisted design-turn state/stream (design
                     D9; ai-v2-dashboards spec "AI v2 tab in the session
                     workspace" — a conditional mount here would abort an
-                    in-flight turn per the subprocess lifecycle rule). */}
+                    in-flight turn per the subprocess lifecycle rule).
+                    Transcript/Topics inherit the same discipline so their
+                    fetch state stays warm across switches (as it did when
+                    they were AI subtabs). */}
                 <div
                   className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'events' && 'hidden')}
                   hidden={feedTab !== 'events'}
@@ -622,18 +634,43 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                   <EventLogSheet sessionId={sessionId} />
                 </div>
                 <div
-                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'ai' && 'hidden')}
-                  hidden={feedTab !== 'ai'}
+                  className={clsx(
+                    'flex flex-col flex-1 min-h-0',
+                    feedTab !== 'transcript' && 'hidden',
+                  )}
+                  hidden={feedTab !== 'transcript'}
                   role="tabpanel"
-                  aria-label="AI"
+                  aria-label="Transcript"
+                >
+                  <TranscribeFeed sessionId={sessionId} />
+                </div>
+                <div
+                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'topics' && 'hidden')}
+                  hidden={feedTab !== 'topics'}
+                  role="tabpanel"
+                  aria-label="Topics"
+                >
+                  <TopicsFeed sessionId={sessionId} />
+                </div>
+                <div
+                  className={clsx(
+                    'flex flex-col flex-1 min-h-0',
+                    feedTab !== 'assistant' && 'hidden',
+                  )}
+                  hidden={feedTab !== 'assistant'}
+                  role="tabpanel"
+                  aria-label="Assistant"
                 >
                   <AiPanel sessionId={sessionId} />
                 </div>
                 <div
-                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'ai-v2' && 'hidden')}
-                  hidden={feedTab !== 'ai-v2'}
+                  className={clsx(
+                    'flex flex-col flex-1 min-h-0',
+                    feedTab !== 'dashboards' && 'hidden',
+                  )}
+                  hidden={feedTab !== 'dashboards'}
                   role="tabpanel"
-                  aria-label="AI v2"
+                  aria-label="Dashboards"
                 >
                   {/* `key={sessionId}` (whole-branch audit fix wave, Fix 1):
                       forces a remount on SESSION change only — orthogonal to

@@ -92,11 +92,11 @@
 
 ## 6. Five-tab IA (web-session-console)
 
-- [ ] 6.1 SessionWorkspace: five-tab state/labels/panels (D5), TranscribeFeed/TopicsFeed as
+- [x] 6.1 SessionWorkspace: five-tab state/labels/panels (D5), TranscribeFeed/TopicsFeed as
       top-level mounted-hidden panels, `AiV2Panel key={sessionId}` preserved; AiPanel → chat-
       only wrapper keeping hoisted chat state; mobile tablist horizontal scroll + tab
       `whitespace-nowrap shrink-0`.
-- [ ] 6.2 Rewrite `SessionWorkspace.test.tsx` for the five-tab IA: tab inventory, mounted-
+- [x] 6.2 Rewrite `SessionWorkspace.test.tsx` for the five-tab IA: tab inventory, mounted-
       hidden node-identity tests (chat + design rail), mid-stream no-abort, session A→B clean
       panel (rerender via `StrictWrapper`). (The old placeholder↔grid visibility-swap tests
       are replaced in task 5.1, not here.)

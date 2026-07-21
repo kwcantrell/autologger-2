@@ -1,7 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { SessionWorkspace } from './SessionWorkspace';
 
 // --- SessionWorkspace tests (mounted-hidden tab discipline) ---
@@ -107,10 +106,11 @@ vi.mock('./ExportModal', () => ({ ExportModal: () => null }));
 vi.mock('./MarkerNav', () => ({ MarkerNav: () => null }));
 vi.mock('./TimecodeDisplay', () => ({ TimecodeDisplay: () => null }));
 vi.mock('./Timeline', () => ({ Timeline: () => null }));
-// TopicsFeed/TranscribeFeed are imported by AiPanel (not SessionWorkspace
-// directly) but resolve to the same module path, so these mocks still apply.
-// They render a marker (rather than null) so the "feeds unchanged, still
-// present under the AI tab" assertions below have something to find.
+// TopicsFeed/TranscribeFeed are top-level tab panels since ui-refresh
+// (design D5 lifted them out of AiPanel's former nested subtabs into
+// SessionWorkspace directly). They render a marker (rather than null) so
+// the "feeds unchanged, still present" assertions below have something to
+// find.
 vi.mock('./TopicsFeed', () => ({
   TopicsFeed: () => <div data-testid="topics-feed-stub" />,
 }));
@@ -142,34 +142,40 @@ function isHidden(el: Element | null): boolean {
   return (el as HTMLElement).hasAttribute('hidden');
 }
 
-describe('SessionWorkspace AI tab restructure', () => {
-  it('renders the top-level tabs (Event Feed, AI, AI v2) and defaults to Event Feed', () => {
+describe('SessionWorkspace tab restructure', () => {
+  it('renders the five top-level tabs and defaults to Event Feed', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
     const tablist = screen.getByRole('tablist', { name: 'Feed tabs' });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Event Feed', 'AI', 'AI v2']);
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      'Event Feed',
+      'Transcript',
+      'Topics',
+      'Assistant',
+      'Dashboards',
+    ]);
     expect(screen.getByRole('tab', { name: 'Event Feed' }).getAttribute('aria-selected')).toBe(
       'true',
     );
-    expect(screen.getByRole('tab', { name: 'AI' }).getAttribute('aria-selected')).toBe('false');
+    expect(screen.getByRole('tab', { name: 'Assistant' }).getAttribute('aria-selected')).toBe(
+      'false',
+    );
     expect(isHidden(screen.getByTestId('event-log-sheet-stub').closest('[role="tabpanel"]'))).toBe(
       false,
     );
   });
 
-  it('opening AI defaults its nested subtabs to Chat, with Transcribe/Topics also present', () => {
+  it('opening Assistant shows the chat, with Transcript/Topics mounted-hidden beside it', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
 
-    const aiTablist = screen.getByRole('tablist', { name: 'AI tabs' });
-    const subtabs = within(aiTablist).getAllByRole('tab');
-    expect(subtabs.map((t) => t.textContent)).toEqual(['Chat', 'Transcribe', 'Topics']);
-    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
-
-    // Feeds unchanged: TranscribeFeed/TopicsFeed still render under the AI
-    // tab (mounted-hidden, present in the DOM even though Chat is active).
+    expect(screen.getByRole('tab', { name: 'Assistant' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    // Feeds unchanged: TranscribeFeed/TopicsFeed stay mounted in the DOM even
+    // while the Assistant tab is active.
     expect(isHidden(screen.getByTestId('ai-chat-panel').closest('[role="tabpanel"]'))).toBe(false);
     expect(isHidden(screen.getByTestId('transcribe-feed-stub').closest('[role="tabpanel"]'))).toBe(
       true,
@@ -179,11 +185,11 @@ describe('SessionWorkspace AI tab restructure', () => {
     );
   });
 
-  it('feed presence: switching to Transcribe/Topics subtabs reveals the unchanged feeds', () => {
+  it('feed presence: switching to the Transcript/Topics tabs reveals the unchanged feeds', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcribe' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     expect(isHidden(screen.getByTestId('transcribe-feed-stub').closest('[role="tabpanel"]'))).toBe(
       false,
     );
@@ -200,16 +206,16 @@ describe('SessionWorkspace AI tab restructure', () => {
 
   // Gate-intent: this asserts DOM *node identity* (`toBe`, i.e. `===`), not
   // just visibility/attribute toggling. A conditional-mount implementation
-  // (`{aiTab === 'chat' && <AiChat/>}`) would remove the element from the
-  // tree on switch-away and create a brand-new element+DOM node on
+  // (`{feedTab === 'assistant' && <AiPanel/>}`) would remove the element from
+  // the tree on switch-away and create a brand-new element+DOM node on
   // switch-back — `querySelector` would return a *different* node object (or
   // null while hidden), so this assertion would fail. A mounted-hidden
   // implementation keeps the same element/DOM node across the switch, only
   // toggling the `hidden` attribute — this assertion passes only for that
   // shape, which is the one the spec requires.
-  it('keeps the same Chat DOM node mounted across AI subtab switches (no unmount)', () => {
+  it('keeps the same Chat DOM node mounted across data-tab switches (no unmount)', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
 
     const chatNodeOnChat = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeOnChat).not.toBeNull();
@@ -219,21 +225,21 @@ describe('SessionWorkspace AI tab restructure', () => {
     expect(chatNodeOnTopics).toBe(chatNodeOnChat); // same node object => never unmounted
     expect(isHidden(chatNodeOnTopics?.closest('[role="tabpanel"]') ?? null)).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcribe' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     expect(container.querySelector('[data-testid="ai-chat-panel"]')).toBe(chatNodeOnChat);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
     const chatNodeBack = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeBack).toBe(chatNodeOnChat);
     expect(isHidden(chatNodeBack?.closest('[role="tabpanel"]') ?? null)).toBe(false);
   });
 
-  // Same node-identity technique, across the top-level Event Feed <-> AI
+  // Same node-identity technique, across the Event Feed <-> Assistant
   // switch: the spec requires the chat turn survive switching to Event Feed
-  // and back, not just switching among the AI subtabs.
-  it('keeps the same Chat DOM node mounted across the Event Feed <-> AI top-tab switch', () => {
+  // and back, not just switching among the other tabs.
+  it('keeps the same Chat DOM node mounted across the Event Feed <-> Assistant switch', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
     const chatNode = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNode).not.toBeNull();
 
@@ -243,40 +249,45 @@ describe('SessionWorkspace AI tab restructure', () => {
       false,
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
     const chatNodeReturned = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeReturned).toBe(chatNode);
     expect(isHidden(chatNodeReturned?.closest('[role="tabpanel"]') ?? null)).toBe(false);
   });
 });
 
-// --- AI v2 tab (ai-v2-dashboards, task 4.1; spec "AI v2 tab in the session
-// workspace") ---
+// --- Dashboards tab (ai-v2-dashboards, task 4.1; spec "AI v2 tab in the
+// session workspace" — the tab label is "Dashboards" since ui-refresh, D5)
+// ---
 //
-// Same mounted-hidden discipline as the AI tab above, extended to a third
+// Same mounted-hidden discipline as the tabs above, extended to this
 // top-level tab. AiV2Panel/AiV2Design are exercised for real here (not
 // mocked), same rationale as AiChat/AiPanel: proving genuine no-unmount and
 // no-abort requires the real DOM node and a real (mocked-at-the-fetch-
 // boundary) in-flight stream.
 
-describe('SessionWorkspace AI v2 tab', () => {
-  it('activates the AI v2 tabpanel and deselects it on load (tab count covered above)', () => {
+describe('SessionWorkspace Dashboards (AI v2) tab', () => {
+  it('activates the Dashboards tabpanel and deselects it on load (tab count covered above)', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
-    expect(screen.getByRole('tab', { name: 'AI v2' }).getAttribute('aria-selected')).toBe('false');
-    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
-    expect(screen.getByRole('tab', { name: 'AI v2' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Dashboards' }).getAttribute('aria-selected')).toBe(
+      'false',
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+    expect(screen.getByRole('tab', { name: 'Dashboards' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
     expect(isHidden(screen.getByTestId('aiv2-panel').closest('[role="tabpanel"]'))).toBe(false);
   });
 
-  // Same node-identity technique as the AI tab's own test above: a
+  // Same node-identity technique as the tab-restructure describe above: a
   // conditional-mount implementation would tear down and rebuild the design
   // rail's DOM node (and its hoisted state) on every switch; querySelector
   // returning the SAME node object across switches only holds for a
   // mounted-hidden implementation.
-  it('keeps the same AI v2 design-rail DOM node mounted across top-tab switches (no unmount)', () => {
+  it('keeps the same Dashboards design-rail DOM node mounted across tab switches (no unmount)', () => {
     const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
-    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
     const railNode = container.querySelector('[data-testid="aiv2-design-rail"]');
     expect(railNode).not.toBeNull();
 
@@ -284,10 +295,10 @@ describe('SessionWorkspace AI v2 tab', () => {
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
     expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(true);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
     expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
     expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(false);
   });
@@ -365,7 +376,7 @@ describe('SessionWorkspace AI v2 tab', () => {
       };
 
       renderStrict(<SessionWorkspace sessionId="sess-1" />);
-      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
 
       const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
       fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
@@ -380,7 +391,7 @@ describe('SessionWorkspace AI v2 tab', () => {
       expect(capturedSignal?.aborted).toBe(false);
 
       // Switch back: conversation intact, not reset to empty.
-      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
       expect(screen.getByText('Give me an overview')).toBeTruthy();
       expect(screen.getByText('Built an overview.')).toBeTruthy();
 
@@ -407,7 +418,7 @@ describe('SessionWorkspace AI v2 tab', () => {
   // fix adds `key={sessionId}` at the mount site so a SESSION change (not a
   // tab change — the test above already proves tab switches never remount)
   // forces a fresh AiV2Panel instance.
-  it('navigating from session A (with a pending, un-kept proposal) to session B shows a clean AiV2 panel', async () => {
+  it('navigating from session A (with a pending, un-kept proposal) to session B shows a clean Dashboards panel', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -454,7 +465,7 @@ describe('SessionWorkspace AI v2 tab', () => {
     );
     try {
       const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
-      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
 
       const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
       fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
@@ -468,17 +479,17 @@ describe('SessionWorkspace AI v2 tab', () => {
       // Navigate to a different, already-cached session — same top-level
       // `SessionWorkspace` instance (feedTab state survives), only the
       // `sessionId` prop changes, exactly as a real nav-without-remount would.
-      // Re-wrapped in the SAME `<StrictMode>` the initial `renderStrict` used
-      // (rather than a bare `rerender(<SessionWorkspace .../>)`): the root
-      // element's TYPE must stay identical across the two `rerender` calls,
-      // or React treats it as a full tree replacement and remounts
+      // Re-wrapped in the SAME `<StrictWrapper>` the initial `renderStrict`
+      // used (rather than a bare `rerender(<SessionWorkspace .../>)`): the
+      // root element's TYPE must stay identical across the two `rerender`
+      // calls, or React treats it as a full tree replacement and remounts
       // `SessionWorkspace` itself — which would make this test pass
       // regardless of whether `AiV2Panel`'s own `key={sessionId}` fix is
       // present, since everything below it would remount either way.
       rerender(
-        <StrictMode>
+        <StrictWrapper>
           <SessionWorkspace sessionId="sess-b" />
-        </StrictMode>,
+        </StrictWrapper>,
       );
 
       // Clean slate for session B: no leaked proposal banner, no leaked
