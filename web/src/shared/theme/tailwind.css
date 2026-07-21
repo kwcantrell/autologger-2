@@ -245,6 +245,29 @@
   --v5-timeline-lane-h: calc(var(--v5-timeline-lane-base) * 1.5);
   --v5-timeline-lane-delta: calc(var(--v5-timeline-lane-base) * 0.5);
 
+  /* ai-v2-dashboards data-viz palette (design.md "UI design brief"; validated
+   * with the dataviz six-checks validator against surface #131b2e — PASS
+   * band/chroma/contrast, worst adjacent CVD ΔE 10.3, legal because every
+   * multi-series widget carries direct labels, never color alone). Slots are
+   * assigned to entities in a FIXED order and never cycled/reshuffled;
+   * speakers take slots 1..N consistently across every widget in a
+   * dashboard (see web/src/pages/index/components/aiV2/palette.ts). Consumed
+   * as var() from component inline styles (Tailwind's scanner can't see a
+   * per-index dynamic class), mirroring the --font-mono precedent above. */
+  --viz-series-1: #0284c7;
+  --viz-series-2: #199e70;
+  --viz-series-3: #c98500;
+  --viz-series-4: #008300;
+  --viz-series-5: #9085e9;
+  --viz-series-6: #e66767;
+  --viz-series-7: #d55181;
+  --viz-series-8: #d95926;
+  /* Single-series marks (event density, nominal category bars) use the brand
+   * sky — never colored by value. */
+  --viz-single: #38bdf8;
+  --viz-grid: rgba(148, 163, 184, 0.14);
+  --viz-axis: rgba(148, 163, 184, 0.34);
+
   /* V4 design tokens (formerly scoped under `.v4-scratch`; promoted to :root in v1.15.0).
    * Consumed by Timeline.css, SessionWorkspace.css, EventLogSheet.css, V6Rail.css,
    * TransportControls.css, CategoryButtonStrip.css, and AppShell.css.

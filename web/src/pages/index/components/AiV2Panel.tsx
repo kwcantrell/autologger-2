@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AiV2Design, type AiV2Message, type AiV2PendingQuestion } from './AiV2Design';
+import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 
 interface Props {
@@ -21,14 +22,26 @@ const STARTER_MESSAGE =
  * and back never unmounts it, never aborts an in-flight design turn, and
  * never clears the conversation or a pending question.
  *
- * Canvas seam (Unit 2, tasks 4.3-4.7): the dashboard grid, direct-manipulation
- * editing, catalog picker, and degraded-state rendering all land in the
- * `data-testid="aiv2-canvas-seam"` region below. This unit builds only the
- * shell (canvas region + docked rail, per the mockup) plus the "Design with
- * AI" entry point (design D7a: agent proposes, user adjusts) so the tab is
- * usable end-to-end before the grid exists — the other D7a entry point,
- * "Start blank", needs the editing grid itself and is Unit 2's to add
- * alongside it rather than a non-functional stub here.
+ * Canvas seam (tasks 4.3/4.6/4.7): the dashboard grid (`aiV2/DashboardGrid.tsx`,
+ * built this unit and fully tested standalone), direct-manipulation editing,
+ * catalog picker, and per-widget degraded-state rendering all land in the
+ * `data-testid="aiv2-canvas-seam"` region below. This component still shows
+ * only the placeholder shell there deliberately: there is no persisted/
+ * design-turn-produced dashboard CONFIG state anywhere yet (Phase 5,
+ * persistence, is a later phase; task 4.6, direct-manipulation editing, is
+ * what introduces the dashboard-config state this panel would hold and feed
+ * into `DashboardGrid`) — wiring the seam to real state belongs to that task,
+ * not this one, per this unit's brief ("do NOT wire a real session data
+ * source"). The "Design with AI" entry point (design D7a: agent proposes,
+ * user adjusts) is wired; "Start blank" needs the editing grid itself and is
+ * task 4.6's to add alongside it rather than a non-functional stub here.
+ *
+ * Preview slot (task 4.4): `renderOptionPreview` below fills Unit 1's seam by
+ * rendering `renderCatalogWidgetPreview` — THE SAME `CatalogWidget` component
+ * `DashboardGrid` renders, on synthetic sample data, keyed by the option's own
+ * catalog `widgetType` (spec "Previews reflect the rendered result": preview
+ * and rendered widget resolve to the same component — see
+ * `aiV2/widgetRegistry.tsx`'s module doc for how that invariant holds).
  */
 export function AiV2Panel({ sessionId }: Props) {
   const [messages, setMessages] = useState<AiV2Message[]>([]);
@@ -89,6 +102,9 @@ export function AiV2Panel({ sessionId }: Props) {
           onPendingQuestionChange={setPendingQuestion}
           pendingStart={pendingStart}
           onPendingStartConsumed={() => setPendingStart(null)}
+          renderOptionPreview={(widgetType, option) =>
+            widgetType ? renderCatalogWidgetPreview(widgetType, option.label) : null
+          }
         />
       </aside>
     </div>
