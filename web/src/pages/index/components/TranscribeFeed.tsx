@@ -1,12 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
+import { ApiError } from '../../../api/client';
 import {
   useGenerateTranscript,
   useInsertTranscriptWord,
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
-import { toast } from '../../../shared/components/Toast';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
@@ -40,6 +40,12 @@ export function TranscribeFeed({ sessionId }: Props) {
   const update = useUpdateTranscriptWord(sessionId);
   const errorRef = useRef<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
+  // Latched on the first 503 (ui-refresh D9: honest capability gate — the server has no
+  // capability endpoint, so unavailability is learned on first attempt and then stated
+  // plainly instead of inviting repeat failures). Persists across session switches because
+  // this panel is mounted-hidden and unkeyed; cleared only by a full page reload, which is
+  // deliberate — the copy below tells the operator to reload after configuring.
+  const [genUnavailable, setGenUnavailable] = useState(false);
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
   // Reactive scroll viewport: OverlayScrollbars publishes its viewport via the
   // `scrollRef` callback below. Storing it in state (not a ref) re-renders so
@@ -50,11 +56,17 @@ export function TranscribeFeed({ sessionId }: Props) {
   function handleGenerate() {
     setGenError(null);
     generate.mutate(undefined, {
+      // Single error channel (ui-refresh): inline in the panel only, no duplicate toast.
+      // A 503 latches the control instead of surfacing a one-off error message.
       onError: (err) => {
+        if (err instanceof ApiError && err.status === 503) {
+          setGenUnavailable(true);
+          errorRef.current = err.message;
+          return;
+        }
         const msg = err instanceof Error ? err.message : 'Generation failed.';
         setGenError(msg);
         errorRef.current = msg;
-        toast.error(msg);
       },
     });
   }
@@ -105,17 +117,41 @@ export function TranscribeFeed({ sessionId }: Props) {
 
   const wordCount = words?.length ?? 0;
 
+  // A11y divergence from the spike (spec-mandated, D9): the spike used `disabled` + a mouse
+  // `title` — invisible to keyboard/AT users since a native-disabled control can't receive
+  // focus and has no accessible description. Here the control stays a real, focusable button
+  // (no `disabled` attribute) using `aria-disabled` instead, with the reason exposed two ways:
+  // `aria-describedby` pointing at an always-visible reason span (not sr-only — sighted
+  // keyboard users get it too), and the click handler no-ops while latched. Visual "disabled"
+  // styling is reproduced via the `aria-disabled:` variant since `disabled:` utilities key off
+  // the native attribute.
+  const genReasonId = 'v5-transcribe-gen-reason';
   const toolbar = (
     <>
-      {genError && <span className="ml-2 text-[0.78rem] text-v5-danger">{genError}</span>}
+      {genError && (
+        <span role="alert" className="ml-2 self-center text-[0.78rem] text-v5-danger">
+          {genError}
+        </span>
+      )}
       <button
         type="button"
-        className={FEED_GLASS_BTN}
+        className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
         disabled={generate.isPending}
-        onClick={handleGenerate}
+        aria-disabled={genUnavailable || undefined}
+        aria-describedby={genUnavailable ? genReasonId : undefined}
+        onClick={() => {
+          if (genUnavailable) return;
+          handleGenerate();
+        }}
       >
         {generate.isPending ? 'Generating…' : 'Auto Generate'}
       </button>
+      {genUnavailable && (
+        <span id={genReasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
+          Transcription isn&apos;t configured on this server (needs{' '}
+          <code>DEEPGRAM_API_KEY</code>). Reload after configuring.
+        </span>
+      )}
       <button
         type="button"
         className={FEED_GLASS_BTN}
@@ -146,6 +182,13 @@ export function TranscribeFeed({ sessionId }: Props) {
         emptyMessage={
           generate.isPending ? (
             <>Generating transcript&hellip; this may take a couple minutes.</>
+          ) : genUnavailable ? (
+            <>
+              Transcription isn&apos;t configured on this server. It needs a DeepGram API key
+              (server setting <code>DEEPGRAM_API_KEY</code>); when enabled, session audio is sent
+              to DeepGram&apos;s cloud to transcribe it. Reload this page after configuring it. You
+              can still add rows by hand with <strong>Insert</strong>.
+            </>
           ) : (
             <>
               No transcript yet. Click <strong>Auto Generate</strong> to transcribe audio.

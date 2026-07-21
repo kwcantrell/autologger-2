@@ -1,6 +1,6 @@
 import { useMemo, useReducer, useState } from 'react';
+import { ApiError } from '../../../api/client';
 import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks/useTopics';
-import { toast } from '../../../shared/components/Toast';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
@@ -35,15 +35,22 @@ export function TopicsFeed({ sessionId }: Props) {
   const generate = useGenerateTopics(sessionId);
   const insert = useInsertTopic(sessionId);
   const [genError, setGenError] = useState<string | null>(null);
+  // Latched on the first 503 (ui-refresh D9: honest capability gate — topic generation has no
+  // external integration wired up on this deployment). Persists across session switches (this
+  // panel is mounted-hidden and unkeyed); cleared only by a full page reload.
+  const [genUnavailable, setGenUnavailable] = useState(false);
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
 
   function handleGenerate() {
     setGenError(null);
     generate.mutate(undefined, {
+      // Single error channel (ui-refresh): inline in the panel only, no duplicate toast.
       onError: (err) => {
-        const msg = err instanceof Error ? err.message : 'Generation failed.';
-        setGenError(msg);
-        toast.error(msg);
+        if (err instanceof ApiError && err.status === 503) {
+          setGenUnavailable(true);
+          return;
+        }
+        setGenError(err instanceof Error ? err.message : 'Generation failed.');
       },
     });
   }
@@ -67,17 +74,36 @@ export function TopicsFeed({ sessionId }: Props) {
 
   const topicCount = topics?.length ?? 0;
 
+  // A11y divergence from the spike (spec-mandated, D9): the spike used `disabled` + a mouse
+  // `title`, unreachable via keyboard/AT. Here the control stays focusable via `aria-disabled`
+  // (not `disabled`) with the reason exposed via `aria-describedby` + an always-visible span,
+  // and the click handler no-ops while latched. See TranscribeFeed for the fuller rationale.
+  const genReasonId = 'v5-topics-gen-reason';
   const toolbar = (
     <>
-      {genError && <span className="ml-2 text-[0.78rem] text-v5-danger">{genError}</span>}
+      {genError && (
+        <span role="alert" className="ml-2 self-center text-[0.78rem] text-v5-danger">
+          {genError}
+        </span>
+      )}
       <button
         type="button"
-        className={FEED_GLASS_BTN}
+        className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
         disabled={generate.isPending}
-        onClick={handleGenerate}
+        aria-disabled={genUnavailable || undefined}
+        aria-describedby={genUnavailable ? genReasonId : undefined}
+        onClick={() => {
+          if (genUnavailable) return;
+          handleGenerate();
+        }}
       >
         {generate.isPending ? 'Generating…' : 'Auto Generate'}
       </button>
+      {genUnavailable && (
+        <span id={genReasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
+          Topic generation isn&apos;t available on this server (no integration configured).
+        </span>
+      )}
       <button
         type="button"
         className={FEED_GLASS_BTN}
@@ -106,9 +132,19 @@ export function TopicsFeed({ sessionId }: Props) {
         isLoading={isLoading}
         isEmpty={!topics || topics.length === 0}
         emptyMessage={
-          <>
-            No topics yet. Generate a transcript first, then click <strong>Auto Generate</strong>.
-          </>
+          genUnavailable ? (
+            <>
+              Topic generation isn&apos;t available on this server — no topic-generation
+              integration is configured. You can still add topics by hand with{' '}
+              <strong>Insert</strong>, or design a dashboard from the{' '}
+              <strong>Dashboards</strong> tab.
+            </>
+          ) : (
+            <>
+              No topics yet. Generate a transcript first, then click{' '}
+              <strong>Auto Generate</strong>.
+            </>
+          )
         }
         sortKey={sort.key}
         sortDir={sort.dir}
