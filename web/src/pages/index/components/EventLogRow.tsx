@@ -35,13 +35,18 @@ const CELL_MSG = 'max-w-[min(28rem,38vw)]';
 /** Message/actions cell chrome (was `.msg` + `.rowActions`). NOTE: `.rowActions`'s
  *  `text-align: center` was DEAD in the legacy cascade — `.sheet td { text-align: left }`
  *  (0,1,1) beat `.rowActions` (0,1,0), so the cell rendered LEFT. We keep that effective
- *  left alignment. */
-const CELL_ACTIONS = 'text-left whitespace-nowrap align-middle leading-none';
+ *  left alignment. `relative` (ui-refresh) makes this cell the containing block for the
+ *  hover action cluster — without it the absolute cluster resolved against the sheet and
+ *  every row's Delete button stacked at one detached point below the table. */
+const CELL_ACTIONS = 'relative text-left whitespace-nowrap align-middle leading-none';
 /** Positioning/geometry for the hover action cluster (was `.rowHoverActions`). Visibility is
  *  applied separately (ROW_ACTIONS_HIDDEN reveal-on-hover, or always-on in batch) so the two
  *  opacity/pointer-events states never stack on one element. */
 const ROW_HOVER_ACTIONS =
-  'absolute right-8 top-1/2 -translate-y-1/2 inline-flex gap-[0.2rem] [transition:opacity_0.14s_ease]';
+  'absolute right-[0.4rem] top-1/2 -translate-y-1/2 inline-flex gap-[0.2rem] [transition:opacity_0.14s_ease]';
+/** Compact in-row icon action (ui-refresh): replaces the legacy `.btn`-with-emoji delete. */
+const ROW_ICON_BTN =
+  'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[0.5rem] border border-v5-border-strong bg-[rgba(15,23,42,0.88)] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(251,113,133,0.5)] hover-always:text-[#fda4af] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
 /** Reveal-on-hover/focus-within (non-batch): hidden until the row (`group`) is hovered. */
 const ROW_ACTIONS_HIDDEN =
   'opacity-0 pointer-events-none [.group:hover_&]:opacity-100 [.group:hover_&]:pointer-events-auto [.group:focus-within_&]:opacity-100 [.group:focus-within_&]:pointer-events-auto';
@@ -351,11 +356,30 @@ export function EventLogRow({
       <Tooltip content="Delete row">
         <button
           type="button"
-          className="btn"
+          className={ROW_ICON_BTN}
           aria-label="Delete row"
           onClick={() => onDelete(event.event_id)}
         >
-          🗑
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <path
+              d="M9 7V5C9 4.44772 9.44772 4 10 4H14C14.5523 4 15 4.44772 15 5V7"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            />
+            <path
+              d="M6.5 7L7.4 19.1C7.44 19.61 7.86 20 8.37 20H15.63C16.14 20 16.56 19.61 16.6 19.1L17.5 7"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+            <path
+              d="M10 11V16M14 11V16"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
       </Tooltip>
     </span>
