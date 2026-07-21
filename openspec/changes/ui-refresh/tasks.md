@@ -103,17 +103,17 @@
 
 ## 7. Honest gates + save models (web-session-console)
 
-- [ ] 7.1 TranscribeFeed/TopicsFeed: 503-latch per mounted panel (D9: persists across
+- [x] 7.1 TranscribeFeed/TopicsFeed: 503-latch per mounted panel (D9: persists across
       session switches, reload clears — copy says so), generate control non-actionable with
       a keyboard/AT-reachable reason (visible text or aria-describedby on focusable
       aria-disabled — NOT a mouse-only title), remedy empty-state copy, single inline error
       channel (remove toast duplication).
-- [ ] 7.2 HomeSettingsModal: DERIVED dirty tracking (compare form state to initialized
+- [x] 7.2 HomeSettingsModal: DERIVED dirty tracking (compare form state to initialized
       snapshot — D11 as panel-revised, diverging from the spike's hand-armed flag), Save
       disabled/"Saved" when clean, guarded Close via `useConfirm`, themed Add-Show dialog,
       corrected Event Buttons copy. `HomeSettingsModal.test.tsx`: edit-any-field-enables-Save
       coverage per tab.
-- [ ] 7.3 NewSessionModal: progressive disclosure (YouTube + timecode-settings sections with
+- [x] 7.3 NewSessionModal: progressive disclosure (YouTube + timecode-settings sections with
       value summaries), Bonus as a true `aria-pressed` toggle; TeamsRoute anonymous-mode
       notice names `REQUIRE_LOGIN=1`; FEED_GLASS_BTN `max-md:px-4`.
 - [ ] 7.4 Finish the vocabulary rename in copy (panel finding): AiV2Design's "AI v2 isn't
