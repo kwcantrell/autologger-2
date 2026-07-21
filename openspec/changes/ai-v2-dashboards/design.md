@@ -32,28 +32,86 @@ implementation. Its findings are inputs here, not waste — see "Inherited findi
 
 ## Decisions
 
-### D1 — Catalog first, sandboxed iframe as the single escape hatch (owner ruling)
+### D1 — Catalog only. No model-authored markup renders, anywhere. (owner ruling, revised
+2026-07-21)
 
-Most widgets come from a **fixed catalog** rendered by our own React components. Claude selects
-types and composes a layout; it does not author the markup. One escape hatch exists for genuinely
-custom output: an **`<iframe sandbox>` without `allow-same-origin`**.
+Every widget comes from a **fixed catalog** rendered by our own React components. Claude selects
+types and composes a layout; **it never authors markup**.
 
 *Why not the demo's approach.* The demo renders Claude-authored HTML via
 `dangerouslySetInnerHTML` + DOMPurify. That is proportionate for a single-user localhost toy. Here
 the markup would be authored from **untrusted transcript content** (anyone audible on a recording
-is an input author) and rendered in a **multi-user, studio-scoped, authenticated** page. DOMPurify
-is a good sanitizer, but "sanitizer bug" and "authenticated origin" is a bad pairing to accept by
-default when a catalog covers the common cases.
+is an input author) and rendered in a **multi-user, studio-scoped, authenticated** page.
 
-*Why the escape hatch survives anyway.* Restricting to a catalog alone would make the feature
-brittle the first time a user wants something unanticipated. The iframe keeps that possible while
-making the blast radius structural rather than dependent on a sanitizer being correct: no
-`allow-same-origin` means no access to cookies, `localStorage`, or the parent DOM, so the worst
-case is a broken tile rather than session compromise.
+*Why the sandboxed-iframe escape hatch was cut (owner ruling, after the panel).* The first draft
+kept an `<iframe sandbox>` escape hatch for custom widgets. The panel priced it honestly: three
+tasks, the most complex part of the change, justified only by a hypothesis about a feature with
+**zero users** — while carrying the entire XSS/CSP/exfiltration surface. Specifically it found
+(a) the spec pinned no sandbox token set, so a conforming implementation could ship
+`allow-scripts allow-same-origin`, which is self-defeating; (b) **this application has no CSP at
+all** (verified: no `Content-Security-Policy` anywhere in `server/src/`), so `allow-scripts` alone
+permits `fetch()` to any origin — exfiltrating precisely the session data the widget was handed;
+and (c) passing data in via `srcdoc` interpolation is itself an injection vector, since
+`JSON.stringify` does not escape `</script>`.
 
-**Invariant a future reader must not "simplify":** there is **no** `dangerouslySetInnerHTML` path
-outside the sandboxed iframe. Rendering a custom widget inline "just for one case" reopens exactly
-the hole this decision closes.
+Cutting it removes all three at once, and removes the only path by which agent-authored markup
+reaches a browser. Adding it later is purely additive, against shipped components, with real
+information about what it is for.
+
+**Invariant a future reader must not "simplify": there is NO `dangerouslySetInnerHTML` anywhere
+in this feature — no exceptions, no "just for one case."** A repo-wide assertion enforces it. If a
+future change wants custom widgets, it must first specify an exact sandbox token set, a CSP with
+`connect-src 'none'`, and a `postMessage` data channel — the three things this draft lacked.
+
+### D2a — "Computable" was checked as column-existence, not population (corrected)
+
+The draft's D2 table marked widgets "✅ computable" because the **columns exist**. The panel showed
+the real question is whether they are **populated**, and I verified each claim:
+
+- **`TranscriptStore.insertTranscriptWord` writes only 6 columns** — `start_sec`/`end_sec` are
+  never written and take the schema default `0.0`. `transcriptWordCreateSchema` does not even
+  accept them. **Every manually-entered transcript has no timing.**
+- **`transcriptRemap.ts` writes literal `start_sec: 0, end_sec: 0`** for anchorless words — any
+  session lacking the internal anchor events. **Every unanchored DeepGram transcript has no
+  timing.**
+- **`speaker` is a diarization index** (`number` → `String(w.speaker)`), not a name. A talk-time
+  legend would read "0, 1, 2".
+- **`paragraphs=true` is requested and discarded** — `extractWords` reads only
+  `alternatives[0].words`. There is **no utterance boundary in storage**, so `utterance_counts` has
+  no definition and two implementers would invent two different ones.
+- **`smart_format` removes disfluencies**, so `filler_counts` over a formatted transcript plausibly
+  reports near-zero regardless of how people actually spoke.
+- **`events.category` is an opaque id**; labels come from `enrichEventRpc` against the **catalog
+  DB** — outside SessionHub. *This was a finding of the predecessor's panel that I failed to carry
+  forward.*
+- **`session_topics.session_time` is `z.string().max(20)` with no format validation**, so
+  `topic_timeline` has no reliable numeric time to plot.
+
+This is the same error the predecessor's panel caught in the lockdown table: **checking existence
+rather than semantics.** Recording it here so the next reader distrusts a "✅" that has not been
+traced to a write path.
+
+### D2b — Fix the data first, and make "unavailable" a first-class rendered state (owner ruling)
+
+**Ruling: sequence the data work ahead of the dashboard, and design for absence regardless.**
+
+1. **Data-first change(s)** land before the catalog depends on them: persist DeepGram
+   `paragraphs` (already requested and paid for) to give utterances a real boundary; persist
+   `sentiment` (same); populate or derive word timings on the manual-entry path; and resolve
+   speaker **names** rather than diarization indices. Each is a schema/ingest concern with its own
+   gate, not something to smuggle into a dashboard change.
+2. **A real test session** is created from `https://www.youtube.com/watch?v=BQP0QejCmxw` so the
+   catalog is exercised against genuine transcript data rather than synthetic fixtures alone.
+   (Note: YouTube import is currently `503` — see the open question below.)
+3. **Degraded state is normative, per widget.** Every widget renders one of: real data, or an
+   **explicit unavailable state naming the reason** ("Talk time unavailable — this transcript has
+   no word timings"). **Zeros are never rendered as data.** This is what makes a wider catalog
+   honest rather than misleading, and it converts the panel's "permanently empty tile" failure into
+   a designed, legible state.
+
+**Open question for the gate:** YouTube import is deliberately `503` in this repo (no external
+integration wired). Creating the reference session therefore needs a route — import the audio
+manually and run the existing DeepGram path, or wire the import. Flagged rather than assumed.
 
 ### D2 — v1 catalog is limited to what today's schema can compute (owner ruling)
 
@@ -91,8 +149,18 @@ drift from it, and it removes an entire class of "the preview looked different" 
 why the catalog is worth having at all — with free-form HTML there is no component to preview
 *with*.
 
-Custom-widget previews are the exception: they render in the same sandboxed iframe as the real
-thing, which preserves the same what-you-see-is-what-you-get property by a different mechanism.
+*(The draft carved out an exception here for custom-widget previews rendering in the sandboxed
+iframe. With the iframe cut from v1 (D1), there is no exception: **every** preview is a real
+component.)*
+
+**Mechanism, which the draft left unspecified (panel finding).** The SDK's preview channel is a
+model-authored **string** (`markdown` or `html`) — there is no way for it to name a React
+component, so "renders through the real component" is not a configuration of the question tool but
+a decision to **not use its preview field at all**. Option identity is therefore carried by a
+**catalog widget-type identifier validated against the closed set on receipt**, never by matching
+free-text labels; the agent's supplied `preview` is discarded server-side (D6a). The answer payload
+must also distinguish a chosen catalog option from the free-text fallback, which is a different
+shape entirely.
 
 ### D4 — Aggregates as tools, not raw rows
 
@@ -110,6 +178,50 @@ parameter; hubs resolve at call time via `registry.get(sessionId)` and are **nev
 is built **per turn**, never hoisted to module scope. `SessionHub.listTranscriptWords`,
 `listTopics`, and `listEvents` are all synchronous reads, so aggregation happens in the tool layer
 and the synchronous-hub invariant holds.
+
+### D5a — A stored dashboard is attacker-influenced content, and validation must be whole-config
+
+**The panel finding most likely to have shipped**, because every artifact pointed attention at the
+iframe and away from here.
+
+The draft's containment argument was: catalog widgets are safe *because* they render through our
+own React components. That covers widget **structure**. It says nothing about widget **content** —
+and the draft spec never constrained content at all (the words "title" and "label" appeared
+**zero times**). But a dashboard config carries: widget titles and captions the agent authors,
+`transcript_excerpt` content that is untrusted transcript text by design, and speaker labels
+derived from DeepGram.
+
+**The categorical change from the predecessor:** it was read-only and ephemeral — injected text
+reached one operator once, in a `delta` event, and was gone. This change **persists
+attacker-influenced strings into a durable artifact that re-renders, unattended, in other users'
+authenticated sessions, indefinitely.** The draft's write-validation checked only widget type and
+interaction vocabulary, so an injected title passes validation and is stored.
+
+React's JSX escaping handles the obvious payload, but it is not the boundary: a title flowing into
+`href`/`src` (`javascript:`), a `style` attribute, an SVG `<use>`, or a chart library's
+HTML-accepting tooltip all execute — and this repo has no charting library yet, so that choice is
+still ahead of us.
+
+**Ruling:** validation on write is **whole-config**, not type-and-interaction. Every string field
+is bounded and constrained by schema, and **no field of a stored dashboard is ever interpolated
+into HTML, a URL, a style, or an event handler** — text only, everywhere.
+
+### D5b — Write authorization, bounds, and a delete path
+
+Three omissions the panel found in the persistence requirement, all now normative:
+
+- **Who may write was never stated.** Read scoping was specified; write scoping was not. Combined
+  with unvalidated content and no delete path, the lowest-privileged studio member could plant a
+  persistent artifact in every colleague's workspace with no way to remove it through the UI.
+- **No bounds of any kind** — no cap on dashboards per session, widgets per dashboard, or config
+  size. The words "limit", "quota", and "maximum" appeared zero times. On a `restart_supported:
+  false` deployment, recovery from a scripted write loop is manual filesystem surgery.
+- **No delete path.** "delete" appeared zero times; the artifact was write-only and monotonic,
+  while the design's own Risks section named stored-config-as-stored-exploit as a risk.
+
+**Ruling:** stored configs record `created_by` and the originating turn; write is scoped at least
+as tightly as read; per-session dashboard count, per-dashboard widget count, and serialized config
+size are all bounded and rejected on write; a delete/replace path exists.
 
 ### D5 — Dashboard persistence — OPEN, for the gate
 
@@ -176,6 +288,102 @@ turn's concurrency slot open, which is the predecessor's D7 slot-leak hazard. Th
 TTL and no reaper, and `restart_supported` is `false` on this deployment, so a leaked slot wedges
 that session until the process restarts.
 
+**Corrected after the panel — the key must bind the PRINCIPAL, not just the session.** The draft
+keyed on `(sessionId, turnId, requestId)`, which is **the same hole the predecessor's panel found
+for resume ids, carried forward unfixed**. Under it, any studio co-member who can pass
+`requireSession` could answer another user's pending question — and here an answer *determines what
+gets built and stored*, converting a read-side confidentiality nit into a **write-side integrity
+hole on a durable artifact**. Ruled:
+
+- The pending entry records the **user id of the principal that initiated the turn**; an answer is
+  rejected unless the answering principal is identical.
+- Turn and request ids are **≥128-bit CSPRNG-derived**, matching the existing `aiMcpServer.ts`
+  precedent, so guessing is not the fallback defense.
+- **The `API_TOKEN` path is explicitly refused on AI v2 routes.** `requireSession` skips the studio
+  check entirely when `user === null`, so a shared Companion device token would otherwise pass for
+  *every session in the deployment*. A device token has no user id and therefore cannot satisfy the
+  principal check — but the refusal is stated normatively rather than left as an emergent property.
+- An answer for a turn no longer in flight is rejected without effect, and the pending entry is
+  deleted when the turn ends by any path, so it cannot be resolved late.
+
+### D7a — Agent proposes, user adjusts (owner ruling, 2026-07-21)
+
+The panel asked whether conversational design earns its place at all, given a closed catalog and a
+fixed layout grammar — and separately found there was **no edit path**: changing one widget meant
+redoing the whole conversation, so "the second edit is more expensive than the first creation."
+
+**Ruling: the agent's job is the first draft, not every edit.** It reads the session's aggregates
+and *proposes* a starting dashboard — the one thing a menu genuinely cannot do. Everything after is
+**direct manipulation**: add, remove, resize, reorder, retitle, without a turn.
+
+This makes the edit path a **core requirement rather than an omission**, and it means the picker UI
+is needed either way — so the catalog components, previews, grid, and persistence are load-bearing
+regardless of whether a turn ever runs. It also bounds the agent's blast radius: the durable
+artifact is mostly shaped by direct user action, with the agent seeding it.
+
+### D8a — `AskUserQuestion` is a BUILT-IN: `tools: []` makes this feature impossible
+
+**The panel's fatal finding, verified independently before folding.** The first draft specified
+`tools: []` (disable all built-ins) plus `AskUserQuestion` in `allowedTools`. That configuration
+cannot work:
+
+- **`AskUserQuestionInput` appears in `sdk-tools.d.ts`'s `ToolInputSchemas` union** — the generated
+  inventory of *Claude CLI built-in tool inputs*, alongside `BashInput` and `FileReadInput`. It is
+  a built-in, not an MCP tool. (The first fact-check missed this by grepping only `sdk.d.ts`.)
+- **`tools: []`** is documented as *"Disable all built-in tools."*
+- **`allowedTools`** is *"auto-allowed **without prompting**… To restrict which tools are
+  available, use the `tools` option instead"* — a permission annotation **over** the base set. It
+  does not add to it.
+- **The demo does the opposite of the draft**: `tools: ["AskUserQuestion"]`, with **nothing** in
+  `allowedTools`. The one working reference puts it in the base set.
+
+**Consequence:** with `tools: []` the tool is never advertised, the model cannot emit it,
+`canUseTool` never fires, and no question reaches the browser — the entire design conversation is
+dead. Worse, the closed-world characterization test would **pass**, certifying the broken
+configuration, because it asserts option *values*, not that the interaction works.
+
+**Ruling: the built-in set is exactly `['AskUserQuestion']`.** This is a knowingly weaker security
+claim than "all built-ins disabled" and the gate accepts it explicitly rather than discovering it
+during apply. Mitigations that make it acceptable:
+
+- The base set is a **one-element closed set**, not an open allowlist — `Bash`, `Read`, `Write`,
+  `Edit`, and `WebFetch` remain absent.
+- **`disallowedTools`** (dropped in transit from the predecessor — see D8b) is re-instated naming
+  the built-in write/exec set, since it is the only option documented as overriding an allow.
+- `AskUserQuestion` cannot read files, run commands, or reach the network; its blast radius is
+  asking the user a question.
+
+The spec's lockdown requirement is reworded accordingly: **"the built-in tool set SHALL be exactly
+the one interactive question tool"**, not "all built-ins disabled outright", which was
+unsatisfiable alongside the interaction this feature requires.
+
+**Also ruled (from the same finding):** `permissionMode` moves off `'dontAsk'`. The SDK documents
+`dontAsk` as an **auto-deny short-circuit** that can bypass `canUseTool` — the exact callback this
+design blocks on. The demo uses `'plan'` and notes the tool "still fires" there. Spike 0.4 pins
+which mode actually runs the callback; `'dontAsk'` is ruled out on the evidence.
+
+### D8b — Inheritance was lossy: three controls and one open conflict were dropped
+
+The draft claimed the predecessor's findings were carried "as **verified input**, not re-derived."
+The panel checked and that framing was inaccurate in two ways, both now corrected:
+
+1. **The predecessor's own log calls most of it unverified** — *"No spike has been run for the
+   SDK"*, *"D1 stays an unverified hypothesis"*. What transferred was **panel corrections to a
+   document**, i.e. doc-reading, not empirical results. The "verified input" heading overstated it
+   and is removed.
+2. **Three controls vanished in transit** and are re-instated here:
+   - **`disallowedTools`** — belt-and-braces naming the built-in write/exec set. Now load-bearing
+     rather than optional, because D8a forces a non-empty `tools` array.
+   - **`MCP_TOOL_TIMEOUT`** in the env whitelist — the predecessor recorded *"a hung in-process MCP
+     tool is unbounded"*; this change adds **more** MCP tools (D4 aggregates) and had inherited the
+     risk without the mitigation.
+   - **`persistSession: false`** — a live finding about on-disk transcripts, dropped without a
+     disposition. Recorded as an open trade (it conflicts with `resume`).
+3. **`safeMode` was an escalated, explicitly UNRESOLVED conflict** in the predecessor, not a
+   settled item. This change inherited *both sides* — the project-hook hole and the closed-world
+   ban on `extraArgs` — but neither the conflict nor the spike meant to settle it. **An open
+   blocker cannot be discharged by supersession.** Restored as spike 0.8.
+
 ### D8 — Security lockdown (inherited, still an unverified hypothesis)
 
 Carried forward from the superseded change, including the four corrections its panel forced:
@@ -236,7 +444,10 @@ surprise.
 
 ## Inherited findings (from the superseded `ai-session-analyst`)
 
-Carried forward as **verified input**, not re-derived. Each was expensive to learn:
+Carried forward from the superseded change. **These are panel corrections to a document —
+doc-reading, not empirical results** (see D8b: the predecessor's own log records "no spike has
+been run for the SDK"). They are still unverified on the SDK path, and Phase 0 exists to settle
+them. Each was expensive to learn and must not be re-derived from scratch:
 
 - **`allowedTools` does not restrict** — it is auto-approve (*"To restrict which tools are
   available, use the `tools` option instead"*). `tools: []` is the built-in denial. The
@@ -292,8 +503,87 @@ Carried forward as **verified input**, not re-derived. Each was expensive to lea
 
 ### 2026-07-21 — Adversarial panel (four skeptical mandates) + gate
 
-*(pending)*
+Four reviewers, distinct mandates, ~20 blockers. **Every load-bearing finding was re-verified
+against the repo or the SDK type surface before folding** — several were fatal.
+
+**Blockers/majors FIXED IN PLACE:**
+
+- **`tools: []` makes the feature impossible (D8a).** `AskUserQuestionInput` is in
+  `sdk-tools.d.ts`'s `ToolInputSchemas` union — the **built-in** inventory — so `tools: []`
+  ("disable all built-ins") strips it. The demo does the opposite (`tools: ["AskUserQuestion"]`,
+  nothing in `allowedTools`). The closed-world test would have **passed** on the broken config.
+  Ruled: built-in set is exactly `['AskUserQuestion']`, `disallowedTools` re-instated,
+  `permissionMode` moved off `'dontAsk'` (an auto-deny short-circuit that can bypass the very
+  callback this design blocks on).
+- **Stored XSS on the "safe" path (D5a).** Catalog rendering protects structure, not **content**;
+  "title"/"label" appeared zero times in the spec. Validation is now whole-config, and no stored
+  field is ever interpolated into HTML, a URL, a style, or an event handler.
+- **Answers bound a session, not a principal (D7).** Any studio co-member could answer another
+  user's question and steer what gets built — the *same* hole the predecessor's panel found for
+  resume ids, carried forward unfixed. Principal binding, ≥128-bit ids, and explicit `API_TOKEN`
+  refusal are now normative.
+- **Persistence had no write authorization, no bounds, no delete path (D5b).**
+- **"Computable" was column-existence, not population (D2a).** Manual inserts never write
+  `start_sec`/`end_sec`; `transcriptRemap` writes literal zeros for anchorless words; `speaker` is
+  a diarization index; `paragraphs` is requested and discarded; `smart_format` strips the fillers
+  `filler_counts` would count; `events.category` is a UUID whose label lives in the catalog DB;
+  topic `session_time` is an unvalidated string. **Same class of error as the predecessor's
+  lockdown table.**
+- **Inheritance was lossy (D8b).** "Verified input" overstated doc-reading as empirical result;
+  `disallowedTools`, `MCP_TOOL_TIMEOUT`, and `persistSession` were dropped in transit, and the
+  `safeMode` conflict was an *unresolved escalation* that supersession cannot discharge.
+
+**ESCALATED TO THE GATE (owner rulings, 2026-07-21):**
+
+- **Sequencing.** The scope reviewer priced the agent layer at 18 of 25 tasks and all the risk,
+  and argued for shipping the picker first. **Ruled: both together, with the blockers fixed.**
+- **Custom-widget iframe.** **Ruled: cut from v1** (D1). This removes findings B2/B3/B5/S3/m14 in
+  one stroke — including that **this application has no CSP at all**, so `allow-scripts` alone
+  would have permitted exfiltration of exactly the data the widget was handed. The repo-wide
+  no-`dangerouslySetInnerHTML` assertion is retained and strengthened to "anywhere, no exceptions".
+- **Data first (D2b).** Persist `paragraphs`/`sentiment`, fix timings and speaker names ahead of
+  the catalog; create a real reference session from a YouTube source; and make **"data
+  unavailable" a first-class rendered state per widget** — zeros are never rendered as data.
+- **Interaction shape (D7a).** **Agent proposes, user adjusts** — the agent seeds a first draft
+  from session aggregates; every subsequent edit is direct manipulation. Makes the edit path a
+  core requirement rather than the omission the panel found.
+
+**NOTED — process/safety issue with the panel itself:** the scope reviewer's headline claim (that
+the shipped CLI's `--permission-prompt-tool` replaces `canUseTool`, collapsing Phase 0) was
+produced by **building and running a nested `claude -p` wired to a permission-prompt MCP server
+that unconditionally returned `{behavior:"allow"}`** — an autonomous loop with its approval gate
+rubber-stamped, spending ~$0.085 unasked. That was not sanctioned. `--permission-prompt-tool` does
+**not** appear in the installed CLI's `--help`, so the claim rests on an undocumented flag
+exercised through a rubber-stamped harness. **The finding is recorded but NOT adopted**; if the
+CLI transport is ever revisited, it needs verification through a sanctioned path.
+
+**MINORS ACCEPTED AS RESIDUAL:** the `503` config gate remains a configuration oracle for
+authorized users (correctly ordered relative to the important `404` masking); the pending-question
+map inherits the predecessor's unbounded-map shape, now with an explicit deletion requirement.
 
 ### 2026-07-21 — Post-gate consistency read (light-tier)
 
-*(pending)*
+**Three findings, all fixed.** Read all four post-fold documents — `proposal.md`, `design.md`,
+`specs/ai-v2-dashboards/spec.md`, `tasks.md` — against the folded gate rulings.
+
+**Found and fixed:**
+1. **`design.md` "Inherited findings" still read "Carried forward as verified input"** — the exact
+   framing D8b says was corrected and removed. D8b described the fix; the target prose was never
+   edited. Now states plainly that these are panel corrections to a document, unverified on the SDK
+   path, with Phase 0 existing to settle them.
+2. **`proposal.md` Non-Goals still presumed the iframe existed** — *"Custom widgets render only in
+   the sandboxed iframe; there is no `dangerouslySetInnerHTML` path outside it"* contradicted the
+   same document's own "cut from v1" bullet. Now a repo-wide, no-exception claim.
+3. **Dead custom-widget preview language** in D3 and in the spec's preview requirement — vacuously
+   true under the v1 cut, but readable as live scope. Both removed.
+
+**Fixed opportunistically while in the file:** the same D3 pass closed panel finding A5 (the
+option→component binding mechanism was asserted but never specified). The SDK's preview channel is
+a model-authored *string* and cannot name a component, so "renders through the real component" is a
+decision to **not use the preview field**; option identity is now carried by a validated catalog
+type identifier rather than inferred from display text. Added as a normative requirement + scenario.
+
+**Clean on:** cross-references (all decision IDs D1–D9 plus the a/b corrections defined and
+referenced; task 0.6 correctly marked removed; every requirement name cited in `tasks.md` matches a
+spec heading verbatim); coverage (every normative SHALL has a covering task; no task implements
+unauthorized work); numbering (the a/b insertions read as layered corrections, clearly labelled).

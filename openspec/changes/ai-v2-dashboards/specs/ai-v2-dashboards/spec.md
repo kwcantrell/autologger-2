@@ -65,10 +65,19 @@ guard path SHALL spawn a subprocess. All error bodies SHALL use the repo's `{ de
 ### Requirement: Design question round trip
 During a design turn the agent MAY ask the requesting user a question. A question SHALL be
 delivered only to the client that initiated that turn and SHALL NOT be broadcast to other clients
-attached to the session. Answers SHALL be submitted to a dedicated endpoint carrying the turn and
-request identifiers, and SHALL be accepted only when both identifiers belong to a question
-currently pending for **that** session and **that** turn; any other identifier SHALL be rejected
-without effect.
+attached to the session.
+
+Answers SHALL be submitted to a dedicated endpoint which SHALL evaluate the same guard chain as
+the design endpoint, masking an inaccessible session as `404`. An answer SHALL be accepted only
+when its identifiers belong to a question currently pending for that session and that turn **and
+the answering principal is the same principal that initiated the turn** — access to the session
+alone SHALL NOT authorize answering another user's question, because an answer determines what is
+built and stored. Turn and request identifiers SHALL be generated with at least 128 bits of
+entropy, so that guessing is not the operative defense. Authentication mechanisms that do not
+identify an individual principal SHALL NOT be accepted on these routes.
+
+An answer for a turn that is no longer in flight SHALL be rejected without effect, and a pending
+entry SHALL be deleted when its turn ends by any path, so it cannot be resolved late.
 
 An unanswered question SHALL NOT hold a turn open indefinitely. When the requesting client
 disconnects or the turn times out, the pending question SHALL be abandoned, the turn SHALL end,
@@ -81,6 +90,15 @@ its child process SHALL be terminated, and its concurrency slot SHALL be release
 #### Scenario: A foreign answer is rejected
 - **WHEN** an answer carries a turn or request identifier belonging to a different session or turn
 - **THEN** it is rejected and the pending question remains unanswered
+
+#### Scenario: A co-member cannot answer another user's question
+- **WHEN** a different authenticated user with access to the same session submits an otherwise
+  valid answer to a question pending for another user's turn
+- **THEN** it is rejected and the question remains pending
+
+#### Scenario: A late answer is rejected
+- **WHEN** an answer arrives for a turn that has already ended
+- **THEN** it is rejected without effect
 
 #### Scenario: An abandoned question does not wedge the session
 - **WHEN** a question is pending and the requesting client disconnects
@@ -101,6 +119,35 @@ persisted, so that no offered widget can render permanently empty.
 - **WHEN** the agent is offered the catalog
 - **THEN** every type in it is backed by data derivable from stored session data
 
+### Requirement: Data unavailability is a rendered state, never a zero
+Backing data may be absent for a given session even when a widget's type is valid — transcripts
+entered by hand carry no word timings, transcripts that could not be anchored to a recording carry
+zeroed timings, and diarized speakers may have no resolved names. A widget whose backing data is
+absent or degenerate SHALL render an **explicit unavailable state naming the reason**, and SHALL
+NOT render zeros, empty series, or placeholder values as though they were measurements.
+
+#### Scenario: A transcript without timings does not render zeros
+- **WHEN** a widget depending on word timings renders for a session whose transcript has none
+- **THEN** it states that timing data is unavailable for that session rather than showing zeros
+
+#### Scenario: Unavailability names its reason
+- **WHEN** any widget cannot render real data
+- **THEN** the rendered state identifies which data is missing
+
+### Requirement: Dashboards are edited directly, not only by conversation
+A design turn produces a **starting** dashboard. Every subsequent modification — adding, removing,
+resizing, repositioning, or retitling a widget — SHALL be possible through direct manipulation
+without running another design turn, so that changing one widget does not require repeating a
+conversation or spending another turn.
+
+#### Scenario: A widget is changed without a design turn
+- **WHEN** a user modifies a saved dashboard's widgets or layout
+- **THEN** the change is applied and persisted with no agent turn run
+
+#### Scenario: A design turn seeds rather than replaces
+- **WHEN** a design turn completes
+- **THEN** its output is a dashboard the user can then edit directly
+
 ### Requirement: Layout and interaction vocabulary
 A dashboard configuration SHALL describe widget placement (position and size) and any cross-widget
 interactions using a **named vocabulary** defined by this capability. Interactions SHALL NOT be
@@ -111,29 +158,37 @@ interaction, or a widget that does not exist in the same dashboard, SHALL be rej
 - **WHEN** a configuration declares an interaction targeting a widget id not present
 - **THEN** validation rejects it
 
-### Requirement: Model-authored markup is confined to a sandbox
-Markup authored by the agent SHALL render **only** inside a sandboxed browser frame that does not
-carry same-origin privileges, so it cannot reach the authenticated document, its cookies, or its
-storage. No other rendering path SHALL interpret agent-authored markup as HTML. Data required by
-a custom widget SHALL be passed to it explicitly; ambient credentials SHALL NOT be reachable
-from it.
+### Requirement: No agent-authored markup is ever rendered
+Every widget SHALL render through this application's own components. No agent-authored content
+SHALL be interpreted as markup, anywhere, by any path. Agent-authored strings that appear in a
+dashboard — titles, captions, labels — SHALL be rendered as **text only**, and SHALL NOT be
+interpolated into HTML, a URL, a style declaration, an attribute that accepts a URL or code, or
+any component option documented to accept markup.
 
-#### Scenario: A custom widget cannot reach the parent document
-- **WHEN** a custom widget attempts to access the parent document, cookies, or storage
-- **THEN** the attempt fails because the frame lacks same-origin privileges
+#### Scenario: A widget title containing markup renders as inert text
+- **WHEN** a stored dashboard carries a widget title containing HTML tags
+- **THEN** the title renders as literal text and no markup is interpreted
 
-#### Scenario: Catalog widgets never interpret agent markup
-- **WHEN** a catalog widget renders
-- **THEN** it renders through the application's own components, not from agent-authored markup
+#### Scenario: Catalog widgets render only from application components
+- **WHEN** any widget renders
+- **THEN** it renders through the application's own components, never from agent-authored markup
 
 ### Requirement: Previews reflect the rendered result
-A preview offered for a catalog widget SHALL be produced by the same component that renders the
-widget in a dashboard, so a preview cannot diverge from the result it previews. A preview for a
-custom widget SHALL render under the same sandbox constraints as the widget itself.
+Every preview SHALL be produced by the same component that renders the widget in a dashboard, so a
+preview cannot diverge from the result it previews.
 
-#### Scenario: Catalog preview and rendered widget agree
-- **WHEN** a user is shown a preview for a catalog widget and later renders that widget
+An option offered to the user SHALL carry a **catalog widget-type identifier**, validated against
+the closed catalog on receipt, so that resolving an option to its component is an exact lookup and
+never an inference from agent-authored display text. Preview content supplied by the agent SHALL
+NOT be used.
+
+#### Scenario: Preview and rendered widget agree
+- **WHEN** a user is shown a preview for a widget and later renders that widget
 - **THEN** both are produced by the same component
+
+#### Scenario: An option naming no catalog type is rejected
+- **WHEN** an option arrives without a valid catalog widget-type identifier
+- **THEN** it is rejected rather than resolved by matching its display text
 
 ### Requirement: Session-scoped aggregate toolset
 The agent SHALL read session data only through tools scoped to the one session the turn was
@@ -156,14 +211,25 @@ partial coverage rather than treating it as complete.
 - **THEN** the result is truncated and the truncation is stated in the tool output
 
 ### Requirement: Subprocess security lockdown
-A design turn SHALL disable all built-in agent tools outright — a positive denial, distinct from
-and not satisfied by an auto-approve allowlist — so no filesystem, shell, or network built-in is
-reachable. It SHALL additionally run with: filesystem settings tiers disabled; only the MCP
-servers this capability passes programmatically; a permission mode that denies rather than prompts
-when a tool is not pre-approved; a configuration directory separate from the operator's personal
-one; account-level cloud connectors disabled; a working directory **outside the repository
-checkout and outside `DATA_DIR`**; an explicit pinned system prompt; a per-turn spend ceiling; and
-a minimal environment. Session forking SHALL be disabled explicitly rather than left to a default.
+A design turn's built-in tool set SHALL be **exactly the one interactive question tool** — a
+closed set of one, established by the base-tool-set option and **not** by an auto-approve
+allowlist, which does not restrict availability. No filesystem, shell, or network built-in SHALL
+be reachable, and the write/execute built-ins SHALL additionally be named in an explicit denial
+list, that being the only mechanism documented to override an allow.
+
+The turn SHALL additionally run with: filesystem settings tiers disabled; only the MCP servers
+this capability passes programmatically; a permission mode under which the interactive question
+tool's permission callback **actually executes** rather than being short-circuited by an auto-deny
+or auto-allow path; a configuration directory separate from the operator's personal one;
+account-level cloud connectors disabled; a working directory **outside the repository checkout and
+outside `DATA_DIR`**; an explicit pinned system prompt; a per-turn spend ceiling; a bound on MCP
+tool-call duration; and a minimal environment. Session forking SHALL be disabled explicitly rather
+than left to a default.
+
+The question tool SHALL NOT be configured to emit HTML previews, and any preview content supplied
+by the agent on a question option SHALL be discarded before the question is relayed to a client —
+previews are produced by this application's own components, so agent-authored preview content is
+both unnecessary and a markup path this capability does not permit.
 
 Configuration-directory isolation SHALL NOT be relied upon to contain settings reached through the
 working directory: agent sessions run non-interactively and therefore skip workspace trust
@@ -180,6 +246,15 @@ closed-world assertion detects an addition.
 #### Scenario: Built-in tools are not reachable
 - **WHEN** the agent attempts to invoke a built-in shell or filesystem tool
 - **THEN** the tool is not available and no command executes
+
+#### Scenario: The interactive question tool is available and its callback runs
+- **WHEN** a design turn asks the user a question
+- **THEN** the question tool is available to the agent, its permission callback executes, and the
+  turn blocks until an answer or an abandonment condition resolves it
+
+#### Scenario: Agent-supplied preview content is not relayed
+- **WHEN** the agent supplies preview content on a question option
+- **THEN** that content is discarded server-side and never reaches a client
 
 #### Scenario: A planted project settings file does not execute
 - **WHEN** a settings file defining a lifecycle hook is present in a directory the deployment does
@@ -220,10 +295,23 @@ agent iterator never terminates. Each turn SHALL additionally carry a per-turn s
 
 ### Requirement: Dashboard persistence
 A dashboard SHALL be stored as a validated configuration and SHALL be re-renderable after the
-design turn that produced it has ended. Stored configurations SHALL be validated on write against
-the catalog and layout vocabulary, so a stored dashboard cannot contain an unknown widget type or
-an undefined interaction. Reading a dashboard SHALL be scoped exactly as the session it belongs
-to, so a caller who cannot read the session cannot read its dashboards.
+design turn that produced it has ended.
+
+Validation on write SHALL cover the **whole configuration**, not only its widget types and
+interactions: every string field SHALL be length-bounded and schema-constrained, and a
+configuration carrying a field that would be interpreted as markup, a URL, or code SHALL be
+rejected. A stored dashboard is a durable artifact that re-renders unattended for other users, so
+its content is treated as untrusted regardless of which agent or user produced it.
+
+Writing a dashboard SHALL be scoped at least as tightly as reading the session it belongs to, and
+stored configurations SHALL record the principal that created them and the turn they originated
+from. Reading SHALL be scoped exactly as the session, so a caller who cannot read the session
+cannot read its dashboards.
+
+The number of dashboards per session, widgets per dashboard, and the serialized size of a
+configuration SHALL each be bounded, with writes exceeding a bound rejected. A stored dashboard
+SHALL be removable and replaceable through the interface, so a bad configuration does not require
+filesystem access to remove.
 
 #### Scenario: A dashboard survives its design turn
 - **WHEN** a design turn completes and the client reloads

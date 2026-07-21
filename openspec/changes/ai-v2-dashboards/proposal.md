@@ -46,14 +46,25 @@ design is a build-an-artifact workflow, not the question-answering one that chan
 - **Widget catalog + layout DSL (normative).** Claude selects widget types from a **fixed
   catalog** and emits a structured layout: grid position, size, and cross-widget interactions
   drawn from a **named vocabulary**, never free-form callbacks. Unknown types are rejected.
-- **Sandboxed custom widget (normative).** The one escape hatch for genuinely custom output:
-  rendered in an **`<iframe sandbox>` without `allow-same-origin`**. Model-authored markup never
-  touches the authenticated DOM. This is the only path by which such markup renders at all.
-- **Security lockdown (normative).** Carries forward the corrected option set from the superseded
-  change: `tools: []` as the built-in denial (**not** the auto-approve `allowedTools`),
-  `settingSources: []`, `strictMcpConfig: true`, a fail-closed permission mode, `cwd` pinned
-  outside the repo and `DATA_DIR`, `maxBudgetUsd`, isolated `CLAUDE_CONFIG_DIR`, and
-  `AskUserQuestion` plus the named SDK-infrastructure tools allowed through `canUseTool`.
+- **No agent-authored markup, anywhere (normative).** The sandboxed custom-widget iframe was
+  **cut from v1 at the gate** — it was the most complex part of the change, justified only by a
+  hypothesis about a feature with zero users, and it carried the whole XSS/CSP/exfiltration
+  surface (this application has **no CSP at all**). Every widget renders through our components;
+  agent-authored strings render as **text only**. A repo-wide assertion enforces that no
+  `dangerouslySetInnerHTML` exists.
+- **Agent proposes, user adjusts (normative).** A design turn produces a *starting* dashboard;
+  every subsequent edit is direct manipulation with no turn. This makes the edit path a core
+  requirement rather than the omission the panel found.
+- **Degraded state is first-class (normative).** A widget whose backing data is absent renders an
+  explicit unavailable state naming the reason — **never zeros as data**. Manual transcripts have
+  no word timings and unanchored ones have zeroed timings, so this is the common case, not an edge.
+- **Security lockdown (normative).** Carries the corrected option set forward, with one
+  gate-accepted weakening: **the built-in set is exactly the interactive question tool** —
+  `tools: []` would strip it, since it is a built-in, making the whole design conversation
+  impossible. Plus `disallowedTools` naming the write/exec built-ins, `settingSources: []`,
+  `strictMcpConfig: true`, a permission mode under which the question callback actually runs,
+  `cwd` pinned outside the repo and `DATA_DIR`, `maxBudgetUsd`, isolated `CLAUDE_CONFIG_DIR`, and
+  a bound on MCP tool-call duration.
 - **Auth.** A configured workspace-scoped key is preferred; the operator's `claude login` is used
   when no key is configured **and** the bind is loopback, logged loudly at startup.
 - **Spend bounds.** Reuses the existing turn registry (per-session single-flight + process-wide
@@ -70,9 +81,14 @@ WS fan-out.
 
 ## Non-Goals
 
-- **No sentiment widgets in v1.** DeepGram sentiment is *requested* (`deepgram.ts`, commit
-  `7f47b31`) but **never persisted** — no column, nothing under `server/src/session/`. Verified.
-  Persisting it is a separate change; shipping a widget with no backing data would be a dead tile.
+- **No custom widgets / no agent-authored markup in v1.** Cut at the gate; adding it later is
+  purely additive, and would first require an exact sandbox token set, a CSP with
+  `connect-src 'none'`, and a `postMessage` data channel — the three things the draft lacked.
+- **The data work is sequenced ahead of this change, not bundled into it.** Persisting DeepGram
+  `paragraphs` and `sentiment` (both requested and currently discarded), populating word timings on
+  the manual-entry path, and resolving speaker **names** rather than diarization indices are
+  schema/ingest concerns with their own gates. Until they land, the affected widgets render their
+  unavailable state rather than being offered as working tiles.
 - **No copying from the reference dashboard.** `autologgers-demo.html` contains a **real private
   conversation** including personal and financial detail. It is a structural reference only: its
   content must never reach specs, tests, fixtures, seed data, or commits.
@@ -80,6 +96,7 @@ WS fan-out.
   lockdown.
 - **No cross-session dashboards.** One session's data per dashboard in v1; the turn→`sessionId`
   binding stays intact.
-- **No model-authored markup in the authenticated DOM.** Custom widgets render only in the
-  sandboxed iframe; there is no `dangerouslySetInnerHTML` path outside it.
+- **No model-authored markup rendered anywhere.** There is no `dangerouslySetInnerHTML` path in
+  this feature at all — enforced by a repo-wide assertion, with no sandboxed exception, because
+  the custom-widget iframe was cut from v1.
 - **No dashboard sharing, export, or scheduled refresh** in v1.

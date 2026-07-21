@@ -1,9 +1,17 @@
 # ai-v2-dashboards — Tasks
 
 > Plan of record. Anchors are orientation only — locate code by content before editing.
-> **PROVISIONAL** until the adversarial panel + gate pass. OpenSpec treats a change as
-> apply-ready the moment this file exists; it is not. Do not dispatch `opsx:apply` until the
-> rulings are folded across all four artifacts and the consistency read is recorded.
+> **Gated 2026-07-21** — four-mandate adversarial panel (~20 blockers) + owner gate passed;
+> rulings folded across all four artifacts. See the design's "Panel & review log".
+>
+> **Still blocking, not yet run:** Phase 0 (the SDK option set and lifecycle remain unverified
+> hypotheses) and Phase 0b (the data work is sequenced ahead of the catalog). A red result on
+> 0.4 or 0.5 returns the transport choice to the gate.
+>
+> **Gate rulings that reshaped this plan:** the custom-widget iframe is **cut from v1**; the
+> built-in tool set is **exactly the interactive question tool** (`tools: []` would strip it and
+> kill the feature); dashboards are **edited directly** after the agent seeds them; and
+> "data unavailable" is a **first-class rendered state**, never zeros.
 >
 > **Private reference:** `~/Desktop/autologgers-demo.html` embeds a real conversation with
 > personal and financial detail. Read it for structure only — its content must never appear in
@@ -51,11 +59,43 @@ Every spike task MUST be falsifiable: state the attempt and the expected refusal
       assert via `ps` that no agent process from that turn survives. Repeat for the timeout path.
       Determine whether the streaming-input prompt form is required for `interrupt()` to exist.
       **If no-orphan cannot be guaranteed, stop and re-gate.**
-- [ ] 0.6 Spike the iframe sandbox: confirm a custom widget with no `allow-same-origin` cannot
-      reach `parent.document`, cookies, or storage; decide whether `allow-scripts` is needed at all
-      in v1 (ship the stricter option if viable — design Open Questions).
-- [ ] 0.7 Record results in `design.md` under "Resolved by the spike"; rewrite D7/D8 to cite
+- [ ] 0.6 *(removed — the custom-widget iframe was cut from v1 at the 2026-07-21 gate.)*
+- [ ] 0.7 Resolve the inherited **`safeMode` conflict** (design D8b): it was an *unresolved
+      escalation* in the predecessor, not a settled item, and supersession cannot discharge it.
+      Determine whether `settingSources: []` + `strictMcpConfig: true` + pinned `cwd` already close
+      what `--safe-mode` closes; if not, whether a named exact-match `extraArgs` exception is
+      workable against the closed-world test; and whether it would disable our own MCP tools.
+- [ ] 0.8 Use `resolveSettings()` to verify the effective settings cascade **without spawning** —
+      cheaper than a live spike for several D8 claims, including whether `managedSettings` actually
+      carries `disableClaudeAiConnectors` through its restrictive-only filter (it is not in an
+      enumerated allowlist category, and the documented failure mode is *silent* dropping).
+- [ ] 0.9 Establish an observable **no-spawn assertion on the SDK path**. The recorded
+      test-infra workaround (`fake-claude` fixture argv recording) was built for the CLI transport;
+      it is not established that it reaches the SDK's own transport. The spec asserts "no guard
+      path SHALL spawn" and must be testable.
+- [ ] 0.10 Record results in `design.md` under "Resolved by the spike"; rewrite D7/D8 to cite
       observed behaviour, and drop the hypothesis framing only when they do.
+
+## 0b. Data-first prerequisites (owner ruling — sequenced AHEAD of the catalog)
+
+Design D2b. These are schema/ingest concerns, each warranting its own change and gate rather than
+being smuggled in here. Listed so the dependency is explicit and the catalog is not built on data
+that does not exist.
+
+- [ ] 0b.1 **Separate change** — persist DeepGram `paragraphs` (already requested and paid for,
+      currently discarded by `extractWords`), giving utterances a real boundary. Without it,
+      `utterance_counts` has no definition.
+- [ ] 0b.2 **Separate change** — persist DeepGram `sentiment` (same situation), which unblocks the
+      sentiment widgets the reference dashboard shows.
+- [ ] 0b.3 **Separate change** — populate word timings on the manual-entry path, or derive them;
+      and resolve speaker **names** rather than diarization indices.
+- [ ] 0b.4 Create the reference session from `https://www.youtube.com/watch?v=BQP0QejCmxw` so the
+      catalog is exercised against real transcript data. **Open:** YouTube import is deliberately
+      `503` in this repo, so this needs a route — import the audio manually and run the existing
+      DeepGram path, or wire the import as its own change. Decide before relying on it.
+
+> Until 0b.1–0b.3 land, the affected widgets render their **unavailable state** (task 4.7) rather
+> than being offered as working tiles. That is the degraded-state ruling working as intended.
 
 ## 1. Aggregates + catalog schema (server, no agent yet)
 
@@ -120,16 +160,30 @@ Every spike task MUST be falsifiable: state the attempt and the expected refusal
 - [ ] 4.4 Previews render through the **real** components with sample data (spec: *Previews
       reflect the rendered result*). Test: preview and rendered widget resolve to the same
       component.
-- [ ] 4.5 Sandboxed custom-widget frame (spec: *Model-authored markup is confined to a sandbox*).
-      DOM test asserting the sandbox attributes and **absence of `allow-same-origin`**; assert no
-      `dangerouslySetInnerHTML` exists anywhere outside this path.
+- [ ] 4.5 Assert **no `dangerouslySetInnerHTML` exists anywhere in the repo** (spec: *No
+      agent-authored markup is ever rendered*) — a repo-wide grep test, no exceptions. Additionally
+      assert no catalog component passes a config string into `href`, `src`, `style`, or any
+      charting-library option documented to accept markup.
+- [ ] 4.6 Direct-manipulation editing (spec: *Dashboards are edited directly*): add, remove,
+      resize, reposition, retitle — persisted without running a design turn. Test: a saved
+      dashboard is modified end-to-end with no agent turn.
+- [ ] 4.7 Degraded-state rendering per widget (spec: *Data unavailability is a rendered state*):
+      each component renders an explicit unavailable state naming the missing data. Test against a
+      manually-entered transcript fixture (no timings) and an anchorless fixture — assert **no
+      zeros are rendered as data**.
 
 ## 5. Persistence
 
-- [ ] 5.1 Storage per the gate's D5 ruling (session DB vs catalog DB), with validation on write
-      (spec: *Dashboard persistence*).
-- [ ] 5.2 Read/write endpoints scoped exactly as the session — a caller who cannot read the
-      session gets `404` for its dashboards.
+- [ ] 5.1 Storage per the gate's D5 ruling (session DB vs catalog DB), with **whole-config**
+      validation on write (spec: *Dashboard persistence*): every string field length-bounded and
+      schema-constrained; a field that would be interpreted as markup, a URL, or code is rejected.
+      Test: a widget title containing HTML is stored as text and renders inert; a `javascript:`
+      URI is rejected on write.
+- [ ] 5.2 Read/write/delete endpoints. Read scoped exactly as the session (`404` otherwise); write
+      scoped at least as tightly; stored configs record `created_by` and the originating turn.
+- [ ] 5.3 Bounds (spec: *Dashboard persistence*): per-session dashboard count, per-dashboard widget
+      count, and serialized config size — each rejected on write when exceeded. Test the render-side
+      guard too: a dashboard declaring an absurd widget count does not hang the viewer.
 
 ## 6. Docs + final gates
 
