@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '../../../shared/ui/Tooltip';
 import { handleWrapperNavigation } from '../departureWatcher';
 import { getOriginatedSessionId, resetOriginationForTesting } from '../transportOrigination';
 import { TransportControls } from './TransportControls';
@@ -41,6 +42,12 @@ vi.mock('../../../api/hooks/useTransport', () => ({
   }),
 }));
 
+// The shared Tooltip (ui-refresh: transport tiles now carry tooltips) throws
+// outside a Radix TooltipProvider, so renders here mirror main.tsx's provider.
+function renderWithProvider(ui: React.ReactElement) {
+  return render(<TooltipProvider delayDuration={0}>{ui}</TooltipProvider>);
+}
+
 function rollButton() {
   return screen.getByRole('button', { name: 'Roll timecode' });
 }
@@ -66,7 +73,7 @@ afterEach(() => {
 
 describe('TransportControls origination guard (async-gap race)', () => {
   it('does not mark origination for a session the client has switched away from before the mutation resolves', async () => {
-    const { rerender } = render(<TransportControls sessionId="sess-1" />);
+    const { rerender } = renderWithProvider(<TransportControls sessionId="sess-1" />);
 
     fireEvent.click(rollButton());
     expect(mockStart.mutateAsync).toHaveBeenCalledTimes(1);
@@ -77,7 +84,11 @@ describe('TransportControls origination guard (async-gap race)', () => {
     // departure watcher observes the navigation away from sess-1 — with
     // nothing to fire yet, since the flag was never set (mirrors the real
     // navigate() call navigation.ts wires through).
-    rerender(<TransportControls sessionId="sess-2" />);
+    rerender(
+      <TooltipProvider delayDuration={0}>
+        <TransportControls sessionId="sess-2" />
+      </TooltipProvider>,
+    );
     handleWrapperNavigation('/sessions/sess-2');
     expect(getOriginatedSessionId()).toBeNull();
 
@@ -101,7 +112,7 @@ describe('TransportControls origination guard (async-gap race)', () => {
   });
 
   it('does not mark origination for a session the client has fully navigated away from (unmount) before the mutation resolves', async () => {
-    const { unmount } = render(<TransportControls sessionId="sess-1" />);
+    const { unmount } = renderWithProvider(<TransportControls sessionId="sess-1" />);
 
     fireEvent.click(rollButton());
     expect(mockStart.mutateAsync).toHaveBeenCalledTimes(1);
@@ -121,7 +132,7 @@ describe('TransportControls origination guard (async-gap race)', () => {
   });
 
   it('still marks origination normally when the client stays on the same session route', async () => {
-    render(<TransportControls sessionId="sess-1" />);
+    renderWithProvider(<TransportControls sessionId="sess-1" />);
 
     fireEvent.click(rollButton());
     resolveStart?.();

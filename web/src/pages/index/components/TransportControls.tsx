@@ -4,15 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { eventsKeys } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useTransport } from '../../../api/hooks/useTransport';
-import micOffIcon from '../../../assets/icons/mic_off_icon.png';
-import micOnIcon from '../../../assets/icons/mic_on_icon.png';
-import pauseOnIcon from '../../../assets/icons/pause_on_icon.png';
-import playOffIcon from '../../../assets/icons/play_off_icon.png';
-import playOnIcon from '../../../assets/icons/play_on_icon.png';
-import recordOffIcon from '../../../assets/icons/record_off_icon.png';
-import recordOnIcon from '../../../assets/icons/record_on_icon.png';
-import stopOffIcon from '../../../assets/icons/stop_off_icon.png';
-import stopOnIcon from '../../../assets/icons/stop_on_icon.png';
+import { Tooltip } from '../../../shared/ui/Tooltip';
 import { markOriginated } from '../transportOrigination';
 
 // --- converted class strings (were TransportControls.module.css) ---
@@ -61,13 +53,13 @@ const SOLID_GREY = 'border-solid border-[#4c505a]';
 const IS_DISABLED =
   'isDisabled cursor-not-allowed border-dashed border-transparent text-[#656b78] opacity-[0.92] [.v5-session-controls-panel_&]:border-dashed [.v5-session-controls-panel_&]:border-[rgba(148,163,184,0.14)]! [.v5-session-controls-panel_&]:[background:rgba(7,11,20,0.55)]! [.v5-session-controls-panel_&]:shadow-none! [.v5-session-controls-panel_&]:opacity-[0.48] [.v5-session-controls-panel_&]:[filter:none]';
 
-// .sessionCtlIcon: img variant (src) uses 1.2rem square, contain; the base 1.7×1.4
-// non-img size never applies here (icons are always <img>). z-1 over the ::before.
-// pointer-events-none restores the original rule's `pointer-events: none` (dropped
-// in the initial conversion — the icon must not eat clicks/hover meant for the
-// parent button).
+// .sessionCtlIcon — ui-refresh: the raster PNG glyphs are replaced by inline
+// currentColor SVGs (crisp at any DPI, tinted by the tile's state accent under
+// the v5 panel, and they dim with the disabled text color for free — the app's
+// only remaining raster icons are gone). pointer-events-none: the icon must not
+// eat clicks/hover meant for the parent button.
 const CTRL_ICON =
-  'pointer-events-none inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center object-contain leading-none [.v5-session-controls-panel_&]:relative [.v5-session-controls-panel_&]:z-[1]';
+  'pointer-events-none inline-flex h-[1.2rem] w-[1.2rem] items-center justify-center leading-none text-[#e2e8f0] [.v5-session-controls-panel_&]:relative [.v5-session-controls-panel_&]:z-[1] [.v5-session-controls-panel_&]:text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]';
 
 const SOLID_CLASS = {
   isSolidGrey: SOLID_GREY,
@@ -81,18 +73,63 @@ const TONE_CLASS = {
   toneLight: TONE_LIGHT,
 } as const;
 
-/** Maps a {@link BtnConfig.icon} key to its content-hashed asset URL. */
-const TRANSPORT_ICONS: Record<string, string> = {
-  play_on: playOnIcon,
-  play_off: playOffIcon,
-  record_on: recordOnIcon,
-  record_off: recordOffIcon,
-  pause_on: pauseOnIcon,
-  mic_on: micOnIcon,
-  mic_off: micOffIcon,
-  stop_on: stopOnIcon,
-  stop_off: stopOffIcon,
-};
+/** Inline SVG transport glyph. The legacy `<icon>_on`/`_off` key pairs map to
+ *  one glyph per action — enabled/disabled looks come from the button's state
+ *  classes via currentColor, not from separate pre-tinted assets. */
+function TransportGlyph({ icon }: { icon: string }) {
+  const kind = icon.replace(/_(on|off)$/, '');
+  switch (kind) {
+    case 'play':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 5.5L18.5 12L8 18.5Z" fill="currentColor" />
+        </svg>
+      );
+    case 'pause':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="7" y="5.5" width="3.4" height="13" rx="1" fill="currentColor" />
+          <rect x="13.6" y="5.5" width="3.4" height="13" rx="1" fill="currentColor" />
+        </svg>
+      );
+    case 'record':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="5.5" fill="currentColor" />
+          <circle
+            cx="12"
+            cy="12"
+            r="8.25"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            opacity="0.45"
+          />
+        </svg>
+      );
+    case 'mic':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="9.25" y="3.5" width="5.5" height="10" rx="2.75" fill="currentColor" />
+          <path
+            d="M6 11.5C6 14.8137 8.68629 17.5 12 17.5C15.3137 17.5 18 14.8137 18 11.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+          <path d="M12 17.5V21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    case 'stop':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="6.5" y="6.5" width="11" height="11" rx="1.75" fill="currentColor" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 export type TransportState = 'stop' | 'play' | 'rolling' | 'audio-recording';
 
@@ -340,27 +377,25 @@ export function TransportControls({
       aria-labelledby="v5-controls-recording-head"
     >
       {configs.map((cfg, i) => (
-        <button
-          key={cfg.ariaLabel}
-          type="button"
-          className={clsx(
-            CTRL_BTN,
-            SOLID_CLASS[cfg.solidClass],
-            TONE_CLASS[cfg.toneClass],
-            !cfg.enabled && IS_DISABLED,
-          )}
-          id={`btn-ctl-${i + 1}`}
-          disabled={!cfg.enabled || busy}
-          aria-label={cfg.ariaLabel}
-          onClick={() => handleClick(i)}
-        >
-          <img
-            className={CTRL_ICON}
-            id={`btn-ctl-${i + 1}-icon`}
-            src={TRANSPORT_ICONS[cfg.icon]}
-            alt=""
-          />
-        </button>
+        <Tooltip key={cfg.ariaLabel} content={cfg.ariaLabel}>
+          <button
+            type="button"
+            className={clsx(
+              CTRL_BTN,
+              SOLID_CLASS[cfg.solidClass],
+              TONE_CLASS[cfg.toneClass],
+              !cfg.enabled && IS_DISABLED,
+            )}
+            id={`btn-ctl-${i + 1}`}
+            disabled={!cfg.enabled || busy}
+            aria-label={cfg.ariaLabel}
+            onClick={() => handleClick(i)}
+          >
+            <span className={CTRL_ICON} id={`btn-ctl-${i + 1}-icon`}>
+              <TransportGlyph icon={cfg.icon} />
+            </span>
+          </button>
+        </Tooltip>
       ))}
       {ytImportPending && transportState === 'stop' && (
         <p
