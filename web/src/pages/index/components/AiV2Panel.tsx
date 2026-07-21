@@ -5,7 +5,7 @@ import { DashboardEditor } from './aiV2/DashboardEditor';
 import { DashboardGrid } from './aiV2/DashboardGrid';
 import {
   type DashboardPersistencePort,
-  localStorageDashboardPersistence,
+  fetchDashboardPersistence,
 } from './aiV2/dashboardPersistence';
 import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import type { DashboardConfig } from './aiV2/widgetTypes';
@@ -13,10 +13,10 @@ import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 
 interface Props {
   sessionId: string;
-  /** DI seam for tests — defaults to the real (currently localStorage-
-   * mocked, see dashboardPersistence.ts) boundary. Never used by app code
-   * to reach a network endpoint; Phase 5 replaces the default export, not
-   * this prop's presence. */
+  /** DI seam for tests — defaults to the real `fetch`-backed boundary (task
+   * 5.2, dashboardPersistence.ts), which calls
+   * `/api/sessions/:sessionId/ai/v2/dashboard`. Tests inject a fake port here
+   * instead of mocking `fetch` at the network boundary. */
   persistence?: DashboardPersistencePort;
 }
 
@@ -38,19 +38,23 @@ const EMPTY_DASHBOARD: DashboardConfig = { widgets: [], interactions: [] };
  *
  * Canvas seam (task 4.6, direct-manipulation editing): `dashboardConfig` is
  * this component's own state, loaded once on mount from the persistence
- * boundary (`aiV2/dashboardPersistence.ts` — a client-side, currently
- * localStorage-backed MOCK; Phase 5 replaces it with the real endpoint
- * behind the same `DashboardPersistencePort` interface, no call-site
- * changes). Two entry points create it (design D7a): "Design with AI" kicks
- * off a design turn via `AiV2Design` (unchanged from task 4.1/4.2 — this
- * component still doesn't assemble a design turn's output into a
- * `DashboardConfig`, since no wiring for that exists yet and it is outside
- * this task's scope); "Start blank" creates an EMPTY `DashboardConfig`
- * directly and drops straight into edit mode, per this task's brief.
- * Every subsequent add/remove/resize/reposition/retitle goes through
- * `DashboardEditor`, which calls `onChange` here — this component persists
- * that value via `persistence.save` and NEVER runs a design turn to do so
- * (spec "Dashboards are edited directly, not only by conversation").
+ * boundary (`aiV2/dashboardPersistence.ts` — the real `fetch`-backed
+ * `DashboardPersistencePort` as of task 5.2, calling
+ * `/api/sessions/:sessionId/ai/v2/dashboard`). Two entry points create it
+ * (design D7a): "Design with AI" kicks off a design turn via `AiV2Design`
+ * (unchanged from task 4.1/4.2 — this component still doesn't assemble a
+ * design turn's output into a `DashboardConfig`, since no wiring for that
+ * exists yet and it is outside this task's scope); "Start blank" creates an
+ * EMPTY `DashboardConfig` directly and drops straight into edit mode, per
+ * this task's brief. Every subsequent add/remove/resize/reposition/retitle
+ * goes through `DashboardEditor`, which calls `onChange` here — this
+ * component persists that value via `persistence.save` and NEVER runs a
+ * design turn to do so (spec "Dashboards are edited directly, not only by
+ * conversation"). A save/load failure (a rejected `DashboardPersistencePort`
+ * call — e.g. a 422 over a persistence bound, or a network error) is
+ * surfaced as an inline banner (`dashboardError` below, task 5.2: "Surface
+ * save errors in the UI") rather than failing silently — the prior fire-
+ * and-forget shape (Phase 4) had no error path at all.
  *
  * Preview slot (task 4.4): `renderOptionPreview` below fills Unit 1's seam by
  * rendering `renderCatalogWidgetPreview` — THE SAME `CatalogWidget` component
@@ -58,7 +62,7 @@ const EMPTY_DASHBOARD: DashboardConfig = { widgets: [], interactions: [] };
  * by the option's own catalog `widgetType` (spec "Previews reflect the
  * rendered result").
  */
-export function AiV2Panel({ sessionId, persistence = localStorageDashboardPersistence }: Props) {
+export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }: Props) {
   const [messages, setMessages] = useState<AiV2Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -71,33 +75,57 @@ export function AiV2Panel({ sessionId, persistence = localStorageDashboardPersis
   const [dashboardConfig, setDashboardConfig] = useState<DashboardConfig | null>(null);
   const [dashboardLoaded, setDashboardLoaded] = useState(false);
   const [editingDashboard, setEditingDashboard] = useState(false);
+  // Task 5.2: "Surface save errors in the UI" — the Phase 4 boundary was
+  // fire-and-forget with no error path at all. Covers BOTH the initial load
+  // and every subsequent save; cleared on the next successful save so a
+  // resolved error doesn't linger.
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setDashboardLoaded(false);
-    void persistence.load(sessionId).then((loaded) => {
-      if (cancelled) return;
-      setDashboardConfig(loaded);
-      setDashboardLoaded(true);
-    });
+    setDashboardError(null);
+    persistence
+      .load(sessionId)
+      .then((loaded) => {
+        if (cancelled) return;
+        setDashboardConfig(loaded);
+        setDashboardLoaded(true);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Fail open: show the empty/no-dashboard state rather than an
+        // infinite loading spinner, alongside the error banner.
+        setDashboardLoaded(true);
+        setDashboardError(
+          err instanceof Error ? err.message : 'Failed to load the saved dashboard.',
+        );
+      });
     return () => {
       cancelled = true;
     };
   }, [sessionId, persistence]);
 
+  function persistDashboard(next: DashboardConfig) {
+    persistence
+      .save(sessionId, next)
+      .then(() => setDashboardError(null))
+      .catch((err: unknown) => {
+        setDashboardError(err instanceof Error ? err.message : 'Failed to save the dashboard.');
+      });
+  }
+
   function handleDashboardChange(next: DashboardConfig) {
     setDashboardConfig(next);
-    // Persisted through the boundary — NEVER through a design turn. Fire-
-    // and-forget: the mocked boundary is synchronous-fast (localStorage);
-    // Phase 5's real endpoint owns retry/error surfacing for its own wire
-    // contract, out of this task's scope.
-    void persistence.save(sessionId, next);
+    // Persisted through the boundary — NEVER through a design turn (spec
+    // "Dashboards are edited directly, not only by conversation").
+    persistDashboard(next);
   }
 
   function startBlank() {
     setDashboardConfig(EMPTY_DASHBOARD);
     setEditingDashboard(true);
-    void persistence.save(sessionId, EMPTY_DASHBOARD);
+    persistDashboard(EMPTY_DASHBOARD);
   }
 
   const hasActivity = messages.length > 0 || isStreaming || pendingQuestion !== null;
@@ -109,6 +137,15 @@ export function AiV2Panel({ sessionId, persistence = localStorageDashboardPersis
         aria-label="Dashboard canvas"
         data-testid="aiv2-canvas-seam"
       >
+        {dashboardError ? (
+          <div
+            role="alert"
+            data-testid="aiv2-dashboard-error"
+            className="shrink-0 rounded-v5-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[0.8rem] text-red-200"
+          >
+            {dashboardError}
+          </div>
+        ) : null}
         {!dashboardLoaded ? null : dashboardConfig ? (
           <>
             <div className="flex shrink-0 items-center gap-2">

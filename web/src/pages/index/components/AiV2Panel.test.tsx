@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import { AiV2Panel } from './AiV2Panel';
 import { DashboardGrid } from './aiV2/DashboardGrid';
@@ -43,9 +43,27 @@ function fakeFetchResponse(chunks: string[]) {
   };
 }
 
-beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn());
-});
+// AiV2Panel now defaults its `persistence` prop to the REAL fetch-backed
+// `DashboardPersistencePort` (task 5.2) — so mounting it (with no explicit
+// `persistence` prop, as these tests deliberately do, to exercise the real
+// app wiring) ALSO fires a `GET /ai/v2/dashboard` fetch on mount, before any
+// click-driven design-turn fetch. A single `mockResolvedValueOnce` (queued by
+// CALL ORDER, not URL) would be consumed by that load call instead of the
+// design POST this suite cares about — so this router dispatches by URL
+// instead of relying on call order.
+function fetchRouter(designResponse: () => Promise<Response>) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/ai/v2/dashboard')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ config: null }),
+      } as unknown as Response);
+    }
+    return designResponse();
+  });
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -53,25 +71,28 @@ afterEach(() => {
 
 describe('AiV2Panel — question-option preview resolves through the real CatalogWidget', () => {
   it('renders the talk_time_by_speaker preview via the same component DashboardGrid uses', async () => {
-    const fetchMock = vi.mocked(fetch);
-    fetchMock.mockResolvedValueOnce(
-      fakeFetchResponse([
-        sseFrame('question', {
-          requestId: 'req-1',
-          turnId: 'turn-1',
-          questions: [
-            {
-              question: 'How should talk time be shown?',
-              header: 'Talk time',
-              multiSelect: false,
-              options: [
-                { label: 'Bars by speaker', widgetType: 'talk_time_by_speaker' },
-                { label: 'Not a catalog type', widgetType: undefined },
+    vi.stubGlobal(
+      'fetch',
+      fetchRouter(
+        async () =>
+          fakeFetchResponse([
+            sseFrame('question', {
+              requestId: 'req-1',
+              turnId: 'turn-1',
+              questions: [
+                {
+                  question: 'How should talk time be shown?',
+                  header: 'Talk time',
+                  multiSelect: false,
+                  options: [
+                    { label: 'Bars by speaker', widgetType: 'talk_time_by_speaker' },
+                    { label: 'Not a catalog type', widgetType: undefined },
+                  ],
+                },
               ],
-            },
-          ],
-        }),
-      ]) as unknown as Response,
+            }),
+          ]) as unknown as Response,
+      ),
     );
 
     renderStrict(<AiV2Panel sessionId="sess-1" />);

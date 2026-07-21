@@ -119,3 +119,62 @@ describe('AiV2Panel — a dashboard is modified end-to-end with NO agent turn', 
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// --- ai-v2-dashboards task 5.2: "Surface save errors in the UI" — the
+// Phase 4 boundary was fire-and-forget with no error path at all. ---
+describe('AiV2Panel — save/load errors are surfaced, not silently swallowed', () => {
+  it('a rejected save() shows an inline error banner', async () => {
+    const port: DashboardPersistencePort = {
+      async load() {
+        return null;
+      },
+      async save() {
+        throw new Error('Serialized dashboard configuration exceeds the limit.');
+      },
+    };
+    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+
+    fireEvent.click(await screen.findByTestId('aiv2-start-blank'));
+
+    expect((await screen.findByTestId('aiv2-dashboard-error')).textContent).toBe(
+      'Serialized dashboard configuration exceeds the limit.',
+    );
+  });
+
+  it('a rejected load() shows an inline error banner and still renders the empty state (fails open)', async () => {
+    const port: DashboardPersistencePort = {
+      async load() {
+        throw new Error('Failed to load dashboard (HTTP 500).');
+      },
+      async save() {},
+    };
+    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+
+    expect((await screen.findByTestId('aiv2-dashboard-error')).textContent).toBe(
+      'Failed to load dashboard (HTTP 500).',
+    );
+    expect(await screen.findByTestId('aiv2-start-blank')).toBeTruthy();
+  });
+
+  it('a subsequent successful save clears a prior error banner', async () => {
+    let shouldFail = true;
+    const port: DashboardPersistencePort = {
+      async load() {
+        return { widgets: [], interactions: [] };
+      },
+      async save() {
+        if (shouldFail) throw new Error('Save failed.');
+      },
+    };
+    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+
+    fireEvent.click(await screen.findByTestId('aiv2-dashboard-edit'));
+    fireEvent.click(screen.getByTestId('aiv2-editor-add-widget'));
+    fireEvent.click(screen.getByTestId('aiv2-picker-item-session_duration'));
+    await screen.findByTestId('aiv2-dashboard-error');
+
+    shouldFail = false;
+    fireEvent.click(screen.getByTestId('aiv2-editor-remove'));
+    await waitFor(() => expect(screen.queryByTestId('aiv2-dashboard-error')).toBeNull());
+  });
+});

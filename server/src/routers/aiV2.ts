@@ -12,6 +12,10 @@
 // hop needs a client→server path SSE cannot provide), returning `{ ok:
 // true }` on success or `{ detail }` on every rejection.
 //
+// Also: the dashboard persistence endpoints (task 5.2, spec "Dashboard
+// persistence") — GET/PUT/DELETE /api/sessions/:sessionId/ai/v2/dashboard —
+// defined near the bottom of this file, alongside their own doc comment.
+//
 // Guard order (spec "Design turn contract"), matching the ai-chat sibling
 // (./ai.ts) and the transcript-words/generate route: authentication
 // (authContext middleware, 401) → session resolution/scoping (requireSession,
@@ -59,6 +63,7 @@ import {
   aiV2OpenNetworkRefused,
 } from '../env';
 import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '../schemas';
+import { DashboardBoundsError, DashboardValidationError } from '../session/SessionHub';
 import type { AppEnv } from '../types';
 import { aiChatTurns } from './aiChatRegistry';
 import { aiV2PendingQuestions, buildPendingQuestionOnQuestion, generatePendingQuestionId } from './aiV2PendingQuestions';
@@ -71,7 +76,7 @@ import {
   prepareDesignTurnCredentials,
   runDesignTurn,
 } from './aiV2SdkSpawn';
-import { ApiError, requireSession } from './_helpers';
+import { ApiError, getSessionHub, requireSession } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
@@ -104,6 +109,15 @@ const ANSWER_NOT_FOUND_DETAIL =
 // refusal on /design is indistinguishable from an ordinary "no such
 // session" 404 (design D7, Phase-3 fix wave).
 const SESSION_NOT_FOUND_DETAIL = 'Session not found';
+
+// Task 5.2 (spec "Dashboard persistence", design D5 ruled session DB). v1's
+// UI (AiV2Panel) and its `DashboardPersistencePort` operate on exactly ONE
+// dashboard per session (`load(sessionId)`/`save(sessionId, config)` — no
+// dashboard id in that interface), so the route always addresses this single
+// well-known slot. The underlying store (dashboardStore.ts) is more general
+// (arbitrary caller-supplied ids, a genuine per-session COUNT bound) so a
+// future multi-dashboard feature can reuse it without a storage migration.
+const PRIMARY_DASHBOARD_ID = 'primary';
 
 /**
  * Design D7 / Phase-3 fix wave: "Authentication mechanisms that do not
@@ -359,5 +373,105 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   if (outcome === 'not-found') {
     throw new ApiError(404, ANSWER_NOT_FOUND_DETAIL);
   }
+  return c.json({ ok: true });
+});
+
+// ── Task 5.2 — dashboard persistence (spec "Dashboard persistence", design ──
+// D5/D5a/D5b). GET/PUT/DELETE /api/sessions/:sessionId/ai/v2/dashboard. New
+// frozen API surface authorized by this delta's "Dashboard persistence"
+// requirement — additive only. Backs the web `DashboardPersistencePort`
+// (dashboardPersistence.ts)'s `load(sessionId)`/`save(sessionId, config)`
+// shape EXACTLY: the GET/PUT bodies ARE a bare `DashboardConfig`, never
+// wrapped, so the fetch-backed implementation needs no shape beyond what
+// catalog.ts already defines.
+//
+// Guard order — matches the design/answer routes through the config gate,
+// then adds body validation on PUT:
+//   auth (401, global authContext middleware)
+//   -> session resolution/scoping (404, requireSession — READ is scoped
+//      EXACTLY as the session; WRITE/DELETE reuse the identical check, so
+//      they are scoped AT LEAST as tightly, spec "Dashboard persistence":
+//      "Reading SHALL be scoped exactly as the session... Writing SHALL be
+//      scoped at least as tightly")
+//   -> principal-less (device-token) refusal (404, requireIndividualPrincipal
+//      — the SAME helper the design/answer routes use, masked identically)
+//   -> AI v2 configuration gate (503, spec "Configuration-gated AI v2
+//      endpoints": "every AI v2 route SHALL respond 503" when unconfigured —
+//      stated with no carve-out for persistence, so this new surface is
+//      gated exactly like design/answer)
+//   -> whole-config validation (422, PUT only, via validateDashboardConfig
+//      inside DashboardStore.saveDashboard — the SAME function the design
+//      route's future propose_dashboard tool, task 5.4, will also call) and
+//      the per-session dashboard-count bound (422, same store call)
+//   -> store operation.
+//
+// Deliberately NOT gated on aiV2OpenNetworkRefused/aiV2CredentialsRefused:
+// both exist because "a design turn spends the operator's credentials" over
+// a paid external API call (spec "Open-network refusal" / "Agent
+// credentials"). A dashboard CRUD operation never spawns a subprocess or
+// spends anything — gating it on those two would block a user's OWN
+// direct-manipulation edits (spec "Dashboards are edited directly, not only
+// by conversation") for a reason that doesn't apply to them. Flagged
+// explicitly in this task's report for gate review.
+aiV2Router.get('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  await requireSession(c, sessionId);
+  requireIndividualPrincipal(c, SESSION_NOT_FOUND_DETAIL);
+  if (!aiV2Configured(c.env.config)) {
+    throw new ApiError(503, NOT_CONFIGURED_DETAIL);
+  }
+  const hub = getSessionHub(c, sessionId);
+  const stored = hub.getDashboard(PRIMARY_DASHBOARD_ID);
+  // `config: null` means "no dashboard saved yet" (never a fabricated empty
+  // dashboard) — matches the port's own doc comment on `load()`.
+  return c.json({ config: stored ? stored.config : null });
+});
+
+aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  await requireSession(c, sessionId);
+  const principal = requireIndividualPrincipal(c, SESSION_NOT_FOUND_DETAIL);
+  if (!aiV2Configured(c.env.config)) {
+    throw new ApiError(503, NOT_CONFIGURED_DETAIL);
+  }
+  // Malformed JSON -> 400 via the global onError handler (c.req.json() throws
+  // SyntaxError), same as the design/answer routes.
+  const body = await c.req.json();
+  // Optional provenance for a write that originates from a design turn's
+  // committed proposal (task 5.4/5.5, not yet wired — the port's
+  // `save(sessionId, config)` signature carries no turnId today, so every
+  // CURRENT caller omits this and the write records createdByTurnId: null).
+  // Carried out-of-band (query param, not a body field) so this route never
+  // needs a second config-shaped schema alongside `validateDashboardConfig`.
+  const turnIdRaw = c.req.query('turnId');
+  const turnId = turnIdRaw && turnIdRaw.trim() ? turnIdRaw.trim().slice(0, 64) : null;
+
+  const hub = getSessionHub(c, sessionId);
+  let stored: ReturnType<typeof hub.saveDashboard>;
+  try {
+    stored = hub.saveDashboard({
+      id: PRIMARY_DASHBOARD_ID,
+      config: body,
+      createdBy: principal?.id ?? null,
+      createdByTurnId: turnId,
+    });
+  } catch (err) {
+    if (err instanceof DashboardValidationError || err instanceof DashboardBoundsError) {
+      throw new ApiError(422, err.message);
+    }
+    throw err;
+  }
+  return c.json({ config: stored.config });
+});
+
+aiV2Router.delete('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  await requireSession(c, sessionId);
+  requireIndividualPrincipal(c, SESSION_NOT_FOUND_DETAIL);
+  if (!aiV2Configured(c.env.config)) {
+    throw new ApiError(503, NOT_CONFIGURED_DETAIL);
+  }
+  const hub = getSessionHub(c, sessionId);
+  hub.deleteDashboard(PRIMARY_DASHBOARD_ID);
   return c.json({ ok: true });
 });

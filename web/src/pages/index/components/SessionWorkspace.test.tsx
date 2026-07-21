@@ -318,9 +318,30 @@ describe('SessionWorkspace AI v2 tab', () => {
   // (never auto-resolving `read()`) keeps the stream "in flight" across the
   // switch so an abort would be observable on `capturedSignal`.
   it('switching tabs mid-stream neither aborts the design turn nor clears the conversation', async () => {
-    vi.stubGlobal('fetch', vi.fn());
+    // AiV2Panel now defaults its `persistence` prop to the REAL fetch-backed
+    // `DashboardPersistencePort` (task 5.2), so mounting it also fires a
+    // `GET /ai/v2/dashboard` on mount, before the click-driven design-turn
+    // POST this test cares about — dispatch by URL rather than relying on
+    // `mockImplementationOnce`'s call-order queue, which the load() call
+    // would otherwise consume first.
+    let designFetchImpl:
+      | ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>)
+      | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/ai/v2/dashboard')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ config: null }),
+          } as unknown as Response);
+        }
+        return designFetchImpl?.(input, init);
+      }),
+    );
     try {
-      const fetchMock = vi.mocked(fetch);
       let capturedSignal: AbortSignal | undefined;
       const encoder = new TextEncoder();
       const pendingChunks: string[] = [];
@@ -333,8 +354,8 @@ describe('SessionWorkspace AI v2 tab', () => {
         fn?.();
       }
 
-      fetchMock.mockImplementationOnce((_url, init) => {
-        capturedSignal = (init as RequestInit)?.signal ?? undefined;
+      designFetchImpl = (_url, init) => {
+        capturedSignal = init?.signal ?? undefined;
         return Promise.resolve({
           status: 200,
           ok: true,
@@ -358,7 +379,7 @@ describe('SessionWorkspace AI v2 tab', () => {
           },
           json: async () => ({}),
         } as unknown as Response);
-      });
+      };
 
       renderStrict(<SessionWorkspace sessionId="sess-1" />);
       fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));

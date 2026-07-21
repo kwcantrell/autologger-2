@@ -26,7 +26,7 @@ import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../types';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
-import { app, envWith } from '../test/harness';
+import { app, env, envWith } from '../test/harness';
 import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { aiV2PendingQuestions } from './aiV2PendingQuestions';
@@ -844,5 +844,225 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
     // after `options.canUseTool(...)` resolves.
     const events = parseSse(buffered + restText);
     expect(events.some((e) => e.event === 'done')).toBe(true);
+  });
+});
+
+// ── Task 5.1/5.2/5.3 — dashboard persistence (spec "Dashboard persistence", ──
+// design D5/D5a/D5b). GET/PUT/DELETE /api/sessions/:sessionId/ai/v2/dashboard.
+// Guard order mirrors design/answer through the config gate: auth (401) ->
+// session resolution/scoping (404) -> principal-less/device-token refusal
+// (404) -> AI v2 config gate (503) -> body validation (422, PUT only) ->
+// store operation. Deliberately NOT gated on open-network/credentials
+// refusal (see aiV2.ts's route doc comment) — these tests configure a
+// non-loopback/no-allowlist env for the "still works" cases specifically to
+// prove that.
+
+function getDashboard(sessionId: string, reqEnv = loopbackEnv(), headers: Record<string, string> = J) {
+  return app.request(`/api/sessions/${sessionId}/ai/v2/dashboard`, { headers }, reqEnv);
+}
+
+function putDashboard(
+  sessionId: string,
+  body: unknown,
+  reqEnv = loopbackEnv(),
+  headers: Record<string, string> = J,
+  query = '',
+) {
+  return app.request(
+    `/api/sessions/${sessionId}/ai/v2/dashboard${query}`,
+    { method: 'PUT', headers, body: typeof body === 'string' ? body : JSON.stringify(body) },
+    reqEnv,
+  );
+}
+
+function deleteDashboard(
+  sessionId: string,
+  reqEnv = loopbackEnv(),
+  headers: Record<string, string> = J,
+) {
+  return app.request(`/api/sessions/${sessionId}/ai/v2/dashboard`, { method: 'DELETE', headers }, reqEnv);
+}
+
+const VALID_DASHBOARD = {
+  widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
+  interactions: [],
+};
+
+describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboard persistence")', () => {
+  it('GET on a session the caller cannot access is masked as 404', async () => {
+    const studioId = await seedStudio();
+    const otherStudioId = await seedStudio();
+    const show = await seedShow({ studioId });
+    const s = await seedSession({ showId: show });
+    const outsider = await seedUser({ studios: [otherStudioId] });
+    const res = await getDashboard(s, loopbackEnv(), { ...J, Cookie: await loginCookie(outsider) });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
+  });
+
+  it('GET on an accessible session with nothing saved returns 200 with config: null (never a fabricated dashboard)', async () => {
+    const s = await seededSession();
+    const res = await getDashboard(s);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ config: null });
+  });
+
+  it('GET returns 503 when AI v2 is unconfigured ("every AI v2 route")', async () => {
+    const s = await seededSession();
+    const res = await getDashboard(s, envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }));
+    expect(res.status).toBe(503);
+  });
+
+  it('a device token (API_TOKEN, user===null) is masked 404 on GET, same as the design/answer routes', async () => {
+    const s = await seededSession();
+    const res = await getDashboard(
+      s,
+      envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: '0', API_TOKEN: 'device-secret' }),
+      { ...J, Authorization: 'Bearer device-secret' },
+    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
+  });
+
+  it('GET still works on a non-loopback, no-allowlist bind (NOT gated by open-network refusal, unlike design/answer)', async () => {
+    const s = await seededSession();
+    const res = await getDashboard(
+      s,
+      envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', REQUIRE_LOGIN: '0', IP_ALLOWLIST: '', AI_V2_API_KEY: '' }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('ai/v2/dashboard — write scoped at least as tightly, whole-config validation, created_by/turn (design D5a/D5b)', () => {
+  it('PUT on a session the caller cannot access is masked as 404, and nothing is stored', async () => {
+    const studioId = await seedStudio();
+    const otherStudioId = await seedStudio();
+    const show = await seedShow({ studioId });
+    const s = await seedSession({ showId: show });
+    const outsider = await seedUser({ studios: [otherStudioId] });
+    const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), {
+      ...J,
+      Cookie: await loginCookie(outsider),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('a device token is masked 404 on PUT/DELETE too, and nothing is stored', async () => {
+    const s = await seededSession();
+    const deviceEnv = envWith({
+      AI_V2_ENABLED: '1',
+      HOST: '127.0.0.1',
+      REQUIRE_LOGIN: '0',
+      API_TOKEN: 'device-secret',
+    });
+    const headers = { ...J, Authorization: 'Bearer device-secret' };
+    const putRes = await putDashboard(s, VALID_DASHBOARD, deviceEnv, headers);
+    expect(putRes.status).toBe(404);
+    const delRes = await deleteDashboard(s, deviceEnv, headers);
+    expect(delRes.status).toBe(404);
+    // Confirm nothing was stored despite the device token's attempt.
+    const getRes = await getDashboard(s);
+    expect(await getRes.json()).toEqual({ config: null });
+  });
+
+  it('PUT returns 503 when AI v2 is unconfigured, before body validation', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(
+      s,
+      { garbage: true },
+      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it('malformed JSON body is 400', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(s, '{not json', loopbackEnv());
+    expect(res.status).toBe(400);
+  });
+
+  it('a valid config round-trips through PUT then GET, recording created_by from the authenticated principal', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const user = await seedUser({ studios: [studioId] });
+    const headers = { ...J, Cookie: await loginCookie(user) };
+    const putRes = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), headers);
+    expect(putRes.status).toBe(200);
+    expect(await putRes.json()).toEqual({ config: VALID_DASHBOARD });
+
+    const getRes = await getDashboard(s, loopbackEnv(), headers);
+    expect(await getRes.json()).toEqual({ config: VALID_DASHBOARD });
+
+    // created_by is recorded in the session DB, not surfaced on the wire
+    // (the port's save() returns void; GET's response is config-only, per
+    // the port's shape) — check it the way the hub itself would.
+    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    expect(stored?.createdBy).toBe(user);
+  });
+
+  it('an anonymous (no-credentials, REQUIRE_LOGIN=0) write records created_by: null — a safe degraded state, not a security bypass', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv());
+    expect(res.status).toBe(200);
+    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    expect(stored?.createdBy).toBeNull();
+  });
+
+  it('an optional ?turnId= query param is recorded as the originating turn', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), J, '?turnId=turn-abc');
+    expect(res.status).toBe(200);
+    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    expect(stored?.createdByTurnId).toBe('turn-abc');
+  });
+
+  it('rejects (422) a config naming an unknown widget type — nothing is stored', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(
+      s,
+      { widgets: [{ ...VALID_DASHBOARD.widgets[0], type: 'custom_widget' }], interactions: [] },
+      loopbackEnv(),
+    );
+    expect(res.status).toBe(422);
+    expect(await (await getDashboard(s)).json()).toEqual({ config: null });
+  });
+
+  it('rejects (422) a title carrying a javascript: URI — nothing is stored (task 5.1 gate scenario)', async () => {
+    const s = await seededSession();
+    const res = await putDashboard(
+      s,
+      {
+        widgets: [{ ...VALID_DASHBOARD.widgets[0], title: 'javascript:alert(1)' }],
+        interactions: [],
+      },
+      loopbackEnv(),
+    );
+    expect(res.status).toBe(422);
+    expect(await (await getDashboard(s)).json()).toEqual({ config: null });
+  });
+
+  it('stores a widget title containing HTML tags as literal text (task 5.1 gate scenario — allowed, renders inert)', async () => {
+    const s = await seededSession();
+    const htmlTitle = '<b>Q3 Review</b>';
+    const res = await putDashboard(
+      s,
+      { widgets: [{ ...VALID_DASHBOARD.widgets[0], title: htmlTitle }], interactions: [] },
+      loopbackEnv(),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { config: typeof VALID_DASHBOARD };
+    expect(body.config.widgets[0].title).toBe(htmlTitle);
+    const getRes = await getDashboard(s);
+    const getBody = (await getRes.json()) as { config: typeof VALID_DASHBOARD };
+    expect(getBody.config.widgets[0].title).toBe(htmlTitle);
+  });
+
+  it('DELETE removes a saved dashboard — subsequent GET returns config: null', async () => {
+    const s = await seededSession();
+    await putDashboard(s, VALID_DASHBOARD, loopbackEnv());
+    const delRes = await deleteDashboard(s, loopbackEnv());
+    expect(delRes.status).toBe(200);
+    expect(await delRes.json()).toEqual({ ok: true });
+    expect(await (await getDashboard(s)).json()).toEqual({ config: null });
   });
 });

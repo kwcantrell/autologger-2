@@ -1,40 +1,39 @@
 // ai-v2-dashboards — the client-side dashboard PERSISTENCE BOUNDARY (task
 // 4.6; spec "Dashboards are edited directly, not only by conversation").
 //
-// Phase 5 ("Persistence", tasks.md 5.1-5.3) has not landed yet and owns the
-// real wire contract (spec "Dashboard persistence": write authorization,
-// whole-config validation, per-session/per-dashboard/serialized-size
-// bounds, `created_by`/originating-turn provenance). This module is the SEAM
-// Phase 5 backs with real HTTP endpoints: a `DashboardPersistencePort` with
-// `load(sessionId)` / `save(sessionId, config)`. Per this unit's brief, it
-// deliberately does NOT invent a server route or a wire shape beyond the
-// `DashboardConfig` JSON the spec already defines
+// Phase 5 (tasks.md 5.1-5.3) landed the real wire contract: GET/PUT/DELETE
+// `/api/sessions/:sessionId/ai/v2/dashboard` (server/src/routers/aiV2.ts) —
+// write authorization, whole-config validation, per-session/per-dashboard/
+// serialized-size bounds, and `created_by`/originating-turn provenance all
+// live server-side (spec "Dashboard persistence"). `fetchDashboardPersistence`
+// below is the real `DashboardPersistencePort` implementation calling those
+// endpoints, and is now `AiV2Panel`'s DEFAULT (no call-site changes there —
+// only the default value the `persistence?` prop falls back to). It carries
+// exactly the `DashboardConfig` JSON the spec already defines
 // (server/src/aiV2/catalog.ts's `dashboardConfigSchema`, mirrored on the web
-// side as `DashboardConfig` in ./widgetTypes) — the boundary carries that
-// value and nothing else.
+// side as `DashboardConfig` in ./widgetTypes) as the bare GET/PUT body — no
+// wrapper beyond `{ config }` on the response envelope.
 //
-// Request/response shape for Phase 5 to wire real endpoints to (recorded
-// here, not invented beyond the spec's own schema):
 //   load(sessionId)         -> Promise<DashboardConfig | null>
-//     GET-shaped; `null` means "no dashboard saved yet for this session" —
-//     never a fabricated empty dashboard.
+//     GET; `null` means "no dashboard saved yet for this session" (a 200
+//     `{ config: null }` response) — never a fabricated empty dashboard.
+//     Rejects (throws) on any non-2xx response, INCLUDING 404 (an
+//     inaccessible/nonexistent session) — a caller viewing a session already
+//     has access, so a 404 here is a genuine error, not "no dashboard yet".
 //   save(sessionId, config) -> Promise<void>
-//     PUT/POST-shaped; `config` is a `DashboardConfig` value (the exact shape
-//     `dashboardConfigSchema` validates). Phase 5 scopes both to the session
-//     per the spec ("Reading SHALL be scoped exactly as the session... "
-//     "Writing SHALL be scoped at least as tightly") and records
-//     `created_by` / the originating turn server-side; neither is this
-//     seam's concern.
+//     PUT; `config` is a `DashboardConfig` value (the exact shape
+//     `dashboardConfigSchema` validates). Rejects (throws, carrying the
+//     server's `{ detail }` when present) on any non-2xx response — a 422
+//     (invalid config/over a bound), a 404 (inaccessible session), or a 503
+//     (AI v2 unconfigured) all surface as a thrown Error for the caller
+//     (AiV2Panel) to catch and show, rather than failing silently
+//     (task 5.2: "Surface save errors in the UI").
 //
-// MOCKED default implementation (task 4.6 constraint: "build against a
-// MOCKED save/load boundary"): `localStorageDashboardPersistence` below is
-// backed by `window.localStorage`, keyed per session, so editing survives a
-// reload today even though no server endpoint exists yet — this is NOT the
-// real persistence path and Phase 5 replaces it wholesale with a
-// `fetch`-backed implementation of the same `DashboardPersistencePort`. Every
-// caller in this unit (DashboardEditor, AiV2Panel) depends only on the port
-// interface, never on the localStorage detail, so that swap is a one-object
-// replacement with no call-site changes.
+// MOCKED implementation kept for tests: `localStorageDashboardPersistence`
+// below (task 4.6's original default, backed by `window.localStorage`) is
+// NOT used by app code anymore, but stays exported/tested since existing
+// DashboardEditor/AiV2Panel tests inject it (or an equivalent fake) directly
+// via the `persistence` prop rather than exercising the network.
 
 import type { DashboardConfig } from './widgetTypes';
 
@@ -42,6 +41,46 @@ export interface DashboardPersistencePort {
   load(sessionId: string): Promise<DashboardConfig | null>;
   save(sessionId: string, config: DashboardConfig): Promise<void>;
 }
+
+async function readDetail(res: Response): Promise<string | null> {
+  try {
+    const data = (await res.json()) as { detail?: unknown };
+    return typeof data.detail === 'string' ? data.detail : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The REAL persistence boundary (task 5.2) — calls
+ * `/api/sessions/:sessionId/ai/v2/dashboard` (server/src/routers/aiV2.ts).
+ * `AiV2Panel`'s default; every call site there is unchanged (it only ever
+ * calls `persistence.load(...)`/`persistence.save(...)`, per the port
+ * interface). */
+export const fetchDashboardPersistence: DashboardPersistencePort = {
+  async load(sessionId: string): Promise<DashboardConfig | null> {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/ai/v2/dashboard`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) {
+      const detail = await readDetail(res);
+      throw new Error(detail ?? `Failed to load dashboard (HTTP ${res.status}).`);
+    }
+    const data = (await res.json()) as { config: DashboardConfig | null };
+    return data.config ?? null;
+  },
+  async save(sessionId: string, config: DashboardConfig): Promise<void> {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/ai/v2/dashboard`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const detail = await readDetail(res);
+      throw new Error(detail ?? `Failed to save dashboard (HTTP ${res.status}).`);
+    }
+  },
+};
 
 const STORAGE_PREFIX = 'aiv2-dashboard:';
 
