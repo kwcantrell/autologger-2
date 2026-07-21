@@ -150,6 +150,70 @@ clears it. The `claude` CLI keeps its own per-session files outside `DATA_DIR`, 
 operator's `~/.claude`; those accumulate across turns independent of this server-side
 ephemerality, the same as any local `claude` usage.
 
+### AI v2 dashboards
+
+`POST /api/sessions/:sessionId/ai/v2/design` (+ `.../ai/v2/answer` for its question round trip,
++ `GET|PUT|DELETE .../ai/v2/dashboard` for persistence) is a second, independent AI feature: an
+AI v2 tab where the operator designs a dashboard conversationally rather than assembling one by
+hand. A design turn proposes a **starting** dashboard — the agent reads the session's aggregates,
+asks the user catalog-widget questions (with real previews) through the same interactive-question
+mechanism as the round trip below, then commits its proposal by calling an in-process
+`propose_dashboard` tool, which validates the whole config and streams it to the browser as the
+turn's own `dashboard` SSE event. Every edit after that is **direct manipulation** in the UI, not
+further conversation. Rendered widgets get their data by the browser aggregating the session's own
+transcript-words/topics/events data client-side — there is no new aggregate HTTP endpoint — and a
+saved dashboard's config persists in the **session's own SQLite DB** (one dashboard per session,
+`{config}` / `{config: null}`), not the catalog DB. Widgets whose inputs the current schema can't
+yet compute (e.g. certain sentiment/utterance stats) render an honest "unavailable" state rather
+than a fabricated zero.
+
+Gated by `AI_V2_ENABLED` (see `server/.env.example`) — unlike the AI chat's implicit
+`CLAUDE_CLI_PATH` gate, this is an **explicit** opt-in flag: unset/off keeps every `ai/v2` route,
+including dashboard persistence, at the endpoint's frozen `503 {detail}`.
+
+**Egress and spend disclosure.** A design turn sends the session's computed aggregates (never raw
+transcript rows) to Anthropic through the Claude Agent SDK, and is a real, billed API call. If
+`AI_V2_API_KEY` is set, that workspace-scoped key pays for it; otherwise the turn falls back to the
+operator's interactive `claude login` session — spending the **operator's personal** subscription —
+and that fallback is permitted only on a loopback bind (`HOST=127.0.0.1`), logged loudly at
+startup; a non-loopback bind with no configured key refuses (`503`) to serve design turns at all.
+Spend is bounded per turn (`AI_V2_MAX_BUDGET_USD`, default `0.5`) and turns share the **same**
+per-session single-flight slot and process-wide concurrency ceiling as the AI chat
+(`AI_CHAT_MAX_CONCURRENT`) — the two paid features bound the operator's exposure together, not
+separately.
+
+**Configuration gating and the open-network refusal — CRUD is deliberately different.** The design
+and answer routes carry the full guard chain: config gate (`503`), the open-network refusal
+(`503`, same "REQUIRE_LOGIN disabled + non-loopback + no IP_ALLOWLIST" check the AI chat uses,
+since a turn spends money), and the agent-credentials refusal (`503`, no key and no loopback
+fallback available). Anonymous access on a reachable, non-loopback network is refused for **turns**
+specifically. The dashboard **CRUD** routes (`GET|PUT|DELETE .../ai/v2/dashboard`) are gated on
+`AI_V2_ENABLED` (`503`) and on the same device-token/principal-less refusal (masked `404`), but are
+**deliberately not** gated on the open-network refusal or the credentials refusal — a dashboard
+read/write/delete spawns no subprocess and spends nothing, so it follows the app's ordinary auth
+posture instead of the paid-endpoint one. This is a considered design decision (recorded in the
+`ai-v2-dashboards` OpenSpec change), not an oversight — a future change should not "fix" it by
+adding those gates to CRUD.
+
+**Sandboxing.** The design turn runs the Claude Agent SDK locked down to a closed world: the
+built-in tool set is exactly the one interactive question tool (`AskUserQuestion`) plus an explicit
+`disallowedTools` belt-and-braces on the built-in write/exec set — no `Bash`, `Read`, `Write`,
+`Edit`, or general web access is ever reachable from a turn. `settingSources: []` suppresses every
+operator hook/plugin/`CLAUDE.md`/`settings.json` load (the primary control — hooks run shell
+commands unconditionally and aren't governed by tool allow/deny lists), `strictMcpConfig` loads
+only the turn's own in-process aggregate MCP server, and the turn runs from a fresh, isolated
+working directory and `CLAUDE_CONFIG_DIR` outside both the repo checkout and `DATA_DIR` (so
+`server/.env` and session data are never in the child's reach). The child process group is
+terminated on every exit path — completion, error, timeout, client disconnect — so no process ever
+survives to keep spending the operator's credentials after the request that started it is gone.
+As with the AI chat, no agent-authored markup is ever rendered anywhere in this feature; a proposed
+dashboard is validated against the same whole-config schema a user's own PUT is held to before it
+is ever shown.
+
+`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate`,
+`…/youtube-import`, and `transcribe.csv` remain their existing unconditional `503` regardless of
+`AI_V2_ENABLED`.
+
 ### Storage map
 
 ```
@@ -244,6 +308,8 @@ was ported from: historical provenance, not a live parity claim.
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
 | `…/topics/generate` · `transcribe.csv` · `youtube-import` → **503** | (unavailable) |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
+| `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
+| `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
