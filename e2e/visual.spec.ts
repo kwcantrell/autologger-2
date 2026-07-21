@@ -345,8 +345,12 @@ test('feed pending-delete', async ({ page }) => {
 test('transcribe-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
   // ai-topics-chat (task 4.1) moved Transcribe under the AI top-level tab as
-  // a subtab (former top-level "Transcribe Feed" tab is gone).
-  await page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'AI' }).click();
+  // a subtab (former top-level "Transcribe Feed" tab is gone). exact: true
+  // disambiguates from the ai-v2-dashboards "AI v2" tab added alongside it.
+  await page
+    .getByRole('tablist', { name: 'Feed tabs' })
+    .getByRole('tab', { name: 'AI', exact: true })
+    .click();
   await page
     .getByRole('tablist', { name: 'AI tabs' })
     .getByRole('tab', { name: 'Transcribe' })
@@ -363,8 +367,12 @@ test('transcribe-feed tab', async ({ page }) => {
 test('topics-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
   // ai-topics-chat (task 4.1) moved Topics under the AI top-level tab as a
-  // subtab (former top-level "Topics Feed" tab is gone).
-  await page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'AI' }).click();
+  // subtab (former top-level "Topics Feed" tab is gone). exact: true
+  // disambiguates from the ai-v2-dashboards "AI v2" tab added alongside it.
+  await page
+    .getByRole('tablist', { name: 'Feed tabs' })
+    .getByRole('tab', { name: 'AI', exact: true })
+    .click();
   await page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }).click();
   await expect(
     page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }),
