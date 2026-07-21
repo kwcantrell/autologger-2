@@ -21,6 +21,7 @@
 // already lives in aiV2SdkSpawn.test.ts (task 0.9) and is intentionally not
 // re-run here to keep this suite hermetic and fast.
 
+import { fileURLToPath } from 'node:url';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../types';
@@ -31,6 +32,10 @@ import { aiChatTurns } from './aiChatRegistry';
 import * as aiV2SdkSpawnModule from './aiV2SdkSpawn';
 
 const J = { 'content-type': 'application/json' };
+// The real hermetic fake-claude fixture (ai-topics-chat) — used ONLY by
+// task 2.7's cross-route tests below, to make a genuine live AI-chat turn
+// (not a direct registry poke) hold the shared slot open.
+const FIXTURE_CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
 
 const spawnSpy = vi.spyOn(aiV2SdkSpawnModule, 'attemptDesignTurnSpawn');
 
@@ -43,6 +48,17 @@ const spawnSpy = vi.spyOn(aiV2SdkSpawnModule, 'attemptDesignTurnSpawn');
  * never called at all. */
 async function* fakeDesignQuery(): AsyncGenerator<SDKMessage> {
   yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+}
+
+/** A design-turn stand-in whose `next()` never resolves — models a turn that
+ * is genuinely still in flight, for task 2.7's cross-route slot tests. Only
+ * the runner's own timeout backstop (an impossibly-short
+ * `AI_CHAT_TIMEOUT_SEC`, shared config with the AI chat route) ever ends it,
+ * so a slot it holds is deterministically still held for as long as the test
+ * needs — no timing race, unlike the AI chat side (see the cross-route test's
+ * own note on why `FAKE_CLAUDE_MODE=hang` can't be used there). */
+async function* hangingDesignQuery(): AsyncGenerator<SDKMessage> {
+  await new Promise<never>(() => {});
 }
 
 beforeEach(() => {
@@ -338,24 +354,69 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
     }
   });
 
-  it('a slot held by the AI CHAT route 409s an AI v2 request for the SAME session — genuine sharing, ' +
-    'not a coincidence of separate registries with the same default', async () => {
+  it('a slot held by a REAL AI CHAT turn (live subprocess, not a direct registry poke) 409s an AI v2 ' +
+    'request for the SAME session — genuine cross-route sharing — and frees once the chat turn completes', async () => {
     const s = await seededSession();
-    // Acquire via the exact mechanism ai.ts uses: a real HTTP call to the
-    // sibling route, held open past the guard chain via an already-aborted
-    // signal is unreliable to synchronize on, so acquire the slot directly
-    // against the SAME shared singleton the route imports — proving sharing
-    // at the registry level, which is what design's "same registry" ruling
-    // is actually about (task 2.7 wires the real cross-route HTTP proof once
-    // the AI chat's own turn can be held open deterministically).
-    const slot = aiChatTurns.tryAcquire(s, 2);
-    expect(slot.ok).toBe(true);
+    // `FAKE_CLAUDE_MODE=hang` can't reach this path: `spawnAiChatTurn`'s own
+    // minimal env whitelist (design D4) strips it along with everything else
+    // non-essential (see ai.int.test.ts's header note) — the whitelist itself
+    // is under test, and defeating it here would be a false positive. Instead
+    // this relies on the SAME deterministic timing ai.int.test.ts's own
+    // guaranteed-timeout test rests on: a real OS process spawn+drain
+    // (fork+exec+Node startup, measured ~25-40ms) cannot complete within the
+    // near-zero latency of the second in-process HTTP call fired right after
+    // the first's Response resolves. And `aiChatTurns.tryAcquire` runs
+    // SYNCHRONOUSLY in ai.ts's handler BEFORE `streamSSE` is even invoked, so
+    // by the time `await chatRes` resolves (streamSSE returns its Response
+    // promptly, independent of how long the callback body takes — proven by
+    // this same file's "a configured key lifts the refusal" test reaching 200
+    // before its mocked turn is drained), the slot is unconditionally already
+    // held — not a race on THAT half.
+    const chatRes = await app.request(
+      `/api/sessions/${s}/ai/chat`,
+      { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+    );
+    expect(chatRes.status).toBe(200);
     try {
       const res = await post(s, { message: 'hi' }, loopbackEnv());
       expect(res.status).toBe(409);
+      expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
+      expect(spawnSpy).not.toHaveBeenCalled();
     } finally {
-      if (slot.ok) slot.release();
+      // Drain fully so the chat turn's own `finally` (slot release) runs
+      // before the suite's afterEach reset — real cleanup, not a leaked slot.
+      await chatRes.text();
     }
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+  });
+
+  it('a slot held by a design (v2) turn 409s an AI CHAT request for the SAME session — the reverse ' +
+    'direction — and frees once the design turn times out', async () => {
+    const s = await seededSession();
+    // The design-turn side CAN be held open deterministically (unlike the AI
+    // chat side above): `hangingDesignQuery` never yields, so only the
+    // runner's own timeout backstop ends it — no timing race required.
+    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+    const v2Res = await post(s, { message: 'hi' }, loopbackEnv({ AI_CHAT_TIMEOUT_SEC: '0.2' }));
+    // Resolves promptly (streamSSE returns its Response before the callback
+    // body — which is racing the never-yielding query against the 0.2s
+    // timeout — has settled).
+    expect(v2Res.status).toBe(200);
+    try {
+      const chatRes = await app.request(
+        `/api/sessions/${s}/ai/chat`,
+        { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+      );
+      expect(chatRes.status).toBe(409);
+      expect(((await chatRes.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
+    } finally {
+      // Drain until the 0.2s timeout fires and the design turn's `finally`
+      // releases the slot.
+      await v2Res.text();
+    }
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
   });
 
   it('the slot is released, not leaked, once a turn finishes — a follow-up on the same session is not 409', async () => {

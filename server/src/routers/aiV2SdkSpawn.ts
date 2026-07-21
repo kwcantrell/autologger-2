@@ -408,8 +408,9 @@ export type DesignTurnSseEvent = {
 
 /** The fixed, scrubbed error details a terminal `error` event may carry.
  * Raw exception text / subprocess stderr / agent error arrays NEVER flow into
- * `{ detail }` — `guardedEmit` is the single choke point Unit D's task 2.8
- * scrubbing hardens further. */
+ * `{ detail }` — `guardedEmit` is the single choke point (task 2.8's
+ * `scrubDesignTurnEvent`) that ENFORCES this, not merely an artifact of
+ * today's call sites happening to only ever pass one of these four literals. */
 export type DesignTurnErrorDetail = 'timeout' | 'upstream-failed' | 'internal-error' | 'aborted';
 
 export type DesignTurnOutcome = { ok: true } | { ok: false; detail: DesignTurnErrorDetail };
@@ -449,6 +450,41 @@ function isAssistantTextBlock(block: unknown): block is { type: 'text'; text: st
   );
 }
 
+// ── Task 2.8 — terminal-error scrubbing (the confidentiality choke point) ──
+// spec "Design turn contract" ({ detail } shape) + design Risks (error
+// scrubbing). Raw exception text, subprocess stderr, and an agent's own
+// `errors: string[]` array (SDKResultError, sdk.d.ts) can all carry file
+// paths, env fragments, or credential-adjacent text — none of that may ever
+// reach the client. `DESIGN_TURN_ERROR_DETAILS` is the fixed allow-list;
+// `scrubDesignTurnEvent` is the enforcement `guardedEmit` calls on EVERY
+// event, so an `error` event's `data` is rebuilt from scratch as exactly
+// `{ detail }`, and `detail` itself is validated against the allow-list —
+// anything else (a raw string, an array, undefined, an accidental extra
+// field riding alongside a valid detail) becomes `'internal-error'`. This is
+// a structural guarantee, not a hope that every call site stays careful:
+// today's call sites already only ever construct one of these four literals,
+// but a future one that slips and forwards `err.message` or `result.errors`
+// is caught here rather than reaching the client.
+const DESIGN_TURN_ERROR_DETAILS: ReadonlySet<string> = new Set<DesignTurnErrorDetail>([
+  'timeout',
+  'upstream-failed',
+  'internal-error',
+  'aborted',
+]);
+
+export function scrubDesignTurnEvent(event: DesignTurnSseEvent): DesignTurnSseEvent {
+  if (event.event !== 'error') return event;
+  const candidate = (event.data as { detail?: unknown } | null | undefined)?.detail;
+  const detail: DesignTurnErrorDetail =
+    typeof candidate === 'string' && DESIGN_TURN_ERROR_DETAILS.has(candidate)
+      ? (candidate as DesignTurnErrorDetail)
+      : 'internal-error';
+  // Rebuilt wholesale — any extra field on `data` (e.g. a stray `stderr` or
+  // `raw` key some future caller might add alongside a valid detail) is
+  // dropped, not merely the invalid detail replaced.
+  return { event: 'error', data: { detail } };
+}
+
 /**
  * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
  * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
@@ -460,12 +496,15 @@ export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignT
   let terminalSent = false;
   const guardedEmit = async (event: DesignTurnSseEvent): Promise<void> => {
     if (terminalSent) return;
-    if (event.event === 'done' || event.event === 'error') terminalSent = true;
+    // Task 2.8: every event — not just the ones the code below happens to
+    // construct carefully — passes through the scrubber before it can reach
+    // the client. A no-op for `delta`/`done` and for an already-valid `error`.
+    const safeEvent = scrubDesignTurnEvent(event);
+    if (safeEvent.event === 'done' || safeEvent.event === 'error') terminalSent = true;
     try {
-      await opts.emit(event);
+      await opts.emit(safeEvent);
     } catch {
-      // The client stream is gone; cleanup below still runs. This is also the
-      // single choke point for terminal-error text (task 2.8 seam).
+      // The client stream is gone; cleanup below still runs.
     }
   };
 

@@ -51,10 +51,16 @@ const OPEN_NETWORK_DETAIL =
 const FOREIGN_CLAUDE_SESSION_ID_DETAIL =
   'claude_session_id was not issued for this session. Omit it to start a new conversation, or resume with the ' +
   "id from this session's most recent done event.";
+// Shared with the AI v2 design-turn registry (aiV2.ts, task 2.7) by design —
+// the wording names BOTH features, never just "AI chat", because the actual
+// holder of a busy slot may be either one (spec "Spend and concurrency
+// bounds": "responds 409 ... naming which feature holds the slot").
 const SESSION_BUSY_DETAIL =
-  'An AI chat turn is already in progress for this session; wait for it to finish before sending another.';
+  'A turn (AI chat or AI v2) is already in progress for this session; wait for it to finish before sending ' +
+  'another. AI chat and AI v2 share one per-session slot by design.';
 const AT_CAPACITY_DETAIL =
-  'The server is at its AI chat concurrency limit (AI_CHAT_MAX_CONCURRENT); try again shortly.';
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and AI v2); ' +
+  'try again shortly.';
 
 // ── Multi-turn continuity: issued-claude_session_id → autologger :sessionId ──
 // (design "Multi-turn continuity bound to the autologger session"). Recorded
