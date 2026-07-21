@@ -68,6 +68,37 @@ export interface DeepgramWord {
   speaker: number;
 }
 
+/** A group-local paragraph, read from
+ * `results.channels[0].alternatives[0].paragraphs.paragraphs[]` (design D1).
+ * `text` is the paragraph's `sentences[].text` joined with a space. */
+export interface DeepgramParagraph {
+  speaker: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** A group-local sentiment segment, read from the **top-level**
+ * `results.sentiments.segments[]` (design D1). `start_word`/`end_word` index
+ * into that same group's word array. The per-request `average` is
+ * deliberately never captured (design D8). */
+export interface DeepgramSentimentSegment {
+  text: string;
+  start_word: number;
+  end_word: number;
+  sentiment: string;
+  sentiment_score: number;
+}
+
+/** A group's transcription result: words plus its paragraph/sentiment
+ * enrichment, all indexed/timed relative to that group's own file — the
+ * caller (remap layer) resolves them onto the session timeline. */
+export interface TranscribeGroupResult {
+  words: DeepgramWord[];
+  paragraphs: DeepgramParagraph[];
+  sentiments: DeepgramSentimentSegment[];
+}
+
 export interface TranscribeGroupParams {
   /** Path to a spooled group file (e.g. a `MergedGroup.outPath`). */
   outPath: string;
@@ -110,7 +141,7 @@ type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
  * `Authorization` header. Non-2xx responses and network/timeout failures
  * both map to `DeepgramUpstreamError` with a generic detail — never the
  * upstream body or the key. */
-export async function transcribeGroup(params: TranscribeGroupParams): Promise<DeepgramWord[]> {
+export async function transcribeGroup(params: TranscribeGroupParams): Promise<TranscribeGroupResult> {
   const { outPath, family, apiKey, model } = params;
   const url = new URL(DEEPGRAM_LISTEN_URL);
   url.searchParams.set('model', model);
@@ -153,7 +184,9 @@ export async function transcribeGroup(params: TranscribeGroupParams): Promise<De
     throw new DeepgramUpstreamError('DeepGram returned an unparseable response.');
   }
 
-  return extractWords(body);
+  const words = extractWords(body);
+  const { paragraphs, sentiments } = extractEnrichment(body);
+  return { words, paragraphs, sentiments };
 }
 
 /** Words come from the first/only channel's first alternative — DeepGram's
@@ -169,4 +202,91 @@ function extractWords(body: DeepgramListenResponse): DeepgramWord[] {
     end: Number(w.end ?? 0),
     speaker: Number(w.speaker ?? 0),
   }));
+}
+
+/** Narrows to a plain object we can index defensively; anything else
+ * (including `null`) yields `undefined` rather than throwing. */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
+}
+
+/** Group-local paragraphs from `results.channels[0].alternatives[0].paragraphs.paragraphs[]`
+ * (design D1). A paragraph whose `start`/`end` doesn't coerce to a real
+ * number (missing or malformed) is dropped — those fields are load-bearing
+ * for the remap layer, so a partial paragraph is never persisted (spec:
+ * "SHALL be treated as absent, never persisted"). `speaker` is not part of
+ * that NaN-drop set and defaults to 0, mirroring `extractWords`. Missing or
+ * non-array `sentences` yields empty text rather than dropping the
+ * paragraph. */
+function extractParagraphs(body: unknown): DeepgramParagraph[] {
+  const channels = asRecord(asRecord(body)?.results)?.channels;
+  const channel0 = Array.isArray(channels) ? asRecord(channels[0]) : undefined;
+  const alternatives = channel0?.alternatives;
+  const alt0 = Array.isArray(alternatives) ? asRecord(alternatives[0]) : undefined;
+  const rawParagraphs = asRecord(alt0?.paragraphs)?.paragraphs;
+  if (!Array.isArray(rawParagraphs)) return [];
+
+  const out: DeepgramParagraph[] = [];
+  for (const raw of rawParagraphs) {
+    const p = asRecord(raw);
+    if (!p) continue;
+    const start = Number(p.start);
+    const end = Number(p.end);
+    if (Number.isNaN(start) || Number.isNaN(end)) continue;
+    const rawSentences = p.sentences;
+    const sentences = Array.isArray(rawSentences) ? rawSentences : [];
+    const text = sentences
+      .map((s) => {
+        const sentence = asRecord(s);
+        return typeof sentence?.text === 'string' ? sentence.text : '';
+      })
+      .join(' ');
+    out.push({ speaker: Number(p.speaker ?? 0), start, end, text });
+  }
+  return out;
+}
+
+/** Group-local sentiment segments from the **top-level**
+ * `results.sentiments.segments[]` (design D1 — not under `channels[]`). A
+ * segment whose `start_word`/`end_word`/`sentiment_score` doesn't coerce to
+ * a real number is dropped (spec: "SHALL be treated as absent, never
+ * persisted"); those indices are load-bearing for the remap layer. The
+ * per-request `average` is deliberately never read (design D8). */
+function extractSentiments(body: unknown): DeepgramSentimentSegment[] {
+  const rawSegments = asRecord(asRecord(asRecord(body)?.results)?.sentiments)?.segments;
+  if (!Array.isArray(rawSegments)) return [];
+
+  const out: DeepgramSentimentSegment[] = [];
+  for (const raw of rawSegments) {
+    const s = asRecord(raw);
+    if (!s) continue;
+    const start_word = Number(s.start_word);
+    const end_word = Number(s.end_word);
+    const sentiment_score = Number(s.sentiment_score);
+    if (Number.isNaN(start_word) || Number.isNaN(end_word) || Number.isNaN(sentiment_score)) {
+      continue;
+    }
+    out.push({
+      text: typeof s.text === 'string' ? s.text : '',
+      start_word,
+      end_word,
+      sentiment: typeof s.sentiment === 'string' ? s.sentiment : '',
+      sentiment_score,
+    });
+  }
+  return out;
+}
+
+/** Pure extraction of the DeepGram paragraph + sentiment enrichment
+ * `transcribeGroup` already requests but previously discarded (spec:
+ * "Enrichment capture from the provider response"). Mirrors `extractWords`'
+ * tolerance: missing/malformed containers yield empty arrays and this never
+ * throws. Takes `unknown` (not the narrower response type `extractWords`
+ * uses) so it tolerates arbitrarily malformed provider bodies at the type
+ * level too. */
+export function extractEnrichment(body: unknown): {
+  paragraphs: DeepgramParagraph[];
+  sentiments: DeepgramSentimentSegment[];
+} {
+  return { paragraphs: extractParagraphs(body), sentiments: extractSentiments(body) };
 }

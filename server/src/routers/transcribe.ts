@@ -133,7 +133,11 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       try {
         // The provider call itself: per spec, a client disconnect from here
         // on does NOT abandon the run — no abort-check after this point.
-        words = await transcribeGroup({ outPath: group.outPath, family: group.family, apiKey, model });
+        // Enrichment (paragraphs/sentiments) is captured by transcribeGroup
+        // but not yet threaded through here — that's Phase 4 (task 4.2),
+        // which will assemble remapped enrichment for the extended
+        // atomic-replace RPC. Words remain the only piece wired today.
+        ({ words } = await transcribeGroup({ outPath: group.outPath, family: group.family, apiKey, model }));
       } catch (err) {
         if (err instanceof DeepgramUpstreamError) {
           throw new ApiError(502, UPSTREAM_FAILURE_DETAIL);

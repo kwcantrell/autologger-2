@@ -2,16 +2,27 @@
 // mocked (vi.stubGlobal) — no real network/provider calls.
 
 import { Agent } from 'undici';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   contentTypeForFamily,
   DeepgramUpstreamError,
+  extractEnrichment,
   PROVIDER_TIMEOUT_MS,
   transcribeGroup,
 } from './deepgram';
+
+// Real captured DeepGram response (design D7: record-once, replay-always).
+// 89 words / 3 paragraphs / 3 sentiment segments (word spans 0-48, 49-61,
+// 62-88), one neutral session average (average is NOT extracted — D8).
+const enrichmentFixture = JSON.parse(
+  readFileSync(
+    join(__dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
+    'utf8',
+  ),
+);
 
 function deepgramResponse(words: unknown[]) {
   return {
@@ -135,17 +146,21 @@ describe('transcribeGroup', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const words = await transcribeGroup({
+    const result = await transcribeGroup({
       outPath: filePath,
       family: 'aac',
       apiKey: 'k',
       model: 'nova-3',
     });
 
-    expect(words).toEqual([
+    expect(result.words).toEqual([
       { word: 'Hello,', start: 0.08, end: 0.32, speaker: 1 },
       { word: 'world', start: 0.4, end: 0.6, speaker: 1 },
     ]);
+    // The real fixture's shape is exercised in extractEnrichment's own
+    // describe block below; here just confirm the struct return is wired.
+    expect(result.paragraphs).toEqual([]);
+    expect(result.sentiments).toEqual([]);
   });
 
   it('maps a non-2xx response to a generic DeepgramUpstreamError without the upstream body or key', async () => {
@@ -183,5 +198,194 @@ describe('transcribeGroup', () => {
     await expect(
       transcribeGroup({ outPath: filePath, family: 'opus', apiKey: 'k', model: 'nova-3' }),
     ).rejects.toBeInstanceOf(DeepgramUpstreamError);
+  });
+});
+
+describe('extractEnrichment', () => {
+  it('extracts paragraphs and sentiment segments from the real captured fixture', () => {
+    const { paragraphs, sentiments } = extractEnrichment(enrichmentFixture);
+
+    expect(paragraphs).toEqual([
+      {
+        speaker: 0,
+        start: 1.28,
+        end: 13.36,
+        text:
+          "Okay Houston, we've had a problem here. This is Houston, say again please. " +
+          "Houston, we've had a problem. We've had a main beam on the vault. Roger main " +
+          'beam on the vault.',
+      },
+      {
+        speaker: 0,
+        start: 15.465,
+        end: 40.89,
+        text:
+          "Okay, stand by thirteen, we're looking at it. Okay, right now Houston, the " +
+          'voltage is looking good. We had a pretty large bang associated with the ' +
+          'caution and warning there. And as I recall, maybe it was the one that had a ' +
+          'camp spike on it once before. Roger, Fred.',
+      },
+      {
+        speaker: 0,
+        start: 42.65,
+        end: 46.33,
+        text: "And the interim air, we're starting to",
+      },
+    ]);
+
+    expect(sentiments).toEqual([
+      {
+        text:
+          "Okay Houston, we've had a problem here. This is Houston, say again please. " +
+          "Houston, we've had a problem. We've had a main beam on the vault. Roger main " +
+          'beam on the vault. Okay, stand by thirteen, we\'re looking at it. Okay, right ' +
+          'now Houston, the voltage is looking good.',
+        start_word: 0,
+        end_word: 48,
+        sentiment: 'neutral',
+        sentiment_score: -0.03932914882898331,
+      },
+      {
+        text: 'We had a pretty large bang associated with the caution and warning there.',
+        start_word: 49,
+        end_word: 61,
+        sentiment: 'negative',
+        sentiment_score: -0.3551284670829773,
+      },
+      {
+        text:
+          'And as I recall, maybe it was the one that had a camp spike on it once ' +
+          "before. Roger, Fred. And the interim air, we're starting to",
+        start_word: 62,
+        end_word: 88,
+        sentiment: 'neutral',
+        sentiment_score: -0.14257504045963287,
+      },
+    ]);
+
+    // D8: the per-request session average is never captured.
+    expect(sentiments.every((s) => !('average' in s))).toBe(true);
+  });
+
+  it('returns empty arrays, never throws, for a body with no results at all', () => {
+    expect(extractEnrichment({})).toEqual({ paragraphs: [], sentiments: [] });
+  });
+
+  it('returns empty paragraphs when the paragraphs container is absent', () => {
+    const body = { results: { channels: [{ alternatives: [{ words: [] }] }] } };
+    expect(extractEnrichment(body).paragraphs).toEqual([]);
+  });
+
+  it('returns empty paragraphs when paragraphs.paragraphs is not an array', () => {
+    const body = {
+      results: {
+        channels: [{ alternatives: [{ words: [], paragraphs: { paragraphs: 'not-an-array' } }] }],
+      },
+    };
+    expect(extractEnrichment(body).paragraphs).toEqual([]);
+  });
+
+  it('treats a missing/non-array sentences field as empty text, without dropping the paragraph', () => {
+    const body = {
+      results: {
+        channels: [
+          {
+            alternatives: [
+              {
+                words: [],
+                paragraphs: {
+                  paragraphs: [
+                    { speaker: 0, start: 1, end: 2 }, // no `sentences` at all
+                    { speaker: 1, start: 3, end: 4, sentences: 'not-an-array' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(extractEnrichment(body).paragraphs).toEqual([
+      { speaker: 0, start: 1, end: 2, text: '' },
+      { speaker: 1, start: 3, end: 4, text: '' },
+    ]);
+  });
+
+  it('drops a paragraph whose start or end is missing/non-numeric, but keeps the rest', () => {
+    const body = {
+      results: {
+        channels: [
+          {
+            alternatives: [
+              {
+                words: [],
+                paragraphs: {
+                  paragraphs: [
+                    { speaker: 0, start: 'not-a-number', end: 2, sentences: [{ text: 'a' }] },
+                    { speaker: 0, end: 2, sentences: [{ text: 'b' }] }, // missing start
+                    { speaker: 0, start: 5, end: 8, sentences: [{ text: 'kept' }] },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(extractEnrichment(body).paragraphs).toEqual([
+      { speaker: 0, start: 5, end: 8, text: 'kept' },
+    ]);
+  });
+
+  it('defaults a paragraph missing speaker to 0 (speaker is not part of the NaN-drop set)', () => {
+    const body = {
+      results: {
+        channels: [
+          {
+            alternatives: [
+              {
+                words: [],
+                paragraphs: { paragraphs: [{ start: 1, end: 2, sentences: [{ text: 'x' }] }] },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(extractEnrichment(body).paragraphs).toEqual([{ speaker: 0, start: 1, end: 2, text: 'x' }]);
+  });
+
+  it('returns empty sentiments when results.sentiments is absent', () => {
+    const body = { results: { channels: [{ alternatives: [{ words: [] }] }] } };
+    expect(extractEnrichment(body).sentiments).toEqual([]);
+  });
+
+  it('returns empty sentiments when results.sentiments.segments is not an array', () => {
+    const body = { results: { sentiments: { segments: 'not-an-array' } } };
+    expect(extractEnrichment(body).sentiments).toEqual([]);
+  });
+
+  it('drops a sentiment segment whose start_word/end_word/sentiment_score is missing/non-numeric', () => {
+    const body = {
+      results: {
+        sentiments: {
+          segments: [
+            { text: 'a', start_word: 0, end_word: 5, sentiment: 'neutral', sentiment_score: 'oops' },
+            { text: 'b', end_word: 5, sentiment: 'neutral', sentiment_score: 0.1 }, // missing start_word
+            { text: 'c', start_word: 1, end_word: 'x', sentiment: 'neutral', sentiment_score: 0.1 },
+            { text: 'kept', start_word: 2, end_word: 3, sentiment: 'positive', sentiment_score: 0.5 },
+          ],
+        },
+      },
+    };
+    expect(extractEnrichment(body).sentiments).toEqual([
+      { text: 'kept', start_word: 2, end_word: 3, sentiment: 'positive', sentiment_score: 0.5 },
+    ]);
+  });
+
+  it('never throws on a completely empty or garbage body', () => {
+    expect(() => extractEnrichment(null as never)).not.toThrow();
+    expect(() => extractEnrichment(undefined as never)).not.toThrow();
+    expect(extractEnrichment(undefined as never)).toEqual({ paragraphs: [], sentiments: [] });
   });
 });
