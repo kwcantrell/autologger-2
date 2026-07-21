@@ -466,6 +466,60 @@ them. Each was expensive to learn and must not be re-derived from scratch:
 - **Test-infra debt** — `vi.mock('node:child_process')` is vacuous through the shared `app`
   singleton.
 
+## UI design brief (2026-07-21, post-gate design artifact)
+
+Confirmed with the owner through the impeccable shape flow (register/personality/a11y captured
+in the repo-root `PRODUCT.md`). This section is **visual guidance for apply-time implementers**,
+not new normative surface: where it and the delta spec could ever disagree, the spec wins. The
+rendered form of every decision below is `design/mockup.html` (standalone, synthetic data only,
+state switcher bottom-left) — the mockup is the visual spec; this section records the decisions
+and their reasons.
+
+**Topology — canvas + docked design rail.** The dashboard grid is the tab's primary surface; the
+design conversation lives in a right-docked, collapsible rail (V5 aside width). Question cards,
+tool-activity lines, notices, and the free-text input all render in the rail; the canvas is never
+blocked by a turn. On ≤767px the rail stacks below the canvas. Direct manipulation (D7a) is
+reachable in every state that shows a grid, not a mode the conversation gates.
+
+**Register and direction.** Product register, dark, extending the V5 glass system unchanged
+(no new chrome vocabulary). Anchors: Vercel Analytics (thin-stroke, one-hue charts, generous
+space) and Linear Insights (typographic data; numbers and labels carry the design). Charts are
+quiet; data is the loudest layer. Anti-references hold: no consumer-cute AI styling, no terminal
+aesthetic; mono is reserved for timecode and data values.
+
+**Data-viz palette (validated, not eyeballed).** Categorical slots, dark mode, validated with the
+dataviz six-checks validator against the effective glass surface `#131b2e`: `#0284c7` (sky,
+brand-anchored), `#199e70`, `#c98500`, `#008300`, `#9085e9`, `#e66767`, `#d55181`, `#d95926` —
+band/chroma/contrast PASS; worst adjacent CVD ΔE 10.3 (floor band, legal because every
+multi-series widget carries direct labels). Slots are assigned to entities in fixed order and
+never cycled; **speakers take slots 1..N consistently across every widget in a dashboard**.
+Single-series marks (event density, nominal category bars) use the brand sky `#38bdf8`; nominal
+bars are never colored by value. Text never wears a series color; identity comes from a swatch
+beside text tokens.
+
+**State inventory** (all rendered in the mockup): saved, empty (teaching state with both entry
+paths — "Design with AI" and "Start blank"), designing (streaming tool lines + Stop turn),
+question pending (option previews rendered by the real widget components with sample data +
+free-text fallback + idle-timeout hint), draft landed ("Draft · yours to edit", staggered
+entrance, Keep/Edit), editing (drag/resize handles, retitle-in-place, remove, near-opaque catalog
+picker with unavailable types disabled-with-reason, keyboard hints), degraded (per-widget
+unavailable states naming the missing data — never zeros), busy 409 (names the holding feature),
+turn error (saved dashboard untouched), unconfigured 503 (actionable, input disabled).
+
+**Degraded-state visual language.** A dashed-ring "Data unavailable" badge plus one sentence
+naming the missing data and why, left-aligned in the widget body; visually distinct from loading
+and from error. This is the D2b requirement's rendered form and appears even in the healthy
+sample dashboard (filler words) so the state reads as normal, not broken.
+
+**Motion.** 150–250ms ease-out state transitions; the only stagger is the draft-landing entrance
+(45ms/widget, translateY 7px + fade). Full `prefers-reduced-motion` fallbacks. No decorative
+motion.
+
+**Accessibility.** WCAG AA on the actual glass surfaces; color never the only channel (direct
+labels on every multi-series widget, swatch-beside-text identity); keyboard-operable editing
+(arrow move, shift-arrow resize, Enter retitle, Del remove) rendered as visible hints in edit
+mode; chart tooltips are supplementary, never the only path to a value.
+
 ## Panel & review log
 
 ### 2026-07-21 — Pre-panel fact-check (light-tier, mechanical fetch-and-compare)
@@ -587,3 +641,17 @@ type identifier rather than inferred from display text. Added as a normative req
 referenced; task 0.6 correctly marked removed; every requirement name cited in `tasks.md` matches a
 spec heading verbatim); coverage (every normative SHALL has a covering task; no task implements
 unauthorized work); numbering (the a/b insertions read as layered corrections, clearly labelled).
+
+### 2026-07-21 — UI design brief + hi-fi mockup folded in (post-gate edit)
+
+Owner-confirmed design brief (impeccable shape flow: canvas + docked rail topology, Vercel
+Analytics / Linear Insights anchors, validated data-viz palette, full state inventory) added as
+the "UI design brief" section, with its rendered form committed as `design/mockup.html`
+(standalone, synthetic data only; nothing sourced from the private reference demo). Explicitly
+non-normative: the delta spec wins on any conflict. Targeted addition, not structural rework, so
+per process this gets a light-tier consistency read (outcome recorded below), not a re-panel.
+
+**Consistency read (light-tier, 2026-07-21): clean.** Read `design.md` in full plus the delta
+spec against the new section: cross-references live (D7a, D2b, `design/mockup.html` on disk), no
+contradictions with D1–D9 or the spec's requirements (no agent preview HTML, no sentiment
+widgets, no WS answers, edit path turn-free), log entry accurate.

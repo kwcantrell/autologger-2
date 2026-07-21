@@ -1,0 +1,1338 @@
+<!doctype html>
+<!--
+  ai-v2-dashboards — production-fidelity design mockup (standalone, no app code).
+
+  Design artifact for the gated OpenSpec change `ai-v2-dashboards`. This file is the
+  visual spec opsx:apply implementers build against: V5 tokens, all key states, the
+  validated data-viz palette, and the canvas + docked design-rail topology from the
+  confirmed design brief (design.md "UI design brief" section).
+
+  ALL DATA IS SYNTHETIC. Nothing here is sourced from the private reference demo
+  (autologgers-demo.html) — speakers, topics, quotes, and numbers are invented.
+
+  States: use the switcher bottom-left (mockup-only chrome, not part of the design).
+  Categorical palette validated with the dataviz six-checks validator on surface
+  #131b2e (dark mode): PASS band/chroma/contrast; CVD worst adjacent 10.3 (floor
+  band, legal with the direct labels every multi-series widget carries).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI v2 — dashboard tab · design mockup</title>
+<style>
+  /* ============ tokens (V5 system, inlined for standalone render) ============ */
+  :root {
+    --bg: #070b14;
+    --text: #e5eefc;
+    --muted: rgba(229, 238, 252, 0.62);
+    --soft: #94a3b8;
+    --primary: #38bdf8;
+    --primary2: #22d3ee;
+    --danger: #f87171;
+    --line: rgba(148, 163, 184, 0.16);
+    --border: rgba(255, 255, 255, 0.06);
+    --border-strong: rgba(255, 255, 255, 0.1);
+    --glass-top: rgba(19, 27, 48, 0.91);
+    --glass-bot: rgba(11, 16, 30, 0.84);
+    --glass-strong-top: rgba(22, 31, 54, 0.94);
+    --glass-strong-bot: rgba(12, 18, 32, 0.9);
+    --glass-face: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 44%),
+      linear-gradient(180deg, var(--glass-top), var(--glass-bot));
+    --glass-face-strong: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 42%),
+      linear-gradient(180deg, var(--glass-strong-top), var(--glass-strong-bot));
+    --shadow-glow: 0 1px 0 rgba(255,255,255,0.055), 0 22px 60px rgba(2,8,23,0.58),
+      0 0 0 1px rgba(255,255,255,0.048), 0 0 128px -36px rgba(56,189,248,0.14),
+      0 0 64px -28px rgba(14,165,233,0.09);
+    --radius-lg: 1.875rem;
+    --radius-md: 1.25rem;
+    --radius-sm: 1rem;
+    --aside-w: 22.5rem;
+    --font-ui: 'Inter', 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+
+    /* data-viz palette — validated (see header comment). Slots assigned to
+       entities in fixed order, never cycled. Speakers take 1..N consistently
+       across every widget in a dashboard. */
+    --series-1: #0284c7;
+    --series-2: #199e70;
+    --series-3: #c98500;
+    --series-4: #008300;
+    --series-5: #9085e9;
+    --series-6: #e66767;
+    --series-7: #d55181;
+    --series-8: #d95926;
+    --viz-single: var(--primary);       /* single-series marks use the brand sky */
+    --viz-grid: rgba(148, 163, 184, 0.14);
+    --viz-axis: rgba(148, 163, 184, 0.34);
+    --chart-surface: #131b2e;           /* effective glass tone charts sit on */
+
+    /* z scale (matches app semantics: content < rail < float < switcher) */
+    --z-handles: 3;
+    --z-picker: 40;
+    --z-tooltip: 60;
+    --z-devbar: 90;
+
+    --ease-out: cubic-bezier(0.22, 1, 0.32, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.45;
+    overflow: hidden;
+  }
+  /* page glow, matching the app's v5 backdrop */
+  .bg-glow {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(60rem 34rem at 78% -12%, rgba(56,189,248,0.10), transparent 60%),
+      radial-gradient(48rem 30rem at 12% 110%, rgba(34,211,238,0.06), transparent 60%);
+  }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* ============ workspace frame (context only) ============ */
+  .frame {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column;
+    height: 100dvh;
+    padding: 0.9rem 1.1rem 1.1rem;
+    gap: 0.65rem;
+  }
+  .session-strip {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 0.9rem;
+    padding: 0.55rem 1rem;
+    background: var(--glass-face);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .session-strip__name {
+    font-weight: 600; font-size: 0.95rem; letter-spacing: -0.01em;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-strip__tc {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .session-strip__dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--soft); opacity: 0.7;
+  }
+
+  .feed-tabs {
+    flex: 0 0 auto;
+    display: flex; align-items: flex-end; gap: 0.2rem;
+    padding: 0 0.4rem;
+  }
+  .feed-tab {
+    padding: 0.42rem 0.95rem 0.5rem;
+    font-size: 0.83rem; font-weight: 500;
+    color: var(--muted);
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 0.7rem 0.7rem 0 0;
+  }
+  .feed-tab[aria-selected="true"] {
+    color: var(--text);
+    background: var(--glass-face-strong);
+    border-color: var(--border-strong);
+  }
+  @media (hover: hover) { .feed-tab:hover { color: var(--text); } }
+
+  /* ============ AI v2 panel: canvas + rail ============ */
+  .aiv2 {
+    flex: 1 1 auto; min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--aside-w);
+    gap: 0.8rem;
+  }
+  body[data-rail="collapsed"] .aiv2 { grid-template-columns: minmax(0, 1fr) 2.6rem; }
+
+  /* ---------- canvas ---------- */
+  .canvas {
+    min-width: 0; min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--glass-face);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-glow);
+    padding: 1.1rem 1.25rem 1.25rem;
+  }
+  .canvas__bar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 0.7rem;
+    padding-bottom: 0.85rem;
+  }
+  .canvas__title {
+    margin: 0;
+    font-size: 1.15rem; font-weight: 600; letter-spacing: -0.02em;
+  }
+  .canvas__saved {
+    font-size: 0.75rem; color: var(--muted);
+  }
+  .canvas__spacer { flex: 1; }
+  .chip-btn {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.38rem 0.8rem;
+    font-size: 0.8rem; font-weight: 500;
+    color: rgba(255,255,255,0.88);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out);
+  }
+  @media (hover: hover) { .chip-btn:hover { background: rgba(255,255,255,0.1); } }
+  .chip-btn--primary {
+    border-color: rgba(56,189,248,0.35);
+    background: rgba(56,189,248,0.14);
+    color: var(--primary);
+  }
+  @media (hover: hover) { .chip-btn--primary:hover { background: rgba(56,189,248,0.22); } }
+  .chip-btn--danger { color: var(--danger); border-color: rgba(248,113,113,0.3); }
+
+  .canvas__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-auto-rows: 5.4rem;
+    gap: 0.8rem;
+  }
+
+  /* ---------- widget card ---------- */
+  .widget {
+    position: relative;
+    display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+    padding: 0.85rem 1rem 0.9rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0) 46%),
+      linear-gradient(180deg, rgba(22,30,52,0.75), rgba(13,19,34,0.72));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: border-color 180ms var(--ease-out), transform 200ms var(--ease-out),
+      opacity 200ms var(--ease-out);
+  }
+  .widget__head {
+    flex: 0 0 auto;
+    display: flex; align-items: baseline; gap: 0.5rem;
+    margin-bottom: 0.55rem;
+  }
+  .widget__title {
+    margin: 0;
+    font-size: 0.8rem; font-weight: 500;
+    color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .widget__meta { margin-left: auto; font-size: 0.72rem; color: var(--soft); white-space: nowrap; }
+  .widget__body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+  /* spans for the sample dashboard */
+  .w-duration  { grid-column: span 3; grid-row: span 2; }
+  .w-questions { grid-column: span 3; grid-row: span 2; }
+  .w-talktime  { grid-column: span 6; grid-row: span 2; }
+  .w-topics    { grid-column: span 12; grid-row: span 2; }
+  .w-density   { grid-column: span 7; grid-row: span 3; }
+  .w-categories{ grid-column: span 5; grid-row: span 3; }
+  .w-excerpt   { grid-column: span 7; grid-row: span 2; }
+  .w-fillers   { grid-column: span 5; grid-row: span 2; }
+  .w-add       { grid-column: span 5; grid-row: span 2; }
+
+  /* ---------- stat tile ---------- */
+  .stat__value {
+    font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
+  }
+  .stat__value--tc { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 500; }
+  .stat__sub { margin-top: 0.3rem; font-size: 0.78rem; color: var(--muted); }
+  .stat__spark { margin-top: auto; align-self: stretch; height: 2rem; }
+
+  /* ---------- bar rows (talk time, categories) ---------- */
+  .bars { display: flex; flex-direction: column; gap: 0.55rem; justify-content: center; flex: 1; }
+  .bar-row { display: grid; grid-template-columns: 6.2rem minmax(0,1fr) 3.6rem; align-items: center; gap: 0.6rem; }
+  .bar-row__label {
+    display: flex; align-items: center; gap: 0.45rem;
+    font-size: 0.8rem; color: var(--text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+  .bar-row__track { position: relative; height: 14px; border-radius: 0 4px 4px 0; }
+  .bar-row__fill {
+    position: absolute; inset: 0 auto 0 0;
+    border-radius: 0 4px 4px 0;   /* rounded data-end, square baseline */
+    min-width: 2px;
+  }
+  .bar-row__value {
+    font-size: 0.78rem; color: var(--muted);
+    font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
+  }
+
+  /* ---------- topic timeline ---------- */
+  .tl { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .tl__lane { position: relative; flex: 1; min-height: 2.1rem; }
+  .tl__seg {
+    position: absolute; top: 12%; bottom: 12%;
+    display: flex; align-items: center;
+    padding: 0 0.55rem;
+    border-radius: 6px;
+    background: rgba(56,189,248,0.16);
+    border: 1px solid rgba(56,189,248,0.26);
+    font-size: 0.75rem; color: var(--text);
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    transition: background 150ms var(--ease-out);
+  }
+  @media (hover: hover) { .tl__seg:hover { background: rgba(56,189,248,0.26); } }
+  .tl__axis {
+    flex: 0 0 auto;
+    position: relative; height: 1.15rem; margin-top: 0.35rem;
+    border-top: 1px solid var(--viz-axis);
+  }
+  .tl__tick {
+    position: absolute; top: 0.2rem; transform: translateX(-50%);
+    font-size: 0.68rem; color: var(--soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- charts (svg) ---------- */
+  .chart { flex: 1; min-height: 0; position: relative; }
+  .chart svg { display: block; width: 100%; height: 100%; }
+  .chart .grid-line { stroke: var(--viz-grid); stroke-width: 1; }
+  .chart .axis-line { stroke: var(--viz-axis); stroke-width: 1; }
+  .chart .axis-label { fill: var(--soft); font-size: 10.5px; font-family: var(--font-ui); }
+  .chart .series-line { stroke: var(--viz-single); stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .series-area { fill: var(--viz-single); opacity: 0.1; }
+  .chart .anno { fill: var(--muted); font-size: 10.5px; font-family: var(--font-ui); }
+  .chart .anno-dot { fill: var(--viz-single); stroke: var(--chart-surface); stroke-width: 2; }
+  .crosshair { stroke: var(--viz-axis); stroke-width: 1; opacity: 0; }
+
+  .viz-tooltip {
+    position: fixed; z-index: var(--z-tooltip);
+    pointer-events: none;
+    padding: 0.4rem 0.6rem;
+    background: var(--glass-face-strong);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(2,8,23,0.5);
+    font-size: 0.75rem; color: var(--text);
+    opacity: 0; transform: translateY(2px);
+    transition: opacity 120ms ease-out, transform 120ms ease-out;
+  }
+  .viz-tooltip.show { opacity: 1; transform: translateY(0); }
+  .viz-tooltip .tt-label { color: var(--muted); }
+  .viz-tooltip .tt-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  /* ---------- excerpt ---------- */
+  .excerpt { display: flex; flex-direction: column; gap: 0.4rem; justify-content: center; flex: 1; min-height: 0; }
+  .excerpt__who { display: flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; color: var(--muted); }
+  .excerpt__tc { margin-left: auto; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.75rem; color: var(--soft); }
+  .excerpt__quote {
+    margin: 0;
+    font-size: 0.92rem; line-height: 1.5; color: var(--text);
+    max-width: 65ch;
+    display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  /* ---------- degraded (unavailable) state ---------- */
+  .unavail {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+    gap: 0.45rem;
+  }
+  .unavail__badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.72rem; font-weight: 500;
+    color: var(--soft);
+    border: 1px dashed rgba(148,163,184,0.4);
+    border-radius: 999px;
+  }
+  .unavail__badge svg { width: 12px; height: 12px; }
+  .unavail__reason { margin: 0; font-size: 0.82rem; color: var(--muted); max-width: 34ch; }
+
+  /* ============ states ============ */
+  /* every stateful block declares which states show it */
+  [data-show] { display: none !important; }
+  /* JS sets .on for blocks whose data-show matches body[data-state] */
+  [data-show].on { display: flex !important; }
+  [data-show="grid"].on { display: grid !important; }
+
+  /* draft entrance: widgets slide-fade in, staggered */
+  body[data-state="draft"] .grid .widget {
+    animation: land 260ms var(--ease-out) both;
+    animation-delay: calc(var(--i, 0) * 45ms);
+  }
+  @keyframes land {
+    from { opacity: 0; transform: translateY(7px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .draft-note {
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    font-size: 0.78rem; color: var(--primary);
+  }
+  .draft-note__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+
+  /* ---------- edit mode ---------- */
+  body[data-state="editing"] .widget:not(.widget--add) { border-color: rgba(56,189,248,0.28); cursor: grab; }
+  .handle {
+    position: absolute; z-index: var(--z-handles);
+    width: 10px; height: 10px;
+    right: 5px; bottom: 5px;
+    border-right: 2px solid rgba(56,189,248,0.7);
+    border-bottom: 2px solid rgba(56,189,248,0.7);
+    border-radius: 0 0 3px 0;
+    cursor: nwse-resize;
+    opacity: 0;
+  }
+  .widget__remove {
+    position: absolute; z-index: var(--z-handles);
+    top: 7px; right: 7px;
+    width: 22px; height: 22px;
+    display: none; align-items: center; justify-content: center;
+    border-radius: 50%;
+    color: var(--soft);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    font-size: 0.8rem; line-height: 1;
+  }
+  @media (hover: hover) { .widget__remove:hover { color: var(--danger); border-color: rgba(248,113,113,0.4); } }
+  body[data-state="editing"] .handle { opacity: 1; }
+  body[data-state="editing"] .widget__remove { display: inline-flex; }
+  body[data-state="editing"] .widget__title[contenteditable] {
+    outline: none;
+    border-bottom: 1px dashed rgba(148,163,184,0.5);
+    cursor: text;
+  }
+  .widget--add {
+    align-items: center; justify-content: center; gap: 0.5rem;
+    flex-direction: row;
+    border-style: dashed; border-color: rgba(148,163,184,0.35);
+    background: rgba(255,255,255,0.02);
+    color: var(--muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+  }
+  @media (hover: hover) { .widget--add:hover { border-color: rgba(56,189,248,0.5); color: var(--text); } }
+  .edit-hints {
+    flex: 0 0 auto;
+    display: flex; gap: 1.1rem; flex-wrap: wrap;
+    justify-content: flex-end;   /* clears the mockup state bar bottom-left */
+    padding-top: 0.7rem;
+    font-size: 0.73rem; color: var(--soft);
+  }
+  /* remove-✕ occupies the meta corner while editing */
+  body[data-state="editing"] .widget__meta { visibility: hidden; }
+  .edit-hints kbd {
+    font-family: var(--font-mono); font-size: 0.7rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--border-strong); border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--muted);
+  }
+
+  /* catalog picker (edit mode) */
+  .picker {
+    position: absolute; z-index: var(--z-picker);
+    right: calc(var(--aside-w) + 3rem); bottom: 2.4rem;
+    width: min(30rem, calc(100% - 2.5rem));
+    max-height: 24rem;
+    display: flex; flex-direction: column;
+    /* near-opaque glass: canvas content must not bleed through the catalog */
+    background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 42%),
+      linear-gradient(180deg, rgba(22,31,54,0.99), rgba(12,18,32,0.98));
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-glow);
+    overflow: hidden;
+  }
+  .picker__head {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.8rem 1rem 0.6rem;
+  }
+  .picker__title { margin: 0; font-size: 0.9rem; font-weight: 600; }
+  .picker__close { margin-left: auto; color: var(--soft); font-size: 1rem; }
+  .picker__grid {
+    overflow-y: auto;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 0.55rem;
+    padding: 0.2rem 1rem 1rem;
+  }
+  .picker-item {
+    display: flex; flex-direction: column; gap: 0.4rem;
+    padding: 0.6rem 0.7rem;
+    text-align: left;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 0.7rem;
+    transition: border-color 150ms var(--ease-out), background 150ms var(--ease-out);
+  }
+  @media (hover: hover) { .picker-item:hover:not([disabled]) { border-color: rgba(56,189,248,0.4); background: rgba(56,189,248,0.06); } }
+  .picker-item[disabled] { cursor: not-allowed; opacity: 0.55; }
+  .picker-item__name { font-size: 0.8rem; font-weight: 500; color: var(--text); }
+  .picker-item__why { font-size: 0.72rem; color: var(--soft); }
+  .mini { height: 2.6rem; display: flex; align-items: flex-end; gap: 3px; padding: 2px 1px; }
+  .mini i { display: block; border-radius: 2px 2px 0 0; background: var(--viz-single); opacity: 0.75; }
+  .mini--rows { flex-direction: column; align-items: stretch; justify-content: center; gap: 4px; }
+  .mini--rows i { height: 5px; border-radius: 0 2px 2px 0; }
+
+  /* ============ design rail ============ */
+  .rail {
+    min-height: 0;
+    display: flex; flex-direction: column;
+    background: var(--glass-face-strong);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-glow);
+    overflow: hidden;
+  }
+  .rail__head {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.95rem 1.1rem 0.7rem;
+  }
+  .rail__title { margin: 0; font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+  .rail__collapse { margin-left: auto; color: var(--soft); font-size: 0.85rem; padding: 0.2rem 0.4rem; }
+  body[data-rail="collapsed"] .rail__head { padding: 0.95rem 0.5rem; justify-content: center; }
+  body[data-rail="collapsed"] .rail__title,
+  body[data-rail="collapsed"] .rail__body,
+  body[data-rail="collapsed"] .rail__foot { display: none; }
+
+  .rail__body {
+    flex: 1 1 auto; min-height: 0;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 0.7rem;
+    padding: 0.2rem 1.1rem 0.8rem;
+  }
+  .msg { display: flex; flex-direction: column; gap: 0.25rem; }
+  .msg__who { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--soft); }
+  .msg__text { margin: 0; font-size: 0.85rem; color: var(--text); max-width: 65ch; }
+  .msg--user .msg__text { color: var(--muted); }
+  .tool-line {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.75rem; color: var(--soft);
+    font-family: var(--font-mono);
+  }
+  .tool-line svg { width: 11px; height: 11px; flex: 0 0 auto; }
+  .spin { animation: spin 1.1s linear infinite; transform-origin: center; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* question card */
+  .qcard {
+    display: flex; flex-direction: column; gap: 0.6rem;
+    padding: 0.85rem 0.9rem;
+    background: rgba(56,189,248,0.05);
+    border: 1px solid rgba(56,189,248,0.22);
+    border-radius: var(--radius-sm);
+  }
+  .qcard__q { margin: 0; font-size: 0.88rem; font-weight: 550; }
+  .qopt {
+    display: flex; flex-direction: column; gap: 0.45rem;
+    padding: 0.6rem 0.7rem;
+    text-align: left;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-strong);
+    border-radius: 0.7rem;
+    transition: border-color 150ms var(--ease-out), background 150ms var(--ease-out);
+  }
+  @media (hover: hover) { .qopt:hover { border-color: rgba(56,189,248,0.55); background: rgba(56,189,248,0.07); } }
+  .qopt__name { font-size: 0.8rem; font-weight: 500; }
+  .qopt__preview {
+    pointer-events: none;
+    padding: 0.5rem 0.55rem;
+    background: rgba(7,11,20,0.55);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+  }
+  .qopt__preview .bars { gap: 0.35rem; }
+  .qopt__preview .bar-row { grid-template-columns: 3.4rem minmax(0,1fr) 2.4rem; gap: 0.4rem; }
+  .qopt__preview .bar-row__label { font-size: 0.68rem; }
+  .qopt__preview .bar-row__value { font-size: 0.66rem; }
+  .qopt__preview .bar-row__track { height: 9px; }
+  .qcard__free {
+    display: flex; align-items: center; gap: 0.4rem;
+    font-size: 0.78rem; color: var(--soft);
+  }
+  .qcard__timeout { font-size: 0.7rem; color: var(--soft); }
+
+  /* stacked-bar preview (option B) */
+  .stackbar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; gap: 2px; background: transparent; }
+  .stackbar i { display: block; height: 100%; }
+  .stackbar + .legend { margin-top: 0.4rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.8rem; font-size: 0.68rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
+
+  /* rail notices */
+  .notice {
+    display: flex; gap: 0.55rem;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.8rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: rgba(255,255,255,0.03);
+    color: var(--muted);
+  }
+  .notice--warn { border-color: rgba(201,133,0,0.4); }
+  .notice--error { border-color: rgba(248,113,113,0.4); }
+  .notice b { color: var(--text); font-weight: 550; }
+  .notice .notice-detail { margin: 0.15rem 0 0; }
+
+  .rail__foot {
+    flex: 0 0 auto;
+    padding: 0.6rem 0.85rem 0.85rem;
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .rail__input {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    background: rgba(7,11,20,0.5);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+  }
+  .rail__input input {
+    flex: 1; min-width: 0;
+    background: none; border: none; outline: none;
+    color: var(--text); font: inherit; font-size: 0.85rem;
+  }
+  .rail__input input::placeholder { color: var(--soft); }
+  .rail__send { color: var(--primary); font-size: 0.85rem; font-weight: 600; }
+  .rail__abort { align-self: center; }
+
+  /* ============ full-panel states (empty / 503) ============ */
+  .panel-state {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.7rem;
+    text-align: center;
+    padding: 2rem;
+  }
+  .panel-state h2 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; }
+  .panel-state p { margin: 0; font-size: 0.9rem; color: var(--muted); max-width: 46ch; }
+  .panel-state .row { display: flex; gap: 0.6rem; margin-top: 0.5rem; flex-wrap: wrap; justify-content: center; }
+  .panel-state code {
+    font-family: var(--font-mono); font-size: 0.8rem;
+    padding: 0.15rem 0.45rem;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--muted);
+  }
+  .panel-state__art { display: flex; gap: 0.45rem; margin-bottom: 0.4rem; opacity: 0.9; }
+  .panel-state__art i {
+    display: block; width: 2.6rem; height: 1.9rem;
+    border: 1px dashed rgba(148,163,184,0.45);
+    border-radius: 7px;
+  }
+  .panel-state__art i:nth-child(2) { width: 3.4rem; border-color: rgba(56,189,248,0.5); }
+
+  /* ============ mockup-only state switcher ============ */
+  .devbar {
+    position: fixed; z-index: var(--z-devbar);
+    left: 12px; bottom: 12px;
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    max-width: calc(100vw - 24px);
+    padding: 5px 7px;
+    background: rgba(15,23,42,0.94);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 9px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    font-size: 0.7rem;
+  }
+  .devbar__label { color: #64748b; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 0.62rem; padding: 0 4px; }
+  .devbar button {
+    padding: 3px 8px;
+    border-radius: 6px;
+    color: #94a3b8;
+    border: 1px solid transparent;
+  }
+  .devbar button[aria-pressed="true"] { color: #e2e8f0; background: rgba(56,189,248,0.15); border-color: rgba(56,189,248,0.35); }
+  @media (hover: hover) { .devbar button:hover { color: #e2e8f0; } }
+
+  /* ============ responsive (repo's single 767px breakpoint) ============ */
+  @media (max-width: 767px) {
+    body { overflow: auto; }
+    .frame { height: auto; min-height: 100dvh; padding: 0.6rem; }
+    .aiv2 { display: flex; flex-direction: column; }
+    .canvas { padding: 0.85rem 0.8rem 1rem; border-radius: var(--radius-md); }
+    .canvas__scroll { overflow: visible; }
+    .grid { display: flex; flex-direction: column; gap: 0.6rem; }
+    .grid .widget { min-height: 7.2rem; }
+    .w-duration, .w-questions { min-height: 5.6rem; }
+    .rail { order: 2; max-height: 24rem; border-radius: var(--radius-md); }
+    body[data-rail="collapsed"] .aiv2 { grid-template-columns: none; }
+    .picker { right: 0.8rem; left: 0.8rem; width: auto; }
+    /* timeline reflows structurally: chronological chips, no positioned lane */
+    .tl__lane { display: flex; flex-wrap: wrap; gap: 0.4rem; align-content: center; }
+    .tl__seg { position: static; width: auto !important; padding: 0.3rem 0.6rem; }
+    .tl__axis { display: none; }
+  }
+
+  /* ============ reduced motion ============ */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    body[data-state="draft"] .grid .widget { animation: none; }
+    .spin { animation: none; }
+  }
+</style>
+</head>
+<body data-state="saved" data-rail="open" data-palette="#0284c7,#199e70,#c98500,#008300,#9085e9,#e66767,#d55181,#d95926">
+<div class="bg-glow" aria-hidden="true"></div>
+
+<div class="frame">
+  <!-- session context (frame only — real chrome comes from SessionWorkspace) -->
+  <div class="session-strip">
+    <span class="session-strip__dot" aria-hidden="true"></span>
+    <span class="session-strip__name">EP 214 — Production roundtable</span>
+    <span class="session-strip__tc">01:32:04 · 30 fps</span>
+  </div>
+
+  <div class="feed-tabs" role="tablist" aria-label="Feed tabs">
+    <button class="feed-tab" role="tab" aria-selected="false" type="button">Event Feed</button>
+    <button class="feed-tab" role="tab" aria-selected="false" type="button">AI</button>
+    <button class="feed-tab" role="tab" aria-selected="true" type="button">AI v2</button>
+  </div>
+
+  <div class="aiv2">
+    <!-- ================= CANVAS ================= -->
+    <section class="canvas" aria-label="Dashboard canvas">
+
+      <!-- toolbar: saved / draft / editing variants -->
+      <div class="canvas__bar" data-show="saved question designing busy error">
+        <h1 class="canvas__title">Session overview</h1>
+        <span class="canvas__saved">Saved · 2 min ago</span>
+        <span class="canvas__spacer"></span>
+        <button class="chip-btn" type="button" data-goto="editing">Edit</button>
+        <button class="chip-btn" type="button" aria-label="Dashboard menu">⋯</button>
+      </div>
+      <div class="canvas__bar" data-show="draft">
+        <h1 class="canvas__title">Session overview</h1>
+        <span class="draft-note"><span class="draft-note__dot"></span>Draft · yours to edit</span>
+        <span class="canvas__spacer"></span>
+        <button class="chip-btn chip-btn--primary" type="button" data-goto="saved">Keep</button>
+        <button class="chip-btn" type="button" data-goto="editing">Edit</button>
+      </div>
+      <div class="canvas__bar" data-show="editing">
+        <h1 class="canvas__title" contenteditable="false">Session overview</h1>
+        <span class="canvas__saved">Editing</span>
+        <span class="canvas__spacer"></span>
+        <button class="chip-btn chip-btn--danger" type="button">Delete dashboard</button>
+        <button class="chip-btn chip-btn--primary" type="button" data-goto="saved">Done</button>
+      </div>
+      <div class="canvas__bar" data-show="degraded">
+        <h1 class="canvas__title">Session overview</h1>
+        <span class="canvas__saved">Manual transcript · limited data</span>
+        <span class="canvas__spacer"></span>
+        <button class="chip-btn" type="button" data-goto="editing">Edit</button>
+      </div>
+
+      <!-- scrollable widget area -->
+      <div class="canvas__scroll" data-show="saved question designing busy error draft editing">
+        <div class="grid" role="list" aria-label="Dashboard widgets">
+
+          <!-- session_duration -->
+          <article class="widget w-duration" style="--i:0" role="listitem" tabindex="0" aria-label="Session duration">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head"><h3 class="widget__title" data-editable>Session duration</h3></div>
+            <div class="widget__body">
+              <div class="stat__value stat__value--tc">1:32:04</div>
+              <div class="stat__sub">10:04 – 11:36 AM · recorded</div>
+            </div>
+          </article>
+
+          <!-- question_counts -->
+          <article class="widget w-questions" style="--i:1" role="listitem" tabindex="0" aria-label="Questions asked">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head"><h3 class="widget__title" data-editable>Questions asked</h3></div>
+            <div class="widget__body">
+              <div class="stat__value">41</div>
+              <div class="stat__sub">Most in the final third</div>
+              <svg class="stat__spark" viewBox="0 0 120 24" preserveAspectRatio="none" aria-hidden="true">
+                <polyline points="0,20 10,19 20,20 30,17 40,18 50,15 60,16 70,13 80,10 90,11 100,6 110,4 120,5"
+                  fill="none" stroke="var(--soft)" stroke-width="1.5" opacity="0.55"/>
+                <polyline points="80,10 90,11 100,6 110,4 120,5"
+                  fill="none" stroke="var(--viz-single)" stroke-width="1.5"/>
+              </svg>
+            </div>
+          </article>
+
+          <!-- talk_time_by_speaker -->
+          <article class="widget w-talktime" style="--i:2" role="listitem" tabindex="0" aria-label="Talk time by speaker">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head">
+              <h3 class="widget__title" data-editable>Talk time by speaker</h3>
+              <span class="widget__meta">of 1:32:04</span>
+            </div>
+            <div class="widget__body">
+              <div class="bars" data-show-inline>
+                <div class="bar-row" data-tt="Alex Rivera — 57:04 (62%)">
+                  <span class="bar-row__label"><i class="swatch" style="background:var(--series-1)"></i>Alex Rivera</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:62%;background:var(--series-1)"></i></span>
+                  <span class="bar-row__value">57:04</span>
+                </div>
+                <div class="bar-row" data-tt="Dana Kim — 25:46 (28%)">
+                  <span class="bar-row__label"><i class="swatch" style="background:var(--series-2)"></i>Dana Kim</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:28%;background:var(--series-2)"></i></span>
+                  <span class="bar-row__value">25:46</span>
+                </div>
+                <div class="bar-row" data-tt="Sam Ortiz — 9:14 (10%)">
+                  <span class="bar-row__label"><i class="swatch" style="background:var(--series-3)"></i>Sam Ortiz</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:10%;background:var(--series-3)"></i></span>
+                  <span class="bar-row__value">9:14</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- topic_timeline -->
+          <article class="widget w-topics" style="--i:3" role="listitem" tabindex="0" aria-label="Topic timeline">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head">
+              <h3 class="widget__title" data-editable>Topic timeline</h3>
+              <span class="widget__meta">6 topics</span>
+            </div>
+            <div class="widget__body">
+              <div class="tl">
+                <div class="tl__lane">
+                  <span class="tl__seg" style="left:0%;width:6.4%" data-tt="Intro — 0:00 to 0:06">Intro</span>
+                  <span class="tl__seg" style="left:7%;width:23.5%" data-tt="Budget review — 0:06 to 0:28">Budget review</span>
+                  <span class="tl__seg" style="left:31%;width:25.5%" data-tt="Q3 roadmap — 0:28 to 0:52">Q3 roadmap</span>
+                  <span class="tl__seg" style="left:57%;width:12.5%" data-tt="Hiring — 0:52 to 1:04">Hiring</span>
+                  <span class="tl__seg" style="left:70%;width:7%" data-tt="Sponsor read — 1:04 to 1:11">Sponsor</span>
+                  <span class="tl__seg" style="left:77.5%;width:22.5%" data-tt="Listener Q&A — 1:11 to 1:32">Listener Q&amp;A</span>
+                </div>
+                <div class="tl__axis" aria-hidden="true">
+                  <span class="tl__tick" style="left:0%">0:00</span>
+                  <span class="tl__tick" style="left:24.4%">0:22</span>
+                  <span class="tl__tick" style="left:48.9%">0:45</span>
+                  <span class="tl__tick" style="left:73.3%">1:07</span>
+                  <span class="tl__tick" style="left:98%">1:32</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- event_density -->
+          <article class="widget w-density" style="--i:4" role="listitem" tabindex="0" aria-label="Event density">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head">
+              <h3 class="widget__title" data-editable>Event density</h3>
+              <span class="widget__meta">events / 5 min</span>
+            </div>
+            <div class="widget__body">
+              <div class="chart" id="density-chart">
+                <svg viewBox="0 0 560 150" preserveAspectRatio="none" aria-label="Events per five minutes across the session">
+                  <line class="grid-line" x1="36" y1="10"  x2="552" y2="10"/>
+                  <line class="grid-line" x1="36" y1="63"  x2="552" y2="63"/>
+                  <line class="axis-line" x1="36" y1="116" x2="552" y2="116"/>
+                  <text class="axis-label" x="30" y="14" text-anchor="end">14</text>
+                  <text class="axis-label" x="30" y="67" text-anchor="end">7</text>
+                  <text class="axis-label" x="30" y="120" text-anchor="end">0</text>
+                  <text class="axis-label" x="36" y="136">0:00</text>
+                  <text class="axis-label" x="294" y="136" text-anchor="middle">0:46</text>
+                  <text class="axis-label" x="552" y="136" text-anchor="end">1:32</text>
+                  <polygon class="series-area" points="36,86 64,80 92,88 120,71 148,63 176,74 204,56 232,48 260,58 288,33 316,10 344,26 372,41 400,33 428,48 456,41 484,26 512,33 540,20 552,26 552,116 36,116"/>
+                  <polyline class="series-line" points="36,86 64,80 92,88 120,71 148,63 176,74 204,56 232,48 260,58 288,33 316,10 344,26 372,41 400,33 428,48 456,41 484,26 512,33 540,20 552,26"/>
+                  <line class="crosshair" id="density-x" x1="0" y1="10" x2="0" y2="116"/>
+                  <circle class="anno-dot" cx="316" cy="10" r="4"/>
+                  <text class="anno" x="330" y="13" text-anchor="start">peak · 14 at 0:42</text>
+                </svg>
+              </div>
+            </div>
+          </article>
+
+          <!-- event_count_by_category (nominal → single hue) -->
+          <article class="widget w-categories" style="--i:5" role="listitem" tabindex="0" aria-label="Events by category">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head">
+              <h3 class="widget__title" data-editable>Events by category</h3>
+              <span class="widget__meta">403 total</span>
+            </div>
+            <div class="widget__body">
+              <div class="bars">
+                <div class="bar-row" data-tt="Marker — 214 events">
+                  <span class="bar-row__label">Marker</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:100%;background:var(--viz-single);opacity:0.85"></i></span>
+                  <span class="bar-row__value">214</span>
+                </div>
+                <div class="bar-row" data-tt="Note — 89 events">
+                  <span class="bar-row__label">Note</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:41.6%;background:var(--viz-single);opacity:0.85"></i></span>
+                  <span class="bar-row__value">89</span>
+                </div>
+                <div class="bar-row" data-tt="Highlight — 47 events">
+                  <span class="bar-row__label">Highlight</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:22%;background:var(--viz-single);opacity:0.85"></i></span>
+                  <span class="bar-row__value">47</span>
+                </div>
+                <div class="bar-row" data-tt="Question — 41 events">
+                  <span class="bar-row__label">Question</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:19.2%;background:var(--viz-single);opacity:0.85"></i></span>
+                  <span class="bar-row__value">41</span>
+                </div>
+                <div class="bar-row" data-tt="Internal — 12 events">
+                  <span class="bar-row__label">Internal</span>
+                  <span class="bar-row__track"><i class="bar-row__fill" style="width:5.6%;background:var(--viz-single);opacity:0.85"></i></span>
+                  <span class="bar-row__value">12</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <!-- transcript_excerpt -->
+          <article class="widget w-excerpt" style="--i:6" role="listitem" tabindex="0" aria-label="Transcript excerpt">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head"><h3 class="widget__title" data-editable>Excerpt · roadmap decision</h3></div>
+            <div class="widget__body">
+              <div class="excerpt">
+                <div class="excerpt__who">
+                  <i class="swatch" style="background:var(--series-2)"></i>Dana Kim
+                  <span class="excerpt__tc">0:42:17</span>
+                </div>
+                <p class="excerpt__quote">“If we lock the export pipeline this quarter, everything
+                downstream gets simpler — the review tools, the archive, all of it. I'd rather slip
+                the mobile work than ship another quarter on the old format.”</p>
+              </div>
+            </div>
+          </article>
+
+          <!-- filler_counts — degraded even in the healthy dashboard (normalizes the state) -->
+          <article class="widget w-fillers" style="--i:7" role="listitem" tabindex="0" aria-label="Filler words — unavailable">
+            <span class="handle" aria-hidden="true"></span>
+            <button class="widget__remove" type="button" aria-label="Remove widget">✕</button>
+            <div class="widget__head"><h3 class="widget__title" data-editable>Filler words</h3></div>
+            <div class="widget__body">
+              <div class="unavail">
+                <span class="unavail__badge">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-dasharray="2.5 2"/></svg>
+                  Data unavailable
+                </span>
+                <p class="unavail__reason">This transcript was formatted on import; disfluencies
+                were removed, so filler words can't be counted.</p>
+              </div>
+            </div>
+          </article>
+
+          <!-- add-widget tile (edit mode only) -->
+          <button class="widget widget--add w-add" type="button" data-show-inline data-edit-only aria-label="Add widget">
+            <span aria-hidden="true">＋</span> Add widget
+          </button>
+        </div>
+      </div>
+
+      <!-- edit-mode keyboard hints -->
+      <div class="edit-hints" data-show="editing">
+        <span><kbd>drag</kbd> move · <kbd>corner</kbd> resize</span>
+        <span><kbd>←↑↓→</kbd> move · <kbd>Shift</kbd>+<kbd>←→</kbd> resize</span>
+        <span><kbd>Enter</kbd> retitle · <kbd>Del</kbd> remove</span>
+      </div>
+
+      <!-- DEGRADED dashboard replaces the grid wholesale (manual transcript session) -->
+      <div class="canvas__scroll" data-show="degraded" hidden>
+        <div class="grid">
+          <article class="widget w-duration" role="listitem" tabindex="0">
+            <div class="widget__head"><h3 class="widget__title">Session duration</h3></div>
+            <div class="widget__body">
+              <div class="unavail">
+                <span class="unavail__badge">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-dasharray="2.5 2"/></svg>
+                  Data unavailable
+                </span>
+                <p class="unavail__reason">This transcript was entered by hand and has no word
+                timings.</p>
+              </div>
+            </div>
+          </article>
+          <article class="widget w-questions" role="listitem" tabindex="0">
+            <div class="widget__head"><h3 class="widget__title">Questions asked</h3></div>
+            <div class="widget__body">
+              <div class="stat__value">41</div>
+              <div class="stat__sub">Counted from transcript text</div>
+            </div>
+          </article>
+          <article class="widget w-talktime" role="listitem" tabindex="0">
+            <div class="widget__head"><h3 class="widget__title">Talk time by speaker</h3></div>
+            <div class="widget__body">
+              <div class="unavail">
+                <span class="unavail__badge">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-dasharray="2.5 2"/></svg>
+                  Data unavailable
+                </span>
+                <p class="unavail__reason">This transcript was entered by hand and has no word
+                timings, so talk time can't be measured.</p>
+              </div>
+            </div>
+          </article>
+          <article class="widget w-topics" role="listitem" tabindex="0">
+            <div class="widget__head">
+              <h3 class="widget__title">Topic timeline</h3>
+              <span class="widget__meta">6 topics</span>
+            </div>
+            <div class="widget__body">
+              <div class="tl">
+                <div class="tl__lane">
+                  <span class="tl__seg" style="left:0%;width:6.4%">Intro</span>
+                  <span class="tl__seg" style="left:7%;width:23.5%">Budget review</span>
+                  <span class="tl__seg" style="left:31%;width:25.5%">Q3 roadmap</span>
+                  <span class="tl__seg" style="left:57%;width:12.5%">Hiring</span>
+                  <span class="tl__seg" style="left:70%;width:7%">Sponsor</span>
+                  <span class="tl__seg" style="left:77.5%;width:22.5%">Listener Q&amp;A</span>
+                </div>
+                <div class="tl__axis" aria-hidden="true">
+                  <span class="tl__tick" style="left:0%">0:00</span>
+                  <span class="tl__tick" style="left:98%">1:32</span>
+                </div>
+              </div>
+            </div>
+          </article>
+          <article class="widget w-excerpt" role="listitem" tabindex="0">
+            <div class="widget__head"><h3 class="widget__title">Excerpt · roadmap decision</h3></div>
+            <div class="widget__body">
+              <div class="excerpt">
+                <div class="excerpt__who">
+                  <i class="swatch" style="background:var(--series-2)"></i>Speaker 2
+                  <span class="excerpt__tc">—</span>
+                </div>
+                <p class="excerpt__quote">“If we lock the export pipeline this quarter, everything
+                downstream gets simpler — the review tools, the archive, all of it.”</p>
+              </div>
+            </div>
+          </article>
+          <article class="widget w-fillers" role="listitem" tabindex="0">
+            <div class="widget__head"><h3 class="widget__title">Speaker names</h3></div>
+            <div class="widget__body">
+              <div class="unavail">
+                <span class="unavail__badge">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-dasharray="2.5 2"/></svg>
+                  Names unresolved
+                </span>
+                <p class="unavail__reason">Speakers are diarization indices (“Speaker 1, 2…”);
+                no names have been resolved for this session.</p>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <!-- EMPTY state -->
+      <div class="panel-state" data-show="empty" hidden>
+        <div class="panel-state__art" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h2>No dashboard for this session yet</h2>
+        <p>A dashboard turns this session's transcript, topics, and events into a visual record:
+        talk time, timelines, densities. Design one with AI, or start from a blank grid.</p>
+        <div class="row">
+          <button class="chip-btn chip-btn--primary" type="button" data-goto="designing">Design with AI</button>
+          <button class="chip-btn" type="button" data-goto="editing">Start blank</button>
+        </div>
+      </div>
+
+      <!-- UNCONFIGURED (503) -->
+      <div class="panel-state" data-show="unconfigured" hidden>
+        <div class="panel-state__art" aria-hidden="true"><i></i><i></i><i></i></div>
+        <h2>AI v2 isn't configured</h2>
+        <p>Dashboards need the agent runtime. Set <code>AI_V2_ENABLED=1</code> and a workspace API
+        key (or run loopback with the operator login) in <code>server/.env</code>, then restart.
+        The rest of the session is unaffected.</p>
+      </div>
+    </section>
+
+    <!-- ================= DESIGN RAIL ================= -->
+    <aside class="rail" aria-label="Design conversation">
+      <div class="rail__head">
+        <h2 class="rail__title">Design</h2>
+        <button class="rail__collapse" type="button" id="rail-toggle" aria-label="Collapse design rail">⇥</button>
+      </div>
+
+      <div class="rail__body">
+        <!-- saved: condensed history -->
+        <div class="msg msg--user" data-show="saved editing degraded draft">
+          <span class="msg__who">You</span>
+          <p class="msg__text">Give me an overview: who talked, what about, where the activity was.</p>
+        </div>
+        <div class="msg" data-show="saved editing degraded draft">
+          <span class="msg__who">Agent</span>
+          <p class="msg__text">Built an overview from this session's aggregates: three speakers with
+          a 62/28/10 split, six topics, and a clear activity peak at 0:42. Filler counts aren't
+          available for this transcript, so that tile explains why instead of guessing.</p>
+        </div>
+
+        <!-- designing: streaming tool activity -->
+        <div class="msg msg--user" data-show="designing question busy error">
+          <span class="msg__who">You</span>
+          <p class="msg__text">Give me an overview: who talked, what about, where the activity was.</p>
+        </div>
+        <div class="tool-line" data-show="designing question">
+          <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M8 3.5 10.5 6 8 8.5" stroke="currentColor"/></svg>
+          read speaker_stats · 3 speakers
+        </div>
+        <div class="tool-line" data-show="designing question">
+          <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M8 3.5 10.5 6 8 8.5" stroke="currentColor"/></svg>
+          read topic_timeline · 6 topics
+        </div>
+        <div class="tool-line" data-show="designing">
+          <svg class="spin" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-dasharray="17 8"/></svg>
+          reading event_stats…
+        </div>
+
+        <!-- question card -->
+        <div class="qcard" data-show="question" hidden>
+          <p class="qcard__q">How should talk time be shown?</p>
+          <button class="qopt" type="button" data-goto="draft">
+            <span class="qopt__name">Bars by speaker</span>
+            <span class="qopt__preview">
+              <span class="bars">
+                <span class="bar-row"><span class="bar-row__label"><i class="swatch" style="background:var(--series-1)"></i>Alex</span><span class="bar-row__track"><i class="bar-row__fill" style="width:62%;background:var(--series-1)"></i></span><span class="bar-row__value">62%</span></span>
+                <span class="bar-row"><span class="bar-row__label"><i class="swatch" style="background:var(--series-2)"></i>Dana</span><span class="bar-row__track"><i class="bar-row__fill" style="width:28%;background:var(--series-2)"></i></span><span class="bar-row__value">28%</span></span>
+                <span class="bar-row"><span class="bar-row__label"><i class="swatch" style="background:var(--series-3)"></i>Sam</span><span class="bar-row__track"><i class="bar-row__fill" style="width:10%;background:var(--series-3)"></i></span><span class="bar-row__value">10%</span></span>
+              </span>
+            </span>
+          </button>
+          <button class="qopt" type="button" data-goto="draft">
+            <span class="qopt__name">Share of session</span>
+            <span class="qopt__preview">
+              <span class="stackbar">
+                <i style="width:62%;background:var(--series-1)"></i>
+                <i style="width:28%;background:var(--series-2)"></i>
+                <i style="width:10%;background:var(--series-3)"></i>
+              </span>
+              <span class="legend">
+                <span><i class="swatch" style="background:var(--series-1)"></i>Alex 62%</span>
+                <span><i class="swatch" style="background:var(--series-2)"></i>Dana 28%</span>
+                <span><i class="swatch" style="background:var(--series-3)"></i>Sam 10%</span>
+              </span>
+            </span>
+          </button>
+          <div class="qcard__free">Or describe it: <em>“minutes, not percentages”</em></div>
+          <div class="qcard__timeout">Continues with the highlighted option after 5 min idle.</div>
+        </div>
+
+        <!-- busy (409) -->
+        <div class="notice notice--warn" data-show="busy" hidden>
+          <div>
+            <b>Session is busy.</b>
+            <p class="notice-detail">A Topics turn is already running for this session. One AI turn
+            runs per session at a time; try again when it finishes.</p>
+          </div>
+        </div>
+
+        <!-- turn failed -->
+        <div class="notice notice--error" data-show="error" hidden>
+          <div>
+            <b>Design turn failed.</b>
+            <p class="notice-detail">The agent stopped before finishing (spend ceiling reached).
+            Your saved dashboard is untouched. Try a narrower request.</p>
+          </div>
+        </div>
+
+        <!-- draft: what changed -->
+        <div class="notice" data-show="draft" hidden>
+          <div>
+            <b>Draft placed on the canvas.</b>
+            <p class="notice-detail">Eight widgets from this session's data. Everything is directly
+            editable: drag, resize, retitle, or remove. No further turns needed.</p>
+          </div>
+        </div>
+
+        <!-- empty-state rail intro -->
+        <div class="msg" data-show="empty">
+          <span class="msg__who">Agent</span>
+          <p class="msg__text" data-show-inline>Ask for a starting dashboard and I'll propose one
+          from this session's aggregates; you refine it from there.</p>
+        </div>
+      </div>
+
+      <div class="rail__foot">
+        <button class="chip-btn rail__abort" type="button" data-show="designing question" data-goto="error">Stop turn</button>
+        <div class="rail__input">
+          <input type="text" placeholder="Ask for a change: “add a question-density widget”" aria-label="Message the design agent">
+          <button class="rail__send" type="button">Send</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- catalog picker (edit mode) -->
+<div class="picker" data-show="editing" hidden role="dialog" aria-label="Add a widget">
+  <div class="picker__head">
+    <h3 class="picker__title">Add a widget</h3>
+    <button class="picker__close" type="button" aria-label="Close">✕</button>
+  </div>
+  <div class="picker__grid">
+    <button class="picker-item" type="button">
+      <span class="picker-item__name">Talk time by speaker</span>
+      <span class="mini mini--rows" aria-hidden="true">
+        <i style="width:62%;background:var(--series-1)"></i>
+        <i style="width:28%;background:var(--series-2)"></i>
+        <i style="width:10%;background:var(--series-3)"></i>
+      </span>
+    </button>
+    <button class="picker-item" type="button">
+      <span class="picker-item__name">Event density</span>
+      <span class="mini" aria-hidden="true">
+        <i style="width:9%;height:30%"></i><i style="width:9%;height:45%"></i><i style="width:9%;height:38%"></i><i style="width:9%;height:60%"></i><i style="width:9%;height:90%"></i><i style="width:9%;height:70%"></i><i style="width:9%;height:55%"></i><i style="width:9%;height:75%"></i>
+      </span>
+    </button>
+    <button class="picker-item" type="button">
+      <span class="picker-item__name">Topic timeline</span>
+      <span class="mini mini--rows" aria-hidden="true">
+        <i style="width:100%;background:rgba(56,189,248,0.35)"></i>
+        <i style="width:64%;background:rgba(56,189,248,0.35);margin-left:18%"></i>
+      </span>
+    </button>
+    <button class="picker-item" type="button">
+      <span class="picker-item__name">Transcript excerpt</span>
+      <span class="picker-item__why">Pull a quote with speaker and timecode</span>
+    </button>
+    <button class="picker-item" type="button">
+      <span class="picker-item__name">Questions asked</span>
+      <span class="picker-item__why">Count + where they cluster</span>
+    </button>
+    <button class="picker-item" type="button" disabled>
+      <span class="picker-item__name">Filler words</span>
+      <span class="picker-item__why">Unavailable: this transcript was formatted and disfluencies
+      were removed</span>
+    </button>
+  </div>
+</div>
+
+<!-- floating tooltip (charts) -->
+<div class="viz-tooltip" id="tt" role="status" aria-live="polite"></div>
+
+<!-- mockup-only state switcher -->
+<div class="devbar" role="toolbar" aria-label="Mockup states (not part of the design)">
+  <span class="devbar__label">State</span>
+  <button type="button" data-state-btn="saved" aria-pressed="true">Saved</button>
+  <button type="button" data-state-btn="empty" aria-pressed="false">Empty</button>
+  <button type="button" data-state-btn="designing" aria-pressed="false">Designing</button>
+  <button type="button" data-state-btn="question" aria-pressed="false">Question</button>
+  <button type="button" data-state-btn="draft" aria-pressed="false">Draft</button>
+  <button type="button" data-state-btn="editing" aria-pressed="false">Editing</button>
+  <button type="button" data-state-btn="degraded" aria-pressed="false">Degraded</button>
+  <button type="button" data-state-btn="busy" aria-pressed="false">Busy 409</button>
+  <button type="button" data-state-btn="error" aria-pressed="false">Error</button>
+  <button type="button" data-state-btn="unconfigured" aria-pressed="false">503</button>
+</div>
+
+<script>
+  // ---- state switching (mockup-only) -------------------------------------
+  const SHOW_GRID_STATES = new Set(['saved','question','designing','busy','error','draft','editing']);
+  function applyState(state) {
+    document.body.dataset.state = state;
+    document.querySelectorAll('[data-state-btn]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.stateBtn === state)));
+    document.querySelectorAll('[data-show]').forEach(el => {
+      const states = el.dataset.show.split(/\s+/);
+      const on = states.includes(state);
+      el.classList.toggle('on', on);
+      el.hidden = !on;
+    });
+    // the main grid scroll region serves several states; the degraded grid is its own block
+    document.querySelectorAll('.canvas__scroll').forEach(el => {
+      const states = (el.dataset.show || '').split(/\s+/);
+      const on = states.includes(state);
+      el.style.display = on ? '' : 'none';
+      el.hidden = !on;
+    });
+    // editing affordances
+    document.querySelectorAll('[data-editable]').forEach(t =>
+      t.toggleAttribute('contenteditable', state === 'editing'));
+    // add-widget tile
+    document.querySelectorAll('[data-edit-only]').forEach(el => {
+      el.style.display = state === 'editing' ? '' : 'none';
+    });
+    // rail input adapts: seeding copy before a dashboard exists, disabled when 503
+    const input = document.querySelector('.rail__input input');
+    const send = document.querySelector('.rail__send');
+    input.placeholder = (state === 'empty')
+      ? 'Ask for a starting dashboard…'
+      : 'Ask for a change: “add a question-density widget”';
+    const off = state === 'unconfigured';
+    input.disabled = off; send.disabled = off;
+    send.style.opacity = off ? 0.4 : '';
+  }
+  document.querySelectorAll('[data-state-btn]').forEach(b =>
+    b.addEventListener('click', () => applyState(b.dataset.stateBtn)));
+  // in-mockup navigation (CTAs simulate the real flow)
+  document.addEventListener('click', e => {
+    const goto = e.target.closest('[data-goto]');
+    if (goto) applyState(goto.dataset.goto);
+  });
+
+  // ---- rail collapse ------------------------------------------------------
+  const railToggle = document.getElementById('rail-toggle');
+  railToggle.addEventListener('click', () => {
+    const collapsed = document.body.dataset.rail === 'collapsed';
+    document.body.dataset.rail = collapsed ? 'open' : 'collapsed';
+    railToggle.textContent = collapsed ? '⇥' : '⇤';
+    railToggle.setAttribute('aria-label', collapsed ? 'Collapse design rail' : 'Expand design rail');
+  });
+
+  // ---- tooltips (bars, timeline segments) --------------------------------
+  const tt = document.getElementById('tt');
+  function showTT(text, x, y) {
+    tt.innerHTML = text;
+    tt.classList.add('show');
+    const pad = 12;
+    const w = tt.offsetWidth, h = tt.offsetHeight;
+    let left = x + pad, top = y - h - pad;
+    if (left + w > innerWidth - 8) left = x - w - pad;
+    if (top < 8) top = y + pad;
+    tt.style.left = left + 'px';
+    tt.style.top = top + 'px';
+  }
+  function hideTT() { tt.classList.remove('show'); }
+  document.querySelectorAll('[data-tt]').forEach(el => {
+    el.addEventListener('pointermove', e => {
+      const [label, value] = el.dataset.tt.split(' — ');
+      showTT('<span class="tt-label">' + label + '</span> · <span class="tt-value">' + (value || '') + '</span>', e.clientX, e.clientY);
+    });
+    el.addEventListener('pointerleave', hideTT);
+  });
+
+  // ---- density chart crosshair + tooltip ---------------------------------
+  const densityData = [5,6,4.5,7.5,8.5,7,9.5,10.5,9,12.5,14,12,10,10.5,9,9.5,12.5,11.5,13,12.5];
+  const dChart = document.getElementById('density-chart');
+  if (dChart) {
+    const svg = dChart.querySelector('svg');
+    const xline = document.getElementById('density-x');
+    dChart.addEventListener('pointermove', e => {
+      const r = svg.getBoundingClientRect();
+      const fx = (e.clientX - r.left) / r.width * 560;
+      const clamped = Math.max(36, Math.min(552, fx));
+      const idx = Math.round((clamped - 36) / (516 / (densityData.length - 1)));
+      const v = densityData[Math.max(0, Math.min(densityData.length - 1, idx))];
+      const mins = Math.round(idx * 92 / (densityData.length - 1));
+      const tc = Math.floor(mins / 60) + ':' + String(mins % 60).padStart(2, '0');
+      xline.setAttribute('x1', clamped); xline.setAttribute('x2', clamped);
+      xline.style.opacity = 1;
+      showTT('<span class="tt-label">' + tc + '</span> · <span class="tt-value">' + v + ' events</span>', e.clientX, e.clientY);
+    });
+    dChart.addEventListener('pointerleave', () => { xline.style.opacity = 0; hideTT(); });
+  }
+
+  // initial state
+  applyState('saved');
+</script>
+</body>
+</html>
