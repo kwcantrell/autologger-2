@@ -22,13 +22,13 @@
 
 ## 2. Confirm migration + row delete (web-ui-system)
 
-- [ ] 2.1 Replace `window.confirm`/`window.prompt` everywhere: EventLogSheet (delete row,
+- [x] 2.1 Replace `window.confirm`/`window.prompt` everywhere: EventLogSheet (delete row,
       discard batch), RecentSessionsList (archive/delete/restore ×4), TeamCard (remove member,
       leave team), HomeSettingsModal Add-Show (themed input dialog). Zero
       `window.confirm|prompt` remains (spec scenario).
-- [ ] 2.2 EventLogRow: `relative` on the actions cell (D4), hover cluster anchored `right`
+- [x] 2.2 EventLogRow: `relative` on the actions cell (D4), hover cluster anchored `right`
       inside the row, SVG trash icon button (ROW_ICON_BTN); keep UNDELETE as `.btn`.
-- [ ] 2.3 Beyond-spike scope (fact-check finding, D13 semantics as panel-pinned): convert
+- [x] 2.3 Beyond-spike scope (fact-check finding, D13 semantics as panel-pinned): convert
       `useRecoveryStopWarning.ts`'s `window.confirm` to hook-exposed pending state rendered
       through `ConfirmDialog` in SessionWorkspace — once per session mount, dismissal =
       decline, accept RE-VALIDATES orphan + lease before posting (no-op + dismiss if
