@@ -42,6 +42,35 @@ describe('SessionCore on a fake runtime', () => {
     expect(core.revision()).toBe(1);
   });
 
+  it('initSchema creates the enrichment tables + ordinal indexes, empty, and re-init is idempotent', () => {
+    const { core } = fakeRuntime();
+
+    const tableNames = core.db
+      .all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('session_transcript_paragraphs', 'session_transcript_sentiment')",
+      )
+      .map((r) => r.name)
+      .sort();
+    expect(tableNames).toEqual(['session_transcript_paragraphs', 'session_transcript_sentiment']);
+
+    const indexNames = core.db
+      .all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_paragraphs_ordinal', 'idx_sentiment_ordinal')",
+      )
+      .map((r) => r.name)
+      .sort();
+    expect(indexNames).toEqual(['idx_paragraphs_ordinal', 'idx_sentiment_ordinal']);
+
+    expect(core.db.all('SELECT * FROM session_transcript_paragraphs')).toEqual([]);
+    expect(core.db.all('SELECT * FROM session_transcript_sentiment')).toEqual([]);
+
+    // Re-running initSchema on an already-existing DB (the registry's reopen path) must not
+    // throw and must leave the tables intact and still empty.
+    core.initSchema();
+    expect(core.db.all('SELECT * FROM session_transcript_paragraphs')).toEqual([]);
+    expect(core.db.all('SELECT * FROM session_transcript_sentiment')).toEqual([]);
+  });
+
   it('broadcast fans out to the fake sockets', () => {
     const { core, sent } = fakeRuntime();
     core.broadcast({ type: 'x', v: 1 });

@@ -130,6 +130,27 @@ export class SessionCore {
         created_at_utc TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_topics_ordinal ON session_topics(ordinal);
+      CREATE TABLE IF NOT EXISTS session_transcript_paragraphs (
+        id TEXT PRIMARY KEY,
+        start_sec REAL,
+        end_sec REAL,
+        speaker TEXT NOT NULL DEFAULT '',
+        text TEXT NOT NULL DEFAULT '',
+        ordinal INTEGER NOT NULL,
+        created_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_paragraphs_ordinal ON session_transcript_paragraphs(ordinal);
+      CREATE TABLE IF NOT EXISTS session_transcript_sentiment (
+        id TEXT PRIMARY KEY,
+        start_sec REAL,
+        end_sec REAL,
+        sentiment TEXT NOT NULL DEFAULT '',
+        sentiment_score REAL NOT NULL DEFAULT 0,
+        text TEXT NOT NULL DEFAULT '',
+        ordinal INTEGER NOT NULL,
+        created_at_utc TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sentiment_ordinal ON session_transcript_sentiment(ordinal);
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       INSERT OR IGNORE INTO meta (key, value) VALUES ('events_stream_revision', '0');
     `);
