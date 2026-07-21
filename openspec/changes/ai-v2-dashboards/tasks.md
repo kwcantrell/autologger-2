@@ -164,11 +164,11 @@ that does not exist.
 
 ## 3. Question round trip
 
-- [ ] 3.1 TDD the pending-question registry (spec: *Design question round trip*): keyed by
+- [x] 3.1 TDD the pending-question registry (spec: *Design question round trip*): keyed by
       `(sessionId, turnId, requestId)` — **never** bare request id. Test: an answer carrying a
       foreign session or turn is rejected; the pending question remains.
-- [ ] 3.2 `POST …/ai/v2/answer` route, full guard chain, resolving the blocked `canUseTool`.
-- [ ] 3.3 TDD abandonment (spec, same requirement): client disconnect and turn timeout each
+- [x] 3.2 `POST …/ai/v2/answer` route, full guard chain, resolving the blocked `canUseTool`.
+- [x] 3.3 TDD abandonment (spec, same requirement): client disconnect and turn timeout each
       abandon the pending question, terminate the child, and **release the slot** — this is the
       slot-leak hazard, not hygiene.
 
