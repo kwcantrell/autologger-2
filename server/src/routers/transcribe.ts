@@ -10,12 +10,13 @@ import { join } from 'node:path';
 import { deepgramConfigured, deepgramModel } from '../env';
 import { mergeAudioSegments } from '../node/audioMerge';
 import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
-import type { DeepgramWord } from '../node/deepgram';
+import type { TranscribeGroupResult } from '../node/deepgram';
 import {
   recordingStartAnchors,
+  remapTranscriptEnrichment,
   remapTranscriptWords,
 } from '../node/transcriptRemap';
-import type { GroupWords, SegmentAnchorInfo } from '../node/transcriptRemap';
+import type { EnrichmentGroup, SegmentAnchorInfo } from '../node/transcriptRemap';
 import {
   topicCreateSchema,
   topicUpdateSchema,
@@ -122,29 +123,32 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
 
     const apiKey = c.env.config.DEEPGRAM_API_KEY;
     const model = deepgramModel(c.env.config);
-    const groupWords: GroupWords[] = [];
+    const enrichmentGroups: EnrichmentGroup[] = [];
     for (const group of groups) {
       const { size } = await stat(group.outPath);
       enforceGroupSizeLimit(size);
       if (c.req.raw.signal?.aborted) {
         throw new ApiError(400, ABORTED_DETAIL);
       }
-      let words: DeepgramWord[];
+      let result: TranscribeGroupResult;
       try {
         // The provider call itself: per spec, a client disconnect from here
         // on does NOT abandon the run — no abort-check after this point.
-        // Enrichment (paragraphs/sentiments) is captured by transcribeGroup
-        // but not yet threaded through here — that's Phase 4 (task 4.2),
-        // which will assemble remapped enrichment for the extended
-        // atomic-replace RPC. Words remain the only piece wired today.
-        ({ words } = await transcribeGroup({ outPath: group.outPath, family: group.family, apiKey, model }));
+        result = await transcribeGroup({ outPath: group.outPath, family: group.family, apiKey, model });
       } catch (err) {
         if (err instanceof DeepgramUpstreamError) {
           throw new ApiError(502, UPSTREAM_FAILURE_DETAIL);
         }
         throw err;
       }
-      groupWords.push({ segments: group.segments, words });
+      // EnrichmentGroup extends GroupWords, so this same per-group array
+      // feeds both remapTranscriptWords and remapTranscriptEnrichment below.
+      enrichmentGroups.push({
+        segments: group.segments,
+        words: result.words,
+        paragraphs: result.paragraphs,
+        sentiments: result.sentiments,
+      });
     }
 
     // Re-acquire the hub after the merge/provider awaits above.
@@ -155,15 +159,24 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       ordinal: s.ordinal,
       recordingOrdinal: s.recording_ordinal,
     }));
-    const remapped = remapTranscriptWords(groupWords, segmentInfo, anchors, timecodeCtx(row).frameRate);
+    const remappedWords = remapTranscriptWords(enrichmentGroups, segmentInfo, anchors, timecodeCtx(row).frameRate);
 
-    if (remapped.length === 0) {
+    if (remappedWords.length === 0) {
       throw new ApiError(400, NO_SPEECH_DETAIL);
     }
 
+    // Enrichment is remapped here, at the same point remapTranscriptWords ran
+    // above — i.e. only after ALL groups' provider calls succeeded (design
+    // D5/D10) — so a failed run persists neither words nor enrichment, and
+    // its output's `{ paragraphs, sentiment }` shape matches the replace
+    // RPC's enrichment param field-for-field (passed straight through).
+    const remappedEnrichment = remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors);
+
     // Replace only after ALL groups succeeded (design D5/D10) — a failed run
-    // never reaches this call, so pre-existing words are left untouched.
-    const words = await getSessionHub(c, sessionId).replaceTranscriptWords(remapped);
+    // never reaches this call, so pre-existing words and enrichment are left
+    // untouched. Words + enrichment go together in the one atomic RPC (no
+    // second write path).
+    const words = await getSessionHub(c, sessionId).replaceTranscriptWords(remappedWords, remappedEnrichment);
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
   } finally {
     generationInFlight = false;

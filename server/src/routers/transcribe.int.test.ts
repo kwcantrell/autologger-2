@@ -343,6 +343,118 @@ describe('transcript generation', () => {
     expect(words.map((w) => w.word)).toEqual(['existing']);
   });
 
+  // ── Enrichment persistence (persist-deepgram-enrichment, task 4.1) ──────
+
+  function deepgramEnrichmentFixture(): unknown {
+    return JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
+        'utf8',
+      ),
+    );
+  }
+
+  function stubFetchWithFixture(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(deepgramEnrichmentFixture()), { status: 200 })),
+    );
+  }
+
+  it('persists real-fixture enrichment and reads it back in ordinal order (anchored)', async () => {
+    const s = await seededSession();
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    stubFetchWithFixture();
+
+    const res = await generate(s);
+    expect(res.status).toBe(200);
+
+    const enrichment = env.ports.sessions.get(s).listTranscriptEnrichment();
+    expect(enrichment.paragraphs).toHaveLength(3);
+    expect(enrichment.sentiment).toHaveLength(3);
+    // Anchored (recording-start anchor resolved) — real timeline positions,
+    // never the never-zeros-as-data NULL, and non-decreasing (ordinal order
+    // is anchored-by-start_sec-ascending for this single-group, all-anchored
+    // case).
+    for (const p of enrichment.paragraphs) {
+      expect(typeof p.start_sec).toBe('number');
+      expect(typeof p.end_sec).toBe('number');
+      expect(p.end_sec).toBeGreaterThanOrEqual(p.start_sec as number);
+      expect(p.text.length).toBeGreaterThan(0);
+    }
+    for (const seg of enrichment.sentiment) {
+      expect(typeof seg.start_sec).toBe('number');
+      expect(typeof seg.end_sec).toBe('number');
+      expect(seg.sentiment.length).toBeGreaterThan(0);
+    }
+    const paraStarts = enrichment.paragraphs.map((p) => p.start_sec as number);
+    expect(paraStarts).toEqual([...paraStarts].sort((a, b) => a - b));
+    const sentStarts = enrichment.sentiment.map((seg) => seg.start_sec as number);
+    expect(sentStarts).toEqual([...sentStarts].sort((a, b) => a - b));
+  });
+
+  it('anchorless-group enrichment reads back with NULL start/end, not zeros', async () => {
+    const s = await seededSession();
+    // No "Recording N Started" event logged — the segment's group resolves
+    // no recording-start anchor (3-step chain step 3: anchorless).
+    await uploadSegment(s, SEG1);
+    stubFetchWithFixture();
+
+    const res = await generate(s);
+    expect(res.status).toBe(200);
+
+    const enrichment = env.ports.sessions.get(s).listTranscriptEnrichment();
+    expect(enrichment.paragraphs.length).toBeGreaterThan(0);
+    expect(enrichment.sentiment.length).toBeGreaterThan(0);
+    for (const p of enrichment.paragraphs) {
+      expect(p.start_sec).toBeNull();
+      expect(p.end_sec).toBeNull();
+    }
+    for (const seg of enrichment.sentiment) {
+      expect(seg.start_sec).toBeNull();
+      expect(seg.end_sec).toBeNull();
+    }
+  });
+
+  it('a never-generated session reads listTranscriptEnrichment as empty arrays', async () => {
+    const s = await seededSession();
+    expect(env.ports.sessions.get(s).listTranscriptEnrichment()).toEqual({
+      paragraphs: [],
+      sentiment: [],
+    });
+  });
+
+  it('GET transcript-words shape is unchanged after enrichment is persisted', async () => {
+    const s = await seededSession();
+    await logRecordingStarted(s, 1);
+    await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
+    stubFetchWithFixture();
+
+    const genRes = await generate(s);
+    expect(genRes.status).toBe(200);
+
+    const res = await app.request(`/api/sessions/${s}/transcript-words`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { words: Array<Record<string, unknown>> };
+    expect(body.words.length).toBeGreaterThan(0);
+    for (const w of body.words) {
+      expect(Object.keys(w).sort()).toEqual(
+        ['created_at_utc', 'end_sec', 'id', 'ordinal', 'session_id', 'session_time', 'speaker', 'start_sec', 'word'].sort(),
+      );
+    }
+  });
+
+  it('no transcript-enrichment HTTP route exists (in-process read only, design D5)', async () => {
+    const s = await seededSession();
+    const res = await app.request(
+      `/api/sessions/${s}/transcript-enrichment`,
+      { method: 'GET' },
+      { ...env },
+    );
+    expect(res.status).toBe(404);
+  });
+
   it('replace-on-rerun: a successful run replaces prior words atomically', async () => {
     const s = await seededSession();
     await uploadSegment(s, SEG1);

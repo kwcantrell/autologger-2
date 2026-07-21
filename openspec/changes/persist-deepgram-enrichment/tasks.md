@@ -65,13 +65,13 @@
 
 ## 4. Router wire-through (transcribe.ts)
 
-- [ ] 4.1 Write a failing integration test: run the generation handler against seeded audio
+- [x] 4.1 Write a failing integration test: run the generation handler against seeded audio
       with the provider mocked to return the **real captured fixture**, then assert the
       persisted enrichment reads back through `listTranscriptEnrichment` (paragraphs +
       sentiment in ordinal order, NULL times for any anchorless rows); a never-generated
       session reads empty; `GET .../transcript-words` shape is unchanged and no new route
       exists.
-- [ ] 4.2 Wire the generation handler to assemble remapped enrichment and pass it to the
+- [x] 4.2 Wire the generation handler to assemble remapped enrichment and pass it to the
       extended replace RPC (no second write path). No new HTTP route, no README change.
       Gate: typecheck + test.
 
