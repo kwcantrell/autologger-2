@@ -48,6 +48,13 @@ posture carries over** (D1).
 So the SDK can use *the deployment's existing `claude` install and login* — precisely the
 property D1 said it lacked. **Owner ruling 2026-07-20: supersede D1 for this change only.**
 
+> **Superseded in part by D10 (same day).** The "no API key needed, auth rides on `claude login`"
+> half of this argument is a **policy problem** for a portable multi-user product — Anthropic does
+> not permit third-party apps to offer claude.ai login. D10 rules a scoped API key preferred, with
+> the login fallback confined to loopback. D0's *technical* premise stands (the SDK can use the
+> existing install); its *auth* premise is narrowed, leaving the in-process MCP toolset (D3) as the
+> primary justification. Read D0 and D10 together.
+
 **Scope limit (deliberate):** this supersession authorizes the SDK for the **analyst only**.
 The topics chat keeps its CLI transport, argv characterization test, and loopback listener
 untouched. D1 remains in force for that agent. A future migration of the topics chat would be
@@ -90,6 +97,10 @@ the whole change.
 | `--max-budget-usd` | **`maxBudgetUsd`** (it exists and enforces) + `maxTurns` |
 | **no** `--fork-session` | `forkSession: false` **pinned explicitly**, never defaulted |
 | *(CLI `-p` implied non-interactive)* | **`permissionMode: 'dontAsk'`** — fail-closed; `'default'` prompts, and nobody is there to answer |
+| *(no CLI equivalent — D11)* | **`CLAUDE_CONFIG_DIR`** on the child env — isolates credentials, transcripts, daemon socket namespace, `.claude.json` |
+| *(no CLI equivalent — D11)* | **`disableClaudeAiConnectors`** via **`managedSettings`** — not an `Options` field; `settingSources: []` means no settings source would carry it |
+| *(no CLI equivalent — D11)* | **`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`** on the child env — strips credentials from any spawned subprocess |
+| *(D12)* | `allowedTools` additionally carries `AskUserQuestion`, plus the named SDK-infrastructure tools spike 0.9 identifies |
 
 **The four corrections the panel forced** (each verified against `sdk.d.ts` v0.3.216):
 
@@ -207,6 +218,76 @@ auth (`401`) → session resolution (`404`, masking unauthorized sessions before
 → config gate + open-network refusal (`503`) → body validation (`422`/`400`) → turn slot (`409`).
 No guard path spawns.
 
+### D10 — Auth: scoped key preferred, login fallback loopback-only (owner ruling, 2026-07-20)
+
+**This corrects a policy error in D0.** D0 justified the SDK partly on *"auth rides on `claude
+login`, no `ANTHROPIC_API_KEY` required"* and presented that as the win. But the SDK overview
+states: *"Anthropic does not allow third party developers to offer claude.ai login or rate limits
+for their products… use the API key authentication methods instead."* autologger is described in
+`CLAUDE.md` as portable — *"runs anywhere Node 22 runs"* — with teams, invites, and studio
+scoping. A portable multi-user product whose AI features silently bill the packager's personal
+subscription is a policy violation, not just an ops smell. (The shipped topics chat has the same
+property; it was gated as an operator-local tool. This decision does not retroactively change it.)
+
+**Ruling (2026-07-20): support both, key preferred.**
+
+1. A workspace-scoped API key, when configured, is used — never the OAuth fallback.
+2. Absent a key, the login fallback is permitted **only on a loopback bind**, and the fallback is
+   logged loudly at startup so an operator cannot drift into it unaware.
+3. Non-loopback with no key is already `503` under the open-network refusal.
+
+The key SHOULD live in a dedicated Anthropic **Workspace** with its own spend limit, so a
+compromised key cannot drain the org (`claude-dev-resources.md` checklist items 1 and 6).
+
+**Consequence for D0:** its auth argument is now secondary. The SDK's remaining justification is
+the in-process MCP toolset (D3) and typed options. That is still a real argument, but it is a
+*narrower* one than D0 was ruled on — recorded here rather than quietly reinterpreted.
+
+### D11 — Child hardening beyond `settingSources` (owner ruling, 2026-07-20)
+
+Source: the operator's own empirically-verified research (`~/claude-dev-questions/`, live tests
+dated 2026-07-20), which is authoritative over doc-reading here.
+
+**The finding that matters most, and that D1 missed:** SDK sessions *always* run
+non-interactively, and **trust verification is skipped entirely in that mode**. A
+`.claude/settings.json` sitting in the session's `cwd` therefore loads and **executes hook
+commands with zero prompt**, for any `cwd`, trusted or not. Crucially, *"`CLAUDE_CONFIG_DIR`
+isolation doesn't help — the exploitable file lives in `cwd`."* The same path lets an untrusted
+directory merge in `permissions.allow` rules (permission rules **merge** across scopes rather
+than override) and inject an `env` block into every subprocess.
+
+D1's `settingSources: []` addresses the *user* tier. The project tier reached through `cwd` is a
+different hole, and the post-panel `cwd`-outside-the-repo pin mitigates it — but for a reason the
+design never stated. It is now stated, and Phase 0 must test the **project**-tier hook, not only
+the user-tier one.
+
+**Ruled in (all four):**
+
+| Control | Status against the SDK surface |
+| --- | --- |
+| Isolated `CLAUDE_CONFIG_DIR` | Env var, not an `Options` field — set it on the child `env`. Isolates credentials, transcripts, the agent-daemon socket namespace, and `.claude.json`. Does **not** isolate `cwd`-scoped project settings. |
+| `disableClaudeAiConnectors` | **Not an `Options` field** — it is a *settings* key (*"when true in any settings source"*), and we load none. Route it through **`managedSettings`**, which the SDK documents for *"embedding applications… enforce them on the spawned subprocess"* and filters **restrictive-only** (can tighten, never widen). |
+| Subprocess env scrub | `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` on the child env. Low marginal value once `tools: []` removes Bash, but cheap. |
+| `safeMode` | **Not an SDK `Options` field** — CLI-only. See the conflict below. |
+
+**Unresolved conflict — `safeMode` vs. the closed-world test.** The operator's checklist calls
+`--safe-mode` *"the only tested mitigation that closes both this and the project-hooks hole at
+once."* But the SDK exposes no `safeMode` option, so it could only reach the child via
+`extraArgs` — which D1's closed-world characterization test **forbids** as a widening surface,
+and rightly so. Three ways out, to be settled by spike **0.8**:
+(a) demonstrate that `settingSources: []` + `strictMcpConfig: true` + a pinned `cwd` already
+close what `--safe-mode` closes, making it redundant; (b) carve a *narrow, named* `extraArgs`
+exception for `--safe-mode` only, asserted by the closed-world test as an exact-match allowance
+rather than an open field; or (c) verify `--safe-mode` does not also disable our own
+`createSdkMcpServer` tools — if it does, it is unusable here regardless.
+
+**Bonus finding — `persistSession: false`.** The SDK can disable transcript-to-disk entirely
+(*"Sessions will not be saved to `~/.claude/projects/` and cannot be resumed later"*). This
+directly addresses the on-disk conversation state the proposal's Non-Goals had to be corrected
+about. It **conflicts with `resume`**, so it is a genuine trade: ephemeral turns with no
+multi-turn continuity, or continuity with transcripts on disk. Spike 0.8 measures the cost;
+the gate decides.
+
 ### D7 — Subprocess and turn lifecycle — OPEN, and potentially D0-reversing
 
 The draft mapped the predecessor's process-group kill ladder to "`abortController` +
@@ -265,6 +346,61 @@ topics pass that was tolerable; for an analyst whose every question is a slice i
 failure mode. Range/slice parameters become normative, with a documented cap and an explicit
 truncation indicator so the model can say "I only saw part of this" rather than summarizing a
 silently truncated transcript. MCP tool params are internal, so this is not a contract change.
+
+### D12 — Interactive clarifying questions via `canUseTool` (owner ruling, 2026-07-20)
+
+Modelled on the operator's `ask-user-question-previews` demo
+(`~/claude-agent-sdk-demos/`), which validates the pattern end to end.
+
+The demo's insight is that **`canUseTool` is not only a gate — it is an interaction channel**.
+The callback blocks; the server forwards the question to the browser and parks a promise
+resolver in a map; the user answers; the promise resolves; `query()` continues. The draft used
+`canUseTool` only to deny.
+
+**Why this earns its place here:** panel finding D8 established that two of three motivating
+questions are ambiguous or unanswerable — *"what happened around 12:30?"* has no defined time
+base (wall clock vs. SMPTE vs. elapsed). Rather than guessing or refusing, the analyst can ask.
+This converts D8 from a scoping problem into a runtime interaction.
+
+**Adaptations required — the demo is a single-user localhost toy and must not be copied
+literally:**
+
+- Its `pending` map is keyed by **request id alone**, with one global map and no auth. Ours MUST
+  be keyed by `(sessionId, turnId, requestId)` and scoped to the turn — a bare request id is the
+  cross-session leak shape the panel already flagged.
+- The demo lets `ToolSearch` and `ExitPlanMode` pass through `canUseTool` because they are SDK
+  infrastructure that loads `AskUserQuestion`. Our default-deny gate would break on this; the
+  allowance must be explicit and named, not a wildcard.
+- The demo rejects pending promises on socket close *"so the `query()` loop unwinds instead of
+  hanging indefinitely."* That is the **same hazard as D7's slot leak** — a parked promise with
+  no answerer holds the turn slot open. The rejection path is mandatory here, not optional.
+- `AskUserQuestion` must be added to `allowedTools`; `tools: []` still holds for built-ins.
+
+Preview HTML (`toolConfig.askUserQuestion.previewFormat`) is **out of scope** — it is the demo's
+subject but adds a sanitization burden (the demo uses DOMPurify) for no analyst benefit.
+
+### D13 — Transport for the question round trip — OPEN
+
+The turn stream stays **SSE on POST** as gated (D5); `ai-topics-chat` D2 rejected WebSocket
+because the per-session WS fan-out **broadcasts to every attached client** (browser tabs *and*
+Companion) and its emission semantics are frozen under `api-contract-freeze`. Nothing in D12
+changes that: analyst replies must not broadcast to every viewer of the session.
+
+But D12's round trip needs a **client→server** path that SSE cannot provide. Options, unresolved:
+
+- **(a) Reuse the existing session WS** for the answer hop only. Cheapest plumbing, but the
+  fan-out means an answer — and any question payload echoed over it — reaches every attached
+  client. Needs a per-client addressing story the current hub does not have.
+- **(b) A small `POST …/ai/analyst/answer`** carrying `(turnId, requestId, label)`. No new
+  transport, no upgrade plumbing, reuses the existing auth/session guards verbatim, and is
+  trivially scoped to the answering user. Adds one route to the frozen surface.
+- **(c) A dedicated analyst WS route**, demo-shaped and bidirectional — but this reverses D2,
+  replaces the gated SSE requirement wholesale, and adds frozen surface needing its own
+  authorization.
+
+**Recommendation: (b).** It preserves D2 and D5 untouched, adds the least frozen surface, and
+the question round trip is low-frequency request/response — precisely what a POST is for. The
+demo needed a socket because it had no other channel; we already have an authenticated one.
 
 ## Risks / Trade-offs
 
@@ -434,7 +570,55 @@ three of four reviewers independently found the same defect in D1's mapping tabl
 - Analyst enable flag not yet named (`AI_ANALYST_ENABLED` proposed); task 1.1 to fix.
 - Abort terminal-event `MAY` tightened to `SHALL NOT` in the spec.
 
+### 2026-07-20 — Second gate: operator research + SDK demo (D10–D13)
+
+The operator supplied two external inputs after the first gate: a working Agent SDK demo
+(`~/claude-agent-sdk-demos/ask-user-question-previews`) and their own empirically-verified
+research notes (`~/claude-dev-questions/`, live tests dated 2026-07-20). Both were treated as
+**authoritative over doc-reading**, the research especially so — it records live tests with
+recorded output, not citations.
+
+**What the demo confirmed:** D0's technical premise, empirically — a working program relying on
+`claude login` with no API key. Also that `tools: [...]` is the restriction option (backing the
+panel's B1 correction), and that `canUseTool` must let named SDK-infrastructure tools through.
+
+**Blockers found and fixed (D10–D11):**
+
+- **D0's auth argument was a policy violation for a portable product.** The operator's notes cite
+  the SDK overview: third-party developers may not offer claude.ai login. D0 had made "no API key
+  needed" the *selling point*. Ruled: scoped key preferred, login fallback loopback-only and
+  logged (**D10**). D0's auth premise is narrowed; its technical premise stands.
+- **`settingSources: []` does not close the hole that actually matters.** The operator's live test
+  proved SDK sessions skip trust verification entirely, so a project-tier `.claude/settings.json`
+  in `cwd` executes hooks with **zero prompt** — and config-dir isolation cannot help, because the
+  file lives in `cwd`. The post-panel `cwd` pin mitigates this, but the design never said why.
+  Now **D11**, with spike 0.7 testing the *project* tier rather than only the user tier.
+- **Two requested controls are not SDK `Options` fields** — verified, not assumed:
+  `disableClaudeAiConnectors` is a *settings* key (and we load no settings sources), so it must
+  route through `managedSettings`, which the SDK documents for embedding applications and filters
+  restrictive-only. `safeMode` has no SDK surface at all.
+
+**ESCALATED — unresolved, spike 0.8:** `--safe-mode` is the operator's checklist's "only tested
+mitigation" for the project-hook hole, but it could only reach the child via `extraArgs`, which
+D1's closed-world test forbids as a widening surface. Three exits recorded in D11; the spike
+decides. Also surfaced: `persistSession: false` would eliminate on-disk transcripts entirely but
+**conflicts with `resume`** — a real trade for the gate, measured by the same spike.
+
+**Ruled in (D12):** the demo's `canUseTool` → promise → browser round trip, which converts panel
+finding D8 from a scoping problem into a runtime interaction — the analyst asks which time base
+is meant instead of guessing. Adaptations recorded: the demo's single-user `pending` map keyed by
+bare request id must become turn-scoped here, and its disconnect-rejection path is **mandatory**
+(it is the same hazard as D7's slot leak).
+
+**OPEN (D13):** the question round trip needs a client→server path SSE cannot provide.
+Recommendation is a small `POST …/ai/analyst/answer` rather than WebSocket — `ai-topics-chat` D2
+rejected WS because the session fan-out broadcasts to every attached client including Companion,
+and analyst replies must not broadcast. Awaiting the operator's ruling.
+
 ### 2026-07-20 — Post-gate consistency read (light-tier)
+
+> Scope note: this read covers the **first** gate's fold-back (panel blockers B1–B8). D10–D13
+> landed afterwards and have not yet been consistency-read; that read runs once D13 is ruled.
 
 **Clean.** Read all four post-fold documents — `proposal.md`, `design.md`,
 `specs/ai-session-analyst/spec.md`, `tasks.md` — against the folded gate rulings.

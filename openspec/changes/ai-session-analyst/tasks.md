@@ -55,9 +55,30 @@ never "confirm X is safe", which an implementer discharges as a checkbox.
       for the turn-timeout path. Determine whether the streaming-input `prompt` form is required
       for `interrupt()` to exist. **If no-orphan cannot be guaranteed, stop and re-gate** — this
       is the D0-reversing finding.
-- [ ] 0.7 Record all results in `design.md` under "Resolved by the spike"; rewrite D1/D2/D7 to
-      cite observed behaviour rather than translation, and drop the "unverified hypothesis"
-      banner only when they do.
+- [ ] 0.7 Spike the **project-tier** hook hole (design D11 — the operator's verified finding that
+      SDK sessions skip trust verification entirely). Plant a `UserPromptSubmit` hook that blocks
+      via `exit 2` (free — the prompt never reaches the model) in a `.claude/settings.json` inside
+      a candidate `cwd`, and assert it **does** fire there and **does not** fire under our pinned
+      `cwd`. `settingSources: []` addresses the *user* tier; this is the project tier reached
+      through `cwd`, which config-dir isolation does not cover. Repeat for a `permissions.allow`
+      block and an `env` block (both merge in via the same path).
+- [ ] 0.8 Resolve the **`safeMode` conflict** (design D11): `safeMode` is not an SDK option, so it
+      could only arrive via `extraArgs`, which the closed-world test forbids. Determine (a) whether
+      `settingSources: []` + `strictMcpConfig: true` + pinned `cwd` already close what
+      `--safe-mode` closes; (b) if not, whether a *named exact-match* `extraArgs` exception is
+      workable; and (c) critically — whether `--safe-mode` **also disables our own
+      `createSdkMcpServer` tools**, which would make it unusable here regardless. Also measure
+      `persistSession: false` against `resume`: confirm they genuinely conflict, so the gate can
+      trade ephemerality against multi-turn continuity on evidence.
+- [ ] 0.9 Spike the D12 round trip: confirm `AskUserQuestion` fires under our locked-down option
+      set with `tools: []` (the demo used `permissionMode: 'plan'` and `tools: ['AskUserQuestion']`
+      — ours differs), and identify exactly which SDK-infrastructure tools must be allowed through
+      `canUseTool` for it to work (the demo names `ToolSearch` and `ExitPlanMode`). Confirm
+      `managedSettings` accepts `disableClaudeAiConnectors` and that it is not silently dropped by
+      the restrictive-only filter.
+- [ ] 0.10 Record all results in `design.md` under "Resolved by the spike"; rewrite
+      D1/D2/D7/D11/D12 to cite observed behaviour rather than translation, and drop the
+      "unverified hypothesis" banner only when they do.
 
 ## 1. Gate + endpoint skeleton (server)
 

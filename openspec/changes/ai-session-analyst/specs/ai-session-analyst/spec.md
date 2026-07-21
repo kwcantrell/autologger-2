@@ -156,6 +156,80 @@ closed-world assertion detects an addition.
 - **WHEN** a user message begins with `--` or otherwise resembles a command-line flag
 - **THEN** it is treated as message content and never parsed as an option
 
+### Requirement: Analyst credentials
+The analyst SHALL use an explicitly configured, workspace-scoped API key when one is present, and
+SHALL NOT fall back to the operator's interactive login while a key is configured. When no key is
+configured, the login fallback SHALL be permitted **only** on a loopback bind, and the server
+SHALL log that it is spending the operator's personal subscription so an operator cannot drift
+into that state unaware. A non-loopback deployment with no configured key SHALL refuse to serve
+analyst turns.
+
+This exists because a portable, multi-user deployment that silently bills the packager's personal
+subscription is not merely an operational surprise — offering third-party access under a
+claude.ai login is outside Anthropic's terms for distributed applications.
+
+#### Scenario: A configured key is used in preference to the login
+- **WHEN** an analyst key is configured and an analyst turn runs
+- **THEN** the turn authenticates with that key and not with the operator's interactive login
+
+#### Scenario: Login fallback is announced, not silent
+- **WHEN** no analyst key is configured and the server is loopback-bound
+- **THEN** turns are served via the operator's login and the server logs that personal
+  subscription credentials are being spent
+
+#### Scenario: Portable deployment without a key refuses
+- **WHEN** no analyst key is configured and the server is bound to a non-loopback address
+- **THEN** analyst turns are refused rather than billed to the operator's personal subscription
+
+### Requirement: Child process isolation
+The analyst child SHALL run with a configuration directory **separate from the operator's
+personal one**, so the turn cannot read the operator's credentials, conversation transcripts, or
+agent-daemon state. Account-level cloud connectors SHALL be disabled for the turn, so an agent
+reading untrusted transcript content cannot reach mail, drive, or calendar data belonging to the
+authenticating account. Credentials SHALL be stripped from any subprocess the turn spawns.
+
+Configuration-directory isolation SHALL NOT be relied upon to contain settings reached through the
+working directory: agent sessions run non-interactively and therefore **skip workspace trust
+verification entirely**, so a settings file in the session's working directory can execute hook
+commands, merge permission grants, and inject environment variables with no prompt. The working
+directory pinned under *Subprocess security lockdown* is what addresses that path, and it SHALL be
+a directory the deployment controls.
+
+#### Scenario: The turn cannot read the operator's personal configuration
+- **WHEN** an analyst turn runs
+- **THEN** its configuration directory is not the operator's personal one, and the operator's
+  stored credentials and transcripts are outside its reach
+
+#### Scenario: A planted project settings file does not execute
+- **WHEN** a settings file defining a lifecycle hook is present in a directory the deployment does
+  not control
+- **THEN** no analyst turn uses that directory as its working directory, and the hook does not run
+
+#### Scenario: Account connectors are not inherited
+- **WHEN** the authenticating account has cloud connectors enabled and an analyst turn runs
+- **THEN** those connectors are not available to the turn
+
+### Requirement: Clarifying questions
+The analyst MAY ask the requesting user a clarifying question when a request is ambiguous — for
+example when a time reference could mean wall clock, timecode, or elapsed time — rather than
+guessing or refusing. A question SHALL be routed only to the user who initiated that turn, SHALL
+be bound to that turn, and SHALL NOT be broadcast to other clients attached to the session. An
+unanswered question SHALL NOT hold a turn open indefinitely: if the requesting client goes away,
+the pending question SHALL be abandoned, the turn SHALL end, and its concurrency slot SHALL be
+released.
+
+#### Scenario: An ambiguous request is clarified rather than guessed
+- **WHEN** the user asks about a time reference with no defined time base
+- **THEN** the analyst asks which basis is meant before answering
+
+#### Scenario: A question reaches only the asking user
+- **WHEN** an analyst turn asks a clarifying question and other clients are attached to the session
+- **THEN** only the client that initiated the turn receives the question
+
+#### Scenario: An abandoned question does not wedge the session
+- **WHEN** a clarifying question is pending and the requesting client disconnects
+- **THEN** the turn ends, its child is terminated, and its concurrency slot is released
+
 ### Requirement: Subprocess and turn lifecycle
 Every analyst turn SHALL terminate its child process on every path — normal completion, failure,
 turn timeout, and client disconnect — leaving no surviving process, because an orphan continues
