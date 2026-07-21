@@ -10,6 +10,7 @@ import {
   useTeam,
 } from '../../../api/hooks/useTeams';
 import type { TeamDetail, TeamMember, TeamMembershipBrief, TeamRole } from '../../../api/types';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 
 // --- TeamCard (teams-self-serve, task 6.2; design D7) ---
 //
@@ -117,6 +118,8 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
     );
   }
 
+  const { confirm, confirmElement } = useConfirm();
+
   function handleRoleChange(userId: string, role: TeamRole) {
     setActionError(null);
     changeRole.mutate(
@@ -125,8 +128,14 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
     );
   }
 
-  function handleRemove(userId: string, email: string) {
-    if (!window.confirm(`Remove ${email} from this team?`)) return;
+  async function handleRemove(userId: string, email: string) {
+    const ok = await confirm({
+      title: 'Remove member',
+      message: `Remove ${email} from this team?`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     setActionError(null);
     removeMember.mutate(userId, {
       onError: (err) => setActionError(errorMessage(err, 'Remove failed.')),
@@ -139,6 +148,7 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
 
   return (
     <div className="mt-3 space-y-4" data-testid={`team-admin-panel-${detail.id}`}>
+      {confirmElement}
       {actionError && (
         <p role="alert" className="modal-hint text-[#ff8a8a]">
           {actionError}
@@ -227,15 +237,23 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
 function MemberPanel({ detail }: { detail: TeamDetail }) {
   const leave = useLeaveTeam(detail.id);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmElement } = useConfirm();
 
-  function handleLeave() {
-    if (!window.confirm('Leave this team?')) return;
+  async function handleLeave() {
+    const ok = await confirm({
+      title: 'Leave team',
+      message: 'Leave this team? An admin will have to re-invite you to rejoin.',
+      confirmLabel: 'Leave team',
+      danger: true,
+    });
+    if (!ok) return;
     setError(null);
     leave.mutate(undefined, { onError: (err) => setError(errorMessage(err, 'Leave failed.')) });
   }
 
   return (
     <div className="mt-3 space-y-3" data-testid={`team-member-panel-${detail.id}`}>
+      {confirmElement}
       {error && (
         <p role="alert" className="modal-hint text-[#ff8a8a]">
           {error}

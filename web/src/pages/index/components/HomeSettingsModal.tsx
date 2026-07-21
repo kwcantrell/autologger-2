@@ -156,6 +156,10 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
 
   const [initialized, setInitialized] = useState(false);
 
+  // Themed replacement for the window.prompt Add-Show flow (ui-refresh, D2).
+  const [addShowOpen, setAddShowOpen] = useState(false);
+  const [newShowName, setNewShowName] = useState('');
+
   // Reset form each time modal opens so stale drafts don't linger. `activeTab`
   // resets here too (teams-settings-nav, D1): the modal now survives route
   // changes while open instead of unmounting, so unmount can no longer be
@@ -274,18 +278,26 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     }
   }
 
-  async function handleAddShow() {
-    if (!profile || !activeStudioId) return;
-    const name = window.prompt('Show name (you can update the code after):')?.trim();
-    if (!name) return;
+  // ui-refresh: themed Add-Show dialog (was window.prompt browser chrome).
+  async function submitAddShow() {
+    const name = newShowName.trim();
+    if (!profile || !activeStudioId || !name) return;
     try {
       const { show } = await createShow.mutateAsync({ studio_id: activeStudioId, name });
       const draft = showToShowDraft(show as Show);
       setShowDrafts((prev) => ({ ...prev, [show.id]: draft }));
       setActiveShowId(show.id);
+      setAddShowOpen(false);
+      setNewShowName('');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not create show.', true);
     }
+  }
+
+  function handleAddShow() {
+    if (!profile || !activeStudioId) return;
+    setNewShowName('');
+    setAddShowOpen(true);
   }
 
   const tabs: { id: TabId; label: string }[] = [
@@ -659,6 +671,47 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           <div id="v6-settings-perf-debug-mount" className="min-w-0" />
         </div>
       </section>
+
+      {/* Themed Add-Show dialog (ui-refresh: was window.prompt). */}
+      <Dialog
+        open={addShowOpen}
+        onOpenChange={(o) => !o && setAddShowOpen(false)}
+        title="Add show"
+        description="You can update the show code and details after creating it."
+      >
+        <label className="field">
+          <span>Show name</span>
+          <input
+            type="text"
+            className={clsx('profile-select', HS_INPUT_OVERRIDE)}
+            id="profile-show-add-name"
+            maxLength={200}
+            autoComplete="off"
+            autoFocus
+            value={newShowName}
+            onChange={(e) => setNewShowName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void submitAddShow();
+              }
+            }}
+          />
+        </label>
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={() => setAddShowOpen(false)}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={createShow.isPending || newShowName.trim() === ''}
+            onClick={() => void submitAddShow()}
+          >
+            {createShow.isPending ? 'Creating…' : 'Create show'}
+          </button>
+        </div>
+      </Dialog>
     </Dialog>
   );
 }

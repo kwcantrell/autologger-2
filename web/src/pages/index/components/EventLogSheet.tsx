@@ -5,6 +5,7 @@ import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type { LogEvent, SessionStatus } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
@@ -198,6 +199,9 @@ export function EventLogSheet({ sessionId }: Props) {
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
 
+  // Themed confirms (ui-refresh: replaces window.confirm browser chrome).
+  const { confirm, confirmElement } = useConfirm();
+
   // --- Derived ---
   const inlineEdit = isLogSheetRolling && !batchEditMode;
 
@@ -288,15 +292,17 @@ export function EventLogSheet({ sessionId }: Props) {
     }
   };
 
-  const handleCancelBatch = () => {
+  const handleCancelBatch = async () => {
     const anyDirty = pendingDeleteIds.size > 0 || batchEdits.size > 0;
-    if (
-      anyDirty &&
-      !window.confirm(
-        'Discard all unsaved changes to the log sheet?\n\nOK = Discard and exit edit mode\nCancel = Keep editing',
-      )
-    ) {
-      return;
+    if (anyDirty) {
+      const ok = await confirm({
+        title: 'Discard changes',
+        message: 'Discard all unsaved changes to the log sheet?',
+        confirmLabel: 'Discard changes',
+        cancelLabel: 'Keep editing',
+        danger: true,
+      });
+      if (!ok) return;
     }
     setBatchEditMode(false);
     setBatchEdits(new Map());
@@ -325,14 +331,20 @@ export function EventLogSheet({ sessionId }: Props) {
         setPendingDeleteIds((prev) => new Set([...prev, eventId]));
         return;
       }
-      if (!window.confirm('Delete this log row?')) return;
+      const ok = await confirm({
+        title: 'Delete log row',
+        message: 'Delete this log row? This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await deleteEvent.mutateAsync(eventId);
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Delete failed.', true);
       }
     },
-    [batchEditMode, deleteEvent],
+    [batchEditMode, deleteEvent, confirm],
   );
 
   const handleUndelete = useCallback((eventId: string) => {
@@ -439,27 +451,30 @@ export function EventLogSheet({ sessionId }: Props) {
       logBottomId="v4-log-bottom"
       sheetId="v4-log-sheet"
       after={
-        // `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
-        // matches `sr-only`; the inputs collapse to 0×0 (was the `#v4-log-session`-prefixed
-        // rules; that ancestor was a specificity hack).
-        <div className="sr-only pointer-events-none" aria-hidden="true">
-          <input
-            type="checkbox"
-            id="view-utc-log"
-            className="absolute h-0 w-0 opacity-0"
-            tabIndex={-1}
-            readOnly
-            checked={viewUtc}
-          />
-          <input
-            type="checkbox"
-            id="show-internal-log"
-            className="absolute h-0 w-0 opacity-0"
-            tabIndex={-1}
-            readOnly
-            checked={showInternal}
-          />
-        </div>
+        <>
+          {confirmElement}
+          {/* `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
+              matches `sr-only`; the inputs collapse to 0×0 (was the `#v4-log-session`-prefixed
+              rules; that ancestor was a specificity hack). */}
+          <div className="sr-only pointer-events-none" aria-hidden="true">
+            <input
+              type="checkbox"
+              id="view-utc-log"
+              className="absolute h-0 w-0 opacity-0"
+              tabIndex={-1}
+              readOnly
+              checked={viewUtc}
+            />
+            <input
+              type="checkbox"
+              id="show-internal-log"
+              className="absolute h-0 w-0 opacity-0"
+              tabIndex={-1}
+              readOnly
+              checked={showInternal}
+            />
+          </div>
+        </>
       }
     >
       <FeedTable

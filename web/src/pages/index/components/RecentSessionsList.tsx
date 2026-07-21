@@ -8,6 +8,7 @@ import {
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
 import type { Session, SessionsResponse } from '../../../api/types';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { Tooltip } from '../../../shared/ui/Tooltip';
@@ -138,6 +139,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   const { mutate: updateSession, isPending: renamePending } = useUpdateSession(s.id);
   const { mutate: archiveSession } = useArchiveSession();
   const { mutate: deleteSession } = useDeleteSession();
+  const { confirm, confirmElement } = useConfirm();
 
   const handleCardClick = (e: React.MouseEvent) => {
     const target = e.target as Element;
@@ -159,8 +161,13 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     );
   };
 
-  const handleArchive = () => {
-    if (!confirm('Archive this session? You can restore it later from Archived sessions.')) return;
+  const handleArchive = async () => {
+    const ok = await confirm({
+      title: 'Archive session',
+      message: `Archive “${s.title}”? You can restore it later from Archived sessions.`,
+      confirmLabel: 'Archive',
+    });
+    if (!ok) return;
     archiveSession(s.id, {
       onSuccess: () => showToast('Session archived.'),
       onError: (err: unknown) =>
@@ -168,8 +175,14 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     });
   };
 
-  const handleDelete = () => {
-    if (!confirm('Permanently delete this session? This action cannot be undone.')) return;
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: 'Delete session',
+      message: `Permanently delete “${s.title}”? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     deleteSession(s.id, {
       onSuccess: () => showToast('Session permanently deleted.'),
       onError: (err: unknown) =>
@@ -282,6 +295,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           onClose={() => setEditing(false)}
         />
       )}
+      {confirmElement}
     </div>
   );
 }
@@ -290,9 +304,15 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { mutate: restoreSession } = useRestoreSession();
   const { mutate: deleteSession } = useDeleteSession();
+  const { confirm, confirmElement } = useConfirm();
 
-  const handleRestore = () => {
-    if (!confirm('Restore this archived session?')) return;
+  const handleRestore = async () => {
+    const ok = await confirm({
+      title: 'Restore session',
+      message: `Restore “${s.title}” to Recent sessions?`,
+      confirmLabel: 'Restore',
+    });
+    if (!ok) return;
     restoreSession(s.id, {
       onSuccess: () => showToast('Session restored.'),
       onError: (err: unknown) =>
@@ -300,8 +320,14 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
     });
   };
 
-  const handleDelete = () => {
-    if (!confirm('Permanently delete this session? This action cannot be undone.')) return;
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: 'Delete session',
+      message: `Permanently delete “${s.title}”? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     deleteSession(s.id, {
       onSuccess: () => showToast('Session permanently deleted.'),
       onError: (err: unknown) =>
@@ -362,6 +388,7 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
           </Tooltip>
         </div>
       </div>
+      {confirmElement}
     </div>
   );
 }
