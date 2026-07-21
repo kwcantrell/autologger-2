@@ -66,6 +66,15 @@ export interface DashboardInteraction {
   targetWidgetId: string;
 }
 
+/** A whole dashboard — verbatim shape of `DashboardConfig` in catalog.ts
+ * (`dashboardConfigSchema`'s inferred type). Task 4.6 (direct-manipulation
+ * editing) holds and mutates values of this shape client-side; Phase 5 is
+ * the validating authority on write (`validateDashboardConfig`). */
+export interface DashboardConfig {
+  widgets: WidgetLayout[];
+  interactions: DashboardInteraction[];
+}
+
 // -- aggregate data shapes (mirrors server/src/aiV2/aggregates.ts) --------------
 
 export interface SessionDurationData {

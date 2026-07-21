@@ -137,6 +137,22 @@ export const KNOWN_WIDGET_TYPES: ReadonlySet<WidgetType> = new Set([
   'transcript_excerpt',
 ] satisfies WidgetType[]);
 
+/** Default display label per catalog type — used to seed a new widget's
+ * title when it's added via the catalog picker (task 4.6). Purely a UI
+ * default: the title is retitle-in-place editable text immediately after
+ * adding, never a fixed/derived value the server enforces. */
+export const WIDGET_TYPE_LABELS: Record<WidgetType, string> = {
+  session_duration: 'Session duration',
+  talk_time_by_speaker: 'Talk time by speaker',
+  utterance_counts: 'Utterance counts',
+  question_counts: 'Questions asked',
+  filler_counts: 'Filler words',
+  topic_timeline: 'Topic timeline',
+  event_count_by_category: 'Events by category',
+  event_density: 'Event density',
+  transcript_excerpt: 'Transcript excerpt',
+};
+
 // -- sample data for previews (task 4.4) ----------------------------------------
 // Synthetic only (never sourced from the private reference demo — see
 // tasks.md header). One healthy sample per catalog type, used ONLY to

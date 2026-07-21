@@ -183,11 +183,11 @@ that does not exist.
 - [x] 4.4 Previews render through the **real** components with sample data (spec: *Previews
       reflect the rendered result*). Test: preview and rendered widget resolve to the same
       component.
-- [ ] 4.5 Assert **no `dangerouslySetInnerHTML` exists anywhere in the repo** (spec: *No
+- [x] 4.5 Assert **no `dangerouslySetInnerHTML` exists anywhere in the repo** (spec: *No
       agent-authored markup is ever rendered*) — a repo-wide grep test, no exceptions. Additionally
       assert no catalog component passes a config string into `href`, `src`, `style`, or any
       charting-library option documented to accept markup.
-- [ ] 4.6 Direct-manipulation editing (spec: *Dashboards are edited directly*): add, remove,
+- [x] 4.6 Direct-manipulation editing (spec: *Dashboards are edited directly*): add, remove,
       resize, reposition, retitle — persisted without running a design turn. Test: a saved
       dashboard is modified end-to-end with no agent turn.
 - [x] 4.7 Degraded-state rendering per widget (spec: *Data unavailability is a rendered state*):
