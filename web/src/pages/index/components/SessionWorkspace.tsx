@@ -16,6 +16,7 @@ import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
 import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
 import { useWaveforms } from '../hooks/useWaveforms';
 import { AiPanel } from './AiPanel';
+import { AiV2Panel } from './AiV2Panel';
 import type { AudioPlayerHandle } from './AudioPlayer';
 import { AudioPlayer } from './AudioPlayer';
 import type { AudioRecorderHandle } from './AudioRecorder';
@@ -90,7 +91,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   }, [effectiveTransport]);
 
   const [showExport, setShowExport] = useState(false);
-  const [feedTab, setFeedTab] = useState<'events' | 'ai'>('events');
+  const [feedTab, setFeedTab] = useState<'events' | 'ai' | 'ai-v2'>('events');
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
     setOnOffState((prev) => {
@@ -484,6 +485,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     [
                       { id: 'events', label: 'Event Feed' },
                       { id: 'ai', label: 'AI' },
+                      { id: 'ai-v2', label: 'AI v2' },
                     ] as const
                   ).map((tab) => {
                     const active = feedTab === tab.id;
@@ -501,10 +503,12 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     );
                   })}
                 </div>
-                {/* Both top-level panels stay mounted (hidden via the `hidden`
-                    attribute), not conditionally rendered: switching to Event
-                    Feed must not unmount AiPanel's hoisted chat state/stream
-                    (design D9 — a conditional mount here would abort an
+                {/* All three top-level panels stay mounted (hidden via the
+                    `hidden` attribute), not conditionally rendered: switching
+                    tabs must not unmount AiPanel's hoisted chat state/stream
+                    or AiV2Panel's hoisted design-turn state/stream (design
+                    D9; ai-v2-dashboards spec "AI v2 tab in the session
+                    workspace" — a conditional mount here would abort an
                     in-flight turn per the subprocess lifecycle rule). */}
                 <div
                   className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'events' && 'hidden')}
@@ -521,6 +525,14 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                   aria-label="AI"
                 >
                   <AiPanel sessionId={sessionId} />
+                </div>
+                <div
+                  className={clsx('flex flex-col flex-1 min-h-0', feedTab !== 'ai-v2' && 'hidden')}
+                  hidden={feedTab !== 'ai-v2'}
+                  role="tabpanel"
+                  aria-label="AI v2"
+                >
+                  <AiV2Panel sessionId={sessionId} />
                 </div>
               </div>
             )}

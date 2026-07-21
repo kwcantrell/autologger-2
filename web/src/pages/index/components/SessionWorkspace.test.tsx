@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
 import { SessionWorkspace } from './SessionWorkspace';
@@ -16,6 +16,11 @@ import { SessionWorkspace } from './SessionWorkspace';
 
 vi.mock('../../../api/client', () => ({
   apiFetch: vi.fn().mockResolvedValue({}),
+  // AiV2Design (and AiChat) import `API_ROOT` directly for their raw `fetch`
+  // calls — omitting it here left it `undefined` for every consumer of this
+  // mocked module, latent until a test actually exercised a real send (this
+  // AI v2 tab's mid-stream test is the first one that does).
+  API_ROOT: '/api',
 }));
 
 vi.mock('../../../api/hooks/useCompanionPresence', () => ({
@@ -155,12 +160,12 @@ function isHidden(el: Element | null): boolean {
 }
 
 describe('SessionWorkspace AI tab restructure', () => {
-  it('renders the two top-level tabs (Event Feed, AI) and defaults to Event Feed', () => {
+  it('renders the top-level tabs (Event Feed, AI, AI v2) and defaults to Event Feed', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
     const tablist = screen.getByRole('tablist', { name: 'Feed tabs' });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Event Feed', 'AI']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Event Feed', 'AI', 'AI v2']);
     expect(screen.getByRole('tab', { name: 'Event Feed' }).getAttribute('aria-selected')).toBe(
       'true',
     );
@@ -259,5 +264,130 @@ describe('SessionWorkspace AI tab restructure', () => {
     const chatNodeReturned = container.querySelector('[data-testid="ai-chat-panel"]');
     expect(chatNodeReturned).toBe(chatNode);
     expect(isHidden(chatNodeReturned?.closest('[role="tabpanel"]') ?? null)).toBe(false);
+  });
+});
+
+// --- AI v2 tab (ai-v2-dashboards, task 4.1; spec "AI v2 tab in the session
+// workspace") ---
+//
+// Same mounted-hidden discipline as the AI tab above, extended to a third
+// top-level tab. AiV2Panel/AiV2Design are exercised for real here (not
+// mocked), same rationale as AiChat/AiPanel: proving genuine no-unmount and
+// no-abort requires the real DOM node and a real (mocked-at-the-fetch-
+// boundary) in-flight stream.
+
+describe('SessionWorkspace AI v2 tab', () => {
+  it('activates the AI v2 tabpanel and deselects it on load (tab count covered above)', () => {
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+
+    expect(screen.getByRole('tab', { name: 'AI v2' }).getAttribute('aria-selected')).toBe('false');
+    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+    expect(screen.getByRole('tab', { name: 'AI v2' }).getAttribute('aria-selected')).toBe('true');
+    expect(isHidden(screen.getByTestId('aiv2-panel').closest('[role="tabpanel"]'))).toBe(false);
+  });
+
+  // Same node-identity technique as the AI tab's own test above: a
+  // conditional-mount implementation would tear down and rebuild the design
+  // rail's DOM node (and its hoisted state) on every switch; querySelector
+  // returning the SAME node object across switches only holds for a
+  // mounted-hidden implementation.
+  it('keeps the same AI v2 design-rail DOM node mounted across top-tab switches (no unmount)', () => {
+    const { container } = renderStrict(<SessionWorkspace sessionId="sess-1" />);
+    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+    const railNode = container.querySelector('[data-testid="aiv2-design-rail"]');
+    expect(railNode).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
+    expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(true);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'AI' }));
+    expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+    expect(container.querySelector('[data-testid="aiv2-design-rail"]')).toBe(railNode);
+    expect(isHidden(railNode?.closest('[role="tabpanel"]') ?? null)).toBe(false);
+  });
+
+  // The gate-intent test the task brief calls for: a design turn streaming
+  // when the user switches to another top-level tab and back must (a) never
+  // have its fetch aborted by the switch itself, and (b) still show the
+  // conversation content afterward — proving the hoisted
+  // conversation/streaming/abort state genuinely survives the switch, not
+  // just that a DOM node happens to persist. A controllable fetch stand-in
+  // (never auto-resolving `read()`) keeps the stream "in flight" across the
+  // switch so an abort would be observable on `capturedSignal`.
+  it('switching tabs mid-stream neither aborts the design turn nor clears the conversation', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    try {
+      const fetchMock = vi.mocked(fetch);
+      let capturedSignal: AbortSignal | undefined;
+      const encoder = new TextEncoder();
+      const pendingChunks: string[] = [];
+      let resolveNextRead: (() => void) | null = null;
+
+      function deliverChunk(chunk: string) {
+        pendingChunks.push(chunk);
+        const fn = resolveNextRead;
+        resolveNextRead = null;
+        fn?.();
+      }
+
+      fetchMock.mockImplementationOnce((_url, init) => {
+        capturedSignal = (init as RequestInit)?.signal ?? undefined;
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          body: {
+            getReader() {
+              return {
+                read: () =>
+                  new Promise((resolve) => {
+                    const tryDeliver = () => {
+                      if (pendingChunks.length > 0) {
+                        resolve({ done: false, value: encoder.encode(pendingChunks.shift()) });
+                      } else {
+                        resolveNextRead = tryDeliver;
+                      }
+                    };
+                    tryDeliver();
+                  }),
+                cancel: async () => {},
+              };
+            },
+          },
+          json: async () => ({}),
+        } as unknown as Response);
+      });
+
+      renderStrict(<SessionWorkspace sessionId="sess-1" />);
+      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+
+      const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
+      fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
+      fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+      deliverChunk('event: delta\ndata: {"text":"Built an overview."}\n\n');
+      await waitFor(() => expect(screen.getByText('Built an overview.')).toBeTruthy());
+      expect(capturedSignal?.aborted).toBe(false);
+
+      // Switch away mid-stream.
+      fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+      expect(capturedSignal?.aborted).toBe(false);
+
+      // Switch back: conversation intact, not reset to empty.
+      fireEvent.click(screen.getByRole('tab', { name: 'AI v2' }));
+      expect(screen.getByText('Give me an overview')).toBeTruthy();
+      expect(screen.getByText('Built an overview.')).toBeTruthy();
+
+      // Proof the stream itself is still genuinely alive (not just that old
+      // text survived): a further delta delivered AFTER the round trip still
+      // lands in the same, still-hoisted conversation.
+      deliverChunk('event: delta\ndata: {"text":" More."}\n\n');
+      await waitFor(() => expect(screen.getByText('Built an overview. More.')).toBeTruthy());
+      expect(capturedSignal?.aborted).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

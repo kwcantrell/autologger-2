@@ -174,10 +174,10 @@ that does not exist.
 
 ## 4. Web — AI v2 tab
 
-- [ ] 4.1 Add the AI v2 surface (spec: *AI v2 tab*), **mounted-hidden**, with conversation/
+- [x] 4.1 Add the AI v2 surface (spec: *AI v2 tab*), **mounted-hidden**, with conversation/
       streaming/abort state **hoisted** above the panel. Test: switching tabs mid-stream neither
       aborts the turn nor clears the conversation.
-- [ ] 4.2 Question view modelled on the demo's `QuestionView`: option cards + free-text fallback.
+- [x] 4.2 Question view modelled on the demo's `QuestionView`: option cards + free-text fallback.
 - [ ] 4.3 Catalog widget components — one per type — and the grid renderer driven by the layout
       DSL.
 - [ ] 4.4 Previews render through the **real** components with sample data (spec: *Previews
