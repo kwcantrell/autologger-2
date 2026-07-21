@@ -315,11 +315,11 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
               className="v4-log-top v4-log-top--playback flex flex-col w-full max-w-full flex-[0_0_auto] shrink-0 h-auto min-h-[calc(var(--v4-log-top-h)+4*var(--v4-nav-grid-my,0.5rem))] max-h-none p-0 gap-4 mt-0 bg-transparent border-none rounded-none shadow-none box-border overflow-visible"
               id="v4-log-top"
             >
-              {/* Category strip — default position, shown when not rolling. Its
-                  display:none base + the body[data-v4-transport] show + the
-                  [data-v5-live-log=1] hide are all in the transport @layer components
-                  block (display can't be a utility here — it must lose to those
-                  ancestor rules); only the non-display box props are inline. */}
+              {/* Category strip — default position, visible in every non-live
+                  transport state (ui-refresh: the stop/play states now show it too —
+                  see the body[data-v4-transport] block in tailwind.css). Buttons are
+                  disabled until rolling; the hint below names the reason so a stopped
+                  session teaches the core loop instead of hiding it. */}
               <div className="v4-log-top__capture flex-1 flex-col min-h-0">
                 {/* v4RollingArea */}
                 <div className="flex flex-row items-stretch gap-4 flex-1 min-h-0">
@@ -339,6 +339,13 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     </div>
                   </div>
                 </div>
+                {!liveDock && sessionId && (
+                  <p className="m-0 mt-[0.45rem] w-full px-1 text-center text-[0.78rem] leading-[1.4] text-v5-muted">
+                    Logging buttons enable while timecode rolls — press{' '}
+                    <strong className="font-semibold text-v5-text">Roll</strong> in Session Controls
+                    to start.
+                  </p>
+                )}
               </div>
 
               {/* v5-session-panels — row of two glass panels (timeline | controls);
@@ -428,6 +435,12 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                             which would shrink the status text — see chrome.css comment. */}
                         <span className="[display:inline]">
                           <span className="text-v5-muted font-medium">Status: </span>
+                          {isRecording && (
+                            <span
+                              className="mr-[0.35rem] inline-block h-2 w-2 rounded-full bg-[#ef4444] shadow-[0_0_8px_rgba(239,68,68,0.55)] animate-wf-label-pulse motion-reduce:animate-none"
+                              aria-hidden="true"
+                            />
+                          )}
                           <span
                             className={clsx(
                               'font-semibold',
@@ -466,19 +479,63 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                         className="h-px m-0 border-none shrink-0 bg-v5-line self-stretch max-w-none"
                         role="presentation"
                       />
-                      <Tooltip content="Session ID">
-                        {/* Session-id line — under controls panel text-align:left,
-                            align-self:stretch; color var(--v5-soft) (later rule wins). */}
-                        <p
+                      <Tooltip content="Copy session ID">
+                        {/* Session-id line (ui-refresh): now an explicit copy chip —
+                            the old <p> was silently click-to-copy with nothing
+                            indicating it. Same mono/faint look, plus a copy glyph
+                            and hover/focus affordance. Clipboard-unavailable
+                            (non-secure LAN origins) reports failure instead of
+                            silently no-oping (spec: never a silent no-op). */}
+                        <button
+                          type="button"
                           className={clsx(
-                            'mt-[0.65rem] mb-0 p-0 text-left text-[0.67rem] leading-[1.35] text-v5-soft [word-break:break-all] select-text self-stretch',
+                            'mt-[0.65rem] mb-0 inline-flex max-w-full min-w-0 cursor-pointer items-center gap-[0.4rem] self-start border-0 bg-transparent p-0 text-left text-[0.67rem] leading-[1.35] text-v5-soft [word-break:break-all] transition-colors hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]',
                             'mono',
                             'faint',
                           )}
                           id="v4-session-id-display"
+                          aria-label="Copy session ID"
+                          onClick={() => {
+                            if (!sessionId) return;
+                            if (!navigator.clipboard?.writeText) {
+                              showToast(
+                                'Clipboard unavailable on this origin — select and copy the ID manually.',
+                                true,
+                              );
+                              return;
+                            }
+                            navigator.clipboard
+                              .writeText(sessionId)
+                              .then(() => showToast('Session ID copied.'))
+                              .catch(() => showToast('Copy failed.', true));
+                          }}
                         >
-                          {sessionId || '—'}
-                        </p>
+                          <span className="min-w-0 select-text">{sessionId || '—'}</span>
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            aria-hidden="true"
+                            className="shrink-0 opacity-70"
+                          >
+                            <rect
+                              x="9"
+                              y="9"
+                              width="11"
+                              height="11"
+                              rx="2"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                            />
+                            <path
+                              d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5V4.5A1.5 1.5 0 0 1 4.5 3H13.5A1.5 1.5 0 0 1 15 4.5V5"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </button>
                       </Tooltip>
                     </div>
                   </aside>
