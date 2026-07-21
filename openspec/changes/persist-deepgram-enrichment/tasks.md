@@ -22,12 +22,12 @@
       `deepgram-enrichment-response.json`. Confirm it contains ≥2 paragraphs with distinct
       speakers, ≥2 sentiment segments with `start_word`/`end_word` spans, and (ideally) a
       `smart_format`-merged token so the replay test documents the real index base.
-- [ ] 1.3 Write failing unit tests for a new pure `extractEnrichment(body)` driven by the
+- [x] 1.3 Write failing unit tests for a new pure `extractEnrichment(body)` driven by the
       **real captured fixture**: returns `{ paragraphs, sentiments }` from the documented
       locations, concatenates `sentences[].text` for paragraph text, keeps sentiment segment
       `text`, coerces all numerics via `Number(...)` (NaN → absent), and is tolerant —
       missing/malformed fields → empty, never throws.
-- [ ] 1.4 Implement `extractEnrichment`; change `transcribeGroup`'s return from
+- [x] 1.4 Implement `extractEnrichment`; change `transcribeGroup`'s return from
       `DeepgramWord[]` to `{ words, paragraphs, sentiments }` (group-local). Add the
       `DeepgramParagraph` / `DeepgramSentimentSegment` interfaces and update existing
       `transcribeGroup` tests to the struct return. Gate: typecheck + test.
