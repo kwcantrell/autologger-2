@@ -130,9 +130,9 @@
       Assistant/Topics top-level tabs, ai-v2-dashboards → Dashboards tab, visual.spec
       Transcript/Topics navigation + `#home-resume-session` in DATE_MASK + home shots
       against the home route; `npm run e2e` (chromium + login-gate) green.
-- [ ] 8.3 Re-bless visual baselines (`npm run e2e:visual:update`) in this branch's own diff,
+- [x] 8.3 Re-bless visual baselines (`npm run e2e:visual:update`) in this branch's own diff,
       then verify `npm run e2e:visual` passes deterministically (run twice).
-- [ ] 8.4 Live verification pass (dev server + browser): stopped-state strip + hint, hotkey
+- [x] 8.4 Live verification pass (dev server + browser): stopped-state strip + hint, hotkey
       badges + a hotkey-logged event (and held-key logs once), export/confirm/shortcuts
       dialogs, Space-on-confirm-button behavior, home surface, mobile 390px tab scroll +
       toolbar fit, **play state with recorded audio** (strip + hint + playback panel layout —
