@@ -55,20 +55,28 @@ function fakeFetchResponse(chunks: string[]) {
 
 function fakePort(initial: DashboardConfig | null = null): DashboardPersistencePort & {
   saves: DashboardConfig[];
+  saveTurnIds: Array<string | null | undefined>;
 } {
   let current = initial;
   const saves: DashboardConfig[] = [];
+  const saveTurnIds: Array<string | null | undefined> = [];
   return {
     saves,
+    saveTurnIds,
     async load() {
       return current;
     },
-    async save(_sessionId, config) {
+    async save(_sessionId, config, turnId) {
       current = config;
       saves.push(config);
+      saveTurnIds.push(turnId);
     },
   };
 }
+
+// Fix wave (Phase 5 review, D5b completeness): the `dashboard` SSE event now
+// carries the proposing turn's id alongside `config`.
+const PROPOSED_TURN_ID = 'turn-99';
 
 const PROPOSED_CONFIG: DashboardConfig = {
   widgets: [
@@ -95,7 +103,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       vi.fn(
         async () =>
           fakeFetchResponse([
-            sseFrame('dashboard', { config: PROPOSED_CONFIG }),
+            sseFrame('dashboard', { config: PROPOSED_CONFIG, turnId: PROPOSED_TURN_ID }),
             sseFrame('done', {}),
           ]) as unknown as Response,
       ),
@@ -129,7 +137,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       vi.fn(
         async () =>
           fakeFetchResponse([
-            sseFrame('dashboard', { config: PROPOSED_CONFIG }),
+            sseFrame('dashboard', { config: PROPOSED_CONFIG, turnId: PROPOSED_TURN_ID }),
             sseFrame('done', {}),
           ]) as unknown as Response,
       ),
@@ -144,6 +152,10 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
     fireEvent.click(screen.getByTestId('aiv2-dashboard-keep'));
 
     await waitFor(() => expect(port.saves).toEqual([PROPOSED_CONFIG]));
+    // Fix wave (Phase 5 review, D5b completeness): Keep threads the
+    // proposal's originating turnId into the persist call, so
+    // `createdByTurnId` is populated server-side instead of always null.
+    expect(port.saveTurnIds).toEqual([PROPOSED_TURN_ID]);
     expect(screen.queryByTestId('aiv2-dashboard-proposal-banner')).toBeNull();
     expect(await screen.findByTestId('aiv2-dashboard-edit')).toBeTruthy();
     expect(await screen.findByTestId('aiv2-dashboard-grid')).toBeTruthy();
@@ -155,7 +167,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       vi.fn(
         async () =>
           fakeFetchResponse([
-            sseFrame('dashboard', { config: PROPOSED_CONFIG }),
+            sseFrame('dashboard', { config: PROPOSED_CONFIG, turnId: PROPOSED_TURN_ID }),
             sseFrame('done', {}),
           ]) as unknown as Response,
       ),

@@ -143,4 +143,37 @@ describe('fetchDashboardPersistence', () => {
     );
     await expect(fetchDashboardPersistence.save('sess-a', CONFIG)).rejects.toThrow(/HTTP 500/);
   });
+
+  // Fix wave (Phase 5 review, D5b completeness): the originating turn is
+  // carried as the PUT route's existing `?turnId=` query param, never a body
+  // field — proves the seam the AiV2Panel proposal-persist flow now uses.
+  it('save() with a turnId appends it as ?turnId= on the PUT URL', async () => {
+    let capturedUrl: string | undefined;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ config: CONFIG }),
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchDashboardPersistence.save('sess-a', CONFIG, 'turn-123');
+    expect(capturedUrl).toBe('/api/sessions/sess-a/ai/v2/dashboard?turnId=turn-123');
+  });
+
+  it('save() with no turnId (a user-authored save) omits the query param entirely', async () => {
+    let capturedUrl: string | undefined;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ config: CONFIG }),
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchDashboardPersistence.save('sess-a', CONFIG);
+    expect(capturedUrl).toBe('/api/sessions/sess-a/ai/v2/dashboard');
+  });
 });

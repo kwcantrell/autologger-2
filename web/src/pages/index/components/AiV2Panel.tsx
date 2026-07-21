@@ -85,6 +85,11 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   // save (spec "A design turn seeds rather than replaces": the agent's
   // output is a starting point the user then adjusts or accepts).
   const [proposedDashboard, setProposedDashboard] = useState<DashboardConfig | null>(null);
+  // Fix wave (Phase 5 review, D5b completeness): the originating turn for
+  // whatever proposal is currently pending — `null` when there is none (or
+  // the event somehow omitted it). Consumed exactly once, on Keep, as the
+  // persist call's turnId; a direct-manipulation save never sets this.
+  const [proposedDashboardTurnId, setProposedDashboardTurnId] = useState<string | null>(null);
   // Task 5.2: "Surface save errors in the UI" — the Phase 4 boundary was
   // fire-and-forget with no error path at all. Covers BOTH the initial load
   // and every subsequent save; cleared on the next successful save so a
@@ -116,9 +121,9 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
     };
   }, [sessionId, persistence]);
 
-  function persistDashboard(next: DashboardConfig) {
+  function persistDashboard(next: DashboardConfig, turnId?: string | null) {
     persistence
-      .save(sessionId, next)
+      .save(sessionId, next, turnId)
       .then(() => setDashboardError(null))
       .catch((err: unknown) => {
         setDashboardError(err instanceof Error ? err.message : 'Failed to save the dashboard.');
@@ -145,12 +150,17 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   function keepProposedDashboard() {
     if (!proposedDashboard) return;
     setDashboardConfig(proposedDashboard);
-    persistDashboard(proposedDashboard);
+    // Fix wave (Phase 5 review, D5b completeness): thread the proposal's
+    // originating turn through so the persisted row's `createdByTurnId`
+    // records it, instead of always `null`.
+    persistDashboard(proposedDashboard, proposedDashboardTurnId);
     setProposedDashboard(null);
+    setProposedDashboardTurnId(null);
   }
 
   function discardProposedDashboard() {
     setProposedDashboard(null);
+    setProposedDashboardTurnId(null);
   }
 
   const hasActivity = messages.length > 0 || isStreaming || pendingQuestion !== null;
@@ -308,7 +318,10 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
           renderOptionPreview={(widgetType, option) =>
             widgetType ? renderCatalogWidgetPreview(widgetType, option.label) : null
           }
-          onDashboardProposed={setProposedDashboard}
+          onDashboardProposed={(config, turnId) => {
+            setProposedDashboard(config);
+            setProposedDashboardTurnId(turnId);
+          }}
         />
       </aside>
     </div>

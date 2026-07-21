@@ -20,14 +20,20 @@
 //     Rejects (throws) on any non-2xx response, INCLUDING 404 (an
 //     inaccessible/nonexistent session) — a caller viewing a session already
 //     has access, so a 404 here is a genuine error, not "no dashboard yet".
-//   save(sessionId, config) -> Promise<void>
+//   save(sessionId, config, turnId?) -> Promise<void>
 //     PUT; `config` is a `DashboardConfig` value (the exact shape
 //     `dashboardConfigSchema` validates). Rejects (throws, carrying the
 //     server's `{ detail }` when present) on any non-2xx response — a 422
 //     (invalid config/over a bound), a 404 (inaccessible session), or a 503
 //     (AI v2 unconfigured) all surface as a thrown Error for the caller
 //     (AiV2Panel) to catch and show, rather than failing silently
-//     (task 5.2: "Surface save errors in the UI").
+//     (task 5.2: "Surface save errors in the UI"). `turnId` (fix wave, D5b
+//     completeness — "stored configurations SHALL record... the turn they
+//     originated from") is optional: present when this save commits a design
+//     turn's proposed dashboard (the `dashboard` SSE event now carries the
+//     turn's id), absent for a user-authored save (`Start blank`, direct-
+//     manipulation edits) — carried as the PUT route's existing `?turnId=`
+//     query param, never a body field.
 //
 // MOCKED implementation kept for tests: `localStorageDashboardPersistence`
 // below (task 4.6's original default, backed by `window.localStorage`) is
@@ -39,7 +45,7 @@ import type { DashboardConfig } from './widgetTypes';
 
 export interface DashboardPersistencePort {
   load(sessionId: string): Promise<DashboardConfig | null>;
-  save(sessionId: string, config: DashboardConfig): Promise<void>;
+  save(sessionId: string, config: DashboardConfig, turnId?: string | null): Promise<void>;
 }
 
 async function readDetail(res: Response): Promise<string | null> {
@@ -68,13 +74,17 @@ export const fetchDashboardPersistence: DashboardPersistencePort = {
     const data = (await res.json()) as { config: DashboardConfig | null };
     return data.config ?? null;
   },
-  async save(sessionId: string, config: DashboardConfig): Promise<void> {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/ai/v2/dashboard`, {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(config),
-    });
+  async save(sessionId: string, config: DashboardConfig, turnId?: string | null): Promise<void> {
+    const query = turnId ? `?turnId=${encodeURIComponent(turnId)}` : '';
+    const res = await fetch(
+      `/api/sessions/${encodeURIComponent(sessionId)}/ai/v2/dashboard${query}`,
+      {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(config),
+      },
+    );
     if (!res.ok) {
       const detail = await readDetail(res);
       throw new Error(detail ?? `Failed to save dashboard (HTTP ${res.status}).`);

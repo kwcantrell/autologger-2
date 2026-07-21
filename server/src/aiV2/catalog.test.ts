@@ -124,9 +124,13 @@ describe('layout and interaction vocabulary', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects a dashboard with zero widgets', () => {
+  it('accepts a dashboard with zero widgets (design D5b: no minimum widget count is imposed — ' +
+    "the canvas's \"Start blank\" entry point saves exactly this shape)", () => {
     const result = validateDashboardConfig({ widgets: [], interactions: [] });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ widgets: [], interactions: [] });
+    }
   });
 
   it('rejects non-integer or out-of-range grid position/size', () => {

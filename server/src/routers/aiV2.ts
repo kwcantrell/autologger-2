@@ -256,7 +256,15 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
           // imported by this file).
           onProposeDashboard: async (config) => {
             try {
-              await stream.writeSSE({ event: 'dashboard', data: JSON.stringify({ config }) });
+              // Fix wave (Phase 5 review, D5b completeness): carry this
+              // turn's own id alongside the validated config — the same
+              // `turnId` the `question` event already includes — so a
+              // caller that later persists this proposal can supply it as
+              // the PUT route's `?turnId=` and have `createdByTurnId`
+              // actually populated (previously always null for the
+              // proposal-persist path, since nothing upstream ever
+              // supplied it).
+              await stream.writeSSE({ event: 'dashboard', data: JSON.stringify({ config, turnId }) });
             } catch {
               // The client stream is gone. The agent already received an
               // "accepted" tool result (the proposal WAS validated), but

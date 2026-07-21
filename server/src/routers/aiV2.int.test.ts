@@ -1019,6 +1019,19 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(stored?.createdByTurnId).toBe('turn-abc');
   });
 
+  it('an EMPTY config ({ widgets: [], interactions: [] }) is accepted (fix wave: the "Start blank" empty ' +
+    'state was previously rejected 422 by this real route — design D5b imposes no minimum widget count) ' +
+    'and round-trips through GET', async () => {
+    const s = await seededSession();
+    const empty = { widgets: [], interactions: [] };
+    const putRes = await putDashboard(s, empty, loopbackEnv());
+    expect(putRes.status).toBe(200);
+    expect(await putRes.json()).toEqual({ config: empty });
+
+    const getRes = await getDashboard(s);
+    expect(await getRes.json()).toEqual({ config: empty });
+  });
+
   it('rejects (422) a config naming an unknown widget type — nothing is stored', async () => {
     const s = await seededSession();
     const res = await putDashboard(
@@ -1135,10 +1148,61 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
     // there is no other channel this event could have gone out on.
     const dashboardEvents = events.filter((e) => e.event === 'dashboard');
     expect(dashboardEvents).toHaveLength(1);
-    expect(dashboardEvents[0].data).toEqual({ config: proposedConfig });
+    const dashboardPayload = dashboardEvents[0].data as { config: unknown; turnId: unknown };
+    expect(dashboardPayload.config).toEqual(proposedConfig);
+    // Fix wave (Phase 5 review, D5b completeness): the event now ALSO
+    // carries this turn's own id (same value the `question` event's
+    // `turnId` field would carry for this same turn) — the seam a caller
+    // needs to later persist this exact proposal with
+    // `?turnId=` and have `createdByTurnId` populated, rather than always
+    // null.
+    expect(typeof dashboardPayload.turnId).toBe('string');
+    expect(dashboardPayload.turnId).toBeTruthy();
 
     // Terminal `done` still follows, exactly once, as usual.
     expect(events.filter((e) => e.event === 'done')).toHaveLength(1);
+  });
+
+  it('the dashboard event turnId, when persisted via PUT ?turnId=, records createdByTurnId on the real write path ' +
+    '(fix wave: closes the D5b "originating turn" gap for the proposal-persist flow)', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const user = await seedUser({ studios: [studioId] });
+    const proposedConfig = {
+      widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
+      interactions: [],
+    };
+
+    spawnSpy.mockImplementationOnce((_prompt, options) => {
+      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+        const result = await callProposeDashboard(options.mcpServers, proposedConfig);
+        if (result.isError) throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
+        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+      }
+      return gatedQuery() as unknown as Query;
+    });
+
+    const headers = { ...J, Cookie: await loginCookie(user) };
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), headers);
+    const events = parseSse(await res.text());
+    const dashboardPayload = events.find((e) => e.event === 'dashboard')?.data as {
+      config: unknown;
+      turnId: string;
+    };
+    expect(dashboardPayload.turnId).toBeTruthy();
+
+    // The client "keeps" the proposal: PUT the SAME config, threading the
+    // turnId the SSE event carried, exactly as AiV2Panel's keep-flow now
+    // does end to end.
+    const putRes = await putDashboard(
+      s,
+      proposedConfig,
+      loopbackEnv(),
+      headers,
+      `?turnId=${encodeURIComponent(dashboardPayload.turnId)}`,
+    );
+    expect(putRes.status).toBe(200);
+    const stored = env.ports.sessions.get(s).getDashboard('primary');
+    expect(stored?.createdByTurnId).toBe(dashboardPayload.turnId);
   });
 
   it('an invalid (markup-bearing) proposal is rejected at the tool boundary — no `dashboard` event, nothing persisted', async () => {

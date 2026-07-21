@@ -118,9 +118,14 @@ export interface AiV2DesignProps {
    * WS). The caller (`AiV2Panel`) renders it through the same real
    * `CatalogWidget`/`DashboardGrid` components a saved dashboard uses (spec
    * "No agent-authored markup is ever rendered") and offers to persist it
-   * through the `DashboardPersistencePort`.
+   * through the `DashboardPersistencePort`. `turnId` (fix wave, D5b
+   * completeness) is this turn's own id — the same value the event's
+   * `turnId` field carries, `null` only if the frame is somehow missing it
+   * — so a caller that persists this proposal can supply it as the
+   * `DashboardPersistencePort.save` turnId and have `createdByTurnId`
+   * actually populated.
    */
-  onDashboardProposed?: (config: DashboardConfig) => void;
+  onDashboardProposed?: (config: DashboardConfig, turnId: string | null) => void;
 }
 
 const CONNECTION_LOST_DETAIL = 'Connection to the design turn was lost before it finished.';
@@ -341,8 +346,17 @@ export function AiV2Design({
             // session WebSocket. Rendered ONLY through the real catalog
             // components by the caller (spec "No agent-authored markup is
             // ever rendered") — this file never renders it itself.
-            const config = parseProposedDashboardConfig(safeJsonParse(frame.data));
-            if (config) onDashboardProposed?.(config);
+            const raw = safeJsonParse(frame.data);
+            const config = parseProposedDashboardConfig(raw);
+            if (config) {
+              // Fix wave (Phase 5 review, D5b completeness): the payload now
+              // also carries this turn's own `turnId` alongside `config` —
+              // read it directly here rather than folding it into
+              // `parseProposedDashboardConfig` (which stays focused on the
+              // config shape only).
+              const turnId = isRecord(raw) && typeof raw.turnId === 'string' ? raw.turnId : null;
+              onDashboardProposed?.(config, turnId);
+            }
           } else if (frame.event === 'done') {
             onPendingQuestionChange(null);
           } else if (frame.event === 'error') {

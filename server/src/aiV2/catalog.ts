@@ -192,7 +192,12 @@ export type DashboardInteraction = z.infer<typeof dashboardInteractionSchema>;
  * rejected") — are enforced in `.superRefine` below. */
 export const dashboardConfigSchema = z
   .object({
-    widgets: z.array(widgetLayoutSchema).min(1).max(MAX_WIDGETS_PER_DASHBOARD),
+    // Design D5b: "no minimum widget count is imposed" — an empty dashboard
+    // (e.g. the canvas's "Start blank" entry point, which saves
+    // `{ widgets: [], interactions: [] }` immediately on click) is a
+    // legitimate in-progress state, not a rejected write. Only the upper
+    // bound (MAX_WIDGETS_PER_DASHBOARD) is authoritative here.
+    widgets: z.array(widgetLayoutSchema).max(MAX_WIDGETS_PER_DASHBOARD),
     interactions: z.array(dashboardInteractionSchema).max(MAX_INTERACTIONS_PER_DASHBOARD).default([]),
   })
   .superRefine((cfg, ctx) => {

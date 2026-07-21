@@ -27,17 +27,21 @@ function last<T>(arr: T[]): T | undefined {
 
 function fakePort(initial: DashboardConfig | null = null): DashboardPersistencePort & {
   saves: DashboardConfig[];
+  saveTurnIds: Array<string | null | undefined>;
 } {
   let current = initial;
   const saves: DashboardConfig[] = [];
+  const saveTurnIds: Array<string | null | undefined> = [];
   return {
     saves,
+    saveTurnIds,
     async load() {
       return current;
     },
-    async save(_sessionId, config) {
+    async save(_sessionId, config, turnId) {
       current = config;
       saves.push(config);
+      saveTurnIds.push(turnId);
     },
   };
 }
@@ -79,6 +83,10 @@ describe('AiV2Panel — Start blank', () => {
     await waitFor(() => {
       expect(port.saves).toEqual([{ widgets: [], interactions: [] }]);
     });
+    // Fix wave (Phase 5 review, D5b completeness): a user-authored save
+    // (no design turn involved) never supplies a turnId — `createdByTurnId`
+    // correctly stays null server-side for this path.
+    expect(port.saveTurnIds).toEqual([undefined]);
   });
 
   it('a previously saved dashboard loads directly into read-only view mode (DashboardGrid), not the editor', async () => {
