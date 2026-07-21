@@ -100,8 +100,9 @@
     }
   }
 
-  /* Timeline nav-marker message marquee (unguarded 15s loop — no motion-reduce
-   * guard in the source). */
+  /* Timeline nav-marker message marquee. Guarded at the consumer (Timeline's
+   * NAV_MSG_TRACK carries motion-reduce:animate-none! — ui-refresh; the loop
+   * was previously unguarded). */
   --animate-marker-msg-marquee: marker-msg-marquee 15s linear infinite;
   @keyframes marker-msg-marquee {
     from {
@@ -823,7 +824,9 @@
     font-weight: 500;
     letter-spacing: 0.28em;
     text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.45);
+    /* ui-refresh: was rgba(255,255,255,0.45) — measured exactly 4.5:1 with zero
+     * margin on the chip background. 0.62 clears AA comfortably in a dim room. */
+    color: rgba(229, 238, 252, 0.62);
   }
 
   /* Shared main-title base (FeedShell's --numeric size delta lives on its own JSX;
@@ -838,6 +841,23 @@
     letter-spacing: -0.02em;
     line-height: 1.2;
     color: var(--v5-text);
+  }
+}
+
+/* --- Top-bar recording strip reveal (ui-refresh) ---
+ * Hidden unless body.v4-is-recording (toggled by AudioRecorder while the mic is
+ * live). Display comes from these ancestor rules, not per-element utilities, so
+ * the swap can't be beaten by the utilities layer. */
+@layer components {
+  #top-bar-recording,
+  #top-bar-recording-dur {
+    display: none;
+  }
+  body.v4-is-recording #top-bar-recording {
+    display: inline-flex;
+  }
+  body.v4-is-recording #top-bar-recording-dur {
+    display: inline;
   }
 }
 
@@ -859,6 +879,15 @@
   }
   body[data-v4-transport='rolling'] .v4-log-top__capture,
   body[data-v4-transport='recording'] .v4-log-top__capture {
+    display: flex;
+  }
+  /* ui-refresh (core-loop discoverability): the capture strip is ALSO visible in
+   * the stop/play states — buttons render disabled with an inline "press Roll"
+   * hint (SessionWorkspace), so a stopped session teaches the logging loop
+   * instead of hiding it. While rolling/recording the [data-v5-live-log='1']
+   * rules below still swap the strip into the live-log dock as before. */
+  body[data-v4-transport='play'] .v4-log-top__capture,
+  body[data-v4-transport='stop'] .v4-log-top__capture {
     display: flex;
   }
   body[data-v4-transport='play'] .v4-log-top__playback,
@@ -1167,16 +1196,26 @@
     margin-top: 1.25rem;
   }
 
+  /* ui-refresh: form controls join the V5 vocabulary (dark glass field). The
+   * `.profile-select` < `input[type=text]` specificity relationship below is
+   * preserved — both carry the same look now, so cascade order is moot. */
   .profile-select {
     font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    color: var(--v5-text);
+    background: rgba(7, 11, 20, 0.6);
+    border: 1px solid var(--v5-border-strong);
+    border-radius: 0.6rem;
     padding: 0.5rem 0.65rem;
     margin: 0 0 1rem;
     width: 100%;
     cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .profile-select:focus-visible {
+    border-color: rgba(56, 189, 248, 0.55);
+    outline: none;
+    background: rgba(7, 11, 20, 0.75);
   }
 
   .main {
@@ -1214,10 +1253,10 @@
 
   .num {
     font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    color: var(--v5-text);
+    background: rgba(7, 11, 20, 0.6);
+    border: 1px solid var(--v5-border-strong);
+    border-radius: 0.6rem;
     padding: 0.55rem 0.65rem;
     width: 4.5rem;
     margin-left: 0.35rem;
@@ -1240,50 +1279,72 @@
     gap: 0.75rem;
   }
 
-  /* The `.btn` compound family — plain rules, kept together in one layer. */
+  /* The `.btn` compound family — plain rules, kept together in one layer.
+   * ui-refresh: re-skinned from the pre-V5 flat grey chrome to the V5 glass
+   * vocabulary (mirrors FEED_GLASS_BTN in FeedTable.tsx) so the modal/settings
+   * layer speaks the same language as the workspace. Class names unchanged —
+   * every legacy consumer converts at once. */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem 0.95rem;
-    font: inherit;
-    font-size: 0.9rem;
-    color: var(--text);
-    background: var(--surface-btn);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    gap: 0.4rem;
+    box-sizing: border-box;
+    padding: 0.5rem 1.1rem;
+    font-family: 'Inter', var(--font-poppins, ui-sans-serif), system-ui, sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(248, 250, 252, 0.92);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.08), rgba(15, 23, 42, 0.45));
+    border: 1px solid var(--v5-border-strong);
+    border-radius: var(--radius-v5-sm);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     cursor: pointer;
     text-decoration: none;
+    transition:
+      border-color 0.15s ease,
+      background 0.15s ease,
+      box-shadow 0.15s ease,
+      color 0.15s ease;
   }
 
   /* Hover guarded behind `hover: hover` so the style does not latch after a tap
    * on touch devices (phone-first, Phase 3) — one of only three guarded hovers
    * in the app (audit G). Focus-visible rings are unaffected. */
   @media (hover: hover) {
-    .btn:hover {
-      border-color: var(--accent-dim);
-      color: var(--accent);
+    .btn:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--v5-primary) 45%, var(--v5-border-strong));
+      background: linear-gradient(165deg, rgba(255, 255, 255, 0.1), rgba(15, 23, 42, 0.5));
+      color: #ffffff;
     }
   }
 
-  /* Disabled: match flat neutral look (same as e.g. Record Audio when off) */
+  /* Disabled: dimmed glass, no hover response. */
   .btn:disabled,
   .btn:disabled:hover {
     opacity: 0.45;
     cursor: not-allowed;
-    color: var(--muted);
-    border-color: var(--border);
-    background: var(--surface-btn);
+    color: var(--v5-muted);
+    border-color: var(--v5-border);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
   }
 
   .btn.primary {
-    background: linear-gradient(180deg, #2a3544, #222a36);
-    border-color: #3d4a5c;
+    border-color: rgba(56, 189, 248, 0.4);
+    background: linear-gradient(165deg, rgba(56, 189, 248, 0.18), rgba(15, 23, 42, 0.5));
+    color: #e0f2fe;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 0 1px rgba(56, 189, 248, 0.1);
   }
 
   @media (hover: hover) {
-    .btn.primary:hover {
-      border-color: var(--accent);
+    .btn.primary:hover:not(:disabled) {
+      border-color: rgba(56, 189, 248, 0.6);
+      background: linear-gradient(165deg, rgba(56, 189, 248, 0.26), rgba(15, 23, 42, 0.52));
+      color: #ffffff;
     }
   }
 
@@ -1291,21 +1352,23 @@
   .btn.primary:disabled:hover {
     opacity: 0.45;
     cursor: not-allowed;
-    color: var(--muted);
-    border-color: var(--border);
-    background: var(--surface-btn);
+    color: var(--v5-muted);
+    border-color: var(--v5-border);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
   .btn.danger {
-    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
-    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--v5-border-strong));
+    background: linear-gradient(165deg, rgba(251, 113, 133, 0.12), rgba(15, 23, 42, 0.5));
+    color: #fda4af;
   }
 
   @media (hover: hover) {
-    .btn.danger:hover {
-      background: color-mix(in srgb, var(--danger) 14%, transparent);
-      border-color: var(--danger);
-      color: var(--danger);
+    .btn.danger:hover:not(:disabled) {
+      background: linear-gradient(165deg, rgba(251, 113, 133, 0.2), rgba(15, 23, 42, 0.52));
+      border-color: color-mix(in srgb, var(--danger) 65%, var(--v5-border-strong));
+      color: #fecdd3;
     }
   }
 
@@ -1313,9 +1376,9 @@
   .btn.danger:disabled:hover {
     opacity: 0.45;
     cursor: not-allowed;
-    color: var(--muted);
-    border-color: var(--border);
-    background: var(--surface-btn);
+    color: var(--v5-muted);
+    border-color: var(--v5-border);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.04), rgba(15, 23, 42, 0.45));
   }
 
   .tool-row {
@@ -1483,11 +1546,27 @@
   input[type='text'],
   textarea {
     font: inherit;
-    color: var(--text);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    color: var(--v5-text);
+    background: rgba(7, 11, 20, 0.6);
+    border: 1px solid var(--v5-border-strong);
+    border-radius: 0.6rem;
     padding: 0.55rem 0.65rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  input[type='text']:focus-visible,
+  textarea:focus-visible {
+    border-color: rgba(56, 189, 248, 0.55);
+    outline: none;
+    background: rgba(7, 11, 20, 0.75);
+  }
+
+  /* Placeholder floor (AA): the app-wide default placeholder used to bottom out
+   * near 35% alpha; 55% of the V5 text color clears 4.5:1 on the dark fields. */
+  input::placeholder,
+  textarea::placeholder {
+    color: rgba(229, 238, 252, 0.55);
+    opacity: 1;
   }
 
   textarea {
