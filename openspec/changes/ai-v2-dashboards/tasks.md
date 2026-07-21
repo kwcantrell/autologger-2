@@ -117,12 +117,12 @@ that does not exist.
 
 ## 1. Aggregates + catalog schema (server, no agent yet)
 
-- [ ] 1.1 TDD the aggregate computations over fixture transcripts (spec: *Session-scoped aggregate
+- [x] 1.1 TDD the aggregate computations over fixture transcripts (spec: *Session-scoped aggregate
       toolset*): speaker talk-time, utterance/question/filler counts, session duration, topic
       timeline, event counts/density. Assert invariants — talk-time sums to session duration,
       counts match hand-computed fixtures. Build fixtures from **synthetic** data, never from the
       private reference dashboard.
-- [ ] 1.2 TDD the widget-catalog + layout schema (spec: *Widget catalog is a closed set*, *Layout
+- [x] 1.2 TDD the widget-catalog + layout schema (spec: *Widget catalog is a closed set*, *Layout
       and interaction vocabulary*): unknown widget type rejected; undefined interaction rejected;
       interaction targeting a missing widget id rejected; a sentiment type is **absent** from the
       catalog. Zod, mirroring the repo's existing schema conventions.
