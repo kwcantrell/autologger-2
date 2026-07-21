@@ -52,15 +52,15 @@
 
 ## 4. Core loop (web-session-console)
 
-- [ ] 4.1 SessionWorkspace: stopped-state hint line under the capture strip (D6); pulsing red
+- [x] 4.1 SessionWorkspace: stopped-state hint line under the capture strip (D6); pulsing red
       dot beside "Recording" status; session-ID copy chip (button + copy SVG + toast).
-- [ ] 4.2 CategoryButtonStrip: shared `triggerCategory` for click + 1–9 hotkeys (D7 guards
+- [x] 4.2 CategoryButtonStrip: shared `triggerCategory` for click + 1–9 hotkeys (D7 guards
       per spec: liveDock condition, `event.repeat` ignored, once per keypress, Ctrl/Meta/Alt
       excluded with Shift permitted, typing/dialog bails); digit badges on live tiles using
       `[display:none]`/live-slot `[display:flex]` arbitrary properties (NOT the `.hidden`
       class — `!important` trap). NEW unit tests for the guard set (repeat, typing target,
       dialog open, modifier).
-- [ ] 4.3 `ShortcutsDialog.tsx` (+ exported `isTypingTarget`, arrow-scrub row scoped "when
+- [x] 4.3 `ShortcutsDialog.tsx` (+ exported `isTypingTarget`, arrow-scrub row scoped "when
       the timeline playhead is focused"); `?` listener (no Ctrl/Meta/Alt; Shift permitted) +
       keyboard entry button in Session Controls head; AudioRecorder toggles
       `body.v4-is-recording` on the recording phase only (D8) **with an unmount cleanup that
