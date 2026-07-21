@@ -253,6 +253,13 @@ export function EventLogSheet({ sessionId }: Props) {
     if (!batchEditMode) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // Radix's DismissableLayer (the discard-confirm dialog's own Escape
+      // handling) calls preventDefault() on the Escape it consumes but does
+      // NOT stopPropagation() — so with the discard dialog open, the same
+      // Escape that just declined it would otherwise reach this listener too
+      // and re-arm the dialog it was just dismissed from. Bail once something
+      // upstream has already consumed the key.
+      if (e.defaultPrevented) return;
       handleCancelBatch();
     };
     document.addEventListener('keydown', handler);
