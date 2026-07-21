@@ -157,9 +157,9 @@ that does not exist.
 - [x] 2.6 Lifecycle (spec: *Subprocess and turn lifecycle*): implement per 0.5's finding, with a
       timeout backstop **independent of the agent iterator**. Test: no orphan after abort or
       timeout; a never-yielding iterator still ends and releases its slot.
-- [ ] 2.7 Slot acquisition against the shared registry (spec: *Spend and concurrency bounds*):
+- [x] 2.7 Slot acquisition against the shared registry (spec: *Spend and concurrency bounds*):
       `409` across **both** features, detail naming the holder, slot released on every path.
-- [ ] 2.8 TDD terminal-`error` scrubbing: raw exception text, subprocess stderr, and agent error
+- [x] 2.8 TDD terminal-`error` scrubbing: raw exception text, subprocess stderr, and agent error
       arrays never reach `{ detail }`.
 
 ## 3. Question round trip
