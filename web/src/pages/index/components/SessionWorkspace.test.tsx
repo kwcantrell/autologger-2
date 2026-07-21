@@ -73,6 +73,7 @@ vi.mock('../../../shared/hooks/useDebugTransportOverride', () => ({
 
 vi.mock('../../../shared/ui/Tooltip', () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 vi.mock('../../../shared/utils/loadingVideo', () => ({

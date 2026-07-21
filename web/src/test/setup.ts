@@ -1,5 +1,24 @@
 import { cleanup } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
+
+// jsdom has no matchMedia; the shared `useIsMobile` breakpoint hook (Dialog,
+// AppShell, ShortcutsDialog) calls it on mount. A minimal never-matches stub
+// keeps components-under-test on the desktop branch.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 
 // `@testing-library/react`'s automatic afterEach cleanup only self-registers
 // when it detects a global `afterEach` (jest-style globals); this workspace's
