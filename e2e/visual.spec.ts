@@ -64,6 +64,10 @@ const DATE_MASK = (page: Page): Locator[] => [
   page.locator('.v5-session-date-inline'),
   page.locator('#session-list'), // rail session cards carry dates + runtime
   page.locator('#v4-session-id-display'), // random per-run session UUID
+  // ui-refresh home launch surface: the resume card shows the most recent
+  // active session (title/date/count from the shared hermetic DB), which
+  // varies with whatever other specs in this run created sessions first.
+  page.locator('#home-resume-session'),
 ];
 const VIDEO_MASK = (page: Page): Locator[] => [
   page.locator('video'),
@@ -155,11 +159,14 @@ async function seedStoppedSession(page: Page): Promise<void> {
 
 test('home', async ({ page }) => {
   await page.goto('/');
-  await expect(
-    page.getByText('Select a session, or create a new one from the left rail.'),
-  ).toBeVisible();
+  // ui-refresh: the home placeholder is now the branded launch surface
+  // (HomeRoute.tsx, `#home-launch`).
+  await expect(page.getByRole('heading', { name: 'AutoLogger' })).toBeVisible();
   await prepareForShot(page);
-  await expect(page).toHaveScreenshot('home.png', { mask: VIDEO_MASK(page), fullPage: false });
+  await expect(page).toHaveScreenshot('home.png', {
+    mask: [...VIDEO_MASK(page), ...DATE_MASK(page)],
+    fullPage: false,
+  });
 });
 
 test('admin-users', async ({ page }) => {
@@ -344,19 +351,15 @@ test('feed pending-delete', async ({ page }) => {
 
 test('transcribe-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
-  // ai-topics-chat (task 4.1) moved Transcribe under the AI top-level tab as
-  // a subtab (former top-level "Transcribe Feed" tab is gone). exact: true
-  // disambiguates from the ai-v2-dashboards "AI v2" tab added alongside it.
+  // ui-refresh: Transcript is a top-level tab again (the ai-topics-chat
+  // nested "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat
+  // "Feed tabs" tablist).
   await page
     .getByRole('tablist', { name: 'Feed tabs' })
-    .getByRole('tab', { name: 'AI', exact: true })
-    .click();
-  await page
-    .getByRole('tablist', { name: 'AI tabs' })
-    .getByRole('tab', { name: 'Transcribe' })
+    .getByRole('tab', { name: 'Transcript' })
     .click();
   await expect(
-    page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Transcribe' }),
+    page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'Transcript' }),
   ).toHaveAttribute('aria-selected', 'true');
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('transcribe-feed.png', {
@@ -366,16 +369,15 @@ test('transcribe-feed tab', async ({ page }) => {
 
 test('topics-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
-  // ai-topics-chat (task 4.1) moved Topics under the AI top-level tab as a
-  // subtab (former top-level "Topics Feed" tab is gone). exact: true
-  // disambiguates from the ai-v2-dashboards "AI v2" tab added alongside it.
+  // ui-refresh: Topics is a top-level tab again (the ai-topics-chat nested
+  // "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat "Feed
+  // tabs" tablist).
   await page
     .getByRole('tablist', { name: 'Feed tabs' })
-    .getByRole('tab', { name: 'AI', exact: true })
+    .getByRole('tab', { name: 'Topics' })
     .click();
-  await page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }).click();
   await expect(
-    page.getByRole('tablist', { name: 'AI tabs' }).getByRole('tab', { name: 'Topics' }),
+    page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'Topics' }),
   ).toHaveAttribute('aria-selected', 'true');
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('topics-feed.png', {
@@ -553,9 +555,8 @@ test.describe('mobile drawer', () => {
   test.skip(({ viewport }) => (viewport?.width ?? 0) >= 768, 'rail drawer is mobile-only');
   test('mobile rail drawer open', async ({ page }) => {
     await page.goto('/');
-    await expect(
-      page.getByText('Select a session, or create a new one from the left rail.'),
-    ).toBeVisible();
+    // ui-refresh: the home placeholder is now the branded launch surface.
+    await expect(page.getByRole('heading', { name: 'AutoLogger' })).toBeVisible();
     await page.getByRole('button', { name: 'Open navigation' }).click();
     await expect(page.locator('#v6-rail')).toBeVisible();
     await prepareForShot(page);

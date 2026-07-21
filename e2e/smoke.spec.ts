@@ -4,9 +4,11 @@ test('workspace shell renders with no page errors', async ({ page }) => {
   const errors: Error[] = [];
   page.on('pageerror', (e) => errors.push(e));
   await page.goto('/');
-  await expect(
-    page.getByText('Select a session, or create a new one from the left rail.'),
-  ).toBeVisible();
+  // ui-refresh: the home placeholder is now the branded launch surface
+  // (HomeRoute.tsx, `#home-launch`) — assert the wordmark + stable New
+  // Session id rather than the retired placeholder copy.
+  await expect(page.getByRole('heading', { name: 'AutoLogger' })).toBeVisible();
+  await expect(page.locator('#home-new-session')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -107,4 +109,49 @@ test('deep-linking: a fresh reload on /sessions/<id> restores the session; a gar
   await expect(page.locator('#v3-session-grid')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to sessions' }).click();
   await expect(page).toHaveURL('/');
+});
+
+// web-session-console (task 8.2, phase-6 reviewer note): the narrow-viewport
+// tab-strip scroll requirement ("Tab strip on narrow viewports" scenario)
+// had no functional coverage — only the (screenshot-only, non-interactive)
+// visual baselines touched a mobile viewport. Runs in this file (the
+// `chromium` project's hermetic server) rather than visual.spec.ts, since
+// it asserts real scroll geometry and keyboard/pointer reachability, not
+// pixels.
+test.describe('narrow viewport tab strip', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('Feed tabs tablist scrolls horizontally and every tab stays reachable', async ({ page }) => {
+    await page.goto('/');
+    // The rail is an off-canvas drawer below 768px (V6Rail.tsx) — open it to
+    // reach New Session, same as visual.spec.ts's openRailIfMobile helper.
+    const openNav = page.getByRole('button', { name: 'Open navigation' });
+    if (await openNav.isVisible()) await openNav.click();
+    await page.locator('#v6-btn-new-session').click();
+    await expect(page.locator('#new-session-form')).toBeVisible();
+    await expect(page.locator('#ns-show')).toBeEnabled();
+    await page.locator('#ns-submit').click();
+    await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+
+    const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
+    await expect(feedTabs).toBeVisible();
+    const [scrollWidth, clientWidth] = await feedTabs.evaluate((el) => [
+      el.scrollWidth,
+      el.clientWidth,
+    ]);
+    // Five single-line tab labels (Event Feed, Transcript, Topics, Assistant,
+    // Dashboards) overflow a 390px-wide strip — the tablist scrolls
+    // (`max-md:overflow-x-auto`) instead of wrapping.
+    expect(scrollWidth).toBeGreaterThan(clientWidth);
+
+    // The last tab, offscreen at rest, is reachable and clickable —
+    // "every tab remains reachable by keyboard" (spec scenario), exercised
+    // here via `scrollIntoViewIfNeeded` + a real click rather than a
+    // screenshot.
+    const dashboardsTab = feedTabs.getByRole('tab', { name: 'Dashboards' });
+    await dashboardsTab.scrollIntoViewIfNeeded();
+    await dashboardsTab.click();
+    await expect(dashboardsTab).toHaveAttribute('aria-selected', 'true');
+  });
 });

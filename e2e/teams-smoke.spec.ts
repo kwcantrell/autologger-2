@@ -184,9 +184,8 @@ test.describe('teams self-serve (seeded-session fixture)', () => {
     await page.getByRole('button', { name: 'Back to sessions' }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId('teams-route')).toHaveCount(0);
-    await expect(
-      page.getByText('Select a session, or create a new one from the left rail.'),
-    ).toBeVisible();
+    // ui-refresh: the home placeholder is now the branded launch surface.
+    await expect(page.getByRole('heading', { name: 'AutoLogger' })).toBeVisible();
   });
 
   // teams-settings-nav, task 3.1 (design D3): a save through the REAL server
@@ -224,8 +223,11 @@ test.describe('teams self-serve (seeded-session fixture)', () => {
     await expect(page.getByRole('dialog')).toBeVisible();
 
     const showName = `zzz-e2e-settings-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
-    page.once('dialog', (dialog) => dialog.accept(showName));
+    // ui-refresh: Add-Show is now the themed Dialog (was window.prompt) —
+    // #profile-show-add opens it, fill the name input, then Create show.
     await page.locator('#profile-show-add').click();
+    await page.locator('#profile-show-add-name').fill(showName);
+    await page.getByRole('button', { name: 'Create show' }).click();
     await expect(page.locator('#profile-show-select')).toContainText(showName);
 
     // The new show clones the studio's default categories (Scene / Audio

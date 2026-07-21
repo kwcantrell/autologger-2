@@ -123,9 +123,9 @@
 
 ## 8. Final gates
 
-- [ ] 8.1 `npm run typecheck` + `npm test` + `npm run lint` (expect only the 5 pre-existing
+- [x] 8.1 `npm run typecheck` + `npm test` + `npm run lint` (expect only the 5 pre-existing
       warnings).
-- [ ] 8.2 Update e2e for the IA/copy/home: smoke + teams-smoke home assertions target
+- [x] 8.2 Update e2e for the IA/copy/home: smoke + teams-smoke home assertions target
       `#home-launch` (placeholder element retired) + Add-Show dialog flow, ai-chat →
       Assistant/Topics top-level tabs, ai-v2-dashboards → Dashboards tab, visual.spec
       Transcript/Topics navigation + `#home-resume-session` in DATE_MASK + home shots

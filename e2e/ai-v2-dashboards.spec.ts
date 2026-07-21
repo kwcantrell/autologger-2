@@ -52,10 +52,10 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     await page.locator('#ns-submit').click();
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
-    // Feed tabs -> AI v2 (SessionWorkspace.tsx: role="tablist" aria-label
-    // "Feed tabs", tab "AI v2").
+    // Feed tabs -> Dashboards (ui-refresh tab name for the AI v2 surface;
+    // SessionWorkspace.tsx: role="tablist" aria-label "Feed tabs").
     const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
-    await feedTabs.getByRole('tab', { name: 'AI v2' }).click();
+    await feedTabs.getByRole('tab', { name: 'Dashboards' }).click();
     await expect(page.getByTestId('aiv2-panel')).toBeVisible();
 
     // Start a design turn — real fetch+SSE against the fake-agent-backed
@@ -116,7 +116,7 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     // data), not from any in-memory turn state.
     await page.reload();
     await expect(page.locator('#v6-app')).toBeVisible();
-    await feedTabs.getByRole('tab', { name: 'AI v2' }).click();
+    await feedTabs.getByRole('tab', { name: 'Dashboards' }).click();
     const gridAfterReload = page.getByTestId('aiv2-dashboard-grid');
     await expect(gridAfterReload).toBeVisible();
     await expect(gridAfterReload.getByText('Speaker talk time')).toBeVisible();
@@ -150,7 +150,7 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
     const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
-    await feedTabs.getByRole('tab', { name: 'AI v2' }).click();
+    await feedTabs.getByRole('tab', { name: 'Dashboards' }).click();
     await expect(page.getByTestId('aiv2-panel')).toBeVisible();
 
     // Primary entry point per the Phase 5 review finding: "Start blank" —
@@ -176,7 +176,7 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     // dashboard for this session yet" empty-CTA state.
     await page.reload();
     await expect(page.locator('#v6-app')).toBeVisible();
-    await feedTabs.getByRole('tab', { name: 'AI v2' }).click();
+    await feedTabs.getByRole('tab', { name: 'Dashboards' }).click();
     await expect(page.getByText('No dashboard for this session yet')).toHaveCount(0);
     // A truly empty dashboard's <ul> renders with zero widgets (zero-size,
     // so `toBeVisible` would be flaky here) — its presence in the DOM plus

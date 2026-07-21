@@ -54,19 +54,13 @@ test('hermetic chat turn: send a message, see the streamed reply, and the AI-cre
   await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
   await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
 
-  // Top-level Feed tabs → AI (SessionWorkspace.tsx: role="tablist" aria-label
-  // "Feed tabs"). `exact: true` — ai-v2-dashboards (task 6.2) added a
-  // sibling "AI v2" tab, and Playwright's default `name` match is a
-  // case-insensitive substring, so an unqualified "AI" would resolve to both
-  // tabs (strict-mode violation) now that the AI v2 tab actually renders in
-  // a fresh `web/dist` build.
+  // Top-level Feed tabs → Assistant (ui-refresh IA: SessionWorkspace.tsx
+  // owns one flat "Feed tabs" tablist — Event Feed, Transcript, Topics,
+  // Assistant, Dashboards. The former nested "AI tabs" (Chat/Transcribe/
+  // Topics under an "AI" tab) is gone; Assistant is the chat surface
+  // directly.
   const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
-  await feedTabs.getByRole('tab', { name: 'AI', exact: true }).click();
-
-  // AI subtabs default to Chat (AiPanel.tsx: role="tablist" aria-label "AI
-  // tabs") — click it anyway for an explicit, order-independent assertion.
-  const aiTabs = page.getByRole('tablist', { name: 'AI tabs' });
-  await aiTabs.getByRole('tab', { name: 'Chat' }).click();
+  await feedTabs.getByRole('tab', { name: 'Assistant' }).click();
   await expect(page.getByTestId('ai-chat-panel')).toBeVisible();
 
   // Send a message — real fetch+SSE turn against the hermetic fixture.
@@ -90,15 +84,15 @@ test('hermetic chat turn: send a message, see the streamed reply, and the AI-cre
   await expect(page.getByTestId('ai-chat-error')).toHaveCount(0);
 
   // Switching to Topics (see the file header for why no row is asserted
-  // here) must not unmount Chat or the conversation above — the subtab
-  // renders cleanly, mounted-hidden per design D9.
-  await aiTabs.getByRole('tab', { name: 'Topics' }).click();
+  // here) must not unmount Chat or the conversation above — the tab renders
+  // cleanly, mounted-hidden per design D9.
+  await feedTabs.getByRole('tab', { name: 'Topics' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Topics' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'Topics feed' })).toBeVisible();
 
-  // Switching back to Chat: the conversation (including the tool chip and
-  // streamed reply) is still intact — no unmount, no cleared state.
-  await aiTabs.getByRole('tab', { name: 'Chat' }).click();
+  // Switching back to Assistant: the conversation (including the tool chip
+  // and streamed reply) is still intact — no unmount, no cleared state.
+  await feedTabs.getByRole('tab', { name: 'Assistant' }).click();
   await expect(transcript).toContainText('Created a fixture topic.');
   await expect(page.getByTestId('ai-chat-tool-chip')).toContainText('Using tool: create_topic');
 
