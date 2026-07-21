@@ -195,18 +195,61 @@ that does not exist.
       manually-entered transcript fixture (no timings) and an anchorless fixture — assert **no
       zeros are rendered as data**.
 
-## 5. Persistence
+## 5. Persistence + the design→dashboard seam
+
+> **Scope note (apply-time owner ruling 2026-07-21, folding a Phase 4 review finding).** Phase 5 was
+> storage-only as originally written, but the Phase 4 review found the **design-turn→`DashboardConfig`
+> seam unwired** (the `done` event carried `{}`; nothing turned a turn into a renderable config) and the
+> **renderer data path unspecified**. Owner rulings (design **D10**, **D11**): the agent commits its
+> proposal through a `propose_dashboard` MCP tool (whole-config validated at the tool boundary, streamed
+> to the initiating client as a `dashboard` SSE event); the renderer computes aggregates **client-side**
+> from the existing session endpoints (no new HTTP surface, no delta amendment). Tasks 5.4–5.6 below add
+> that scope; 5.1–5.3 are the original storage tasks.
 
 - [ ] 5.1 Storage per the gate's D5 ruling (session DB vs catalog DB), with **whole-config**
       validation on write (spec: *Dashboard persistence*): every string field length-bounded and
       schema-constrained; a field that would be interpreted as markup, a URL, or code is rejected.
       Test: a widget title containing HTML is stored as text and renders inert; a `javascript:`
-      URI is rejected on write.
-- [ ] 5.2 Read/write/delete endpoints. Read scoped exactly as the session (`404` otherwise); write
-      scoped at least as tightly; stored configs record `created_by` and the originating turn.
+      URI is rejected on write. Reuse/extend the Phase-1 `catalog.ts` validation; Phase 5.3 replaces
+      its placeholder count-caps with the authoritative bounds.
+- [ ] 5.2 Read/write/delete endpoints, backing the web `DashboardPersistencePort`
+      (`load(sessionId)`/`save(sessionId,config)`) Phase 4 left as a localStorage mock — swap the
+      default impl for a `fetch`-backed one with **no call-site changes**. Read scoped exactly as the
+      session (`404` otherwise); write scoped at least as tightly; stored configs record `created_by`
+      and the originating turn. The same principal-less-auth refusal as the other AI v2 routes applies
+      (device tokens masked `404`). Surface save errors in the UI (the Phase 4 boundary is currently
+      fire-and-forget).
 - [ ] 5.3 Bounds (spec: *Dashboard persistence*): per-session dashboard count, per-dashboard widget
       count, and serialized config size — each rejected on write when exceeded. Test the render-side
-      guard too: a dashboard declaring an absurd widget count does not hang the viewer.
+      guard too: a dashboard declaring an absurd widget count does not hang the viewer. **Replace
+      `catalog.ts`'s placeholder widget/interaction count caps with these authoritative bounds.**
+- [ ] 5.4 **`propose_dashboard` MCP tool** (server; design **D10**, spec *Dashboards are edited
+      directly* + *Dashboard persistence*): extend the per-turn MCP server built in task 2.4 with a
+      tool the agent calls to commit its proposed `DashboardConfig`. Validate the **whole config** at
+      the tool boundary against the Phase-1 catalog/layout schema (same validation as a user write —
+      an agent proposal cannot bypass it). Test: a valid proposal is accepted; a config naming an
+      unknown widget type, a dangling interaction, or a markup-bearing field is rejected at the tool
+      boundary and nothing is proposed. `sessionId` stays closure-bound (never a tool param), consistent
+      with the other aggregate tools.
+- [ ] 5.5 **Stream the proposal + client render** (server SSE + web; design D10, spec *Dashboards are
+      edited directly*): emit the validated proposed config to the initiating client on the design
+      turn's SSE stream as a **`dashboard`** event (delivered only to that client, like `question` —
+      **never** on the frozen WS fan-out). Follow the shipped `question` precedent: a direct
+      `stream.writeSSE({ event: 'dashboard', … })` from the turn's principal/turn-scoped context
+      (`aiV2.ts`), independent of `runDesignTurn`'s `guardedEmit` and its closed `delta`/`done`/`error`
+      union — that union's scrub is error-`detail`-content-only and does not gate event types. Web wires
+      the `dashboard` event into the grid (rendered through the real catalog components, D1/D3) and
+      offers to persist it via the `DashboardPersistencePort`. Test: a design turn's proposal renders
+      end-to-end with no markup path; the event reaches only the initiating client.
+- [ ] 5.6 **Client-side aggregation for the renderer** (web; design **D11**, spec *Data unavailability
+      is a rendered state*): compute the widgets' real data in the web from the **existing**
+      `useTranscriptWords`/`useTopics`/`useEvents` endpoints, reusing the Phase-1 `aggregates.ts`
+      **logic** (share or mirror it — do not fork a divergent second implementation). No new HTTP
+      route. Wire the aggregate results (including the degraded/unavailable signals, D2b) into the
+      Phase-4 widget props, replacing the "no data provided" placeholder. Resolve `event_count_by_category`
+      labels from the web's existing category source where available, else render the honest
+      "labels unavailable" affordance — never a fabricated label. Test: real fixtures render real data;
+      no-timings/anchorless fixtures still render the unavailable state (no zeros-as-data regression).
 
 ## 6. Docs + final gates
 

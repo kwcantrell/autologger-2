@@ -472,6 +472,53 @@ applications to offer claude.ai login, and this repo is described as portable �
 silently billing the packager's personal subscription is a policy problem, not just an ops
 surprise.
 
+### D10 — The design turn commits its proposal through a `propose_dashboard` MCP tool (apply-time owner ruling, 2026-07-21)
+
+The gated artifacts said a design turn "produces a **starting** dashboard" (D7a) but never specified
+**how** a turn yields a concrete `DashboardConfig`. The Phase 4 review surfaced the gap: the design
+turn's `done` event carried `{}`, and nothing assembled a completed turn into a renderable config, so
+the feature's core loop — *agent proposes a dashboard* — produced nothing, and the Phase 6 e2e
+("a dashboard rendered") had no path to pass. Owner ruling on the mechanism:
+
+The agent reads the session aggregates (D4 tools), asks the user catalog-widget questions with real
+previews (D7 round trip), then **calls an in-process `propose_dashboard` MCP tool** with the assembled
+`DashboardConfig`. That tool is the single commit point:
+
+- **It validates the WHOLE config against the Phase-1 catalog/layout schema at the tool boundary** —
+  this is D5a's whole-config validation applied at the *proposal* entry point, not only at the user
+  write path. Agent-authored config is attacker-influenced content (transcript text can steer the
+  agent), so an invalid or markup-bearing config is rejected before it is proposed, exactly as a user
+  write would be.
+- **The validated config is streamed to the initiating client on the design turn's own SSE stream, as
+  a `dashboard` event** (delivered only to that client, like the `question` event — never on the frozen
+  WS fan-out). The client renders it in the grid (D1/D3 components — never markup) and can persist it
+  through the D5 store.
+
+*Why a typed tool over a free-text final message or client-side accumulation.* A tool input is a typed,
+schema-validated boundary — structurally safer than parsing a model's free-text final message, and it
+keeps the config an explicit, single, validated artifact rather than something reassembled from the
+question/answer trail (which cannot carry layout and titles cleanly). The tool extends the per-turn MCP
+server built in task 2.4; it is in-process, not new HTTP surface. The one new observable is the
+`dashboard` SSE event on the (already delta-authorized) design route.
+
+### D11 — The rendered dashboard computes its aggregates client-side; no new HTTP surface (apply-time owner ruling, 2026-07-21)
+
+The Phase-2.4 MCP aggregate tools serve the **agent**, not the web **renderer**, and no delta
+requirement authorizes a "GET aggregate data" route. The Phase 4 review confirmed the renderer's data
+path was unspecified. Owner ruling: **the rendered dashboard's widgets get their data by computing
+aggregates in the web**, from the **existing** `useTranscriptWords` / `useTopics` / `useEvents`
+endpoints — the same session data the other tabs already fetch — reusing the Phase-1 `aggregates.ts`
+**logic** (shared or mirrored to the web workspace to avoid a second, divergent implementation). The
+degraded/unavailable signals the components key on (D2b) come from that same shared aggregation, so the
+"never zeros as data" rule holds identically on the client.
+
+This keeps the change's **"additive `ai/v2` routes only"** posture (proposal "Contract impact"): no
+`GET`-aggregates route, no delta amendment, no new frozen surface. The trade is that aggregation runs
+client-side — acceptable, since the raw data is already fetched client-side for the existing tabs and a
+dashboard is not a high-frequency compute. (`event_count_by_category` labels live in the catalog DB
+outside the hub (D2a); the web resolves them from its existing category source where available, and
+renders the honest "labels unavailable" affordance otherwise — never a fabricated label.)
+
 ## Resolved by the spike (Phase 0, 2026-07-21)
 
 Empirical results from the Phase 0 de-risking spikes, each run under `maxBudgetUsd ≤ 0.25`/turn,
@@ -849,3 +896,47 @@ project-hook-hole closure to the pinned `cwd` alone (corrected to credit `settin
 `cwd` as defense-in-depth). Post-fix spec/design consistency read: **clean** — the edited
 "Subprocess security lockdown" requirement and this design's D8/"Resolved by the spike" now agree,
 no SHALL relaxed.
+
+### 2026-07-21 — Apply-time owner ruling: design→dashboard seam + renderer data source (D10, D11)
+
+The **Phase 4 full-tier review** (PASS/PASS) surfaced two forward gaps the gated plan left
+unspecified — neither a defect in the shipped Phase 4 code, both genuine underspecifications: (1) the
+design turn had **no wired mechanism** to produce a `DashboardConfig` (the `done` event carried `{}`),
+so *agent proposes a dashboard* produced nothing renderable and Phase 6's e2e had no path to pass;
+(2) the **renderer's data path** was unspecified (the Phase-2.4 MCP tools serve the agent, not the
+web, and no delta requirement authorizes a render endpoint). Both were escalated to the owner at the
+Phase 5 check-in and ruled:
+
+- **D10 — commit via a `propose_dashboard` MCP tool.** The agent assembles the config and calls a typed
+  in-process tool that validates the **whole config** (D5a) at the boundary; the validated config
+  streams to the initiating client on a new `dashboard` SSE event. Chosen over free-text final-message
+  parsing (fragile) and pure client-side accumulation (can't carry layout/titles cleanly).
+- **D11 — client-side aggregation for the renderer.** The web computes widget data from the existing
+  `useTranscriptWords`/`useTopics`/`useEvents` endpoints, reusing `aggregates.ts` logic — **no new HTTP
+  surface**, preserving the "additive `ai/v2` routes only" contract posture (chosen over a new GET
+  endpoint, which would need a delta amendment).
+
+Folded across all three artifacts: **design.md** D10/D11 (above); **spec.md** — *Dashboards are edited
+directly* gains a normative proposal-delivery paragraph + two scenarios (validated proposal to the
+initiating client only; invalid proposal rejected), and *Dashboard persistence* extends whole-config
+validation to "wherever a configuration enters — user write **and** agent proposal alike"; **tasks.md**
+— Phase 5 gains tasks 5.4 (propose_dashboard tool), 5.5 (stream `dashboard` event + client render),
+5.6 (client-side aggregation), with a scope note. **Process:** this is an apply-time owner ruling
+filling a review-found gap, not structural rework, so it takes a **light-tier consistency read** (not a
+re-panel); its adversarial coverage comes from the **Phase 5 full-tier review** (the new surface is
+contract-affecting — a `dashboard` SSE event — and security-relevant — agent-authored config validated
+whole) and the whole-branch audit. New `dashboard` SSE event is additive on the already-delta-authorized
+design route; no existing route/status/shape/WS emission changes.
+
+**Consistency read (light-tier, 2026-07-21): one Important finding, fixed; otherwise clean.** Read all
+three folded documents (design D10/D11 + log, spec's two amended requirements, tasks 5.4–5.6) against
+each other and the pre-existing gated design. Confirmed: D10/D11 ↔ spec ↔ tasks agree on tool name/role,
+whole-config validation applying to the agent proposal, and client-side aggregation with no new HTTP
+route; the new `dashboard` SSE event is **additive and client-only** (rides the already-authorized
+design POST's stream, like `question`; the frozen WS fan-out is untouched); no contradiction with
+D1/D3/D4/D5a/D5b/D6/D7 or the "additive only" contract posture; `DashboardPersistencePort` description
+matches the shipped Phase-4 code; no stale pre-fold language survives. **Fixed:** task 5.5 wrongly said
+the `dashboard` event "maps into the existing scrub allow-list on error" — but the shipped `question`
+event uses a **direct `stream.writeSSE`** bypassing `guardedEmit`'s `delta`/`done`/`error` closed union
+(whose scrub is error-`detail`-content-only, not an event-type gate); corrected to point the implementer
+at the real `question` precedent.

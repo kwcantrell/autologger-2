@@ -135,10 +135,18 @@ NOT render zeros, empty series, or placeholder values as though they were measur
 - **THEN** the rendered state identifies which data is missing
 
 ### Requirement: Dashboards are edited directly, not only by conversation
-A design turn produces a **starting** dashboard. Every subsequent modification — adding, removing,
-resizing, repositioning, or retitling a widget — SHALL be possible through direct manipulation
-without running another design turn, so that changing one widget does not require repeating a
-conversation or spending another turn.
+A design turn produces a **starting** dashboard. The agent SHALL deliver its proposal as a single
+structured dashboard configuration validated as a **whole** against the widget catalog and layout
+vocabulary at the point it is committed — an invalid or markup-bearing proposed configuration SHALL be
+rejected before it is delivered or persisted, identically to a user write (see *Dashboard
+persistence*). The validated proposal SHALL be delivered only to the client that initiated that turn,
+on that turn's own stream, and SHALL NOT be broadcast to other clients attached to the session.
+Agent-supplied configuration SHALL be rendered only through the application's own components, never as
+markup (see *No agent-authored markup is ever rendered*).
+
+Every subsequent modification — adding, removing, resizing, repositioning, or retitling a widget —
+SHALL be possible through direct manipulation without running another design turn, so that changing one
+widget does not require repeating a conversation or spending another turn.
 
 #### Scenario: A widget is changed without a design turn
 - **WHEN** a user modifies a saved dashboard's widgets or layout
@@ -147,6 +155,16 @@ conversation or spending another turn.
 #### Scenario: A design turn seeds rather than replaces
 - **WHEN** a design turn completes
 - **THEN** its output is a dashboard the user can then edit directly
+
+#### Scenario: A design turn delivers a validated proposal to the initiating client
+- **WHEN** a design turn commits a proposed dashboard
+- **THEN** the configuration is validated as a whole and delivered to the initiating client for
+  rendering, and other clients attached to the session do not receive it
+
+#### Scenario: An invalid proposed configuration is rejected
+- **WHEN** a design turn would commit a configuration naming a widget type outside the catalog, a
+  dangling interaction, or a field that would be interpreted as markup
+- **THEN** the proposal is rejected and no dashboard is delivered or persisted
 
 ### Requirement: Layout and interaction vocabulary
 A dashboard configuration SHALL describe widget placement (position and size) and any cross-widget
@@ -303,7 +321,10 @@ Validation on write SHALL cover the **whole configuration**, not only its widget
 interactions: every string field SHALL be length-bounded and schema-constrained, and a
 configuration carrying a field that would be interpreted as markup, a URL, or code SHALL be
 rejected. A stored dashboard is a durable artifact that re-renders unattended for other users, so
-its content is treated as untrusted regardless of which agent or user produced it.
+its content is treated as untrusted regardless of which agent or user produced it. This same
+whole-configuration validation SHALL be applied wherever a configuration enters the system — a
+user's direct write **and** an agent's proposed dashboard alike — so an agent proposal cannot bypass
+the constraints a user write is held to.
 
 Writing a dashboard SHALL be scoped at least as tightly as reading the session it belongs to, and
 stored configurations SHALL record the principal that created them and the turn they originated
