@@ -3,6 +3,7 @@
 
 import { type RefObject, useEffect, useRef } from 'react';
 import { toast } from '../../../shared/components/Toast';
+import { isTypingTarget } from '../components/ShortcutsDialog';
 
 declare global {
   interface Window {
@@ -797,16 +798,14 @@ export function useZoomRail(
     inp.addEventListener('blur', onInpBlur);
     inp.addEventListener('focus', onInpFocus);
 
-    // Keyboard zoom (+/-)
-    const isTyping = (el: EventTarget | null): boolean => {
-      if (!el || !(el instanceof Element)) return false;
-      const t = (el as HTMLElement).tagName;
-      if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return true;
-      return (el as HTMLElement).isContentEditable;
-    };
+    // Keyboard zoom (+/-): bail while typing, while any dialog is open, or
+    // when another handler already consumed the key (ui-refresh D14 / spec
+    // "Global single-key handlers yield to dialogs and interactive targets").
     const onKeydown = (ev: KeyboardEvent) => {
-      if (isTyping(ev.target)) return;
+      if (isTypingTarget(ev.target)) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"]')) return;
       if (ev.code === 'Equal' || ev.code === 'NumpadAdd') {
         ev.preventDefault();
         changeTimelineZoom.current(TIMELINE_ZOOM_KEY_FACT);

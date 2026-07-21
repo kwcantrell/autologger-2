@@ -10,6 +10,18 @@ import {
 import type { AudioSegment } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
+import { isTypingTarget } from './ShortcutsDialog';
+
+/**
+ * True when the event target is (or is inside) an element that consumes a
+ * Space keypress itself — a focused button's native activation must win over
+ * the global play/pause handler (ui-refresh D14 / spec "Global single-key
+ * handlers yield to dialogs and interactive targets").
+ */
+function isKeyConsumingInteractiveTarget(el: EventTarget | null): boolean {
+  if (!el || !(el instanceof Element)) return false;
+  return Boolean(el.closest('button, a[href], summary, [role="button"]'));
+}
 
 export interface AudioPlayerHandle {
   toggle: () => void;
@@ -291,17 +303,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     };
   }, []);
 
-  // Space bar: play/pause (when not in a text input)
+  // Space bar: play/pause (when not in a text input, no dialog open, and not
+  // consumed by a focused interactive element — ui-refresh D14).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== 'Space' || e.metaKey || e.ctrlKey || e.altKey) return;
-      const tag = (document.activeElement?.tagName ?? '').toUpperCase();
-      if (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        (document.activeElement as HTMLElement | null)?.isContentEditable
-      )
-        return;
+      if (e.defaultPrevented) return;
+      if (isTypingTarget(document.activeElement)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (isKeyConsumingInteractiveTarget(e.target)) return;
       if (validSegments.length === 0) return;
       e.preventDefault();
       toggle();
