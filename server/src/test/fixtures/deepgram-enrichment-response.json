@@ -1,0 +1,1159 @@
+{
+  "metadata": {
+    "transaction_key": "deprecated",
+    "request_id": "019f8458-e32f-7210-8035-e7f721ade459",
+    "sha256": "1a16beb183286d59a23a2acbb4021b06c421082c02b8b4cb61277bd4b26e13ab",
+    "created": "2026-07-21T11:04:05.985Z",
+    "duration": 45.03506,
+    "channels": 1,
+    "models": [
+      "2187e11a-3532-4498-b076-81fa530bdd49"
+    ],
+    "model_info": {
+      "2187e11a-3532-4498-b076-81fa530bdd49": {
+        "name": "general-nova-3",
+        "version": "2025-07-31.0",
+        "arch": "nova-3"
+      }
+    },
+    "sentiment_info": {
+      "model_uuid": "80ab3179-d113-4254-bd6b-4a2f96498695",
+      "input_tokens": 125,
+      "output_tokens": 125
+    }
+  },
+  "results": {
+    "channels": [
+      {
+        "alternatives": [
+          {
+            "transcript": "Okay Houston, we've had a problem here. This is Houston, say again please. Houston, we've had a problem. We've had a main beam on the vault. Roger main beam on the vault. Okay, stand by thirteen, we're looking at it. Okay, right now Houston, the voltage is looking good. We had a pretty large bang associated with the caution and warning there. And as I recall, maybe it was the one that had a camp spike on it once before. Roger, Fred. And the interim air, we're starting to",
+            "confidence": 0.96435547,
+            "words": [
+              {
+                "word": "okay",
+                "start": 1.28,
+                "end": 1.8399999,
+                "confidence": 0.43139648,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "Okay",
+                "sentiment": "neutral",
+                "sentiment_score": -0.07163950800895691
+              },
+              {
+                "word": "houston",
+                "start": 1.8399999,
+                "end": 2.3999999,
+                "confidence": 0.59106445,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "Houston,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.14105169475078583
+              },
+              {
+                "word": "we've",
+                "start": 2.3999999,
+                "end": 2.6399999,
+                "confidence": 0.9719238,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "we've",
+                "sentiment": "neutral",
+                "sentiment_score": -0.18729636073112488
+              },
+              {
+                "word": "had",
+                "start": 2.6399999,
+                "end": 2.72,
+                "confidence": 0.96435547,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "had",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2107234299182892
+              },
+              {
+                "word": "a",
+                "start": 2.72,
+                "end": 2.8,
+                "confidence": 0.9892578,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "a",
+                "sentiment": "neutral",
+                "sentiment_score": -0.25634872913360596
+              },
+              {
+                "word": "problem",
+                "start": 2.8,
+                "end": 3.04,
+                "confidence": 0.9951172,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "problem",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2587631344795227
+              },
+              {
+                "word": "here",
+                "start": 3.04,
+                "end": 3.7599998,
+                "confidence": 0.95947266,
+                "speaker": 0,
+                "speaker_confidence": 0.6229688,
+                "punctuated_word": "here.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.25020214915275574
+              },
+              {
+                "word": "this",
+                "start": 4.24,
+                "end": 4.48,
+                "confidence": 0.7919922,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "This",
+                "sentiment": "neutral",
+                "sentiment_score": -0.16983994841575625
+              },
+              {
+                "word": "is",
+                "start": 4.48,
+                "end": 4.64,
+                "confidence": 0.99902344,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "is",
+                "sentiment": "neutral",
+                "sentiment_score": -0.11427325010299684
+              },
+              {
+                "word": "houston",
+                "start": 4.64,
+                "end": 5.04,
+                "confidence": 0.7932129,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "Houston,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.15795326232910156
+              },
+              {
+                "word": "say",
+                "start": 5.04,
+                "end": 5.2,
+                "confidence": 0.9873047,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "say",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1163044571876526
+              },
+              {
+                "word": "again",
+                "start": 5.2,
+                "end": 5.44,
+                "confidence": 0.9921875,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "again",
+                "sentiment": "neutral",
+                "sentiment_score": -0.08012374490499496
+              },
+              {
+                "word": "please",
+                "start": 5.44,
+                "end": 6,
+                "confidence": 0.80078125,
+                "speaker": 0,
+                "speaker_confidence": 0.39002174,
+                "punctuated_word": "please.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.10905484855175018
+              },
+              {
+                "word": "houston",
+                "start": 6.48,
+                "end": 7.2,
+                "confidence": 0.9001465,
+                "speaker": 0,
+                "speaker_confidence": 0.29372454,
+                "punctuated_word": "Houston,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1415034532546997
+              },
+              {
+                "word": "we've",
+                "start": 7.2,
+                "end": 7.44,
+                "confidence": 0.9946289,
+                "speaker": 0,
+                "speaker_confidence": 0.29372454,
+                "punctuated_word": "we've",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1518058478832245
+              },
+              {
+                "word": "had",
+                "start": 7.44,
+                "end": 7.52,
+                "confidence": 0.9921875,
+                "speaker": 0,
+                "speaker_confidence": 0.29372454,
+                "punctuated_word": "had",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1562197506427765
+              },
+              {
+                "word": "a",
+                "start": 7.52,
+                "end": 7.6,
+                "confidence": 0.99902344,
+                "speaker": 0,
+                "speaker_confidence": 0.29372454,
+                "punctuated_word": "a",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1760619878768921
+              },
+              {
+                "word": "problem",
+                "start": 7.6,
+                "end": 8.16,
+                "confidence": 0.9790039,
+                "speaker": 0,
+                "speaker_confidence": 0.29372454,
+                "punctuated_word": "problem.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1847536563873291
+              },
+              {
+                "word": "we've",
+                "start": 9.2,
+                "end": 9.5199995,
+                "confidence": 0.9707031,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "We've",
+                "sentiment": "neutral",
+                "sentiment_score": -0.11180180311203004
+              },
+              {
+                "word": "had",
+                "start": 9.5199995,
+                "end": 9.679999,
+                "confidence": 0.9741211,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "had",
+                "sentiment": "neutral",
+                "sentiment_score": -0.10458070784807204
+              },
+              {
+                "word": "a",
+                "start": 9.679999,
+                "end": 9.76,
+                "confidence": 0.97314453,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "a",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1048039048910141
+              },
+              {
+                "word": "main",
+                "start": 9.76,
+                "end": 9.92,
+                "confidence": 0.78027344,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "main",
+                "sentiment": "neutral",
+                "sentiment_score": -0.10239939391613008
+              },
+              {
+                "word": "beam",
+                "start": 9.92,
+                "end": 10.16,
+                "confidence": 0.36108398,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "beam",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1405873745679855
+              },
+              {
+                "word": "on",
+                "start": 10.16,
+                "end": 10.4,
+                "confidence": 0.19750977,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "on",
+                "sentiment": "neutral",
+                "sentiment_score": -0.0935179591178894
+              },
+              {
+                "word": "the",
+                "start": 10.4,
+                "end": 10.719999,
+                "confidence": 0.15795898,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "the",
+                "sentiment": "neutral",
+                "sentiment_score": -0.11835109442472458
+              },
+              {
+                "word": "vault",
+                "start": 10.719999,
+                "end": 11.28,
+                "confidence": 0.6899414,
+                "speaker": 0,
+                "speaker_confidence": 0.36978036,
+                "punctuated_word": "vault.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1147543638944626
+              },
+              {
+                "word": "roger",
+                "start": 12.08,
+                "end": 12.559999,
+                "confidence": 0.95947266,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "Roger",
+                "sentiment": "neutral",
+                "sentiment_score": -0.03282291442155838
+              },
+              {
+                "word": "main",
+                "start": 12.559999,
+                "end": 12.799999,
+                "confidence": 0.5024414,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "main",
+                "sentiment": "neutral",
+                "sentiment_score": -0.020872393622994423
+              },
+              {
+                "word": "beam",
+                "start": 12.799999,
+                "end": 12.96,
+                "confidence": 0.9770508,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "beam",
+                "sentiment": "neutral",
+                "sentiment_score": -0.0362420454621315
+              },
+              {
+                "word": "on",
+                "start": 12.96,
+                "end": 13.12,
+                "confidence": 0.7402344,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "on",
+                "sentiment": "neutral",
+                "sentiment_score": -0.03711588308215141
+              },
+              {
+                "word": "the",
+                "start": 13.12,
+                "end": 13.2,
+                "confidence": 0.86572266,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "the",
+                "sentiment": "neutral",
+                "sentiment_score": -0.06135820969939232
+              },
+              {
+                "word": "vault",
+                "start": 13.2,
+                "end": 13.36,
+                "confidence": 0.984375,
+                "speaker": 0,
+                "speaker_confidence": 0.26954544,
+                "punctuated_word": "vault.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.058135125786066055
+              },
+              {
+                "word": "okay",
+                "start": 15.465,
+                "end": 16.025,
+                "confidence": 0.6171875,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "Okay,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.00776876974850893
+              },
+              {
+                "word": "stand",
+                "start": 16.025,
+                "end": 16.265,
+                "confidence": 0.61328125,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "stand",
+                "sentiment": "neutral",
+                "sentiment_score": -0.0031066257506608963
+              },
+              {
+                "word": "by",
+                "start": 16.265,
+                "end": 16.345001,
+                "confidence": 0.9970703,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "by",
+                "sentiment": "neutral",
+                "sentiment_score": -0.0034899991005659103
+              },
+              {
+                "word": "thirteen",
+                "start": 16.345001,
+                "end": 16.985,
+                "confidence": 0.48266602,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "thirteen,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.002971458248794079
+              },
+              {
+                "word": "we're",
+                "start": 16.985,
+                "end": 17.145,
+                "confidence": 0.97998047,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "we're",
+                "sentiment": "neutral",
+                "sentiment_score": -0.005563367158174515
+              },
+              {
+                "word": "looking",
+                "start": 17.145,
+                "end": 17.305,
+                "confidence": 0.99121094,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "looking",
+                "sentiment": "neutral",
+                "sentiment_score": -0.005690690129995346
+              },
+              {
+                "word": "at",
+                "start": 17.305,
+                "end": 17.465,
+                "confidence": 0.99902344,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "at",
+                "sentiment": "neutral",
+                "sentiment_score": -0.017134901136159897
+              },
+              {
+                "word": "it",
+                "start": 17.465,
+                "end": 17.945,
+                "confidence": 0.9926758,
+                "speaker": 0,
+                "speaker_confidence": 0.37242943,
+                "punctuated_word": "it.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.016741769388318062
+              },
+              {
+                "word": "okay",
+                "start": 18.985,
+                "end": 20.025,
+                "confidence": 0.63134766,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "Okay,",
+                "sentiment": "neutral",
+                "sentiment_score": 0.19426533579826355
+              },
+              {
+                "word": "right",
+                "start": 20.025,
+                "end": 20.585,
+                "confidence": 0.81933594,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "right",
+                "sentiment": "neutral",
+                "sentiment_score": 0.22927509248256683
+              },
+              {
+                "word": "now",
+                "start": 20.585,
+                "end": 21.145,
+                "confidence": 0.9980469,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "now",
+                "sentiment": "neutral",
+                "sentiment_score": 0.1932426542043686
+              },
+              {
+                "word": "houston",
+                "start": 21.145,
+                "end": 21.785,
+                "confidence": 0.5854492,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "Houston,",
+                "sentiment": "positive",
+                "sentiment_score": 0.3928987085819245
+              },
+              {
+                "word": "the",
+                "start": 21.785,
+                "end": 21.945,
+                "confidence": 0.99609375,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "the",
+                "sentiment": "positive",
+                "sentiment_score": 0.4161134660243988
+              },
+              {
+                "word": "voltage",
+                "start": 21.945,
+                "end": 22.505001,
+                "confidence": 0.9267578,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "voltage",
+                "sentiment": "positive",
+                "sentiment_score": 0.4529336392879486
+              },
+              {
+                "word": "is",
+                "start": 22.505001,
+                "end": 23.065,
+                "confidence": 0.9921875,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "is",
+                "sentiment": "positive",
+                "sentiment_score": 0.3415104150772095
+              },
+              {
+                "word": "looking",
+                "start": 24.345001,
+                "end": 24.585,
+                "confidence": 0.6479492,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "looking",
+                "sentiment": "positive",
+                "sentiment_score": 0.34516820311546326
+              },
+              {
+                "word": "good",
+                "start": 24.585,
+                "end": 25.305,
+                "confidence": 0.66711426,
+                "speaker": 0,
+                "speaker_confidence": 0.68194985,
+                "punctuated_word": "good.",
+                "sentiment": "positive",
+                "sentiment_score": 0.3529205322265625
+              },
+              {
+                "word": "we",
+                "start": 27.385,
+                "end": 27.625,
+                "confidence": 0.98828125,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "We",
+                "sentiment": "neutral",
+                "sentiment_score": -0.20291131734848025
+              },
+              {
+                "word": "had",
+                "start": 27.625,
+                "end": 27.865,
+                "confidence": 0.9902344,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "had",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2219316065311432
+              },
+              {
+                "word": "a",
+                "start": 27.865,
+                "end": 28.025,
+                "confidence": 0.99609375,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "a",
+                "sentiment": "neutral",
+                "sentiment_score": -0.24218109250068665
+              },
+              {
+                "word": "pretty",
+                "start": 28.025,
+                "end": 28.425,
+                "confidence": 0.9770508,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "pretty",
+                "sentiment": "neutral",
+                "sentiment_score": -0.3276311159133911
+              },
+              {
+                "word": "large",
+                "start": 28.425,
+                "end": 28.744999,
+                "confidence": 0.99609375,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "large",
+                "sentiment": "negative",
+                "sentiment_score": -0.3931486904621124
+              },
+              {
+                "word": "bang",
+                "start": 28.744999,
+                "end": 29.065,
+                "confidence": 0.984375,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "bang",
+                "sentiment": "negative",
+                "sentiment_score": -0.4269026219844818
+              },
+              {
+                "word": "associated",
+                "start": 29.065,
+                "end": 30.345001,
+                "confidence": 0.9921875,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "associated",
+                "sentiment": "negative",
+                "sentiment_score": -0.4167830348014831
+              },
+              {
+                "word": "with",
+                "start": 29.85,
+                "end": 30.01,
+                "confidence": 0.9667969,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "with",
+                "sentiment": "negative",
+                "sentiment_score": -0.41363152861595154
+              },
+              {
+                "word": "the",
+                "start": 30.01,
+                "end": 30.33,
+                "confidence": 0.97802734,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "the",
+                "sentiment": "negative",
+                "sentiment_score": -0.41340193152427673
+              },
+              {
+                "word": "caution",
+                "start": 30.33,
+                "end": 30.970001,
+                "confidence": 0.96240234,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "caution",
+                "sentiment": "negative",
+                "sentiment_score": -0.4273293912410736
+              },
+              {
+                "word": "and",
+                "start": 30.970001,
+                "end": 31.130001,
+                "confidence": 0.984375,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "and",
+                "sentiment": "negative",
+                "sentiment_score": -0.4718065559864044
+              },
+              {
+                "word": "warning",
+                "start": 31.130001,
+                "end": 31.53,
+                "confidence": 0.9970703,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "warning",
+                "sentiment": "negative",
+                "sentiment_score": -0.46267879009246826
+              },
+              {
+                "word": "there",
+                "start": 31.53,
+                "end": 32.170002,
+                "confidence": 0.83325195,
+                "speaker": 0,
+                "speaker_confidence": 0.7633373,
+                "punctuated_word": "there.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.29631704092025757
+              },
+              {
+                "word": "and",
+                "start": 32.81,
+                "end": 32.97,
+                "confidence": 0.96972656,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "And",
+                "sentiment": "neutral",
+                "sentiment_score": -0.15176507830619812
+              },
+              {
+                "word": "as",
+                "start": 32.97,
+                "end": 33.21,
+                "confidence": 0.91015625,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "as",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1421864926815033
+              },
+              {
+                "word": "i",
+                "start": 33.21,
+                "end": 33.37,
+                "confidence": 0.98828125,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "I",
+                "sentiment": "neutral",
+                "sentiment_score": -0.13506320118904114
+              },
+              {
+                "word": "recall",
+                "start": 33.37,
+                "end": 33.93,
+                "confidence": 0.8798828,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "recall,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.13726915419101715
+              },
+              {
+                "word": "maybe",
+                "start": 33.93,
+                "end": 34.09,
+                "confidence": 0.78027344,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "maybe",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1857147067785263
+              },
+              {
+                "word": "it",
+                "start": 34.09,
+                "end": 34.33,
+                "confidence": 0.6567383,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "it",
+                "sentiment": "neutral",
+                "sentiment_score": -0.1859854757785797
+              },
+              {
+                "word": "was",
+                "start": 34.33,
+                "end": 34.41,
+                "confidence": 0.99609375,
+                "speaker": 0,
+                "speaker_confidence": 0.67328835,
+                "punctuated_word": "was",
+                "sentiment": "neutral",
+                "sentiment_score": -0.15489868819713593
+              },
+              {
+                "word": "the",
+                "start": 34.41,
+                "end": 34.57,
+                "confidence": 0.9350586,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "the",
+                "sentiment": "neutral",
+                "sentiment_score": -0.18585483729839325
+              },
+              {
+                "word": "one",
+                "start": 34.57,
+                "end": 34.73,
+                "confidence": 0.99902344,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "one",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2420234978199005
+              },
+              {
+                "word": "that",
+                "start": 34.73,
+                "end": 34.97,
+                "confidence": 0.9873047,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "that",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2209887057542801
+              },
+              {
+                "word": "had",
+                "start": 34.97,
+                "end": 35.53,
+                "confidence": 0.89746094,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "had",
+                "sentiment": "neutral",
+                "sentiment_score": -0.22956016659736633
+              },
+              {
+                "word": "a",
+                "start": 35.53,
+                "end": 36.09,
+                "confidence": 0.9316406,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "a",
+                "sentiment": "neutral",
+                "sentiment_score": -0.24800750613212583
+              },
+              {
+                "word": "camp",
+                "start": 36.25,
+                "end": 36.57,
+                "confidence": 0.4013672,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "camp",
+                "sentiment": "negative",
+                "sentiment_score": -0.4191712439060211
+              },
+              {
+                "word": "spike",
+                "start": 36.57,
+                "end": 36.97,
+                "confidence": 0.9902344,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "spike",
+                "sentiment": "neutral",
+                "sentiment_score": -0.22621265053749084
+              },
+              {
+                "word": "on",
+                "start": 36.97,
+                "end": 37.13,
+                "confidence": 0.97802734,
+                "speaker": 0,
+                "speaker_confidence": 0.6283583,
+                "punctuated_word": "on",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2277780324220657
+              },
+              {
+                "word": "it",
+                "start": 37.13,
+                "end": 37.29,
+                "confidence": 0.9970703,
+                "speaker": 0,
+                "speaker_confidence": 0.39285123,
+                "punctuated_word": "it",
+                "sentiment": "neutral",
+                "sentiment_score": -0.2962076961994171
+              },
+              {
+                "word": "once",
+                "start": 37.29,
+                "end": 37.85,
+                "confidence": 0.9667969,
+                "speaker": 0,
+                "speaker_confidence": 0.39285123,
+                "punctuated_word": "once",
+                "sentiment": "neutral",
+                "sentiment_score": -0.21980074048042297
+              },
+              {
+                "word": "before",
+                "start": 37.85,
+                "end": 38.57,
+                "confidence": 0.9941406,
+                "speaker": 0,
+                "speaker_confidence": 0.39285123,
+                "punctuated_word": "before.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.20688959956169128
+              },
+              {
+                "word": "roger",
+                "start": 39.77,
+                "end": 40.41,
+                "confidence": 0.53149414,
+                "speaker": 0,
+                "speaker_confidence": 0.39285123,
+                "punctuated_word": "Roger,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.014742869883775713
+              },
+              {
+                "word": "fred",
+                "start": 40.41,
+                "end": 40.89,
+                "confidence": 0.83374023,
+                "speaker": 0,
+                "speaker_confidence": 0.39285123,
+                "punctuated_word": "Fred.",
+                "sentiment": "neutral",
+                "sentiment_score": -0.020580489188432693
+              },
+              {
+                "word": "and",
+                "start": 42.65,
+                "end": 42.97,
+                "confidence": 0.43139648,
+                "speaker": 0,
+                "speaker_confidence": 0.31316662,
+                "punctuated_word": "And",
+                "sentiment": "neutral",
+                "sentiment_score": -0.03206147626042366
+              },
+              {
+                "word": "the",
+                "start": 42.97,
+                "end": 43.13,
+                "confidence": 0.56396484,
+                "speaker": 0,
+                "speaker_confidence": 0.31316662,
+                "punctuated_word": "the",
+                "sentiment": "neutral",
+                "sentiment_score": -0.04821090400218963
+              },
+              {
+                "word": "interim",
+                "start": 43.13,
+                "end": 43.45,
+                "confidence": 0.5527344,
+                "speaker": 0,
+                "speaker_confidence": 0.31316662,
+                "punctuated_word": "interim",
+                "sentiment": "neutral",
+                "sentiment_score": -0.041549284011125565
+              },
+              {
+                "word": "air",
+                "start": 43.45,
+                "end": 44.09,
+                "confidence": 0.65405273,
+                "speaker": 0,
+                "speaker_confidence": 0.41167855,
+                "punctuated_word": "air,",
+                "sentiment": "neutral",
+                "sentiment_score": -0.055398982018232346
+              },
+              {
+                "word": "we're",
+                "start": 44.09,
+                "end": 44.41,
+                "confidence": 0.9484863,
+                "speaker": 0,
+                "speaker_confidence": 0.41167855,
+                "punctuated_word": "we're",
+                "sentiment": "neutral",
+                "sentiment_score": -0.05890500545501709
+              },
+              {
+                "word": "starting",
+                "start": 44.41,
+                "end": 44.65,
+                "confidence": 0.9604492,
+                "speaker": 0,
+                "speaker_confidence": 0.41167855,
+                "punctuated_word": "starting",
+                "sentiment": "neutral",
+                "sentiment_score": -0.06377783417701721
+              },
+              {
+                "word": "to",
+                "start": 44.65,
+                "end": 46.33,
+                "confidence": 0.9086914,
+                "speaker": 0,
+                "speaker_confidence": 0,
+                "punctuated_word": "to",
+                "sentiment": "neutral",
+                "sentiment_score": -0.02417774870991707
+              }
+            ],
+            "paragraphs": {
+              "transcript": "\nSpeaker 0: Okay Houston, we've had a problem here. This is Houston, say again please. Houston, we've had a problem. We've had a main beam on the vault. Roger main beam on the vault.\n\nOkay, stand by thirteen, we're looking at it. Okay, right now Houston, the voltage is looking good. We had a pretty large bang associated with the caution and warning there. And as I recall, maybe it was the one that had a camp spike on it once before. Roger, Fred.\n\nAnd the interim air, we're starting to",
+              "paragraphs": [
+                {
+                  "sentences": [
+                    {
+                      "text": "Okay Houston, we've had a problem here.",
+                      "start": 1.28,
+                      "end": 3.7599998,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.19657500088214874
+                    },
+                    {
+                      "text": "This is Houston, say again please.",
+                      "start": 4.24,
+                      "end": 6,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.12459158524870874
+                    },
+                    {
+                      "text": "Houston, we've had a problem.",
+                      "start": 6.48,
+                      "end": 8.16,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.16206893920898438
+                    },
+                    {
+                      "text": "We've had a main beam on the vault.",
+                      "start": 9.2,
+                      "end": 11.28,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.11134957522153854
+                    },
+                    {
+                      "text": "Roger main beam on the vault.",
+                      "start": 12.08,
+                      "end": 13.36,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.04109109534571568
+                    }
+                  ],
+                  "speaker": 0,
+                  "sentiment": "neutral",
+                  "sentiment_score": -0.12722694961121306,
+                  "num_words": 32,
+                  "start": 1.28,
+                  "end": 13.36
+                },
+                {
+                  "sentences": [
+                    {
+                      "text": "Okay, stand by thirteen, we're looking at it.",
+                      "start": 15.465,
+                      "end": 17.945,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.007808447582647204
+                    },
+                    {
+                      "text": "Okay, right now Houston, the voltage is looking good.",
+                      "start": 18.985,
+                      "end": 25.305,
+                      "sentiment": "neutral",
+                      "sentiment_score": 0.3242586718665229
+                    },
+                    {
+                      "text": "We had a pretty large bang associated with the caution and warning there.",
+                      "start": 27.385,
+                      "end": 32.170002,
+                      "sentiment": "negative",
+                      "sentiment_score": -0.3628195936863239
+                    },
+                    {
+                      "text": "And as I recall, maybe it was the one that had a camp spike on it once before.",
+                      "start": 32.81,
+                      "end": 38.57,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.21196541521284315
+                    },
+                    {
+                      "text": "Roger, Fred.",
+                      "start": 39.77,
+                      "end": 40.89,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.017661679536104202
+                    }
+                  ],
+                  "speaker": 0,
+                  "sentiment": "neutral",
+                  "sentiment_score": -0.11422990169376135,
+                  "num_words": 50,
+                  "start": 15.465,
+                  "end": 40.89
+                },
+                {
+                  "sentences": [
+                    {
+                      "text": "And the interim air, we're starting to",
+                      "start": 42.65,
+                      "end": 46.33,
+                      "sentiment": "neutral",
+                      "sentiment_score": -0.04629731923341751
+                    }
+                  ],
+                  "speaker": 0,
+                  "sentiment": "neutral",
+                  "sentiment_score": -0.04629731923341751,
+                  "num_words": 7,
+                  "start": 42.65,
+                  "end": 46.33
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "sentiments": {
+      "segments": [
+        {
+          "text": "Okay Houston, we've had a problem here. This is Houston, say again please. Houston, we've had a problem. We've had a main beam on the vault. Roger main beam on the vault. Okay, stand by thirteen, we're looking at it. Okay, right now Houston, the voltage is looking good.",
+          "start_word": 0,
+          "end_word": 48,
+          "sentiment": "neutral",
+          "sentiment_score": -0.03932914882898331
+        },
+        {
+          "text": "We had a pretty large bang associated with the caution and warning there.",
+          "start_word": 49,
+          "end_word": 61,
+          "sentiment": "negative",
+          "sentiment_score": -0.3551284670829773
+        },
+        {
+          "text": "And as I recall, maybe it was the one that had a camp spike on it once before. Roger, Fred. And the interim air, we're starting to",
+          "start_word": 62,
+          "end_word": 88,
+          "sentiment": "neutral",
+          "sentiment_score": -0.14257504045963287
+        }
+      ],
+      "average": {
+        "sentiment": "neutral",
+        "sentiment_score": -0.10866030883789064
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@
 
 ## 1. Real-response fixture + extraction (deepgram.ts)
 
-- [ ] 1.1 Add a short (~30–60s) public-domain / CC0 **2-speaker** speech clip under
+- [x] 1.1 Add a short (~30–60s) public-domain / CC0 **2-speaker** speech clip under
       `server/src/test/fixtures/audio/` with a source + license header comment (never
       `autologgers-demo.html` content). Add `scripts/capture-deepgram-fixture.mjs` + an
       `npm run capture:deepgram-fixture` script that **loads `server/.env`**
@@ -17,7 +17,7 @@
       (`diarize/smart_format/paragraphs/sentiment/language/model`), and writes the raw
       response to `server/src/test/fixtures/deepgram-enrichment-response.json`. The script is
       **not in any test glob**, so `npm test` never runs it (stays hermetic).
-- [ ] 1.2 **[operator step]** Put the key in gitignored `server/.env` (`DEEPGRAM_API_KEY=…`),
+- [x] 1.2 **[operator step]** Put the key in gitignored `server/.env` (`DEEPGRAM_API_KEY=…`),
       then run `npm run capture:deepgram-fixture` **once** to mint + commit the **real**
       `deepgram-enrichment-response.json`. Confirm it contains ≥2 paragraphs with distinct
       speakers, ≥2 sentiment segments with `start_word`/`end_word` spans, and (ideally) a
