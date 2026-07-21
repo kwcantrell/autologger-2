@@ -240,9 +240,9 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
     await refetchAll(client, SESSION_ID);
     rerender({ sessionId: SESSION_ID });
     await waitFor(() =>
-      expect(
-        (client.getQueryData(['session-status', SESSION_ID]) as SessionStatus).timecode,
-      ).toBe('00:00:45:00'),
+      expect((client.getQueryData(['session-status', SESSION_ID]) as SessionStatus).timecode).toBe(
+        '00:00:45:00',
+      ),
     );
 
     expect(result.current).toBeNull();
