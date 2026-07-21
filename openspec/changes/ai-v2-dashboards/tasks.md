@@ -206,7 +206,7 @@ that does not exist.
 > from the existing session endpoints (no new HTTP surface, no delta amendment). Tasks 5.4–5.6 below add
 > that scope; 5.1–5.3 are the original storage tasks.
 
-- [ ] 5.1 Storage in the **session DB** (D5 ruled session DB, 2026-07-21 — idempotent
+- [x] 5.1 Storage in the **session DB** (D5 ruled session DB, 2026-07-21 — idempotent
       `CREATE TABLE IF NOT EXISTS` in `sessionCore.ts` `initSchema`, session DBs have no migrations),
       with **whole-config**
       validation on write (spec: *Dashboard persistence*): every string field length-bounded and
@@ -214,14 +214,14 @@ that does not exist.
       Test: a widget title containing HTML is stored as text and renders inert; a `javascript:`
       URI is rejected on write. Reuse/extend the Phase-1 `catalog.ts` validation; Phase 5.3 replaces
       its placeholder count-caps with the authoritative bounds.
-- [ ] 5.2 Read/write/delete endpoints, backing the web `DashboardPersistencePort`
+- [x] 5.2 Read/write/delete endpoints, backing the web `DashboardPersistencePort`
       (`load(sessionId)`/`save(sessionId,config)`) Phase 4 left as a localStorage mock — swap the
       default impl for a `fetch`-backed one with **no call-site changes**. Read scoped exactly as the
       session (`404` otherwise); write scoped at least as tightly; stored configs record `created_by`
       and the originating turn. The same principal-less-auth refusal as the other AI v2 routes applies
       (device tokens masked `404`). Surface save errors in the UI (the Phase 4 boundary is currently
       fire-and-forget).
-- [ ] 5.3 Bounds (spec: *Dashboard persistence*): per-session dashboard count, per-dashboard widget
+- [x] 5.3 Bounds (spec: *Dashboard persistence*): per-session dashboard count, per-dashboard widget
       count, and serialized config size — each rejected on write when exceeded. Test the render-side
       guard too: a dashboard declaring an absurd widget count does not hang the viewer. **Replace
       `catalog.ts`'s placeholder widget/interaction count caps with these authoritative bounds.**
