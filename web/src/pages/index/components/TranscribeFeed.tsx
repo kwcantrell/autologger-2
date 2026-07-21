@@ -148,8 +148,8 @@ export function TranscribeFeed({ sessionId }: Props) {
       </button>
       {genUnavailable && (
         <span id={genReasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
-          Transcription isn&apos;t configured on this server (needs{' '}
-          <code>DEEPGRAM_API_KEY</code>). Reload after configuring.
+          Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
+          Reload after configuring.
         </span>
       )}
       <button
@@ -185,9 +185,9 @@ export function TranscribeFeed({ sessionId }: Props) {
           ) : genUnavailable ? (
             <>
               Transcription isn&apos;t configured on this server. It needs a DeepGram API key
-              (server setting <code>DEEPGRAM_API_KEY</code>); when enabled, session audio is sent
-              to DeepGram&apos;s cloud to transcribe it. Reload this page after configuring it. You
-              can still add rows by hand with <strong>Insert</strong>.
+              (server setting <code>DEEPGRAM_API_KEY</code>); when enabled, session audio is sent to
+              DeepGram&apos;s cloud to transcribe it. Reload this page after configuring it. You can
+              still add rows by hand with <strong>Insert</strong>.
             </>
           ) : (
             <>

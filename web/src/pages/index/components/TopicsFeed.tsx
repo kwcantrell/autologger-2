@@ -134,15 +134,13 @@ export function TopicsFeed({ sessionId }: Props) {
         emptyMessage={
           genUnavailable ? (
             <>
-              Topic generation isn&apos;t available on this server — no topic-generation
-              integration is configured. You can still add topics by hand with{' '}
-              <strong>Insert</strong>, or design a dashboard from the{' '}
-              <strong>Dashboards</strong> tab.
+              Topic generation isn&apos;t available on this server — no topic-generation integration
+              is configured. You can still add topics by hand with <strong>Insert</strong>, or
+              design a dashboard from the <strong>Dashboards</strong> tab.
             </>
           ) : (
             <>
-              No topics yet. Generate a transcript first, then click{' '}
-              <strong>Auto Generate</strong>.
+              No topics yet. Generate a transcript first, then click <strong>Auto Generate</strong>.
             </>
           )
         }

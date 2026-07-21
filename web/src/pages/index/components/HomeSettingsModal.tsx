@@ -264,7 +264,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       familyName,
     };
     return JSON.stringify(current) !== JSON.stringify(initialSnapshot);
-  }, [initialSnapshot, activeStudioId, activeShowId, defaultFps, showDrafts, givenName, familyName]);
+  }, [
+    initialSnapshot,
+    activeStudioId,
+    activeShowId,
+    defaultFps,
+    showDrafts,
+    givenName,
+    familyName,
+  ]);
 
   async function handleRequestClose() {
     if (dirty) {
@@ -723,9 +731,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                   automatically" — they don't; every edit in this tab is a draft applied by
                   Save (updateShowDraft). Copy now matches the actual save model (D11). */}
               <p className="modal-hint mt-0">
-                Update button colors maps each event&rsquo;s color to the nearest slot color
-                without changing the palette. Drag rows to set session order. Changes here apply
-                when you click <strong>Save</strong>.
+                Update button colors maps each event&rsquo;s color to the nearest slot color without
+                changing the palette. Drag rows to set session order. Changes here apply when you
+                click <strong>Save</strong>.
               </p>
               <EventButtonsTable
                 buttons={currentDraft.categories}
