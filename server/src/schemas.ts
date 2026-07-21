@@ -130,6 +130,19 @@ export const chatRequestSchema = z.object({
 });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
 
+// -- ai-v2-dashboards: the design-turn request body ---------------------------
+// Deliberately mirrors chatRequestSchema's shape: `message` is 1-8000 chars
+// after trimming (whitespace-only ⇒ invalid); `claude_session_id`, when
+// present, is a non-empty string naming a previous design conversation to
+// resume. Task 2.1/2.2's scope is the route's guard SHELL only — ownership/
+// continuity checks against a resume id, the real turn runner, and MCP
+// option-set building belong to tasks 2.3-2.8, which may extend this schema.
+export const aiV2DesignRequestSchema = z.object({
+  message: z.string().trim().min(1).max(8000),
+  claude_session_id: z.string().min(1).optional(),
+});
+export type AiV2DesignRequest = z.infer<typeof aiV2DesignRequestSchema>;
+
 export const companionPresenceBodySchema = z.object({
   client_id: z.string().min(1).max(256),
   session_id: z.string().max(120).nullish(),

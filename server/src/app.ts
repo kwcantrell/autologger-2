@@ -14,6 +14,7 @@ import { InvalidRangeError } from './node/blobStore';
 import { ApiError } from './routers/_helpers';
 import { adminRouter } from './routers/admin';
 import { aiRouter } from './routers/ai';
+import { aiV2Router } from './routers/aiV2';
 import { audioRouter } from './routers/audio';
 import { authRouter } from './routers/auth';
 import { companionRouter } from './routers/companion';
@@ -87,6 +88,7 @@ export function wireApp(
   app.route('/', companionRouter);
   app.route('/', transcribeRouter);
   app.route('/', aiRouter);
+  app.route('/', aiV2Router);
   app.route('/', exportsRouter);
   app.route('/', adminRouter);
 
