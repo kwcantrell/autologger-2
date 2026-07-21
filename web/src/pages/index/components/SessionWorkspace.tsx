@@ -9,6 +9,7 @@ import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { CompanionCommandType } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
+import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { Tooltip } from '../../../shared/ui/Tooltip';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { useAudioClips } from '../hooks/useAudioClips';
@@ -55,7 +56,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
 
   const debugOverride = useDebugTransportOverride();
   const blocksMedia = useRemoteRecordingGate(sessionId || null);
-  useRecoveryStopWarning(sessionId || null, blocksMedia);
+  const recoveryStopPending = useRecoveryStopWarning(sessionId || null, blocksMedia);
   const { mergedPeaks, isDecoding: isWaveformDecoding } = useWaveforms(
     sessionId,
     audioClips,
@@ -204,6 +205,20 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
     <section className="v3-right-wrap relative flex min-h-0 w-full min-w-0 flex-1 flex-col [overflow-x:clip] overflow-y-visible [isolation:isolate] z-0">
       {showExport && sessionId && (
         <ExportModal sessionId={sessionId} onClose={() => setShowExport(false)} />
+      )}
+      {/* Orphan-recording recovery warning (ui-refresh D13): themed replacement for the
+          blocking window.confirm this used to render through. The hook re-validates the
+          orphan + lease at accept-time and no-ops if either resolved in the meantime. */}
+      {recoveryStopPending && (
+        <ConfirmDialog
+          open
+          title={recoveryStopPending.title}
+          message={recoveryStopPending.message}
+          confirmLabel="Add synthetic stop"
+          cancelLabel="Cancel"
+          onConfirm={recoveryStopPending.onAccept}
+          onCancel={recoveryStopPending.onDecline}
+        />
       )}
       {/* Headless audio components */}
       {sessionId && (

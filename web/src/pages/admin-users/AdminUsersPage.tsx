@@ -4,6 +4,7 @@ import { API_ROOT } from '../../api/client';
 import type { AdminDataResponse, AdminStudio, AdminUser } from '../../api/types';
 import logoUrl from '../../assets/logos/logo-autologger-transparent.png';
 import { showToast, Toast } from '../../shared/components/Toast';
+import { useConfirm } from '../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../shared/ui/Popover';
 
 const TOKEN_KEY = 'autologger_admin_token';
@@ -39,6 +40,7 @@ export function AdminUsersPage() {
   const [loading, setLoading] = useState(false);
   const [newTeamId, setNewTeamId] = useState('');
   const [newTeamName, setNewTeamName] = useState('');
+  const { confirm, confirmElement } = useConfirm();
 
   function saveToken(t: string) {
     setToken(t);
@@ -82,7 +84,13 @@ export function AdminUsersPage() {
   }
 
   async function deleteTeam(studioId: string) {
-    if (!confirm(`Delete team "${studioId}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: 'Delete team',
+      message: `Delete team "${studioId}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await fetchAdmin(`admin/studios/${encodeURIComponent(studioId)}`, token, {
         method: 'DELETE',
@@ -330,6 +338,7 @@ export function AdminUsersPage() {
         </div>
       </footer>
       <Toast />
+      {confirmElement}
     </div>
   );
 }

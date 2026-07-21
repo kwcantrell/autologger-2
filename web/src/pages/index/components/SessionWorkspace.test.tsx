@@ -84,7 +84,7 @@ vi.mock('../hooks/useAudioClips', () => ({
 }));
 
 vi.mock('../hooks/useRecoveryStopWarning', () => ({
-  useRecoveryStopWarning: () => {},
+  useRecoveryStopWarning: () => null,
 }));
 
 vi.mock('../hooks/useRemoteRecordingGate', () => ({
