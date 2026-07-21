@@ -137,7 +137,7 @@
       dialogs, Space-on-confirm-button behavior, home surface, mobile 390px tab scroll +
       toolbar fit, **play state with recorded audio** (strip + hint + playback panel layout —
       the one state the spike never verified), recording strip incl. unmount-while-recording.
-- [ ] 8.5 Divergence audit artifact (D15): commit `git diff ui-refresh-spike <branch> --
+- [x] 8.5 Divergence audit artifact (D15): commit `git diff ui-refresh-spike <branch> --
       web/ e2e/` (and a baseline-PNG diff summary) under `.apply/`, with each deliberate
       departure annotated (D11, D13, D14, gate rulings); accidental departures resolved or
       justified before the whole-branch audit.
