@@ -467,6 +467,55 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
   });
 });
 
+// ── Phase-3 fix wave — Fix 1: principal-less (device-token) refusal (design D7) ──
+
+describe('ai/v2/design — principal-less (device-token) refusal (404, design D7, Phase-3 fix wave)', () => {
+  it('a device token (API_TOKEN, user===null) gets 404, masked as "Session not found", spawning nothing', async () => {
+    const s = await seededSession();
+    const res = await post(
+      s,
+      { message: 'hi' },
+      envWith({
+        AI_V2_ENABLED: '1',
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        AI_V2_API_KEY: '',
+        API_TOKEN: 'device-secret',
+      }),
+      { ...J, Authorization: 'Bearer device-secret' },
+    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('a device token is refused with 404 BEFORE the config gate — masks whether AI v2 is even configured', async () => {
+    const s = await seededSession();
+    const res = await post(
+      s,
+      { message: 'hi' },
+      envWith({
+        AI_V2_ENABLED: '', // unconfigured — would otherwise 503
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        API_TOKEN: 'device-secret',
+      }),
+      { ...J, Authorization: 'Bearer device-secret' },
+    );
+    expect(res.status).toBe(404);
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('a valid in-studio real user still passes (not refused by the new guard)', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const user = await seedUser({ studios: [studioId] });
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('ai/v2/design — no guard path spawns (spec "Design turn contract")', () => {
   it('across every guard-rejecting scenario exercised above, attemptDesignTurnSpawn was never called', () => {
     // Aggregate assertion: the per-test expect(spawnSpy).not.toHaveBeenCalled()
@@ -596,6 +645,27 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     // Refused structurally, before/regardless of the registry lookup — the
     // question is still pending, provably not consumed by this attempt.
     expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(true);
+    // /answer never spawns regardless, but the shared guard is proven not to
+    // open any path that could (task 3.1/3.2's SPAWN BOUNDARY still holds).
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('(c\') a device token is refused with 404 BEFORE the config gate on /answer too — masks configuration ' +
+    'state (Phase-3 fix wave, matching the /design route)', async () => {
+    const s = await seededSession();
+    const res = await postAnswer(
+      s,
+      { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
+      envWith({
+        AI_V2_ENABLED: '', // unconfigured — would otherwise 503
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        API_TOKEN: 'device-secret',
+      }),
+      { ...J, Authorization: 'Bearer device-secret' },
+    );
+    expect(res.status).toBe(404);
+    expect(spawnSpy).not.toHaveBeenCalled();
   });
 
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
@@ -735,11 +805,19 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
     const payload = JSON.parse(dataLine.slice('data: '.length)) as {
       requestId: string;
       turnId: string;
-      questions: unknown;
+      questions: Array<{ question: string; header: string; multiSelect: boolean; options: unknown[] }>;
     };
     const { requestId, turnId, questions } = payload;
     expect(requestId).toMatch(/^[0-9a-f]{32}$/);
     expect(JSON.stringify(questions)).not.toMatch(/SECRET-PREVIEW-CONTENT/);
+    // Phase-3 fix wave (Fix 2): `payload.questions` is the flattened array
+    // itself — ONE level below the payload, not `payload.questions.questions`
+    // — since this is a NEW, non-frozen SSE event (safe to change now, before
+    // Phase 4's web QuestionView consumes it).
+    expect(Array.isArray(questions)).toBe(true);
+    expect(questions).toEqual([
+      { question: 'Which widget?', header: 'Widget', multiSelect: false, options: [{ label: 'Duration', description: 'd' }] },
+    ]);
     expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(true);
 
     const answerRes = await postAnswer(

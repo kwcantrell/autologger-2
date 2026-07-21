@@ -116,6 +116,31 @@ describe('AiV2PendingQuestionRegistry — keyed by (sessionId, turnId, requestId
     expect(registry.has(key)).toBe(true);
   });
 
+  it('Phase-3 fix wave (Fix 3, defensive) — rejects an answer with FEWER entries than pending questions; the question remains pending', () => {
+    const registry = new AiV2PendingQuestionRegistry();
+    const key = { sessionId: 's1', turnId: 't1', requestId: 'r1' };
+    registry.register(key, 'user-a', { questions: [{ question: 'Q1?' }, { question: 'Q2?' }] });
+
+    const outcome = registry.resolveAnswer(key, 'user-a', [{ kind: 'text', text: 'only one answer' }]);
+
+    expect(outcome).toBe('not-found');
+    expect(registry.has(key)).toBe(true);
+  });
+
+  it('Phase-3 fix wave (Fix 3, defensive) — rejects an answer with MORE entries than pending questions; the question remains pending', () => {
+    const registry = new AiV2PendingQuestionRegistry();
+    const key = { sessionId: 's1', turnId: 't1', requestId: 'r1' };
+    registry.register(key, 'user-a', { questions: [{ question: 'Q1?' }] });
+
+    const outcome = registry.resolveAnswer(key, 'user-a', [
+      { kind: 'text', text: 'a' },
+      { kind: 'text', text: 'b' },
+    ]);
+
+    expect(outcome).toBe('not-found');
+    expect(registry.has(key)).toBe(true);
+  });
+
   it('a crafted sessionId embedding a would-be delimiter cannot collide two different pending entries onto the same key', () => {
     const registry = new AiV2PendingQuestionRegistry();
     const legit = { sessionId: 's1', turnId: 't1', requestId: 'r1' };
@@ -158,7 +183,8 @@ describe('buildAnswerPermissionResult — option vs free-text answer shapes (spe
 });
 
 describe('stripPreviewForRelay — agent-supplied preview content is discarded before relay (spec "Subprocess security lockdown")', () => {
-  it('drops the preview field from every option, keeping label/description', () => {
+  it('drops the preview field from every option, keeping label/description, and returns the FLATTENED array directly ' +
+    '(Phase-3 fix wave, Fix 2 — not wrapped in another { questions } object)', () => {
     const input = {
       questions: [
         {
@@ -173,20 +199,19 @@ describe('stripPreviewForRelay — agent-supplied preview content is discarded b
       ],
     };
 
-    const relayed = stripPreviewForRelay(input) as {
-      questions: Array<{ options: Array<Record<string, unknown>> }>;
-    };
+    const relayed = stripPreviewForRelay(input);
 
+    expect(Array.isArray(relayed)).toBe(true);
     expect(JSON.stringify(relayed)).not.toMatch(/evil/);
-    expect(relayed.questions[0].options).toEqual([
+    expect(relayed[0].options).toEqual([
       { label: 'A', description: 'desc a' },
       { label: 'B', description: 'desc b' },
     ]);
   });
 
-  it('is defensive against a malformed input shape — never throws', () => {
+  it('is defensive against a malformed input shape — never throws, returning an empty array (not { questions: [] })', () => {
     expect(() => stripPreviewForRelay({})).not.toThrow();
-    expect(stripPreviewForRelay({})).toEqual({ questions: [] });
+    expect(stripPreviewForRelay({})).toEqual([]);
   });
 });
 
@@ -220,6 +245,11 @@ describe('buildPendingQuestionOnQuestion — the onQuestion seam (registers, rel
     expect(payload.turnId).toBe('t1');
     expect(payload.requestId).toMatch(/^[0-9a-f]{32}$/);
     expect(JSON.stringify(payload.questions)).not.toMatch(/SECRET/);
+    // Phase-3 fix wave (Fix 2): the emitted payload's `questions` is the
+    // flattened array itself, not `{ questions: [...] }` one level deeper.
+    expect(Array.isArray(payload.questions)).toBe(true);
+    expect(payload.questions).toHaveLength(1);
+    expect((payload.questions as Array<{ question: string }>)[0].question).toBe('Q?');
     expect(registry.has({ sessionId: 's1', turnId: 't1', requestId: payload.requestId })).toBe(true);
 
     const outcome = registry.resolveAnswer(

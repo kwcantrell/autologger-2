@@ -120,35 +120,48 @@ export function buildAnswerPermissionResult(
   };
 }
 
+/** The single flattened question shape `stripPreviewForRelay` produces —
+ * the SAME shape `DesignQuestionEmitPayload.questions` carries over the wire
+ * (Phase-3 fix wave: the payload used to double-nest this array one level
+ * deeper than necessary; flattened here so there is exactly one `questions`
+ * key between the SDK's raw tool input and the relayed SSE payload). */
+export interface RelayedQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: Array<Record<string, unknown>>;
+}
+
 /**
  * Strip any agent-supplied `preview` content from `AskUserQuestion` options
  * before relaying to a client (spec "Subprocess security lockdown": "any
  * preview content supplied by the agent on a question option SHALL be
  * discarded before the question is relayed to a client" — previews are
  * produced by this application's own components, D3, never agent markup).
- * Defensive against a malformed/unexpected input shape; never throws.
+ * Returns the flattened array of questions directly (not wrapped in another
+ * `{ questions }` object — callers that need the wrapper, e.g. the wire
+ * payload, add it themselves). Defensive against a malformed/unexpected
+ * input shape; never throws.
  */
-export function stripPreviewForRelay(input: Record<string, unknown>): unknown {
+export function stripPreviewForRelay(input: Record<string, unknown>): RelayedQuestion[] {
   const rawQuestions = (input as { questions?: unknown }).questions;
-  if (!Array.isArray(rawQuestions)) return { questions: [] };
-  return {
-    questions: rawQuestions.map((q) => {
-      const question = (q ?? {}) as Record<string, unknown>;
-      const rawOptions = question.options;
-      const options = Array.isArray(rawOptions)
-        ? rawOptions.map((o) => {
-            const { preview: _preview, ...rest } = (o ?? {}) as Record<string, unknown>;
-            return rest;
-          })
-        : [];
-      return {
-        question: typeof question.question === 'string' ? question.question : '',
-        header: typeof question.header === 'string' ? question.header : '',
-        multiSelect: Boolean(question.multiSelect),
-        options,
-      };
-    }),
-  };
+  if (!Array.isArray(rawQuestions)) return [];
+  return rawQuestions.map((q) => {
+    const question = (q ?? {}) as Record<string, unknown>;
+    const rawOptions = question.options;
+    const options = Array.isArray(rawOptions)
+      ? rawOptions.map((o) => {
+          const { preview: _preview, ...rest } = (o ?? {}) as Record<string, unknown>;
+          return rest;
+        })
+      : [];
+    return {
+      question: typeof question.question === 'string' ? question.question : '',
+      header: typeof question.header === 'string' ? question.header : '',
+      multiSelect: Boolean(question.multiSelect),
+      options,
+    };
+  });
 }
 
 export class AiV2PendingQuestionRegistry {
@@ -197,6 +210,14 @@ export class AiV2PendingQuestionRegistry {
    * post-gate correction: a co-member with session access must not learn,
    * from the response, whether they merely guessed a wrong id or are
    * answering someone else's pending question — anti-enumeration).
+   *
+   * Also returns `'not-found'` — the SAME invalid-answer rejection path,
+   * NOT resolving the question — when the submitted answer count does not
+   * match the number of questions actually pending for this entry (Phase-3
+   * fix wave, defensive): `buildAnswerPermissionResult` zips `answers[i]` to
+   * `questions[i]` positionally, so a mismatched count would otherwise
+   * either fabricate a `question_${i}` key for an extra answer or silently
+   * leave a trailing question unanswered.
    */
   resolveAnswer(
     key: PendingQuestionKey,
@@ -206,6 +227,9 @@ export class AiV2PendingQuestionRegistry {
     const k = keyOf(key);
     const entry = this.pending.get(k);
     if (!entry || entry.principalUserId !== answeringPrincipalUserId) return 'not-found';
+    const rawQuestions = (entry.originalInput as { questions?: unknown }).questions;
+    const pendingQuestionCount = Array.isArray(rawQuestions) ? rawQuestions.length : 0;
+    if (answers.length !== pendingQuestionCount) return 'not-found';
     this.pending.delete(k);
     entry.resolve(buildAnswerPermissionResult(entry.originalInput, answers));
     return 'ok';
@@ -245,7 +269,10 @@ export const aiV2PendingQuestions = new AiV2PendingQuestionRegistry();
 export interface DesignQuestionEmitPayload {
   requestId: string;
   turnId: string;
-  questions: unknown;
+  /** The flattened, preview-stripped question array — `stripPreviewForRelay`'s
+   * direct return, ONE `questions` level below the payload (Phase-3 fix
+   * wave: no longer double-nested as `questions: { questions: [...] }`). */
+  questions: RelayedQuestion[];
 }
 
 export interface BuildPendingQuestionOnQuestionParams {
