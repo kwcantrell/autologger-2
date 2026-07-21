@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { systemClock } from '../clock';
-import { newUserAllTeamsEnabled } from '../env';
+import { aiV2UsesLoginFallback, newUserAllTeamsEnabled } from '../env';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -68,8 +68,24 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_CHAT_MAX_CONCURRENT: procEnv.AI_CHAT_MAX_CONCURRENT || '',
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
+      AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
+      AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
+      AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
     },
   };
+  // Spec "Login fallback is announced, not silent" (design D9): say so once,
+  // loudly, at boot — never per-request — whenever a design turn would
+  // authenticate via the operator's OWN claude.ai subscription rather than a
+  // configured workspace key.
+  if (aiV2UsesLoginFallback(bindings.config)) {
+    console.warn(
+      '\n' +
+        '!!! AI v2 is enabled (AI_V2_ENABLED) with no AI_V2_API_KEY configured:\n' +
+        "!!! design turns will authenticate via the operator's `claude login`\n" +
+        "!!! session, spending the OPERATOR'S PERSONAL Anthropic subscription for\n" +
+        '!!! every turn. Set AI_V2_API_KEY to bill a workspace key instead.\n',
+    );
+  }
   // Design D5: NEW_USER_ALL_TEAMS is deprecated -- the callback's new-user
   // branch no longer consults it (teams-self-serve change, "NEW_USER_ALL_TEAMS
   // deprecated"). The key stays parsed (no env-shape break); a truthy value

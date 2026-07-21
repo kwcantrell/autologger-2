@@ -120,6 +120,82 @@ export function aiChatOpenNetworkRefused(env: Config): boolean {
   return !loopback;
 }
 
+// ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────
+
+/** Gate (spec "Configuration-gated AI v2 endpoints"): AI v2 requires an
+ * EXPLICIT enable flag, unlike the AI chat's implicit gate via CLAUDE_CLI_PATH
+ * presence — a design turn spends the operator's Anthropic credentials (and,
+ * unless a workspace key is configured, their PERSONAL claude.ai
+ * subscription — see aiV2CredentialsRefused), so it defaults OFF rather than
+ * "on the moment something is set". Independent of aiChatConfigured: flipping
+ * this MUST NOT affect /api/sessions/:id/ai/chat (spec "AI v2 disabled
+ * independently of the AI chat"). */
+export function aiV2Configured(env: Config): boolean {
+  return ['1', 'true', 'yes'].includes((env.AI_V2_ENABLED || '').trim().toLowerCase());
+}
+
+/** A configured workspace-scoped Anthropic API key (design D9, spec "Agent
+ * credentials") — preferred over the operator's interactive `claude login`
+ * whenever present; the login fallback MUST NOT be used while a key is
+ * configured. */
+export function aiV2ApiKey(env: Config): string {
+  return (env.AI_V2_API_KEY || '').trim();
+}
+
+export function aiV2ApiKeyConfigured(env: Config): boolean {
+  return Boolean(aiV2ApiKey(env));
+}
+
+/** Per-turn spend ceiling in USD (spec "Spend and concurrency bounds", the
+ * SDK's `maxBudgetUsd` option); default 0.5, mirroring aiChatMaxBudgetUsd's
+ * default. Non-numeric / non-positive falls back to the default. */
+export function aiV2MaxBudgetUsd(env: Config): number {
+  const n = Number((env.AI_V2_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 0.5;
+}
+
+function loopbackHostname(env: Config): boolean {
+  const hostname = (env.HOST || '').trim() || '0.0.0.0';
+  return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+}
+
+/** Open-network refusal (spec "Open-network refusal"): same shape as
+ * aiChatOpenNetworkRefused, evaluated independently for AI v2's own routes —
+ * REQUIRE_LOGIN disabled AND a non-loopback bind AND no IP_ALLOWLIST. This is
+ * about the GENERAL auth gate being open on a reachable network; it is
+ * distinct from aiV2CredentialsRefused below, which fires regardless of
+ * REQUIRE_LOGIN. */
+export function aiV2OpenNetworkRefused(env: Config): boolean {
+  if (requireLoginEnabled(env)) return false;
+  if ((env.IP_ALLOWLIST || '').trim()) return false;
+  return !loopbackHostname(env);
+}
+
+/** Agent credentials (spec "Agent credentials", design D9): the interactive
+ * `claude login` fallback is permitted ONLY on a loopback bind. When no
+ * workspace key is configured AND the bind is non-loopback, AI v2 MUST refuse
+ * to serve turns — independent of REQUIRE_LOGIN/IP_ALLOWLIST (a normal
+ * multi-user deployment with login required, but no configured key, bound
+ * non-loopback, would otherwise spend the OPERATOR'S OWN personal claude.ai
+ * subscription on every authenticated user's turn; Anthropic does not permit
+ * third-party apps to offer claude.ai login to others, so that is a policy
+ * problem this predicate exists to prevent, not merely an ops surprise). */
+export function aiV2CredentialsRefused(env: Config): boolean {
+  if (aiV2ApiKeyConfigured(env)) return false;
+  return !loopbackHostname(env);
+}
+
+/** Whether a design turn would authenticate via the operator's interactive
+ * `claude login` session (no key configured, loopback-bound, feature
+ * enabled) — used at startup to emit the loud, non-silent log the spec's
+ * "Login fallback is announced, not silent" scenario requires. False both
+ * when a key IS configured (no fallback in use) and when
+ * aiV2CredentialsRefused would refuse the turn outright (no fallback
+ * possible). */
+export function aiV2UsesLoginFallback(env: Config): boolean {
+  return aiV2Configured(env) && !aiV2ApiKeyConfigured(env) && !aiV2CredentialsRefused(env);
+}
+
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */
 export function adminMeta(env: Config): Record<string, boolean> {
   return {

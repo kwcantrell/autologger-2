@@ -46,6 +46,27 @@ export interface Config {
   AI_CHAT_TIMEOUT_SEC: string;
   AI_CHAT_MAX_CONCURRENT: string;
   AI_CHAT_MAX_BUDGET_USD: string;
+  /** AI v2 dashboards (ai-v2-dashboards). Off by default: unlike the AI chat's
+   * implicit gate (any non-blank CLAUDE_CLI_PATH enables it), AI v2 ALSO
+   * requires this EXPLICIT flag (spec "Configuration-gated AI v2 endpoints")
+   * — a design turn can spend the operator's PERSONAL Anthropic subscription
+   * even with no key configured (see AI_V2_API_KEY below), so opt-in must be
+   * unambiguous rather than implicit. Independent of CLAUDE_CLI_PATH/
+   * AI_CHAT_*: flipping this MUST NOT change /api/sessions/:id/ai/chat's
+   * behavior, and vice versa (spec "AI v2 disabled independently of the AI
+   * chat"). */
+  AI_V2_ENABLED: string;
+  /** A configured workspace-scoped Anthropic API key, preferred over the
+   * operator's interactive `claude login` (design D9, spec "Agent
+   * credentials"). Blank ⇒ fall back to the login, permitted ONLY on a
+   * loopback bind — see aiV2CredentialsRefused. */
+  AI_V2_API_KEY: string;
+  /** Per-turn USD spend ceiling (spec "Spend and concurrency bounds", the
+   * SDK's `maxBudgetUsd` option). Concurrency itself is NOT a separate AI v2
+   * setting — design "Spend and concurrency bounds" shares the AI chat's
+   * registry and ceiling (AI_CHAT_MAX_CONCURRENT) deliberately, so both
+   * features bound the operator's exposure together. */
+  AI_V2_MAX_BUDGET_USD: string;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and
