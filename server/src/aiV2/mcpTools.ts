@@ -52,6 +52,8 @@ import {
   computeTopicTimeline,
   computeUtteranceStats,
 } from './aggregates';
+import type { DashboardConfig } from './catalog';
+import { validateDashboardConfig } from './catalog';
 
 /** MCP server name for the per-turn aggregate toolset. Deliberately distinct
  * from `aiMcpServer.ts`'s `'autologger'` (the AI chat's loopback listener,
@@ -68,6 +70,7 @@ export const AGGREGATE_TOOL_NAMES = [
   'topic_timeline',
   'event_stats',
   'transcript_excerpt',
+  'propose_dashboard',
 ] as const;
 
 /** Hard cap on `topic_timeline`'s returned entries (spec: bounded list). */
@@ -78,11 +81,35 @@ const MAX_EXCERPT_WORDS = 200;
 const DEFAULT_EXCERPT_WORDS = 100;
 
 /**
- * Build a FRESH per-turn MCP server exposing session-scoped aggregate tools.
- * See the module header for the closure/call-time/per-turn invariants this
- * function exists to satisfy.
+ * Task 5.4 (design D10): dependencies for the `propose_dashboard` tool below.
+ * Optional so every existing caller/test that only needs the five read-only
+ * aggregate tools (task 2.4) is unaffected.
  */
-export function buildAggregateMcpServer(sessionId: string, registry: SessionHubRegistry) {
+export interface BuildAggregateMcpServerDeps {
+  /**
+   * Invoked with the ALREADY-VALIDATED `DashboardConfig` when a proposal is
+   * accepted — never invoked for a rejected one, and never invoked with raw/
+   * unvalidated agent input. `aiV2.ts` wires this to a direct
+   * `stream.writeSSE({ event: 'dashboard', ... })` on the design turn's own
+   * stream (mirroring the `question` event's `onQuestion` callback, task
+   * 3.1/3.2) — this module has no knowledge of SSE, HTTP, or persistence; it
+   * only hands back a value that already passed the same whole-config
+   * validator a user write is held to.
+   */
+  onProposeDashboard?: (config: DashboardConfig) => void | Promise<void>;
+}
+
+/**
+ * Build a FRESH per-turn MCP server exposing session-scoped aggregate tools
+ * plus (task 5.4) `propose_dashboard`, the single commit point for a design
+ * turn's proposed dashboard. See the module header for the closure/call-time/
+ * per-turn invariants this function exists to satisfy.
+ */
+export function buildAggregateMcpServer(
+  sessionId: string,
+  registry: SessionHubRegistry,
+  deps: BuildAggregateMcpServerDeps = {},
+) {
   const speakerStats = tool(
     'speaker_stats',
     "Per-speaker talk time and the session's total duration, derived from " +
@@ -235,9 +262,83 @@ export function buildAggregateMcpServer(sessionId: string, registry: SessionHubR
     },
   );
 
+  // ── Task 5.4 — propose_dashboard (design D10, spec "Dashboards are edited
+  // directly" + "Dashboard persistence"). The SINGLE commit point for a
+  // design turn's proposed dashboard: it validates the WHOLE config against
+  // the SAME Phase-1 catalog/layout schema a user write is held to
+  // (`validateDashboardConfig`, imported from ./catalog — never re-derived
+  // here), so agent-authored config (attacker-influenced: transcript content
+  // can steer the agent) cannot bypass a single constraint a user write is
+  // subject to. `sessionId` is not accepted as an input field — this tool
+  // does not read or write session data itself, only hands a validated value
+  // to `deps.onProposeDashboard` for the caller (aiV2.ts) to stream and,
+  // later, persist through the existing Phase-5 store.
+  //
+  // Input schema is DELIBERATELY loose (each widget/interaction is an
+  // untyped record) — the authoritative check is `validateDashboardConfig`
+  // in the handler body, not this tool's own JSON-schema shape, so there is
+  // exactly ONE place the accept/reject decision is made and it is the same
+  // function every other entry point (the persistence PUT route, task 5.2)
+  // already calls.
+  const proposeDashboard = tool(
+    'propose_dashboard',
+    'Commit your proposed starting dashboard for this session. The WHOLE ' +
+      'configuration is validated against the widget catalog and layout ' +
+      'vocabulary before it ever reaches the user — an unknown widget type, ' +
+      'a duplicate widget id, a dangling interaction reference, or a title ' +
+      'containing markup/URL/code content is rejected and NOTHING is shown ' +
+      'or saved. On rejection, fix the reported issues and call this tool ' +
+      'again; on acceptance the user sees your proposal immediately and can ' +
+      'keep or discard it themselves. Provide `widgets` (each an object with ' +
+      'id, type — one of the catalog widget types — title, x, y, w, h) and ' +
+      'optionally `interactions` (each an object with kind — ' +
+      'highlight_speaker | filter_by_topic | scroll_to_time — sourceWidgetId, ' +
+      'targetWidgetId).',
+    {
+      widgets: z
+        .array(z.record(z.unknown()))
+        .describe('Widget instances: id, type, title, x, y, w, h.'),
+      interactions: z
+        .array(z.record(z.unknown()))
+        .optional()
+        .describe('Optional cross-widget interactions: kind, sourceWidgetId, targetWidgetId.'),
+    },
+    async (args) => {
+      const result = validateDashboardConfig({
+        widgets: args.widgets,
+        interactions: args.interactions ?? [],
+      });
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                accepted: false,
+                errors: result.error.issues.map((issue) => issue.message),
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      // Only the VALIDATED, typed value is ever handed onward — never the
+      // raw agent-supplied `args`.
+      await deps.onProposeDashboard?.(result.data);
+      return { content: [{ type: 'text', text: JSON.stringify({ accepted: true }) }] };
+    },
+  );
+
   return createSdkMcpServer({
     name: AGGREGATE_MCP_SERVER_NAME,
     version: '0.1.0',
-    tools: [speakerStats, utteranceStats, topicTimeline, eventStats, transcriptExcerpt],
+    tools: [
+      speakerStats,
+      utteranceStats,
+      topicTimeline,
+      eventStats,
+      transcriptExcerpt,
+      proposeDashboard,
+    ],
   });
 }

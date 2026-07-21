@@ -16,7 +16,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { SessionHubRegistry } from '../session/SessionHub';
-import { AGGREGATE_TOOL_NAMES, buildAggregateMcpServer } from './mcpTools';
+import type { DashboardConfig } from './catalog';
+import { AGGREGATE_TOOL_NAMES, type BuildAggregateMcpServerDeps, buildAggregateMcpServer } from './mcpTools';
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -37,8 +38,9 @@ type ToolResult = { content: Array<{ type: string; text: string }>; isError?: bo
  * in-process transport pair (no HTTP, no subprocess). Caller closes. */
 async function connectToTurn(
   sessionId: string,
+  deps: BuildAggregateMcpServerDeps = {},
 ): Promise<{ client: Client; close: () => Promise<void> }> {
-  const { instance } = buildAggregateMcpServer(sessionId, registry);
+  const { instance } = buildAggregateMcpServer(sessionId, registry, deps);
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test', version: '0.0.0' });
   await Promise.all([instance.connect(serverTransport), client.connect(clientTransport)]);
@@ -237,6 +239,176 @@ describe('buildAggregateMcpServer — bounded lists state their own truncation',
       const timeline = await callJson(client, 'topic_timeline');
       expect(timeline.entries).toEqual([]);
       expect(timeline.truncated).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+});
+
+// ── Task 5.4 — propose_dashboard (design D10, spec "Dashboards are edited ──
+// directly, not only by conversation" + "Dashboard persistence"). Gate-intent
+// property: this tool is the SINGLE commit point, and it validates the WHOLE
+// config against the SAME validator (validateDashboardConfig, ./catalog.ts)
+// a user write is held to — an invalid/unknown/dangling/markup-bearing
+// proposal is rejected at the tool boundary and `onProposeDashboard` is
+// PROVABLY never invoked for it.
+describe('buildAggregateMcpServer — propose_dashboard (design D10)', () => {
+  function validConfig(): DashboardConfig {
+    return {
+      widgets: [
+        { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+        { id: 'w2', type: 'talk_time_by_speaker', title: 'Talk time', x: 4, y: 0, w: 4, h: 2 },
+      ],
+      interactions: [],
+    };
+  }
+
+  it('accepts a valid proposal and hands the VALIDATED config to onProposeDashboard, nothing else', async () => {
+    const proposed: DashboardConfig[] = [];
+    const { client, close } = await connectToTurn('proposeOk', {
+      onProposeDashboard: (config) => {
+        proposed.push(config);
+      },
+    });
+    try {
+      const cfg = validConfig();
+      const res = (await client.callTool({
+        name: 'propose_dashboard',
+        arguments: cfg,
+      })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(JSON.parse(res.content[0].text)).toEqual({ accepted: true });
+      expect(proposed).toEqual([cfg]);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects a config naming an unknown widget type — nothing is proposed', async () => {
+    const proposed: DashboardConfig[] = [];
+    const { client, close } = await connectToTurn('proposeUnknownType', {
+      onProposeDashboard: (config) => {
+        proposed.push(config);
+      },
+    });
+    try {
+      const res = (await client.callTool({
+        name: 'propose_dashboard',
+        arguments: {
+          widgets: [
+            { id: 'w1', type: 'sentiment_series', title: 'Sentiment', x: 0, y: 0, w: 4, h: 2 },
+          ],
+          interactions: [],
+        },
+      })) as ToolResult;
+      expect(res.isError).toBe(true);
+      const parsed = JSON.parse(res.content[0].text) as { accepted: boolean };
+      expect(parsed.accepted).toBe(false);
+      expect(proposed).toHaveLength(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects a config with a dangling interaction reference — nothing is proposed', async () => {
+    const proposed: DashboardConfig[] = [];
+    const { client, close } = await connectToTurn('proposeDangling', {
+      onProposeDashboard: (config) => {
+        proposed.push(config);
+      },
+    });
+    try {
+      const res = (await client.callTool({
+        name: 'propose_dashboard',
+        arguments: {
+          widgets: [
+            { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+          ],
+          interactions: [
+            { kind: 'highlight_speaker', sourceWidgetId: 'w1', targetWidgetId: 'ghost' },
+          ],
+        },
+      })) as ToolResult;
+      expect(res.isError).toBe(true);
+      const parsed = JSON.parse(res.content[0].text) as { accepted: boolean };
+      expect(parsed.accepted).toBe(false);
+      expect(proposed).toHaveLength(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects a markup/URL-bearing title (javascript: URI) — nothing is proposed', async () => {
+    const proposed: DashboardConfig[] = [];
+    const { client, close } = await connectToTurn('proposeMarkup', {
+      onProposeDashboard: (config) => {
+        proposed.push(config);
+      },
+    });
+    try {
+      const res = (await client.callTool({
+        name: 'propose_dashboard',
+        arguments: {
+          widgets: [
+            {
+              id: 'w1',
+              type: 'session_duration',
+              title: '<img src=x onerror="javascript:alert(1)">',
+              x: 0,
+              y: 0,
+              w: 4,
+              h: 2,
+            },
+          ],
+          interactions: [],
+        },
+      })) as ToolResult;
+      expect(res.isError).toBe(true);
+      const parsed = JSON.parse(res.content[0].text) as { accepted: boolean };
+      expect(parsed.accepted).toBe(false);
+      expect(proposed).toHaveLength(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('rejects a duplicate widget id — nothing is proposed', async () => {
+    const proposed: DashboardConfig[] = [];
+    const { client, close } = await connectToTurn('proposeDup', {
+      onProposeDashboard: (config) => {
+        proposed.push(config);
+      },
+    });
+    try {
+      const res = (await client.callTool({
+        name: 'propose_dashboard',
+        arguments: {
+          widgets: [
+            { id: 'w1', type: 'session_duration', title: 'A', x: 0, y: 0, w: 4, h: 2 },
+            { id: 'w1', type: 'talk_time_by_speaker', title: 'B', x: 4, y: 0, w: 4, h: 2 },
+          ],
+          interactions: [],
+        },
+      })) as ToolResult;
+      expect(res.isError).toBe(true);
+      const parsed = JSON.parse(res.content[0].text) as { accepted: boolean };
+      expect(parsed.accepted).toBe(false);
+      expect(proposed).toHaveLength(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('does not accept a sessionId argument — no such property on the tool schema', async () => {
+    const { client, close } = await connectToTurn('proposeNoSession');
+    try {
+      const { tools } = await client.listTools();
+      const proposeTool = tools.find((t) => t.name === 'propose_dashboard');
+      expect(proposeTool).toBeTruthy();
+      const props = Object.keys(
+        (proposeTool?.inputSchema?.properties ?? {}) as Record<string, unknown>,
+      );
+      expect(props.every((p) => !/session/i.test(p))).toBe(true);
     } finally {
       await close();
     }
