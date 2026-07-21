@@ -1,0 +1,29 @@
+deepgram-enrichment-source.mp3 — provenance (persist-deepgram-enrichment, task 1.1)
+
+Source:   https://commons.wikimedia.org/wiki/File:Apollo13-wehaveaproblem.ogg
+Direct:   https://upload.wikimedia.org/wikipedia/commons/6/6f/Apollo13-wehaveaproblem.ogg
+License:  Public domain in the United States — "This file is in the public domain in the
+          United States because it was solely created by NASA. NASA copyright policy states
+          that 'NASA material is not protected by copyright unless noted.'" (Wikimedia
+          Commons file description page, accessed 2026-07-21.)
+Content:  Apollo 13 air-to-ground communication recorded 1970-04-14, mission elapsed time
+          ~02:07:55 — the "Houston, we've had a problem" exchange. Multiple distinct voices
+          across two distinct audio channels: Command Module Pilot Jack Swigert and
+          Commander Jim Lovell aboard the spacecraft (relayed via S-band radio, characteristic
+          static/compression), and CAPCOM Jack Lousma at Mission Control in Houston (clean
+          landline audio) — genuinely two (in fact several) speakers with clearly different
+          acoustic character, good for exercising diarization. English, clearly spoken.
+Original: Ogg Vorbis, 44100 Hz stereo, ~163 kbps, duration 2:59 (178.66s).
+
+Trim + encode (ffmpeg 7.x):
+  ffmpeg -i Apollo13-wehaveaproblem.ogg -ss 0.5 -t 45 -c:a libmp3lame -b:a 128k \
+    deepgram-enrichment-source.mp3
+
+Rationale for the window: starts just after the file's leading ~0.5s of near-silence, runs
+45s (within the ~30-60s target) and, correlated against Spacelog's mission-elapsed-time
+transcript (https://apollo13.spacelog.org/page/02:07:55:19/), covers Swigert's initial call,
+CAPCOM's "Say again, please", Lovell's "we've had a problem... main B bus undervolt", CAPCOM's
+"Roger, main B undervolt" / "stand by, we're looking at it", and into Fred Haise's status
+report — a real multi-speaker back-and-forth exchange, not a single monologue.
+
+Result: MP3 (audio/mpeg), 44100 Hz stereo, 128 kbps, 45.00s, 721022 bytes.

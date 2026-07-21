@@ -11,7 +11,8 @@
     "start": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts"
+    "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts",
+    "capture:deepgram-fixture": "node --env-file-if-exists=.env scripts/capture-deepgram-fixture.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",
