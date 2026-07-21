@@ -435,6 +435,16 @@ export interface RunDesignTurnOptions {
    * (completion/error/timeout/abort). A spy in 2.6's tests; Unit D (2.7)
    * passes the real `AiChatTurnRegistry` release. */
   release: () => void;
+  /** Abandon any pending `AskUserQuestion` for this turn (task 3.3, design
+   * D7 — "not hygiene": an unanswered question parked on the pending-
+   * question registry holds this turn's concurrency slot open, the
+   * predecessor's slot-leak hazard). Invoked in the SAME `finally` as
+   * `terminate`/`release`, on EVERY exit path — including a clean
+   * completion, where it is a harmless no-op — so a pending entry can never
+   * survive the turn it belongs to and a late answer has nothing left to
+   * resolve. Optional so callers that don't wire the Phase-3 registry
+   * (e.g. 2.5/2.6's own tests) are unaffected. */
+  abandonPendingQuestions?: () => void;
   /** Best-effort client-disconnect signal (the SSE request's abort signal). */
   abortSignal?: AbortSignal;
   killGraceMs?: number;
@@ -595,6 +605,10 @@ export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignT
     clearTimeout(timeoutHandle);
     // No orphan on ANY exit path — including an unexpected throw above.
     await terminateOnce();
+    // Task 3.3: the pending-question backstop — same "every exit path"
+    // guarantee as terminate/release above, so an unanswered question never
+    // survives the turn it belongs to (see the field's own docstring).
+    opts.abandonPendingQuestions?.();
     opts.release();
   }
 }

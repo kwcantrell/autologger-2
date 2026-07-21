@@ -242,6 +242,105 @@ describe('runDesignTurn — lifecycle (task 2.6)', () => {
     });
     expect(released).toBe(true);
   });
+});
+
+// ── 3.3 — pending-question abandonment (the slot-leak-hazard backstop) ─────
+// spec "Design question round trip": "the pending question SHALL be
+// abandoned, the turn SHALL end, its child process SHALL be terminated, and
+// its concurrency slot SHALL be released" on client disconnect or timeout —
+// this is the load-bearing property (D7: "not hygiene"), not merely that
+// `abandonPendingQuestions` happens to be called. `abandonPendingQuestions`
+// is OPTIONAL on `RunDesignTurnOptions` so callers that don't wire the
+// Phase-3 registry (2.5/2.6's own tests above) are unaffected.
+
+describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
+  it('a timeout abandons any pending question, in addition to terminating the child and releasing the slot', async () => {
+    let abandoned = false;
+    let terminated = false;
+    let released = false;
+
+    const outcome = await withTimeout(
+      runDesignTurn({
+        query: neverYieldingQuery(),
+        emit: () => {},
+        timeoutMs: 30,
+        abortController: new AbortController(),
+        terminate: async () => {
+          terminated = true;
+        },
+        release: () => {
+          released = true;
+        },
+        abandonPendingQuestions: () => {
+          abandoned = true;
+        },
+        killGraceMs: 10,
+      }),
+      3000,
+      'runDesignTurn never ended for a never-yielding iterator',
+    );
+
+    expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+    expect(abandoned).toBe(true);
+    expect(terminated).toBe(true);
+    expect(released).toBe(true);
+  });
+
+  it('a client disconnect (abort) abandons any pending question too, alongside terminate/release', async () => {
+    let abandoned = false;
+    let terminated = false;
+    let released = false;
+
+    const outcome = await runDesignTurn({
+      query: neverYieldingQuery(),
+      emit: () => {},
+      timeoutMs: 5_000,
+      abortController: new AbortController(),
+      terminate: async () => {
+        terminated = true;
+      },
+      release: () => {
+        released = true;
+      },
+      abandonPendingQuestions: () => {
+        abandoned = true;
+      },
+      abortSignal: AbortSignal.abort(), // already-disconnected client
+    });
+
+    expect(outcome).toEqual({ ok: false, detail: 'aborted' });
+    expect(abandoned).toBe(true);
+    expect(terminated).toBe(true);
+    expect(released).toBe(true);
+  });
+
+  it('a clean completion abandons too (harmless — nothing was pending; proves EVERY exit path, not just timeout/abort)', async () => {
+    let abandoned = false;
+    await runDesignTurn({
+      query: fromMessages([assistant({ type: 'text', text: 'ok' }), resultSuccess]),
+      emit: () => {},
+      timeoutMs: 60_000,
+      abortController: new AbortController(),
+      terminate: NOOP_TERMINATE,
+      release: NOOP_RELEASE,
+      abandonPendingQuestions: () => {
+        abandoned = true;
+      },
+    });
+    expect(abandoned).toBe(true);
+  });
+
+  it('is optional — a caller that omits it (e.g. the 2.5/2.6 tests above) is unaffected', async () => {
+    const outcome = await runDesignTurn({
+      query: fromMessages([assistant({ type: 'text', text: 'ok' }), resultSuccess]),
+      emit: () => {},
+      timeoutMs: 60_000,
+      abortController: new AbortController(),
+      terminate: NOOP_TERMINATE,
+      release: NOOP_RELEASE,
+    });
+    expect(outcome).toEqual({ ok: true });
+  });
 
   it('no orphan: the SIGKILL rung fires against a SIGTERM-ignoring child', async () => {
     const { child, ready } = spawnDetachedReady(IGNORE_SIGTERM);
