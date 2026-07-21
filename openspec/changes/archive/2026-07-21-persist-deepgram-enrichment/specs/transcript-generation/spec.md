@@ -153,17 +153,17 @@ second writer outside this transaction; there is exactly one atomic replace cove
 and enrichment together, so a crash can never leave words persisted with enrichment lost (or
 vice versa).
 
-#### Scenario: Re-run replaces prior words and enrichment together
+#### Scenario: Re-run replaces prior words
 - **WHEN** generation succeeds on a session that already has transcript words and enrichment
 - **THEN** the stored set afterward contains only the new run's words and enrichment,
   replaced in a single transaction
 
-#### Scenario: Failed run preserves existing words and enrichment
+#### Scenario: Failed run preserves existing words
 - **WHEN** any group's provider request fails mid-run
 - **THEN** the session's pre-existing transcript words and enrichment are unchanged and no
   partial insert of either is observable at any point
 
-#### Scenario: Zero-word result does not wipe the transcript or enrichment
+#### Scenario: Zero-word result does not wipe the transcript
 - **WHEN** generation succeeds upstream but returns zero words (e.g. silent audio) for a
   session that already has transcript words and enrichment
 - **THEN** the response is `400` with a no-speech-detected detail and the existing words and
