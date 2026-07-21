@@ -98,8 +98,12 @@ export function useRecoveryStopWarning(
     title: 'Unresolved recording',
     // Copy intentionally does not promise a specific timecode for the stop it
     // will add (D13) — the dialog is non-blocking, so "now" isn't fixed at
-    // render time; it names the current time only in the abstract.
-    message: `The session log shows an audio recording with no matching stop event (last segment around ${pending.lastEndDisplay}). If another window, tab, or user is still recording this session, decline — do not add a stop from here. Accept only if that recording truly ended without logging a stop (for example after a crash); a synthetic stop will be added at the current time to fix the log.`,
+    // render time; it names the current time only in the abstract. Wording
+    // references the actual rendered button labels ("Cancel" / "Add synthetic
+    // stop" — see SessionWorkspace's ConfirmDialog props) rather than the
+    // generic "decline"/"accept" this replaced, so the message and the buttons
+    // agree.
+    message: `The session log shows an audio recording with no matching stop event (last segment around ${pending.lastEndDisplay}). If another window, tab, or user is still recording this session, click Cancel — do not add a stop from here. Click "Add synthetic stop" only if that recording truly ended without logging a stop (for example after a crash); a synthetic stop will be added at the current time to fix the log.`,
     onAccept,
     onDecline,
   };
