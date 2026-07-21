@@ -44,7 +44,7 @@
       SVGs (accent-tinted via `--session-ctl-accent`), wrap tiles in `Tooltip`; keep
       `#btn-ctl-N`/`#btn-ctl-N-icon` ids. Wrap the origination-guard tests in a
       TooltipProvider render helper.
-- [ ] 3.2 TimecodeDisplay: mic/record/stop glyphs → state-tinted SVGs; delete the 12 orphaned
+- [x] 3.2 TimecodeDisplay: mic/record/stop glyphs → state-tinted SVGs; delete the 12 orphaned
       PNG assets (`git rm`), verify zero remaining references.
 - [x] 3.3 Test infra (D12): `renderStrict` wraps `TooltipProvider` + export `StrictWrapper`;
       `matchMedia` stub in `web/src/test/setup.ts`; Tooltip module mocks export

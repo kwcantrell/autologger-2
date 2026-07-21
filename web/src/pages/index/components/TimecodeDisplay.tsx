@@ -1,12 +1,41 @@
 import clsx from 'clsx';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
-import micOffIcon from '../../../assets/icons/mic_off_icon.png';
-import micTcOnIcon from '../../../assets/icons/mic_tc_on_icon.png';
-import recordTcOnIcon from '../../../assets/icons/record_tc_on_icon.png';
-import stopTcOffIcon from '../../../assets/icons/stop_tc_off_icon.png';
 
 interface Props {
   sessionId: string;
+}
+
+// Inline currentColor glyphs (ui-refresh: replaces the pre-tinted PNG pairs —
+// state now tints via text color, matching the transport tiles' SVG treatment).
+function MicGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9.25" y="3.5" width="5.5" height="10" rx="2.75" fill="currentColor" />
+      <path
+        d="M6 11.5C6 14.8137 8.68629 17.5 12 17.5C15.3137 17.5 18 14.8137 18 11.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path d="M12 17.5V21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RecordGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="6" fill="currentColor" />
+    </svg>
+  );
+}
+
+function StopGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6.5" y="6.5" width="11" height="11" rx="1.75" fill="currentColor" />
+    </svg>
+  );
 }
 
 export function TimecodeDisplay({ sessionId }: Props) {
@@ -53,16 +82,22 @@ export function TimecodeDisplay({ sessionId }: Props) {
           id="session-roll-line"
         >
           <span className="inline-flex flex-shrink-0 items-center gap-[0.42rem] self-center p-0 leading-none">
-            <img
-              className="block h-[1.08rem] w-[1.08rem] object-contain opacity-95 [filter:none]"
-              src={isRecording ? micTcOnIcon : micOffIcon}
-              alt=""
-            />
-            <img
-              className="block h-[1.08rem] w-[1.08rem] object-contain opacity-95 [filter:none]"
-              src={isRolling ? recordTcOnIcon : stopTcOffIcon}
-              alt=""
-            />
+            <span
+              className={clsx(
+                'inline-flex h-[1.08rem] w-[1.08rem] items-center justify-center',
+                isRecording ? 'text-[#ef4444]' : 'text-[#6b7280]',
+              )}
+            >
+              <MicGlyph />
+            </span>
+            <span
+              className={clsx(
+                'inline-flex h-[1.08rem] w-[1.08rem] items-center justify-center',
+                isRolling ? 'text-[#b44242]' : 'text-[#6b7280]',
+              )}
+            >
+              {isRolling ? <RecordGlyph /> : <StopGlyph />}
+            </span>
           </span>
           <span className="flex min-h-0 flex-[1_1_auto] items-center justify-end self-stretch">
             <span
