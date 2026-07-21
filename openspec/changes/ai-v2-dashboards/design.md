@@ -406,6 +406,19 @@ non-interactively, and **trust verification is skipped entirely in that mode** �
 `CLAUDE_CONFIG_DIR` isolation does not help because the file lives in `cwd`. The pinned `cwd` is
 what addresses this.
 
+**Pinned SDK: `@anthropic-ai/claude-agent-sdk@0.3.216`** (task 0.1, 2026-07-21): docstrings for
+tools/allowedTools/strictMcpConfig/maxBudgetUsd/cwd/managedSettings verified against the pinned
+copy — match D8 as written. Also confirmed: `AskUserQuestionInput` is present in
+`sdk-tools.d.ts`'s `ToolInputSchemas` union at this version (same version the D8a finding was
+verified on; no drift), and `disableClaudeAiConnectors?: boolean` exists on the `Settings`
+interface that `managedSettings` accepts. Install note (not a docstring finding): the package
+declares a peer dependency on `zod@^4.0.0` across every published `0.2.x`/`0.3.x` version checked,
+which conflicts with this repo's `zod@^3.24.1`; installed with `--legacy-peer-deps` to get an
+exact pin without forcing a zod major bump. No nested/duplicate `zod` was created — one `zod@3.x`
+remains at the top level, so whether the SDK's own runtime code requires `zod@4` behavior at
+call time (as opposed to only at `npm install` peer-resolution time) is unverified and is a
+candidate concern for task 2.4 (in-process MCP tools) or a follow-up spike.
+
 ### D9 — Auth: scoped key preferred, login fallback loopback-only
 
 Owner ruling: use `claude login` when the operator has the CLI installed. Guardrail retained: a
