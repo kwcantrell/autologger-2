@@ -136,7 +136,7 @@ that does not exist.
       contract*): integration tests first for the guard order — auth → session `404` →
       config/open-network `503` → body `422`/`400` → slot `409` — asserting an unauthorized session
       masks as `404` and that **no guard path spawns**. Reuse `requireSession` and `ApiError`.
-- [ ] 2.3 **Closed-world** characterization test on the resolved SDK options (spec: *Subprocess
+- [x] 2.3 **Closed-world** characterization test on the resolved SDK options (spec: *Subprocess
       security lockdown*): assert `tools: ['AskUserQuestion']` (the one-element closed base set —
       **not** `tools: []`, which Spike 0.4 proved strips the tool and kills the feature),
       `permissionMode: 'plan'` (**not** `'dontAsk'`, which bypasses `canUseTool`),
@@ -151,10 +151,10 @@ that does not exist.
       captured in the closure, **never** a parameter; hub resolved at call time, never held across
       an `await`; server instance built **per turn**, never module-scoped. Test: two concurrent
       turns on different sessions do not cross.
-- [ ] 2.5 Turn runner + SSE relay: assistant text only, never reasoning/thinking; exactly one
+- [x] 2.5 Turn runner + SSE relay: assistant text only, never reasoning/thinking; exactly one
       terminal event per completed stream; client abort emits none. Mirror the existing
       `guardedEmit` pattern rather than re-inventing it.
-- [ ] 2.6 Lifecycle (spec: *Subprocess and turn lifecycle*): implement per 0.5's finding, with a
+- [x] 2.6 Lifecycle (spec: *Subprocess and turn lifecycle*): implement per 0.5's finding, with a
       timeout backstop **independent of the agent iterator**. Test: no orphan after abort or
       timeout; a never-yielding iterator still ends and releases its slot.
 - [ ] 2.7 Slot acquisition against the shared registry (spec: *Spend and concurrency bounds*):
