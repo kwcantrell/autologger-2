@@ -250,27 +250,36 @@ needs a *client→server* path SSE cannot provide. Options considered:
   verbatim, is trivially scoped to the answering user, and adds one route. The demo needed a
   socket because it had no other authenticated channel; we already have one.
 
-### D6a — Preview format and question timeout (found during fact-check, 2026-07-21)
+### D6a — Preview format and question timeout (found during fact-check, 2026-07-21; confirmed by spike 0.4)
 
 Two `AskUserQuestion` surfaces the first draft did not account for, read from `sdk.d.ts` v0.3.216:
 
 - **`toolConfig.askUserQuestion.previewFormat` defaults to `'markdown'`**, with `'html'` as the
   opt-in the demo takes. Because catalog previews here render through **React components** (D3),
   we do not need model-authored HTML for the common path — so we **stay on the `'markdown'`
-  default** and never opt into HTML. This removes the sanitization question entirely for catalog
-  previews; the sandboxed iframe (D1) remains the only place model markup renders at all.
+  default** and never opt into HTML. Spike 0.4 pinned `previewFormat: 'markdown'` in every live
+  turn and never opted into `'html'`. The sandboxed iframe was cut in D1 anyway, so model markup
+  has no render path left at all.
 - **`askUserQuestionTimeout`** (`'60s' | '5m' | '10m' | 'never'`, default `'never'`) auto-continues
-  with whatever answers are selected after an idle period. The spec requires that an unanswered
-  question not hold a turn open; this is a *native* mechanism for that, complementing — not
-  replacing — the server-side abandonment path in D7, which must still exist because the client
-  can vanish without the agent noticing.
+  with whatever answers are selected after an idle period. **Correction (task 0.4):** this is a
+  field of the **`Settings`** interface (`sdk.d.ts:4897`), not of `toolConfig.askUserQuestion` —
+  the two live on different option surfaces despite reading like one mechanism in the original
+  draft. It must be set via the top-level **`settings`** option; it does **not** survive
+  `managedSettings`' restrictive-only filter (confirmed twice, independently, by 0.4's and 0.8's
+  `resolveSettings()` checks — the same call that lets `disableClaudeAiConnectors` through drops
+  `askUserQuestionTimeout`). Whether the `settings`-tier value is honored at runtime was not
+  independently spawned (would need a turn idling ≥60s, out of spend scope). The spec still
+  requires that an unanswered question not hold a turn open, so the server-side abandonment path
+  in D7 remains the load-bearing backstop regardless — this is a native complement to it, not a
+  replacement, whether or not the client-side timeout is later verified live.
 
-**Caveat carried to the spike:** the demo runs SDK **v0.2.72**; the version inspected here is
-**v0.3.216**. `toolConfig` exists in both, but no `AskUserQuestion` type, constant, or tool-name
-literal appears anywhere in either `sdk.d.ts` — it is a CLI-side built-in, not an SDK-typed
-symbol. **Whether it survives `tools: []` is therefore unverified and potentially fatal to this
-design** (task 0.4). If `tools: []` strips it, the options are to name it in `tools` explicitly or
-to abandon the interactive-question shape.
+**Resolved by spike 0.4 (was: unverified and potentially fatal to this design).**
+`AskUserQuestion` is a CLI-side built-in, not an SDK-typed symbol — no type, constant, or
+tool-name literal for it appears in `sdk.d.ts` in either the demo's v0.2.72 or the pinned
+v0.3.216. Task 0.4 exercised the interaction live: `tools: []` strips it entirely (the model
+cannot even emit a real `tool_use` block for it — see D8a), while `tools: ['AskUserQuestion']`
+advertises it, fires it, and completes the round trip end to end. See "Resolved by the spike"
+above and D8a below for the full result.
 
 ### D7 — `canUseTool` round trip, hardened
 
@@ -282,6 +291,18 @@ The demo's mechanic, adapted for a multi-user server:
 | no auth on the answer | answer route runs the full guard chain; a request id from another session or turn is rejected |
 | rejects pending promises on socket close | **mandatory**, not optional — see below |
 | `ToolSearch`/`ExitPlanMode` passed through | same, but as a **named** allowance, never a wildcard |
+
+**Confirmed live (spikes 0.2, 0.4).** The full round trip — `AskUserQuestion` advertised, a real
+`tool_use` block, `canUseTool` invoked, a programmatic answer unblocking the turn — was exercised
+end to end three times under this design's option set (task 0.4), and `canUseTool` was separately
+confirmed to fire and gate for every advertised tool (the MCP aggregate tool and
+`AskUserQuestion`), while refusing unadvertised tools by absence rather than by a denial that ever
+reaches it (task 0.2). D8's layering is enforcement, not observability-only. **Correction:** in
+the minimal two-tool turns spiked, `ToolSearch`/`ExitPlanMode` did not request `canUseTool`
+passage at all — the named-passthrough branch stays in the implementation defensively, but no
+turn shape in Phase 0 required it for a successful result; the closed-world test (task 2.3) should
+assert `canUseTool` fires for exactly the tool set actually exercised, not hard-code these two as
+always-present.
 
 The disconnect rejection is load-bearing, not hygiene: a parked promise with no answerer holds the
 turn's concurrency slot open, which is the predecessor's D7 slot-leak hazard. The registry has no
@@ -323,9 +344,12 @@ artifact is mostly shaped by direct user action, with the agent seeding it.
 
 ### D8a — `AskUserQuestion` is a BUILT-IN: `tools: []` makes this feature impossible
 
-**The panel's fatal finding, verified independently before folding.** The first draft specified
-`tools: []` (disable all built-ins) plus `AskUserQuestion` in `allowedTools`. That configuration
-cannot work:
+**The panel's fatal finding, verified independently before folding — and spike-confirmed live**
+(task 0.4): `tools: []` produced zero `AskUserQuestion` advertisement in `system/init` and the
+model could not even emit a syntactically real `tool_use` block for it (it emitted inert text
+that only *mimics* a function call), while `tools: ['AskUserQuestion']` advertised, fired, and
+completed the round trip end to end. The first draft specified `tools: []` (disable all
+built-ins) plus `AskUserQuestion` in `allowedTools`. That configuration cannot work:
 
 - **`AskUserQuestionInput` appears in `sdk-tools.d.ts`'s `ToolInputSchemas` union** — the generated
   inventory of *Claude CLI built-in tool inputs*, alongside `BashInput` and `FileReadInput`. It is
@@ -359,8 +383,11 @@ unsatisfiable alongside the interaction this feature requires.
 
 **Also ruled (from the same finding):** `permissionMode` moves off `'dontAsk'`. The SDK documents
 `dontAsk` as an **auto-deny short-circuit** that can bypass `canUseTool` — the exact callback this
-design blocks on. The demo uses `'plan'` and notes the tool "still fires" there. Spike 0.4 pins
-which mode actually runs the callback; `'dontAsk'` is ruled out on the evidence.
+design blocks on. The demo uses `'plan'` and notes the tool "still fires" there. **Confirmed live
+by spike 0.4:** `permissionMode: 'dontAsk'` auto-denied before `canUseTool` ever ran, for every
+tool tried — not only `AskUserQuestion` — so it is ruled out on live evidence, not only
+documentation. `'plan'` is the mode the spike found that both advertises the tool and routes
+through `canUseTool`.
 
 ### D8b — Inheritance was lossy: three controls and one open conflict were dropped
 
@@ -393,18 +420,29 @@ Carried forward from the superseded change, including the four corrections its p
 must be pinned elsewhere. Plus isolated `CLAUDE_CONFIG_DIR`, `disableClaudeAiConnectors` via
 `managedSettings`, and subprocess env scrub.
 
-`allowedTools` additionally carries **`AskUserQuestion`** here, which the predecessor did not need.
+**`tools`** additionally carries **`AskUserQuestion`** here (D8a), which the predecessor did not
+need — an interactive question tool has no analogue in a read-only session analyst. (Corrected:
+the first draft's `allowedTools`-based framing was itself the fatal misconfiguration D8a found;
+`allowedTools` never restricts, so the built-in is carried in `tools`, not there.)
 
-**Still unverified on the SDK path**, and blocking: whether `settingSources: []` suppresses the
-operator's real `UserPromptSubmit` shell hook; whether the project-tier hook hole (below) is
-closed by the pinned `cwd`; and **whether any process survives an abort** — `interrupt()` is
-streaming-input-only and `abortController` kills one pid, not a group.
+**Resolved by Phase 0 spikes (0.3, 0.5) — see "Resolved by the spike" above for full evidence:**
+`settingSources: []` suppresses the operator's real `UserPromptSubmit` shell hook (task 0.3a,
+control-armed); the project-tier hook hole (below) is closed by `settingSources: []` itself, not
+by the pinned `cwd` as originally framed (task 0.3b, including a hostile-`cwd` control arm); and
+no-orphan on abort is achievable, but **not** via the SDK's default `abortController` alone — it
+requires an implementer-owned process-group kill ladder wired through `spawnClaudeCodeProcess`,
+mirroring `killAiChatProcessGroup` (task 0.5). `interrupt()` remains unused by this design
+regardless of its runtime behavior (task 0.5 found it resolves rather than throws against a
+string prompt, contra a naive docstring reading — moot, since the design never calls it).
 
 **The operator's verified finding that must not be re-lost:** SDK sessions always run
 non-interactively, and **trust verification is skipped entirely in that mode** — so a
 `.claude/settings.json` in the session's `cwd` executes hook commands with **zero prompt**, and
-`CLAUDE_CONFIG_DIR` isolation does not help because the file lives in `cwd`. The pinned `cwd` is
-what addresses this.
+`CLAUDE_CONFIG_DIR` isolation does not help because the file lives in `cwd`. **Corrected (task
+0.3b, control arm 3):** `settingSources: []` alone closes this hole, confirmed live even against a
+planted hostile `cwd` — the pinned `cwd` remains valuable defense-in-depth (and is still the fix
+for the separate `server/.env`-exposure concern this section opened with) but is not itself what
+suppresses the hook.
 
 **Pinned SDK: `@anthropic-ai/claude-agent-sdk@0.3.216`** (task 0.1, 2026-07-21): docstrings for
 tools/allowedTools/strictMcpConfig/maxBudgetUsd/cwd/managedSettings verified against the pinned
@@ -419,6 +457,12 @@ remains at the top level, so whether the SDK's own runtime code requires `zod@4`
 call time (as opposed to only at `npm install` peer-resolution time) is unverified and is a
 candidate concern for task 2.4 (in-process MCP tools) or a follow-up spike.
 
+**Resolved by spike 0.4:** `zod@3.25.76` schemas work correctly against the pinned SDK's
+`createSdkMcpServer`/`tool()` at call time — confirmed live in the Arm B turn, where the model
+called an MCP tool built from a repo-style zod@3 raw-shape schema and got back the expected
+result. The peer-dependency mismatch is peer-resolution-time only, not a runtime interop problem;
+task 2.4 should not re-litigate it.
+
 ### D9 — Auth: scoped key preferred, login fallback loopback-only
 
 Owner ruling: use `claude login` when the operator has the CLI installed. Guardrail retained: a
@@ -427,6 +471,98 @@ bind, and the fallback is logged loudly at startup. Anthropic does not permit th
 applications to offer claude.ai login, and this repo is described as portable — a packaged copy
 silently billing the packager's personal subscription is a policy problem, not just an ops
 surprise.
+
+## Resolved by the spike (Phase 0, 2026-07-21)
+
+Empirical results from the Phase 0 de-risking spikes, each run under `maxBudgetUsd ≤ 0.25`/turn,
+operator-login auth, and the shared option-set builder in `.apply/spikes/harness.mjs`. Full
+evidence, exact option deltas, and live-turn counts are in `.apply/task-0.*-report.md`; this
+section is the terse, decision-relevant summary. D6a/D7/D8/D8a above are rewritten to cite these
+results directly.
+
+- **0.1 — SDK pinned.** `@anthropic-ai/claude-agent-sdk@0.3.216` exact, no range operator. Six
+  load-bearing docstrings (`tools`, `allowedTools`, `strictMcpConfig`, `maxBudgetUsd`, `cwd`,
+  `managedSettings`) match D8 as written. `AskUserQuestionInput` confirmed present in
+  `sdk-tools.d.ts`'s `ToolInputSchemas` union at this exact version.
+
+- **0.4 — the fatal question, GREEN.** `tools: ['AskUserQuestion']` + `permissionMode: 'plan'`
+  works end to end, live: `system/init` advertises the tool, a real `tool_use` block fires,
+  `canUseTool` executes, a programmatic answer unblocks the turn, the turn completes
+  successfully. `tools: []` and `permissionMode: 'dontAsk'` each **independently** kill the
+  interaction (the former strips advertisement entirely — the model emits inert text that only
+  *mimics* a tool call; the latter auto-denies before `canUseTool` ever runs, for every tool, not
+  only `AskUserQuestion`). D8a's gate-accepted weakening (built-in set = exactly
+  `['AskUserQuestion']`) is now spike-confirmed, and `'dontAsk'` is ruled out on live evidence, not
+  only documentation. `previewFormat` stays pinned at the `'markdown'` default throughout.
+
+- **0.4 — design corrections that amend D6a and D8.** `askUserQuestionTimeout` is a **`Settings`**
+  field (`sdk.d.ts:4897`), set via the top-level **`settings`** option — **not** part of
+  `toolConfig.askUserQuestion`, which D6a's original prose conflated. It does **not** survive
+  `managedSettings`' restrictive-only filter (so it must never be passed via `managedSettings`);
+  `disableClaudeAiConnectors` **does** survive that filter, in the same call (re-confirmed
+  independently by 0.8).
+
+- **0.4 — zod interop.** The repo's `zod@3.25.76` works at runtime with the pinned SDK's
+  `createSdkMcpServer` + `tool()`, despite the SDK's declared `zod@^4.0.0` peer — a
+  peer-resolution-time-only mismatch, not a runtime one. Closes the concern task 0.1 opened; task
+  2.4 should not re-litigate it.
+
+- **0.5 — the other potentially-fatal question, GREEN with a design correction.** No-orphan is
+  achievable for both the abort and timeout triggers, but **not** via the SDK's default
+  `abortController` alone: that path is single-pid (SIGTERM at 2s, SIGKILL at 7s, gated on the
+  *tracked leader's* exit status — confirmed from `sdk.mjs` source and live). A naive
+  process-group-forward of the SDK's own signals left a real SIGTERM-ignoring companion process
+  **orphaned, live**. Closing it requires an **implementer-owned pgid group-kill ladder gated on
+  group liveness**, wired through the SDK's `spawnClaudeCodeProcess` spawn override — mirroring
+  `killAiChatProcessGroup` in `server/src/routers/aiChatRunner.ts` almost exactly. The SDK exposes
+  no child pid anywhere (typed and live-confirmed) — `spawnClaudeCodeProcess` is the only way to
+  obtain one. The turn iterator **throws** on abort in every arm (tasks 2.5/2.6 must catch it, not
+  rely on a clean loop return). `interrupt()` resolves, rather than throwing, against a string
+  prompt on the pinned version — moot here, since the design never calls it.
+
+- **0.2 / 0.3 — escape attempts and hook holes.** Shell (`Bash`) and filesystem (`Read`) escape
+  attempts were both refused under the shipping `tools: ['AskUserQuestion']` set, by
+  non-advertisement — neither tool appeared in `system/init`, so no real `tool_use` block for
+  either was ever possible. `canUseTool` **fires** for every advertised tool (the MCP aggregate
+  tool and `AskUserQuestion` both), gating in addition to being merely notified — D8's layering is
+  **enforcement**, not observability-only. Hook holes, both control-armed: `settingSources: []`
+  suppresses the operator's real user-tier `UserPromptSubmit` hook (fires under
+  `settingSources: ['user']` on the identical setup); a planted project-tier hostile hook fires
+  under a hostile `cwd` + `settingSources: ['project']` (control, proving the plant works) but
+  **not** under the shipping config, and — the correction — **not even under a hostile `cwd`** when
+  `settingSources: []` alone is set (arm 3). **D8's attribution is corrected accordingly:** the
+  pinned `cwd` is defense-in-depth (and remains load-bearing for the separate `server/.env`
+  exposure concern), but `settingSources: []` is itself what closes the project-tier hook hole —
+  not the pinned `cwd`, as the original prose claimed.
+
+- **0.7 — `safeMode` NOT needed.** Our existing combination — `settingSources: []` (hooks) +
+  `strictMcpConfig: true` (repo `.mcp.json`) + pinned empty `cwd` + isolated empty
+  `CLAUDE_CONFIG_DIR` (CLAUDE.md, skills) + never setting `plugins`/`skills`/`agents` — already
+  closes every category `--safe-mode` closes, for this design's runtime shape. `settingSources: []`
+  and `--safe-mode` are **not** equivalent mechanisms (they gate different, largely
+  non-overlapping categories); it is the full combination that closes the gap, not any one control
+  alone. Settles D8b's inherited, explicitly-unresolved `safeMode` conflict. No `extraArgs`
+  exception is needed in task 2.3 — the closed-world test keeps asserting `extraArgs` fully absent.
+
+- **0.8 — settings-cascade record.** `resolveSettings()`'s own input surface covers only
+  `{cwd, settingSources, managedSettings, serverManagedSettings}` — most of D8's controls
+  (`tools`, `disallowedTools`, `strictMcpConfig`, `mcpServers`, `permissionMode`,
+  `settings.askUserQuestionTimeout`, and others) are not `Settings`-cascade fields at all and were
+  correctly verified live in 0.1–0.5 rather than through this API. Of the fields that *are*
+  representable: `settingSources: []` yields an empty resolved `sources` array (independent
+  confirmation of 0.3); `managedSettings.disableClaudeAiConnectors` survives the restrictive-only
+  filter; `managedSettings.askUserQuestionTimeout` is dropped by the same call, alongside the
+  docstring's own named "silently dropped" examples (`model`, `cleanupPeriodDays`) — strengthening
+  confidence the filter is real allowlist membership, not a no-op.
+
+- **0.9 — no-spawn is testable on the SDK path.** Using the `pathToClaudeCodeExecutable` option
+  pointed at an on-disk recorder fixture (`server/src/test/fixtures/ai-v2-sdk-spawn-recorder.mjs`),
+  committed as a new test seam (`server/src/routers/aiV2SdkSpawn.ts` /
+  `aiV2SdkSpawn.test.ts`, commit `cd31da8`) — deliberately not `vi.mock('node:child_process')`,
+  which is unreliable for the SDK path for the same eager-module-vs-hoisted-mock timing reason
+  D8b's inherited test-infra finding names. `query()` spawns synchronously at call time (before
+  the caller's first `await`), so the recorder need not drain a turn to prove a spawn occurred.
+  Task 2.2's route tests should reuse this seam directly rather than re-deriving one.
 
 ## Risks / Trade-offs
 
@@ -457,27 +593,47 @@ surprise.
 
 ## Inherited findings (from the superseded `ai-session-analyst`)
 
-Carried forward from the superseded change. **These are panel corrections to a document —
-doc-reading, not empirical results** (see D8b: the predecessor's own log records "no spike has
-been run for the SDK"). They are still unverified on the SDK path, and Phase 0 exists to settle
-them. Each was expensive to learn and must not be re-derived from scratch:
+Carried forward from the superseded change. **These were panel corrections to a document —
+doc-reading, not empirical results** when first folded (see D8b: the predecessor's own log
+records "no spike has been run for the SDK"). Phase 0 has since settled most of them empirically;
+each bullet below records what happened. See "Resolved by the spike" above for the full evidence
+and per-task citations — the blanket "still unverified" framing this section used to carry is now
+largely false and is corrected item by item:
 
-- **`allowedTools` does not restrict** — it is auto-approve (*"To restrict which tools are
-  available, use the `tools` option instead"*). `tools: []` is the built-in denial. The
-  predecessor's first draft got this backwards, leaving shell and filesystem built-ins live in a
-  nominally locked-down agent.
+- **`allowedTools` does not restrict; `tools: []` is the built-in denial.** Doc-derived, and now
+  behaviorally consistent with every live spike: `tools` controlled what was advertised in
+  `system/init` in every turn (0.2, 0.4), while `allowedTools` was never populated or exercised as
+  a restriction mechanism in Phase 0. The predecessor's first draft got this backwards, leaving
+  shell and filesystem built-ins live in a nominally locked-down agent; no spike re-created that
+  specific wrong configuration to independently re-confirm the failure mode, so this stays
+  doc-derived rather than newly spiked.
 - **`maxBudgetUsd` exists and enforces** — the predecessor's draft claimed no equivalent and
-  rationalized a weaker bound.
+  rationalized a weaker bound. Doc-confirmed (task 0.1) and used successfully as a spend cap in
+  every live turn across Phase 0 (≤$0.25/turn, never exceeded); not stress-tested to observe it
+  actually cut off an over-budget turn.
 - **`strictMcpConfig: true` is required** — it suppresses project `.mcp.json`, and this repo has
   one checked in (CodeGraph, commit `591ac17`) that would otherwise load into the agent.
+  Doc-confirmed (task 0.1); not independently re-verified live against this repo's own
+  `.mcp.json` in Phase 0, so this stays hedged as doc-derived.
 - **`cwd` defaults to `process.cwd()`** — the repo checkout, which contains `server/.env`.
-- **Trust verification is skipped for non-interactive sessions** (operator-verified, live test):
-  a project-tier `.claude/settings.json` in `cwd` executes hooks with **zero prompt**, and
-  `CLAUDE_CONFIG_DIR` isolation does not cover it because the file lives in `cwd`.
-- **Lifecycle is unresolved** — `interrupt()` is streaming-input-only; `abortController` kills one
-  pid, not a process group; the SDK exposes no pid.
-- **Test-infra debt** — `vi.mock('node:child_process')` is vacuous through the shared `app`
-  singleton.
+  Doc-confirmed (task 0.1); genuinely untested beyond that (no spike arm ever left `cwd`
+  unpinned), so it stays hedged.
+- **Trust verification is skipped for non-interactive sessions — RESOLVED, with a correction.**
+  Task 0.3 confirmed live, with control arms, that `settingSources: []` — not the pinned `cwd`, as
+  originally framed here and in D8 — is what suppresses both the user-tier hook (0.3a) and the
+  project-tier hook (0.3b, including against a planted hostile `cwd`). See D8's corrected
+  attribution above.
+- **Lifecycle is unresolved — LARGELY RESOLVED (task 0.5).** `abortController` kills one pid, not
+  a process group: confirmed from `sdk.mjs` source and live. The SDK exposes no pid: confirmed,
+  both typed and live. No-orphan is achievable, but only via an implementer-owned process-group
+  kill ladder through `spawnClaudeCodeProcess` — a naive group-forward of the SDK's own signals
+  left a real orphan live. `interrupt()`'s actual runtime behavior against a string prompt
+  (resolves, does not throw) is now known, though moot since this design never calls it.
+- **Test-infra debt — ADDRESSED, not eliminated.** `vi.mock('node:child_process')` is vacuous
+  through the shared `app` singleton. Task 0.9 built and committed a working alternative test seam
+  (`pathToClaudeCodeExecutable` pointed at an on-disk recorder fixture) for the SDK path
+  specifically, rather than fixing the underlying mock-timing hole; the underlying vitest
+  mock-timing issue itself remains unfixed for any code that still relies on `vi.mock` for this.
 
 ## UI design brief (2026-07-21, post-gate design artifact)
 
@@ -668,3 +824,19 @@ per process this gets a light-tier consistency read (outcome recorded below), no
 spec against the new section: cross-references live (D7a, D2b, `design/mockup.html` on disk), no
 contradictions with D1–D9 or the spec's requirements (no agent preview HTML, no sentiment
 widgets, no WS answers, edit path turn-free), log entry accurate.
+
+### 2026-07-21 — Phase 0 de-risking spikes (empirical, apply-time)
+
+Both potentially-fatal questions — 0.4 (`AskUserQuestion` under our locked-down `tools` set) and
+0.5 (no-orphan lifecycle) — came back **GREEN**: the transport choice does **not** return to the
+gate. Design corrections folded into D6a/D7/D8/D8a from the spike evidence: `askUserQuestionTimeout`
+belongs on the top-level `settings` option, not `toolConfig.askUserQuestion` (0.4); the
+project-tier hook hole is closed by `settingSources: []` itself, with the pinned `cwd` recast as
+defense-in-depth rather than the fix (0.3); no-orphan on abort/timeout requires an
+implementer-owned process-group kill ladder wired through `spawnClaudeCodeProcess` for task 2.6,
+mirroring `killAiChatProcessGroup` — the SDK's default `abortController` alone is insufficient
+(0.5); and `safeMode` is ruled unnecessary, closing D8b's inherited, explicitly-unresolved
+conflict, with no `extraArgs` exception needed in task 2.3 (0.7). Per-task evidence, exact option
+deltas, and live-turn counts live in `.apply/task-0.1-report.md` through `.apply/task-0.9-report.md`
+(and the combined `.apply/task-0.2-0.3-report.md`, `.apply/task-0.7-0.8-report.md`); a terse
+summary is recorded above under "Resolved by the spike".
