@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { AiV2Panel } from './AiV2Panel';
 import type { DashboardPersistencePort } from './aiV2/dashboardPersistence';
 import type { DashboardConfig } from './aiV2/widgetTypes';
@@ -30,6 +30,12 @@ function fakeFetchResponse(chunks: string[]) {
   return {
     status: 200,
     ok: true,
+    // Task 5.6: AiV2Panel now ALSO fires plain GET requests for its
+    // widget-data hooks (transcript-words/topics/events/show-categories),
+    // which get this SAME stubbed response (the mock isn't routed by URL) —
+    // `apiFetch` reads `res.headers` unconditionally, so a benign
+    // content-type header keeps those incidental calls from throwing.
+    headers: new Headers({ 'content-type': 'application/json' }),
     body: {
       getReader() {
         return {
@@ -95,7 +101,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       ),
     );
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     await screen.findByTestId('aiv2-start-blank'); // initial empty state loaded
     startDesignTurn();
@@ -129,7 +135,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       ),
     );
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     await screen.findByTestId('aiv2-start-blank');
     startDesignTurn();
@@ -155,7 +161,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       ),
     );
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     await screen.findByTestId('aiv2-start-blank');
     startDesignTurn();
@@ -186,7 +192,7 @@ describe('AiV2Panel — the dashboard SSE event renders a proposal through the r
       ),
     );
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     await screen.findByTestId('aiv2-start-blank');
     startDesignTurn();

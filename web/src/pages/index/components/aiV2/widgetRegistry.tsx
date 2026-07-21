@@ -51,7 +51,16 @@ export type CatalogWidgetData =
   | { widgetType: 'question_counts'; questionCounts: UtteranceStatsData }
   | { widgetType: 'filler_counts'; fillerCounts: FillerStatsData }
   | { widgetType: 'topic_timeline'; topicTimeline: TopicTimelineDataT }
-  | { widgetType: 'event_count_by_category'; eventCountByCategory: EventCountsData }
+  | {
+      widgetType: 'event_count_by_category';
+      eventCountByCategory: EventCountsData;
+      /** Category id -> display label (task 5.6, design D2a: labels live in
+       * the catalog DB, resolved by the caller from the web's existing
+       * category source). Passed through verbatim to
+       * `EventCountByCategoryWidget` — see that component for the
+       * "labels unavailable" fallback when a specific id has no entry. */
+      categoryLabels?: Record<string, string>;
+    }
   | { widgetType: 'event_density'; eventDensity: EventDensityData }
   | {
       widgetType: 'transcript_excerpt';
@@ -97,7 +106,12 @@ function renderBody(data: CatalogWidgetData) {
     case 'topic_timeline':
       return <TopicTimelineWidget data={data.topicTimeline} />;
     case 'event_count_by_category':
-      return <EventCountByCategoryWidget data={data.eventCountByCategory} />;
+      return (
+        <EventCountByCategoryWidget
+          data={data.eventCountByCategory}
+          categoryLabels={data.categoryLabels}
+        />
+      );
     case 'event_density':
       return <EventDensityWidget data={data.eventDensity} />;
     case 'transcript_excerpt':

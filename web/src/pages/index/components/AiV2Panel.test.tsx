@@ -1,6 +1,7 @@
 import { fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
+import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { AiV2Panel } from './AiV2Panel';
 import { DashboardGrid } from './aiV2/DashboardGrid';
 import { SAMPLE_WIDGET_DATA } from './aiV2/widgetRegistry';
@@ -26,6 +27,12 @@ function fakeFetchResponse(chunks: string[]) {
   return {
     status: 200,
     ok: true,
+    // Task 5.6: AiV2Panel now ALSO fires plain GET requests for its
+    // widget-data hooks (transcript-words/topics/events/show-categories),
+    // which fall through this router's `designResponse()` default (below) —
+    // `apiFetch` reads `res.headers` unconditionally, so a benign
+    // content-type header keeps those incidental calls from throwing.
+    headers: new Headers({ 'content-type': 'application/json' }),
     body: {
       getReader() {
         return {
@@ -95,7 +102,7 @@ describe('AiV2Panel — question-option preview resolves through the real Catalo
       ),
     );
 
-    renderStrict(<AiV2Panel sessionId="sess-1" />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" />);
     const textarea = screen.getByPlaceholderText(/ask for a starting dashboard/i);
     fireEvent.change(textarea, { target: { value: 'Give me an overview' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));

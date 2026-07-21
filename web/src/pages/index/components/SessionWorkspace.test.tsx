@@ -32,6 +32,24 @@ vi.mock('../../../api/hooks/useEvents', () => ({
   useEvents: () => ({ data: undefined }),
 }));
 
+// ai-v2-dashboards task 5.6: AiV2Panel (exercised for real here, see below)
+// now calls these three hooks too, via `useAiV2WidgetData`. They all use the
+// REAL `useQuery` under the hood, which the wholesale `@tanstack/react-query`
+// mock below does not provide — mocked at the module boundary, matching
+// `useEvents` above, so AiV2Panel's widget-data hook never reaches it.
+vi.mock('../../../api/hooks/useTranscriptWords', () => ({
+  useTranscriptWords: () => ({ data: undefined }),
+}));
+
+vi.mock('../../../api/hooks/useTopics', () => ({
+  topicsQueryKey: (sessionId: string) => ['topics', sessionId],
+  useTopics: () => ({ data: undefined }),
+}));
+
+vi.mock('../../../api/hooks/useShowCategories', () => ({
+  useShowCategories: () => ({ data: undefined }),
+}));
+
 vi.mock('../../../api/hooks/useSessionSocket', () => ({
   useSessionSocket: () => {},
 }));

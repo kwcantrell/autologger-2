@@ -177,6 +177,15 @@ export interface TranscriptWord {
   session_time: string;
   speaker: string;
   word: string;
+  /** Already present on the wire (the server spreads its own `TranscriptWord`
+   * row verbatim — `server/src/routers/transcribe.ts`'s
+   * `words.map((w) => ({ ...w, session_id: sessionId }))`) but omitted from
+   * this type until ai-v2-dashboards task 5.6 needed typed access for
+   * client-side aggregation (`0.0` for manually-entered/anchorless words —
+   * see `server/src/aiV2/aggregates.ts`'s degenerate-timing discipline, D2a).
+   * Declaring it here is a type-only fix, not a wire-shape change. */
+  start_sec: number;
+  end_sec: number;
   ordinal: number;
   created_at_utc: string;
 }

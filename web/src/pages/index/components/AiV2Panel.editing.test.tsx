@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
 import { AiV2Panel } from './AiV2Panel';
 import type { DashboardPersistencePort } from './aiV2/dashboardPersistence';
 import type { DashboardConfig } from './aiV2/widgetTypes';
@@ -11,10 +11,15 @@ import type { DashboardConfig } from './aiV2/widgetTypes';
 // These tests exercise the CANVAS seam end to end: "Start blank" creating an
 // empty dashboard config in edit mode, add/remove/retitle mutating it and
 // calling the persistence boundary's `save` — and, the load-bearing gate
-// assertion, that NONE of this ever calls `fetch` (i.e. never runs a design
-// turn against `/ai/v2/design` or `/ai/v2/answer` — the ONLY fetch call
-// sites for this feature, both in AiV2Design.tsx, which this panel mounts
-// alongside the canvas the whole time).
+// assertion, that NONE of this ever calls `/ai/v2/design` or `/ai/v2/answer`
+// (i.e. never runs a design turn — the only two fetch call sites for that,
+// both in AiV2Design.tsx, which this panel mounts alongside the canvas the
+// whole time). Since ai-v2-dashboards task 5.6, the canvas ALSO fires plain
+// GET requests for its widget-data hooks (transcript-words/topics/events/
+// show-categories) on every mount — legitimate, unrelated to running a
+// design turn — so the gate below asserts those two specific endpoints were
+// never called, rather than "fetch was never called at all" (this file's
+// original, now over-broad, assertion).
 
 function last<T>(arr: T[]): T | undefined {
   return arr[arr.length - 1];
@@ -37,8 +42,25 @@ function fakePort(initial: DashboardConfig | null = null): DashboardPersistenceP
   };
 }
 
+/** A single benign, empty-shaped 200 response satisfies every widget-data GET
+ * (transcript-words/topics/events/show-categories) — none of these tests
+ * assert on rendered widget content, only on the editing/persistence seam,
+ * so an unrouted catch-all is sufficient (and keeps this file's `fetchSpy`
+ * simple enough to still assert against directly). */
+function benignFetchResponse() {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'content-type': 'application/json' }),
+    json: async () => ({}),
+  } as unknown as Response;
+}
+
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn());
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => benignFetchResponse()),
+  );
 });
 
 afterEach(() => {
@@ -48,7 +70,7 @@ afterEach(() => {
 describe('AiV2Panel — Start blank', () => {
   it('creates an empty dashboard config, drops straight into edit mode, and persists it', async () => {
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     const startBlank = await screen.findByTestId('aiv2-start-blank');
     fireEvent.click(startBlank);
@@ -65,7 +87,7 @@ describe('AiV2Panel — Start blank', () => {
       interactions: [],
     };
     const port = fakePort(saved);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     expect(await screen.findByTestId('aiv2-dashboard-grid')).toBeTruthy();
     expect(screen.queryByTestId('aiv2-dashboard-editor')).toBeNull();
@@ -77,7 +99,7 @@ describe('AiV2Panel — a dashboard is modified end-to-end with NO agent turn', 
   it('add + retitle + remove on a blank dashboard call save() but never fetch()', async () => {
     const fetchSpy = vi.mocked(fetch);
     const port = fakePort(null);
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     fireEvent.click(await screen.findByTestId('aiv2-start-blank'));
     await screen.findByTestId('aiv2-dashboard-editor');
@@ -112,11 +134,17 @@ describe('AiV2Panel — a dashboard is modified end-to-end with NO agent turn', 
     fireEvent.click(screen.getByTestId('aiv2-editor-remove'));
     await waitFor(() => expect(last(port.saves)?.widgets).toEqual([]));
 
-    // Gate assertion: none of add/retitle/reposition/resize/remove ever
-    // touched `fetch` — the ONLY call sites for the design-turn endpoints
-    // (/ai/v2/design, /ai/v2/answer) both live in AiV2Design.tsx, mounted
-    // alongside this canvas the entire time.
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Gate assertion: none of add/retitle/reposition/resize/remove (nor the
+    // widget-data hooks firing on mount) ever touched the design-turn
+    // endpoints (/ai/v2/design, /ai/v2/answer) — the ONLY call sites for
+    // those both live in AiV2Design.tsx, mounted alongside this canvas the
+    // entire time. (The canvas's OWN GET requests for widget data are
+    // expected and unrelated to this gate — see this file's header comment.)
+    const designOrAnswerCalls = fetchSpy.mock.calls.filter(([input]) => {
+      const url = typeof input === 'string' ? input : String(input);
+      return url.includes('/ai/v2/design') || url.includes('/ai/v2/answer');
+    });
+    expect(designOrAnswerCalls).toHaveLength(0);
   });
 });
 
@@ -132,7 +160,7 @@ describe('AiV2Panel — save/load errors are surfaced, not silently swallowed', 
         throw new Error('Serialized dashboard configuration exceeds the limit.');
       },
     };
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     fireEvent.click(await screen.findByTestId('aiv2-start-blank'));
 
@@ -148,7 +176,7 @@ describe('AiV2Panel — save/load errors are surfaced, not silently swallowed', 
       },
       async save() {},
     };
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     expect((await screen.findByTestId('aiv2-dashboard-error')).textContent).toBe(
       'Failed to load dashboard (HTTP 500).',
@@ -166,7 +194,7 @@ describe('AiV2Panel — save/load errors are surfaced, not silently swallowed', 
         if (shouldFail) throw new Error('Save failed.');
       },
     };
-    renderStrict(<AiV2Panel sessionId="sess-1" persistence={port} />);
+    renderWithQueryClient(<AiV2Panel sessionId="sess-1" persistence={port} />);
 
     fireEvent.click(await screen.findByTestId('aiv2-dashboard-edit'));
     fireEvent.click(screen.getByTestId('aiv2-editor-add-widget'));

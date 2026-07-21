@@ -7,6 +7,7 @@ import {
   type DashboardPersistencePort,
   fetchDashboardPersistence,
 } from './aiV2/dashboardPersistence';
+import { useAiV2WidgetData } from './aiV2/useAiV2WidgetData';
 import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import type { DashboardConfig } from './aiV2/widgetTypes';
 import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
@@ -157,6 +158,15 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   // the saved dashboard until kept or discarded.
   const displayConfig = proposedDashboard ?? dashboardConfig;
 
+  // Task 5.6 (design D11): the widgets' REAL data, computed client-side from
+  // the session's existing transcript-words/topics/events/show-categories
+  // endpoints — replaces the Phase-4 `widgetData={{}}` placeholder. Always
+  // called (rules of hooks) with whatever widgets are currently displayed,
+  // whether that's the saved dashboard, an in-progress edit, or an agent's
+  // pending proposal — every one of those is rendered through the same
+  // `DashboardGrid`/`DashboardEditor` widgetData prop.
+  const widgetData = useAiV2WidgetData(sessionId, displayConfig?.widgets ?? []);
+
   return (
     <div className="flex flex-1 min-h-0 gap-3" data-testid="aiv2-panel">
       <section
@@ -227,12 +237,16 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
             )}
             <div className="min-h-0 flex-1 overflow-y-auto">
               {!proposedDashboard && dashboardConfig && editingDashboard ? (
-                <DashboardEditor config={dashboardConfig} onChange={handleDashboardChange} />
+                <DashboardEditor
+                  config={dashboardConfig}
+                  onChange={handleDashboardChange}
+                  widgetData={widgetData}
+                />
               ) : (
                 <DashboardGrid
                   widgets={displayConfig.widgets}
                   interactions={displayConfig.interactions}
-                  widgetData={{}}
+                  widgetData={widgetData}
                 />
               )}
             </div>
