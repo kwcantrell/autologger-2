@@ -76,3 +76,28 @@ no liveness story to add.
   work — so session transcript content does land on the host. "Read-only" means no autologger
   session state is mutated; it does not mean no side effects. Spend, egress to Anthropic,
   on-disk conversation state, and issued-id retention are all expected consequences of a turn.
+
+---
+
+## SUPERSEDED 2026-07-20 — not implemented
+
+Abandoned before implementation by owner decision, in favour of **`ai-v2-dashboards`** (an "AI
+v2" tab where users design dashboards from session transcripts/logs, modelled on the
+`ask-user-question-previews` SDK demo). The read-only-analyst framing does not survive the
+pivot: dashboard design is a build-an-artifact workflow, not a question-answering one.
+
+**Artifacts retained deliberately** — the panel and two gates produced findings that are inputs
+to the successor, and re-deriving them would be waste:
+
+- **D0/D1/D2** — the SDK lockdown option set, including the four corrections the panel forced
+  (`tools: []` is the restriction, not `allowedTools`; `maxBudgetUsd` exists; `strictMcpConfig`
+  suppresses project `.mcp.json`; `cwd` defaults to the repo checkout).
+- **D7** — subprocess lifecycle: `interrupt()` is streaming-input-only; `abortController` kills
+  one pid, not a group. Unresolved, and inherited by the successor.
+- **D10** — auth policy: scoped key preferred, `claude login` fallback loopback-only.
+- **D11** — the operator's verified finding that SDK sessions skip trust verification, so a
+  project-tier settings file in `cwd` executes hooks with zero prompt.
+- **D12** — the `canUseTool` → promise → browser round trip, which is now the *core* interaction
+  of the successor rather than a clarifying-question add-on.
+
+No code was written against this change; nothing to revert.
