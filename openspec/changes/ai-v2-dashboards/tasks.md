@@ -147,7 +147,7 @@ that does not exist.
       — **and** assert `hooks`/`plugins`/`agents`/`extraArgs`/`additionalDirectories`/
       permission-bypass are **absent**. Do **not** hard-code `ToolSearch`/`ExitPlanMode` as
       required `canUseTool`-passers — Spike 0.4 found they don't request passage in minimal turns.
-- [ ] 2.4 In-process MCP aggregate tools (spec: *Session-scoped aggregate toolset*): `sessionId`
+- [x] 2.4 In-process MCP aggregate tools (spec: *Session-scoped aggregate toolset*): `sessionId`
       captured in the closure, **never** a parameter; hub resolved at call time, never held across
       an `await`; server instance built **per turn**, never module-scoped. Test: two concurrent
       turns on different sessions do not cross.
