@@ -840,3 +840,12 @@ conflict, with no `extraArgs` exception needed in task 2.3 (0.7). Per-task evide
 deltas, and live-turn counts live in `.apply/task-0.1-report.md` through `.apply/task-0.9-report.md`
 (and the combined `.apply/task-0.2-0.3-report.md`, `.apply/task-0.7-0.8-report.md`); a terse
 summary is recorded above under "Resolved by the spike".
+
+**Phase 0 review (apply-time, full tier — 2026-07-21):** the phase's three committed artifacts (SDK
+pin 0.1, no-spawn test seam 0.9, this fold 0.10) reviewed clean after one fix wave. Two Important
+stale-artifact findings were fixed: `tasks.md` task 2.3 still named the disproven `tools: []`
+(corrected to the confirmed `tools: ['AskUserQuestion']` set) and `spec.md` still attributed the
+project-hook-hole closure to the pinned `cwd` alone (corrected to credit `settingSources: []`, with
+`cwd` as defense-in-depth). Post-fix spec/design consistency read: **clean** — the edited
+"Subprocess security lockdown" requirement and this design's D8/"Resolved by the spike" now agree,
+no SHALL relaxed.
