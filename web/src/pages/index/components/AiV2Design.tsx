@@ -9,6 +9,14 @@ import {
 } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { parseSseFrames } from './AiChat';
+import {
+  type DashboardConfig,
+  type DashboardInteraction,
+  INTERACTION_KINDS,
+  type InteractionKind,
+  isWidgetType,
+  type WidgetLayout,
+} from './aiV2/widgetTypes';
 import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 
 // AI v2 design rail (ai-v2-dashboards, tasks 4.1/4.2; design "UI design
@@ -17,7 +25,9 @@ import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 // rendered result"). This is the AI-chat sibling's proven shape (AiChat.tsx),
 // adapted for a DIFFERENT wire contract: the design turn's SSE vocabulary is
 // `delta` (assistant text) / `question` (pending AskUserQuestion, addressed
-// only to this turn's own stream — never the session WS) / `done` (terminal
+// only to this turn's own stream — never the session WS) / `dashboard` (task
+// 5.4/5.5, design D10: a validated PROPOSED DashboardConfig, addressed only
+// to this turn's own stream — never the session WS) / `done` (terminal
 // success) / `error` ({ detail }, terminal failure) — no `tool` event.
 // `parseSseFrames` is reused directly from AiChat.tsx rather than
 // re-implemented: it is generic frame-splitting, not chat-specific.
@@ -101,6 +111,16 @@ export interface AiV2DesignProps {
    * all — never a fabricated stand-in — until Unit 2 wires it in.
    */
   renderOptionPreview?: (widgetType: string | undefined, option: AiV2QuestionOption) => ReactNode;
+  /**
+   * Task 5.5 (design D10): fires with the VALIDATED `DashboardConfig` carried
+   * by a `dashboard` SSE event — the design turn's proposed starting
+   * dashboard, delivered only to this turn's own stream (never the session
+   * WS). The caller (`AiV2Panel`) renders it through the same real
+   * `CatalogWidget`/`DashboardGrid` components a saved dashboard uses (spec
+   * "No agent-authored markup is ever rendered") and offers to persist it
+   * through the `DashboardPersistencePort`.
+   */
+  onDashboardProposed?: (config: DashboardConfig) => void;
 }
 
 const CONNECTION_LOST_DETAIL = 'Connection to the design turn was lost before it finished.';
@@ -163,6 +183,56 @@ export function parsePendingQuestion(raw: unknown): AiV2PendingQuestion | null {
   return { requestId, turnId, questions };
 }
 
+const INTERACTION_KIND_SET = new Set<string>(INTERACTION_KINDS);
+
+function parseWidgetLayout(raw: unknown): WidgetLayout | null {
+  if (!isRecord(raw)) return null;
+  const { id, type, title, x, y, w, h } = raw;
+  if (typeof id !== 'string' || !id) return null;
+  if (typeof type !== 'string' || !isWidgetType(type)) return null;
+  if (typeof title !== 'string' || !title) return null;
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof w !== 'number' ||
+    typeof h !== 'number'
+  ) {
+    return null;
+  }
+  return { id, type, title, x, y, w, h };
+}
+
+function parseDashboardInteraction(raw: unknown): DashboardInteraction | null {
+  if (!isRecord(raw)) return null;
+  const { kind, sourceWidgetId, targetWidgetId } = raw;
+  if (typeof kind !== 'string' || !INTERACTION_KIND_SET.has(kind)) return null;
+  if (typeof sourceWidgetId !== 'string' || typeof targetWidgetId !== 'string') return null;
+  return { kind: kind as InteractionKind, sourceWidgetId, targetWidgetId };
+}
+
+/** Defensive parse of the `dashboard` SSE frame's JSON payload
+ * (`{ config: { widgets, interactions } }`, task 5.5, design D10). The
+ * server already ran the SAME whole-config validator a user write is held to
+ * (`validateDashboardConfig`, server/src/aiV2/catalog.ts) before ever
+ * streaming this event, so this parse is defense-in-depth against a
+ * malformed frame — not a second security boundary. Returns `null` for
+ * anything unusable (including a config with no valid widgets); a proposal
+ * this can't parse is silently dropped rather than surfaced as a fabricated
+ * dashboard. */
+export function parseProposedDashboardConfig(raw: unknown): DashboardConfig | null {
+  if (!isRecord(raw)) return null;
+  const configRaw = raw.config;
+  if (!isRecord(configRaw)) return null;
+  const rawWidgets = Array.isArray(configRaw.widgets) ? configRaw.widgets : [];
+  const widgets = rawWidgets.map(parseWidgetLayout).filter((w): w is WidgetLayout => w !== null);
+  if (widgets.length === 0) return null;
+  const rawInteractions = Array.isArray(configRaw.interactions) ? configRaw.interactions : [];
+  const interactions = rawInteractions
+    .map(parseDashboardInteraction)
+    .filter((i): i is DashboardInteraction => i !== null);
+  return { widgets, interactions };
+}
+
 export function AiV2Design({
   sessionId,
   messages,
@@ -175,6 +245,7 @@ export function AiV2Design({
   pendingStart,
   onPendingStartConsumed,
   renderOptionPreview,
+  onDashboardProposed,
 }: AiV2DesignProps) {
   const [input, setInput] = useState('');
   const [notConfigured, setNotConfigured] = useState(false);
@@ -264,6 +335,14 @@ export function AiV2Design({
             // session WebSocket.
             const question = parsePendingQuestion(safeJsonParse(frame.data));
             if (question) onPendingQuestionChange(question);
+          } else if (frame.event === 'dashboard') {
+            // Task 5.5 (design D10): delivered ONLY on this turn's own SSE
+            // stream, exactly like `question` above — never read off the
+            // session WebSocket. Rendered ONLY through the real catalog
+            // components by the caller (spec "No agent-authored markup is
+            // ever rendered") — this file never renders it itself.
+            const config = parseProposedDashboardConfig(safeJsonParse(frame.data));
+            if (config) onDashboardProposed?.(config);
           } else if (frame.event === 'done') {
             onPendingQuestionChange(null);
           } else if (frame.event === 'error') {

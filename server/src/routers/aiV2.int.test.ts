@@ -22,9 +22,12 @@
 // re-run here to keep this suite hermetic and fast.
 
 import { fileURLToPath } from 'node:url';
-import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../types';
+import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
 import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
@@ -1064,5 +1067,117 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(delRes.status).toBe(200);
     expect(await delRes.json()).toEqual({ ok: true });
     expect(await (await getDashboard(s)).json()).toEqual({ config: null });
+  });
+});
+
+// ── Task 5.4/5.5 — propose_dashboard -> `dashboard` SSE event (design D10, ──
+// spec "Dashboards are edited directly, not only by conversation") — no live
+// SDK turn, no Anthropic spend. Exercises the REAL wiring the route builds:
+// `spawnSpy` captures the actual `options` object aiV2.ts hands to
+// `attemptDesignTurnSpawn` (including the real per-turn `mcpServers` entry,
+// built by the real `buildAggregateMcpServer` with the real
+// `onProposeDashboard` closure aiV2.ts installs) and the fake `Query`
+// connects a real MCP client to that SAME `instance` — exactly as a live SDK
+// turn's own tool-execution loop would — and calls `propose_dashboard`
+// through it. This proves the tool-invocation -> validated-config ->
+// `stream.writeSSE({ event: 'dashboard' })` path end to end, not merely that
+// the two halves work in isolation.
+describe("ai/v2/design — propose_dashboard's validated config reaches the dashboard SSE event (design D10)", () => {
+  async function callProposeDashboard(
+    mcpServers: Record<string, unknown> | undefined,
+    args: Record<string, unknown>,
+  ): Promise<{ isError?: boolean; text: string }> {
+    const config = mcpServers?.[AGGREGATE_MCP_SERVER_NAME] as McpSdkServerConfigWithInstance;
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await Promise.all([config.instance.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const res = (await client.callTool({ name: 'propose_dashboard', arguments: args })) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+      return { isError: res.isError, text: res.content[0].text };
+    } finally {
+      await clientTransport.close();
+    }
+  }
+
+  it('a valid proposal streams a `dashboard` event carrying the exact validated config, on this stream only', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const user = await seedUser({ studios: [studioId] });
+    const proposedConfig = {
+      widgets: [
+        { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+      ],
+      interactions: [],
+    };
+
+    spawnSpy.mockImplementationOnce((_prompt, options) => {
+      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+        const result = await callProposeDashboard(options.mcpServers, proposedConfig);
+        if (result.isError) throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
+        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+      }
+      return gatedQuery() as unknown as Query;
+    });
+
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const events = parseSse(text);
+
+    // Exactly one `dashboard` event, on THIS response's own SSE body — the
+    // only stream this test ever reads from. There is no second client/WS
+    // connection anywhere in this test (the route never imports or calls any
+    // session WS fan-out for this event — see aiV2.ts's onProposeDashboard
+    // callback, which only ever calls `stream.writeSSE` on this same Hono
+    // stream), so "reaches only the initiating client" holds structurally:
+    // there is no other channel this event could have gone out on.
+    const dashboardEvents = events.filter((e) => e.event === 'dashboard');
+    expect(dashboardEvents).toHaveLength(1);
+    expect(dashboardEvents[0].data).toEqual({ config: proposedConfig });
+
+    // Terminal `done` still follows, exactly once, as usual.
+    expect(events.filter((e) => e.event === 'done')).toHaveLength(1);
+  });
+
+  it('an invalid (markup-bearing) proposal is rejected at the tool boundary — no `dashboard` event, nothing persisted', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const user = await seedUser({ studios: [studioId] });
+
+    spawnSpy.mockImplementationOnce((_prompt, options) => {
+      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+        const result = await callProposeDashboard(options.mcpServers, {
+          widgets: [
+            {
+              id: 'w1',
+              type: 'session_duration',
+              title: 'javascript:alert(1)',
+              x: 0,
+              y: 0,
+              w: 4,
+              h: 2,
+            },
+          ],
+          interactions: [],
+        });
+        expect(result.isError).toBe(true);
+        expect(JSON.parse(result.text)).toMatchObject({ accepted: false });
+        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+      }
+      return gatedQuery() as unknown as Query;
+    });
+
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    expect(res.status).toBe(200);
+    const events = parseSse(await res.text());
+    expect(events.filter((e) => e.event === 'dashboard')).toHaveLength(0);
+
+    // Nothing was persisted either — the propose tool never calls the
+    // dashboard store itself (design D10: it only streams; persistence is a
+    // separate, explicit client choice through the existing PUT route).
+    expect(await (await getDashboard(s, loopbackEnv(), { ...J, Cookie: await loginCookie(user) })).json()).toEqual({
+      config: null,
+    });
   });
 });

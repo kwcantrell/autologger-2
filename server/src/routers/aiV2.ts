@@ -6,15 +6,21 @@
 // existing route, shape, status code, or WS emission changes). The design
 // route emits Server-Sent Events: `delta` (assistant text), `question`
 // (a pending AskUserQuestion, addressed ONLY to this turn's own stream —
-// never the session's WS fan-out, design D6), `done` (terminal success),
-// `error` ({ detail }, terminal failure) — exactly one terminal event per
-// completed stream. The answer route is a plain JSON POST (D6: the answer
-// hop needs a client→server path SSE cannot provide), returning `{ ok:
+// never the session's WS fan-out, design D6), `dashboard` (task 5.4/5.5,
+// design D10: a validated PROPOSED DashboardConfig, addressed ONLY to this
+// turn's own stream — never the session's WS fan-out, same as `question`),
+// `done` (terminal success), `error` ({ detail }, terminal failure) —
+// `delta`/`question`/`dashboard` are never terminal; exactly one terminal
+// event per completed stream. The answer route is a plain JSON POST (D6: the
+// answer hop needs a client→server path SSE cannot provide), returning `{ ok:
 // true }` on success or `{ detail }` on every rejection.
 //
 // Also: the dashboard persistence endpoints (task 5.2, spec "Dashboard
 // persistence") — GET/PUT/DELETE /api/sessions/:sessionId/ai/v2/dashboard —
-// defined near the bottom of this file, alongside their own doc comment.
+// defined near the bottom of this file, alongside their own doc comment. The
+// `propose_dashboard` MCP tool (task 5.4) can also write through the SAME
+// store (design D10), carrying its originating turn id, once the client
+// chooses to persist a proposal it received on the `dashboard` event.
 //
 // Guard order (spec "Design turn contract"), matching the ai-chat sibling
 // (./ai.ts) and the transcript-words/generate route: authentication
@@ -237,7 +243,29 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         configDir: workspace.configDir,
         apiKey: apiKey || undefined,
         maxBudgetUsd,
-        mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions),
+        mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions, {
+          // Task 5.4/5.5 (design D10). The propose_dashboard tool has ALREADY
+          // validated the whole config (the same validator a user write is
+          // held to, ../aiV2/catalog.ts) before this callback ever runs — an
+          // invalid/markup-bearing proposal never reaches here at all. Emits
+          // a direct `stream.writeSSE` on THIS turn's own stream, exactly
+          // mirroring the `question` event immediately below: independent of
+          // runDesignTurn's guardedEmit/delta/done/error union, and never on
+          // the session's WS fan-out (this callback has no reference to any
+          // WS broadcast — the session hub's fan-out machinery is never
+          // imported by this file).
+          onProposeDashboard: async (config) => {
+            try {
+              await stream.writeSSE({ event: 'dashboard', data: JSON.stringify({ config }) });
+            } catch {
+              // The client stream is gone. The agent already received an
+              // "accepted" tool result (the proposal WAS validated), but
+              // nothing further to do here — there is no fan-out to fall
+              // back to, matching the question event's identical best-effort
+              // write below.
+            }
+          },
+        }),
         canUseTool: buildDesignTurnCanUseTool({
           onQuestion: buildPendingQuestionOnQuestion({
             sessionId,

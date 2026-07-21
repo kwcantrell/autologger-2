@@ -75,6 +75,15 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   const [dashboardConfig, setDashboardConfig] = useState<DashboardConfig | null>(null);
   const [dashboardLoaded, setDashboardLoaded] = useState(false);
   const [editingDashboard, setEditingDashboard] = useState(false);
+  // Task 5.5 (design D10): a design turn's proposed dashboard, received on
+  // the `dashboard` SSE event — distinct from `dashboardConfig` (the SAVED
+  // dashboard) until the user explicitly keeps it. Rendered through the same
+  // `DashboardGrid`/`CatalogWidget` components a saved dashboard uses (spec
+  // "No agent-authored markup is ever rendered" — there is no separate
+  // "proposal renderer"), with a Keep/Discard offer rather than an automatic
+  // save (spec "A design turn seeds rather than replaces": the agent's
+  // output is a starting point the user then adjusts or accepts).
+  const [proposedDashboard, setProposedDashboard] = useState<DashboardConfig | null>(null);
   // Task 5.2: "Surface save errors in the UI" — the Phase 4 boundary was
   // fire-and-forget with no error path at all. Covers BOTH the initial load
   // and every subsequent save; cleared on the next successful save so a
@@ -128,7 +137,25 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
     persistDashboard(EMPTY_DASHBOARD);
   }
 
+  // Task 5.5 (design D10): the agent's proposal is shown immediately (real
+  // components, no markup) but is NOT auto-saved — the user explicitly keeps
+  // or discards it, matching design D7a ("the agent's job is the first
+  // draft... everything after is direct manipulation").
+  function keepProposedDashboard() {
+    if (!proposedDashboard) return;
+    setDashboardConfig(proposedDashboard);
+    persistDashboard(proposedDashboard);
+    setProposedDashboard(null);
+  }
+
+  function discardProposedDashboard() {
+    setProposedDashboard(null);
+  }
+
   const hasActivity = messages.length > 0 || isStreaming || pendingQuestion !== null;
+  // What the canvas actually shows: a pending proposal takes priority over
+  // the saved dashboard until kept or discarded.
+  const displayConfig = proposedDashboard ?? dashboardConfig;
 
   return (
     <div className="flex flex-1 min-h-0 gap-3" data-testid="aiv2-panel">
@@ -146,38 +173,65 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
             {dashboardError}
           </div>
         ) : null}
-        {!dashboardLoaded ? null : dashboardConfig ? (
+        {!dashboardLoaded ? null : displayConfig ? (
           <>
-            <div className="flex shrink-0 items-center gap-2">
-              <h2 className="m-0 text-sm font-semibold text-v5-text">Session overview</h2>
-              <span className="ml-auto" />
-              {editingDashboard ? (
+            {proposedDashboard ? (
+              <div
+                className="flex shrink-0 items-center gap-2 rounded-v5-md border border-v5-border-strong glass-face px-3 py-2 text-[0.8rem] text-v5-text"
+                data-testid="aiv2-dashboard-proposal-banner"
+              >
+                <span className="flex-1">
+                  Draft — the agent proposed this dashboard. Keep it to save, or discard it.
+                </span>
                 <button
                   type="button"
                   className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-                  data-testid="aiv2-dashboard-done"
-                  onClick={() => setEditingDashboard(false)}
+                  data-testid="aiv2-dashboard-keep"
+                  onClick={keepProposedDashboard}
                 >
-                  Done
+                  Keep
                 </button>
-              ) : (
                 <button
                   type="button"
                   className={FEED_GLASS_BTN}
-                  data-testid="aiv2-dashboard-edit"
-                  onClick={() => setEditingDashboard(true)}
+                  data-testid="aiv2-dashboard-discard"
+                  onClick={discardProposedDashboard}
                 >
-                  Edit
+                  Discard
                 </button>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="flex shrink-0 items-center gap-2">
+                <h2 className="m-0 text-sm font-semibold text-v5-text">Session overview</h2>
+                <span className="ml-auto" />
+                {editingDashboard ? (
+                  <button
+                    type="button"
+                    className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                    data-testid="aiv2-dashboard-done"
+                    onClick={() => setEditingDashboard(false)}
+                  >
+                    Done
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={FEED_GLASS_BTN}
+                    data-testid="aiv2-dashboard-edit"
+                    onClick={() => setEditingDashboard(true)}
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {editingDashboard ? (
+              {!proposedDashboard && dashboardConfig && editingDashboard ? (
                 <DashboardEditor config={dashboardConfig} onChange={handleDashboardChange} />
               ) : (
                 <DashboardGrid
-                  widgets={dashboardConfig.widgets}
-                  interactions={dashboardConfig.interactions}
+                  widgets={displayConfig.widgets}
+                  interactions={displayConfig.interactions}
                   widgetData={{}}
                 />
               )}
@@ -240,6 +294,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
           renderOptionPreview={(widgetType, option) =>
             widgetType ? renderCatalogWidgetPreview(widgetType, option.label) : null
           }
+          onDashboardProposed={setProposedDashboard}
         />
       </aside>
     </div>
