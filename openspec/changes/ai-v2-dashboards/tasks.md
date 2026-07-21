@@ -225,7 +225,7 @@ that does not exist.
       count, and serialized config size — each rejected on write when exceeded. Test the render-side
       guard too: a dashboard declaring an absurd widget count does not hang the viewer. **Replace
       `catalog.ts`'s placeholder widget/interaction count caps with these authoritative bounds.**
-- [ ] 5.4 **`propose_dashboard` MCP tool** (server; design **D10**, spec *Dashboards are edited
+- [x] 5.4 **`propose_dashboard` MCP tool** (server; design **D10**, spec *Dashboards are edited
       directly* + *Dashboard persistence*): extend the per-turn MCP server built in task 2.4 with a
       tool the agent calls to commit its proposed `DashboardConfig`. Validate the **whole config** at
       the tool boundary against the Phase-1 catalog/layout schema (same validation as a user write —
@@ -233,7 +233,7 @@ that does not exist.
       unknown widget type, a dangling interaction, or a markup-bearing field is rejected at the tool
       boundary and nothing is proposed. `sessionId` stays closure-bound (never a tool param), consistent
       with the other aggregate tools.
-- [ ] 5.5 **Stream the proposal + client render** (server SSE + web; design D10, spec *Dashboards are
+- [x] 5.5 **Stream the proposal + client render** (server SSE + web; design D10, spec *Dashboards are
       edited directly*): emit the validated proposed config to the initiating client on the design
       turn's SSE stream as a **`dashboard`** event (delivered only to that client, like `question` —
       **never** on the frozen WS fan-out). Follow the shipped `question` precedent: a direct
