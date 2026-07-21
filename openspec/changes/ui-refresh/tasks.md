@@ -10,13 +10,13 @@
 
 ## 1. System vocabulary (web-ui-system)
 
-- [ ] 1.1 Re-skin the legacy `.btn` family + `.profile-select`/`.num`/`input[type=text]`/
+- [x] 1.1 Re-skin the legacy `.btn` family + `.profile-select`/`.num`/`input[type=text]`/
       `textarea` + placeholder floor to V5 glass in `web/src/shared/theme/tailwind.css` (D1);
       raise eyebrow color to `rgba(229,238,252,0.62)`; add the stop/play capture-strip display
       rules (D6) and the `body.v4-is-recording` reveal rules (D8) in the same theme pass.
-- [ ] 1.2 Add `web/src/shared/ui/ConfirmDialog.tsx` (`ConfirmDialog` + `useConfirm`, D2) with
+- [x] 1.2 Add `web/src/shared/ui/ConfirmDialog.tsx` (`ConfirmDialog` + `useConfirm`, D2) with
       the danger variant; unit-verifiable via its EventLogSheet consumer tests in unit 2.
-- [ ] 1.3 Contrast/motion fixes: TimelineTicks alpha 0.36→0.58; inactive feed-tab label
+- [x] 1.3 Contrast/motion fixes: TimelineTicks alpha 0.36→0.58; inactive feed-tab label
       0.48→0.6 (`feedTabStyles.ts`); marquee `motion-reduce:animate-none!` on Timeline's
       NAV_MSG_TRACK + token comment update.
 
