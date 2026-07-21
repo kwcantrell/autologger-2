@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import { eventsKeys } from '../../../api/hooks/useEvents';
 import type { EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
@@ -137,6 +137,13 @@ beforeEach(() => {
   window.AutoLogger_invalidateEvents = undefined;
 });
 
+afterEach(() => {
+  // Only the accept-time-discrimination test below fakes `Date`; restoring
+  // unconditionally here is a harmless no-op for every other test and keeps a
+  // failed assertion inside that test from leaking fake timers forward.
+  vi.useRealTimers();
+});
+
 async function refetchAll(client: QueryClient, sessionId: string) {
   await act(async () => {
     await client.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
@@ -145,7 +152,15 @@ async function refetchAll(client: QueryClient, sessionId: string) {
 }
 
 describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', () => {
-  it('accept posts a synthetic stop at accept-time', async () => {
+  it('accept posts a synthetic stop reflecting accept-time, not arm-time', async () => {
+    // Fake ONLY `Date` (real setTimeout/setInterval keep running) so
+    // `waitFor`'s internal polling still works, while the arm-time and
+    // accept-time instants are under test control and provably distinct.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const armTime = new Date('2026-07-21T00:00:30.000Z');
+    const acceptTime = new Date('2026-07-21T00:05:45.000Z');
+    vi.setSystemTime(armTime);
+
     setSessionState(SESSION_ID, [orphanStartEvent()], statusFixture());
     const client = makeClient();
 
@@ -155,6 +170,10 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
 
     await waitFor(() => expect(result.current).not.toBeNull());
     expect(result.current?.title).toBeTruthy();
+
+    // Real time (a non-blocking dialog can sit open for a while) passes
+    // between the dialog arming and the user's click.
+    vi.setSystemTime(acceptTime);
 
     act(() => {
       result.current?.onAccept();
@@ -168,9 +187,10 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
     expect(path).toBe(`sessions/${SESSION_ID}/events`);
     expect(body.category).toBe('internal');
     expect(body.message).toBe('Recording 1 Stopped');
-    // marked_at_utc is a real, parseable accept-time timestamp — not a value
-    // baked in when the dialog first armed.
-    expect(Number.isNaN(Date.parse(String(body.marked_at_utc)))).toBe(false);
+    // marked_at_utc is computed AT ACCEPT, not baked in when the dialog first
+    // armed — the discriminating assertion this test exists for.
+    expect(body.marked_at_utc).toBe(acceptTime.toISOString());
+    expect(body.marked_at_utc).not.toBe(armTime.toISOString());
   });
 
   it('decline dismisses the dialog and posts nothing', async () => {
@@ -188,6 +208,44 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
     });
 
     await waitFor(() => expect(result.current).toBeNull());
+    expect(postCalls).toHaveLength(0);
+  });
+
+  it('does not re-arm after decline when events/status refetch (once-per-mount latch)', async () => {
+    setSessionState(SESSION_ID, [orphanStartEvent()], statusFixture());
+    const client = makeClient();
+
+    const { result, rerender } = renderHook(
+      ({ sessionId }: { sessionId: string }) => useRecoveryStopWarning(sessionId, false),
+      { wrapper: wrapperFor(client), initialProps: { sessionId: SESSION_ID } },
+    );
+
+    await waitFor(() => expect(result.current).not.toBeNull());
+
+    act(() => {
+      result.current?.onDecline();
+    });
+    await waitFor(() => expect(result.current).toBeNull());
+
+    // The orphan is still present (nothing resolved it) — only the latch
+    // (`warnedRef`, armed once per session mount, not cleared on decline)
+    // stands between this and re-arming. Change `status` (e.g. the timecode
+    // a poll would advance) so react-query's structural sharing actually hands
+    // the hook a NEW status object — a no-op refetch (identical data) would
+    // bail out on reference equality before ever reaching the arm effect, which
+    // wouldn't exercise the latch at all. The orphan itself is untouched, so
+    // `findOrphanRecording` still finds it; only `warnedRef` should stop it
+    // from reopening the dialog.
+    setSessionState(SESSION_ID, [orphanStartEvent()], statusFixture({ timecode: '00:00:45:00' }));
+    await refetchAll(client, SESSION_ID);
+    rerender({ sessionId: SESSION_ID });
+    await waitFor(() =>
+      expect(
+        (client.getQueryData(['session-status', SESSION_ID]) as SessionStatus).timecode,
+      ).toBe('00:00:45:00'),
+    );
+
+    expect(result.current).toBeNull();
     expect(postCalls).toHaveLength(0);
   });
 
