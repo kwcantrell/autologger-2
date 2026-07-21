@@ -34,8 +34,22 @@
 // the spawn attempt has already happened, whether or not any message is
 // ever read from the returned `Query`.
 
+import { type ChildProcess, spawn } from 'node:child_process';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  McpServerConfig,
+  Options,
+  PermissionResult,
+  Query,
+  SDKMessage,
+  SpawnOptions,
+  SpawnedProcess,
+} from '@anthropic-ai/claude-agent-sdk';
+import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 
 /**
  * Start a design turn against the Agent SDK. This is the spawn boundary:
@@ -47,4 +61,553 @@ import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
  */
 export function attemptDesignTurnSpawn(prompt: string, options: Options): Query {
   return query({ prompt, options });
+}
+
+// ── Task 2.3 — the closed-world SDK option set (the security boundary) ──────
+// design D8/D8a, "Resolved by the spike" (0.4/0.5), spec "Subprocess security
+// lockdown". This builder is the SINGLE SOURCE OF TRUTH for the locked-down
+// `Options` the runner passes to `query()`: 2.3's closed-world characterization
+// test asserts the SAME object this function returns, so a value change is
+// caught by the pinned-value assertions and an ADDITION (a widening option) is
+// caught by the absence assertions. Every value below is spike-confirmed
+// (0.4: `tools: ['AskUserQuestion']` + `permissionMode: 'plan'` works end to
+// end; `tools: []` and `'dontAsk'` each independently kill the interaction).
+
+/** The one built-in tool a design turn may reach (D8a): a CLOSED set of one,
+ * established by the base-tool-set option — NOT by an auto-approve allowlist.
+ * `tools: []` would strip it (spike 0.4) and kill the interactive question. */
+const DESIGN_TURN_BUILTIN_TOOLS = ['AskUserQuestion'] as const;
+
+/** Belt-and-braces (D8a/D8b): name the built-in write/exec set explicitly.
+ * `disallowedTools` is the only option documented as overriding an allow, so
+ * it re-states the denial `tools` already implies by omission. */
+const DESIGN_TURN_DISALLOWED_TOOLS = [
+  'Bash',
+  'Write',
+  'Edit',
+  'Read',
+  'WebFetch',
+  'WebSearch',
+  'NotebookEdit',
+] as const;
+
+/** MCP-tool-call duration bound (D8b re-instated `MCP_TOOL_TIMEOUT`): a hung
+ * in-process aggregate tool must not wedge a turn indefinitely. */
+export const DESIGN_TURN_MCP_TOOL_TIMEOUT_MS = '30000';
+
+/** Idle-question auto-continue bound. Set via the top-level `settings` option,
+ * NEVER `managedSettings` — 0.4/0.8 confirmed the restrictive-only filter drops
+ * it there. A native complement to the server-side abandonment backstop (D7),
+ * not a replacement. */
+const DESIGN_TURN_ASK_TIMEOUT = '60s' as const;
+
+/** Always-forwarded minimal env beyond HOME/PATH. Proxy/TLS vars are forwarded
+ * only when the parent actually has them (never fabricated), mirroring the AI
+ * chat's precedent. */
+const DESIGN_TURN_OPTIONAL_ENV_PASSTHROUGH = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+] as const;
+
+/** The complete set of env keys a design-turn subprocess may carry. The
+ * closed-world test asserts `options.env`'s keys are a subset of this set
+ * (an addition is a widening that must be caught), and that the required keys
+ * are present. `ANTHROPIC_API_KEY` appears only when a workspace key is
+ * configured (D9); the proxy/TLS keys only when the parent has them. */
+export const DESIGN_TURN_ALLOWED_ENV_KEYS: readonly string[] = [
+  'PATH',
+  'HOME',
+  'CLAUDE_CONFIG_DIR',
+  'MCP_TOOL_TIMEOUT',
+  'ANTHROPIC_API_KEY',
+  ...DESIGN_TURN_OPTIONAL_ENV_PASSTHROUGH,
+];
+
+/** Pinned system prompt (spec: "an explicit pinned system prompt"). Guidance,
+ * not a security boundary — the boundary is the option set above. A plain
+ * string REPLACES the claude_code coding-agent preset entirely, so the design
+ * agent inherits none of it. */
+export const DESIGN_TURN_SYSTEM_PROMPT =
+  "You are AutoLogger's dashboard design assistant for exactly one recording session. " +
+  'Read that session\'s aggregate statistics through the provided tools (speaker_stats, ' +
+  'utterance_stats, topic_timeline, event_stats, transcript_excerpt), then propose a ' +
+  'starting dashboard the user can edit directly. Compose it only from the fixed widget ' +
+  'catalog you are given. When a tool reports its data as unavailable, say so plainly — ' +
+  'never invent zeros or placeholder measurements. You may ask the user one clarifying ' +
+  'question. Stay focused on this one session and this one task.';
+
+export interface BuildDesignTurnOptionsParams {
+  /** Pinned working directory — OUTSIDE the repo checkout and DATA_DIR
+   * (spec). Created by `createDesignTurnWorkspace`. */
+  cwd: string;
+  /** Isolated `CLAUDE_CONFIG_DIR`, separate from the operator's `~/.claude`. */
+  configDir: string;
+  /** Workspace-scoped Anthropic key (D9). When present it is passed as
+   * `ANTHROPIC_API_KEY` and the interactive login is NOT used. */
+  apiKey?: string;
+  maxBudgetUsd: number;
+  /** The per-turn aggregate MCP server (`buildAggregateMcpServer`). */
+  mcpServer: McpServerConfig;
+  /** The permission callback — its identity is out of scope for the value
+   * pins, but it must be PRESENT (a design turn runs in `'plan'` mode, which
+   * routes tool use through this callback). */
+  canUseTool: CanUseTool;
+  /** The turn's abort controller — the timeout backstop and client-disconnect
+   * path call `.abort()` on it. */
+  abortController: AbortController;
+  /** The group-kill spawn override (`createDesignTurnSpawner`) — the ONLY way
+   * to obtain the child pid/pgid (spike 0.5); required for no-orphan. */
+  spawnClaudeCodeProcess: (options: SpawnOptions) => SpawnedProcess;
+  /** Test seam: point the SDK at an on-disk recorder instead of the real CLI.
+   * Never set in production. */
+  pathToClaudeCodeExecutable?: string;
+  /** Override for tests; defaults to the real `process.env`. */
+  procEnv?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Build the closed-world locked-down `Options` for a design turn. Pure — no
+ * I/O, no spawn — so the closed-world test asserts exactly what the runner
+ * passes to `query()`. Only the keys set here reach the SDK; every widening
+ * option (`hooks`/`plugins`/`agents`/`extraArgs`/`additionalDirectories`/
+ * `allowDangerouslySkipPermissions`/`permissionPromptToolName`) is left unset
+ * and therefore absent — which the closed-world absence assertions enforce.
+ */
+export function buildDesignTurnOptions(params: BuildDesignTurnOptionsParams): Options {
+  const procEnv = params.procEnv ?? process.env;
+
+  const env: Record<string, string> = {
+    // Isolated config dir (separate from the operator's ~/.claude); the CLI
+    // reads credentials and settings from here.
+    CLAUDE_CONFIG_DIR: params.configDir,
+    // MCP tool-call duration bound (D8b).
+    MCP_TOOL_TIMEOUT: DESIGN_TURN_MCP_TOOL_TIMEOUT_MS,
+  };
+  if (procEnv.PATH) env.PATH = procEnv.PATH;
+  if (procEnv.HOME) env.HOME = procEnv.HOME;
+  for (const key of DESIGN_TURN_OPTIONAL_ENV_PASSTHROUGH) {
+    const value = procEnv[key];
+    if (value) env[key] = value;
+  }
+  // D9: a configured workspace key is preferred over the interactive login,
+  // and the login is not used while a key is configured.
+  if (params.apiKey) env.ANTHROPIC_API_KEY = params.apiKey;
+
+  const options: Options = {
+    // D8a: the built-in tool set is a closed set of exactly one.
+    tools: [...DESIGN_TURN_BUILTIN_TOOLS],
+    // D8b: explicit denial of the write/exec built-ins (overrides an allow).
+    disallowedTools: [...DESIGN_TURN_DISALLOWED_TOOLS],
+    // `allowedTools` does not restrict; it auto-approves. Pin it empty so
+    // nothing is ever auto-approved without the `canUseTool` callback running.
+    allowedTools: [],
+    // 0.4: 'plan' both advertises AskUserQuestion AND routes through
+    // canUseTool. 'dontAsk' auto-denies before the callback ever runs.
+    permissionMode: 'plan',
+    // Disable the filesystem settings tiers — closes the non-interactive
+    // trust-skip hook hole (0.3), independent of cwd.
+    settingSources: [],
+    // Suppress the repo's checked-in .mcp.json (CodeGraph) from loading.
+    strictMcpConfig: true,
+    // Session forking disabled explicitly rather than left to a default.
+    forkSession: false,
+    // Pinned cwd, outside the repo and DATA_DIR (defense-in-depth for the
+    // server/.env exposure; the hook hole itself is closed by settingSources).
+    cwd: params.cwd,
+    systemPrompt: DESIGN_TURN_SYSTEM_PROMPT,
+    maxBudgetUsd: params.maxBudgetUsd,
+    // D6a/D3: pin previewFormat at its 'markdown' default; never opt into
+    // 'html'. Catalog previews render through real React components.
+    toolConfig: { askUserQuestion: { previewFormat: 'markdown' } },
+    // Idle-question bound via `settings` (NOT managedSettings — 0.4/0.8).
+    settings: { askUserQuestionTimeout: DESIGN_TURN_ASK_TIMEOUT },
+    // Account-level cloud connectors disabled (survives the restrictive-only
+    // filter — 0.4/0.8).
+    managedSettings: { disableClaudeAiConnectors: true },
+    mcpServers: { [AGGREGATE_MCP_SERVER_NAME]: params.mcpServer },
+    canUseTool: params.canUseTool,
+    abortController: params.abortController,
+    spawnClaudeCodeProcess: params.spawnClaudeCodeProcess,
+    env,
+  };
+  if (params.pathToClaudeCodeExecutable) {
+    options.pathToClaudeCodeExecutable = params.pathToClaudeCodeExecutable;
+  }
+  return options;
+}
+
+// ── Task 2.3 — the permission callback (canUseTool) ────────────────────────
+// design D7. In `'plan'` mode every tool use routes through this callback.
+// The aggregate MCP tools are allowed; the write/exec built-ins are absent
+// from `tools` and additionally denied here by default-deny. AskUserQuestion
+// is delegated to an injected handler — Phase 3 (2.7/3.x) supplies the real
+// pending-question relay that BLOCKS the turn on an answer; until then it is
+// denied. `ToolSearch`/`ExitPlanMode` are passed through as a NAMED allowance
+// (never a wildcard); spike 0.4 found they don't request passage in minimal
+// turns, so this branch is defensive, not load-bearing.
+
+const AGGREGATE_TOOL_WIRE_PREFIX = `mcp__${AGGREGATE_MCP_SERVER_NAME}__`;
+const NAMED_INFRA_PASSTHROUGH = new Set(['ToolSearch', 'ExitPlanMode']);
+
+export interface DesignTurnCanUseToolDeps {
+  /** Phase-3 seam: the pending-question relay. When absent, AskUserQuestion is
+   * denied (the turn cannot ask a question until Phase 3 wires this). */
+  onQuestion?: (
+    input: Record<string, unknown>,
+    options: Parameters<CanUseTool>[2],
+  ) => Promise<PermissionResult>;
+}
+
+export function buildDesignTurnCanUseTool(deps: DesignTurnCanUseToolDeps = {}): CanUseTool {
+  return async (toolName, input, options) => {
+    if (toolName.startsWith(AGGREGATE_TOOL_WIRE_PREFIX)) {
+      return { behavior: 'allow', updatedInput: input };
+    }
+    if (NAMED_INFRA_PASSTHROUGH.has(toolName)) {
+      return { behavior: 'allow', updatedInput: input };
+    }
+    if (toolName === 'AskUserQuestion') {
+      if (deps.onQuestion) return deps.onQuestion(input, options);
+      return {
+        behavior: 'deny',
+        message: 'Interactive questions are not available in this turn.',
+      };
+    }
+    return { behavior: 'deny', message: `The ${toolName} tool is not permitted in a design turn.` };
+  };
+}
+
+// ── Task 2.6 — process-group kill ladder (no orphan on ANY exit path) ───────
+// design D8/"Resolved by the spike" 0.5, spec "Subprocess and turn lifecycle".
+// Mirrors `killAiChatProcessGroup` in aiChatRunner.ts (SIGTERM → grace →
+// SIGKILL on the negative pgid), with ONE deliberate difference the spike
+// forced: escalation is gated on GROUP liveness (`process.kill(-pgid, 0)`),
+// NOT the tracked leader's exit status. Spike 0.5 Turn 2 proved a
+// leader-exit-gated ladder leaves a real SIGTERM-ignoring group member
+// orphaned, because the SDK stops escalating once its ONE tracked process
+// looks dead; Turn 3's group-liveness-gated ladder closed it. The child is
+// spawned `detached: true` (via `createDesignTurnSpawner`) so its pid IS its
+// pgid, and `-pid` addresses the whole group (POSIX/Linux — this deployment
+// target, matching every other process-spawning path in the repo).
+
+/** Grace window between the SIGTERM and the SIGKILL rung. Exported so tests
+ * can pass a short override; production relies on the default. */
+export const DEFAULT_DESIGN_TURN_KILL_GRACE_MS = 3000;
+
+/** True iff the process GROUP led by `pgid` still has at least one live
+ * member. `process.kill(-pgid, 0)` sends no signal — it only probes
+ * deliverability: ESRCH means the group is gone; EPERM means it exists but is
+ * unsignalable (we own it, so unlikely) — treated as alive to stay safe. */
+export function designTurnGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+async function waitUntilGroupGone(pgid: number, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  while (designTurnGroupAlive(pgid)) {
+    if (Date.now() - start >= timeoutMs) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+/**
+ * Terminate the process group led by `pgid`: SIGTERM the group, wait up to
+ * `graceMs` for it to die, and — if ANY member is still alive (gated on
+ * GROUP liveness, not one process's exit) — SIGKILL the group. A no-op if the
+ * group is already gone. Never throws: an ESRCH on an already-dead group is
+ * exactly the no-orphan outcome. Resolves once the group is confirmed gone (or
+ * a bounded final wait elapses after the SIGKILL rung).
+ */
+export async function killDesignTurnProcessGroup(
+  pgid: number | null | undefined,
+  graceMs: number = DEFAULT_DESIGN_TURN_KILL_GRACE_MS,
+): Promise<void> {
+  if (pgid == null || !designTurnGroupAlive(pgid)) return;
+  try {
+    process.kill(-pgid, 'SIGTERM');
+  } catch {
+    return; // ESRCH: the group went away between the probe and the signal.
+  }
+  const gone = await waitUntilGroupGone(pgid, graceMs);
+  if (!gone) {
+    try {
+      process.kill(-pgid, 'SIGKILL');
+    } catch {
+      // Raced gone between the liveness check and this signal — fine.
+    }
+    await waitUntilGroupGone(pgid, 2000);
+  }
+}
+
+export interface DesignTurnSpawner {
+  /** Pass as `Options.spawnClaudeCodeProcess`. Spawns the real CLI
+   * `detached: true` and captures its pgid. */
+  spawnClaudeCodeProcess: (options: SpawnOptions) => SpawnedProcess;
+  /** Terminate the captured group via the ladder. Idempotent; a no-op if
+   * nothing was spawned or the group is already gone. Call on EVERY exit
+   * path. */
+  terminate: (graceMs?: number) => Promise<void>;
+  /** The captured pgid (pid of the detached leader), or null if not yet
+   * spawned. */
+  getPgid: () => number | null;
+}
+
+/**
+ * A `spawnClaudeCodeProcess` override that owns the child as its own
+ * process-group leader (`detached: true`) and exposes a group-kill `terminate`
+ * — the no-orphan guarantee (spike 0.5). The SDK exposes no pid anywhere, so
+ * this override is the ONLY way to obtain the pgid the ladder needs.
+ */
+export function createDesignTurnSpawner(): DesignTurnSpawner {
+  let child: ChildProcess | null = null;
+  let terminated = false;
+
+  const spawnClaudeCodeProcess = (options: SpawnOptions): SpawnedProcess => {
+    const spawned = spawn(options.command, options.args, {
+      cwd: options.cwd,
+      env: options.env,
+      detached: true, // fresh process-group leader; pgid === spawned.pid
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    child = spawned;
+    return spawned as unknown as SpawnedProcess;
+  };
+
+  const terminate = async (graceMs?: number): Promise<void> => {
+    if (terminated) return;
+    terminated = true;
+    await killDesignTurnProcessGroup(child?.pid ?? null, graceMs);
+  };
+
+  return { spawnClaudeCodeProcess, terminate, getPgid: () => child?.pid ?? null };
+}
+
+// ── Task 2.5 — turn runner + SSE relay ─────────────────────────────────────
+// spec "Design turn contract" (SSE streaming) + "Subprocess and turn
+// lifecycle". Relays ONLY assistant text (never reasoning/thinking, never
+// tool_use blocks) as `delta` events, and emits EXACTLY ONE terminal event
+// (`done` XOR `error`) per completed stream — enforced by the `guardedEmit`
+// choke point (mirroring `runAiChatTurn`'s pattern). A client abort emits NO
+// terminal event. The turn timeout is INDEPENDENT of the agent iterator (a
+// turn that never yields still ends), and the child group is terminated on
+// EVERY exit path. The iterator THROWS on abort in every arm (spike 0.5) —
+// caught here, never relied upon to return cleanly.
+
+export type DesignTurnSseEvent = {
+  event: 'delta' | 'done' | 'error';
+  data: Record<string, unknown>;
+};
+
+/** The fixed, scrubbed error details a terminal `error` event may carry.
+ * Raw exception text / subprocess stderr / agent error arrays NEVER flow into
+ * `{ detail }` — `guardedEmit` is the single choke point Unit D's task 2.8
+ * scrubbing hardens further. */
+export type DesignTurnErrorDetail = 'timeout' | 'upstream-failed' | 'internal-error' | 'aborted';
+
+export type DesignTurnOutcome = { ok: true } | { ok: false; detail: DesignTurnErrorDetail };
+
+export interface RunDesignTurnOptions {
+  /** The SDK turn (result of `attemptDesignTurnSpawn`), or any async iterable
+   * of `SDKMessage` for hermetic tests. */
+  query: AsyncIterable<SDKMessage>;
+  /** Forwarded to the client as SSE events; NEVER invoked more than once with
+   * a terminal event (`guardedEmit` guard). */
+  emit: (event: DesignTurnSseEvent) => Promise<void> | void;
+  /** The GUARANTEED backstop, independent of the iterator (spec). */
+  timeoutMs: number;
+  /** The turn's abort controller — `.abort()` is called on the timeout and
+   * client-disconnect paths so the SDK tears the child down and the iterator
+   * throws. */
+  abortController: AbortController;
+  /** Terminate the child process group (the no-orphan ladder). Called on
+   * every exit path. */
+  terminate: (graceMs?: number) => Promise<void>;
+  /** Slot-release cleanup — invoked in a `finally` on EVERY exit path
+   * (completion/error/timeout/abort). A spy in 2.6's tests; Unit D (2.7)
+   * passes the real `AiChatTurnRegistry` release. */
+  release: () => void;
+  /** Best-effort client-disconnect signal (the SSE request's abort signal). */
+  abortSignal?: AbortSignal;
+  killGraceMs?: number;
+}
+
+function isAssistantTextBlock(block: unknown): block is { type: 'text'; text: string } {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    (block as { type?: unknown }).type === 'text' &&
+    typeof (block as { text?: unknown }).text === 'string' &&
+    (block as { text: string }).text.length > 0
+  );
+}
+
+/**
+ * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
+ * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
+ * and a best-effort client-disconnect signal, terminate the child group on
+ * every path, and release the concurrency slot in a `finally`. Guarantees
+ * exactly one terminal event; a client disconnect emits none.
+ */
+export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignTurnOutcome> {
+  let terminalSent = false;
+  const guardedEmit = async (event: DesignTurnSseEvent): Promise<void> => {
+    if (terminalSent) return;
+    if (event.event === 'done' || event.event === 'error') terminalSent = true;
+    try {
+      await opts.emit(event);
+    } catch {
+      // The client stream is gone; cleanup below still runs. This is also the
+      // single choke point for terminal-error text (task 2.8 seam).
+    }
+  };
+
+  const relayPromise: Promise<DesignTurnOutcome> = (async () => {
+    try {
+      for await (const message of opts.query) {
+        if (message.type === 'assistant') {
+          const content = (message.message as { content?: unknown } | undefined)?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (isAssistantTextBlock(block)) {
+                await guardedEmit({ event: 'delta', data: { text: block.text } });
+              }
+              // thinking / signature / tool_use / anything else: never relayed
+              // (spec: assistant text only, no reasoning reaches the client).
+            }
+          }
+        } else if (message.type === 'result') {
+          if (message.subtype === 'success' && message.is_error !== true) {
+            await guardedEmit({ event: 'done', data: {} });
+            return { ok: true };
+          }
+          await guardedEmit({ event: 'error', data: { detail: 'upstream-failed' } });
+          return { ok: false, detail: 'upstream-failed' };
+        }
+      }
+      // Stream ended with no `result` — unusable; scrubbed failure.
+      await guardedEmit({ event: 'error', data: { detail: 'internal-error' } });
+      return { ok: false, detail: 'internal-error' };
+    } catch {
+      // The iterator threw — our own abort/timeout (spike 0.5: throws in every
+      // arm), or a genuine SDK error. Attempt a scrubbed terminal; guardedEmit
+      // no-ops if the timeout/abort branch already claimed the terminal slot.
+      await guardedEmit({ event: 'error', data: { detail: 'internal-error' } });
+      return { ok: false, detail: 'internal-error' };
+    }
+  })();
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<'timeout'>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve('timeout'), opts.timeoutMs);
+  });
+  const abortPromise = new Promise<'abort'>((resolve) => {
+    const signal = opts.abortSignal;
+    if (!signal) return; // never resolves — Promise.race simply never picks it
+    if (signal.aborted) {
+      resolve('abort');
+      return;
+    }
+    signal.addEventListener('abort', () => resolve('abort'), { once: true });
+  });
+
+  let terminated = false;
+  const terminateOnce = async (): Promise<void> => {
+    if (terminated) return;
+    terminated = true;
+    await opts.terminate(opts.killGraceMs);
+  };
+
+  try {
+    const winner = await Promise.race([
+      relayPromise.then((outcome) => ({ kind: 'relay' as const, outcome })),
+      timeoutPromise.then(() => ({ kind: 'timeout' as const })),
+      abortPromise.then(() => ({ kind: 'abort' as const })),
+    ]);
+    clearTimeout(timeoutHandle);
+    // On the timeout/abort paths the relay may never settle (a never-yielding
+    // iterator that ignores abort) — suppress any late rejection and DO NOT
+    // await it, so those paths still end and release the slot.
+    relayPromise.catch(() => {});
+
+    if (winner.kind === 'timeout') {
+      await guardedEmit({ event: 'error', data: { detail: 'timeout' } });
+      opts.abortController.abort();
+    } else if (winner.kind === 'abort') {
+      // Best-effort client disconnect: emit NO terminal event (nobody is
+      // listening) but claim the terminal slot so a late relay emit is a no-op.
+      terminalSent = true;
+      opts.abortController.abort();
+    }
+
+    await terminateOnce();
+
+    if (winner.kind === 'relay') return winner.outcome;
+    if (winner.kind === 'timeout') return { ok: false, detail: 'timeout' };
+    return { ok: false, detail: 'aborted' };
+  } finally {
+    clearTimeout(timeoutHandle);
+    // No orphan on ANY exit path — including an unexpected throw above.
+    await terminateOnce();
+    opts.release();
+  }
+}
+
+// ── Turn workspace + credentials (runtime file I/O, kept out of the pure
+// option builder so the closed-world test asserts a pure object) ────────────
+
+const DESIGN_TURN_CWD_PREFIX = 'autologger-ai-v2-cwd-';
+const DESIGN_TURN_CONFIG_PREFIX = 'autologger-ai-v2-config-';
+
+export interface DesignTurnWorkspace {
+  /** Pinned cwd for this turn — a fresh OS-tmp subdir, outside the repo and
+   * DATA_DIR. */
+  cwd: string;
+  /** Isolated CLAUDE_CONFIG_DIR for this turn — a fresh OS-tmp subdir. */
+  configDir: string;
+  /** Remove both dirs. Idempotent; safe on every exit path. */
+  cleanup: () => void;
+}
+
+/**
+ * Create a fresh, per-turn cwd and isolated config dir under the OS tmp dir —
+ * neither inside the repo checkout nor DATA_DIR (whose default `./data`
+ * resolves under the repo). Fresh per turn: a design turn never resumes an SDK
+ * session store, so there is nothing to preserve across turns and full
+ * isolation is the safest choice.
+ */
+export function createDesignTurnWorkspace(): DesignTurnWorkspace {
+  const cwd = mkdtempSync(join(tmpdir(), DESIGN_TURN_CWD_PREFIX));
+  const configDir = mkdtempSync(join(tmpdir(), DESIGN_TURN_CONFIG_PREFIX));
+  let cleaned = false;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(configDir, { recursive: true, force: true });
+  };
+  return { cwd, configDir, cleanup };
+}
+
+/**
+ * When no workspace key is configured (D9 login fallback, permitted only on a
+ * loopback bind — already gated upstream), seed the isolated config dir with
+ * the operator's `claude login` credentials so the subprocess can authenticate
+ * without inheriting the rest of the operator's `~/.claude`. A no-op when a key
+ * is configured (the key authenticates via `ANTHROPIC_API_KEY`) or when no
+ * credential file exists (the turn then fails with a scrubbed auth error).
+ */
+export function prepareDesignTurnCredentials(configDir: string, apiKey?: string): void {
+  if (apiKey) return;
+  const source = join(homedir(), '.claude', '.credentials.json');
+  if (existsSync(source)) {
+    copyFileSync(source, join(configDir, '.credentials.json'));
+  }
 }

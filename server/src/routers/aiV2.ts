@@ -1,7 +1,10 @@
-// ai-v2-dashboards — the design-turn endpoint's guard SHELL (tasks 2.1/2.2).
-// POST /api/sessions/:sessionId/ai/v2/design. New frozen API surface
-// authorized by the ai-v2-dashboards delta spec (additive only — no existing
-// route, shape, status code, or WS emission changes).
+// ai-v2-dashboards — the design-turn endpoint (tasks 2.1/2.2 guard shell +
+// 2.5/2.6 real streaming turn). POST /api/sessions/:sessionId/ai/v2/design.
+// New frozen API surface authorized by the ai-v2-dashboards delta spec
+// (additive only — no existing route, shape, status code, or WS emission
+// changes). Emits Server-Sent Events: `delta` (assistant text), `done`
+// (terminal success), `error` ({ detail }, terminal failure) — exactly one
+// terminal event per completed stream.
 //
 // Guard order (spec "Design turn contract"), matching the ai-chat sibling
 // (./ai.ts) and the transcript-words/generate route: authentication
@@ -17,32 +20,42 @@
 // uses ... so per-session single-flight and the process-wide ceiling bound
 // both features together rather than doubling the operator's exposure").
 //
-// SPAWN BOUNDARY: this unit (2.1/2.2) stops here, before the SDK is ever
-// touched. Nothing below calls attemptDesignTurnSpawn
+// SPAWN BOUNDARY: no guard-rejecting path reaches attemptDesignTurnSpawn
 // (server/src/routers/aiV2SdkSpawn.ts) — the one call site that reaches the
-// Agent SDK's `query()` (task 0.9) — so "no guard path spawns a subprocess"
-// is true by construction: there is no spawn call anywhere in this file.
-// Tasks 2.3-2.8 (closed-world option-set build, MCP aggregate tools, turn
-// runner, SSE relay, lifecycle, and the FINAL slot-acquisition semantics —
-// hold across the turn, release in `finally`) replace the placeholder 501
-// tail below with the real turn; they own that call, strictly downstream of
-// every guard already enforced here. The slot acquire/release pair just
-// above that tail is real (not a stub): it is this unit's honest answer to
-// "the guard chain must reach the point where a slot would be acquired" —
-// acquired and immediately released because there is no actual turn yet to
-// hold it across; task 2.7 replaces the immediate release with a
-// hold-for-the-turn's-duration + release-on-every-path lifecycle.
+// Agent SDK's `query()` (task 0.9). It is called ONLY after every guard has
+// passed, inside the SSE stream body, strictly downstream of the slot
+// acquisition — so "no guard path spawns a subprocess" holds. The turn's
+// child process group is terminated and its concurrency slot released in the
+// stream's `finally` on EVERY exit path (completion, error, timeout, client
+// disconnect), so no orphan survives to keep spending the operator's
+// credentials (spec "Subprocess and turn lifecycle"). Task 2.7 (Unit D)
+// refines the slot-acquisition semantics; the option set, spawn override,
+// kill ladder, SSE relay, and timeout backstop live in aiV2SdkSpawn.ts.
 
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
+import { buildAggregateMcpServer } from '../aiV2/mcpTools';
 import {
   aiChatMaxConcurrent,
+  aiChatTimeoutSec,
+  aiV2ApiKey,
   aiV2Configured,
   aiV2CredentialsRefused,
+  aiV2MaxBudgetUsd,
   aiV2OpenNetworkRefused,
 } from '../env';
 import { aiV2DesignRequestSchema } from '../schemas';
 import type { AppEnv } from '../types';
 import { aiChatTurns } from './aiChatRegistry';
+import {
+  attemptDesignTurnSpawn,
+  buildDesignTurnCanUseTool,
+  buildDesignTurnOptions,
+  createDesignTurnSpawner,
+  createDesignTurnWorkspace,
+  prepareDesignTurnCredentials,
+  runDesignTurn,
+} from './aiV2SdkSpawn';
 import { ApiError, requireSession } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
@@ -61,8 +74,6 @@ const SESSION_BUSY_DETAIL =
 const AT_CAPACITY_DETAIL =
   'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and AI v2); ' +
   'try again shortly.';
-const NOT_IMPLEMENTED_DETAIL =
-  'AI v2 design turns are not implemented yet on this branch (guard chain only — tasks 2.3-2.8 pending).';
 
 aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   const sessionId = c.req.param('sessionId');
@@ -91,26 +102,68 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // 4. Body validation — ZodError → 422, malformed JSON → 400 (both via the
   // global onError handler in app.ts), spawning nothing. c.req.json() throws
   // SyntaxError on malformed JSON.
-  // The parsed body itself (message, optional resume id) is unused past
-  // validation in this unit — tasks 2.3-2.8 own reading it to actually run a
-  // turn. aiV2ApiKeyConfigured (env.ts) and aiV2MaxBudgetUsd (env.ts) are
-  // likewise config accessors this unit exports for Unit C's consumption
-  // (building the SDK's auth + maxBudgetUsd options) rather than something
-  // this guard-only route needs to call itself.
-  aiV2DesignRequestSchema.parse(await c.req.json());
+  const body = aiV2DesignRequestSchema.parse(await c.req.json());
 
-  // 5. Turn slot — 409, shared with the AI chat's registry (see module
-  // doc). Acquired for real so the guard-order tests above are genuine (a
-  // slot already busy — from EITHER feature — 409s here, before body
-  // validation would even matter), then released immediately: this unit
-  // runs no actual turn to hold it across.
+  // 5. Turn slot — 409, shared with the AI chat's registry (see module doc).
+  // Acquired BEFORE any spawn and held across the whole turn; released in the
+  // stream's `finally` on every exit path (task 2.7 refines the acquisition
+  // semantics; the hold-and-release lifecycle is real here).
   const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
   if (!slot.ok) {
     throw new ApiError(409, slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL);
   }
-  slot.release();
 
-  // SPAWN BOUNDARY (see module doc): every guard has passed. Tasks 2.3-2.8
-  // own the real SDK turn; this unit deliberately stops before it.
-  throw new ApiError(501, NOT_IMPLEMENTED_DETAIL);
+  // Every guard passed. Build the locked-down design turn (task 2.3's
+  // closed-world option set), spawn it through the group-kill spawn override
+  // (task 2.6), and relay its assistant text as SSE `delta`/`done`/`error`
+  // events (task 2.5). The child group is terminated and the slot released on
+  // EVERY exit path — completion, error, timeout, client disconnect — so no
+  // orphan ever survives to keep spending the operator's credentials (spec
+  // "Subprocess and turn lifecycle").
+  const apiKey = aiV2ApiKey(c.env.config);
+  const maxBudgetUsd = aiV2MaxBudgetUsd(c.env.config);
+  const timeoutMs = aiChatTimeoutSec(c.env.config) * 1000;
+
+  return streamSSE(c, async (stream) => {
+    const workspace = createDesignTurnWorkspace();
+    const spawner = createDesignTurnSpawner();
+    const abortController = new AbortController();
+    try {
+      prepareDesignTurnCredentials(workspace.configDir, apiKey || undefined);
+      const options = buildDesignTurnOptions({
+        cwd: workspace.cwd,
+        configDir: workspace.configDir,
+        apiKey: apiKey || undefined,
+        maxBudgetUsd,
+        mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions),
+        canUseTool: buildDesignTurnCanUseTool(),
+        abortController,
+        spawnClaudeCodeProcess: spawner.spawnClaudeCodeProcess,
+      });
+      const turn = attemptDesignTurnSpawn(body.message, options);
+      await runDesignTurn({
+        query: turn,
+        emit: async (event) => {
+          await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+        },
+        timeoutMs,
+        abortController,
+        abortSignal: c.req.raw.signal,
+        terminate: spawner.terminate,
+        release: slot.release,
+      });
+    } catch {
+      // Any unexpected failure BEFORE runDesignTurn took over (e.g. building
+      // options or the synchronous spawn throwing) still owes the client
+      // exactly one scrubbed terminal event — never the raw exception text.
+      await stream.writeSSE({ event: 'error', data: JSON.stringify({ detail: 'internal-error' }) });
+    } finally {
+      // Defense-in-depth: runDesignTurn already terminates + releases on the
+      // paths it controls, but if setup threw before it ran, these idempotent
+      // calls guarantee no orphaned group and no leaked slot.
+      await spawner.terminate();
+      slot.release();
+      workspace.cleanup();
+    }
+  });
 });

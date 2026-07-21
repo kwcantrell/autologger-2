@@ -21,6 +21,7 @@
 // already lives in aiV2SdkSpawn.test.ts (task 0.9) and is intentionally not
 // re-run here to keep this suite hermetic and fast.
 
+import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../types';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
@@ -33,9 +34,21 @@ const J = { 'content-type': 'application/json' };
 
 const spawnSpy = vi.spyOn(aiV2SdkSpawnModule, 'attemptDesignTurnSpawn');
 
+/** A hermetic stand-in for the SDK `Query`: yields one success `result` and
+ * ends, so a turn on the allowed path completes WITHOUT spawning a real
+ * subprocess or spending anything. (The spawn override in the real options is
+ * never reached because `query()` — the thing that would call it — is mocked.)
+ * Used as the DEFAULT for every test so no case can accidentally reach a live
+ * SDK turn; guard-rejecting tests still assert `attemptDesignTurnSpawn` was
+ * never called at all. */
+async function* fakeDesignQuery(): AsyncGenerator<SDKMessage> {
+  yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+}
+
 beforeEach(() => {
   aiChatTurns.reset();
-  spawnSpy.mockClear();
+  spawnSpy.mockReset();
+  spawnSpy.mockImplementation(() => fakeDesignQuery() as unknown as Query);
 });
 afterEach(() => {
   aiChatTurns.reset();
@@ -216,9 +229,13 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
       envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '1', HOST: '0.0.0.0', AI_V2_API_KEY: 'workspace-key' }),
       { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) },
     );
-    // Every 503 gate lifted; falls through to body validation / slot / the
-    // transitional not-yet-implemented tail — never a credentials 503.
+    // Every 503 gate lifted; falls through to the real streaming turn (200
+    // SSE, mocked hermetically) — never a credentials 503. The turn is
+    // actually reached, so the spawn boundary WAS crossed on this allowed path.
+    expect(res.status).toBe(200);
     expect(res.status).not.toBe(503);
+    await res.text(); // drain the stream so the turn's finally (slot release) runs
+    expect(spawnSpy).toHaveBeenCalledTimes(1);
   });
 
   it('predicate: aiV2CredentialsRefused is independent of REQUIRE_LOGIN/IP_ALLOWLIST', () => {
@@ -341,16 +358,19 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
     }
   });
 
-  it('the slot is released, not leaked, once the guard chain finishes (this unit holds no turn open)', async () => {
+  it('the slot is released, not leaked, once a turn finishes — a follow-up on the same session is not 409', async () => {
     const s = await seededSession();
     const res = await post(s, { message: 'hi' }, loopbackEnv());
-    // Every guard passed; this unit's transitional tail (no real turn yet)
-    // still releases the slot it acquired rather than leaking it — a
-    // follow-up request on the same session is never falsely 409'd.
     expect(res.status).not.toBe(409);
+    // Drain the SSE stream so the turn's `finally` (slot release) has run
+    // before asserting the slot is free — the release is on an async path now,
+    // not synchronous as the transitional tail was.
+    await res.text();
     expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
     const second = await post(s, { message: 'again' }, loopbackEnv());
     expect(second.status).not.toBe(409);
+    await second.text();
+    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
   });
 });
 
