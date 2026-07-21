@@ -243,7 +243,7 @@ that does not exist.
       the `dashboard` event into the grid (rendered through the real catalog components, D1/D3) and
       offers to persist it via the `DashboardPersistencePort`. Test: a design turn's proposal renders
       end-to-end with no markup path; the event reaches only the initiating client.
-- [ ] 5.6 **Client-side aggregation for the renderer** (web; design **D11**, spec *Data unavailability
+- [x] 5.6 **Client-side aggregation for the renderer** (web; design **D11**, spec *Data unavailability
       is a rendered state*): compute the widgets' real data in the web from the **existing**
       `useTranscriptWords`/`useTopics`/`useEvents` endpoints, reusing the Phase-1 `aggregates.ts`
       **logic** (share or mirror it — do not fork a divergent second implementation). No new HTTP
