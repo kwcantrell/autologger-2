@@ -28,6 +28,7 @@ import { EventLogSheet } from './EventLogSheet';
 import { ExportModal } from './ExportModal';
 import { feedTabButtonClassName } from './feedTabStyles';
 import { MarkerNav } from './MarkerNav';
+import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TimecodeDisplay } from './TimecodeDisplay';
 import { Timeline } from './Timeline';
 import { getTransportState, TransportControls } from './TransportControls';
@@ -92,6 +93,22 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   }, [effectiveTransport]);
 
   const [showExport, setShowExport] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  // "?" opens the keyboard-shortcut reference (ui-refresh) — never while typing
+  // or while another dialog is up. Ctrl/Meta/Alt excluded; Shift deliberately
+  // permitted (it is how "?" is typed on most layouts).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      setShowShortcuts(true);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const [feedTab, setFeedTab] = useState<'events' | 'ai' | 'ai-v2'>('events');
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
@@ -220,6 +237,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
           onCancel={recoveryStopPending.onDecline}
         />
       )}
+      <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       {/* Headless audio components */}
       {sessionId && (
         <>
@@ -419,6 +437,40 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                   aria-label="Session controls"
                 >
                   <div className="v5-panel-head v5-panel-head--controls">
+                    <div className="v5-panel-head__actions absolute top-[0.85rem] right-[1.1rem]">
+                      <Tooltip content="Keyboard shortcuts (?)">
+                        <button
+                          type="button"
+                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[0.5rem] border border-v5-border-strong bg-white/[0.04] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border-strong))] hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]"
+                          aria-label="Keyboard shortcuts"
+                          onClick={() => setShowShortcuts(true)}
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <rect
+                              x="3"
+                              y="6.5"
+                              width="18"
+                              height="11"
+                              rx="2"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                            />
+                            <path
+                              d="M6.5 10H6.51M10 10H10.01M13.5 10H13.51M17 10H17.01M6.5 13.5H6.51M17 13.5H17.01M9.5 13.5H14.5"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </button>
+                      </Tooltip>
+                    </div>
                     <div className="v5-panel-head__main">
                       <p className="v5-panel-eyebrow">Session Controls</p>
                       {/* --status title: base main-title in the multi-emitter @layer;

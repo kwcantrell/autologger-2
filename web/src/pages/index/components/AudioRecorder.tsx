@@ -322,6 +322,20 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     useEffect(() => {
       const isActive = state.phase === 'recording' || state.phase === 'uploading';
       document.body.classList.toggle('v4-local-recording', isActive);
+      // ui-refresh: revives the top-bar RECORDING AUDIO indicator (AppShell) —
+      // the class the shipped markup always keyed on but nothing ever toggled.
+      // Scoped to the live-recording phase only, so the strip never claims
+      // "recording" during upload.
+      document.body.classList.toggle('v4-is-recording', state.phase === 'recording');
+      // Unmount cleanup (spec: "Unmount while recording clears the strip"): the
+      // recorder unmounts on session close/switch or route change; without this
+      // the body classes — and the strip they reveal — would leak past the
+      // component's life. `v4-local-recording` shares the same leak shape (same
+      // effect, same body-state semantics), so it is removed here too.
+      return () => {
+        document.body.classList.remove('v4-local-recording');
+        document.body.classList.remove('v4-is-recording');
+      };
     }, [state.phase]);
 
     // Release on page hide / tab close

@@ -273,12 +273,30 @@ export function AppShell() {
                 aria-live="polite"
                 aria-label="Recording status"
               >
-                {/* v4Recording / v4Timecode are always display:none (body.v4-is-recording
-                    is never toggled), so `hidden` carries the whole rule. */}
-                <span className="hidden" id="top-bar-recording">
-                  RECORDING AUDIO
+                {/* Persistent recording strip (ui-refresh): AudioRecorder now toggles
+                    body.v4-is-recording while the mic is live; the reveal rules live
+                    in tailwind.css (display must come from the body-ancestor rule,
+                    not a utility). AudioRecorder keeps writing the duration text
+                    imperatively into #top-bar-recording-dur. */}
+                <span
+                  className="items-center gap-[0.4rem] rounded-full border border-[rgba(251,113,133,0.45)] bg-[rgba(127,29,29,0.35)] px-[0.6rem] py-[0.2rem] text-[0.68rem] font-semibold tracking-[0.12em] uppercase text-[#fecaca] before:h-[0.45rem] before:w-[0.45rem] before:rounded-full before:bg-[#ef4444] before:content-[''] before:animate-wf-label-pulse motion-reduce:before:animate-none"
+                  id="top-bar-recording"
+                >
+                  Recording audio
                 </span>
-                <span className={clsx('hidden', 'mono')} id="top-bar-recording-dur">
+                {/* aria-hidden (spec "Truthful recording indication"): the duration
+                    ticks every second via imperative textContent writes; inside this
+                    aria-live container that would announce each tick. Excluding it
+                    from the accessibility tree keeps the live region quiet — only
+                    the strip's appearance/disappearance announces. */}
+                <span
+                  className={clsx(
+                    'text-[0.78rem] font-semibold text-[#fecaca] [font-variant-numeric:tabular-nums]',
+                    'mono',
+                  )}
+                  id="top-bar-recording-dur"
+                  aria-hidden="true"
+                >
                   00:00:00
                 </span>
               </output>
