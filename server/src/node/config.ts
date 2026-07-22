@@ -14,6 +14,7 @@ import { CatalogDb } from './catalogStore';
 import { KvStore } from './kvStore';
 import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
+import { sweepStaleYoutubeImportTempDirs } from './youtubeImportScratch';
 
 // Resolved from this file's location, not cwd — the server must work both via
 // `npm run -w server` (cwd = server/) and under test runners started elsewhere.
@@ -37,6 +38,12 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const kv = new KvStore(catalog, clock);
   kv.purgeExpired(); // startup hygiene — no sweep timer (spec)
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
+  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
+  // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
+  // temp dir orphaned by a crash/kill that skipped the route handler's own
+  // `finally` cleanup. Prefix-scoped — never touches other scratch-root users
+  // (e.g. transcript generation) or the blob store's real audio prefix.
+  sweepStaleYoutubeImportTempDirs(audioBlobStore.scratchRoot());
 
   const bindings: Bindings = {
     ports: {
@@ -45,7 +52,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       catalog: new CatalogDb(catalog),
       kv,
       sessions: registry,
-      audio: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
+      audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
     },
     config: {

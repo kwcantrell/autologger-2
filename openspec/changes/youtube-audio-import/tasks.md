@@ -77,7 +77,7 @@
   a same-session in-flight run) and a **global concurrency ceiling** (409 when the aggregate
   in-flight count is at the cap). Acquire both as the statements directly before the
   `try{…}finally{release both}` (fidelity note — nothing throwable between add and try).
-- [ ] 5.3 Replace the `503` stub in `server/src/routers/sessions.ts` with the gated handler,
+- [x] 5.3 Replace the `503` stub in `server/src/routers/sessions.ts` with the gated handler,
   ordered: `requireSession` → open-network refusal (`503`) + `ytDlpConfigured` gate (`503`)
   → body/allowlist validation (`400`) → per-session + global concurrency acquire (`409`) →
   download into a per-request temp dir under `blobStore.scratchRoot()` (`finally` cleanup) →
@@ -87,7 +87,7 @@
   date present, catalog `setSessionEpisodeDate` → `200 {ok:true}`; any post-validation
   failure (download/extract, bound breach, unsupported container, `put` failure) →
   `502 {detail}`; both guards released on every exit path.
-- [ ] 5.4 Add a startup sweep of stale import temp dirs under `scratchRoot()` (D6 — covers
+- [x] 5.4 Add a startup sweep of stale import temp dirs under `scratchRoot()` (D6 — covers
   `finally`-skipping crashes).
 
 ## 6. Contract + capability integration tests (frozen-surface phase)
