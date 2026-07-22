@@ -315,6 +315,19 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     // topics): delete only the topics THIS run created — the pre-run topics
     // were never touched and remain exactly as they were.
     await hub.deleteTopics(newIds);
+    // Operator-facing diagnostic: the `502` body is deliberately opaque to the
+    // client (a fixed, non-sensitive string), but a self-hosted operator needs
+    // the real reason to debug — an exceeded `--max-budget-usd` surfaces as the
+    // outcome detail `upstream-failed`, a slow turn as `timeout`, an auth
+    // problem as `not-logged-in`, and a turn that ran clean but made no topics
+    // as `ok` with zero new topics. Logged to the server console only; never
+    // the response.
+    console.warn(
+      `[topics/generate] session=${sessionId}: generation failed — ` +
+        (outcome.ok
+          ? 'CLI turn succeeded but created 0 topics'
+          : `CLI turn failed (${outcome.detail})`),
+    );
     throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
   } finally {
     slot.release();
