@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Config } from './types';
 import {
   adminMeta,
   adminTokenConfigured,
+  aiChatOpenNetworkRefused,
+  aiV2OpenNetworkRefused,
   cookieSecureForRequest,
   deepgramConfigured,
   deepgramModel,
@@ -10,11 +15,43 @@ import {
   oauthConfigured,
   publicBaseUrl,
   requireLoginEnabled,
+  resolveYtDlpPath,
   sessionCookieName,
   sessionTtlDays,
+  youtubeImportOpenNetworkRefused,
+  ytDlpConfigured,
 } from './env';
 
-const E = (o: Record<string, string | undefined>): Config => o as unknown as Config;
+const E = (o: Record<string, string | null | undefined>): Config => o as unknown as Config;
+
+// A full, valid Config literal for exercising the shared open-network
+// predicate — same base shape the ai.int.test.ts / aiV2.int.test.ts
+// predicate tests use, extended with the new YTDLP_RESOLVED_PATH field.
+const openNetworkBase = (): Config => ({
+  PUBLIC_BASE_URL: '',
+  HOST: '0.0.0.0',
+  GOOGLE_CLIENT_ID: '',
+  GOOGLE_CLIENT_SECRET: '',
+  REQUIRE_LOGIN: '0',
+  SESSION_COOKIE: '',
+  SESSION_DAYS: '14',
+  NEW_USER_ALL_TEAMS: '0',
+  COOKIE_SECURE: '',
+  IP_ALLOWLIST: '',
+  TRUST_PROXY: '',
+  API_TOKEN: '',
+  ADMIN_TOKEN: '',
+  DEEPGRAM_API_KEY: '',
+  DEEPGRAM_MODEL: '',
+  CLAUDE_CLI_PATH: '',
+  AI_CHAT_TIMEOUT_SEC: '',
+  AI_CHAT_MAX_CONCURRENT: '',
+  AI_CHAT_MAX_BUDGET_USD: '',
+  AI_V2_ENABLED: '',
+  AI_V2_API_KEY: '',
+  AI_V2_MAX_BUDGET_USD: '',
+  YTDLP_RESOLVED_PATH: null,
+});
 
 describe('env flag parsing', () => {
   it('requireLoginEnabled defaults true; false only for 0/false/no', () => {
@@ -91,5 +128,100 @@ describe('env flag parsing', () => {
     expect(deepgramModel(E({}))).toBe('nova-3');
     expect(deepgramModel(E({ DEEPGRAM_MODEL: '' }))).toBe('nova-3');
     expect(deepgramModel(E({ DEEPGRAM_MODEL: 'nova-2' }))).toBe('nova-2');
+  });
+});
+
+describe('yt-dlp binary resolution (design D2, youtube-audio-import)', () => {
+  const tempDirs: string[] = [];
+  afterEach(() => {
+    while (tempDirs.length) {
+      rmSync(tempDirs.pop() as string, { recursive: true, force: true });
+    }
+  });
+
+  it('explicit YTDLP_PATH set → resolved verbatim and reads as configured', () => {
+    const resolved = resolveYtDlpPath({ YTDLP_PATH: '/opt/tools/yt-dlp', PATH: '' });
+    expect(resolved).toBe('/opt/tools/yt-dlp');
+    expect(ytDlpConfigured(E({ YTDLP_RESOLVED_PATH: resolved }))).toBe(true);
+  });
+
+  it('explicit YTDLP_PATH wins even when a different binary is also on PATH', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ytdlp-path-'));
+    tempDirs.push(dir);
+    const onPath = join(dir, 'yt-dlp');
+    writeFileSync(onPath, '#!/bin/sh\nexit 0\n');
+    chmodSync(onPath, 0o755);
+    const resolved = resolveYtDlpPath({ YTDLP_PATH: '/opt/tools/yt-dlp', PATH: dir });
+    expect(resolved).toBe('/opt/tools/yt-dlp');
+  });
+
+  it('no explicit path but yt-dlp resolvable on PATH → resolved and reads as configured', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ytdlp-path-'));
+    tempDirs.push(dir);
+    const bin = join(dir, 'yt-dlp');
+    writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+    chmodSync(bin, 0o755);
+    const resolved = resolveYtDlpPath({ PATH: dir });
+    expect(resolved).toBe(bin);
+    expect(ytDlpConfigured(E({ YTDLP_RESOLVED_PATH: resolved }))).toBe(true);
+  });
+
+  it('a same-named file on PATH that is not executable is skipped', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ytdlp-path-'));
+    tempDirs.push(dir);
+    const bin = join(dir, 'yt-dlp');
+    writeFileSync(bin, 'not a real binary');
+    chmodSync(bin, 0o644); // no execute bit
+    expect(resolveYtDlpPath({ PATH: dir })).toBeNull();
+  });
+
+  it('neither an explicit path nor a PATH-resolvable binary → not configured', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ytdlp-empty-'));
+    tempDirs.push(dir);
+    expect(resolveYtDlpPath({ PATH: dir })).toBeNull();
+    expect(resolveYtDlpPath({})).toBeNull();
+    expect(ytDlpConfigured(E({ YTDLP_RESOLVED_PATH: null }))).toBe(false);
+    expect(ytDlpConfigured(E({}))).toBe(false);
+  });
+});
+
+describe('open-network refusal (shared predicate; AI chat / AI v2 / YouTube import)', () => {
+  it('youtubeImportOpenNetworkRefused matches the same truth table as its siblings', () => {
+    const base = openNetworkBase();
+    // anonymous + non-loopback + no allowlist → refused
+    expect(youtubeImportOpenNetworkRefused(base)).toBe(true);
+    // unset HOST defaults to 0.0.0.0 (non-loopback) → refused
+    expect(youtubeImportOpenNetworkRefused({ ...base, HOST: '' })).toBe(true);
+    // login required → not refused
+    expect(youtubeImportOpenNetworkRefused({ ...base, REQUIRE_LOGIN: '1' })).toBe(false);
+    // allowlist present → not refused
+    expect(youtubeImportOpenNetworkRefused({ ...base, IP_ALLOWLIST: '10.0.0.0/8' })).toBe(false);
+    // loopback binds → not refused
+    for (const h of ['127.0.0.1', '::1', 'localhost']) {
+      expect(youtubeImportOpenNetworkRefused({ ...base, HOST: h })).toBe(false);
+    }
+  });
+
+  it('all three open-network predicates agree on every case (shared core, not three copies)', () => {
+    const base = openNetworkBase();
+    const cases: Partial<Config>[] = [
+      {},
+      { HOST: '' },
+      { REQUIRE_LOGIN: '1' },
+      { REQUIRE_LOGIN: 'true' },
+      { IP_ALLOWLIST: '10.0.0.0/8' },
+      { HOST: '127.0.0.1' },
+      { HOST: '::1' },
+      { HOST: 'localhost' },
+      { HOST: '192.168.1.5' },
+      { REQUIRE_LOGIN: '1', HOST: '127.0.0.1' },
+      { REQUIRE_LOGIN: '0', IP_ALLOWLIST: '', HOST: '0.0.0.0' },
+    ];
+    for (const overrides of cases) {
+      const env = { ...base, ...overrides };
+      const expected = aiChatOpenNetworkRefused(env);
+      expect(aiV2OpenNetworkRefused(env)).toBe(expected);
+      expect(youtubeImportOpenNetworkRefused(env)).toBe(expected);
+    }
   });
 });

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { systemClock } from '../clock';
-import { aiV2UsesLoginFallback, newUserAllTeamsEnabled } from '../env';
+import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -71,6 +71,9 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
+      // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
+      // no business running per request. ytDlpConfigured(env) reads this.
+      YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),
     },
   };
   // Spec "Login fallback is announced, not silent" (design D9): say so once,
