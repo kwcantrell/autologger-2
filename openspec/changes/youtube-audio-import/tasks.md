@@ -92,7 +92,7 @@
 
 ## 6. Contract + capability integration tests (frozen-surface phase)
 
-- [ ] 6.1 Integration tests over the endpoint status matrix using the fake-binary harness:
+- [x] 6.1 Integration tests over the endpoint status matrix using the fake-binary harness:
   no `yt-dlp` → `503` byte-for-byte with the pre-change response; open-network config →
   `503`, no spawn; bare `yt-dlp` on `PATH` → treated as configured; non-allowlisted URL
   (incl. `youtube.com.evil.com`) → `400`, no spawn; `youtu.be` → accepted; concurrent
@@ -101,7 +101,7 @@
   `use_publish_date:true`) `episode_date` populated + rendered on the correct day;
   download-fail / unsupported-container / over-cap / live-stream → `502` with audio
   unchanged; `topics/generate` + `transcribe.csv` still `503`.
-- [ ] 6.2 Assert the ingested segment is byte-identical to the produced file, and that a
+- [x] 6.2 Assert the ingested segment is byte-identical to the produced file, and that a
   **blob-write (disk-full) failure leaves the audio-segment listing byte-for-byte
   unchanged** (no orphan metadata row) — the atomic-rollback assertion, not merely "no
   playable segment".
