@@ -8,7 +8,7 @@
 
 ## 1. Characterize the seam before reshaping it
 
-- [ ] 1.1 Add a characterization integration test pinning the **current** `youtube-import`
+- [x] 1.1 Add a characterization integration test pinning the **current** `youtube-import`
   behavior: `POST /api/sessions/:id/youtube-import` on an existing session returns
   `503 {detail}` with the current detail string, and the `requireSession` guard behavior for
   an unknown/inaccessible session is unchanged. (`routers/sessions.int.test.ts`; the route
