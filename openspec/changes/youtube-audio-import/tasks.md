@@ -141,7 +141,7 @@
   reusing the recorded-take shape `{type,is_rolling:false,current_take}`). Unit-test the RPC:
   atomic (a mid-transaction throw persists none of the three writes), emits the two WS messages
   once, Started at position `P` and Stopped at `P + trunc(durationS·fps)`.
-- [ ] 9.4 Wire the handler (`server/src/routers/sessions.ts`): **refuse with `409` if the
+- [x] 9.4 Wire the handler (`server/src/routers/sessions.ts`): **refuse with `409` if the
   transport `is_rolling`** (D13, checked before synthesis); compute `N = max(existing
   recording_ordinal over segments, existing "Recording k" event numbers) + 1` (D12); attach
   the segment with `recording_ordinal=N` + `started_at_utc=now` + `ended_at_utc=now+duration`;
