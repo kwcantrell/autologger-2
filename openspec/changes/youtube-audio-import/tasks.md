@@ -134,7 +134,7 @@
 - [x] 9.2 Extend `fetchYoutubeAudio` (`server/src/node/ytdlp.ts`) to also return the video
   `duration` (seconds) already read from `--dump-json`; reject a non-positive duration as a
   failed import (`duration ≤ 0` guard, design D10). Update the fake-binary unit test.
-- [ ] 9.3 Add a **composite anchor hub RPC** (D11) — one `inTxn` that does `addEvent`
+- [x] 9.3 Add a **composite anchor hub RPC** (D11) — one `inTxn` that does `addEvent`
   `Recording N Started` → `stopTakeWithDuration({ durationS, ctx })` → `addEvent` `Recording N
   Stopped`, and **broadcasts `event.changed` + `transport.changed` once** after commit
   (`stopTakeWithDuration` currently broadcasts nothing — add the `transport.changed` emit here,
