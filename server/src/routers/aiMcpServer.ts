@@ -58,6 +58,10 @@ export const AI_MCP_TOOL_NAMES = [
   'create_topic',
 ] as const;
 
+/** One of the three short tool names above — the type callers use to
+ * restrict `--allowedTools` for a turn (topic-generation design D7/D3). */
+export type AiMcpToolName = (typeof AI_MCP_TOOL_NAMES)[number];
+
 /** A registered chat turn's MCP coordinates. The CLI runner (task 3.2) consumes
  * this: `url` + `token` build the generated `--mcp-config`, and `dispose()` is
  * called in the turn's `finally` to drop the registration + retire the token. */

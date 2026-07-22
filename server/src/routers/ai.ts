@@ -32,13 +32,7 @@ import {
 import { chatRequestSchema } from '../schemas';
 import type { AppEnv } from '../types';
 import { aiChatTurns } from './aiChatRegistry';
-import {
-  type AiChatSpawnResult,
-  killAiChatProcessGroup,
-  runAiChatTurn,
-  spawnAiChatTurn,
-} from './aiChatRunner';
-import { type AiMcpTurn, getAiMcpListener } from './aiMcpServer';
+import { driveAiTurn } from './aiTurn';
 import { ApiError, requireSession } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
@@ -125,56 +119,36 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
     throw new ApiError(409, slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL);
   }
 
-  // Every guard passed: register an MCP turn (task 2.1), spawn the locked-down
-  // CLI (task 3.2), and let `runAiChatTurn` (task 3.4) relay its stdout as
-  // real delta/tool/done/error events (task 3.3's `relayAiChatTurn`) while
-  // racing the guaranteed timeout and a best-effort client-disconnect signal.
-  // Registration, spawn, the generated MCP config, and the child's process
-  // group are all dropped/killed in `finally` alongside the concurrency
-  // slot, regardless of how the turn ends — this preserves the Phase 1 "slot
-  // release in finally" seam and extends it to "no orphan process, ever"
-  // (spec "Subprocess lifecycle").
+  // Every guard passed: `driveAiTurn` (topic-generation design D7 — the
+  // shared helper `topics/generate` also uses) registers an MCP turn, spawns
+  // the locked-down CLI, and relays its stdout as real delta/tool/done/error
+  // events while racing the guaranteed timeout and a best-effort
+  // client-disconnect signal. Registration, spawn, the generated MCP config,
+  // and the child's process group are all dropped/killed inside the helper's
+  // own `finally`, regardless of how the turn ends; this router still
+  // releases the concurrency slot in ITS OWN `finally` (slot lifecycle is
+  // per-endpoint — the 409 wording differs from `topics/generate`'s) —
+  // together this preserves the Phase 1 "slot release in finally" seam and
+  // "no orphan process, ever" (spec "Subprocess lifecycle").
   return streamSSE(c, async (stream) => {
-    let mcpTurn: AiMcpTurn | null = null;
-    let spawned: AiChatSpawnResult | null = null;
     try {
-      const listener = await getAiMcpListener(c.env.ports.sessions);
-      mcpTurn = listener.registerTurn(sessionId);
-      spawned = spawnAiChatTurn({
+      const outcome = await driveAiTurn({
+        registry: c.env.ports.sessions,
         cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,
         message: body.message,
-        mcpTurn: { url: mcpTurn.url, token: mcpTurn.token },
         maxBudgetUsd: aiChatMaxBudgetUsd(c.env.config),
+        timeoutMs: aiChatTimeoutSec(c.env.config) * 1000,
         resumeSessionId,
-      });
-      const outcome = await runAiChatTurn({
-        child: spawned.child,
         emit: async (event) => {
           await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
         },
-        timeoutMs: aiChatTimeoutSec(c.env.config) * 1000,
         abortSignal: c.req.raw.signal,
       });
       if (outcome.ok) {
         issuedClaudeSessionIds.set(outcome.claudeSessionId, sessionId);
       }
-    } catch {
-      // Any unexpected failure setting up the turn (e.g. the MCP listener
-      // failing to start, or spawnAiChatTurn's cwd/config write throwing)
-      // still owes the client exactly one terminal event — never Hono's
-      // default streamSSE `onError` fallback, which would relay the raw
-      // exception message (a secrecy leak the spec forbids).
-      await stream.writeSSE({ event: 'error', data: JSON.stringify({ detail: 'internal-error' }) });
     } finally {
-      // Defensive-in-depth: runAiChatTurn already kills the process group on
-      // every path it controls, but this call is idempotent (a fast no-op
-      // once the child has exited) and guarantees no orphan even if setup
-      // threw before runAiChatTurn ever ran (e.g. spawnAiChatTurn itself
-      // failed after the child was already forked).
-      if (spawned) await killAiChatProcessGroup(spawned.child);
-      mcpTurn?.dispose();
-      spawned?.cleanupConfig();
       slot.release();
     }
   });
