@@ -181,10 +181,11 @@ describe('AiMcpListener — no cross-talk between concurrent turns', () => {
   });
 });
 
-describe('AiMcpListener — get_transcript_words returns hub rows (no session_id)', () => {
-  it('omits the per-word session_id the HTTP surface adds', async () => {
+describe('AiMcpListener — get_transcript_words returns COMPACT readable text', () => {
+  it('renders speaker/timecode-prefixed text, NOT verbose per-word JSON', async () => {
     registry.get('sessA').replaceTranscriptWords([
       { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
+      { session_time: '00:00:02', speaker: 'S1', word: 'world', start_sec: 2, end_sec: 3 },
     ]);
     const turn = listener.registerTurn('sessA');
     const { client, close } = await connectMcp(turn.url, turn.token);
@@ -193,13 +194,35 @@ describe('AiMcpListener — get_transcript_words returns hub rows (no session_id
         name: 'get_transcript_words',
         arguments: {},
       })) as ToolResult;
-      const words = JSON.parse(res.content[0].text) as Array<Record<string, unknown>>;
-      expect(words).toHaveLength(1);
-      // Hub row fields present…
-      expect(words[0].word).toBe('hello');
-      expect(words[0].start_sec).toBe(1);
-      // …and the HTTP surface's per-word session_id is NOT present.
-      expect(words[0]).not.toHaveProperty('session_id');
+      const text = res.content[0].text;
+      // Compact, readable text — the transcript words with a timecode + speaker
+      // prefix (one line per speaker segment).
+      expect(text).toBe('[00:00:01] speaker S1: hello world');
+      // Load-bearing negatives (the overflow-causing regression this guards):
+      // it must NOT be the verbose per-word JSON that produced a ~300KB single
+      // line the CLI could not read.
+      expect(text).not.toMatch(/"start_sec"|"created_at_utc"|"ordinal"|"session_id"/);
+      expect(() => JSON.parse(text)).toThrow();
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('handles an anchorless transcript (empty session_time) without a timecode prefix', async () => {
+    registry.get('sessB').replaceTranscriptWords([
+      { session_time: '', speaker: '0', word: 'rockets', start_sec: 0, end_sec: 0 },
+      { session_time: '', speaker: '0', word: 'and', start_sec: 0, end_sec: 0 },
+      { session_time: '', speaker: '0', word: 'coffee', start_sec: 0, end_sec: 0 },
+    ]);
+    const turn = listener.registerTurn('sessB');
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res.content[0].text).toBe('speaker 0: rockets and coffee');
     } finally {
       await close();
       turn.dispose();
