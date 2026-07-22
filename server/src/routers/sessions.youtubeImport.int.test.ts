@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
+import { recordingStartAnchors } from '../node/transcriptRemap';
 import { YOUTUBE_IMPORT_MAX_CONCURRENT, youtubeImportGuard } from '../node/youtubeImportGuard';
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { app, env, envWith } from '../test/harness';
@@ -60,6 +61,12 @@ const SESSION_BUSY_DETAIL = 'An import is already in progress for this session.'
 const AT_CAPACITY_DETAIL =
   'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const TRANSCRIPTION_UNAVAILABLE_DETAIL = 'Transcription is unavailable on this deployment.';
+const IMPORT_ROLLING_DETAIL =
+  'YouTube import is refused while this session is actively recording; stop the recording and try again.';
+
+// `seedSession`'s default frameRate=24, startOffsetFrames=0 (server/src/test/helpers.ts) —
+// the same TimecodeCtx shape the route builds via `timecodeCtx(sessionRow)`.
+const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
 const scratchDirs: string[] = [];
 function scratchDir(): string {
@@ -498,5 +505,249 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── Tasks 9.5 + 9.6: timeline-anchoring frozen-surface integration tests ───
+// (design D10-D13, spec "A successful import produces a timeline-anchored
+// take" / "Recording-ordinal assignment avoids collision" / "Anchor position
+// and take extent" / "Import is refused while a recording is live" /
+// "Existing anchorless imports are not retroactively changed"). Production
+// code (9.1-9.4) is already landed; these tests are the frozen-surface gate
+// over it.
+
+interface HttpEvent {
+  message: string;
+  category: string;
+  timecode_total_frames: number | null;
+  frame_rate: number | null;
+}
+
+async function listEventsRaw(sessionId: string, bindings: Bindings): Promise<string> {
+  const res = await app.request(`/api/sessions/${sessionId}/events`, { method: 'GET' }, bindings);
+  expect(res.status).toBe(200);
+  return res.text();
+}
+
+async function listEvents(
+  sessionId: string,
+  bindings: Bindings,
+): Promise<{ total: number; events: HttpEvent[] }> {
+  return JSON.parse(await listEventsRaw(sessionId, bindings));
+}
+
+describe('task 9.5 — anchored success: exact timecodes, transport advance, WS emissions', () => {
+  it('Started is anchored at the pre-import transport position, Stopped at +trunc(duration*fps), elapsed_frames advances by the same amount, and event.changed/transport.changed/audio.changed all fire', async () => {
+    const session = await seededSession();
+    const { binaryPath } = freshBinary(); // default success mode: duration 125s @ 24fps -> 3000 frames
+    const testEnv = configuredEnv(binaryPath);
+
+    // Observe the SAME in-process hub the route resolves via getSessionHub
+    // (env.ports.sessions IS c.env.ports.sessions — same registry instance) —
+    // a real socket attach, not a mock of the broadcast call.
+    const hub = env.ports.sessions.get(session);
+    const wsMessages: Array<Record<string, unknown>> = [];
+    hub.attachSocket({ send: (d: string) => void wsMessages.push(JSON.parse(d)) }, 'browser');
+
+    // Fresh session: transport position at import time is 0.
+    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+
+    const { events, total } = await listEvents(session, testEnv);
+    expect(total).toBe(2);
+    const started = events.find((e) => e.message === 'Recording 1 Started');
+    const stopped = events.find((e) => e.message === 'Recording 1 Stopped');
+    expect(started).toBeDefined();
+    expect(stopped).toBeDefined();
+    expect(started?.category).toBe('internal');
+    expect(started?.timecode_total_frames).toBe(0); // pre-import transport position
+    expect(started?.frame_rate).toBe(24);
+    expect(stopped?.timecode_total_frames).toBe(3000); // trunc(125 * 24)
+
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(1);
+    const seg = segs.segments[0] as {
+      recording_ordinal: number | null;
+      started_at_utc: string | null;
+      ended_at_utc: string | null;
+    };
+    expect(seg.recording_ordinal).toBe(1);
+    expect(seg.started_at_utc).not.toBeNull();
+    expect(seg.ended_at_utc).not.toBeNull();
+
+    // Transport actually advanced by the same 3000 frames (not just the
+    // Stopped event's own timecode — the live projection too).
+    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(3000);
+
+    const types = wsMessages.map((m) => m.type);
+    expect(types).toContain('audio.changed'); // addAudioSegment
+    expect(types.filter((t) => t === 'event.changed').length).toBeGreaterThanOrEqual(2); // Started + Stopped
+    expect(wsMessages).toContainEqual({ type: 'transport.changed', is_rolling: false, current_take: 0 });
+  });
+});
+
+describe('task 9.5 — non-overlap: a second import is anchored after the first, not at position 0', () => {
+  it('second import gets recording_ordinal=2, Started at the first take\'s end position', async () => {
+    const session = await seededSession();
+    const testEnv = configuredEnv(freshBinary().binaryPath);
+
+    const first = await postImport(session, VALID_BODY, testEnv);
+    expect(first.status).toBe(200);
+
+    const second = await postImport(session, VALID_BODY, configuredEnv(freshBinary().binaryPath));
+    expect(second.status).toBe(200);
+
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(2);
+    const seg2 = segs.segments.find((s) => (s as { recording_ordinal: number | null }).recording_ordinal === 2);
+    expect(seg2).toBeDefined();
+
+    const { events, total } = await listEvents(session, testEnv);
+    expect(total).toBe(4);
+    const started2 = events.find((e) => e.message === 'Recording 2 Started');
+    const stopped2 = events.find((e) => e.message === 'Recording 2 Stopped');
+    // Anchored after the first take's Stopped position (3000), NOT at 0 —
+    // the non-overlap property (design D10/spec "Two sequential imports do
+    // not overlap").
+    expect(started2?.timecode_total_frames).toBe(3000);
+    expect(stopped2?.timecode_total_frames).toBe(6000);
+  });
+});
+
+describe('task 9.5 — refused while rolling (409): live roll untouched, no Recording events', () => {
+  it('a live recording blocks the import, and the roll/current_take/events are byte-identical before and after the 409', async () => {
+    const session = await seededSession();
+    const { binaryPath, markerPath } = freshBinary();
+    const testEnv = configuredEnv(binaryPath);
+
+    // Start a real roll through the frozen transport/start route (not a
+    // fake-status stub) so `is_rolling`/`current_take` are the genuine
+    // live-projection values the import handler re-reads.
+    const startRes = await app.request(`/api/sessions/${session}/transport/start`, { method: 'POST' }, testEnv);
+    expect(startRes.status).toBe(200);
+
+    const statusBefore = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const beforeBody = (await statusBefore.json()) as { is_rolling: boolean; current_take: number };
+    expect(beforeBody.is_rolling).toBe(true);
+    expect(beforeBody.current_take).toBe(1);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ detail: IMPORT_ROLLING_DETAIL });
+    // The early rolling guard runs BEFORE mkdtemp/spawn — genuinely no
+    // subprocess launched to clobber the live take.
+    expect(neverSpawned(markerPath)).toBe(true);
+
+    const statusAfter = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const afterBody = (await statusAfter.json()) as { is_rolling: boolean; current_take: number };
+    expect(afterBody.is_rolling).toBe(true); // roll NOT clobbered
+    expect(afterBody.current_take).toBe(1); // NOT bumped by a synthesized take
+
+    const { total } = await listEvents(session, testEnv);
+    expect(total).toBe(0); // no Recording N Started/Stopped synthesized
+
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(0);
+  });
+});
+
+describe('task 9.5 — failed import: zero events, transport not advanced', () => {
+  it('a download failure leaves the event log and transport position exactly as they were', async () => {
+    const session = await seededSession();
+    const { binaryPath } = freshBinary({ mode: 'download-fail' });
+    const testEnv = configuredEnv(binaryPath);
+
+    const hub = env.ports.sessions.get(session);
+    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(502);
+
+    const { total } = await listEvents(session, testEnv);
+    expect(total).toBe(0); // no Recording N Started/Stopped
+    expect(hub.transportSnapshot(CTX).elapsed_frames).toBe(0); // no advance
+    expect((await listSegments(session, testEnv)).segments).toHaveLength(0);
+  });
+});
+
+describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', () => {
+  // NOTE (frozen-surface self-check, task 9.5): the repo's hermetic
+  // transcript-generation path (transcribe.int.test.ts) mocks DeepGram's own
+  // HTTP call but still requires the uploaded audio bytes to be decodable
+  // (mediabunny-probed) so word/segment offsets can be computed — see that
+  // suite's "all-unreadable" 400 case. The fake-ytdlp fixture's "success"
+  // mode writes the literal, non-decodable string 'fake-audio-bytes' as the
+  // produced file (this suite's own byte-identity assertion above depends on
+  // that), so an imported segment can't be fed through the real transcript
+  // pipeline without a fixture change this task doesn't authorize. Per task
+  // 9.5's own fallback ("if not, document that recordingStartAnchors
+  // resolution is the substitute"), this test instead asserts the exact
+  // function transcript generation calls to resolve a segment's anchor,
+  // fed the REAL events the import created through the real HTTP route —
+  // the same production seam (server/src/node/transcriptRemap.ts), not a
+  // reimplementation of its logic.
+  it('recordingStartAnchors resolves the imported take: recordingOrdinal=1, anchorSeconds=0 at position 0', async () => {
+    const session = await seededSession();
+    const testEnv = configuredEnv(freshBinary().binaryPath);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(200);
+
+    const { events } = await listEvents(session, testEnv);
+    const anchors = recordingStartAnchors(events);
+    expect(anchors).toContainEqual({ recordingOrdinal: 1, anchorSeconds: 0 });
+  });
+});
+
+describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouched', () => {
+  it('a session already holding an anchorless imported segment is byte-for-byte unchanged after the change\'s read/startup paths run', async () => {
+    const session = await seededSession();
+    const hub = env.ports.sessions.get(session);
+
+    // A pre-existing anchorless take: recording_ordinal/timestamps null, no
+    // events — exactly what an import produced BEFORE task 9.4 wired
+    // anchoring in (the 9.1 characterization baseline this test now pins as
+    // "never migrated").
+    const seg = hub.addAudioSegment({
+      sessionId: session,
+      mimeType: 'audio/mp4',
+      startedAtUtc: null,
+      endedAtUtc: null,
+      recordingOrdinal: null,
+    });
+    expect(seg.recording_ordinal).toBeNull();
+    expect(seg.started_at_utc).toBeNull();
+    expect(seg.ended_at_utc).toBeNull();
+
+    const segsBefore = await listSegmentsRaw(session, env);
+    const eventsBefore = await listEventsRaw(session, env);
+
+    // Exercise the change's read/startup path: idle-hub close + lazy reopen
+    // (SessionHubRegistry#get(), CLAUDE.md invariant "idle hubs close their
+    // DB handles and reopen lazily") is the real mechanism by which a
+    // later request re-derives session state from disk after a restart —
+    // this change adds NO DB migration (design "Migration Plan": "No DB
+    // migration"), so there is structurally nothing else in the read/
+    // startup path that could touch this row. `-1` forces the idle check
+    // (`now - lastTouchedMs > idleMs`) true regardless of elapsed time.
+    env.ports.sessions.evictIdle(-1);
+
+    const segsAfter = await listSegmentsRaw(session, env);
+    const eventsAfter = await listEventsRaw(session, env);
+    expect(segsAfter).toBe(segsBefore); // byte-for-byte unchanged
+    expect(eventsAfter).toBe(eventsBefore); // still zero events, untouched
+
+    // The row itself is still exactly anchorless — nothing migrated it.
+    const after = await listSegments(session, env);
+    const reread = after.segments.find((s) => (s as { id: string }).id === seg.id) as
+      | { recording_ordinal: number | null; started_at_utc: string | null; ended_at_utc: string | null }
+      | undefined;
+    expect(reread).toBeDefined();
+    expect(reread?.recording_ordinal).toBeNull();
+    expect(reread?.started_at_utc).toBeNull();
+    expect(reread?.ended_at_utc).toBeNull();
   });
 });

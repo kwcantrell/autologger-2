@@ -148,7 +148,7 @@
   after the successful `put`, call the composite anchor RPC (D11); on composite throw, roll
   back the segment and `502`. Build `ctx` via the same `timecodeCtx(row)` the events router
   uses. Update the 9.1 characterization test to assert the anchored outcome.
-- [ ] 9.5 Integration tests (frozen-surface): a successful import creates `Recording N
+- [x] 9.5 Integration tests (frozen-surface): a successful import creates `Recording N
   Started`/`Stopped` (Started `timecode_total_frames` = transport position; Stopped ≈
   `+duration·fps`), segment `recording_ordinal=N` + non-null timestamps, transport advanced;
   emits `event.changed` + `transport.changed` + `audio.changed`, HTTP still `200 {ok:true}`; a
@@ -157,7 +157,7 @@
   Anchor-resolution end-to-end: assert `recordingStartAnchors` over the created events resolves
   the segment (and, if a hermetic transcript path exists, that words get **non-empty
   `session_time`** — NOT `start_sec>0`, which is legitimately 0 at position 0).
-- [ ] 9.6 Assert **no backfill**: a session already holding an anchorless imported segment
+- [x] 9.6 Assert **no backfill**: a session already holding an anchorless imported segment
   (recording_ordinal/timestamps null, no events) is left byte-for-byte unchanged when the
   server runs this change — no migration touches it; only a new import produces an anchored
   take.
