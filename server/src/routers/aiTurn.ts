@@ -48,6 +48,10 @@ export interface DriveAiTurnOptions {
    * `list_topics` here so the model cannot dedup against the topics it is
    * about to replace (design D3/D5). */
   allowedTools?: readonly AiMcpToolName[];
+  /** Dedicated `--append-system-prompt`; omit for `ai/chat`'s reused brief.
+   * `topics/generate` passes a generate-specific prompt (no `list_topics`
+   * dedup instruction, since that tool is withheld). */
+  systemPrompt?: string;
   maxBudgetUsd: number;
   timeoutMs: number;
   /** A `claude_session_id` already validated by the caller as issued for
@@ -85,6 +89,7 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<AiChatTurnO
       maxBudgetUsd: opts.maxBudgetUsd,
       resumeSessionId: opts.resumeSessionId,
       allowedTools: opts.allowedTools,
+      systemPrompt: opts.systemPrompt,
     });
     return await runAiChatTurn({
       child: spawned.child,

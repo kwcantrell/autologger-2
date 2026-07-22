@@ -11,6 +11,7 @@
     "start": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:real": "RUN_REAL_AI_TESTS=1 vitest run real.test",
     "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts",
     "capture:deepgram-fixture": "node --env-file-if-exists=.env scripts/capture-deepgram-fixture.mjs"
   },

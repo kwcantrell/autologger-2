@@ -98,6 +98,12 @@ export interface BuildAiChatArgvInput {
    * unchanged behavior). `topics/generate` (topic-generation design D7)
    * passes a narrower set that withholds `list_topics`. */
   allowedTools?: string;
+  /** `--append-system-prompt` value — omit for `AI_CHAT_SYSTEM_PROMPT_BRIEF`
+   * (`ai/chat`'s current, unchanged behavior). `topics/generate` passes a
+   * dedicated one-shot generate prompt (no `list_topics` dedup instruction,
+   * since that tool is withheld — the reused chat prompt otherwise makes the
+   * model create too few/no topics). */
+  systemPrompt?: string;
 }
 
 /**
@@ -125,7 +131,7 @@ export function buildAiChatArgv(input: BuildAiChatArgvInput): string[] {
     '--allowedTools',
     input.allowedTools ?? ALLOWED_TOOLS,
     '--append-system-prompt',
-    AI_CHAT_SYSTEM_PROMPT_BRIEF,
+    input.systemPrompt ?? AI_CHAT_SYSTEM_PROMPT_BRIEF,
     '--max-budget-usd',
     String(input.maxBudgetUsd),
   ];
@@ -200,6 +206,8 @@ export interface AiChatSpawnOptions {
   /** Restrict the `--allowedTools` set to these short tool names; omit for
    * the default full allowlist (`ai/chat`'s current, unchanged behavior). */
   allowedTools?: readonly AiMcpToolName[];
+  /** Dedicated `--append-system-prompt`; omit for `ai/chat`'s reused brief. */
+  systemPrompt?: string;
   /** Override for tests; defaults to the real `process.env`. */
   procEnv?: NodeJS.ProcessEnv;
 }
@@ -246,6 +254,7 @@ export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
     allowedTools: opts.allowedTools
       ? opts.allowedTools.map((name) => `mcp__autologger__${name}`).join(',')
       : undefined,
+    systemPrompt: opts.systemPrompt,
   });
 
   const child = spawn(opts.cliPath, argv, {

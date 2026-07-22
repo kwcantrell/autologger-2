@@ -21,9 +21,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
-import { stableSessionCwd } from './aiChatRunner';
+import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
-import { generateTopicsTurn, TOPIC_GENERATE_MESSAGE } from './topicGenerate';
+import {
+  generateTopicsTurn,
+  TOPIC_GENERATE_MESSAGE,
+  TOPIC_GENERATE_SYSTEM_PROMPT,
+} from './topicGenerate';
 
 const SUCCESS_FIXTURE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
 const ERROR_FIXTURE = fileURLToPath(new URL('../test/fixtures/fake-claude-error.mjs', import.meta.url));
@@ -123,5 +127,28 @@ describe('generateTopicsTurn', () => {
     // would fail here.
     expect(allowed).not.toContain('mcp__autologger__list_topics');
     expect(allowed.join(',')).not.toMatch(/\blist_topics\b/);
+  });
+
+  it('the spawned argv uses the DEDICATED generate system prompt, not the ' +
+    'chat brief (the reused brief tells the model to list_topics — a withheld ' +
+    'tool — which made the real model create too few/zero topics)', async () => {
+    await generateTopicsTurn({
+      registry,
+      cliPath: SUCCESS_FIXTURE,
+      sessionId,
+      maxBudgetUsd: 2.0,
+      timeoutMs: 10_000,
+    });
+    const argv = JSON.parse(
+      readFileSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'), 'utf8'),
+    ) as string[];
+    const i = argv.indexOf('--append-system-prompt');
+    expect(i).toBeGreaterThanOrEqual(0);
+    const systemPrompt = argv[i + 1];
+    expect(systemPrompt).toBe(TOPIC_GENERATE_SYSTEM_PROMPT);
+    // Load-bearing negatives: the dedicated prompt must NOT reference the
+    // withheld list_topics tool, and must NOT be the reused chat brief.
+    expect(systemPrompt).not.toMatch(/list_topics/);
+    expect(systemPrompt).not.toBe(AI_CHAT_SYSTEM_PROMPT_BRIEF);
   });
 });
