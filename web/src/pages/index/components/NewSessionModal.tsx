@@ -288,7 +288,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
             type="button"
             className={DISCLOSURE_BTN}
             id="ns-toggle-yt"
-            aria-expanded={showYt || Boolean(ytUrl.trim())}
+            aria-expanded={showYt}
             onClick={() => setShowYt((v) => !v)}
           >
             <svg
@@ -297,10 +297,7 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
               viewBox="0 0 24 24"
               fill="none"
               aria-hidden="true"
-              className={clsx(
-                '[transition:transform_0.15s_ease]',
-                (showYt || Boolean(ytUrl.trim())) && 'rotate-90',
-              )}
+              className={clsx('[transition:transform_0.15s_ease]', showYt && 'rotate-90')}
             >
               <path
                 d="M9 5L16 12L9 19"
@@ -310,9 +307,9 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
                 strokeLinejoin="round"
               />
             </svg>
-            Import audio from YouTube{ytUrl.trim() ? ' — link added' : ''}
+            Import audio from YouTube{!showYt && ytUrl.trim() ? ' — link added' : ''}
           </button>
-          {(showYt || Boolean(ytUrl.trim())) && (
+          {showYt && (
             <div className="flex flex-col gap-2 pl-5">
               <label className="field">
                 <span>YouTube video link</span>
