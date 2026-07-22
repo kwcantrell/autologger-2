@@ -59,7 +59,7 @@
   (single-column `UPDATE`), plus a `YYYYMMDD → YYYY-MM-DD` helper. **Not** a hub RPC (D4 —
   `episode_date` is catalog-side). Unit-test: setting a date is reflected in the catalog read
   path (`serializeSessionEntry`); the normalization is correct; a null/blank date is a no-op.
-- [ ] 4.2 Fix the publish-date **off-by-one display** (D4): `fmtDateOnly` (duplicated in
+- [x] 4.2 Fix the publish-date **off-by-one display** (D4): `fmtDateOnly` (duplicated in
   `web/src/pages/index/components/HomeRoute.tsx` and `RecentSessionsList.tsx`) must render a
   bare `YYYY-MM-DD` on its literal calendar day (no `new Date()` UTC-midnight zone shift),
   while still handling the full-timestamp `created_at_utc` fallback. Add a web unit test
