@@ -230,6 +230,51 @@ export const teamRoleChangeBodySchema = z.object({
 });
 export type TeamRoleChangeBody = z.infer<typeof teamRoleChangeBodySchema>;
 
+// -- youtube-audio-import: request body + exact-hostname allowlist (D6) ------
+// `url`/`use_publish_date` are the verbatim snake_case keys the client sends
+// (web/src/api/hooks/useSessions.ts useYoutubeImport). The allowlist validator
+// is consumed by the route handler (Phase 5.3) BEFORE any `yt-dlp` spawn — see
+// spec "Request and URL validation": rejection requires an EXACT lowercased-
+// hostname match against the enumerated allowlist, never substring/suffix
+// (bypassable by hosts like `youtube.com.evil.com`). `new URL()` already
+// lowercases the host, strips userinfo (so `https://youtube.com@evil.com`
+// resolves to host `evil.com` and is rejected), and punycode-normalizes IDN.
+export const youtubeImportBodySchema = z.object({
+  url: z.string().min(1).max(2048),
+  use_publish_date: z.boolean(),
+});
+export type YoutubeImportBody = z.infer<typeof youtubeImportBodySchema>;
+
+const YOUTUBE_HOST_ALLOWLIST: ReadonlySet<string> = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+  'youtu.be',
+  'youtube-nocookie.com',
+]);
+
+export type YoutubeUrlValidation = { ok: true; href: string } | { ok: false };
+
+/**
+ * Exact-hostname YouTube allowlist validator (design D6). Parses `raw` with
+ * `new URL()`, requires `http(s)`, and requires the lowercased `hostname` be
+ * an exact member of `YOUTUBE_HOST_ALLOWLIST`. Returns the normalized
+ * `url.href` on success so the caller spawns `yt-dlp` against the validated,
+ * parser-normalized value rather than the raw request string.
+ */
+export function validateYoutubeImportUrl(raw: string): YoutubeUrlValidation {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ok: false };
+  if (!YOUTUBE_HOST_ALLOWLIST.has(parsed.hostname.toLowerCase())) return { ok: false };
+  return { ok: true, href: parsed.href };
+}
+
 export const profileUpdateBodySchema = z.object({
   active_studio_id: z.string().max(120).nullish(),
   active_show_id: z.string().min(1).max(120).nullish(),

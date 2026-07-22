@@ -7,6 +7,8 @@ import {
   logBodySchema,
   MAX_METADATA_BYTES,
   newSessionBodySchema,
+  validateYoutubeImportUrl,
+  youtubeImportBodySchema,
 } from './schemas';
 
 describe('logBodySchema.metadata cap', () => {
@@ -67,5 +69,72 @@ describe('enum + bound schemas', () => {
   it('audioSegmentWaveformBodySchema bounds peaks 8..4096', () => {
     expect(audioSegmentWaveformBodySchema.safeParse({ peaks: [1, 2, 3] }).success).toBe(false);
     expect(audioSegmentWaveformBodySchema.safeParse({ peaks: Array(8).fill(0) }).success).toBe(true);
+  });
+});
+
+describe('youtubeImportBodySchema', () => {
+  it('accepts a well-formed body', () => {
+    const r = youtubeImportBodySchema.safeParse({
+      url: 'https://youtu.be/dQw4w9WgXcQ',
+      use_publish_date: true,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('requires url to be present', () => {
+    expect(youtubeImportBodySchema.safeParse({ use_publish_date: true }).success).toBe(false);
+  });
+
+  it('rejects a non-boolean use_publish_date', () => {
+    const r = youtubeImportBodySchema.safeParse({
+      url: 'https://youtu.be/dQw4w9WgXcQ',
+      use_publish_date: 'yes',
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('validateYoutubeImportUrl (design D6 — exact-hostname allowlist)', () => {
+  const allowlisted = [
+    'https://youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://m.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://music.youtube.com/watch?v=dQw4w9WgXcQ',
+    'https://youtu.be/dQw4w9WgXcQ',
+    'https://youtube-nocookie.com/embed/dQw4w9WgXcQ',
+  ];
+
+  it.each(allowlisted)('accepts allowlisted host: %s', (url) => {
+    const r = validateYoutubeImportUrl(url);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.href).toBe(new URL(url).href);
+  });
+
+  it('accepts an uppercase-host variant by normalizing before comparison', () => {
+    const r = validateYoutubeImportUrl('https://YouTu.be/dQw4w9WgXcQ');
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a dot-suffix look-alike host (youtube.com.evil.com)', () => {
+    expect(validateYoutubeImportUrl('https://youtube.com.evil.com/watch?v=x').ok).toBe(false);
+  });
+
+  it('rejects a prefix/hyphen look-alike host (evil-youtube.com)', () => {
+    expect(validateYoutubeImportUrl('https://evil-youtube.com/watch?v=x').ok).toBe(false);
+  });
+
+  it('rejects a userinfo trick whose real host is evil.com', () => {
+    const r = validateYoutubeImportUrl('https://youtube.com@evil.com/watch?v=x');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects a non-http(s) scheme', () => {
+    expect(validateYoutubeImportUrl('ftp://youtube.com/watch?v=x').ok).toBe(false);
+    expect(validateYoutubeImportUrl('javascript:alert(1)').ok).toBe(false);
+  });
+
+  it('rejects an unparseable URL', () => {
+    expect(validateYoutubeImportUrl('not a url').ok).toBe(false);
+    expect(validateYoutubeImportUrl('').ok).toBe(false);
   });
 });
