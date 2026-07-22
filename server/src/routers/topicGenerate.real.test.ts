@@ -30,8 +30,13 @@ function resolveClaude(): string | null {
   return probe.status === 0 ? candidate : null;
 }
 
-const cliPath = resolveClaude();
-const RUN = process.env.RUN_REAL_AI_TESTS === '1' && cliPath !== null;
+// Gate the CLI probe itself behind the opt-in: in a normal `npm test` run this
+// module is imported (vitest's unit glob includes it), so an unconditional
+// probe would spawn `claude --version` on every test run. Only resolve when the
+// operator has opted in — otherwise no subprocess is spawned at all.
+const OPTED_IN = process.env.RUN_REAL_AI_TESTS === '1';
+const cliPath = OPTED_IN ? resolveClaude() : null;
+const RUN = OPTED_IN && cliPath !== null;
 
 // A transcript with genuine multi-segment CONTENT (not an intro that merely
 // *previews* segments — that is ambiguous and a smart model may collapse it to

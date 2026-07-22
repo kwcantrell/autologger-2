@@ -106,10 +106,13 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<AiChatTurnO
     return { ok: false, detail: 'internal-error' };
   } finally {
     // Defensive-in-depth: runAiChatTurn already kills the process group on
-    // every path it controls, but this call is idempotent (a fast no-op once
-    // the child has exited) and guarantees no orphan even if setup threw
-    // before runAiChatTurn ever ran (e.g. spawnAiChatTurn itself failed after
-    // the child was already forked).
+    // every path it controls, and this call is idempotent (a fast no-op once
+    // the child has exited). It covers the case where the turn threw AFTER
+    // spawnAiChatTurn returned but before/inside runAiChatTurn. (The narrow
+    // window where spawnAiChatTurn itself throws after fork but before
+    // returning — leaving `spawned` null — is not reachable to kill here; in
+    // practice the only post-fork work is guarded stdin writes, so it does not
+    // orphan.)
     if (spawned) await killAiChatProcessGroup(spawned.child);
     mcpTurn?.dispose();
     spawned?.cleanupConfig();

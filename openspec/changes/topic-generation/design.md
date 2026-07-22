@@ -233,3 +233,48 @@ _All resolved at the 2026-07-22 gate:_
   restored" — corrected to "left untouched/unchanged" + added the "fixed handler-owned detail"
   framing; (3) the proposal's capability summary said "(snapshot/restore-on-failure)" —
   corrected to "(crash-safe swap)". Re-validated `--strict`.
+- **Post-apply debugging fixes** — _2026-07-22, three reactive commits after apply, driven by a
+  real-session failure the hermetic fixtures could not catch._ Wiring the real (large) FS-9
+  transcript through the real `claude` CLI surfaced a production bug: `get_transcript_words`
+  returned `JSON.stringify(words)` — a ~300 KB single line on a ~1,759-word session — which
+  overflowed the CLI's tool-output token limit, so the model never saw the transcript and
+  produced a placeholder/zero topics. Fixes: (1) `b301ced` operator `console.warn` of the real
+  failure reason before the fixed `502`; (2) `d19d1af` a **dedicated** `TOPIC_GENERATE_SYSTEM_PROMPT`
+  (the reused chat brief told the model to `list_topics`, a withheld tool) plumbed through
+  `buildAiChatArgv`/`driveAiTurn`, plus a **gated** real-`claude` e2e test (`RUN_REAL_AI_TESTS=1`,
+  never runs in `npm test`); (3) `3e5974d` `get_transcript_words` now returns compact,
+  bounded, per-speaker session-time-anchored **text** instead of JSON rows. Verified end-to-end
+  on the real FS-9 session: 0/placeholder → 11 real per-subject topics.
+- **Whole-branch audit** — _2026-07-22, two adversarial reviewers (opus): contract/seam +
+  correctness._ Branch green (typecheck clean, server 791 pass + 1 gated skip, web 367,
+  companion 20; `openspec validate --strict` valid).
+  - **Contract/seam — CLEAN except one MAJOR (process):** every `topics/generate`
+    status/body (404/503/503/400/409/200/502) is authorized by the `api-contract-freeze`
+    delta; the `200 {topics}` shape matches `GET …/topics`; the unconfigured `503` is
+    byte-identical; the `driveAiTurn` extraction leaves `ai/chat`'s SSE shapes/emission/status
+    observably unchanged. **MAJOR:** the `get_transcript_words` format change (`3e5974d`) is a
+    seam shared with `ai/chat` whose model-visible output contract diverged from the baseline
+    `ai-topics-chat` spec ("with the hub row fields") with **no authorizing delta** — a
+    spec/process gap, not a wire break (the MCP server is loopback/in-process/CLI-only, not
+    frozen HTTP/WS surface; no in-repo consumer parses it as JSON).
+  - **Correctness — CLEAN, no blockers/majors:** crash-safe swap set-difference sound (ids are
+    `randomUUID`, no collision; single-flight held across the whole record→run→swap; atomic
+    per-branch deletes); `systemPrompt`/`allowedTools` plumbing resolves correctly with the
+    `?? default` fallback for `ai/chat`; `driveAiTurn` `finally` leaks nothing on any path.
+    Minors: an overstated orphan-kill comment, `formatTranscriptForModel` test-coverage gaps,
+    an ungated `claude --version` probe at import in the real test, a timeout-test title nit.
+  - **Disposition:** **MAJOR → fixed in place** by authoring a `MODIFIED Requirement` delta
+    against the `ai-topics-chat` capability (`specs/ai-topics-chat/spec.md`) folding the
+    compact-text `get_transcript_words` contract into the baseline (revert was not viable — the
+    format change *is* the root-cause fix). Correctness minors **fixed in place**: comment
+    corrected, four `formatTranscriptForModel` edge cases added (empty/flip-back/delayed-timecode/
+    blank-speaker), the real-test CLI probe gated behind `RUN_REAL_AI_TESTS`. **Housekeeping:**
+    reverted stray `.env.example` diagnostic budget bumps and deleted the untracked `repro-real.mts`
+    spike from the working tree. Timeout-title nit accepted as residual (kill is covered
+    transitively by the ai/chat tests).
+- **Post-audit consistency read** — _2026-07-22, self-read (single new MODIFIED requirement,
+  proportionate to a re-panel)._ The new `ai-topics-chat` delta reproduces the baseline
+  requirement verbatim except the `get_transcript_words` bullet + one added scenario; the
+  changed bullet matches the shipped `formatTranscriptForModel` output and the new test
+  assertions; `list_topics`/`create_topic`/write-through/session-binding text unchanged.
+  Re-validated `openspec validate topic-generation --strict`.
