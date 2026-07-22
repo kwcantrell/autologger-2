@@ -218,26 +218,52 @@ export class SessionHub {
    * writes (calling the *store* methods directly rather than the self-transactional
    * delegates above, so nothing is nested) — a mid-transaction throw (e.g. a disk-full
    * on the second insert) rolls back the Started event AND the transport advance, never
-   * leaving a dangling `Recording N Started` with no `Stopped`. */
+   * leaving a dangling `Recording N Started` with no `Stopped`.
+   *
+   * Phase-9 fix-wave (finding 1): the three store calls inside `inTxn` all pass
+   * `suppressBroadcast: true` — `EventStore.addEvent`/`TransportStore.stopTakeWithDuration`
+   * otherwise broadcast synchronously on each call, i.e. BEFORE `db.transaction` commits.
+   * A mid-transaction throw (e.g. SQLITE_FULL on the Stopped write) would then have
+   * already let the Started `event.changed` reach clients even though the whole
+   * transaction rolls back — contradicting design D11 ("broadcasts once after commit")
+   * and the delta scenario "Failed import emits no take messages". Broadcasting is
+   * instead done ONCE, here, after `inTxn` returns successfully — never reached on a
+   * throw, since the exception propagates out of `inTxn` before this line runs. */
   anchorImportedTake(input: { recordingOrdinal: number; durationS: number; ctx: TimecodeCtx }) {
-    return this.inTxn(() => {
+    const { started, stopped, projection } = this.inTxn(() => {
       const { event: started } = this.events.addEvent({
         category: 'internal',
         message: `Recording ${input.recordingOrdinal} Started`,
         metadataJson: '{}',
         markedAtUtc: null,
         ctx: input.ctx,
+        suppressBroadcast: true,
       });
-      this.transport.stopTakeWithDuration({ durationS: input.durationS, ctx: input.ctx });
+      this.transport.stopTakeWithDuration({
+        durationS: input.durationS,
+        ctx: input.ctx,
+        suppressBroadcast: true,
+      });
       const { event: stopped, projection } = this.events.addEvent({
         category: 'internal',
         message: `Recording ${input.recordingOrdinal} Stopped`,
         metadataJson: '{}',
         markedAtUtc: null,
         ctx: input.ctx,
+        suppressBroadcast: true,
       });
       return { started, stopped, projection };
     });
+    // Post-commit, once each — reusing the exact existing shapes (event.changed's
+    // `{type, revision}`; transport.changed's recorded-take shape `{type,
+    // is_rolling:false, current_take}`, same as stopTake's).
+    this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+    this.core.broadcast({
+      type: 'transport.changed',
+      is_rolling: false,
+      current_take: projection.current_take,
+    });
+    return { started, stopped, projection };
   }
 
   // --- lease delegates ---

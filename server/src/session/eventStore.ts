@@ -38,6 +38,14 @@ export class EventStore {
     metadataJson: string;
     markedAtUtc: string | null;
     ctx: TimecodeCtx;
+    /** youtube-audio-import Phase-9 fix-wave (finding 1): when true, skip this
+     * call's `event.changed` broadcast. Used ONLY by
+     * `SessionHub.anchorImportedTake`'s composite `inTxn`, so a mid-transaction
+     * throw can never let a broadcast reach clients ahead of the DB commit that
+     * would make it true — the composite broadcasts once, itself, after
+     * `inTxn` returns successfully. Every other caller omits this (default
+     * false), preserving the existing per-write broadcast behavior. */
+    suppressBroadcast?: boolean;
   }): { event: EventRpc; projection: SessionProjection } {
     const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();
     const wallMs = Number.isNaN(markMs) ? this.core.now() : markMs;
@@ -59,7 +67,9 @@ export class EventStore {
       metaJson,
     );
     this.core.bumpRevision();
-    this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+    if (!input.suppressBroadcast) {
+      this.core.broadcast({ type: 'event.changed', revision: this.core.revision() });
+    }
     const r = this.core.first('SELECT * FROM events WHERE id = ?', id);
     return { event: eventRowToRpc(r as Row), projection: this.core.projection() };
   }

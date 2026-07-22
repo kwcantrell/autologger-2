@@ -584,7 +584,12 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
 
     const types = wsMessages.map((m) => m.type);
     expect(types).toContain('audio.changed'); // addAudioSegment
-    expect(types.filter((t) => t === 'event.changed').length).toBeGreaterThanOrEqual(2); // Started + Stopped
+    // Phase-9 fix-wave (finding 1): the composite broadcasts event.changed
+    // exactly ONCE, after commit — not once per addEvent call (Started +
+    // Stopped) — so a mid-transaction throw can never leak a broadcast ahead
+    // of the rollback it belongs to.
+    expect(types.filter((t) => t === 'event.changed').length).toBe(1);
+    expect(types.filter((t) => t === 'transport.changed').length).toBe(1);
     expect(wsMessages).toContainEqual({ type: 'transport.changed', is_rolling: false, current_take: 0 });
   });
 });
@@ -614,6 +619,45 @@ describe('task 9.5 — non-overlap: a second import is anchored after the first,
     // not overlap").
     expect(started2?.timecode_total_frames).toBe(3000);
     expect(stopped2?.timecode_total_frames).toBe(6000);
+  });
+});
+
+// Phase-9 fix-wave (finding 3): `nextRecordingOrdinal`'s event-message scan
+// must be restricted to `category === 'internal'` — the real anchors
+// `anchorImportedTake` ever writes — so a non-internal event that merely
+// matches the `Recording <n> Started/Stopped` message text can't inflate N.
+describe('task 9.5 — N-scan category guard: a non-internal "Recording 99 Started" event does not inflate N', () => {
+  it('a logged event with a Recording-shaped message in a non-internal category is ignored by the ordinal scan', async () => {
+    const session = await seededSession();
+    const testEnv = configuredEnv(freshBinary().binaryPath);
+
+    // Seed a NON-internal event whose message text collides with the
+    // internal anchor format — via the hub directly (same pattern as "task
+    // 9.6 — no backfill" above), bypassing the /events route's category
+    // whitelist so the seeded row's category is exactly 'cam' (not
+    // 'internal').
+    const hub = env.ports.sessions.get(session);
+    hub.addEvent({
+      category: 'cam',
+      message: 'Recording 99 Started',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+    });
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(200);
+
+    // If the non-internal "Recording 99" event had inflated N, the imported
+    // take would anchor at recordingOrdinal=100. It must instead be 1 — the
+    // seeded event is the only pre-existing event, and it's not internal.
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(1);
+    expect((segs.segments[0] as { recording_ordinal: number | null }).recording_ordinal).toBe(1);
+
+    const { events } = await listEvents(session, testEnv);
+    expect(events.some((e) => e.message === 'Recording 1 Started')).toBe(true);
+    expect(events.some((e) => e.message === 'Recording 100 Started')).toBe(false);
   });
 });
 
@@ -651,6 +695,73 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
 
     const segs = await listSegments(session, testEnv);
     expect(segs.segments).toHaveLength(0);
+  });
+
+  // Phase-9 fix-wave (finding 2): the test above only exercises the EARLY
+  // rolling guard (before mkdtemp/download). This exercises the LATE guard
+  // (after a successful `put`, right before the composite anchor RPC) — the
+  // race where a recording starts DURING the download.
+  //
+  // Hermetic seam: `env.ports.sessions.get(session)` returns the SAME
+  // in-process hub instance `getSessionHub` resolves inside the route
+  // (SessionHubRegistry caches by session id — see SessionHub.ts's `get()`).
+  // A real live roll is started via the frozen `/transport/start` route
+  // FIRST (so `is_rolling` is genuinely true for the rest of the test), then
+  // `hub.statusLive` is spied to fake a stale not-rolling snapshot on ONLY
+  // its FIRST call — simulating the early guard's read landing an instant
+  // BEFORE the roll started. Every later call (including the late guard's
+  // real second read, and the post-request `/status` assertion once the spy
+  // is restored) sees the genuine, unmodified transport row. This makes the
+  // download proceed for real (proven by the marker file) and the late guard
+  // fire off a REAL is_rolling=true read, not a fully-mocked one.
+  it('the LATE guard (post-download, pre-synthesis) refuses a recording that started during the download: 409, segment rolled back, live roll untouched, no Recording events', async () => {
+    const session = await seededSession();
+    const { binaryPath, markerPath } = freshBinary();
+    const testEnv = configuredEnv(binaryPath);
+
+    const hub = env.ports.sessions.get(session);
+    const originalStatusLive = hub.statusLive.bind(hub);
+    let statusLiveCalls = 0;
+    const spy = vi.spyOn(hub, 'statusLive').mockImplementation((ctx) => {
+      statusLiveCalls += 1;
+      const real = originalStatusLive(ctx);
+      // Only the FIRST read (the early guard) is faked as not-rolling; every
+      // subsequent read (the late guard, and anything after) is the real
+      // live value.
+      return statusLiveCalls === 1 ? { ...real, is_rolling: false } : real;
+    });
+
+    // Start a REAL live roll — genuine transport state for the whole request,
+    // except the early guard's faked first read above.
+    const startRes = await app.request(`/api/sessions/${session}/transport/start`, { method: 'POST' }, testEnv);
+    expect(startRes.status).toBe(200);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    spy.mockRestore();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ detail: IMPORT_ROLLING_DETAIL });
+    expect(statusLiveCalls).toBeGreaterThanOrEqual(2); // both guards actually ran
+
+    // The download genuinely proceeded past the early guard (real subprocess
+    // launched) — proves this test exercises the LATE guard, not the early one.
+    expect(neverSpawned(markerPath)).toBe(false);
+
+    // The segment the handler attached mid-request was rolled back by the
+    // late guard — audio-segment listing is back to empty.
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(0);
+
+    // The live roll is STILL rolling — not clobbered by
+    // stopTakeWithDuration inside the (never-reached) composite anchor RPC.
+    const statusAfter = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const afterBody = (await statusAfter.json()) as { is_rolling: boolean; current_take: number };
+    expect(afterBody.is_rolling).toBe(true);
+    expect(afterBody.current_take).toBe(1);
+
+    // No Recording N Started/Stopped events were synthesized.
+    const { total } = await listEvents(session, testEnv);
+    expect(total).toBe(0);
   });
 });
 

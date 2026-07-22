@@ -108,6 +108,26 @@ describe('SessionCore on a fake runtime', () => {
     expect(topics.deleteTopic(t.id)).toBe(false); // affected-row count drives the miss
   });
 
+  // Phase-9 fix-wave (finding 1): SessionHub.anchorImportedTake's composite
+  // relies on this to keep its per-write broadcasts out of the in-transaction
+  // path — DB write still applies, only the broadcast is skipped.
+  it('addEvent({ suppressBroadcast: true }) still persists and bumps revision but broadcasts nothing', () => {
+    const { core, sent } = fakeRuntime();
+    const events = new EventStore(core);
+    const added = events.addEvent({
+      category: 'internal',
+      message: 'Recording 1 Started',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: { frameRate: 30, startOffsetFrames: 0 },
+      suppressBroadcast: true,
+    });
+    expect(added.event.message).toBe('Recording 1 Started');
+    expect(core.projection().event_count).toBe(1);
+    expect(core.revision()).toBe(1); // revision still bumped
+    expect(sent).toEqual([]); // no event.changed reached the socket
+  });
+
   it('presence counts fake sockets by role', () => {
     const { core, sockets } = fakeRuntime();
     sockets.add({ send: () => {}, role: 'companion' });

@@ -73,8 +73,17 @@ export class TransportStore {
     return { state: { ...st, stopped: true }, projection: this.core.projection() };
   }
 
-  /** Finalize an in-progress take with an exact duration (YouTube import path). */
-  stopTakeWithDuration(input: { durationS: number; ctx: TimecodeCtx }): SessionProjection {
+  /** Finalize an in-progress take with an exact duration (YouTube import path).
+   * `suppressBroadcast` (youtube-audio-import Phase-9 fix-wave, finding 1): when
+   * true, skip this call's `transport.changed` broadcast — used ONLY by
+   * `SessionHub.anchorImportedTake`'s composite `inTxn`, which broadcasts once
+   * itself, after the transaction commits. Every other caller omits it
+   * (default false), preserving the existing broadcast behavior. */
+  stopTakeWithDuration(input: {
+    durationS: number;
+    ctx: TimecodeCtx;
+    suppressBroadcast?: boolean;
+  }): SessionProjection {
     const tr = this.core.transportRow();
     const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
     this.core.db.run(
@@ -84,11 +93,13 @@ export class TransportStore {
     // Matches stopTake's exact emitted shape (design D11) — stopTakeWithDuration
     // previously broadcast nothing, which was a gap masked by having zero
     // non-test callers until the youtube-import anchor composite.
-    this.core.broadcast({
-      type: 'transport.changed',
-      is_rolling: false,
-      current_take: tr.current_take,
-    });
+    if (!input.suppressBroadcast) {
+      this.core.broadcast({
+        type: 'transport.changed',
+        is_rolling: false,
+        current_take: tr.current_take,
+      });
+    }
     return this.core.projection();
   }
 

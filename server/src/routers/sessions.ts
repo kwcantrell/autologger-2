@@ -260,7 +260,13 @@ const RECORDING_EVENT_RE = /^Recording (\d+) (?:Started|Stopped)$/;
  * "Recording k" event numbers) + 1`. Deliberately NOT `segments.length + 1`
  * (the client's convention): that collides after a segment deletion. Reads
  * the FULL unpaged event set (`exportEvents`) so an ordinal used by an event
- * whose segment was later deleted still can't be reused. */
+ * whose segment was later deleted still can't be reused.
+ * Phase-9 fix-wave (finding 3): the event-message scan is restricted to
+ * `category === 'internal'` — the real anchors this composite RPC ever
+ * writes (`SessionHub.anchorImportedTake`, always `category: 'internal'`,
+ * mirroring `recordingStartAnchors`' own `'internal'` filter) — so a
+ * logged/user-authored event that merely happens to match the
+ * `Recording <n> Started/Stopped` message text can't inflate N. */
 function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
   let maxOrdinal = 0;
   for (const seg of hub.listAudioSegments()) {
@@ -269,6 +275,7 @@ function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
     }
   }
   for (const ev of hub.exportEvents()) {
+    if (String(ev.category).toLowerCase() !== 'internal') continue;
     const m = RECORDING_EVENT_RE.exec(ev.message);
     if (m) {
       const n = Number(m[1]);
