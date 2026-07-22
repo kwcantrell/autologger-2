@@ -26,9 +26,13 @@ for Google ID-token verify, on:
 Node process, state on local disk under `DATA_DIR`. Transcript generation
 (`…/transcript-words/generate`) is configuration-gated: `503` unless `DEEPGRAM_API_KEY` is
 set, in which case it sends recorded session audio to DeepGram's cloud STT API (see README
-"Transcript generation (DeepGram)" — audio egress + spend disclosure). YouTube import,
-`topics/generate`, and `transcribe.csv` stay intentionally `503` (no external integration
-wired up). `restart_supported` stays `false` (gate decision E2).
+"Transcript generation (DeepGram)" — audio egress + spend disclosure). YouTube import
+(`…/youtube-import`) is likewise configuration-gated: `503` unless an operator-provided
+`yt-dlp` binary is configured or resolvable on `PATH`, in which case it downloads a video's
+audio to local disk and attaches it to the session (see README "YouTube audio import" —
+egress disclosure + open-network refusal). `topics/generate` and `transcribe.csv` stay
+intentionally `503` (no external integration wired up). `restart_supported` stays `false`
+(gate decision E2).
 
 ## Setup & commands
 

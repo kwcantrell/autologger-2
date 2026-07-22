@@ -41,13 +41,16 @@ module consume (see Endpoints below; the contract is frozen).
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
-- **Transcript generation is configuration-gated; YouTube import stays unavailable.**
-  `POST …/transcript-words/generate` returns a clean `503 {detail}` (the frontend toasts it)
-  unless `DEEPGRAM_API_KEY` is set, in which case it combines the session's recorded audio
-  and returns `200 {words}` from DeepGram's speech-to-text API — see "Transcript generation
-  (DeepGram)" below. The `…/youtube-import` and `transcribe.csv` endpoints remain
-  unconditional `503 {detail}` (no external integration wired up). Manual transcript-word/topic
-  CRUD still works.
+- **Transcript generation and YouTube audio import are configuration-gated; `transcribe.csv`
+  stays unavailable.** `POST …/transcript-words/generate` returns a clean `503 {detail}` (the
+  frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in which case it combines the
+  session's recorded audio and returns `200 {words}` from DeepGram's speech-to-text API —
+  see "Transcript generation (DeepGram)" below. `POST …/youtube-import` returns the same
+  frozen `503 {detail}` unless an operator-provided `yt-dlp` binary is configured (or
+  resolvable on `PATH`), in which case it downloads a video's audio and attaches it to the
+  session — see "YouTube audio import" below. The `…/topics/generate` and `transcribe.csv`
+  endpoints remain unconditional `503 {detail}` (no external integration wired up). Manual
+  transcript-word/topic CRUD still works.
 
 ### Transcript generation (DeepGram)
 
@@ -68,6 +71,38 @@ billed, metered calls — every generate request is a paid request.** Under `REQ
 (open LAN-studio box) any client that can reach the server can trigger those calls; there is
 no additional auth gate beyond `REQUIRE_LOGIN`. Only set the key on a box you operate and are
 prepared to pay for.
+
+### YouTube audio import
+
+`POST …/sessions/:id/youtube-import` keeps its frozen `503 {detail}` unless a `yt-dlp` binary
+is available (see `server/.env.example`): the gate is satisfied by either an explicit
+`YTDLP_PATH` **or** a bare `yt-dlp` resolvable on the server process's `PATH` — unlike
+`DEEPGRAM_API_KEY`/`CLAUDE_CLI_PATH`, **an already-installed `yt-dlp` on `PATH` is sufficient
+to auto-enable import**, with no separate opt-in flag. When configured, the endpoint validates
+the request `url` against an exact-hostname YouTube allowlist, spawns `yt-dlp` to fetch the
+video's best supported-container audio into an isolated temp dir, attaches it as a new audio
+segment on the session (rolling back the metadata row if the blob write fails), and — when
+`use_publish_date` is set and the video reports an upload date — writes the session's
+`episode_date`. Responses: `400 {detail}` for a malformed or non-allowlisted URL (no spawn);
+`409 {detail}` when another import for the same session is already running or the global
+concurrency ceiling is reached (no spawn); `502 {detail}` for a download/extraction failure,
+hang timeout, over the byte-size or 4-hour duration cap, a live/unknown-duration stream, or an
+unsupported produced container (no segment attached); `200 {ok: true}` on success.
+
+**Egress and spend disclosure.** Enabling this (by either route — configured path or bare
+`PATH`) makes the server issue outbound HTTP requests to YouTube and download third-party
+audio to local disk for every import — there is no metered API cost, but it is real network
+egress on the operator's behalf. As with `DEEPGRAM_API_KEY`, the endpoint additionally refuses
+(`503`, no subprocess spawned) in the open-network configuration — `REQUIRE_LOGIN` disabled,
+a non-loopback bind, and no `IP_ALLOWLIST` — mirroring the AI chat / AI v2 refusal, so this is
+never left reachable to an anonymous LAN client. Only run this on a box you operate and are
+prepared to have make YouTube requests on your behalf.
+
+**`ffmpeg` note.** The spawned `yt-dlp` child's `PATH` is pinned to the resolved binary's own
+directory only (config/plugin/secret-exfil lockdown — no inherited `process.env`), so `yt-dlp`
+cannot discover an `ffmpeg` installed elsewhere on the host's normal `PATH`. If a given video
+needs `ffmpeg` for post-processing (format merging/remuxing), `ffmpeg` must be co-located next
+to the resolved `yt-dlp` binary or that import fails (`502`) for that video.
 
 ### AI chat (Claude CLI)
 
@@ -211,9 +246,10 @@ As with the AI chat, no agent-authored markup is ever rendered anywhere in this 
 dashboard is validated against the same whole-config schema a user's own PUT is held to before it
 is ever shown.
 
-`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate`,
-`…/youtube-import`, and `transcribe.csv` remain their existing unconditional `503` regardless of
-`AI_V2_ENABLED`.
+`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate` and
+`transcribe.csv` remain their existing unconditional `503` regardless of `AI_V2_ENABLED`;
+`…/youtube-import` is likewise unaffected by `AI_V2_ENABLED` — it has its own `yt-dlp`
+configuration gate (see "YouTube audio import" above).
 
 ### Storage map
 
@@ -278,7 +314,7 @@ server/src/
     auth.ts                  /auth/google/start|callback, /auth/logout
     profile.ts               GET /api/studio, GET|PUT /api/profile
     shows.ts                 GET|POST /api/shows
-    sessions.ts              list/create/update/archive/restore/delete; youtube-import (503)
+    sessions.ts              list/create/update/archive/restore/delete; youtube-import (config-gated)
     events.ts                events CRUD, transport, status, lease, WebSocket upgrade
     audio.ts                 upload/list/range-download, waveform, sync-from-disk
     companion.ts             Companion presence + state + log/transport/command (WS relay)
@@ -307,7 +343,8 @@ was ported from: historical provenance, not a live parity claim.
 | `GET\|POST …/audio/segments` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `…/topics/generate` · `transcribe.csv` · `youtube-import` → **503** | (unavailable) |
+| `…/topics/generate` · `transcribe.csv` → **503** | (unavailable) |
+| `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
