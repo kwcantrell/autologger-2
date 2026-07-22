@@ -242,6 +242,7 @@ describe('ai/v2/design — open-network refusal (503)', () => {
       COOKIE_SECURE: '', IP_ALLOWLIST: '', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
       DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: '', AI_CHAT_TIMEOUT_SEC: '',
       AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
       AI_V2_ENABLED: '1', AI_V2_API_KEY: 'k', AI_V2_MAX_BUDGET_USD: '',
     };
     expect(aiV2OpenNetworkRefused(base)).toBe(true);
@@ -296,6 +297,7 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
       COOKIE_SECURE: '', IP_ALLOWLIST: '10.0.0.0/8', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
       DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: '', AI_CHAT_TIMEOUT_SEC: '',
       AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
       AI_V2_ENABLED: '1', AI_V2_API_KEY: '', AI_V2_MAX_BUDGET_USD: '',
     };
     // Non-loopback, no key, REQUIRE_LOGIN=1, allowlist set — every knob that

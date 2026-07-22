@@ -349,6 +349,12 @@ export class SessionHub {
   deleteTopic(topicId: string) {
     return this.inTxn(() => this.topics.deleteTopic(topicId));
   }
+  /** Bulk delete by id, one transaction (topic-generation design D3's
+   * crash-safe swap primitive — NOT clear-all/restore). In-process only, no
+   * HTTP route: consumed by the topics/generate handler (phase 3). */
+  deleteTopics(ids: string[]) {
+    return this.inTxn(() => this.topics.deleteTopics(ids));
+  }
 
   // --- dashboard delegates (ai-v2-dashboards task 5.1/5.2, design D5) ---
   /** Synchronous read — never wrapped in `inTxn` (matches listTopics/
