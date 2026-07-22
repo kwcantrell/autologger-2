@@ -73,7 +73,7 @@
   `youtu.be`, `youtube-nocookie.com`}). Unit-test: accepts each allowlisted host incl.
   `youtu.be`; rejects `youtube.com.evil.com`, `evil-youtube.com`, userinfo
   `https://youtube.com@evil.com`, and non-`http(s)`/unparseable.
-- [ ] 5.2 Add the two concurrency guards (D8): a **per-session single-flight** `Set` (409 on
+- [x] 5.2 Add the two concurrency guards (D8): a **per-session single-flight** `Set` (409 on
   a same-session in-flight run) and a **global concurrency ceiling** (409 when the aggregate
   in-flight count is at the cap). Acquire both as the statements directly before the
   `try{…}finally{release both}` (fidelity note — nothing throwable between add and try).
