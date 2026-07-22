@@ -143,6 +143,33 @@ export function aiChatOpenNetworkRefused(env: Config): boolean {
   return openNetworkRefused(env);
 }
 
+// ── Topic generation (topic-generation, design D6) ──────────────────────────
+// `topics/generate` reuses the AI chat's CLI/MCP/gate/registry (aiChatConfigured,
+// aiChatOpenNetworkRefused, aiChatTurns, AI_CHAT_MAX_CONCURRENT) as-is, but a
+// one-shot generate reads the WHOLE transcript in a single turn -- a bigger
+// workload than an incremental chat message -- so spend/time bounds are their
+// own dedicated config, defaulted higher than the chat's, rather than reused
+// (reuse would make the button deterministically fail on large sessions).
+
+/** Per-turn CLI cost ceiling in USD for a one-shot topic generation (design
+ * D6); default 2.0 -- higher than aiChatMaxBudgetUsd's 0.5 since a generate
+ * turn walks the full transcript with many create_topic round-trips.
+ * Non-numeric / non-positive falls back to the default. */
+export function topicGenerateMaxBudgetUsd(env: Config): number {
+  const n = Number((env.TOPIC_GENERATE_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 2.0;
+}
+
+/** Per-turn server-side timeout backstop in seconds for a one-shot topic
+ * generation (design D6); default 300, matching aiChatTimeoutSec's default
+ * (the same subprocess-timeout + process-group-kill mechanism, just its own
+ * knob so it can be raised independently of the chat's). Non-numeric /
+ * non-positive falls back to the default. */
+export function topicGenerateTimeoutSec(env: Config): number {
+  const n = Number((env.TOPIC_GENERATE_TIMEOUT_SEC || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 300;
+}
+
 // ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────
 
 /** Gate (spec "Configuration-gated AI v2 endpoints"): AI v2 requires an

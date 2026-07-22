@@ -86,4 +86,14 @@ export class TopicStore {
     const r = this.core.db.run('DELETE FROM session_topics WHERE id = ?', topicId);
     return r.changes > 0;
   }
+
+  /** Bulk delete by id (topic-generation design D3's crash-safe swap
+   * primitive) — deletes ONLY the given ids, leaving every other topic row
+   * untouched (ordinal/created_at/etc. unchanged). Empty array is a no-op
+   * (no query issued). NOT a clear-all/restore path. */
+  deleteTopics(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(', ');
+    this.core.db.run(`DELETE FROM session_topics WHERE id IN (${placeholders})`, ...ids);
+  }
 }

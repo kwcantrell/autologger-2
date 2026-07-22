@@ -41,15 +41,19 @@ module consume (see Endpoints below; the contract is frozen).
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
-- **Transcript generation and YouTube audio import are configuration-gated; `transcribe.csv`
-  stays unavailable.** `POST …/transcript-words/generate` returns a clean `503 {detail}` (the
-  frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in which case it combines the
-  session's recorded audio and returns `200 {words}` from DeepGram's speech-to-text API —
-  see "Transcript generation (DeepGram)" below. `POST …/youtube-import` returns the same
-  frozen `503 {detail}` unless an operator-provided `yt-dlp` binary is configured (or
-  resolvable on `PATH`), in which case it downloads a video's audio and attaches it to the
-  session — see "YouTube audio import" below. The `…/topics/generate` and `transcribe.csv`
-  endpoints remain unconditional `503 {detail}` (no external integration wired up). Manual
+- **Transcript generation, YouTube audio import, and topic generation are
+  configuration-gated; `transcribe.csv` stays unavailable.** `POST …/transcript-words/generate`
+  returns a clean `503 {detail}` (the frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in
+  which case it combines the session's recorded audio and returns `200 {words}` from
+  DeepGram's speech-to-text API — see "Transcript generation (DeepGram)" below.
+  `POST …/youtube-import` returns the same frozen `503 {detail}` unless an operator-provided
+  `yt-dlp` binary is configured (or resolvable on `PATH`), in which case it downloads a
+  video's audio and attaches it to the session — see "YouTube audio import" below.
+  `POST …/topics/generate` returns the same frozen `503 {detail}` unless `CLAUDE_CLI_PATH`
+  is set (the AI chat's gate), in which case it runs a single, non-conversational `claude`
+  CLI turn against the session's transcript and returns `200 {topics}` — a crash-safe
+  replace-all of the session's topics — see "AI chat (Claude CLI)" below. `transcribe.csv`
+  remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
 
 ### Transcript generation (DeepGram)
@@ -107,10 +111,33 @@ to the resolved `yt-dlp` binary or that import fails (`502`) for that video.
 ### AI chat (Claude CLI)
 
 `POST /api/sessions/:sessionId/ai/chat` turns a session's transcript into topics
-conversationally, instead of a one-shot generate button (`…/topics/generate` keeps its
-intentional, unconditional `503`). A chat panel in the session workspace drives the
-operator's local `claude` CLI, which reads the session's transcript and creates topics
-through a locked-down, session-scoped toolset.
+conversationally. A chat panel in the session workspace drives the operator's local `claude`
+CLI, which reads the session's transcript and creates topics through a locked-down,
+session-scoped toolset.
+
+**Topic generation (`…/topics/generate`), the one-shot sibling.** The "Generate topics"
+button is a separate, **non-conversational** consumer of the same CLI/MCP machinery: gated on
+the same `CLAUDE_CLI_PATH` (unset/blank keeps the endpoint's frozen `503`, byte-for-byte
+unchanged for unconfigured deployments), the same open-network refusal below, and the same
+per-session single-flight / process-wide concurrency ceiling (`AI_CHAT_MAX_CONCURRENT`) as
+the chat — a generate and a chat turn on the same session are mutually exclusive, since both
+spend the operator's Anthropic budget on that session. Unlike the chat — whose toolset has no
+delete tool, so it can only append topics — a generate **replaces the session's topics
+wholesale**: it runs one fixed turn ("generate a fresh complete set of topics for this
+transcript") with the `list_topics` tool withheld (so the model can't dedup against the
+topics it's about to replace), then swaps in the fresh set. The swap is **crash-safe**: the
+prior topics are never deleted until the fresh set exists, so a failed or crashed run leaves
+the session's topics untouched, byte-for-byte. The endpoint requires an existing transcript
+(`400 {detail}` if the session has no transcript words — a generate never creates a
+transcript itself) and returns `200 {topics}` on success, in the same shape `GET …/topics`
+returns, or `502 {detail}` if the CLI turn fails or produces zero topics (again leaving the
+prior topics untouched). Because a one-shot reads the **entire** transcript in a single turn —
+a bigger workload than an incremental chat message — it is bounded by its own, higher-by-default
+spend/time ceiling rather than the chat's, so large sessions don't deterministically fail:
+`TOPIC_GENERATE_MAX_BUDGET_USD` (default `2.0`, the per-turn CLI cost ceiling) and
+`TOPIC_GENERATE_TIMEOUT_SEC` (default `300`, the server-side timeout backstop) — see
+`server/.env.example`. The AI chat tab remains the conversational path; `transcribe.csv`
+keeps its own, unrelated, unconditional `503`.
 
 Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
 the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte
@@ -246,10 +273,11 @@ As with the AI chat, no agent-authored markup is ever rendered anywhere in this 
 dashboard is validated against the same whole-config schema a user's own PUT is held to before it
 is ever shown.
 
-`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate` and
-`transcribe.csv` remain their existing unconditional `503` regardless of `AI_V2_ENABLED`;
-`…/youtube-import` is likewise unaffected by `AI_V2_ENABLED` — it has its own `yt-dlp`
-configuration gate (see "YouTube audio import" above).
+`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate`'s
+`CLAUDE_CLI_PATH` gate (see "AI chat (Claude CLI)" above) and `transcribe.csv`'s unconditional
+`503` are both unaffected by `AI_V2_ENABLED`; `…/youtube-import` is likewise unaffected by
+`AI_V2_ENABLED` — it has its own `yt-dlp` configuration gate (see "YouTube audio import"
+above).
 
 ### Storage map
 
@@ -343,7 +371,8 @@ was ported from: historical provenance, not a live parity claim.
 | `GET\|POST …/audio/segments` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `…/topics/generate` · `transcribe.csv` → **503** | (unavailable) |
+| `POST …/topics/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
+| `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |

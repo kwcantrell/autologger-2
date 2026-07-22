@@ -75,6 +75,8 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       AI_CHAT_TIMEOUT_SEC: procEnv.AI_CHAT_TIMEOUT_SEC || '',
       AI_CHAT_MAX_CONCURRENT: procEnv.AI_CHAT_MAX_CONCURRENT || '',
       AI_CHAT_MAX_BUDGET_USD: procEnv.AI_CHAT_MAX_BUDGET_USD || '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: procEnv.TOPIC_GENERATE_MAX_BUDGET_USD || '',
+      TOPIC_GENERATE_TIMEOUT_SEC: procEnv.TOPIC_GENERATE_TIMEOUT_SEC || '',
       AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',

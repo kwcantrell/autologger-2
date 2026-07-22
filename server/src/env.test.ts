@@ -18,6 +18,8 @@ import {
   resolveYtDlpPath,
   sessionCookieName,
   sessionTtlDays,
+  topicGenerateMaxBudgetUsd,
+  topicGenerateTimeoutSec,
   youtubeImportOpenNetworkRefused,
   ytDlpConfigured,
 } from './env';
@@ -47,6 +49,8 @@ const openNetworkBase = (): Config => ({
   AI_CHAT_TIMEOUT_SEC: '',
   AI_CHAT_MAX_CONCURRENT: '',
   AI_CHAT_MAX_BUDGET_USD: '',
+  TOPIC_GENERATE_MAX_BUDGET_USD: '',
+  TOPIC_GENERATE_TIMEOUT_SEC: '',
   AI_V2_ENABLED: '',
   AI_V2_API_KEY: '',
   AI_V2_MAX_BUDGET_USD: '',
@@ -128,6 +132,26 @@ describe('env flag parsing', () => {
     expect(deepgramModel(E({}))).toBe('nova-3');
     expect(deepgramModel(E({ DEEPGRAM_MODEL: '' }))).toBe('nova-3');
     expect(deepgramModel(E({ DEEPGRAM_MODEL: 'nova-2' }))).toBe('nova-2');
+  });
+});
+
+describe('topic generation config (design D6: dedicated budget/timeout, higher than the AI chat)', () => {
+  it('topicGenerateMaxBudgetUsd defaults to 2.0 -- higher than aiChatMaxBudgetUsd (0.5) -- and is overridable', () => {
+    expect(topicGenerateMaxBudgetUsd(E({}))).toBe(2.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '' }))).toBe(2.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '5' }))).toBe(5);
+    // non-numeric / non-positive falls back to the default, matching aiChatMaxBudgetUsd's shape
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: 'abc' }))).toBe(2.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '0' }))).toBe(2.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '-1' }))).toBe(2.0);
+  });
+
+  it('topicGenerateTimeoutSec defaults to 300 and is overridable via TOPIC_GENERATE_TIMEOUT_SEC', () => {
+    expect(topicGenerateTimeoutSec(E({}))).toBe(300);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '' }))).toBe(300);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '600' }))).toBe(600);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: 'abc' }))).toBe(300);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '0' }))).toBe(300);
   });
 });
 

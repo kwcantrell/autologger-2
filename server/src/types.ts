@@ -46,6 +46,15 @@ export interface Config {
   AI_CHAT_TIMEOUT_SEC: string;
   AI_CHAT_MAX_CONCURRENT: string;
   AI_CHAT_MAX_BUDGET_USD: string;
+  /** Topic generation (topic-generation, design D6). A one-shot generate
+   * reads the entire transcript in one turn -- a larger workload than an
+   * incremental chat message -- so it gets its OWN budget/timeout, defaulted
+   * higher than AI_CHAT_MAX_BUDGET_USD/AI_CHAT_TIMEOUT_SEC rather than
+   * reusing them (reuse would make the button deterministically fail on
+   * large sessions). Concurrency/gating (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT,
+   * the aiChatTurns registry) is shared with the AI chat, unchanged. */
+  TOPIC_GENERATE_MAX_BUDGET_USD: string;
+  TOPIC_GENERATE_TIMEOUT_SEC: string;
   /** AI v2 dashboards (ai-v2-dashboards). Off by default: unlike the AI chat's
    * implicit gate (any non-blank CLAUDE_CLI_PATH enables it), AI v2 ALSO
    * requires this EXPLICIT flag (spec "Configuration-gated AI v2 endpoints")

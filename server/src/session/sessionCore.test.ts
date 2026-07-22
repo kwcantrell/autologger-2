@@ -108,6 +108,46 @@ describe('SessionCore on a fake runtime', () => {
     expect(topics.deleteTopic(t.id)).toBe(false); // affected-row count drives the miss
   });
 
+  // topic-generation design D3's crash-safe swap primitive: deleteTopics must
+  // remove ONLY the given ids and leave every other topic row byte-for-byte
+  // untouched (same id/ordinal/summary/created_at) -- this is load-bearing
+  // for "prior topics untouched" on the swap's failure path.
+  it('deleteTopics bulk-deletes only the given ids, leaving the others untouched', () => {
+    const { core } = fakeRuntime();
+    const topics = new TopicStore(core);
+    const a = topics.insertTopic({
+      session_time: '00:00:01',
+      duration_sec: 5,
+      topic_level: 1,
+      summary: 'a',
+    });
+    const b = topics.insertTopic({
+      session_time: '00:00:02',
+      duration_sec: 5,
+      topic_level: 1,
+      summary: 'b',
+    });
+    const c = topics.insertTopic({
+      session_time: '00:00:03',
+      duration_sec: 5,
+      topic_level: 1,
+      summary: 'c',
+    });
+
+    topics.deleteTopics([b.id]);
+
+    const remaining = topics.listTopics();
+    expect(remaining.map((t) => t.id).sort()).toEqual([a.id, c.id].sort());
+    // The surviving rows are byte-for-byte unchanged, not just present.
+    expect(remaining.find((t) => t.id === a.id)).toEqual(a);
+    expect(remaining.find((t) => t.id === c.id)).toEqual(c);
+    expect(remaining.find((t) => t.id === b.id)).toBeUndefined();
+
+    // Empty array is a no-op: nothing is deleted.
+    topics.deleteTopics([]);
+    expect(topics.listTopics()).toHaveLength(2);
+  });
+
   // Phase-9 fix-wave (finding 1): SessionHub.anchorImportedTake's composite
   // relies on this to keep its per-write broadcasts out of the in-transaction
   // path — DB write still applies, only the broadcast is skipped.

@@ -30,9 +30,12 @@ set, in which case it sends recorded session audio to DeepGram's cloud STT API (
 (`…/youtube-import`) is likewise configuration-gated: `503` unless an operator-provided
 `yt-dlp` binary is configured or resolvable on `PATH`, in which case it downloads a video's
 audio to local disk and attaches it to the session (see README "YouTube audio import" —
-egress disclosure + open-network refusal). `topics/generate` and `transcribe.csv` stay
-intentionally `503` (no external integration wired up). `restart_supported` stays `false`
-(gate decision E2).
+egress disclosure + open-network refusal). `topics/generate` is likewise configuration-gated
+(`503` unless `CLAUDE_CLI_PATH` is set): configured, it reuses the AI chat's CLI/MCP/gate/
+registry machinery to run a single non-conversational turn and returns `200 {topics}` — a
+crash-safe replace-all of the session's topics, never touching the prior set until the fresh
+one exists (see README "AI chat (Claude CLI)"). `transcribe.csv` stays intentionally `503`
+(no external integration wired up). `restart_supported` stays `false` (gate decision E2).
 
 ## Setup & commands
 

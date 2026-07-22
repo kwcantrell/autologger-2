@@ -58,6 +58,10 @@ export const AI_MCP_TOOL_NAMES = [
   'create_topic',
 ] as const;
 
+/** One of the three short tool names above — the type callers use to
+ * restrict `--allowedTools` for a turn (topic-generation design D7/D3). */
+export type AiMcpToolName = (typeof AI_MCP_TOOL_NAMES)[number];
+
 /** A registered chat turn's MCP coordinates. The CLI runner (task 3.2) consumes
  * this: `url` + `token` build the generated `--mcp-config`, and `dispose()` is
  * called in the turn's `finally` to drop the registration + retire the token. */
@@ -109,19 +113,61 @@ const createTopicToolShape = {
  * transactional, ordinal-assigning `SessionHub.insertTopic` — the identical code
  * path a manual insert takes (no WS emission: topics have none).
  */
+/** Render transcript words as compact, readable text for the model. Groups
+ * consecutive words by speaker into lines, each prefixed with the segment's
+ * first available timecode (`[HH:MM:SS] speaker N: words…`). Empty timecodes
+ * (anchorless transcripts) and blank speakers are omitted from the prefix. A
+ * ~20x reduction vs `JSON.stringify(words)`, which kept the model from ever
+ * reading a real (multi-thousand-word) transcript. */
+function formatTranscriptForModel(
+  words: Array<{ word: string; session_time: string; speaker: string }>,
+): string {
+  if (words.length === 0) return '(this session has no transcript)';
+  const lines: string[] = [];
+  let curSpeaker: string | null = null;
+  let segTime = '';
+  let buf: string[] = [];
+  const flush = (): void => {
+    if (buf.length === 0) return;
+    const timePrefix = segTime ? `[${segTime}] ` : '';
+    const speakerPrefix = curSpeaker ? `speaker ${curSpeaker}: ` : '';
+    lines.push(`${timePrefix}${speakerPrefix}${buf.join(' ')}`.trim());
+    buf = [];
+  };
+  for (const w of words) {
+    const speaker = w.speaker ?? '';
+    if (speaker !== curSpeaker) {
+      flush();
+      curSpeaker = speaker;
+      segTime = w.session_time || '';
+    } else if (!segTime && w.session_time) {
+      segTime = w.session_time;
+    }
+    buf.push(w.word);
+  }
+  flush();
+  return lines.join('\n');
+}
+
 function buildSessionMcpServer(registry: SessionHubRegistry, sessionId: string): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
 
   server.tool(
     'get_transcript_words',
-    "Returns this session's transcript words (the DeepGram output).",
+    "Returns this session's transcript as readable text (speaker- and " +
+      'timecode-annotated), for reading and summarizing.',
     {},
     async () => {
-      // Hub resolved at call time (D3) — never held across an await. Hub rows
-      // carry no per-word session_id (that's the HTTP surface's addition), so
-      // the spec's omission is satisfied by returning the rows verbatim.
+      // Hub resolved at call time (D3) — never held across an await.
       const words = registry.get(sessionId).listTranscriptWords();
-      return { content: [{ type: 'text', text: JSON.stringify(words) }] };
+      // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
+      // transcript is thousands of 8-field word rows (~180 chars each); the
+      // raw `JSON.stringify(words)` produced a single ~300KB line that
+      // overflowed the CLI's tool-output token limit, so the model could not
+      // read it at all and generated no usable topics. Grouping words into
+      // speaker/timecode-prefixed lines drops that ~20x while preserving what
+      // the model needs to read and to place topics on the timeline.
+      return { content: [{ type: 'text', text: formatTranscriptForModel(words) }] };
     },
   );
 

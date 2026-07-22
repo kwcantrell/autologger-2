@@ -276,6 +276,7 @@ describe('ai/chat — open-network refusal (503)', () => {
       COOKIE_SECURE: '', IP_ALLOWLIST: '', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
       DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: CLI, AI_CHAT_TIMEOUT_SEC: '',
       AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
       AI_V2_ENABLED: '', AI_V2_API_KEY: '', AI_V2_MAX_BUDGET_USD: '',
     };
     // anonymous + non-loopback + no allowlist → refused
