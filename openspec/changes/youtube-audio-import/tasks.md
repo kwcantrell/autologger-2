@@ -128,10 +128,10 @@
 > timeline-anchored take so transcript words get time, the audio bar places, and events
 > appear (closes the anchorless residual observed in FS-8).
 
-- [ ] 9.1 Characterize + then flip: add an integration test pinning the CURRENT anchorless
+- [x] 9.1 Characterize + then flip: add an integration test pinning the CURRENT anchorless
   outcome (imported segment `recording_ordinal`/`started_at_utc`/`ended_at_utc` all null,
   zero events); it is updated in 9.4 to assert the anchored outcome.
-- [ ] 9.2 Extend `fetchYoutubeAudio` (`server/src/node/ytdlp.ts`) to also return the video
+- [x] 9.2 Extend `fetchYoutubeAudio` (`server/src/node/ytdlp.ts`) to also return the video
   `duration` (seconds) already read from `--dump-json`; reject a non-positive duration as a
   failed import (`duration ≤ 0` guard, design D10). Update the fake-binary unit test.
 - [ ] 9.3 Add a **composite anchor hub RPC** (D11) — one `inTxn` that does `addEvent`

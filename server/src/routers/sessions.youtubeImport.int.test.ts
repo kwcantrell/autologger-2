@@ -285,6 +285,42 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
   });
 });
 
+// ── Task 9.1 (2nd-cycle fold-in, design D10-D13): characterize the CURRENT
+// anchorless outcome BEFORE Phase 9 makes a successful import synthesize a
+// timeline-anchored take. This test is UPDATED by task 9.4 to assert the
+// anchored outcome instead (recording_ordinal=N, non-null started/
+// ended_at_utc, a matching pair of `Recording N Started`/`Stopped` events)
+// — for now it pins today's pre-anchor behavior so the later flip shows up
+// as a diff against a known baseline, not a fresh assertion out of nowhere.
+
+describe('anchorless import (task 9.1 characterization — pre-anchor behavior, flipped in task 9.4)', () => {
+  it('a successful import produces a segment with recording_ordinal/started_at_utc/ended_at_utc all null and zero events', async () => {
+    const session = await seededSession();
+    const { binaryPath } = freshBinary(); // default success mode: ext m4a, duration 125s, upload_date "20240115"
+    const testEnv = configuredEnv(binaryPath);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+
+    const after = await listSegments(session, testEnv);
+    expect(after.segments).toHaveLength(1);
+    const seg = after.segments[0] as {
+      recording_ordinal: number | null;
+      started_at_utc: string | null;
+      ended_at_utc: string | null;
+    };
+    expect(seg.recording_ordinal).toBeNull();
+    expect(seg.started_at_utc).toBeNull();
+    expect(seg.ended_at_utc).toBeNull();
+
+    const eventsRes = await app.request(`/api/sessions/${session}/events`, { method: 'GET' }, testEnv);
+    expect(eventsRes.status).toBe(200);
+    const eventsBody = (await eventsRes.json()) as { total: number };
+    expect(eventsBody.total).toBe(0);
+  });
+});
+
 // ── Matrix row: bare yt-dlp on PATH counts as configured ────────────────────
 
 describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on PATH counts as configured")', () => {

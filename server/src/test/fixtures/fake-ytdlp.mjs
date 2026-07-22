@@ -29,7 +29,11 @@
 // through the real code path, so the test harness instead drops a JSON file
 // into the per-request temp dir (which IS this process's cwd) before
 // calling `fetchYoutubeAudio`. Missing file ⇒ default "success" behavior.
-// Shape: `{ mode?: string, ext?: string, uploadDate?: string | null }`.
+// Shape: `{ mode?: string, ext?: string, uploadDate?: string | null,
+// duration?: number }`. `duration` (task 9.2) overrides the "success"-mode
+// probe's default 125s — used to exercise the `duration <= 0` reject
+// without needing a dedicated mode (the download step never runs when the
+// probe itself rejects).
 //
 // Modes (default "success"):
 //   success              — probe reports a normal short video; download
@@ -123,7 +127,7 @@ if (mode === 'hang' || mode === 'hang-with-descendant') {
     if (mode === 'live') payload = { is_live: true, duration: null, upload_date: null };
     else if (mode === 'null-duration') payload = { is_live: false, duration: null, upload_date };
     else if (mode === 'long-duration') payload = { is_live: false, duration: 20000, upload_date };
-    else payload = { is_live: false, duration: 125, upload_date };
+    else payload = { is_live: false, duration: Object.hasOwn(control, 'duration') ? control.duration : 125, upload_date };
     process.stdout.write(`${JSON.stringify(payload)}\n`);
     process.exitCode = 0;
   }

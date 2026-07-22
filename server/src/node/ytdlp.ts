@@ -328,6 +328,14 @@ export interface YtDlpFetchResult {
    * when absent — normalization to `YYYY-MM-DD` is the caller's job
    * (design D4, task 4.1's helper), not this module's. */
   uploadDate: string | null;
+  /** The video's duration in seconds, as read from the probe's
+   * `--dump-json` output (task 9.2, design D10 — the timeline-anchor
+   * transport advance consumes this). Always a **finite, positive**
+   * number: the probe already rejects null/non-finite/over-4h durations
+   * above, and a non-positive duration (`<= 0`) is rejected the same way
+   * (a zero-length take must never be produced) — so by the time this is
+   * returned, `duration > 0` is guaranteed. */
+  duration: number;
 }
 
 /**
@@ -369,6 +377,13 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
     throw new YtDlpError(
       `This video is longer than the ${MAX_DURATION_SECONDS / 3600}-hour import limit.`,
     );
+  }
+  if (duration <= 0) {
+    // Design D10: a zero-length (or negative, malformed-metadata) take must
+    // never be produced — the timeline-anchor transport advance (task 9.4)
+    // depends on a strictly positive duration to place `Recording N Stopped`
+    // after `Started`.
+    throw new YtDlpError('This video has a non-positive duration, which is not supported.');
   }
   const uploadDate = typeof meta.upload_date === 'string' && meta.upload_date ? meta.upload_date : null;
 
@@ -412,5 +427,5 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
     throw new YtDlpError(`Downloaded audio container ".${produced.ext}" is not supported.`);
   }
 
-  return { audioPath: produced.path, contentType, uploadDate };
+  return { audioPath: produced.path, contentType, uploadDate, duration };
 }

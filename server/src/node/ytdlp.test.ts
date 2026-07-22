@@ -84,7 +84,13 @@ function readEnvCheck(tempDir: string, kind: 'probe' | 'download'): Record<strin
  * var could never reach the child through the real code path being tested. */
 function writeStubControl(
   tempDir: string,
-  control: { mode?: string; ext?: string; uploadDate?: string | null; descendantDelayMs?: number },
+  control: {
+    mode?: string;
+    ext?: string;
+    uploadDate?: string | null;
+    descendantDelayMs?: number;
+    duration?: number;
+  },
 ): void {
   writeFileSync(join(tempDir, '.ytdlp-stub.json'), JSON.stringify(control));
 }
@@ -139,6 +145,7 @@ describe('fetchYoutubeAudio — success', () => {
       audioPath: join(tempDir, 'audio.m4a'),
       contentType: 'audio/mp4',
       uploadDate: '20240115',
+      duration: 125,
     });
     expect(existsSync(result.audioPath)).toBe(true);
   });
@@ -270,6 +277,24 @@ describe('fetchYoutubeAudio — bound enforcement', () => {
 
   it('the 4-hour cap boundary matches MAX_DURATION_SECONDS', () => {
     expect(MAX_DURATION_SECONDS).toBe(4 * 60 * 60);
+  });
+
+  // Task 9.2 / design D10: a zero-length take must never be produced — a
+  // non-positive reported duration is rejected at the metadata-probe step,
+  // same as live/null/over-4h, and the download spawn never runs.
+  it.each([0, -5])('rejects a non-positive duration (%i) with YtDlpError, no download spawn', async (duration) => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    writeStubControl(tempDir, { duration });
+
+    const promise = fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath });
+
+    await expect(promise).rejects.toBeInstanceOf(YtDlpError);
+    await expect(promise).rejects.toThrow('non-positive duration');
+    expect(existsSync(join(tempDir, 'audio.m4a'))).toBe(false);
+    // Only the probe ran — the download step is never reached once the
+    // probe itself rejects the duration.
+    expect(readArgvLog(tempDir)).toHaveLength(1);
   });
 });
 
