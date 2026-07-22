@@ -169,10 +169,12 @@ The app SHALL NOT write `body.dataset.sessionId` and SHALL NOT define
 `window.V3_selectSession` or `window.V3_closeSession`; in-app callers of those globals
 SHALL use the router (or component props) instead. The imperative `syncChrome` DOM
 toggling SHALL be removed, with both of its observable behaviors preserved by
-route-driven rendering: the placeholder↔workspace visibility swap (the
-`#v3-session-placeholder` / `#v3-session-grid` elements it toggles today) and the page
-title reset to "AutoLogger" when no session is active. Test code SHALL observe the
-active session through the URL.
+route-driven rendering: without an active session the app renders the dedicated home
+route component in the workspace's place (a stable, e2e-observable region of its own —
+the legacy `#v3-session-placeholder` element and its copy are retired with it); with an
+active session it renders the session workspace (`#v3-session-grid`); and the page title
+resets to "AutoLogger" when no session is active. Test code SHALL observe the active
+session through the URL.
 
 #### Scenario: No dataset or window-global writes
 - **WHEN** a session is selected or closed through any path (click, deep link,
@@ -180,11 +182,11 @@ active session through the URL.
 - **THEN** `document.body.dataset.sessionId` remains unset and
   `window.V3_selectSession` / `window.V3_closeSession` are undefined
 
-#### Scenario: Workspace visibility swap survives the removal
+#### Scenario: Home/workspace swap is route-driven
 - **WHEN** a session becomes active (by any path) or is closed
-- **THEN** the workspace region is shown/hidden as today — the placeholder renders
-  without a session, the session grid renders with one (the existing e2e assertions on
-  these regions stay green)
+- **THEN** the dedicated home component renders without a session and the session grid
+  renders with one — mount-driven by the route, with the e2e assertions updated from the
+  retired placeholder element to the home component's region in this same change
 
 #### Scenario: Studio-switch close path still works
 - **WHEN** the settings modal's save handler detects an active-studio change (the sole

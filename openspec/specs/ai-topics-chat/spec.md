@@ -268,48 +268,50 @@ dropped/removed when the turn ends. No orphaned `claude` processes survive the t
   delivered, the turn timeout guarantees termination
 
 ### Requirement: AI tab and subtab arrangement
-The session workspace SHALL present two top-level feed tabs, `Event Feed` and `AI`. The
-AI panel SHALL contain three subtabs — `Chat`, `Transcribe`, `Topics` — defaulting to
-`Chat`, where Transcribe and Topics render the existing `TranscribeFeed` and `TopicsFeed`
-components with their current behavior (columns, sorting, inline editing, Auto Generate /
-Insert toolbar) unchanged. Chat message state and any in-flight SSE turn SHALL survive
-switching among subtabs and between the AI and Event Feed tabs — switching MUST NOT
-unmount the chat stream, abort the turn, or clear the conversation. The Chat subtab SHALL
-render the conversation as whitespace-preserved plain text (no markdown rendering in v1),
-stream assistant replies as they arrive, surface `tool` events as activity indicators,
-offer a Stop control that aborts the in-flight turn (client aborts the fetch; server
-terminates per the lifecycle requirement), show a clear not-configured state when the
-endpoint returns `503`, and render terminal `error` events. On receiving a `tool` event
-naming `create_topic`, the chatting client SHALL invalidate its topics query so AI-created
-rows appear in the Topics subtab during the turn — this client-side refresh is the
-liveness mechanism (there is no topics WS emission to rely on). The exact rendered tab and
-subtab **label strings are non-normative** (the restructure is web-only, not
-contract-bearing); the normative requirements are the two-tab / three-subtab structure,
-the feeds' unchanged behavior, state survival across switches, the liveness refresh, the
-Stop control, and the not-configured state.
+The workspace tab inventory, order, and labels are governed by `web-session-console` (which
+this change makes the single owner of tab IA: Transcript, Topics, and the chat surface render
+as top-level sibling tabs; there is no nested subtab arrangement). Within that structure, this
+capability owns the chat surface's and feeds' semantics: the Transcript and Topics tabs render
+the existing `TranscribeFeed` and `TopicsFeed` components with their current behavior
+(columns, sorting, inline editing, Auto Generate / Insert toolbar) unchanged — except as
+governed by web-session-console's capability-gating requirement (the Auto Generate control's
+503 latch and single-channel errors). Chat message
+state and any in-flight SSE turn SHALL survive switching among any of the workspace tabs —
+switching MUST NOT unmount the chat stream, abort the turn, or clear the conversation. The
+chat surface SHALL render the conversation as whitespace-preserved plain text (no markdown
+rendering in v1), stream assistant replies as they arrive, surface `tool` events as activity
+indicators, offer a Stop control that aborts the in-flight turn (client aborts the fetch;
+server terminates per the lifecycle requirement), show a clear not-configured state when the
+endpoint returns `503`, and render terminal `error` events. On receiving a `tool` event naming
+`create_topic`, the chatting client SHALL invalidate its topics query so AI-created rows
+appear in the Topics tab during the turn — this client-side refresh is the liveness mechanism
+(there is no topics WS emission to rely on). The normative requirements are: deference of tab
+structure/labels to `web-session-console`, the feeds' unchanged behavior, state survival
+across tab switches, the liveness refresh, the Stop control, and the not-configured state.
 
 #### Scenario: Feeds survive the move
-- **WHEN** the user opens AI › Transcribe or AI › Topics
-- **THEN** the feed behaves exactly as the former top-level tab did
+- **WHEN** the user opens the Transcript or Topics tab
+- **THEN** the feed renders with its established columns, sorting, inline editing, and
+  Auto Generate / Insert toolbar, behaviorally unchanged from before the IA restructure
 
-#### Scenario: Switching subtabs mid-turn preserves the turn
-- **WHEN** the user switches to AI › Topics (or Event Feed) while a turn is streaming
-- **THEN** the turn keeps streaming, the subprocess is not killed, and the conversation
-  is intact on return to Chat
+#### Scenario: Switching tabs mid-turn preserves the turn
+- **WHEN** a chat turn is streaming and the user switches to any other workspace tab and back
+- **THEN** the stream is not aborted, the conversation is not cleared, and subsequent deltas
+  continue rendering into the same conversation
 
 #### Scenario: AI-created topics appear during the turn
-- **WHEN** the chatting client receives a `tool` SSE event naming `create_topic`
-- **THEN** it invalidates its topics query, and the new row is visible in the Topics
-  subtab without a page reload
+- **WHEN** the in-flight turn emits a `tool` event naming `create_topic`
+- **THEN** the client invalidates its topics query and the new topic row is visible in the
+  Topics tab while the turn is still streaming
 
 #### Scenario: Stop aborts an in-flight turn
-- **WHEN** the user clicks Stop during a streaming turn
-- **THEN** the client aborts the request and the server terminates the subprocess
+- **WHEN** the user activates Stop during a streaming turn
+- **THEN** the client aborts the fetch, the turn ends in the UI, and the conversation up to
+  that point remains
 
 #### Scenario: Unconfigured chat is explained in place
-- **WHEN** the user sends a message while the server has no `CLAUDE_CLI_PATH`
-- **THEN** the Chat subtab shows the not-configured explanation rather than a generic
-  failure
+- **WHEN** the chat endpoint returns `503`
+- **THEN** the chat surface shows its not-configured state in place (no dead send affordance)
 
 ### Requirement: Egress and spend disclosure
 The README SHALL document the AI chat feature: that enabling it sends session transcript
