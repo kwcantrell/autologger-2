@@ -293,3 +293,101 @@ response detail is the message the client surfaces to the user.
 
 - **WHEN** an import fails for any reason after validation
 - **THEN** the session's audio-segment listing is unchanged from before the request
+
+### Requirement: A successful import produces a timeline-anchored take
+
+On a successful import the server SHALL record the imported audio as a single **take**
+anchored on the session timeline, so it is indistinguishable to downstream consumers
+(transcript remap, audio-clip placement, events feed) from a recorded take. Without this,
+imported audio is anchorless: transcript words get `session_time=''`/`start_sec=0`, the audio
+bar is unplaced, and no events appear. Concretely, a successful import SHALL, after the blob
+`put` succeeds: assign a recording ordinal `N`, attach the segment with `recording_ordinal=N`
+and non-null `started_at_utc`/`ended_at_utc`, and create a `Recording N Started` internal
+event, advance the transport by the video's duration, and create a `Recording N Stopped`
+internal event. The three anchor writes (Started, transport advance, Stopped) SHALL be
+performed **atomically in a single transaction** that emits its WebSocket notifications once,
+so a partial anchor (e.g. a `Recording N Started` with no `Stopped`) can never persist.
+
+#### Scenario: Imported audio is timeline-anchored
+
+- **WHEN** an import succeeds for a session
+- **THEN** the session gains a `Recording N Started` internal event whose
+  `timecode_total_frames` equals the session's transport position at import time, a matching
+  `Recording N Stopped` internal event after the duration advance, and exactly one audio
+  segment whose `recording_ordinal` is `N`
+
+#### Scenario: Transcript generated afterward is timeline-positioned
+
+- **WHEN** transcript generation runs on a session whose only audio is an imported, anchored
+  segment
+- **THEN** the produced words carry non-empty `session_time` derived from the `Recording N
+  Started` anchor (not the anchorless `session_time=''`)
+
+#### Scenario: Anchor writes are atomic
+
+- **WHEN** the anchor transaction fails part-way (e.g. a disk error between the events)
+- **THEN** none of the three anchor writes persist — no dangling `Recording N Started`
+  without its `Stopped`, and no partial transport advance
+
+### Requirement: Recording-ordinal assignment avoids collision
+
+The import SHALL choose `N` as one greater than the highest ordinal already in use in the
+session — the max over both existing segments' `recording_ordinal` **and** existing
+`Recording k` event numbers — so `N` cannot collide with a still-present take even after an
+earlier segment was deleted (deleting a segment does not delete its `Recording k` events).
+The `Recording N Started`/`Stopped` events and the segment's `recording_ordinal` SHALL all
+use that same `N`.
+
+#### Scenario: First import gets ordinal 1
+
+- **WHEN** the first import into a session with no takes succeeds
+- **THEN** the events are `Recording 1 Started`/`Stopped` and the segment's `recording_ordinal`
+  is `1`
+
+#### Scenario: Ordinal does not collide after a deletion
+
+- **WHEN** an import succeeds in a session where an earlier take's segment was deleted but its
+  `Recording k` events remain
+- **THEN** `N` is greater than every existing `recording_ordinal` and every existing
+  `Recording k` event number, so the imported take's anchor cannot resolve to a prior take's
+  position
+
+### Requirement: Anchor position and take extent
+
+The `Recording N Started` event SHALL be anchored at the session's transport position at
+import time. The transport SHALL then be advanced by the video's duration (in frames at the
+session frame rate, sourced from the same `yt-dlp` metadata the import already reads), so the
+`Recording N Stopped` event and the take extent cover `[position, position+duration]` and a
+subsequent take/import lands after it (no overlap). A video whose reported duration is not a
+positive number SHALL be rejected as a failed import rather than producing a zero-length take.
+
+#### Scenario: Two sequential imports do not overlap
+
+- **WHEN** two imports succeed one after the other in the same session
+- **THEN** the second take is anchored after the first (its events and segment extent follow
+  the first's), not at the same position
+
+### Requirement: Import is refused while a recording is live
+
+If the session's transport is actively rolling (a live recording in progress) when a
+`youtube-import` request would proceed, the server SHALL refuse it with `409 {detail}` and
+SHALL NOT synthesize a take or advance/clobber the live roll. This protects the in-flight
+recording, which the import's transport advance would otherwise silently end and corrupt.
+
+#### Scenario: Import during a live recording is refused
+
+- **WHEN** a `youtube-import` request is made for a session whose transport `is_rolling` is
+  true
+- **THEN** the response is `409 {detail}`, no subprocess/synthesis clobbers the live roll,
+  and the recording continues unaffected
+
+### Requirement: Existing anchorless imports are not retroactively changed
+
+This anchoring applies only to imports performed after it ships. Segments already stored
+anchorless SHALL NOT be migrated or altered; there is no backfill (a re-import produces an
+anchored take).
+
+#### Scenario: Prior anchorless segment is untouched
+
+- **WHEN** the server runs against a session that already holds an anchorless imported segment
+- **THEN** that segment is left exactly as it was; only a new import produces an anchored take

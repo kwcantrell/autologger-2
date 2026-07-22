@@ -273,6 +273,60 @@ inherited env are live RCE/exfil vectors independent of the URL; (b) no open-net
 — rejected at the gate: the two sibling outbound features already refuse, and the PATH gate
 makes an unauthenticated surface the default-risk case.
 
+### D10 — Imported audio is a timeline-anchored take (2nd panel + gate, 2026-07-21)
+Folded in after the feature shipped anchorless (the parent's own MINOR 2 residual, then
+observed live in session FS-8: 1759 transcript words at `session_time=''`/`0`, unplaced bar,
+zero events). On a successful import the handler synthesizes a take that mirrors what a
+recording produces, reusing the existing seam: `addEvent` `Recording N Started` (which
+auto-stamps `timecode_total_frames` from the current transport position via `timecodeForMark`
+— the anchor `recordingStartAnchors`/the remap consume), advance the transport by the video
+duration, `addEvent` `Recording N Stopped`, and attach the segment with `recording_ordinal=N`
++ non-null `started_at_utc`/`ended_at_utc`. `fetchYoutubeAudio` additionally returns the
+`duration` it already reads. *Fact-check corrections folded:* `N` follows the **client's**
+convention, not `current_take` (see D12); and the `Started`+`Stopped` pair is load-bearing
+only for mixed sessions (bar sizing itself comes from the audio's decoded duration,
+`audioClips.ts:405` — the transport advance's real job is non-overlap, see this decision's
+Alternatives below, not sizing; earlier draft rationale corrected).
+**Alternatives:** anchor-only (no advance) — rejected: two sequential imports (or an
+import-then-record) would then overlap at the same position (bar *and* transcript); the
+advance is one reused `stopTakeWithDuration` call over a duration already fetched.
+
+### D11 — Atomic composite anchor RPC that broadcasts once (panel BLOCKER + MAJOR)
+The three anchor writes (Started, transport advance, Stopped) run in **one** new composite
+hub RPC inside a single `inTxn`, broadcasting `event.changed` + `transport.changed` once
+after commit. Two panel findings force this: (a) `stopTakeWithDuration` **does not broadcast
+at all** today (zero non-test callers, so the gap never surfaced) — so the composite is the
+natural home for the required `transport.changed` (reusing the recorded-take shape
+`{type,is_rolling:false,current_take}`); (b) three separate transactions would let a
+synchronous disk-full throw between them persist a dangling `Recording N Started` — the exact
+orphan pathology D10 forbids. The composite runs **after** a successful blob `put` (D3's
+put-first ordering preserved: the segment/blob exist first, so `put` failure still rolls back
+just the segment); if the composite itself throws, the handler rolls back the segment and
+`502`s (failure = session unchanged).
+**Alternative (rejected):** accept a "nil window" of three separate txns — rejected: the
+partial state is a *persistent* orphan, not a transient race, and better-sqlite3 throws
+synchronously on `SQLITE_FULL`.
+
+### D12 — `N = max(existing recording_ordinal, existing "Recording k" event number) + 1`
+The client numbers takes `segments.length + 1` (`AudioRecorder.tsx:89`), **not** the transport
+`current_take` (which the recording-start path never reads) — so no `startTake` is used
+(avoiding a `current_take` side effect and an `is_rolling` blip). But the panel showed the
+client's `count+1` collides after a segment deletion (delete take 1's segment → `count` drops
+→ an import reuses an existing take's ordinal → wrong anchor). Import therefore uses the
+collision-proof `max(recording_ordinal over segments, "Recording k" event numbers) + 1`, a
+deliberate improvement over the client's flawed convention (the client bug is pre-existing and
+separate). `N` is computed before the segment is attached.
+
+### D13 — Refuse import while a recording is live (gate, 2026-07-21)
+The per-session single-flight is import-vs-import only; nothing blocks an import while a client
+is actively recording. Since `stopTakeWithDuration` has no `is_rolling` guard, an import during
+a live roll would silently end the recording, discard its accumulated roll time, and can
+produce `Stopped < Started` (negative-length take). **Gate decision: refuse with `409` when the
+transport `is_rolling`** (checked before synthesis), protecting the live take. Uses the existing
+`409` status with a new precondition (no new status code).
+**Alternatives:** allow-but-skip-advance (rejected at the gate: leaves imported+live audio
+possibly overlapping); leave unguarded (rejected: silent live-take corruption).
+
 ## Risks / Trade-offs
 
 - **`yt-dlp` breaks against YouTube changes** → Mitigation: the binary is operator-provided
@@ -412,3 +466,44 @@ No open questions remain.
   split into "`503` byte-for-byte unchanged (no binary)" vs "`503` new (open-network
   refusal)" and added the `put`-failure `502` trigger. Re-validated `--strict` after the
   fixes.
+
+### Timeline-anchor fold-in (2nd cycle, 2026-07-21) — D10–D13
+
+After the feature shipped, the anchorless residual bit in practice (session FS-8), so the
+`imported audio is a timeline-anchored take` work was **folded into this change** (gate
+decision: fold, not a standalone change — the parent is unmerged on the same branch).
+
+- **Pre-panel fact-check** — _2026-07-21, light-tier._ 8 claims; CONFIRMED the anchor
+  mechanics (`addEvent` auto-timecode; `stopTakeWithDuration` advances with no
+  `is_rolling` guard; `recordingStartAnchors` match; FS-8 anchorless). **CORRECTED:** `N` is
+  the client's `segments.length+1`, **not** `current_take` (→ no `startTake`); and
+  `audioClips` yields no bar interval for a dangling `Started` (the pair is load-bearing in
+  mixed sessions). Folded into D10/D12.
+- **Adversarial panel** — _2026-07-21, three skeptical reviewers (opus)._ **(BLOCKER, ×2
+  reviewers) `stopTakeWithDuration` never broadcasts `transport.changed`** — the spec/delta/
+  test assumed an emission that won't fire. **(MAJOR) import-during-live-recording clobbers
+  the take** — no `is_rolling` guard; can produce `Stopped < Started`. **(atomicity) three
+  separate txns → orphan `Started` on a sync disk-full throw** — the pathology D10 forbids.
+  **(MAJOR/scope) advance rationale wrong** — bar sizing is automatic from decoded duration;
+  advance is for non-overlap. **(MINOR) `N=count+1` collides after a segment deletion.**
+  Verified SOUND: single-segment remap yields `session_time=P/fps+t`; duration units;
+  Companion (poll-based) unaffected; failure path safe.
+- **Spec-review gate (owner)** — _2026-07-21._
+  - **Fixed in place:** composite atomic anchor RPC broadcasting `transport.changed` once
+    (D11); `N = max(recording_ordinal, event ordinals)+1` collision-proof (D12); advance
+    rationale corrected to non-overlap (D10); `duration ≤ 0` rejected; test asserts
+    `session_time` non-empty (not `start_sec>0`, which is legitimately 0 at position 0).
+  - **Escalated to the gate (owner decisions):** **(1) packaging** — owner chose to **fold
+    into this parent change** (standalone `youtube-import-timeline-anchor` deleted). **(2)
+    import-during-live-recording** — owner chose **refuse with `409` when `is_rolling`** (D13).
+  - **Accepted as residual (minors):** sub-frame-duration → guarded by the `duration ≤ 0`/
+    positive-duration reject; the pre-existing `audio.changed`-before-`put` WS imperfection
+    (inherited, not this change's regression).
+- **Post-gate consistency read** — _2026-07-21, light-tier (Explore/sonnet)._ Read all four
+  folded artifacts. Clean on the substance (N-formula, atomic composite + single broadcast,
+  non-overlap rationale, 409-while-rolling, duration≤0, `session_time`-non-empty assertion,
+  D10–D13 numbering, no dangling standalone-change refs). Three minor fixes applied: (1) D10
+  cited "D11" for the non-overlap rationale that lives in D10's own Alternatives — citation
+  corrected; (2) the proposal's Modified-Capabilities bullet didn't reflect the fold — added
+  the anchor-events/transport emission + the rolling-`409` precondition; (3) Phase 9 had no
+  task for the "no backfill" requirement — added task 9.6. Re-validated `--strict`.

@@ -76,3 +76,41 @@ their current frozen `503`.
 - **WHEN** a session that was populated by an opt-in import is listed or fetched
 - **THEN** its JSON has the same fields as before, with `episode_date` now carrying the
   imported date rather than `null` — no field added, removed, or retyped
+
+### Requirement: YouTube import success anchors a take; refuses while a recording is live
+
+`POST /api/sessions/:sessionId/youtube-import`, on a **successful** import, SHALL — in
+addition to attaching the segment — create two internal events (`Recording N Started`/
+`Stopped`) and advance the transport by the imported video's duration. These emit the
+**existing** `event.changed` and `transport.changed` WebSocket messages, in their existing
+shapes (the same a recorded take emits) — no new message shape. The HTTP success body stays
+`200 {ok:true}`. Additionally, the endpoint SHALL respond `409 {detail}` (a new precondition
+on the existing `409` status — no new status code) when the session's transport is actively
+rolling, so an import cannot clobber a live recording. Failed imports emit none of the take
+messages.
+
+#### Scenario: Successful import emits the standard take WS messages
+
+- **WHEN** a client is subscribed to a session's WebSocket and an import succeeds
+- **THEN** it receives `event.changed` (for the two `Recording N` events) and
+  `transport.changed` (for the duration advance) in their existing shapes, plus the existing
+  `audio.changed` — and the HTTP response is still `200 {ok:true}`
+
+#### Scenario: Import while recording maps to 409
+
+- **WHEN** a `youtube-import` request is made while the session transport `is_rolling`
+- **THEN** the response is `409 {detail}` (the existing `409` status, new precondition), no
+  take is synthesized, and the live recording is unaffected
+
+#### Scenario: Response shape and status matrix are otherwise unchanged
+
+- **WHEN** an import is requested under any other condition
+- **THEN** the HTTP status/body match the existing frozen matrix exactly — this change adds
+  only success-path event/transport emission and the rolling `409` precondition, no
+  response-shape or new-status change
+
+#### Scenario: Failed import emits no take messages
+
+- **WHEN** an import fails after validation
+- **THEN** no `event.changed` or `transport.changed` is emitted on its behalf and no
+  `Recording` events or transport advance persist

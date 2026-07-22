@@ -64,6 +64,12 @@ greenfield pipeline.
   error (e.g. `502`), distinct from the unconfigured `503`. The client treats every
   non-2xx identically (toast `err.message`, then the retry modal), so the exact code is a
   server choice as long as it stays the existing `{detail}` envelope.
+- **Timeline-anchored take** (2nd-cycle fold-in, design D10–D13): a successful import
+  synthesizes a take — `Recording N Started`/`Stopped` internal events anchored at the
+  current transport position, a transport advance by the video duration, and a segment with
+  `recording_ordinal`/timestamps — so transcript words get time, the audio bar places, and
+  events appear (the anchorless residual, observed live in FS-8). The three anchor writes are
+  one atomic transaction; the import is **refused `409` while a recording is live**.
 
 ## Capabilities
 
@@ -83,9 +89,13 @@ greenfield pipeline.
   AI-endpoint refusal) in the open-network config; `409 {detail}` when another same-session
   import is in flight or the global ceiling is reached (no spawn); a `502 {detail}` for a
   download/extract/bound/unsupported-container/blob-write failure; and a `400` for a
-  non-allowlisted or malformed URL. This is the authorizing delta the freeze requires. The `GET`-side session JSON shape is
-  unchanged — `episode_date` was already a nullable field in the response; this change only
-  makes it non-null for imported sessions (a value, not a shape, change).
+  non-allowlisted or malformed URL. **Fold-in (D10–D13):** a successful import additionally
+  creates the two `Recording N` anchor events + a transport advance, broadcasting the existing
+  `event.changed`/`transport.changed` once (no new WS shape); and a `409 {detail}` precondition
+  is added for a session whose transport is actively rolling (the existing `409` status, new
+  precondition). This is the authorizing delta the freeze requires. The `GET`-side session JSON
+  shape is unchanged — `episode_date` was already a nullable field in the response; this change
+  only makes it non-null for imported sessions (a value, not a shape, change).
 
 ## Impact
 

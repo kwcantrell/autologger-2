@@ -121,3 +121,50 @@
   web change (task 4.2, `fmtDateOnly` display). Run `npm run e2e:visual`; if the date-display
   fix alters any baseline, re-bless the affected baselines **in this branch's diff** (a
   legitimate UI correction), and note which — do not re-bless unrelated drift.
+
+## 9. Timeline anchoring (2nd-cycle fold-in; frozen-surface/concurrency phase — review FULL)
+
+> Added after the 2nd panel + gate (design D10–D13). Makes a successful import synthesize a
+> timeline-anchored take so transcript words get time, the audio bar places, and events
+> appear (closes the anchorless residual observed in FS-8).
+
+- [ ] 9.1 Characterize + then flip: add an integration test pinning the CURRENT anchorless
+  outcome (imported segment `recording_ordinal`/`started_at_utc`/`ended_at_utc` all null,
+  zero events); it is updated in 9.4 to assert the anchored outcome.
+- [ ] 9.2 Extend `fetchYoutubeAudio` (`server/src/node/ytdlp.ts`) to also return the video
+  `duration` (seconds) already read from `--dump-json`; reject a non-positive duration as a
+  failed import (`duration ≤ 0` guard, design D10). Update the fake-binary unit test.
+- [ ] 9.3 Add a **composite anchor hub RPC** (D11) — one `inTxn` that does `addEvent`
+  `Recording N Started` → `stopTakeWithDuration({ durationS, ctx })` → `addEvent` `Recording N
+  Stopped`, and **broadcasts `event.changed` + `transport.changed` once** after commit
+  (`stopTakeWithDuration` currently broadcasts nothing — add the `transport.changed` emit here,
+  reusing the recorded-take shape `{type,is_rolling:false,current_take}`). Unit-test the RPC:
+  atomic (a mid-transaction throw persists none of the three writes), emits the two WS messages
+  once, Started at position `P` and Stopped at `P + trunc(durationS·fps)`.
+- [ ] 9.4 Wire the handler (`server/src/routers/sessions.ts`): **refuse with `409` if the
+  transport `is_rolling`** (D13, checked before synthesis); compute `N = max(existing
+  recording_ordinal over segments, existing "Recording k" event numbers) + 1` (D12); attach
+  the segment with `recording_ordinal=N` + `started_at_utc=now` + `ended_at_utc=now+duration`;
+  after the successful `put`, call the composite anchor RPC (D11); on composite throw, roll
+  back the segment and `502`. Build `ctx` via the same `timecodeCtx(row)` the events router
+  uses. Update the 9.1 characterization test to assert the anchored outcome.
+- [ ] 9.5 Integration tests (frozen-surface): a successful import creates `Recording N
+  Started`/`Stopped` (Started `timecode_total_frames` = transport position; Stopped ≈
+  `+duration·fps`), segment `recording_ordinal=N` + non-null timestamps, transport advanced;
+  emits `event.changed` + `transport.changed` + `audio.changed`, HTTP still `200 {ok:true}`; a
+  **second** import gets the next ordinal anchored after the first (non-overlap); import while
+  `is_rolling` → `409`, live roll untouched; a failed import creates no events/no advance.
+  Anchor-resolution end-to-end: assert `recordingStartAnchors` over the created events resolves
+  the segment (and, if a hermetic transcript path exists, that words get **non-empty
+  `session_time`** — NOT `start_sec>0`, which is legitimately 0 at position 0).
+- [ ] 9.6 Assert **no backfill**: a session already holding an anchorless imported segment
+  (recording_ordinal/timestamps null, no events) is left byte-for-byte unchanged when the
+  server runs this change — no migration touches it; only a new import produces an anchored
+  take.
+
+## 10. Final gates (re-run after phase 9)
+
+- [ ] 10.1 `npm run typecheck` + `npm test` green.
+- [ ] 10.2 `npm run e2e` (chromium + login-gate). No new web change in phase 9, so
+  `e2e:visual` baselines are expected unchanged (the pre-existing 16-baseline drift stays out
+  of scope) — run to confirm no new drift; do not re-bless.
