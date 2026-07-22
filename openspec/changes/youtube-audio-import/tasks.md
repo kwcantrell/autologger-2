@@ -116,8 +116,8 @@
 
 ## 8. Final gates
 
-- [ ] 8.1 `npm run typecheck` + `npm test` green.
-- [ ] 8.2 `npm run e2e` (chromium + login-gate projects). This branch **does** carry a small
+- [x] 8.1 `npm run typecheck` + `npm test` green.
+- [x] 8.2 `npm run e2e` (chromium + login-gate projects). This branch **does** carry a small
   web change (task 4.2, `fmtDateOnly` display). Run `npm run e2e:visual`; if the date-display
   fix alters any baseline, re-bless the affected baselines **in this branch's diff** (a
   legitimate UI correction), and note which — do not re-bless unrelated drift.
