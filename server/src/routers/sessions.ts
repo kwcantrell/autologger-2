@@ -1,17 +1,34 @@
 // Sessions routes — ported from web/routers/sessions.py. Listing + metadata are
 // pure catalog reads (no hub wake); create initializes the catalog index row
 // and the session hub.
-// YouTube import is a 503 stub on this deployment (phase 6 decision).
+// YouTube import (youtube-audio-import, design D1/D2/D3/D6/D7/D8/D9, task 5.3):
+// config-gated + open-network-refused (mirroring the AI chat/AI v2 outbound
+// features), URL-allowlist-validated, per-session + global concurrency
+// bounded, downloads via the operator-provided `yt-dlp` binary into a
+// per-request scratch-root temp dir, and ingests through the SAME
+// addAudioSegment → ports.audio.put → rollback-on-failure path the recorder
+// (`audio.ts`) uses — see the handler body below for the full guard order.
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Row } from '../db/catalog';
-import { oauthConfigured } from '../env';
-import { newSessionBodySchema, sessionUpdateBodySchema } from '../schemas';
+import { normalizeUploadDate } from '../db/sessionIndexStore';
+import { oauthConfigured, ytDlpConfigured, youtubeImportOpenNetworkRefused } from '../env';
+import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
+import { youtubeImportGuard } from '../node/youtubeImportGuard';
+import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
+import {
+  newSessionBodySchema,
+  sessionUpdateBodySchema,
+  validateYoutubeImportUrl,
+  youtubeImportBodySchema,
+} from '../schemas';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
-import { ApiError, getSessionHub, requireSession } from './_helpers';
+import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const sessionsRouter = new Hono<AppEnv>();
 
@@ -219,8 +236,199 @@ sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
   return c.json({ ok: true, hidden: true });
 });
 
-// YouTube import is unavailable on this deployment (no import pipeline wired up).
+// YouTube import (design D1/D2/D3/D6/D7/D8/D9). Detail text kept IDENTICAL to
+// the pre-pipeline stub's for the not-configured case (api-contract-freeze:
+// "byte-for-byte unchanged" for deployments with no yt-dlp available).
+const YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL = 'YouTube import is unavailable on this deployment.';
+const YOUTUBE_IMPORT_OPEN_NETWORK_DETAIL =
+  'YouTube import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
+  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing third-party audio.';
+const YOUTUBE_IMPORT_BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
+const YOUTUBE_IMPORT_BAD_URL_DETAIL =
+  'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
+const YOUTUBE_IMPORT_SESSION_BUSY_DETAIL = 'An import is already in progress for this session.';
+const YOUTUBE_IMPORT_AT_CAPACITY_DETAIL =
+  'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
+const YOUTUBE_IMPORT_ROLLING_DETAIL =
+  'YouTube import is refused while this session is actively recording; stop the recording and try again.';
+
+// design D12: `Recording N Started`/`Stopped` internal-event message shape —
+// parsed back out to compute the next collision-proof recording ordinal.
+const RECORDING_EVENT_RE = /^Recording (\d+) (?:Started|Stopped)$/;
+
+/** design D12 — `N = max(existing recording_ordinal over segments, existing
+ * "Recording k" event numbers) + 1`. Deliberately NOT `segments.length + 1`
+ * (the client's convention): that collides after a segment deletion. Reads
+ * the FULL unpaged event set (`exportEvents`) so an ordinal used by an event
+ * whose segment was later deleted still can't be reused.
+ * Phase-9 fix-wave (finding 3): the event-message scan is restricted to
+ * `category === 'internal'` — the real anchors this composite RPC ever
+ * writes (`SessionHub.anchorImportedTake`, always `category: 'internal'`,
+ * mirroring `recordingStartAnchors`' own `'internal'` filter) — so a
+ * logged/user-authored event that merely happens to match the
+ * `Recording <n> Started/Stopped` message text can't inflate N. */
+function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
+  let maxOrdinal = 0;
+  for (const seg of hub.listAudioSegments()) {
+    if (seg.recording_ordinal !== null && seg.recording_ordinal > maxOrdinal) {
+      maxOrdinal = seg.recording_ordinal;
+    }
+  }
+  for (const ev of hub.exportEvents()) {
+    if (String(ev.category).toLowerCase() !== 'internal') continue;
+    const m = RECORDING_EVENT_RE.exec(ev.message);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > maxOrdinal) maxOrdinal = n;
+    }
+  }
+  return maxOrdinal + 1;
+}
+
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
-  await requireSession(c, c.req.param('sessionId'));
-  throw new ApiError(503, 'YouTube import is unavailable on this deployment.');
+  const sessionId = c.req.param('sessionId');
+  const sessionRow = await requireSession(c, sessionId);
+  const ctx = timecodeCtx(sessionRow);
+
+  // Configuration gate, THEN open-network refusal (matches the AI chat/AI v2
+  // sibling ordering in ai.ts/aiV2.ts) — a deployment with no yt-dlp at all
+  // stays byte-for-byte its pre-change 503, regardless of network config.
+  const binaryPath = c.env.config.YTDLP_RESOLVED_PATH;
+  if (!ytDlpConfigured(c.env.config) || !binaryPath) {
+    throw new ApiError(503, YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL);
+  }
+  if (youtubeImportOpenNetworkRefused(c.env.config)) {
+    throw new ApiError(503, YOUTUBE_IMPORT_OPEN_NETWORK_DETAIL);
+  }
+
+  // Body + URL validation (400) — before any concurrency claim or spawn.
+  let rawBody: unknown;
+  try {
+    rawBody = await c.req.json();
+  } catch {
+    throw new ApiError(400, YOUTUBE_IMPORT_BAD_BODY_DETAIL);
+  }
+  const parsedBody = youtubeImportBodySchema.safeParse(rawBody);
+  if (!parsedBody.success) {
+    throw new ApiError(400, YOUTUBE_IMPORT_BAD_BODY_DETAIL);
+  }
+  const urlCheck = validateYoutubeImportUrl(parsedBody.data.url);
+  if (!urlCheck.ok) {
+    throw new ApiError(400, YOUTUBE_IMPORT_BAD_URL_DETAIL);
+  }
+
+  // Concurrency guards (design D8) — the single statement directly before
+  // try{…}finally{release} (fidelity note: nothing throwable in between).
+  const lease = youtubeImportGuard.tryAcquire(sessionId);
+  if (!lease) {
+    const detail = youtubeImportGuard.isSessionInFlight(sessionId)
+      ? YOUTUBE_IMPORT_SESSION_BUSY_DETAIL
+      : YOUTUBE_IMPORT_AT_CAPACITY_DETAIL;
+    throw new ApiError(409, detail);
+  }
+
+  let tempDir: string | null = null;
+  try {
+    // Early rolling guard (design D13, fast-fail): refuse before any
+    // download/spawn if a recording is already live on this session — no
+    // point spending the download just to fail synthesis later. Re-checked
+    // once more below, right before synthesis, to close the race where a
+    // recording starts DURING the (multi-minute) download.
+    if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+      throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
+    }
+
+    tempDir = await mkdtemp(join(c.env.ports.audio.scratchRoot(), `${YOUTUBE_IMPORT_TMP_PREFIX}${sessionId}-`));
+
+    // Long-running download — no hub reference is held across this await
+    // (design D1: the idle-hub sweeper may close the session DB during a
+    // multi-minute download); the hub is re-acquired via getSessionHub AFTER
+    // this resolves, below.
+    const fetched = await fetchYoutubeAudio({ url: urlCheck.href, tempDir, binaryPath });
+    const bytes = await readFile(fetched.audioPath);
+
+    // Re-acquire the hub post-download (D1). N is computed before the
+    // segment is attached (design D12 — collision-proof, not
+    // `segments.length + 1`), then the segment carries the SAME ordinal +
+    // now/now+duration timestamps the composite anchor RPC below anchors to
+    // (design D10), via the SAME addAudioSegment → ports.audio.put →
+    // rollback-on-failure path the recorder (audio.ts) uses (D3/D7).
+    const hub = getSessionHub(c, sessionId);
+    const recordingOrdinal = nextRecordingOrdinal(hub);
+    const nowMs = c.env.ports.clock.now();
+    const startedAtUtc = isoZ(new Date(nowMs));
+    const endedAtUtc = isoZ(new Date(nowMs + fetched.duration * 1000));
+    const seg = hub.addAudioSegment({
+      sessionId,
+      mimeType: fetched.contentType,
+      startedAtUtc,
+      endedAtUtc,
+      recordingOrdinal,
+    });
+    try {
+      await c.env.ports.audio.put(seg.r2_key, bytes, { contentType: fetched.contentType });
+    } catch (err) {
+      // Atomic rollback (D7): a put failure must never leave a metadata row
+      // pointing at a missing blob — mirrors audio.ts's own rollback.
+      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      throw err;
+    }
+
+    // Final rolling guard (design D13, race): re-read right before synthesis
+    // — protects a live take that started DURING the download from being
+    // clobbered by stopTakeWithDuration inside the composite RPC. Mirrors the
+    // put-failure rollback shape above: the segment is already attached, so a
+    // refusal here rolls it back rather than leaving an unanchored orphan.
+    if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
+    }
+
+    // Composite anchor RPC (design D10/D11): Recording N Started → transport
+    // advance by the video's duration → Recording N Stopped, one atomic
+    // txn broadcasting event.changed + transport.changed once. Runs AFTER
+    // the successful blob put (D3's put-first ordering preserved) — on
+    // throw, roll back the just-attached segment so failure leaves the
+    // session byte-for-byte unchanged.
+    try {
+      getSessionHub(c, sessionId).anchorImportedTake({
+        recordingOrdinal,
+        durationS: fetched.duration,
+        ctx,
+      });
+    } catch (err) {
+      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      throw err;
+    }
+
+    // Publish-date opt-in (D4) — catalog write, not a hub RPC; a missing/
+    // unusable date is a no-op, never a failure. The catalog handle is
+    // process-lifetime, so no re-acquire concern here (unlike the hub).
+    if (parsedBody.data.use_publish_date) {
+      const iso = normalizeUploadDate(fetched.uploadDate);
+      if (iso) {
+        c.get('catalog').sessions.setSessionEpisodeDate(sessionId, iso);
+      }
+    }
+
+    return c.json({ ok: true });
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    // Every post-validation failure (download/extract, bound breach,
+    // unsupported container, put failure) maps to a clean 502 {detail} — D7.
+    // YtDlpError's `.message` is already a safe, non-sensitive summary; any
+    // other thrown error (e.g. a disk-full ENOSPC from ports.audio.put, or a
+    // readFile failure) falls back to a generic detail rather than leaking
+    // an internals-shaped message.
+    const detail =
+      err instanceof YtDlpError
+        ? err.message
+        : 'Failed to import audio from YouTube.';
+    throw new ApiError(502, detail);
+  } finally {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+    lease.release();
+  }
 });

@@ -102,12 +102,34 @@ describe('TransportStore', () => {
     expect(state.stopped).toBe(false);
   });
 
-  it('stopTakeWithDuration adds trunc(durationS * frameRate) to elapsed_frames', () => {
-    const { core, row } = fakeCore({ is_rolling: true, elapsed_frames: 10 });
+  it('stopTakeWithDuration adds trunc(durationS * frameRate) to elapsed_frames and broadcasts transport.changed', () => {
+    const { core, row, broadcasts } = fakeCore({
+      is_rolling: true,
+      current_take: 2,
+      elapsed_frames: 10,
+    });
     const store = new TransportStore(core);
     store.stopTakeWithDuration({ durationS: 2, ctx: CTX }); // 2s @ 30fps = 60
     expect(row.elapsed_frames).toBe(70);
     expect(row.is_rolling).toBe(false);
+    expect(broadcasts).toEqual([{ type: 'transport.changed', is_rolling: false, current_take: 2 }]);
+  });
+
+  // Phase-9 fix-wave (finding 1): `suppressBroadcast` lets
+  // SessionHub.anchorImportedTake's composite RPC apply this write inside its
+  // `inTxn` without a mid-transaction broadcast, then fire the equivalent
+  // broadcast itself once the transaction commits.
+  it('stopTakeWithDuration({ suppressBroadcast: true }) still applies the DB write but broadcasts nothing', () => {
+    const { core, row, broadcasts } = fakeCore({
+      is_rolling: true,
+      current_take: 2,
+      elapsed_frames: 10,
+    });
+    const store = new TransportStore(core);
+    store.stopTakeWithDuration({ durationS: 2, ctx: CTX, suppressBroadcast: true });
+    expect(row.elapsed_frames).toBe(70);
+    expect(row.is_rolling).toBe(false);
+    expect(broadcasts).toEqual([]);
   });
 
   it('statusLive reports event counts and revision', () => {

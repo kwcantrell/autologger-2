@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { systemClock } from '../clock';
-import { aiV2UsesLoginFallback, newUserAllTeamsEnabled } from '../env';
+import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
@@ -14,6 +14,7 @@ import { CatalogDb } from './catalogStore';
 import { KvStore } from './kvStore';
 import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
+import { sweepStaleYoutubeImportTempDirs } from './youtubeImportScratch';
 
 // Resolved from this file's location, not cwd — the server must work both via
 // `npm run -w server` (cwd = server/) and under test runners started elsewhere.
@@ -37,6 +38,12 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const kv = new KvStore(catalog, clock);
   kv.purgeExpired(); // startup hygiene — no sweep timer (spec)
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
+  const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
+  // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
+  // temp dir orphaned by a crash/kill that skipped the route handler's own
+  // `finally` cleanup. Prefix-scoped — never touches other scratch-root users
+  // (e.g. transcript generation) or the blob store's real audio prefix.
+  sweepStaleYoutubeImportTempDirs(audioBlobStore.scratchRoot());
 
   const bindings: Bindings = {
     ports: {
@@ -45,7 +52,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       catalog: new CatalogDb(catalog),
       kv,
       sessions: registry,
-      audio: new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp')),
+      audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
     },
     config: {
@@ -71,6 +78,9 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
+      // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
+      // no business running per request. ytDlpConfigured(env) reads this.
+      YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),
     },
   };
   // Spec "Login fallback is announced, not silent" (design D9): say so once,

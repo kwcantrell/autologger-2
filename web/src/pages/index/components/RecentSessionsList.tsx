@@ -12,6 +12,7 @@ import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { Tooltip } from '../../../shared/ui/Tooltip';
+import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { showToast } from '../utils/toast';
 
@@ -115,13 +116,6 @@ function RenameSessionModal({ initialTitle, isPending, onSave, onClose }: Rename
       </div>
     </Dialog>
   );
-}
-
-function fmtDateOnly(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatTimecodeHMS(tc: string | null): string {

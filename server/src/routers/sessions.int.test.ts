@@ -86,7 +86,7 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
     expect((await res.json()) as { hidden: boolean }).toMatchObject({ hidden: true });
   });
 
-  it('youtube-import is 503', async () => {
+  it('youtube-import is 503 with the current unconditional-refusal detail body', async () => {
     const session = await seededSession();
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
@@ -94,6 +94,64 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
       { ...env },
     );
     expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'YouTube import is unavailable on this deployment.',
+    });
+  });
+});
+
+// Characterization for youtube-audio-import task 1.1: pins the CURRENT (pre-import-pipeline)
+// behavior of POST /api/sessions/:id/youtube-import — the unconditional 503 stub, and that
+// its requireSession guard (existence + tenancy masking) behaves exactly like the other
+// non-includeHidden per-session routes (PUT, archive, restore). Any future change to this
+// route's status/shape needs an authorizing api-contract-freeze delta (per CLAUDE.md).
+describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pre-pipeline)', () => {
+  it('masked 404 (identical shape) for nonexistent, ui_hidden, and foreign-studio ids', async () => {
+    const nonexistent = await app.request(
+      '/api/sessions/does-not-exist/youtube-import',
+      { method: 'POST' },
+      { ...env },
+    );
+
+    const hiddenSession = await seededSession();
+    await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
+    const hidden = await app.request(
+      `/api/sessions/${hiddenSession}/youtube-import`,
+      { method: 'POST' },
+      { ...env },
+    );
+
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showB = await seedShow({ studioId: studioB });
+    const foreignSession = await seedSession({ showId: showB });
+    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
+    const foreign = await app.request(
+      `/api/sessions/${foreignSession}/youtube-import`,
+      { method: 'POST', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+
+    for (const res of [nonexistent, hidden, foreign]) {
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Session not found' });
+    }
+  });
+
+  it('a member of the session’s studio still reaches the 503 stub (guard passes through)', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const session = await seedSession({ showId: show });
+    const cookie = await loginCookie(await seedUser({ studios: [studio] }));
+    const res = await app.request(
+      `/api/sessions/${session}/youtube-import`,
+      { method: 'POST', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'YouTube import is unavailable on this deployment.',
+    });
   });
 });
 

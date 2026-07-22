@@ -1,4 +1,5 @@
 import { useSessions } from '../../../api/hooks/useSessions';
+import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { navigate } from '../navigation';
 
 // --- HomeRoute (ui-refresh, task 5.1; design D10, GATE-OVERRIDDEN) ---
@@ -26,13 +27,6 @@ const HOME_ROUTE =
 
 const RESUME_CARD =
   'group glass-panel box-border flex w-full max-w-[24rem] cursor-pointer flex-col items-stretch gap-[0.35rem] rounded-v5-lg border border-v5-border px-6 py-5 text-left [transition:border-color_0.15s_ease,background_0.15s_ease] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_35%,var(--v5-border))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
-
-function fmtDateOnly(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
 
 interface Props {
   onNewSession: () => void;

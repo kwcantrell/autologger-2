@@ -1,7 +1,15 @@
 // Typed config accessors — ported from the AUTOLOGGER_* env getters in
 // src/autologger/web/auth_identity.py. They read the composition root's Config
 // object (src/types.ts).
+//
+// Almost everything here is a pure read of an already-built Config. The one
+// exception is resolveYtDlpPath (design D2, youtube-audio-import): PATH
+// resolution is filesystem I/O, so it is NOT a per-request Config read — it
+// runs exactly once, at startup, from the composition root (node/config.ts),
+// and its result is what the pure ytDlpConfigured gate below reads.
 
+import { accessSync, constants } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import type { Config } from './types';
 
 export function sessionCookieName(env: Config): string {
@@ -78,6 +86,25 @@ export function deepgramModel(env: Config): string {
   return (env.DEEPGRAM_MODEL || '').trim() || 'nova-3';
 }
 
+// ── Shared: open-network refusal ────────────────────────────────────────────
+// Every outbound, spend-something-per-request feature (AI chat, AI v2,
+// YouTube import) refuses to serve when auth is open on a reachable network —
+// REQUIRE_LOGIN disabled AND no IP_ALLOWLIST AND a non-loopback bind. One
+// core predicate, three feature-named call sites (kept as separate exported
+// functions — not a single shared export — so each feature's call site/tests
+// read the same way the DeepGram/AI-chat precedents already do).
+
+function loopbackHostname(env: Config): boolean {
+  const hostname = (env.HOST || '').trim() || '0.0.0.0';
+  return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+}
+
+function openNetworkRefused(env: Config): boolean {
+  if (requireLoginEnabled(env)) return false;
+  if ((env.IP_ALLOWLIST || '').trim()) return false;
+  return !loopbackHostname(env);
+}
+
 // ── AI topics chat (ai-topics-chat, design D5/D8) ───────────────────────────
 
 /** Gate (design D8): the AI chat runs only when CLAUDE_CLI_PATH names the claude
@@ -113,11 +140,7 @@ export function aiChatMaxBudgetUsd(env: Config): number {
  * Mirrors the boot-time warning in main.ts; unset HOST defaults to 0.0.0.0
  * (non-loopback), matching the serve() default. */
 export function aiChatOpenNetworkRefused(env: Config): boolean {
-  if (requireLoginEnabled(env)) return false;
-  if ((env.IP_ALLOWLIST || '').trim()) return false;
-  const hostname = (env.HOST || '').trim() || '0.0.0.0';
-  const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
-  return !loopback;
+  return openNetworkRefused(env);
 }
 
 // ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────
@@ -154,11 +177,6 @@ export function aiV2MaxBudgetUsd(env: Config): number {
   return Number.isFinite(n) && n > 0 ? n : 0.5;
 }
 
-function loopbackHostname(env: Config): boolean {
-  const hostname = (env.HOST || '').trim() || '0.0.0.0';
-  return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
-}
-
 /** Open-network refusal (spec "Open-network refusal"): same shape as
  * aiChatOpenNetworkRefused, evaluated independently for AI v2's own routes —
  * REQUIRE_LOGIN disabled AND a non-loopback bind AND no IP_ALLOWLIST. This is
@@ -166,9 +184,7 @@ function loopbackHostname(env: Config): boolean {
  * distinct from aiV2CredentialsRefused below, which fires regardless of
  * REQUIRE_LOGIN. */
 export function aiV2OpenNetworkRefused(env: Config): boolean {
-  if (requireLoginEnabled(env)) return false;
-  if ((env.IP_ALLOWLIST || '').trim()) return false;
-  return !loopbackHostname(env);
+  return openNetworkRefused(env);
 }
 
 /** Agent credentials (spec "Agent credentials", design D9): the interactive
@@ -194,6 +210,49 @@ export function aiV2CredentialsRefused(env: Config): boolean {
  * possible). */
 export function aiV2UsesLoginFallback(env: Config): boolean {
   return aiV2Configured(env) && !aiV2ApiKeyConfigured(env) && !aiV2CredentialsRefused(env);
+}
+
+// ── YouTube audio import (youtube-audio-import, design D2/D9) ──────────────
+
+/** Resolve the yt-dlp binary ONCE, at startup (design D2): an explicit
+ * `YTDLP_PATH` env var if set, else a bare `yt-dlp` looked up on the process
+ * `PATH`. PATH resolution is filesystem I/O, so this MUST be called exactly
+ * once — from the composition root (`node/config.ts`) while building
+ * `Config` — and never per request; the resolved absolute path (or `null`)
+ * is what `ytDlpConfigured` below reads back as a pure boolean. */
+export function resolveYtDlpPath(procEnv: Record<string, string | undefined>): string | null {
+  const explicit = (procEnv.YTDLP_PATH || '').trim();
+  if (explicit) return explicit;
+  const pathVar = procEnv.PATH || '';
+  for (const dir of pathVar.split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, 'yt-dlp');
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not present, or not executable, in this PATH entry — keep looking.
+    }
+  }
+  return null;
+}
+
+/** Gate (design D2, spec "Configuration gating"): YouTube import runs only
+ * when a yt-dlp binary was resolved at startup (explicit `YTDLP_PATH` or a
+ * `PATH` lookup); unset/unresolved keeps the endpoint's frozen 503. A pure
+ * boolean read of the startup-resolved value — never a per-request probe. */
+export function ytDlpConfigured(env: Config): boolean {
+  return Boolean(env.YTDLP_RESOLVED_PATH);
+}
+
+/** Open-network refusal (spec "Open-network refusal", design D9): same shape
+ * as aiChatOpenNetworkRefused/aiV2OpenNetworkRefused — an import spends
+ * bandwidth/disk and reaches a third party on the operator's IP, so it
+ * refuses (503) whenever REQUIRE_LOGIN is disabled AND no IP_ALLOWLIST is
+ * set AND the bind is non-loopback. This neutralizes the unauthenticated-
+ * reachability edge of the PATH-inclusive config gate above. */
+export function youtubeImportOpenNetworkRefused(env: Config): boolean {
+  return openNetworkRefused(env);
 }
 
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */

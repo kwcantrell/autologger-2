@@ -112,6 +112,94 @@ describe('SessionHub', () => {
   });
 });
 
+// youtube-audio-import design D10-D13: composite anchor RPC that synthesizes a
+// recorded-take shape (Started → advance → Stopped) around imported audio.
+describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
+  it('anchors Recording N Started at position P and Recording N Stopped at P + trunc(durationS*frameRate)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    // Establish a non-zero starting position P (via the plain stopTakeWithDuration
+    // delegate) so Started/Stopped land at provably distinct timecodes, not both at 0.
+    hub.stopTakeWithDuration({ durationS: 3, ctx: CTX }); // P = trunc(3 * 24) = 72
+
+    const { started, stopped, projection } = hub.anchorImportedTake({
+      recordingOrdinal: 1,
+      durationS: 5,
+      ctx: CTX,
+    });
+
+    expect(started.category).toBe('internal');
+    expect(started.message).toBe('Recording 1 Started');
+    expect(started.timecode_total_frames).toBe(72);
+    expect(stopped.message).toBe('Recording 1 Stopped');
+    expect(stopped.timecode_total_frames).toBe(72 + 120); // 5s @ 24fps = 120 frames
+    expect(projection.transport_elapsed_frames).toBe(192);
+    expect(projection.is_rolling).toBe(false);
+    hub.close();
+  });
+
+  it('emits event.changed and transport.changed exactly once each, after commit (Phase-9 fix-wave finding 1)', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const got: string[] = [];
+    hub.attachSocket({ send: (d: string) => void got.push(d) }, 'browser');
+
+    hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX });
+
+    const parsed = got.map((d) => JSON.parse(d));
+    // Exactly once each — the composite suppresses the two per-addEvent
+    // broadcasts and the stopTakeWithDuration broadcast, then fires ONE
+    // event.changed + ONE transport.changed after inTxn commits (design D11:
+    // "broadcasts once after commit").
+    expect(parsed.filter((m) => m.type === 'event.changed')).toHaveLength(1);
+    expect(parsed.filter((m) => m.type === 'transport.changed')).toHaveLength(1);
+    // Exact recorded-take shape stopTake emits — stopTakeWithDuration previously
+    // broadcast nothing at all.
+    expect(parsed).toContainEqual({ type: 'transport.changed', is_rolling: false, current_take: 0 });
+    hub.close();
+  });
+
+  it('is atomic: a mid-transaction throw on the third write (Stopped) persists none of the three anchor writes AND broadcasts nothing', () => {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const before = hub.ensure();
+    const beforeEvents = hub.listEvents({ limit: 10, offset: 0 });
+    const got: string[] = [];
+    hub.attachSocket({ send: (d: string) => void got.push(d) }, 'browser');
+
+    // Reach into the store the hub composes to force a synchronous throw on the
+    // SECOND addEvent call (the "Stopped" write) — after the "Started" insert and
+    // the transport advance have already run inside the same transaction. This
+    // proves the whole txn rolls back, not just that the failing statement no-ops.
+    const eventsStore = (hub as unknown as { events: { addEvent: (...a: unknown[]) => unknown } })
+      .events;
+    const original = eventsStore.addEvent.bind(eventsStore);
+    let calls = 0;
+    const spy = vi.spyOn(eventsStore, 'addEvent').mockImplementation((...args: unknown[]) => {
+      calls += 1;
+      if (calls === 2) throw new Error('simulated disk-full');
+      return original(...args);
+    });
+
+    expect(() =>
+      hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX }),
+    ).toThrow('simulated disk-full');
+    spy.mockRestore();
+
+    // DB-persistence check: the Started event and the transport advance, both
+    // already applied pre-throw, must be rolled back along with the
+    // never-attempted Stopped insert — no dangling Started event, no partial
+    // transport advance.
+    expect(hub.ensure()).toEqual(before);
+    expect(hub.listEvents({ limit: 10, offset: 0 })).toEqual(beforeEvents);
+    // Broadcast-suppression check (Phase-9 fix-wave finding 1 — the actual
+    // point of this fix): the composite's per-write broadcasts are suppressed
+    // and the single post-commit broadcast is only reached when `inTxn`
+    // returns successfully, so a mid-transaction throw must reach the
+    // subscribed socket with NO event.changed/transport.changed at all —
+    // not merely "the DB rolled back".
+    expect(got).toEqual([]);
+    hub.close();
+  });
+});
+
 describe('SessionHub.replaceTranscriptWords', () => {
   it('inserts words with start_sec/end_sec and contiguous ordinals from 0', () => {
     const hub = new SessionHub(join(dir, 's1.db'));

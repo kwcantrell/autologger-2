@@ -67,6 +67,14 @@ export interface Config {
    * registry and ceiling (AI_CHAT_MAX_CONCURRENT) deliberately, so both
    * features bound the operator's exposure together. */
   AI_V2_MAX_BUDGET_USD: string;
+  /** YouTube audio import (youtube-audio-import, design D2). NOT a raw env
+   * string like the fields above — it's the absolute yt-dlp binary path
+   * resolved ONCE at startup (`resolveYtDlpPath` in env.ts, called from the
+   * composition root), or `null` if neither an explicit path nor a `PATH`
+   * lookup found one. `ytDlpConfigured(env)` reads this value; it never
+   * re-resolves per request. Optional so existing full-object `Config`
+   * literals elsewhere (pre-dating this field) keep type-checking. */
+  YTDLP_RESOLVED_PATH?: string | null;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and
