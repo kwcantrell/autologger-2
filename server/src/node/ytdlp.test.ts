@@ -84,7 +84,7 @@ function readEnvCheck(tempDir: string, kind: 'probe' | 'download'): Record<strin
  * var could never reach the child through the real code path being tested. */
 function writeStubControl(
   tempDir: string,
-  control: { mode?: string; ext?: string; uploadDate?: string | null },
+  control: { mode?: string; ext?: string; uploadDate?: string | null; descendantDelayMs?: number },
 ): void {
   writeFileSync(join(tempDir, '.ytdlp-stub.json'), JSON.stringify(control));
 }
@@ -295,6 +295,53 @@ describe('fetchYoutubeAudio — hang timeout', () => {
     expect(elapsed).toBeGreaterThanOrEqual(hangTimeoutMs);
     expect(elapsed).toBeLessThan(hangTimeoutMs + 5000);
   }, 10000);
+
+  // Fix wave 1 (Phase 3 review, Finding 2): the hang-timeout kill must reach
+  // the WHOLE process group, not just the direct yt-dlp pid — a descendant
+  // (e.g. an ffmpeg postprocessor) must never outlive the bound. The fixture
+  // forks a grandchild (inheriting its own process group, unrelated to
+  // `detached`) that would write a marker file after a delay LONGER than the
+  // hang timeout; if the caller's kill only signaled the direct pid, that
+  // grandchild would survive and eventually write its marker.
+  it('kills a hanging download AND its descendant (process-group kill, not just the direct pid)', async () => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    const hangTimeoutMs = 200;
+    const descendantDelayMs = 1500;
+    writeStubControl(tempDir, { mode: 'hang-with-descendant', descendantDelayMs });
+
+    await expect(
+      fetchYoutubeAudio({ url: 'https://youtu.be/abc123', tempDir, binaryPath, hangTimeoutMs }),
+    ).rejects.toThrow(/timed out/i);
+
+    // Wait past the descendant's own delay window. If the group kill
+    // failed and only the direct pid died, the still-alive grandchild's
+    // timer would fire during this wait and the marker would appear.
+    await new Promise((resolve) => setTimeout(resolve, descendantDelayMs + 500));
+    expect(existsSync(join(tempDir, 'descendant-marker.txt'))).toBe(false);
+  }, 10000);
+});
+
+// ── Byte-size backstop: the JS-side check is authoritative, not just the
+// `--max-filesize` flag (Fix wave 1, Phase 3 review Finding 1) ─────────────
+
+describe('fetchYoutubeAudio — byte-size backstop (independent of --max-filesize)', () => {
+  it('rejects a produced file that exceeds maxFilesizeBytes even though yt-dlp exited 0 ' +
+    '(simulates a size-unknown stream the flag could not enforce in advance)', async () => {
+    const tempDir = makeTempDir();
+    const binaryPath = makeBinary(tempDir);
+    writeStubControl(tempDir, { mode: 'oversize-bypass' });
+
+    const promise = fetchYoutubeAudio({
+      url: 'https://youtu.be/abc123',
+      tempDir,
+      binaryPath,
+      maxFilesizeBytes: 100,
+    });
+
+    await expect(promise).rejects.toBeInstanceOf(YtDlpError);
+    await expect(promise).rejects.toThrow(/exceeds the 100-byte import limit/);
+  });
 });
 
 // ── spawn() call contract: real node:child_process.spawn, wrapped only to

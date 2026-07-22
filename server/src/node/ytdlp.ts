@@ -36,7 +36,7 @@
 // `buildAiChatChildEnv` forwards, added only when the parent actually has it.
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 /** A typed failure from any stage of the fetch (probe spawn error/timeout,
@@ -63,7 +63,12 @@ export const MAX_DURATION_SECONDS = 4 * 60 * 60;
  * ingestion — design D5). Chosen to match DeepGram's own upload ceiling
  * downstream (`DEEPGRAM_MAX_GROUP_BYTES` in `routers/transcribe.ts`) — a
  * file this module would accept but transcription could never consume is a
- * pointless egress either way. */
+ * pointless egress either way. `--max-filesize` alone is defense in depth,
+ * not the authoritative check: yt-dlp cannot enforce it before download for
+ * some streams (size-unknown DASH/chunked), so `fetchYoutubeAudio` also
+ * `stat()`s the produced file after download and rejects it here — the
+ * JS-side check is what's actually load-bearing, mirroring the
+ * belt-and-suspenders shape the duration axis already has. */
 export const DEFAULT_MAX_FILESIZE_BYTES = 2_000_000_000;
 
 /** Design D5 axis 4: wall-clock hang timeout applied to EACH spawn (probe
@@ -161,12 +166,38 @@ interface RunResult {
   timedOut: boolean;
 }
 
+/** Kill `child`'s entire process group (not just the one pid) — a hang-timeout
+ * proof the same signal reaches a descendant (e.g. an ffmpeg postprocessor
+ * yt-dlp spawned) that would otherwise orphan and keep running/writing past
+ * the wall-clock bound. Requires `child` to have been spawned with
+ * `detached: true` (its pid IS the process-group id, mirroring
+ * `killAiChatProcessGroup` in `routers/aiChatRunner.ts`). Never throws:
+ * `process.kill` on an already-gone group raises ESRCH — a race with the
+ * child exiting on its own between the timer firing and this call — which is
+ * swallowed since "already gone" is exactly the no-orphan outcome wanted. */
+function killProcessGroup(child: ChildProcess): void {
+  if (child.pid == null) return;
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    // ESRCH: the group already exited — nothing left to kill.
+  }
+}
+
 /** Spawn one yt-dlp invocation with `shell: false` against the scrubbed env,
  * bounded by `timeoutMs` wall-clock (design D5 axis 4) — on expiry the
- * process is SIGKILLed (a hung process, by definition, isn't going to
- * respond to a gentler signal) and `timedOut: true` is reported. Never
- * throws: spawn failure surfaces as `exitCode: null` via the child's own
- * `error` event, uniformly with a non-zero exit for the caller's purposes. */
+ * WHOLE PROCESS GROUP is SIGKILLed (a hung process, by definition, isn't
+ * going to respond to a gentler signal), not just the direct pid, so a
+ * descendant yt-dlp spawned (e.g. an ffmpeg postprocessor) can never outlive
+ * the bound — and `timedOut: true` is reported. Spawned with `detached:
+ * true` so the child is its own process-group leader; on POSIX this makes
+ * `child.pid` double as the group id `killProcessGroup` signals (matching
+ * `spawnAiChatTurn`'s posture in `routers/aiChatRunner.ts`) — no group is
+ * left behind on the normal (non-timeout) exit path, since nothing here ever
+ * calls `unref()` and the group's last member exiting on its own reaps it.
+ * Never throws: spawn failure surfaces as `exitCode: null` via the child's
+ * own `error` event, uniformly with a non-zero exit for the caller's
+ * purposes. */
 function runYtDlpProcess(
   binaryPath: string,
   argv: string[],
@@ -176,7 +207,7 @@ function runYtDlpProcess(
     let settled = false;
     let child: ChildProcess;
     try {
-      child = spawn(binaryPath, argv, { shell: false, cwd: opts.cwd, env: opts.env });
+      child = spawn(binaryPath, argv, { shell: false, cwd: opts.cwd, env: opts.env, detached: true });
     } catch {
       resolve({ exitCode: null, stdout: '', timedOut: false });
       return;
@@ -186,7 +217,7 @@ function runYtDlpProcess(
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killProcessGroup(child);
     }, opts.timeoutMs);
 
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -343,6 +374,23 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
   if (!produced) {
     throw new YtDlpError('Download did not produce an audio file.');
   }
+
+  // JS-side byte-size backstop (design D5 axis 1, this module's own
+  // authoritative check — mirrors the JS-side duration check above):
+  // `--max-filesize` is enforced by yt-dlp itself DURING download, but for
+  // some streams (size-unknown DASH/chunked) yt-dlp cannot know the final
+  // size in advance and can exit 0 having written an over-cap file anyway.
+  // Since D5 makes this cap load-bearing for RAM (Phase 5 buffers the
+  // produced file whole), trusting the flag alone is not enough — `stat()`
+  // the produced file and reject it here, same as any other bound breach
+  // (never return `audioPath` for an over-cap file).
+  const producedStat = await stat(produced.path);
+  if (producedStat.size > maxFilesizeBytes) {
+    throw new YtDlpError(
+      `Downloaded audio exceeds the ${maxFilesizeBytes}-byte import limit (yt-dlp did not enforce --max-filesize for this stream).`,
+    );
+  }
+
   const contentType = contentTypeForExt(produced.ext);
   if (!contentType) {
     throw new YtDlpError(`Downloaded audio container ".${produced.ext}" is not supported.`);
