@@ -34,4 +34,40 @@ describe('change-detecting catalog readers (characterization)', () => {
     expect(cat.sessions.setSessionUiHidden(session, true)).toBe(true);
     expect(cat.sessions.setSessionUiHidden('no-such-session', true)).toBe(false);
   });
+
+  it('setSessionEpisodeDate: value round-trips through getSessionJoinedRow — the exact row shape serializeSessionEntry (GET /api/sessions/:id) serves', async () => {
+    const show = await seedShow({ studioId: await seedStudio() });
+    const session = await seedSession({ showId: show });
+    const cat = catalogFor();
+
+    // Before any write, the joined row (what the detail route reads) carries
+    // no episode_date — matches the "already nullable" frozen-shape claim.
+    expect(cat.sessions.getSessionJoinedRow(session)?.episode_date).toBeNull();
+
+    expect(cat.sessions.setSessionEpisodeDate(session, '2024-01-15')).toBe(true);
+    const joined = cat.sessions.getSessionJoinedRow(session);
+    expect(joined?.episode_date).toBe('2024-01-15');
+    // Same column via the other read path the list route (listSessionsForShow)
+    // feeds through serializeSessionEntry.
+    const listed = cat.sessions.listSessionsForShow(show).find((r) => r.id === session);
+    expect(listed?.episode_date).toBe('2024-01-15');
+
+    expect(cat.sessions.setSessionEpisodeDate('no-such-session', '2024-02-02')).toBe(false);
+  });
+
+  it('setSessionEpisodeDate: a null/blank iso is a no-op — no UPDATE runs, existing value is untouched', async () => {
+    const show = await seedShow({ studioId: await seedStudio() });
+    const session = await seedSession({ showId: show });
+    const cat = catalogFor();
+
+    expect(cat.sessions.setSessionEpisodeDate(session, null)).toBe(false);
+    expect(cat.sessions.setSessionEpisodeDate(session, undefined)).toBe(false);
+    expect(cat.sessions.setSessionEpisodeDate(session, '  ')).toBe(false);
+    expect(cat.sessions.getSessionJoinedRow(session)?.episode_date).toBeNull();
+
+    // A no-op write must not clobber a previously set value either.
+    cat.sessions.setSessionEpisodeDate(session, '2024-03-03');
+    expect(cat.sessions.setSessionEpisodeDate(session, null)).toBe(false);
+    expect(cat.sessions.getSessionJoinedRow(session)?.episode_date).toBe('2024-03-03');
+  });
 });

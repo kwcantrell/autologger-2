@@ -9,6 +9,26 @@ import type { Row } from './shared';
 import type { ShowsStore } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
 
+const UPLOAD_DATE_RE = /^(\d{4})(\d{2})(\d{2})$/;
+
+/**
+ * yt-dlp's `--dump-json` `upload_date` field (`YYYYMMDD`) → the `YYYY-MM-DD`
+ * form the catalog `sessions.episode_date` column stores. A null/blank/
+ * malformed input is a no-op — returns `null` rather than throwing, since a
+ * missing/unparseable publish date must never fail the import (design D4).
+ */
+export function normalizeUploadDate(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return null;
+  const m = UPLOAD_DATE_RE.exec(trimmed);
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const month = Number(mo);
+  const day = Number(d);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return `${y}-${mo}-${d}`;
+}
+
 export class SessionIndexStore {
   constructor(
     private db: CatalogDb,
@@ -124,6 +144,26 @@ export class SessionIndexStore {
     const res = this.db.run(
       'UPDATE sessions SET archived = ? WHERE id = ?',
       archived ? 1 : 0,
+      sessionId,
+    );
+    return res.changes > 0;
+  }
+
+  /**
+   * Catalog-layer writer for `episode_date` (design D4 — NOT a hub RPC;
+   * `episode_date` is a catalog `sessions` column with no per-session-DB
+   * counterpart). Sibling of `setSessionArchived`/`setSessionUiHidden`: a
+   * single-column `UPDATE`. `iso` must already be normalized to `YYYY-MM-DD`
+   * (see `normalizeUploadDate`) — a null/blank `iso` is a no-op (no `UPDATE`
+   * runs, returns `false`) since a missing publish date must never fail the
+   * import.
+   */
+  setSessionEpisodeDate(sessionId: string, iso: string | null | undefined): boolean {
+    const value = (iso ?? '').trim();
+    if (!value) return false;
+    const res = this.db.run(
+      'UPDATE sessions SET episode_date = ? WHERE id = ?',
+      value,
       sessionId,
     );
     return res.changes > 0;
