@@ -164,7 +164,7 @@
 
 ## 10. Final gates (re-run after phase 9)
 
-- [ ] 10.1 `npm run typecheck` + `npm test` green.
-- [ ] 10.2 `npm run e2e` (chromium + login-gate). No new web change in phase 9, so
+- [x] 10.1 `npm run typecheck` + `npm test` green.
+- [x] 10.2 `npm run e2e` (chromium + login-gate). No new web change in phase 9, so
   `e2e:visual` baselines are expected unchanged (the pre-existing 16-baseline drift stays out
   of scope) — run to confirm no new drift; do not re-bless.
