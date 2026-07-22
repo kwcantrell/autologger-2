@@ -211,6 +211,35 @@ export class SessionHub {
     return this.transport.statusLive(ctx);
   }
 
+  // --- composite RPCs ---
+  /** youtube-audio-import design D10/D11: synthesizes a recorded-take shape around
+   * imported audio — `Recording N Started` at the current transport position, advance
+   * the transport by `durationS`, `Recording N Stopped`. One `inTxn` around all three
+   * writes (calling the *store* methods directly rather than the self-transactional
+   * delegates above, so nothing is nested) — a mid-transaction throw (e.g. a disk-full
+   * on the second insert) rolls back the Started event AND the transport advance, never
+   * leaving a dangling `Recording N Started` with no `Stopped`. */
+  anchorImportedTake(input: { recordingOrdinal: number; durationS: number; ctx: TimecodeCtx }) {
+    return this.inTxn(() => {
+      const { event: started } = this.events.addEvent({
+        category: 'internal',
+        message: `Recording ${input.recordingOrdinal} Started`,
+        metadataJson: '{}',
+        markedAtUtc: null,
+        ctx: input.ctx,
+      });
+      this.transport.stopTakeWithDuration({ durationS: input.durationS, ctx: input.ctx });
+      const { event: stopped, projection } = this.events.addEvent({
+        category: 'internal',
+        message: `Recording ${input.recordingOrdinal} Stopped`,
+        metadataJson: '{}',
+        markedAtUtc: null,
+        ctx: input.ctx,
+      });
+      return { started, stopped, projection };
+    });
+  }
+
   // --- lease delegates ---
   claimLease(clientId: string) {
     return this.inTxn(() => this.lease.claimLease(clientId));

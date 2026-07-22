@@ -81,6 +81,14 @@ export class TransportStore {
       'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
       tr.elapsed_frames + extra,
     );
+    // Matches stopTake's exact emitted shape (design D11) — stopTakeWithDuration
+    // previously broadcast nothing, which was a gap masked by having zero
+    // non-test callers until the youtube-import anchor composite.
+    this.core.broadcast({
+      type: 'transport.changed',
+      is_rolling: false,
+      current_take: tr.current_take,
+    });
     return this.core.projection();
   }
 
