@@ -88,8 +88,7 @@ writeFileSync(
     hasHome: Object.hasOwn(process.env, 'HOME'),
     path: process.env.PATH ?? null,
     hasIgnoreConfig: argv.includes('--ignore-config'),
-    hasNoPlugins: argv.includes('--no-plugins'),
-    hasNoNetrc: argv.includes('--no-netrc'),
+    hasNoPluginDirs: argv.includes('--no-plugin-dirs'),
   }),
 );
 

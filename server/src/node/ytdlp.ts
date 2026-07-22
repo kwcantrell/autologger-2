@@ -24,10 +24,11 @@
 // Security lockdown (design D9, modeled on `buildAiChatChildEnv` in
 // `server/src/routers/aiChatRunner.ts`): `shell: false` with a discrete argv
 // array and a `--` terminator before the positional URL (never shell- or
-// option-interpreted); `--ignore-config` + `--no-plugins` + `--no-netrc` so
-// no ambient `yt-dlp` config file, plugin, or `.netrc` credential can inject
-// flags (`--exec`, `--postprocessor-args`, …) or leak credentials into the
-// run; a minimal, SCRUBBED child env — never inherited `process.env` — that
+// option-interpreted); `--ignore-config` + `--no-plugin-dirs` so no ambient
+// `yt-dlp` config file or plugin can inject flags (`--exec`,
+// `--postprocessor-args`, …); `.netrc` is off by default and `--ignore-config`
+// blocks any config from enabling it, so no `.netrc` credential is read either;
+// a minimal, SCRUBBED child env — never inherited `process.env` — that
 // carries only HOME (if the parent has one) + PATH pinned to the resolved
 // binary's OWN directory (never the parent's real `PATH`, and never
 // containing anything else — deliberately even MORE restrictive than
@@ -261,9 +262,37 @@ async function locateProducedFile(tempDir: string): Promise<{ path: string; ext:
 }
 
 /** Lockdown flags shared by BOTH spawns (design D9): no ambient config file,
- * no plugins, no `.netrc` credential use, and quiet (no warning noise to
- * parse around). */
-const LOCKDOWN_ARGV = ['--ignore-config', '--no-plugins', '--no-netrc', '--no-warnings'];
+ * no plugin directories, and quiet (no warning noise to parse around). These
+ * are the REAL yt-dlp option spellings (verified against the binary): plugins
+ * are cleared with `--no-plugin-dirs` (there is no `--no-plugins`), and
+ * `.netrc` needs no flag — it is OFF by default and `--ignore-config` prevents
+ * any config from turning it on with `--netrc`, so an explicit disable flag
+ * (which yt-dlp does not have) is neither needed nor valid. */
+const LOCKDOWN_ARGV = ['--ignore-config', '--no-plugin-dirs', '--no-warnings'];
+
+/** The flag portion of each spawn's argv (everything before the `--` URL
+ * terminator), factored out so the real-binary flag-validity smoke test
+ * (`ytdlp.realbinary.test.ts`) validates the EXACT flags this module spawns —
+ * no re-typed copy that could share a typo. These are yt-dlp's real option
+ * spellings; the fake-binary unit tests accept any flag, so a nonexistent one
+ * (historically `--no-plugins`/`--no-netrc`) only surfaces against a real
+ * binary. */
+export const PROBE_FLAGS: readonly string[] = [...LOCKDOWN_ARGV, '--skip-download', '--dump-json'];
+
+export function downloadFlags(maxFilesizeBytes: number): string[] {
+  return [
+    ...LOCKDOWN_ARGV,
+    '-f',
+    AUDIO_FORMAT_SELECTOR,
+    '-o',
+    OUTPUT_TEMPLATE,
+    '--max-filesize',
+    String(maxFilesizeBytes),
+    '--match-filters',
+    `duration < ${MAX_DURATION_SECONDS}`,
+    '--no-simulate',
+  ];
+}
 
 export interface YtDlpFetchOptions {
   /** The already-validated, already-normalized URL (`url.href`) — this
@@ -320,7 +349,7 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
   // ── Step 1: metadata-only probe — no bytes fetched yet (design D5 axis 2:
   // a live stream must be rejected here, BEFORE any download attempt, since
   // its audio is otherwise effectively unbounded). ──
-  const probeArgv = [...LOCKDOWN_ARGV, '--skip-download', '--dump-json', '--', opts.url];
+  const probeArgv = [...PROBE_FLAGS, '--', opts.url];
   const probe = await runYtDlpProcess(opts.binaryPath, probeArgv, runOpts);
   if (probe.timedOut) {
     throw new YtDlpError('Reading video metadata timed out.');
@@ -348,20 +377,7 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
   // alongside the JS-side check above; the JS-side check is the
   // authoritative enforcement — the match-filter is defense in depth in
   // case a future edit to this module's probe logic regresses). ──
-  const downloadArgv = [
-    ...LOCKDOWN_ARGV,
-    '-f',
-    AUDIO_FORMAT_SELECTOR,
-    '-o',
-    OUTPUT_TEMPLATE,
-    '--max-filesize',
-    String(maxFilesizeBytes),
-    '--match-filter',
-    `duration < ${MAX_DURATION_SECONDS}`,
-    '--no-simulate',
-    '--',
-    opts.url,
-  ];
+  const downloadArgv = [...downloadFlags(maxFilesizeBytes), '--', opts.url];
   const download = await runYtDlpProcess(opts.binaryPath, downloadArgv, runOpts);
   if (download.timedOut) {
     throw new YtDlpError('Downloading audio timed out.');

@@ -202,8 +202,7 @@ describe('fetchYoutubeAudio — argv hardening', () => {
     const [probeArgv, downloadArgv] = readArgvLog(tempDir);
     for (const argv of [probeArgv, downloadArgv]) {
       expect(argv).toContain('--ignore-config');
-      expect(argv).toContain('--no-plugins');
-      expect(argv).toContain('--no-netrc');
+      expect(argv).toContain('--no-plugin-dirs');
     }
     expect(probeArgv).toContain('--skip-download');
     expect(downloadArgv).not.toContain('--skip-download');
@@ -235,8 +234,7 @@ describe('fetchYoutubeAudio — child env exclusion', () => {
       hasHome: true,
       path: dirname(binaryPath),
       hasIgnoreConfig: true,
-      hasNoPlugins: true,
-      hasNoNetrc: true,
+      hasNoPluginDirs: true,
     });
     expect(downloadCheck).toEqual(probeCheck);
   });
