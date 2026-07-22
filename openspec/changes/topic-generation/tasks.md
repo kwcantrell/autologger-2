@@ -26,7 +26,7 @@
   `TOPIC_GENERATE_MAX_BUDGET_USD` (+ optional `TOPIC_GENERATE_TIMEOUT_SEC`) config in `env.ts`,
   defaulted higher than the chat's (design D6). Unit-test `deleteTopics` (deletes only the given
   ids, leaves others) + the config default.
-- [ ] 2.3 Add the one-shot generate function: calls `driveAiTurn` with **`list_topics`
+- [x] 2.3 Add the one-shot generate function: calls `driveAiTurn` with **`list_topics`
   withheld** (allowedTools = `get_transcript_words` + `create_topic`), a fixed one-shot user
   message (design D5), the dedicated budget/timeout (D6), a no-op `emit`, and **no abortSignal**
   (D2); returns the `AiChatTurnOutcome`. Unit-test vs `fake-claude.mjs`: success on a `result`
