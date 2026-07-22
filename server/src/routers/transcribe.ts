@@ -7,7 +7,15 @@
 import { Hono } from 'hono';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { deepgramConfigured, deepgramModel } from '../env';
+import {
+  aiChatConfigured,
+  aiChatMaxConcurrent,
+  aiChatOpenNetworkRefused,
+  deepgramConfigured,
+  deepgramModel,
+  topicGenerateMaxBudgetUsd,
+  topicGenerateTimeoutSec,
+} from '../env';
 import { mergeAudioSegments } from '../node/audioMerge';
 import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
 import type { TranscribeGroupResult } from '../node/deepgram';
@@ -24,7 +32,9 @@ import {
   transcriptWordUpdateSchema,
 } from '../schemas';
 import type { AppEnv } from '../types';
+import { aiChatTurns } from './aiChatRegistry';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { generateTopicsTurn } from './topicGenerate';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
@@ -221,9 +231,94 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
   return c.json({ topics: await getSessionHub(c, sessionId).listTopics() });
 });
 
+// ── Topic generation (topic-generation, design D1-D7) ───────────────────────
+// Reuses the AI chat's CLI/MCP lockdown + gate + turn registry (env.ts "Topic
+// generation" section) for a one-shot, non-conversational generate turn
+// (`generateTopicsTurn`, task 2.3) run to completion server-side (design D2 —
+// no SSE, no abortSignal). The `aiChatTurns` slot is acquired HERE (not inside
+// `generateTopicsTurn`) and released in this handler's own `finally`, mirroring
+// `ai.ts`'s per-endpoint slot lifecycle (409 wording is generate-specific).
+
+const TOPIC_GENERATE_OPEN_NETWORK_DETAIL =
+  'Topic generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
+  'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
+const NO_TRANSCRIPT_DETAIL =
+  'This session has no transcript words to generate topics from.';
+const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
+  'A turn (AI chat or topic generation) is already in progress for this session; wait for it to finish before ' +
+  'generating topics again. AI chat and topic generation share one per-session slot by design.';
+const TOPIC_GENERATE_AT_CAPACITY_DETAIL =
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and topic ' +
+  'generation); try again shortly.';
+// Fixed, handler-owned — never the CLI's raw output or its internal outcome
+// token (design D3/spec "Failure mapping").
+const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
+
 transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
-  await requireSession(c, c.req.param('sessionId'));
-  throw new ApiError(503, UNAVAILABLE);
+  const sessionId = c.req.param('sessionId');
+  await requireSession(c, sessionId);
+
+  // Configuration gate + open-network refusal — both 503, before any spawn,
+  // byte-identical unconfigured detail to the pre-change stub (task 1.1).
+  if (!aiChatConfigured(c.env.config)) {
+    throw new ApiError(503, UNAVAILABLE);
+  }
+  if (aiChatOpenNetworkRefused(c.env.config)) {
+    throw new ApiError(503, TOPIC_GENERATE_OPEN_NETWORK_DETAIL);
+  }
+
+  // Transcript precondition (design D4) — 400 before any spawn.
+  const transcriptWords = await getSessionHub(c, sessionId).listTranscriptWords();
+  if (transcriptWords.length === 0) {
+    throw new ApiError(400, NO_TRANSCRIPT_DETAIL);
+  }
+
+  // Single-flight (per session) + process-wide concurrency ceiling — 409,
+  // spawning nothing. Acquired here (not inside generateTopicsTurn) and
+  // released in this handler's own finally.
+  const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
+  if (!slot.ok) {
+    throw new ApiError(
+      409,
+      slot.reason === 'session-busy' ? TOPIC_GENERATE_SESSION_BUSY_DETAIL : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
+    );
+  }
+
+  try {
+    // Record pre-run topic ids BEFORE the run (design D3's crash-safe swap):
+    // nothing below ever mutates these topics until the atomic
+    // delete-on-success.
+    const preRunIds = new Set((await getSessionHub(c, sessionId).listTopics()).map((t) => t.id));
+
+    const outcome = await generateTopicsTurn({
+      registry: c.env.ports.sessions,
+      cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
+      sessionId,
+      maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),
+      timeoutMs: topicGenerateTimeoutSec(c.env.config) * 1000,
+    });
+
+    // Re-acquire the hub after the async, potentially multi-minute turn
+    // above — the idle sweeper may have closed the prior handle in the
+    // meantime (invariant: hubs close their DB handles and reopen lazily).
+    const hub = getSessionHub(c, sessionId);
+    const after = await hub.listTopics();
+    const newIds = after.filter((t) => !preRunIds.has(t.id)).map((t) => t.id);
+
+    if (outcome.ok && newIds.length >= 1) {
+      // Success: delete the pre-run topics, leaving only the fresh set.
+      await hub.deleteTopics([...preRunIds]);
+      return c.json({ topics: await hub.listTopics() });
+    }
+
+    // Failure (turn error/timeout/CLI error, or a run that created no
+    // topics): delete only the topics THIS run created — the pre-run topics
+    // were never touched and remain exactly as they were.
+    await hub.deleteTopics(newIds);
+    throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
+  } finally {
+    slot.release();
+  }
 });
 
 transcribeRouter.post('/api/sessions/:sessionId/topics', async (c) => {
