@@ -161,9 +161,15 @@ tools, all hard-bound to the `:sessionId` of the originating request via the tur
 registration (the model cannot address any other session — no tool parameter names a
 session):
 
-- `get_transcript_words` — returns the session's transcript words (the DeepGram output)
-  with the hub row fields (the HTTP read surface's per-word `session_id` is omitted, being
-  redundant when the session is fixed).
+- `get_transcript_words` — returns the session's transcript rendered as **compact,
+  model-readable text**, not JSON rows: consecutive words are grouped into per-speaker
+  segments, each line prefixed with the segment's session-time anchor and speaker when
+  present (e.g. `[HH:MM:SS] speaker S1: …`); a session with no transcript renders as a
+  short placeholder line. The rendering carries the word text, speaker, and session-time
+  anchor and omits the other hub row fields (`start_sec`, `created_at_utc`, `ordinal`,
+  `session_id`, …), which the model does not need and whose per-word repetition made the
+  JSON form a single oversized payload that overflowed the CLI's tool-output limit and
+  hid the transcript from the model. The output SHALL be a bounded, non-JSON rendering.
 - `list_topics` — returns the session's topics with the hub row fields.
 - `create_topic` — creates one topic; input SHALL be validated with the same bounds as
   the existing `topicCreateSchema` (`session_time` ≤ 20 chars, `duration_sec` ≥ 0,
@@ -192,6 +198,12 @@ HTTP surface.
 - **WHEN** a chat turn runs for session A
 - **THEN** every MCP tool reads and writes session A only, with no tool parameter that
   can name a different session
+
+#### Scenario: Transcript is delivered as bounded text, not JSON rows
+- **WHEN** the model calls `get_transcript_words` for a session with a transcript
+- **THEN** the tool returns a compact per-speaker, session-time-anchored text rendering
+  (not a JSON array of hub rows), so a multi-thousand-word transcript stays within the
+  CLI's tool-output limit and is visible to the model
 
 ### Requirement: Subprocess security lockdown
 The spawned CLI MUST be restricted to the autologger MCP tools and nothing else. The
