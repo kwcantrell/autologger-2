@@ -63,7 +63,7 @@
 
 ## 5. Final gates
 
-- [ ] 5.1 `npm run typecheck` + `npm test` green.
-- [ ] 5.2 `npm run e2e` (chromium + login-gate). No web change expected (the generate button
+- [x] 5.1 `npm run typecheck` + `npm test` green.
+- [x] 5.2 `npm run e2e` (chromium + login-gate). No web change expected (the generate button
   already posts `topics/generate`); run `e2e:visual` to confirm no drift (the pre-existing
   16-baseline main drift stays out of scope) — do not re-bless.
