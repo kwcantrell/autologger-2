@@ -37,6 +37,34 @@ describe('unavailable endpoints (503)', () => {
       detail: 'Transcription is unavailable on this deployment.',
     });
   });
+
+  // ── Characterization: topics/generate (topic-generation, task 1.1) ─────────
+  // Pins the CURRENT (pre-change) behavior byte-for-byte, ahead of phase 3
+  // flipping the 503 stub to a gated handler. Update this test in lockstep
+  // with that change, not before.
+
+  it('topics/generate is byte-identical to the pre-change frozen 503', async () => {
+    const s = await seededSession();
+    const res = await app.request(
+      `/api/sessions/${s}/topics/generate`,
+      { method: 'POST' },
+      { ...env },
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      detail: 'Transcription is unavailable on this deployment.',
+    });
+  });
+
+  it('topics/generate 404s an unknown session before the 503 (requireSession guard unchanged)', async () => {
+    const res = await app.request(
+      '/api/sessions/does-not-exist/topics/generate',
+      { method: 'POST' },
+      { ...env },
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Session not found' });
+  });
 });
 
 describe('transcript-words CRUD', () => {
