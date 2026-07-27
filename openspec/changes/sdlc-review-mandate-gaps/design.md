@@ -638,3 +638,23 @@ clean: no surviving instance of any panel-refuted claim outside the dated histor
 record; all six gate rulings match the normative sections; every tasks.md bullet traces
 to its design anchor; delta spec and D6 tell the same story.
 `openspec validate --strict` re-run after the edits: passes.
+
+### 2026-07-27 — Post-implementation consistency read (task 3.1, recorded outcome)
+
+**Clean.** Documents read: `CLAUDE.md`, `.claude/skills/openspec-apply-change/SKILL.md`,
+`proposal.md`, `design.md`, `tasks.md`, `specs/sdlc-process/spec.md`, plus the implementer's
+`.apply/task-1-report.md`. Every encoding edit matches its design decision with the
+panel-mandated qualifiers intact (D1.1 → 6c/6f/Guardrails; D1.2/D1.3 → step 7 build +
+integrity + charter + CLAUDE.md parenthetical; D2 → fact-check block, worded as the
+adequate method under the existing per-claim-method rule with the CONFIRMED reservation
+rewritten in, not layered beside; D3.1/D3.2 → partition block + step 7 + Guardrails with
+external-consumer property, declare-when, revisit clause, floor-not-ceiling; D4 → 6e/7 +
+Guardrails, consequence-anchored, working-tree-only, re-execute + own mutation). No live
+instruction contradicts another; CLAUDE.md's steps-6–7 pointer and summary parentheticals
+claim nothing the skill doesn't carry; SKILL.md step numbering and frontmatter intact;
+`openspec/config.yaml` byte-identical to `main` (D7 honored); no stale pre-gate language
+outside dated historical records. The implementer's flagged density (6e bullet, fact-check
+block) was reviewed for trims: every clause traces to a panel-mandated qualifier — no
+zero-loss trim exists; left as written. `openspec validate sdlc-review-mandate-gaps
+--strict`: valid. Ledger records task 2.2's skill-load + `/opsx:apply`-plugin observation,
+so the D6 auto-load question is closed by observation as tasked.
