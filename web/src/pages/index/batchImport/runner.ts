@@ -114,6 +114,14 @@ async function importLocalAudio(
   });
 }
 
+async function deleteSession(sessionId: string, signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  await apiFetch(`sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    signal,
+  });
+}
+
 export interface RunBatchImportOptions {
   showId: string;
   files: FileList | readonly File[];
@@ -124,7 +132,7 @@ export interface RunBatchImportOptions {
   onSessionCreated?: () => void;
 }
 
-/** Discover, match/skip/create, stitch, and upload audio groups for the selected show. */
+/** Discover, match/skip, stitch, create, and upload audio groups for the selected show. */
 export async function runBatchImport(options: RunBatchImportOptions): Promise<void> {
   const { showId, files, profile, signal, onProgress, onSessionCreated } = options;
 
@@ -169,21 +177,7 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
       continue;
     }
 
-    let sessionId: string;
-    try {
-      const created = await createSessionForStem(showId, stem, profile, signal);
-      sessionId = created.id;
-      onSessionCreated?.();
-      sessions = await fetchSessions(signal);
-    } catch (err) {
-      const detail = errorDetail(err, 'Create failed');
-      state.lines.push(formatFailedLine(stem, detail));
-      emit({
-        current: null,
-        percent: Math.round((clipIndex / total) * 100),
-      });
-      continue;
-    }
+    throwIfAborted(signal);
 
     let blob: Blob;
     let durationS: number;
@@ -194,6 +188,24 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
       durationS = stitched.durationS;
     } catch (err) {
       const detail = errorDetail(err, 'Stitch failed');
+      state.lines.push(formatFailedLine(stem, detail));
+      emit({
+        current: null,
+        percent: Math.round((clipIndex / total) * 100),
+      });
+      continue;
+    }
+
+    throwIfAborted(signal);
+
+    let sessionId: string;
+    try {
+      const created = await createSessionForStem(showId, stem, profile, signal);
+      sessionId = created.id;
+      onSessionCreated?.();
+      sessions = await fetchSessions(signal);
+    } catch (err) {
+      const detail = errorDetail(err, 'Create failed');
       state.lines.push(formatFailedLine(stem, detail));
       emit({
         current: null,
@@ -214,6 +226,12 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
     } catch (err) {
       const detail = errorDetail(err, 'Upload failed');
       state.lines.push(formatFailedLine(stem, detail));
+      try {
+        await deleteSession(sessionId, signal);
+        sessions = await fetchSessions(signal);
+      } catch {
+        // Best-effort rollback; a leftover empty session would block retry via match.
+      }
     }
 
     emit({

@@ -200,4 +200,69 @@ describe('runBatchImport', () => {
     expect(sessionsCall).toBe(1);
     expect(mockedStitch).not.toHaveBeenCalled();
   });
+
+  it('does not create a session when stitch fails', async () => {
+    mockedApiFetch.mockImplementation(async (path, opts) => {
+      if (path === 'sessions' && (!opts || opts.method === undefined)) {
+        return mockSessionsResponse([]);
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    mockedStitch.mockRejectedValue(new Error('decode failed'));
+
+    const lines: string[] = [];
+    await runBatchImport({
+      showId: 'show-1',
+      files: filesFrom('YMH_001.mp3'),
+      profile: profileFixture(),
+      signal: new AbortController().signal,
+      onProgress: (s) => {
+        lines.push(...s.lines);
+      },
+    });
+
+    expect(lines).toContain('Failed YMH_001: decode failed');
+    expect(mockedApiFetch).not.toHaveBeenCalledWith(
+      'sessions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('deletes the session when import fails', async () => {
+    const deleteCalls: string[] = [];
+    mockedApiFetch.mockImplementation(async (path, opts) => {
+      if (path === 'sessions' && (!opts || opts.method === undefined)) {
+        return mockSessionsResponse([]);
+      }
+      if (path === 'sessions' && opts?.method === 'POST') {
+        return { id: 'new-session', episode: 'YMH_003', title: 'YMH_003' };
+      }
+      if (path === 'sessions/new-session' && opts?.method === 'DELETE') {
+        deleteCalls.push('deleted');
+        return { ok: true };
+      }
+      if (path.includes('local-audio-import')) {
+        throw new Error('upload failed');
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    mockedStitch.mockResolvedValue({
+      blob: new Blob(['wav'], { type: 'audio/wav' }),
+      durationS: 3,
+    });
+
+    const lines: string[] = [];
+    await runBatchImport({
+      showId: 'show-1',
+      files: filesFrom('YMH_003.mp3'),
+      profile: profileFixture(),
+      signal: new AbortController().signal,
+      onProgress: (s) => {
+        lines.push(...s.lines);
+      },
+    });
+
+    expect(deleteCalls).toHaveLength(1);
+    expect(lines).toContain('Failed YMH_003: upload failed');
+  });
 });

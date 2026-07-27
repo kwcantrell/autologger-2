@@ -130,7 +130,10 @@ accepted no-ffmpeg / easier stitch.
   oversize body.
 - README endpoint inventory lists 413.
 
-### 2026-07-27 — Consistency read (post-gate edit)
+### 2026-07-27 — Whole-branch fix-wave (P1 retryability)
+
+**Fixed in place:** Runner stitches before session create; import failure best-effort
+`DELETE /api/sessions/:id` so failed groups stay retryable (no permanent skip).
 
 Read proposal.md, design.md, tasks.md, specs/batch-audio-import/spec.md,
 specs/api-contract-freeze/spec.md after ffmpeg removal. **Clean** — no remaining
