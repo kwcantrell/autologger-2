@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta --kill-others-on-fail \"npm run dev -w server\" \"npm run dev -w web\"",
+    "teardown": "node scripts/teardown.mjs",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
     "test": "npm run test -w server && npm run test -w web && npm run test -w companion",
