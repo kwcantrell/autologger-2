@@ -585,3 +585,97 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
     expect(isProcessAlive(pid)).toBe(false);
   });
 });
+
+// ── Task 1.3 (code-health-consolidation) — full SSE frame-sequence pins ─────
+// The byte-identity gate for the shared OUTER turn orchestrator extraction
+// (design D3, phase 4): each test captures the COMPLETE emitted event-frame
+// sequence for one turn outcome and asserts it with a whole-array `toEqual`
+// — a suppressed, reordered, reshaped, or extra frame fails the pin. These
+// pin FRAMES only, never settle/resolve timing or relay-drain policy (D3:
+// the two paths' drain policies differ and must stay free to keep differing).
+
+describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate)', () => {
+  function pinCollector(): { events: AiChatSseEvent[]; emit: (event: AiChatSseEvent) => void } {
+    const events: AiChatSseEvent[] = [];
+    return { events, emit: (event) => void events.push(event) };
+  }
+
+  it('success: the full frame sequence is exactly tool → delta → done, payloads pinned verbatim', async () => {
+    const spawned = spawnAiChatTurn({
+      cliPath: FIXTURE_PATH,
+      sessionId,
+      message: 'hi',
+      mcpTurn: { url: 'http://127.0.0.1:9999/mcp', token: 't' },
+      maxBudgetUsd: 0.5,
+      procEnv: TEST_PROC_ENV,
+    });
+    const { events, emit } = pinCollector();
+
+    const outcome = await runAiChatTurn({ child: spawned.child, emit, timeoutMs: 10_000 });
+    spawned.cleanupConfig();
+
+    expect(events).toEqual([
+      { event: 'tool', data: { name: 'create_topic' } },
+      { event: 'delta', data: { text: 'Created a fixture topic.' } },
+      { event: 'done', data: { claude_session_id: 'fixture-cli-session-id' } },
+    ]);
+    expect(outcome).toEqual({ ok: true, claudeSessionId: 'fixture-cli-session-id' });
+  });
+
+  it('timeout: the full frame sequence is exactly one error{timeout} frame', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    await waitForPidFile(child);
+    const { events, emit } = pinCollector();
+
+    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 1000 });
+
+    expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
+    expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+  });
+
+  it('abort (client disconnect): the full frame sequence is exactly zero frames', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
+    await waitForPidFile(child);
+    const { events, emit } = pinCollector();
+    const controller = new AbortController();
+    controller.abort();
+
+    const outcome = await runAiChatTurn({
+      child,
+      emit,
+      timeoutMs: 10_000,
+      abortSignal: controller.signal,
+      killGraceMs: 1000,
+    });
+
+    expect(events).toEqual([]);
+    expect(outcome).toEqual({ ok: false, detail: 'aborted' });
+  });
+
+  it('error (CLI nonzero exit): the full frame sequence is exactly one scrubbed ' +
+    'error{upstream-failed} frame', async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'exit-nonzero' });
+    const { events, emit } = pinCollector();
+
+    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000 });
+
+    expect(events).toEqual([{ event: 'error', data: { detail: 'upstream-failed' } }]);
+    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
+  });
+
+  it("error (auth failure): the chat path's error{not-logged-in} literal survives verbatim " +
+    "(design D3: chat's scrub is the identity — a v2-style allow-list would mangle this " +
+    "to internal-error, which this pin exists to catch)", async () => {
+    const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'not-logged-in' });
+    const { events, emit } = pinCollector();
+
+    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000 });
+
+    expect(events).toEqual([{ event: 'error', data: { detail: 'not-logged-in' } }]);
+    expect(outcome).toEqual({ ok: false, detail: 'not-logged-in' });
+    // The raw stderr (device-login URL, key text) never rides along in any frame.
+    const wire = JSON.stringify(events);
+    expect(wire).not.toContain('claude.ai/login');
+    expect(wire).not.toContain('Invalid API key');
+  });
+});
