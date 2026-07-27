@@ -200,6 +200,75 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
   });
 });
 
+// code-health-consolidation task 1.2: pin the EXACT success-path WS broadcast
+// frames — types, payload shapes/values (where deterministic), and relative
+// order — for one representative mutation per broadcasting store (events,
+// transport, audio, lease) plus the ONE composite RPC (anchorImportedTake).
+// These are the byte-identity gate the post-commit broadcast-queue change
+// (phase 2) MUST keep green: a frame-count, ordering, or payload regression on
+// the success path fails here. `toEqual` on the whole captured array is
+// deliberate — it pins the frame COUNT (extra/missing frames fail) as well as
+// each frame's shape and their order.
+describe('SessionHub broadcast frame pins (success-path byte-identity gate)', () => {
+  function capturingHub() {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const frames: Record<string, unknown>[] = [];
+    // Attach AFTER construction so the constructor's expireIfStale txn (no
+    // holder → no broadcast) can never colour the capture.
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    return { hub, frames };
+  }
+
+  it('events: addEvent emits exactly one event.changed carrying the bumped revision', () => {
+    const { hub, frames } = capturingHub();
+    hub.addEvent({ category: 'cam', message: 'hi', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+    expect(frames).toEqual([{ type: 'event.changed', revision: 1 }]);
+    hub.close();
+  });
+
+  it('transport: startTake emits exactly one transport.changed (rolling, take incremented)', () => {
+    const { hub, frames } = capturingHub();
+    hub.startTake(CTX);
+    expect(frames).toEqual([{ type: 'transport.changed', is_rolling: true, current_take: 1 }]);
+    hub.close();
+  });
+
+  it('audio: addAudioSegment emits exactly one audio.changed (no payload)', () => {
+    const { hub, frames } = capturingHub();
+    hub.addAudioSegment({
+      sessionId: 's1',
+      mimeType: 'audio/webm',
+      startedAtUtc: null,
+      endedAtUtc: null,
+      recordingOrdinal: null,
+    });
+    expect(frames).toEqual([{ type: 'audio.changed' }]);
+    hub.close();
+  });
+
+  it('lease: claimLease emits exactly one lease.changed (no payload)', () => {
+    const { hub, frames } = capturingHub();
+    hub.claimLease('client-a');
+    expect(frames).toEqual([{ type: 'lease.changed' }]);
+    hub.close();
+  });
+
+  it('composite: anchorImportedTake emits exactly [event.changed(final revision), transport.changed] in that order and NO intermediate store frames', () => {
+    const { hub, frames } = capturingHub();
+    // Two internal events (Started + Stopped) bump the revision to 2; the two
+    // per-addEvent event.changed frames and stopTakeWithDuration's
+    // transport.changed are suppressed inside the txn, and the composite
+    // manually emits ONE of each after commit (design D1: atomicity from the
+    // queue, frame-count/order from the retained suppressBroadcast flags).
+    hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX });
+    expect(frames).toEqual([
+      { type: 'event.changed', revision: 2 },
+      { type: 'transport.changed', is_rolling: false, current_take: 0 },
+    ]);
+    hub.close();
+  });
+});
+
 describe('SessionHub.replaceTranscriptWords', () => {
   it('inserts words with start_sec/end_sec and contiguous ordinals from 0', () => {
     const hub = new SessionHub(join(dir, 's1.db'));
