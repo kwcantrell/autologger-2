@@ -15,10 +15,13 @@ broadcasts emitted for a given mutation, their payloads, and their relative orde
 be identical to the current published behavior — this requirement authorizes suppressing
 emission on failure, not any change to emission on success.
 
-This supersedes the per-call `suppressBroadcast` mechanism as the means of keeping
-composite mutations atomic with their notifications; composite RPCs SHALL rely on
-post-commit flushing rather than per-call suppression flags, with no observable
-difference on the success path.
+This requirement pins observables only — it does not mandate an implementation
+mechanism. Mutations performed inside a transaction SHALL have their broadcasts held
+until that transaction commits; broadcasts legitimately issued outside any transaction
+(e.g. a composite RPC's deliberate post-commit emission) remain immediate sends and are
+unaffected. The composite RPC's published frame set (its suppressed intermediate
+store-level frames and its exact post-commit frames) is part of the frozen success-path
+behavior and SHALL NOT change.
 
 #### Scenario: Failed commit emits no broadcast
 
@@ -41,9 +44,13 @@ difference on the success path.
 
 ### Requirement: Suffix range against a zero-byte audio blob
 
-A syntactically valid suffix `Range` request (`bytes=-N`, `N > 0`) against a zero-byte
-audio blob SHALL yield the same unsatisfiable-range response the endpoint already
-produces for other unsatisfiable ranges (`416`), rather than an internal error. This
+On the audio download endpoint (`GET /api/sessions/:sessionId/audio/:segmentId/download`,
+the repo's only Range-consuming route), a syntactically valid suffix `Range` request
+(`bytes=-N`, `N > 0`) against a zero-byte audio blob SHALL yield the same
+unsatisfiable-range response the endpoint already produces for other unsatisfiable
+ranges (`416`), rather than an internal error. (Implementation note for the auditor:
+`InvalidRangeError → 416` is mapped at two sites — the router's local catch and the app
+error handler — which must stay consistent.) This
 authorizes converting the current crash-driven `500` on this path to `416`; all other
 range-request behavior (including `Content-Range` semantics on satisfiable ranges) is
 unchanged.

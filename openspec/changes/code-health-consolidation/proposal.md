@@ -21,9 +21,11 @@ change, is cheaper than debugging the divergence later.
 
 - **Post-commit broadcast queue** (finding 1.3): `SessionHub.inTxn` collects store-level
   WS broadcasts and flushes them only after the transaction commits, so a commit-time
-  failure can no longer emit `*.changed` for a rolled-back write. Deletes the two
-  `suppressBroadcast` flags and their compensating docs. Success-path emission order is
-  unchanged; the observable change is failure-path-only (contract delta).
+  failure can no longer emit `*.changed` for a rolled-back write. The two
+  `suppressBroadcast` flags are RETAINED (panel ruling: they own the composite's
+  frame-count contract, a different job from the queue's atomicity — see design D1);
+  their rationale comments are updated. Success-path emission is byte-identical; the
+  observable change is failure-path-only (contract delta).
 - **Zero-byte suffix-Range fix** (finding 1.7): a suffix `Range` against a zero-byte blob
   returns the contract-implied `416` instead of crashing into a `500` (contract delta,
   error-path status code only).
@@ -32,9 +34,11 @@ change, is cheaper than debugging the divergence later.
   path, and extract the ~80-line duplicated turn orchestration (`runAiChatTurn` /
   `runDesignTurn`) into one shared orchestrator parameterized by scrubber/cleanup —
   resolving the two already-observed drifts (emit-throw swallowing, terminal-detail
-  scrubbing) with one deliberate policy each. Also bound `issuedClaudeSessionIds`
-  (finding 1.13).
-- **Duplication consolidations** (findings 2.1, 2.3–2.14, 3.8): single-source the
+  scrubbing) with one deliberate policy each. Bounding `issuedClaudeSessionIds`
+  (finding 1.13) is ESCALATED to the gate — the drafted cap would break an
+  `ai-topics-chat` SHALL without a delta (see design D4 for the options).
+- **Duplication consolidations** (findings 2.1, 2.3–2.12, 2.14, 3.8 — 2.13 de-scoped,
+  see Non-Goals): single-source the
   hand-duplicated logic pairs — web SSE-turn plumbing + composer (AiChat/AiV2Design),
   internal-audio message grammar (recording.ts/audioClips.ts), server deck-title rule
   (three copies), marker grouping (Timeline/MarkerNav), generate-503-latch
@@ -99,3 +103,6 @@ and corrects two failure-path behaviors under existing capabilities._
   (mounted-hidden latches, 503 latch fallback, scrub chokepoints, provenance headers).
 - No `useZoomRail` structural rewrite (finding 5.9's largest item) — flagged as its own
   future change if wanted; only its dead refs (already QF) and comments were touched.
+- No TranscribeRow/TopicsRow edit-buffer dedupe (finding 2.13) — de-scoped by the panel
+  (2026-07-27): `[A?]`-verified, low-med, self-annotating in the code; re-dispositioned
+  to accepted residual rather than silently left untasked.

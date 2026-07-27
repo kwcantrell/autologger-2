@@ -13,8 +13,9 @@
       anchors in `.apply/` notes
 - [ ] 1.2 Pin current success-path broadcast behavior: int tests asserting the exact
       broadcast types/payload shapes/relative order for one representative mutation per
-      broadcasting store (events, transport, audio, lease) and for both
-      `suppressBroadcast` composite RPCs
+      broadcasting store (events, transport, audio, lease) and for the ONE composite
+      RPC (`anchorImportedTake` — the two `suppressBroadcast` flags are store-method
+      parameters it alone consumes)
 - [ ] 1.3 Pin both AI paths' observable SSE sequences: tests capturing the full
       event-frame sequence for a chat turn and a design turn (success, timeout, abort,
       error) against the current implementations
@@ -24,10 +25,15 @@
 - [ ] 2.1 Implement the core broadcast queue per D1 (enqueue-in-txn, flush-on-outermost-
       commit, discard-on-rollback; zero `await`s) with unit tests incl. nested-txn and
       mid-txn-throw cases
-- [ ] 2.2 New failure-path test: forced commit-time failure emits no broadcast (delta
-      spec scenario 1); success-path pins from 1.2 stay green unchanged
-- [ ] 2.3 Delete both `suppressBroadcast` flags + compensating comments; composite RPC
-      tests from 1.2 stay green byte-identical
+- [ ] 2.2 New failure-path test: a throw escaping the transaction after a
+      broadcast-enqueueing store call emits no broadcast (delta scenario 1 — an
+      equivalent, hook-free proxy for a commit-step failure at the queue seam; do NOT
+      add failure-injection hooks to production `inTxn`); success-path pins from 1.2
+      stay green unchanged
+- [ ] 2.3 RETAIN the `suppressBroadcast` flags and `anchorImportedTake`'s manual
+      post-commit emission per D1 (panel blocker: the queue provides atomicity, not
+      suppression); update their rationale comments to describe the division of labor;
+      composite pin from 1.2 stays green byte-identical
 
 ## 3. Zero-byte suffix range (contract-surface phase — per-phase review required)
 
@@ -40,12 +46,15 @@
 - [ ] 4.1 Extract the v2 group-liveness kill ladder into a shared module per D2; unit
       test for the leader-exits-member-survives case; both paths consume it; delete the
       chat-path leader-exit ladder
-- [ ] 4.2 Extract the shared OUTER turn orchestrator per D3 (rescoped: relay stays
-      per-path; hooks incl. `runRelay`/`terminate`/`release`/`onTimeoutOrAbort`;
-      emit-guard swallows for both paths; scrubbing and relay-drain policy stay
-      per-path; v2's outer try/finally hardening adopted for both); SSE pins from 1.3
+- [ ] 4.2 Extract the shared OUTER turn orchestrator per D3 (five hooks max:
+      `runRelay` [owns drain policy], `terminate` [owns v2's abort calls], `scrub`
+      [applied by the shared guard to every event; chat's is identity], `timeoutMs`,
+      `onFinally` [every exit path; carries v2's release + abandonPendingQuestions];
+      chat slot release stays ROUTER-owned after id registration); SSE pins from 1.3
       stay green for both paths
-- [ ] 4.3 Cap `issuedClaudeSessionIds` per D4 with insertion-order eviction + unit test
+- [ ] 4.3 `issuedClaudeSessionIds` bounding — BLOCKED ON GATE DECISION (D4: defer vs
+      ai-topics-chat delta with touch-refresh + stated cap); implement per the ruling
+      or strike this task if deferred
 
 ## 5. Server consolidations
 
@@ -57,10 +66,14 @@
       gate set per D12 (the dashboard-CRUD routes deliberately gate only on
       `aiV2Configured` — preserve that); route-behavior tests unchanged (finding 2.11)
 - [ ] 5.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
-      stores), `freeLease()`, bidirectional mime↔ext table, `SELECT 1` existence checks
+      stores), `freeLease()`, bidirectional mime↔ext table; incidental `SELECT 1`
+      existence-check fix at the two non-conforming sites (topicStore/transcriptStore
+      update methods — already rewritten by this task; NOT a repo-wide sweep)
       (findings 2.12, review §1 low items folded there)
 - [ ] 5.5 Companion payload typed server-side per D11 (type-only; wire bytes pinned by
-      existing companion int tests)
+      existing companion int tests); AND companion row-reuse per D12 —
+      `requireActiveSession` returns the row, the three re-fetch sites consume it,
+      both non-null casts deleted (finding 5.6 — panel caught this as untasked)
 - [ ] 5.6 KEEP the PUT `internal` branch per D9 (fact-check reversed the review's
       dead-branch reading: the branch is reachable when a profile defines category id
       `internal`); add a comment documenting the reachability condition and the frozen
@@ -99,10 +112,10 @@
       (`.all`-style entry) and the two test files (finding 2.8); grep-clean assertion
       that no bare `'session-status'`/`'audio-segments'` literals remain outside the
       factories
-- [ ] 7.7 Unify SessionCard/ArchivedSessionCard per D12's W7 inventory (parameterize
-      menu items AND container selectability, title button-vs-span, rename-modal
-      ownership, `data-start-offset`/a11y markers) (finding 2.9); behaviors tested per
-      variant
+- [ ] 7.7 SessionCard/ArchivedSessionCard: EXTRACTION not unification per D12 (panel
+      reversal) — shared delete-confirm hook, shared meta/runtime helper, shared
+      menu/meta-row scaffold; two thin variant components remain (finding 2.9);
+      behaviors tested per variant
 - [ ] 7.8 Small batched items (finding 5.9 subset dispositioned OS, D12): tab-panel map
       in SessionWorkspace, `colSpan={COLUMNS.length}`, memoized EventLogSheet
       filter+sort, `categories.map` index reuse, `useAudioClips` conditional tick bump,
@@ -126,7 +139,8 @@
       phases 2–4, full diffs of deferred phases, shared-file cross-checks, materialized
       file list + stray-file scan, seam call-site checks, package integrity)
 - [ ] 9.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — visual
-      baselines current as of 2026-07-14; any diff is branch-induced signal (this change
-      intends zero visual change, so any diff is a defect, not a re-bless)
+      baselines last re-blessed 2026-07-26 (feed-row-seek; panel corrected the stale
+      2026-07-14 date); this change intends zero visual change, so any diff is a
+      defect, not a re-bless
 - [ ] 9.3 Full `npm test` + `npm run typecheck` + `npm run lint` across workspaces;
       update README/CLAUDE.md only if any consolidation moved a documented seam
