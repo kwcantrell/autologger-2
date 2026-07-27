@@ -87,16 +87,16 @@
 
 ## 7. Transcript feed wiring
 
-- [ ] 7.1 Write failing tests in a new `TranscribeRow.test.tsx`: a row resolves from its **stored**
+- [x] 7.1 Write failing tests in a new `TranscribeRow.test.tsx`: a row resolves from its **stored**
       `session_time` via the D3 converter (not the uncommitted edit buffer); **an edited row
       resolves to the edited time, not its stale `start_sec`**; **a hand-inserted row
       (`start_sec === 0`, real typed time) resolves to the typed time and does not drive the
       playhead to `0`**; an anchorless row renders **no control**; fields still focus and still
       commit on blur, untouched; and activating the control focuses no field and begins no edit.
-- [ ] 7.2 Implement: `TranscribeFeed` owns the hook and passes a stable handler mirroring its
+- [x] 7.2 Implement: `TranscribeFeed` owns the hook and passes a stable handler mirroring its
       existing `handleUpdate` `useCallback`; seekability arrives as a prop so `memo` re-renders when
       the gate flips.
-- [ ] 7.3 Re-measure the rendered row height and reconcile `TranscribeFeed`'s hard-coded
+- [x] 7.3 Re-measure the rendered row height and reconcile `TranscribeFeed`'s hard-coded
       `ROW_HEIGHT` (currently `34`; measured actual today ≈29.4px) or switch to `measureElement`.
       The virtualizer has no measurement pass, so a row exceeding the estimate drifts every
       subsequent offset. Update the constant's comment.
