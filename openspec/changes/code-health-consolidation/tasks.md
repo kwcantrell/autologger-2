@@ -16,7 +16,7 @@
       broadcasting store (events, transport, audio, lease) and for the ONE composite
       RPC (`anchorImportedTake` — the two `suppressBroadcast` flags are store-method
       parameters it alone consumes)
-- [ ] 1.3 Pin both AI paths' observable SSE sequences: tests capturing the full
+- [x] 1.3 Pin both AI paths' observable SSE sequences: tests capturing the full
       event-frame sequence for a chat turn and a design turn (success, timeout, abort,
       error) against the current implementations
 
