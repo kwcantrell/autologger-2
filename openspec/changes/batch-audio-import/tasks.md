@@ -18,8 +18,8 @@
 
 ## Phase 4 — Client import runner
 
-- [ ] 4.1 Pure helpers: discover audio files, group by stem/`-N`, order segments — unit tests.
-- [ ] 4.2 Client stitch helper (Web Audio decode→concat→WAV) + duration_s; unit/integration-style test with fixture buffers where feasible.
+- [x] 4.1 Pure helpers: discover audio files, group by stem/`-N`, order segments — unit tests.
+- [x] 4.2 Client stitch helper (Web Audio decode→concat→WAV) + duration_s; unit/integration-style test with fixture buffers where feasible.
 - [ ] 4.3 Match/skip/create against sessions for selected show (active-show align via profile PUT); call local-audio-import; progress lines + percent; AbortController on close; invalidate `sessions`; never navigate; tests.
 
 ## Phase 5 — Final gates
