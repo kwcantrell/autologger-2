@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { sessionTimeToTimelineSec } from './timelineSec';
+import { formatTimelineSec, sessionTimeToTimelineSec } from './timelineSec';
+
+// Shared rates × seconds matrix (quality fix wave, FIX 2): hoisted to module
+// scope so the `formatTimelineSec` inverse-property describe block below runs
+// the SAME cases the round-trip describe block already exercises, rather than
+// a second, driftable copy.
+const RATES = [24, 25, 30, 23.976, 29.97, 59.94, 119.88];
+const SECS = [0, 1, 100.3, 3600.5, 7325.75, 43200.9];
 
 // feed-row-seek, task 2.1/2.2; design D3.
 //
@@ -195,11 +202,8 @@ describe('sessionTimeToTimelineSec', () => {
       return `${p2(tc.hours)}:${p2(tc.minutes)}:${p2(tc.seconds)}${sep}${p2(tc.frames)}`;
     }
 
-    const rates = [24, 25, 30, 23.976, 29.97, 59.94, 119.88];
-    const secs = [0, 1, 100.3, 3600.5, 7325.75, 43200.9];
-
-    for (const fps of rates) {
-      for (const sec of secs) {
+    for (const fps of RATES) {
+      for (const sec of SECS) {
         it(`recovers ~${sec}s at ${fps}fps within half a frame`, () => {
           const totalFrames = Math.round(sec * fps);
           const tc = fromTotalFramesForTest(totalFrames, fps);
@@ -233,6 +237,77 @@ describe('sessionTimeToTimelineSec', () => {
       // design.md describes ("mutually consistent... offset").
       expect(got as number).toBeCloseTo(100, 6);
       expect(got as number).not.toBeCloseTo(sec, 0);
+    });
+  });
+});
+
+// --- formatTimelineSec (quality fix wave, FIX 2) ---
+//
+// `formatTimelineSec`'s docstring claims it is the "exact inverse of
+// `sessionTimeToTimelineSec`", and until now nothing asserted that — its only
+// coverage was indirect, through three `TranscribeRow.test.tsx` cases fixed
+// at integer fps (24) with whole-second values. That left untested: the `;`
+// drop-frame separator branch, every non-integer rate (the entire point of
+// the module — see D3), the 24-hour wrap, the null-returning guards, and the
+// inverse property itself.
+describe('formatTimelineSec', () => {
+  describe('inverse property — round-trips through sessionTimeToTimelineSec', () => {
+    for (const fps of RATES) {
+      for (const sec of SECS) {
+        it(`formatTimelineSec(${sec}, ${fps}) parses back to within half a frame via sessionTimeToTimelineSec`, () => {
+          const str = formatTimelineSec(sec, fps);
+          expect(str).not.toBeNull();
+          const got = sessionTimeToTimelineSec(str as string, fps);
+          expect(got).not.toBeNull();
+          expect(Math.abs((got as number) - sec)).toBeLessThanOrEqual(0.5 / fps + 1e-9);
+        });
+      }
+    }
+  });
+
+  describe('drop-frame separator', () => {
+    it('uses ";" before the frame field at ~29.97fps', () => {
+      const str = formatTimelineSec(3600, 29.97);
+      expect(str).not.toBeNull();
+      expect(str as string).toMatch(/^\d{2}:\d{2}:\d{2};\d{2}$/);
+    });
+
+    it('uses ":" before the frame field at every other rate, including other non-integer ones', () => {
+      for (const fps of [24, 25, 30, 23.976, 59.94, 119.88]) {
+        const str = formatTimelineSec(100, fps);
+        expect(str).not.toBeNull();
+        expect(str as string).toMatch(/^\d{2}:\d{2}:\d{2}:\d{1,3}$/);
+      }
+    });
+  });
+
+  describe('24-hour wrap', () => {
+    it('wraps the hour field at 24 hours, mirroring fromTotalFrames/formatSmpte', () => {
+      // 24h 1m 40s -> wraps to 00:01:40:00 (D3's dependency on the server's
+      // existing wrap behavior; see the round-trip describe block above).
+      const str = formatTimelineSec(24 * 3600 + 100, 24);
+      expect(str).toBe('00:01:40:00');
+    });
+  });
+
+  describe('null / guard cases', () => {
+    it('rejects a negative second', () => {
+      expect(formatTimelineSec(-1, 24)).toBeNull();
+    });
+
+    it('rejects a non-finite second', () => {
+      expect(formatTimelineSec(Number.NaN, 24)).toBeNull();
+      expect(formatTimelineSec(Number.POSITIVE_INFINITY, 24)).toBeNull();
+    });
+
+    it('rejects fps that is zero, negative, or non-finite', () => {
+      expect(formatTimelineSec(10, 0)).toBeNull();
+      expect(formatTimelineSec(10, -24)).toBeNull();
+      expect(formatTimelineSec(10, Number.NaN)).toBeNull();
+    });
+
+    it('accepts second zero', () => {
+      expect(formatTimelineSec(0, 24)).toBe('00:00:00:00');
     });
   });
 });

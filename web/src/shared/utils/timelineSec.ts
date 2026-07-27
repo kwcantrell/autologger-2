@@ -106,7 +106,7 @@ export function formatTimelineSec(sec: number, fps: number): string | null {
   const roundedFps = Math.round(fps);
   if (roundedFps <= 0) return null;
 
-  const totalFrames = Math.max(0, Math.round(sec * fps));
+  const totalFrames = Math.round(sec * fps);
   const ff = totalFrames % roundedFps;
   let t = Math.floor(totalFrames / roundedFps);
   const ss = t % 60;
