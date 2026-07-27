@@ -26,8 +26,15 @@ function isKeyConsumingInteractiveTarget(el: EventTarget | null): boolean {
 export interface AudioPlayerHandle {
   toggle: () => void;
   isPlaying: () => boolean;
-  /** Seek to a timeline-absolute second. Maps to the corresponding audio segment + offset. */
+  /** Seek to a timeline-absolute second. Maps to the corresponding audio segment + offset.
+   * Non-playing: resumes ONLY if the player was already playing — MarkerNav's path
+   * (feed-row-seek design D1, D8). Never starts playback from a paused player. */
   seekToTimelineSec: (sec: number) => void;
+  /** Play-capable counterpart of `seekToTimelineSec` (feed-row-seek design D1): seeks to a
+   * timeline-absolute second and ALWAYS ends up playing — starting playback on a paused
+   * player, or continuing (not restarting) from the new position on a playing one. Reserved
+   * for the feed jump path; MarkerNav must keep calling the non-playing method above. */
+  seekToTimelineSecAndPlay: (sec: number) => void;
 }
 
 export interface AudioPlayerProps {
@@ -38,13 +45,28 @@ export interface AudioPlayerProps {
   onPlaybackSecChange?: (sec: number | null) => void;
 }
 
-/** Find the clip index containing `sec`, falling back to the next playable clip. */
-function resolvePlayPosition(
+/** Clamp an arbitrary numeric target to a non-negative second — NaN or a
+ *  negative value collapses to 0. Exported (quality fix wave, FIX 6a) so
+ *  `useTimelineSeek`'s coverage check can normalize with the SAME expression
+ *  `resolvePlayPosition` uses internally, instead of re-deriving it while
+ *  passing the raw (un-normalized) `sec` through to `resolvePlayPosition` —
+ *  the same mirrored-computation hazard the quality fix wave collapsed in
+ *  TranscribeRow. `sec` is already typed `number`, so no `Number(sec)` cast
+ *  is needed here or at either call site. */
+export function normalizeTargetSec(sec: number): number {
+  return Math.max(0, sec || 0);
+}
+
+/** Find the clip index containing `sec`, falling back to the next playable clip.
+ *  Exported for `useTimelineSeek`'s coverage check (whole-branch audit fix wave,
+ *  finding M4), which verifies the clip this function actually resolves to
+ *  contains `sec` rather than maintaining a separately-drifting predicate. */
+export function resolvePlayPosition(
   sec: number,
   clips: readonly AudioClipLite[],
 ): { clipIdx: number; offsetSec: number } | null {
   if (!clips.length) return null;
-  const target = Math.max(0, Number(sec) || 0);
+  const target = normalizeTargetSec(sec);
   const playable = (c: AudioClipLite) => Boolean(c.segmentId && c.url && !c.missingAudio);
   for (let i = 0; i < clips.length; i++) {
     const c = clips[i];
@@ -232,8 +254,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     }
   }, [validSegments, ensureAudio, playClip]);
 
-  const seekToTimelineSec = useCallback(
-    (sec: number) => {
+  // Shared by seekToTimelineSec (non-playing: resumes only if wasPlaying) and
+  // seekToTimelineSecAndPlay (feed-row-seek design D1: always ends up playing —
+  // starts on a paused player, continues without restarting on a playing one).
+  // `forcePlay` is the only behavioral difference between the two public methods.
+  const seekToPosition = useCallback(
+    (sec: number, forcePlay: boolean) => {
       const target = resolvePlayPosition(sec, clipsRef.current);
       if (!target) return;
       const clip = clipsRef.current[target.clipIdx];
@@ -241,10 +267,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const idx = validSegments.findIndex((s) => s.id === clip.segmentId);
       if (idx < 0) return;
       const wasPlaying = playingRef.current;
+      const shouldPlay = forcePlay || wasPlaying;
       const el = ensureAudio();
       pendingOffsetRef.current = target.offsetSec;
       clipIndexRef.current = idx;
       setClipIndex(idx);
+      // Reflect the playing state immediately when starting fresh playback (mirrors
+      // playClip's synchronous UI feedback) — don't wait on the deferred applyOffset
+      // below, which may not run until a loadedmetadata event fires.
+      if (forcePlay && !wasPlaying) setPlayingState(true);
       const seg = validSegments[idx];
       const sameSrc = el.src?.endsWith(seg.url);
       if (!sameSrc) {
@@ -257,8 +288,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         } catch {
           /* ignore */
         }
-        if (wasPlaying) {
+        if (shouldPlay) {
           pendingOffsetRef.current = null;
+          // Autoplay policy: play() can reject (e.g. no user-gesture credit left);
+          // fall back to reflecting the real paused state rather than an unhandled rejection.
           el.play().catch(() => setPlayingState(false));
         }
       };
@@ -267,18 +300,47 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       } else {
         const onMeta = () => {
           el.removeEventListener('loadedmetadata', onMeta);
+          el.removeEventListener('error', onLoadError);
           applyOffset();
         };
+        // Whole-branch audit fix wave, finding M5: the optimistic
+        // `setPlayingState(true)` above fires before `el.load()` resolves.
+        // If `loadedmetadata` never fires (bad codec, 404, aborted range),
+        // nothing would otherwise reconcile the UI — `applyOffset`'s own
+        // `play().catch()` never runs because `applyOffset` itself never
+        // runs. This listener is that reconciliation, local to this seek
+        // attempt; the shared top-level `error` handler (in the "Wire ended"
+        // effect above) still separately owns the user-facing toast.
+        const onLoadError = () => {
+          el.removeEventListener('loadedmetadata', onMeta);
+          el.removeEventListener('error', onLoadError);
+          setPlayingState(false);
+        };
         el.addEventListener('loadedmetadata', onMeta, { once: true });
+        el.addEventListener('error', onLoadError, { once: true });
       }
     },
     [validSegments, ensureAudio, setPlayingState],
   );
 
+  const seekToTimelineSec = useCallback(
+    (sec: number) => seekToPosition(sec, false),
+    [seekToPosition],
+  );
+  const seekToTimelineSecAndPlay = useCallback(
+    (sec: number) => seekToPosition(sec, true),
+    [seekToPosition],
+  );
+
   useImperativeHandle(
     ref,
-    () => ({ toggle, isPlaying: () => playingRef.current, seekToTimelineSec }),
-    [toggle, seekToTimelineSec],
+    () => ({
+      toggle,
+      isPlaying: () => playingRef.current,
+      seekToTimelineSec,
+      seekToTimelineSecAndPlay,
+    }),
+    [toggle, seekToTimelineSec, seekToTimelineSecAndPlay],
   );
 
   // Pause and reset when segments list changes (session switch).

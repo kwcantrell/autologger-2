@@ -1,21 +1,25 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
+import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useGenerateTranscript,
   useInsertTranscriptWord,
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
+import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TranscribeRow } from './TranscribeRow';
 
 type SortKey = 'session_time' | 'speaker' | 'word';
 const sortReducer = clickSortReducer<SortKey>;
 
 const COLUMNS: ColumnDef[] = [
+  JUMP_COLUMN,
   {
     key: 'session_time',
     label: 'Session Time',
@@ -26,8 +30,17 @@ const COLUMNS: ColumnDef[] = [
   { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: 'text-left min-w-40' },
 ];
 
-// Approximate rendered height of a single TranscribeRow (input + cell padding + border).
-const ROW_HEIGHT = 34;
+// Approximate rendered height of a single TranscribeRow: input/button + cell
+// padding + border. feed-row-seek task 7.3: re-measured (real headless
+// Chromium against the actual compiled Tailwind CSS — jsdom has no layout
+// engine) both before and after adding the leading jump column. Baseline
+// (session-time/speaker/word only) measured ≈29.98px; with the jump column's
+// leading cell (a 24px/h-6 button in a shorter [0.1rem]-padded cell) added,
+// the row measured ≈30.48px — the jump cell does not become the tallest cell
+// (the session-time input cell still is), so the column adds only marginal
+// height. 31 covers the measured post-column height with a small margin; the
+// prior 34 was a looser overestimate.
+const ROW_HEIGHT = 31;
 
 interface Props {
   sessionId: string;
@@ -38,6 +51,16 @@ export function TranscribeFeed({ sessionId }: Props) {
   const generate = useGenerateTranscript(sessionId);
   const insert = useInsertTranscriptWord(sessionId);
   const update = useUpdateTranscriptWord(sessionId);
+  // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
+  // its `unavailable`/`jump` handed to every row as a prop/stable callback.
+  // Transcript has no batch-edit mode (always editable), so the gate is just
+  // loaded-status + not-rolling. `useTimelineSeek` reads the session-wide
+  // clip layout via `AudioClipsContext` — no local `useEvents` call needed
+  // here at all (whole-branch audit fix wave, finding C1/I3). ---
+  const { data: status } = useSessionStatus(sessionId);
+  const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
+  const jumpReasonId = 'v5-transcribe-feed-jump-reason';
+  const fps = status?.frame_rate ?? null;
   const errorRef = useRef<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   // Latched on the first 503 (ui-refresh D9: honest capability gate — the server has no
@@ -174,6 +197,15 @@ export function TranscribeFeed({ sessionId }: Props) {
       // (was `:global(.v5-transcribe-feed)` in FeedTable.module.css) rides along as
       // utilities: fill the tab panel on desktop, cap + internal-scroll on phones.
       modifier="v5-transcribe-feed flex flex-col flex-[1_1_0] min-h-0 overflow-hidden max-md:flex-[0_0_auto] max-md:max-h-[70dvh]"
+      after={
+        // The ONE shared reason node every row's jump control references while
+        // unavailable (design D2 gate decision) — never one per row.
+        jumpUnavailable && (
+          <span id={jumpReasonId} className="sr-only">
+            Jump is unavailable while timecode is rolling or session status is loading.
+          </span>
+        )
+      }
     >
       <FeedTable
         columns={COLUMNS}
@@ -202,7 +234,7 @@ export function TranscribeFeed({ sessionId }: Props) {
       >
         {paddingTop > 0 && (
           <tr>
-            <td colSpan={3} style={{ height: paddingTop, padding: 0, border: 'none' }} />
+            <td colSpan={4} style={{ height: paddingTop, padding: 0, border: 'none' }} />
           </tr>
         )}
         {sortedWords &&
@@ -214,12 +246,16 @@ export function TranscribeFeed({ sessionId }: Props) {
                 row={w}
                 speakerOffset={speakerOffset}
                 onUpdate={handleUpdate}
+                fps={fps}
+                onJump={jump}
+                jumpUnavailable={jumpUnavailable}
+                jumpReasonId={jumpReasonId}
               />
             );
           })}
         {paddingBottom > 0 && (
           <tr>
-            <td colSpan={3} style={{ height: paddingBottom, padding: 0, border: 'none' }} />
+            <td colSpan={4} style={{ height: paddingBottom, padding: 0, border: 'none' }} />
           </tr>
         )}
       </FeedTable>

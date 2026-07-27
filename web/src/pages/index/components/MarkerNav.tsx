@@ -8,6 +8,7 @@ import {
   parseSmpteToSec,
   sessionFrameRate,
 } from '../../../shared/utils/audioClips';
+import { jumpTimelineToSec } from '../utils/timelineJump';
 
 // .v4-session-nav-btn: local --v4-session-nav-border fallback (transparent) is
 // defined here as an arbitrary-property utility (recipe 3b); MarkerNav's inline
@@ -140,9 +141,7 @@ export function MarkerNav({ sessionId }: Props) {
         target = secs[0];
       }
     }
-    window.AutoLogger_setManualScrubSec?.(target);
-    window.AutoLogger_scrollTimelineToSec?.(target);
-    window.AutoLogger_seekAudio?.(target);
+    jumpTimelineToSec(target);
   };
 
   const prevColor = enabled && prevEvent ? colorOf(prevEvent) : 'transparent';

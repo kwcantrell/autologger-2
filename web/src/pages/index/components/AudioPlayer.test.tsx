@@ -1,6 +1,6 @@
 import { fireEvent } from '@testing-library/react';
 import { createRef } from 'react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioSegment } from '../../../api/types';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { renderStrict } from '../../../test/renderStrict';
@@ -55,6 +55,134 @@ function renderPlayer() {
 afterEach(() => {
   document.querySelectorAll('button[data-test-probe], [role="dialog"]').forEach((el) => {
     el.remove();
+  });
+});
+
+// --- Play-capable seek path (feed-row-seek, task 4.1) ---
+//
+// `seekToTimelineSecAndPlay` is the second, play-capable counterpart to the
+// existing `seekToTimelineSec` (which only resumes when the player was
+// already playing — MarkerNav's non-playing path). These tests pin three
+// properties normative in the spec ("A feed jump starts playback from that
+// point"):
+//   1. on a PAUSED player, the new path starts playback from the target
+//   2. on a PLAYING player, the new path continues from the new position
+//      without restarting (no pause() call in between)
+//   3. the EXISTING `seekToTimelineSec` path is unchanged: it still only
+//      resumes when the player was already playing — paused stays paused
+//
+// jsdom's HTMLMediaElement never actually loads media, so both seek paths
+// wait for a real `loadedmetadata` event before applying the offset/play
+// (the same mechanism `playClip` already relies on for the toggle() tests
+// above). We capture the `Audio()` instance the component creates via a
+// constructor proxy and dispatch that event ourselves.
+describe('AudioPlayer play-capable seek path', () => {
+  let createdAudioEls: HTMLAudioElement[];
+  let originalAudioCtor: typeof Audio;
+
+  beforeEach(() => {
+    createdAudioEls = [];
+    originalAudioCtor = window.Audio;
+    window.Audio = new Proxy(originalAudioCtor, {
+      construct(target, args) {
+        const instance = Reflect.construct(target, args) as HTMLAudioElement;
+        createdAudioEls.push(instance);
+        return instance;
+      },
+    }) as unknown as typeof Audio;
+  });
+
+  afterEach(() => {
+    window.Audio = originalAudioCtor;
+    // `vi.spyOn` on a shared prototype method (HTMLMediaElement.prototype.pause)
+    // is not auto-restored between tests in this project's vitest config (no
+    // restoreMocks/clearMocks) — an un-restored spy from one test wraps the
+    // still-stubbed pause() and its call count leaks into the next test's
+    // assertion. Restore explicitly.
+    vi.restoreAllMocks();
+  });
+
+  function lastAudioEl(): HTMLAudioElement {
+    const el = createdAudioEls[createdAudioEls.length - 1];
+    if (!el) throw new Error('no Audio() instance created yet');
+    return el;
+  }
+
+  function loadMetadata() {
+    lastAudioEl().dispatchEvent(new Event('loadedmetadata'));
+  }
+
+  it('a play-capable path starts playback from the target on a paused player', () => {
+    const ref = renderPlayer();
+    expect(ref.current?.isPlaying()).toBe(false);
+
+    ref.current?.seekToTimelineSecAndPlay(5);
+    // Playing state reflects immediately (matches playClip's synchronous
+    // UI-feedback pattern), even before metadata resolves.
+    expect(ref.current?.isPlaying()).toBe(true);
+
+    loadMetadata();
+    expect(ref.current?.isPlaying()).toBe(true);
+  });
+
+  it('a playing player continues from the new position without restarting', () => {
+    const ref = renderPlayer();
+    ref.current?.toggle();
+    expect(ref.current?.isPlaying()).toBe(true);
+    loadMetadata(); // resolve toggle's own pending metadata wait
+
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause');
+    ref.current?.seekToTimelineSecAndPlay(7);
+    expect(ref.current?.isPlaying()).toBe(true);
+    loadMetadata(); // resolve the seek's pending metadata wait
+
+    expect(ref.current?.isPlaying()).toBe(true);
+    expect(pauseSpy).not.toHaveBeenCalled();
+  });
+
+  it('the existing seekToTimelineSec path is unchanged: paused stays paused', () => {
+    const ref = renderPlayer();
+    ref.current?.seekToTimelineSec(2);
+    loadMetadata();
+    expect(ref.current?.isPlaying()).toBe(false);
+
+    ref.current?.seekToTimelineSec(7);
+    loadMetadata();
+    expect(ref.current?.isPlaying()).toBe(false);
+  });
+
+  it('the existing seekToTimelineSec path still resumes without restarting when already playing', () => {
+    const ref = renderPlayer();
+    ref.current?.toggle();
+    expect(ref.current?.isPlaying()).toBe(true);
+    loadMetadata();
+
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause');
+    ref.current?.seekToTimelineSec(7);
+    loadMetadata();
+
+    expect(ref.current?.isPlaying()).toBe(true);
+    expect(pauseSpy).not.toHaveBeenCalled();
+  });
+
+  // Whole-branch audit fix wave, finding M5: `seekToTimelineSecAndPlay`'s
+  // optimistic `setPlayingState(true)` fires before `el.load()` resolves; the
+  // only thing that used to reconcile it was `applyOffset`'s own
+  // `play().catch()` — which never runs at all if `loadedmetadata` never
+  // fires (bad codec, 404, aborted range). Without a load-failure listener,
+  // the transport UI would show "playing" forever with no audio. Simulates
+  // that failure by dispatching a real 'error' event on the underlying
+  // element INSTEAD of 'loadedmetadata', and asserts the optimistic state is
+  // reconciled back to not-playing.
+  it('a load failure (no loadedmetadata, an error event instead) reconciles the optimistic playing state back to false', () => {
+    const ref = renderPlayer();
+    expect(ref.current?.isPlaying()).toBe(false);
+
+    ref.current?.seekToTimelineSecAndPlay(5);
+    expect(ref.current?.isPlaying()).toBe(true);
+
+    lastAudioEl().dispatchEvent(new Event('error'));
+    expect(ref.current?.isPlaying()).toBe(false);
   });
 });
 

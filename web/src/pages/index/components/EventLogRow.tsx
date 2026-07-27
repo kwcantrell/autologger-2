@@ -9,6 +9,7 @@ import {
   normalizeWallIso,
   parseYmdHmsUtcToIso,
 } from '../../../shared/utils/timecode';
+import { JumpToTimeButton } from './JumpToTimeButton';
 import { Select } from './Select';
 
 // EventLogRow cell/row chrome (was EventLogSheet.module.css, shared @layer legacy). The row
@@ -25,9 +26,16 @@ const CELL_BASE =
   'px-[0.55rem] py-[0.38rem] text-[0.84rem] [border-bottom:1px_solid_var(--border)]';
 /** Row-hover tint for non-edit cells (was `.sheet tbody tr:hover td`). */
 const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
-/** Timecode cell (was `.sheet .tc` + the `cursor:pointer!important` lock on td.tc + children). */
+/** Timecode cell (was `.sheet .tc`). feed-row-seek, task 6.2: the legacy
+ *  `cursor:pointer!important` lock on td.tc + children is reconciled here —
+ *  it had no handler behind it even before this change (a row-wide click
+ *  design that was abandoned; see design D2), and the jump control now lives
+ *  in its own leading column, never in this cell. An `!important` cursor
+ *  claim on every descendant would defeat an unavailable-state cursor on
+ *  anything rendered inside this cell in the future, so the assertion is
+ *  dropped rather than carried forward as dead CSS. */
 const CELL_TC =
-  'text-left align-middle font-[family-name:var(--font-mono)] text-accent whitespace-nowrap !cursor-pointer [&_*]:!cursor-pointer';
+  'text-left align-middle font-[family-name:var(--font-mono)] text-accent whitespace-nowrap';
 /** Category cell (was `.sheetCat`). */
 const CELL_CAT = 'text-left align-middle font-semibold whitespace-nowrap';
 /** Message cell max-width (was `.sheet-dense .msg`, which beat `.sheet .msg`). */
@@ -79,6 +87,18 @@ interface Props {
   pendingDelete: boolean;
   viewUtc: boolean;
   batchValues: RowEditValues | null;
+  /** This row's resolved timeline second (design D4: `timecode_total_frames /
+   *  frame_rate`, resolved by `EventLogSheet`), or `null` when unresolvable.
+   *  Passed as a prop, not derived here (design D7). */
+  resolvedSec: number | null;
+  /** `EventLogSheet`'s `useTimelineSeek` `jump`, `useCallback`-stable and
+   *  shared by every row in the feed (design D7). */
+  onJump: (sec: number) => void;
+  /** The feed-wide not-rolling/batch-edit gate (design D5), shared by every row. */
+  jumpUnavailable: boolean;
+  /** id of the ONE reason node `EventLogSheet` renders while unavailable — every
+   *  row passes the same id (design D2 gate decision). */
+  jumpReasonId?: string;
   onInlineSave: (event: LogEvent, values: RowEditValues) => void;
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
@@ -99,6 +119,10 @@ export function EventLogRow({
   pendingDelete,
   viewUtc,
   batchValues,
+  resolvedSec,
+  onJump,
+  jumpUnavailable,
+  jumpReasonId,
   onInlineSave,
   onBatchChange,
   onDelete,
@@ -390,6 +414,18 @@ export function EventLogRow({
   // .rowHoverActions`). Editable cells opt out of the tint (they set their own bg).
   return (
     <tr ref={rowRef} data-event-id={event.event_id} className="group">
+      {/* Jump column (feed-row-seek, design D2/D7): its own leading cell, never
+          inside the timecode cell — inline editing's contents/width/containing
+          block are untouched by this. */}
+      <td className={clsx(CELL_BASE, 'text-center align-middle')}>
+        <JumpToTimeButton
+          resolvedSec={resolvedSec}
+          displayTime={col1View}
+          onJump={onJump}
+          unavailable={jumpUnavailable}
+          reasonId={jumpReasonId}
+        />
+      </td>
       {editable ? (
         // `.colTcCellEdit`: centered (was `td.colTcCellEdit { text-align: center }`, the input
         // inherits it) + edit bg + (batch) white text; pending adds strikethrough (left:2rem).
