@@ -22,15 +22,15 @@
 
 ## 2. Broadcast atomicity (contract-surface phase — per-phase review required)
 
-- [ ] 2.1 Implement the core broadcast queue per D1 (enqueue-in-txn, flush-on-outermost-
+- [x] 2.1 Implement the core broadcast queue per D1 (enqueue-in-txn, flush-on-outermost-
       commit, discard-on-rollback; zero `await`s) with unit tests incl. nested-txn and
       mid-txn-throw cases
-- [ ] 2.2 New failure-path test: a throw escaping the transaction after a
+- [x] 2.2 New failure-path test: a throw escaping the transaction after a
       broadcast-enqueueing store call emits no broadcast (delta scenario 1 — an
       equivalent, hook-free proxy for a commit-step failure at the queue seam; do NOT
       add failure-injection hooks to production `inTxn`); success-path pins from 1.2
       stay green unchanged
-- [ ] 2.3 RETAIN the `suppressBroadcast` flags and `anchorImportedTake`'s manual
+- [x] 2.3 RETAIN the `suppressBroadcast` flags and `anchorImportedTake`'s manual
       post-commit emission per D1 (panel blocker: the queue provides atomicity, not
       suppression); update their rationale comments to describe the division of labor;
       composite pin from 1.2 stays green byte-identical
