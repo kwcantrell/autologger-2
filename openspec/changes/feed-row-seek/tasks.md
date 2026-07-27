@@ -39,10 +39,10 @@
 
 ## 3. Shared jump module + feed hook
 
-- [ ] 3.1 Write failing tests for a plain `timelineJump` module: issues scrub → scroll → audio in
+- [x] 3.1 Write failing tests for a plain `timelineJump` module: issues scrub → scroll → audio in
       order; no-ops without throwing when the globals are undefined; and is **ungated,
       uncoverage-checked, and non-playing** (design D8) — assert it performs none of those itself.
-- [ ] 3.2 Implement `timelineJump` as the one typed place the three global names live.
+- [x] 3.2 Implement `timelineJump` as the one typed place the three global names live.
 - [ ] 3.3 Write failing tests for the feed-facing hook: unavailable while `is_rolling`; unavailable
       while status is **unresolved** (design D5 — `undefined` must not read as not-rolling);
       unavailable in batch-edit mode; available when loaded, not rolling, not batch; when the target
