@@ -288,9 +288,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       } else {
         const onMeta = () => {
           el.removeEventListener('loadedmetadata', onMeta);
+          el.removeEventListener('error', onLoadError);
           applyOffset();
         };
+        // Whole-branch audit fix wave, finding M5: the optimistic
+        // `setPlayingState(true)` above fires before `el.load()` resolves.
+        // If `loadedmetadata` never fires (bad codec, 404, aborted range),
+        // nothing would otherwise reconcile the UI — `applyOffset`'s own
+        // `play().catch()` never runs because `applyOffset` itself never
+        // runs. This listener is that reconciliation, local to this seek
+        // attempt; the shared top-level `error` handler (in the "Wire ended"
+        // effect above) still separately owns the user-facing toast.
+        const onLoadError = () => {
+          el.removeEventListener('loadedmetadata', onMeta);
+          el.removeEventListener('error', onLoadError);
+          setPlayingState(false);
+        };
         el.addEventListener('loadedmetadata', onMeta, { once: true });
+        el.addEventListener('error', onLoadError, { once: true });
       }
     },
     [validSegments, ensureAudio, setPlayingState],

@@ -164,6 +164,26 @@ describe('AudioPlayer play-capable seek path', () => {
     expect(ref.current?.isPlaying()).toBe(true);
     expect(pauseSpy).not.toHaveBeenCalled();
   });
+
+  // Whole-branch audit fix wave, finding M5: `seekToTimelineSecAndPlay`'s
+  // optimistic `setPlayingState(true)` fires before `el.load()` resolves; the
+  // only thing that used to reconcile it was `applyOffset`'s own
+  // `play().catch()` — which never runs at all if `loadedmetadata` never
+  // fires (bad codec, 404, aborted range). Without a load-failure listener,
+  // the transport UI would show "playing" forever with no audio. Simulates
+  // that failure by dispatching a real 'error' event on the underlying
+  // element INSTEAD of 'loadedmetadata', and asserts the optimistic state is
+  // reconciled back to not-playing.
+  it('a load failure (no loadedmetadata, an error event instead) reconciles the optimistic playing state back to false', () => {
+    const ref = renderPlayer();
+    expect(ref.current?.isPlaying()).toBe(false);
+
+    ref.current?.seekToTimelineSecAndPlay(5);
+    expect(ref.current?.isPlaying()).toBe(true);
+
+    lastAudioEl().dispatchEvent(new Event('error'));
+    expect(ref.current?.isPlaying()).toBe(false);
+  });
 });
 
 describe('AudioPlayer global Space handler', () => {
