@@ -190,6 +190,20 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
     };
   }, []);
 
+  // Play-capable counterpart for feed row jumps (feed-row-seek design D1, D8): unlike
+  // AutoLogger_seekAudio above (non-playing; MarkerNav's path), this always ends up
+  // playing — starting playback on a paused player, continuing on a playing one. The
+  // useTimelineSeek hook is the only intended caller; MarkerNav must keep using the
+  // non-playing global.
+  useEffect(() => {
+    window.AutoLogger_seekAudioAndPlay = (sec: number) => {
+      audioPlayerRef.current?.seekToTimelineSecAndPlay(sec);
+    };
+    return () => {
+      window.AutoLogger_seekAudioAndPlay = undefined;
+    };
+  }, []);
+
   // Expose transport-stop for AppShell to call (fire-and-forget) before closing a session.
   useEffect(() => {
     if (!sessionId || blocksMedia || !isRolling) {

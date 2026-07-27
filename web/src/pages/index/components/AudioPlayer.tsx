@@ -26,8 +26,15 @@ function isKeyConsumingInteractiveTarget(el: EventTarget | null): boolean {
 export interface AudioPlayerHandle {
   toggle: () => void;
   isPlaying: () => boolean;
-  /** Seek to a timeline-absolute second. Maps to the corresponding audio segment + offset. */
+  /** Seek to a timeline-absolute second. Maps to the corresponding audio segment + offset.
+   * Non-playing: resumes ONLY if the player was already playing — MarkerNav's path
+   * (feed-row-seek design D1, D8). Never starts playback from a paused player. */
   seekToTimelineSec: (sec: number) => void;
+  /** Play-capable counterpart of `seekToTimelineSec` (feed-row-seek design D1): seeks to a
+   * timeline-absolute second and ALWAYS ends up playing — starting playback on a paused
+   * player, or continuing (not restarting) from the new position on a playing one. Reserved
+   * for the feed jump path; MarkerNav must keep calling the non-playing method above. */
+  seekToTimelineSecAndPlay: (sec: number) => void;
 }
 
 export interface AudioPlayerProps {
@@ -232,8 +239,12 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     }
   }, [validSegments, ensureAudio, playClip]);
 
-  const seekToTimelineSec = useCallback(
-    (sec: number) => {
+  // Shared by seekToTimelineSec (non-playing: resumes only if wasPlaying) and
+  // seekToTimelineSecAndPlay (feed-row-seek design D1: always ends up playing —
+  // starts on a paused player, continues without restarting on a playing one).
+  // `forcePlay` is the only behavioral difference between the two public methods.
+  const seekToPosition = useCallback(
+    (sec: number, forcePlay: boolean) => {
       const target = resolvePlayPosition(sec, clipsRef.current);
       if (!target) return;
       const clip = clipsRef.current[target.clipIdx];
@@ -241,10 +252,15 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const idx = validSegments.findIndex((s) => s.id === clip.segmentId);
       if (idx < 0) return;
       const wasPlaying = playingRef.current;
+      const shouldPlay = forcePlay || wasPlaying;
       const el = ensureAudio();
       pendingOffsetRef.current = target.offsetSec;
       clipIndexRef.current = idx;
       setClipIndex(idx);
+      // Reflect the playing state immediately when starting fresh playback (mirrors
+      // playClip's synchronous UI feedback) — don't wait on the deferred applyOffset
+      // below, which may not run until a loadedmetadata event fires.
+      if (forcePlay && !wasPlaying) setPlayingState(true);
       const seg = validSegments[idx];
       const sameSrc = el.src?.endsWith(seg.url);
       if (!sameSrc) {
@@ -257,8 +273,10 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         } catch {
           /* ignore */
         }
-        if (wasPlaying) {
+        if (shouldPlay) {
           pendingOffsetRef.current = null;
+          // Autoplay policy: play() can reject (e.g. no user-gesture credit left);
+          // fall back to reflecting the real paused state rather than an unhandled rejection.
           el.play().catch(() => setPlayingState(false));
         }
       };
@@ -275,10 +293,24 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     [validSegments, ensureAudio, setPlayingState],
   );
 
+  const seekToTimelineSec = useCallback(
+    (sec: number) => seekToPosition(sec, false),
+    [seekToPosition],
+  );
+  const seekToTimelineSecAndPlay = useCallback(
+    (sec: number) => seekToPosition(sec, true),
+    [seekToPosition],
+  );
+
   useImperativeHandle(
     ref,
-    () => ({ toggle, isPlaying: () => playingRef.current, seekToTimelineSec }),
-    [toggle, seekToTimelineSec],
+    () => ({
+      toggle,
+      isPlaying: () => playingRef.current,
+      seekToTimelineSec,
+      seekToTimelineSecAndPlay,
+    }),
+    [toggle, seekToTimelineSec, seekToTimelineSecAndPlay],
   );
 
   // Pause and reset when segments list changes (session switch).

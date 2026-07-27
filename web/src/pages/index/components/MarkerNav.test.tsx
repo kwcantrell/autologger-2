@@ -107,15 +107,20 @@ function mockHooks(events: LogEvent[], status: SessionStatus) {
 let scrubMock: ReturnType<typeof vi.fn<(sec: number | null) => void>>;
 let scrollMock: ReturnType<typeof vi.fn<(sec: number, totalSec?: number) => void>>;
 let seekMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
+let seekAndPlayMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   scrubMock = vi.fn();
   scrollMock = vi.fn();
   seekMock = vi.fn();
+  // Play-capable path (feed-row-seek, phase 4) — MarkerNav must never call this;
+  // see "issues the audio seek unconditionally ... and never starts playback" below.
+  seekAndPlayMock = vi.fn();
   window.AutoLogger_setManualScrubSec = scrubMock;
   window.AutoLogger_scrollTimelineToSec = scrollMock;
   window.AutoLogger_seekAudio = seekMock;
+  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
 });
 
 describe('MarkerNav prev/next jump (characterization baseline)', () => {
@@ -173,12 +178,15 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
 
     // "Never starts playback": the only audio-facing call is AutoLogger_seekAudio,
     // and every call carries just the target second — the same single-argument,
-    // non-playing signature AudioPlayer.seekToTimelineSec exposes today. A
-    // playback-capable path would need a second argument or a distinct global;
-    // neither is exercised here.
+    // non-playing signature AudioPlayer.seekToTimelineSec exposes today.
     for (const call of seekMock.mock.calls) {
       expect(call).toHaveLength(1);
     }
+
+    // Direct assertion (feed-row-seek phase 4 strengthened this beyond the
+    // call-arity proxy above, now that a playback-capable path actually
+    // exists): MarkerNav must never reach the play-capable global at all.
+    expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 
   it('disables both buttons when no markers exist', () => {
