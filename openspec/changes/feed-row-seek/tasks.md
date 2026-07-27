@@ -19,19 +19,19 @@
 
 ## 2. Frame-arithmetic session-time converter (the correctness core)
 
-- [ ] 2.1 Write failing tests for a new converter (design D3). Cover: at **23.976 fps**,
+- [x] 2.1 Write failing tests for a new converter (design D3). Cover: at **23.976 fps**,
       `00:59:56:10` resolves to ≈3600.0 s and NOT ≈3596.4 s — assert the ~3.6 s divergence so a
       literal-seconds implementation fails; same at 29.97 and 59.94; integer rates where both agree;
       **a 119.88 fps frame field ≥ 100 (three digits) parses**; `ff >= Math.round(fps)` is
       **rejected** (`00:00:00:99` at 24 fps must NOT yield 4.125 s); minutes/seconds > 59 rejected;
       `H:MM:SS` accepted; **`MM:SS` rejected** (ambiguous with `HH:MM` — a 19,470 s error);
       `HH:MM:SS` parses with zero frames; empty/garbage yields "no position", never `0`.
-- [ ] 2.2 Add a round-trip test against `renderSmpte`'s construction
+- [x] 2.2 Add a round-trip test against `renderSmpte`'s construction
       (`formatSmpte(fromTotalFrames(round(sec*fps), fps))`) asserting recovery within half a frame,
       **including a case past 24 hours** — D3's correctness depends on `fromTotalFrames` continuing
       to wrap, so pin it; an innocuous future "don't wrap the hour field" fix would desynchronize
       strings from clips.
-- [ ] 2.3 Implement to green, mirroring `server/src/routers/events.ts`'s existing inverse
+- [x] 2.3 Implement to green, mirroring `server/src/routers/events.ts`'s existing inverse
       expression exactly (`Math.round(Number(row.frame_rate))`, then
       `(hh*3600 + mm*60 + ss) * fps`). Add a source comment: **neither** `parseSmpteToSec` is
       correct here — both treat HH:MM:SS as literal seconds — so an import auto-fix cannot
