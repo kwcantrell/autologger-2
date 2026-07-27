@@ -45,8 +45,11 @@ export interface AudioPlayerProps {
   onPlaybackSecChange?: (sec: number | null) => void;
 }
 
-/** Find the clip index containing `sec`, falling back to the next playable clip. */
-function resolvePlayPosition(
+/** Find the clip index containing `sec`, falling back to the next playable clip.
+ *  Exported for `useTimelineSeek`'s coverage check (whole-branch audit fix wave,
+ *  finding M4), which verifies the clip this function actually resolves to
+ *  contains `sec` rather than maintaining a separately-drifting predicate. */
+export function resolvePlayPosition(
   sec: number,
   clips: readonly AudioClipLite[],
 ): { clipIdx: number; offsetSec: number } | null {

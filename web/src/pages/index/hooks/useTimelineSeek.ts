@@ -1,8 +1,8 @@
 import { useCallback } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
-import type { LogEvent } from '../../../api/types';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
-import { useAudioClips } from './useAudioClips';
+import { resolvePlayPosition } from '../components/AudioPlayer';
+import { useAudioClipsContext } from './AudioClipsContext';
 
 /**
  * Published by `SessionWorkspace` → `AudioPlayer` in a later unit of this
@@ -53,18 +53,25 @@ export interface UseTimelineSeekResult {
   jump: (sec: number) => void;
 }
 
-/** Mirrors `AudioPlayer.resolvePlayPosition`'s `playable` predicate exactly. */
-function isPlayableClip(clip: AudioClipLite): boolean {
-  return Boolean(clip.segmentId && clip.url && !clip.missingAudio);
-}
-
-/** True when a playable clip actually contains `sec` — strict containment, not
- * `resolvePlayPosition`'s forgiving forward/backward fallback (design D6). */
+/**
+ * True when `resolvePlayPosition` — the SAME resolution `AudioPlayer` itself
+ * runs — would land on a clip that actually CONTAINS `sec`, not on a clip it
+ * only fell forward/backward to (design D6). Whole-branch audit fix wave,
+ * finding M4: this used to be a separately-maintained `clips.some(...)`
+ * predicate that could drift from `resolvePlayPosition`'s actual behavior —
+ * in particular, with overlapping clips, `some()` could report "covered"
+ * from playable clip B while `resolvePlayPosition` picks an earlier,
+ * unplayable clip A and forwards PAST B to some other clip entirely.
+ * Delegating to `resolvePlayPosition` and then checking containment on the
+ * clip it actually returns makes this predicate structurally unable to
+ * disagree with the player about what "covered" means.
+ */
 function isCoveredByPlayableClip(sec: number, clips: readonly AudioClipLite[]): boolean {
   const target = Math.max(0, Number(sec) || 0);
-  return clips.some(
-    (clip) => target >= clip.startSec && target < clip.endSec && isPlayableClip(clip),
-  );
+  const resolved = resolvePlayPosition(sec, clips);
+  if (!resolved) return false;
+  const clip = clips[resolved.clipIdx];
+  return target >= clip.startSec && target < clip.endSec;
 }
 
 /**
@@ -82,13 +89,14 @@ function isCoveredByPlayableClip(sec: number, clips: readonly AudioClipLite[]): 
  * directly; `timelineJump` remains the ungated, uncoverage-checked,
  * non-playing bundle reserved for marker navigation (design D8).
  */
-export function useTimelineSeek(
-  sessionId: string,
-  events: LogEvent[],
-  batchEditMode: boolean,
-): UseTimelineSeekResult {
+export function useTimelineSeek(sessionId: string, batchEditMode: boolean): UseTimelineSeekResult {
   const { data: status } = useSessionStatus(sessionId || null);
-  const { clips } = useAudioClips(sessionId, events);
+  // Whole-branch audit fix wave, finding C1: read the SAME clip layout the
+  // player uses (`SessionWorkspace` publishes it via `AudioClipsProvider`)
+  // instead of calling `useAudioClips` here with this feed's own,
+  // differently-limited `events` — see AudioClipsContext.tsx for why that
+  // mismatch was a wrong-recording-playback hazard.
+  const { clips } = useAudioClipsContext();
 
   const available = status != null && status.is_rolling === false && !batchEditMode;
 

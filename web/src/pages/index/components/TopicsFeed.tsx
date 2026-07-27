@@ -1,6 +1,5 @@
 import { useMemo, useReducer, useState } from 'react';
 import { ApiError } from '../../../api/client';
-import { useEvents } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
@@ -68,21 +67,34 @@ export function TopicsFeed({ sessionId }: Props) {
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
   // its `available`/`jump` handed to every row as a prop/stable callback.
   // Topics has no batch-edit mode (always editable, mirroring Transcript),
-  // so the gate is just loaded-status + not-rolling. `useTranscriptWords`/
-  // `useEvents` are already fetched elsewhere when Transcript/Event Feed are
-  // mounted (ui-refresh: all tabs stay mounted, just hidden) — React Query
-  // dedupes. ---
+  // so the gate is just loaded-status + not-rolling. `useTimelineSeek` reads
+  // the session-wide clip layout via `AudioClipsContext` — no local
+  // `useEvents` call needed here at all (whole-branch audit fix wave,
+  // finding C1/I3). `useTranscriptWords` is already fetched elsewhere when
+  // the Transcript feed is mounted (ui-refresh: all tabs stay mounted, just
+  // hidden) — React Query dedupes. ---
   const { data: status } = useSessionStatus(sessionId);
   const { data: words } = useTranscriptWords(sessionId);
-  const { data: eventsData } = useEvents(sessionId);
-  const events = useMemo(() => eventsData?.events ?? [], [eventsData]);
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, events, false);
+  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, false);
   const jumpUnavailable = !jumpAvailable;
   const jumpReasonId = 'v5-topics-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   // Task 8.3: computed once here from the session's transcript words, passed
   // down to every row like `fps` — never re-derived per row.
-  const transcriptAnchored = !transcriptWhollyAnchorless(words ?? []);
+  //
+  // Whole-branch audit fix wave, finding I1: `words` is `undefined` until
+  // `useTranscriptWords` resolves (or forever, if the request fails) —
+  // `transcriptWhollyAnchorless(words ?? [])` reads an empty array as "not
+  // wholly anchorless" (its `length > 0` guard), so `transcriptAnchored`
+  // used to fail OPEN during that window: every Topics row would render a
+  // live jump control against model-invented times before the real
+  // transcript state was known, permanently so if the request errors. `words
+  // != null` treats "not yet known" as unanchored while preserving the
+  // deliberate empty-transcript decision below `transcriptWhollyAnchorless`
+  // — a LOADED empty transcript (hand-entered topics, no transcript at all)
+  // still yields `transcriptAnchored === true`, because that case never went
+  // through the model's invented-time path.
+  const transcriptAnchored = words != null && !transcriptWhollyAnchorless(words);
   const [genError, setGenError] = useState<string | null>(null);
   // Latched on the first 503 (ui-refresh D9: honest capability gate — topic generation has no
   // external integration wired up on this deployment). Persists across session switches (this

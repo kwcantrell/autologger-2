@@ -12,7 +12,6 @@ import type {
   TranscriptWord,
 } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
-import { useAudioClips } from '../hooks/useAudioClips';
 import { EventLogSheet } from './EventLogSheet';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
@@ -37,9 +36,12 @@ import { TranscribeFeed } from './TranscribeFeed';
 // (e.g. `SessionRoute.test.tsx`) for driving a background data change without
 // touching component internals.
 //
-// `useAudioClips` is mocked at the module boundary (mirrors
-// `EventLogSheet.jumpColumn.test.tsx`) — clip coverage isn't what's under
-// test here, only the availability gate.
+// `useTimelineSeek` reads its clip layout from `AudioClipsContext` (whole-
+// branch audit fix wave, finding C1); none of these feeds are rendered under
+// an `AudioClipsProvider` here, so they get the context's empty default —
+// the same "no clip coverage" starting point the old `mockedUseAudioClips`
+// stub gave every test in this file. Clip coverage isn't what's under test
+// here, only the availability gate.
 //
 // `@tanstack/react-virtual` is mocked to render every row unconditionally:
 // jsdom has no layout engine, so `TranscribeFeed`'s real virtualizer measures
@@ -55,10 +57,6 @@ vi.mock('../../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/client')>();
   return { ...actual, apiFetch: vi.fn() };
 });
-
-vi.mock('../hooks/useAudioClips', () => ({
-  useAudioClips: vi.fn(),
-}));
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
@@ -86,7 +84,6 @@ if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined
 }
 
 const mockedApiFetch = vi.mocked(apiFetch);
-const mockedUseAudioClips = vi.mocked(useAudioClips);
 
 const SESSION_ID = 'sess-transition-1';
 
@@ -229,7 +226,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentStatus = statusFixture({ is_rolling: true });
   mockApi();
-  mockedUseAudioClips.mockReturnValue({ clips: [], totalSec: 100, segments: [] });
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 

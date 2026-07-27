@@ -6,8 +6,8 @@ import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../..
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { renderStrict } from '../../../test/renderStrict';
-import { useAudioClips } from '../hooks/useAudioClips';
-import { EventLogSheet } from './EventLogSheet';
+import { AudioClipsProvider } from '../hooks/AudioClipsContext';
+import { EventLogSheet, eventRowTimelineSec } from './EventLogSheet';
 
 // --- EventLogSheet jump column wiring (feed-row-seek, task 6.1/6.2) ---
 //
@@ -20,21 +20,18 @@ import { EventLogSheet } from './EventLogSheet';
 // resolution rule, the not-rolling/batch-edit gate, and jump-and-play
 // end-to-end through rendered DOM.
 //
-// `useAudioClips` is mocked at the module boundary (mirrors
-// SessionWorkspace.test.tsx / useTimelineSeek.test.tsx) so clip coverage is
-// directly controllable without wiring real audio-segment fetches.
+// `useTimelineSeek` reads its clip layout from `AudioClipsContext` (whole-
+// branch audit fix wave, finding C1) — the SAME session-wide layout
+// `SessionWorkspace` publishes — rather than calling `useAudioClips` itself,
+// so clip coverage here is driven by wrapping `renderSheet()` in an
+// `AudioClipsProvider`, not by mocking `useAudioClips`.
 
 vi.mock('../../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/client')>();
   return { ...actual, apiFetch: vi.fn() };
 });
 
-vi.mock('../hooks/useAudioClips', () => ({
-  useAudioClips: vi.fn(),
-}));
-
 const mockedApiFetch = vi.mocked(apiFetch);
-const mockedUseAudioClips = vi.mocked(useAudioClips);
 
 const SESSION_ID = 'sess-jump-col-1';
 
@@ -177,15 +174,16 @@ beforeEach(() => {
   window.AutoLogger_scrollTimelineToSec = scrollMock;
   window.AutoLogger_seekAudio = vi.fn();
   window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
-  mockedUseAudioClips.mockReturnValue({ clips: [], totalSec: 100, segments: [] });
 });
 
-function renderSheet() {
+function renderSheet(clips: AudioClipLite[] = []) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderStrict(
     <QueryClientProvider client={client}>
       <TooltipProvider delayDuration={400}>
-        <EventLogSheet sessionId={SESSION_ID} />
+        <AudioClipsProvider value={{ clips }}>
+          <EventLogSheet sessionId={SESSION_ID} />
+        </AudioClipsProvider>
       </TooltipProvider>
     </QueryClientProvider>,
   );
@@ -244,8 +242,7 @@ describe('EventLogSheet — jump column', () => {
 
   it('activating an available jump control seeks the timeline and starts playback when the target is covered', async () => {
     mockApi(statusFixture(), [resolvableEventFixture()]);
-    mockedUseAudioClips.mockReturnValue({ clips: [COVERING_CLIP], totalSec: 100, segments: [] });
-    renderSheet();
+    renderSheet([COVERING_CLIP]);
 
     const btn = await screen.findByRole('button', { name: /Jump to/ });
     fireEvent.click(btn);
@@ -260,5 +257,24 @@ describe('EventLogSheet — jump column', () => {
     renderSheet();
 
     expect(await screen.findByText('00:00:10')).toBeTruthy();
+  });
+});
+
+// Whole-branch audit fix wave, finding M6: the spec requires a row's
+// resolved second to be finite AND non-negative (mirroring
+// `sessionTimeToTimelineSec`'s own `sec >= 0` floor). Not reachable through
+// the current data shape (frames/fps are both already guarded finite and
+// positive above this check), but pinned directly against the exported
+// function for spec conformance and to catch a future loosening of the
+// frames guard.
+describe('eventRowTimelineSec — non-negative guard (finding M6)', () => {
+  it('rejects a negative resolved second rather than returning it', () => {
+    expect(
+      eventRowTimelineSec(resolvableEventFixture({ timecode_total_frames: -240, frame_rate: 24 })),
+    ).toBeNull();
+  });
+
+  it('still resolves an ordinary non-negative row', () => {
+    expect(eventRowTimelineSec(resolvableEventFixture())).toBe(10);
   });
 });

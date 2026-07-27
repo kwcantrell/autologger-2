@@ -1,7 +1,6 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 import { ApiError } from '../../../api/client';
-import { useEvents } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useGenerateTranscript,
@@ -55,13 +54,11 @@ export function TranscribeFeed({ sessionId }: Props) {
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
   // its `available`/`jump` handed to every row as a prop/stable callback.
   // Transcript has no batch-edit mode (always editable), so the gate is just
-  // loaded-status + not-rolling. `useEvents` default limit (200) matches
-  // EventLogSheet's initial query — React Query dedupes when both feeds are
-  // mounted (ui-refresh: all tabs stay mounted, just hidden). ---
+  // loaded-status + not-rolling. `useTimelineSeek` reads the session-wide
+  // clip layout via `AudioClipsContext` — no local `useEvents` call needed
+  // here at all (whole-branch audit fix wave, finding C1/I3). ---
   const { data: status } = useSessionStatus(sessionId);
-  const { data: eventsData } = useEvents(sessionId);
-  const events = useMemo(() => eventsData?.events ?? [], [eventsData]);
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, events, false);
+  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, false);
   const jumpUnavailable = !jumpAvailable;
   const jumpReasonId = 'v5-transcribe-feed-jump-reason';
   const fps = status?.frame_rate ?? null;

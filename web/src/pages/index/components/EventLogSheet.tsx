@@ -31,7 +31,15 @@ export function eventRowTimelineSec(event: LogEvent): number | null {
   const fps = event.frame_rate;
   if (frames == null || fps == null) return null;
   if (!Number.isFinite(frames) || !Number.isFinite(fps) || fps <= 0) return null;
-  return frames / fps;
+  const sec = frames / fps;
+  // Whole-branch audit fix wave, finding M6: the spec requires a row's
+  // resolved second to be finite AND non-negative (`sessionTimeToTimelineSec`
+  // enforces the same `sec >= 0` floor). Not currently reachable — frames/fps
+  // are both guarded finite and fps > 0 above — but a negative
+  // `timecode_total_frames` isn't otherwise rejected, so this stays an
+  // explicit invariant rather than an accident of the current data shape.
+  if (!(sec >= 0)) return null;
+  return sec;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,8 +228,11 @@ export function EventLogSheet({ sessionId }: Props) {
   const deleteEvent = useDeleteEvent(sessionId);
 
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
-  // its `available`/`jump` handed to every row as a prop/stable callback. ---
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, events, batchEditMode);
+  // its `available`/`jump` handed to every row as a prop/stable callback.
+  // `useTimelineSeek` reads the session-wide clip layout via
+  // `AudioClipsContext` (whole-branch audit fix wave, finding C1) rather than
+  // this feed's own (differently-limited) `events` — no `events` arg here. ---
+  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, batchEditMode);
   const jumpUnavailable = !jumpAvailable;
   const jumpReasonId = 'v5-event-feed-jump-reason';
 
