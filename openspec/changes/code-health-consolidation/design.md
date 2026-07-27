@@ -7,10 +7,11 @@ to it. The review's verification legend applies: `[V]` findings were orchestrato
 `[A]`/`[A?]` findings are agent-reported and MUST be re-verified by this change's
 pre-panel fact-check pass before the panel treats them as fact.
 
-The change is internal consolidation plus two failure-path contract deltas (see
-`specs/api-contract-freeze/spec.md`). The quick-fix track (`quick-fixes-2026-07`) already
-landed the mechanical findings; this change assumes that branch is merged first and its
-shared exports (e.g. `WORKSPACE_EVENTS_LIMIT`, exported `loopbackHostname`) exist.
+**Split by the 2026-07-27 gate (ruling 1):** this change is the HEAD — the two
+failure-path contract deltas (see `specs/api-contract-freeze/spec.md`) plus the AI
+process-lifecycle work. Decisions D5, D6, D8–D12 moved to `code-health-tail` (decision
+IDs are shared across the two changes; D1–D4 and D7 live here). The quick-fix track
+(`quick-fixes-2026-07`) merged to `main` 2026-07-27 (`721fc00`).
 
 **Invariants a future reader must not "helpfully" undo** (all preserved by this design):
 
@@ -28,19 +29,15 @@ shared exports (e.g. `WORKSPACE_EVENTS_LIMIT`, exported `loopbackHostname`) exis
 
 **Goals:**
 
-- Make broadcast emission atomic with the owning transaction (finding 1.3) and delete the
-  `suppressBroadcast` mechanism it replaces.
+- Make broadcast emission atomic with the owning transaction (finding 1.3); the
+  `suppressBroadcast` flags are retained per D1 (panel ruling — they own the
+  composite's frame contract).
 - Eliminate the orphan-process hazard on the chat/topic path and the turn-orchestration
-  drift class (1.1, 1.14, 2.2, 1.13).
-- Single-source every duplicated-logic pair the review confirmed (2.1, 2.3–2.14, 3.8),
-  each with behavior-preservation tests.
+  drift class (1.1, 1.14, 2.2).
 - Return `416` for suffix ranges on zero-byte blobs (1.7).
-- Remove the spurious-await pattern (5.1) and land the batched consistency items
-  (5.6–5.10).
 
-**Non-Goals:** everything in the proposal's Non-Goals list; additionally no refactor of
-`useZoomRail`'s internal structure and no cross-workspace shared-types package (the
-`api/types.ts` mirroring convention stays as documented).
+**Non-Goals:** everything in the proposal's Non-Goals list — notably the entire
+consolidation tail (now `code-health-tail`) and the deferred finding 1.13.
 
 ## Decisions
 
@@ -138,128 +135,26 @@ orchestrators are where the drift already happened twice; unify the relays too �
 rejected: the input types differ fundamentally and forcing them under one abstraction
 would manufacture complexity, not remove it.
 
-**D4 — `issuedClaudeSessionIds` bounding: ESCALATED TO THE GATE.** The panel found the
-drafted approach (insertion-order eviction at an unstated cap) breaks the baseline
-`ai-topics-chat` SHALL ("when a request carries a `claude_session_id` that was issued
-for the same `:sessionId`, the server SHALL resume") with no authorizing delta: an
-evicted-but-legitimate id gets `422` instead of resuming. Worse, `Map.set` on an
-existing key does NOT refresh insertion order, and a resumed chat re-issues the same id
-each turn — so the drafted eviction is FIFO that evicts the longest-lived, most active
-conversation FIRST. Gate options:
-(a) **Defer (recommended):** drop the cap from this change; re-disposition review
-finding 1.13 to accepted-residual/roadmap. The leak is slow (two short strings per
-completed turn) and the change is already large.
-(b) **Do it right here:** add a small `ai-topics-chat` delta authorizing bounded
-retention (evicted id ⇒ treated as stale/`422`), with touch-refresh on re-issue and
-resume (delete-then-set) and a stated cap (e.g. 512) that task 4.3's test asserts.
-Not an option: landing any cap without the delta (unauthorized observable change).
+**D4 — `issuedClaudeSessionIds` bounding: DEFERRED (gate ruling 2, 2026-07-27).** The
+panel found the drafted approach (insertion-order eviction at an unstated cap) breaks
+the baseline `ai-topics-chat` SHALL ("… the server SHALL resume") with no authorizing
+delta — an evicted-but-legitimate id gets `422` — and `Map.set` doesn't refresh
+insertion order, so the FIFO cap would evict the longest-lived, most-active
+conversation FIRST. The gate deferred: no cap in this change; review finding 1.13 is
+re-dispositioned to accepted residual / roadmap (the leak is two short strings per
+completed turn). Any future cap requires an `ai-topics-chat` delta with touch-refresh
+and a stated cap value.
 
-**D5 — Web SSE consolidation: one `useSseTurn` hook + one composer component.** The hook
-owns fetch/reader/decoder buffering (over the already-shared `parseSseFrames`, which is
-not duplicated today — AiV2Design imports it from AiChat), delta-append, abort-vs-lost
-classification (per-path `CONNECTION_LOST_DETAIL` string), and the notConfigured-503
-branch. Parameterization surface per the fact-check (claim W1): an event-vocabulary
-handler map with chat-only `tool`, design-only `question`/`dashboard`, and per-path
-`done`/`error` bodies (chat's `done` parses and propagates `claude_session_id`;
-design's clears pending-question state, and its `error` clears it before pushing the
-message). The Stop/Send textarea footer becomes a shared component with one slot:
-a plain `placeholder: string` prop computed by the caller (panel: not a function slot —
-same effect, smaller contract; design computes its string from
-`messages.length`/`pendingQuestion` at the call site).
-*Alternatives:* leave duplicated with lint-guard comments — rejected: ~150 lines of
-already-observed drift surface.
-
-**D6 — Query keys: extend the existing factory modules.** Add `sessionStatusKeys` and
-`audioSegmentsKeys` factories (neither exists today — fact-check W6) beside the existing
-`eventsKeys`/`sessionKeys`/`teamKeys`/`topicsQueryKey` and replace every bare literal.
-Sweep inventory (W6): `session-status` in `useSessionSocket.ts` (×3), `useTransport.ts`,
-`useSessionStatus.ts`, `useAudio.ts`, PLUS the prefix-only literal
-`['session-status']` in `HomeSettingsModal.tsx` (needs an `.all`-style factory entry)
-and two test files; `audio-segments` in `useSessionSocket.ts`, `useSessions.ts`,
-`useAudio.ts`. Key *arrays are unchanged* (same strings, same shapes), so no cache
-invalidation behavior changes — this is compile-time coupling only.
+**D5, D6 — moved to `code-health-tail`** (gate ruling 1; decision IDs are shared
+across the two changes).
 
 **D7 — Zero-byte suffix range maps to the existing unsatisfiable-range path.** In the
 blob-store range computation, a suffix range against `size === 0` raises
 `InvalidRangeError` (the type the router already maps to `416`) instead of constructing
 an invalid stream window. Covered by a new unit + integration test.
 
-**D8 — De-async `requireSession` and drop spurious awaits.** `requireSession` becomes
-synchronous (its body already is); the ~44 `await`s on hub RPCs and the two `Promise.all`
-wraps over sync calls are removed; test seed helpers likewise. Handlers stay `async`
-where Hono requires a Promise return.
-*Consequence check:* removing `await`s removes microtask yields inside handlers, which is
-not observable at the HTTP layer; the frozen-contract int suites pin responses.
-
-**D9 — PUT `internal` category branch (3.8): KEEP the branch — it is reachable, not
-dead.** (Reversed by the 2026-07-27 fact-check, claim S12.) `validateCategoriesList`
-(`server/src/studio.ts`) accepts any non-empty trimmed string as a category id with no
-reserved-id list, so a studio profile CAN define a category with id `internal`; for such
-a profile, PUT's `stripCategoryUiSnapshots` branch fires and is load-bearing observable
-behavior. Deleting it (the review's original disposition option) would be an
-unauthorized contract change on that edge. Instead: keep the branch and add a comment
-documenting its reachability condition and the deliberate PUT-vs-POST asymmetry (POST
-admits `internal` explicitly even when absent from the profile; PUT requires it to be a
-profile category first — both frozen).
-*Alternatives:* delete as dead code — rejected: refuted by the validator read; align
-PUT to POST's admit-internal rule — rejected: observable contract change with no
-consumer need.
-
-**D10 — `core.eventCounts()` owns the event-count SQL.** The duplicated count queries
-(including the `lower(trim(category)) != 'internal'` filter) move to one core helper;
-`TransportStore.statusLive` calls it, restoring sessionCore's stated "stores never read
-each other's tables" layering.
-
-**D11 — Companion payload typed server-side only.** Declare the state-payload type next
-to the companion router and type the builder against it; companion keeps its own copy
-(documented mirroring, same as `web/src/api/types.ts`). The server-side type MUST
-describe what the server actually sends — including the two `last_command` fields
-(`session_id`, `created_at_utc`) that companion's `LastCommand` interface under-declares
-today (fact-check S18); companion's type is NOT changed (frozen wire; excess fields are
-benign to a structural TS consumer). No shared package, no wire change.
-*Alternative:* a shared workspace types package — rejected: new coupling surface for a
-frozen wire shape; mirroring with per-field provenance is the repo's established pattern.
-
-**D12 — Remaining consolidations follow the obvious single-source direction** (each with
-a behavior-pinning test first where one doesn't exist), with fact-check refinements:
-deck title → existing `sessionDeckDisplayTitle` (three copies verified behaviorally
-identical, no import cycle); marker grouping → one shared util consumed by Timeline +
-MarkerNav (implementations verified outcome-equivalent, phrasing-different); generate-
-latch → `useGatedGenerate` + shared toolbar fragment (note W3: near-verbatim holds
-against the post-`quick-fixes-2026-07` baseline — verify against the merged tree, and
-the Transcribe reason-span carries an inline `<code>` element the shared fragment must
-slot); palette-9 → single exported `normalizePalette9` + module-level `DEFAULT_PALETTE`
-in EventButtonsTable's shape (W5: neither name is exported anywhere today, so no
-migration hazard); session cards → EXTRACTION, not unification (panel: W7's six difference axes are
-perfectly correlated with archived-vs-active, so a parameterized mega-component is the
-wrong direction — instead extract the verbatim ~40 duplicated lines into a shared
-delete-confirm hook, a shared meta/runtime derivation helper, and a shared menu/meta-row
-scaffold, keeping two thin variant components); aiV2 guard
-prologue → `guardAiV2Route` helper parameterized by WHICH 503 gates apply (S10: the
-dashboard-CRUD routes deliberately gate only on `aiV2Configured` — documented in-file —
-so the helper takes a gate set, it does not assume all five routes are identical);
-store patch-builder/ordinal-seed → shared private helpers module; lease free-path →
-private `freeLease()`; mime↔ext → one bidirectional table; internal-audio grammar →
-recording.ts imports from audioClips.ts (W2: also reconcile the `?? ''` vs `|| ''`
-character and decide export visibility — audioClips' `sortAudioInternalByOrdinalThenTime`
-is module-private today while recording.ts exports it); existence checks → `SELECT 1`
-convention; companion row-reuse (S14 nuance: only 2 of the 3 re-fetch sites cast — the
-third null-checks — returning the row from `requireActiveSession` removes all three
-re-fetches regardless); catalog cleanups per finding 5.7 (upsert for `authSetPrefs` —
-currently 2–3 statements depending on row existence, S15 — `tx()` for the two
-read-modify-write pairs, `resetToDefault()` local in `getStudioSettingsBlob`, single
-`listShowsForStudio` per profile assembly). Test-infra dedupe (5.10, corrected counts
-S16/W11): shared `parseSse` (2 files) and a shared seed-chain helper (the duplication
-spans ~9–12 int-test files, not ~8), shared e2e `createSession` helper (8 sites / 5 spec
-files, promoting visual.spec's private helper), `configuredEnv` rename, shared
-fake-core test helper (2 of the 3 fakes use `as unknown as` casts; `sessionCore.test.ts`'s
-satisfies `SessionRuntime` structurally).
-
-**Explicit residual dispositions for finding 5.9's unlisted leftovers** (panel: record
-them so the audit's traceability check has an answer): `aiV2SdkSpawn`'s redundant
-`terminateOnce`/`cleaned` ordering — absorbed by D3's rewrite; NewSessionModal inline
-styles, `audio.ts` waveform-bound comment mismatch (the [-0.02,1.02] acceptance range
-itself is frozen), `app.ts` `as 400` cast — accepted residuals (OBS), not tasked.
+**D8–D12 and the finding-5.9 residual dispositions — moved to `code-health-tail`**
+(gate ruling 1).
 
 ## Risks / Trade-offs
 
@@ -269,13 +164,11 @@ itself is frozen), `app.ts` `as 400` cast — accepted residuals (OBS), not task
   they asserted unpublished timing, never by re-suppressing.
 - [Shared turn orchestrator could subtly change SSE output] → pin both paths' observable
   SSE sequences with tests *before* extracting; scrubbing stays per-path.
-- [De-async sweep touches ~6 routers mechanically] → tsc catches missed call sites
-  (sync function, no floating promises); frozen-contract suites pin behavior.
 - [Kill-ladder swap on the chat path regresses some edge] → the ladder being adopted is
   the spike-proven v2 one; add a unit test for the leader-exits-member-survives case
   (the exact scenario the old ladder failed).
-- [Wide file touch surface risks collision with `server-capabilities`] → sequencing:
-  this change lands before `server-capabilities` starts (one change in flight).
+- [Sequencing] → one change in flight: this change → `code-health-tail` →
+  `server-capabilities`.
 
 ## Migration Plan
 
@@ -285,9 +178,7 @@ require no client updates.
 
 ## Open Questions
 
-- None blocking. The catalog statement-cache idea (finding 5.7's `CatalogDb` re-prepare
-  note) is intentionally NOT included — perf-only at current scale; revisit if profiling
-  ever says otherwise.
+- None blocking.
 
 ## Panel & review log
 
@@ -378,5 +269,14 @@ require no client updates.
   indistinguishable at Hono's `onError` incl. the WS middleware; security chokepoints —
   scrub allow-lists, principal binding, closed-world lockdown, dashboard-CRUD gate
   narrowing — are preserved by the rewritten D3/D12).
-- **Gate** — PENDING (armed by the panel synthesis above; four escalated decisions).
+- **2026-07-27 — Gate (owner ruling): all four panel recommendations adopted.**
+  (1) SPLIT executed — this change narrowed to the head (phases 1–4 + final gates,
+  decisions D1–D4/D7); the tail became the `code-health-tail` change (D5, D6, D8–D12),
+  sequenced after this one. (2) Finding 1.13 DEFERRED — task 4.3 struck, D4 records the
+  constraint any future cap must satisfy. (3) Toast-API + path-encoding convergence
+  DROPPED to accepted residual; `OkResponse` adoption kept (in the tail). (4) Seed-chain
+  test migration kept at full breadth (lands in the tail). Session-scope note: apply-
+  time implementer subagents will run top-tier (Opus/Fable) this session per the
+  owner's model directive — recorded here as the ledger justification the SDLC's
+  mid-tier default requires.
 - **Post-gate consistency read** — PENDING.

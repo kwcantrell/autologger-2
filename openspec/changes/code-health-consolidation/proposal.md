@@ -1,9 +1,11 @@
 # Proposal: code-health-consolidation
 
-> Source brief: `docs/reviews/2026-07-27-full-repo-review.md` (committed research artifact).
-> This change implements the findings dispositioned **OS**/**OS-delta** there; finding
-> numbers below (1.1, 2.3, …) refer to that document. The **QF**-dispositioned findings
-> already landed on branch `quick-fixes-2026-07` and are out of scope here.
+> Source brief: `docs/reviews/2026-07-27-full-repo-review.md` (committed research
+> artifact); finding numbers below refer to it. The **QF**-dispositioned findings
+> landed via `quick-fixes-2026-07` (merged 2026-07-27). **Split by the 2026-07-27
+> gate (ruling 1):** this change is the HEAD — contract deltas + AI process lifecycle
+> (it lands first); the consolidation tail (former phases 5–8) moved to the
+> `code-health-tail` change, which lands second.
 
 ## Why
 
@@ -35,28 +37,12 @@ change, is cheaper than debugging the divergence later.
   `runDesignTurn`) into one shared orchestrator parameterized by scrubber/cleanup —
   resolving the two already-observed drifts (emit-throw swallowing, terminal-detail
   scrubbing) with one deliberate policy each. Bounding `issuedClaudeSessionIds`
-  (finding 1.13) is ESCALATED to the gate — the drafted cap would break an
-  `ai-topics-chat` SHALL without a delta (see design D4 for the options).
-- **Duplication consolidations** (findings 2.1, 2.3–2.12, 2.14, 3.8 — 2.13 de-scoped,
-  see Non-Goals): single-source the
-  hand-duplicated logic pairs — web SSE-turn plumbing + composer (AiChat/AiV2Design),
-  internal-audio message grammar (recording.ts/audioClips.ts), server deck-title rule
-  (three copies), marker grouping (Timeline/MarkerNav), generate-503-latch
-  (Transcribe/Topics feeds), palette-9 normalization, React Query key factories for the
-  bare-literal keys, session cards (RecentSessionsList), event-count SQL via a
-  `core.eventCounts()` helper (restoring sessionCore's stated no-cross-store-reads
-  layering), aiV2 route-guard prologue, store patch-builder/ordinal-seed helpers, lease
-  free-path, mime↔ext mapping, and typing the companion state payload the server builds
-  (the PUT `internal` category branch is kept and documented — the fact-check
-  established it is reachable, not dead — preserving the frozen 400 behavior).
-- **Spurious-await cleanup** (finding 5.1): make `requireSession` and the test seed
-  helpers synchronous and drop the ~44 misleading `await`s on synchronous hub RPCs,
-  making real suspension points visible again.
-- **Batched consistency items** (findings 5.6–5.10, 5.9-adjacent): companion router
-  row-reuse, catalog store cleanups (upsert patterns, transaction pairing, statement
-  reuse decision), path-encoding and `OkResponse`/toast-API convergence, the small
-  web perf/markup items, and the test-infrastructure dedupe (shared `parseSse`,
-  `seededSession`, e2e create-session helper).
+  (finding 1.13) was DEFERRED by the gate (ruling 2): the drafted cap would have broken
+  an `ai-topics-chat` SHALL without a delta and FIFO-evicted the most-active
+  conversation first; re-dispositioned to accepted residual / roadmap.
+- **Everything else from the review's OS bucket** — duplication consolidations,
+  de-async sweep, batched consistency items, test-infra dedupe — moved to the
+  `code-health-tail` change (gate ruling 1).
 
 ## Capabilities
 
@@ -79,30 +65,24 @@ and corrects two failure-path behaviors under existing capabilities._
 - **Contract impact**: exactly the two failure-path deltas above; every other observable
   HTTP/WS behavior (shapes, status codes, success-path emission, message ordering) is
   unchanged and verified by the existing frozen-contract test suites.
-- **Server**: `SessionHub`/`sessionCore` + all four broadcasting stores (broadcast queue);
-  `aiChatRunner`/`aiV2SdkSpawn` (shared orchestrator + kill ladder); `blobStore` (range);
-  routers `events`/`companion`/`studio` (deck title, row reuse, dead branch);
-  `_helpers`/six routers (await cleanup); catalog stores (batched cleanups); `ai.ts`
-  (session-id map bound).
-- **Web**: shared SSE-turn hook + composer; `recording.ts`; MarkerNav/Timeline grouping;
-  Transcribe/Topics feeds + rows; HomeSettingsModal/EventButtonsTable palette; query-key
-  factories; RecentSessionsList; assorted small items.
-- **Companion**: type-only (shared payload typing on the server side; no wire change).
-- **Tests**: all consolidations ship with tests proving behavior-preservation; the two
-  deltas get explicit new failure-path tests; test-infra dedupe touches int/e2e helpers.
+- **Server**: `SessionHub`/`sessionCore` + the four broadcasting stores (broadcast
+  queue); `aiChatRunner`/`aiV2SdkSpawn` (shared outer orchestrator + kill ladder);
+  `blobStore` + audio router (range).
+- **Web / Companion**: none in this change (all in `code-health-tail`).
+- **Tests**: phase-1 pinning tests (broadcast frames, SSE sequences); explicit new
+  failure-path tests for both deltas; a kill-ladder leader-exits-member-survives test.
 
 ## Non-Goals
 
+- The consolidation tail — duplication consolidations, de-async sweep, batched items,
+  test-infra dedupe — split to `code-health-tail` (gate ruling 1, 2026-07-27).
+- No `issuedClaudeSessionIds` cap (finding 1.13) — deferred by the gate (ruling 2);
+  accepted residual / roadmap.
 - No new API surface, endpoints, or capability flags (that is `server-capabilities`,
-  queued separately).
-- No re-fix of anything already landed on `quick-fixes-2026-07` (QF findings).
-- No action on accepted residuals (findings 1.16–1.21, 3.9) beyond what the review
-  records.
+  queued behind `code-health-tail`).
+- No re-fix of anything already landed via `quick-fixes-2026-07` (QF findings).
+- No action on accepted residuals (findings 1.16–1.21, 2.13, 3.9, and the toast/
+  path-encoding convergence dropped by gate ruling 3).
 - No CHANGELOG.md disposition (escalated to the owner separately).
 - No behavior changes to the deliberate patterns the review explicitly excluded
   (mounted-hidden latches, 503 latch fallback, scrub chokepoints, provenance headers).
-- No `useZoomRail` structural rewrite (finding 5.9's largest item) — flagged as its own
-  future change if wanted; only its dead refs (already QF) and comments were touched.
-- No TranscribeRow/TopicsRow edit-buffer dedupe (finding 2.13) — de-scoped by the panel
-  (2026-07-27): `[A?]`-verified, low-med, self-annotating in the code; re-dispositioned
-  to accepted residual rather than silently left untasked.

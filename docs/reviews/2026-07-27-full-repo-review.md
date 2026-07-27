@@ -145,3 +145,22 @@ constants, three sanctioned lockstep mirrors.
 Raw per-slice agent reports are not retained; this document is the durable record.
 Anchors follow the repo rule: **locate quoted code by content before editing — line
 numbers go stale.**
+
+---
+
+## Gate addendum (2026-07-27, after fact-check + adversarial panel)
+
+The `code-health-consolidation` gate re-dispositioned some of the above:
+
+- The OS bucket was **split into two changes**: `code-health-consolidation` (head:
+  1.1, 1.3, 1.7, 1.14, 2.2) and `code-health-tail` (everything else OS-dispositioned).
+- **1.13 → OBS/roadmap** (gate ruling 2): the drafted cap would have violated the
+  `ai-topics-chat` resume SHALL; any future cap needs a delta + touch-refresh.
+- **3.8 reclassified**: the PUT `internal` branch is REACHABLE, not dead (a profile can
+  define category id `internal` — validator reserves no ids); kept and pinned via a
+  `code-health-tail` delta.
+- **2.13 → OBS** (panel de-scope); **5.8's toast-API + path-encoding convergence →
+  OBS** (gate ruling 3; `OkResponse` adoption kept); 5.9's unlisted leftovers recorded
+  as OBS in `code-health-tail`'s design.
+- Fact-check count corrections: the seed-chain duplication (5.10) spans ~9–12 files;
+  the S14 companion casts are 2 of 3 sites; `authSetPrefs` is 2–3 statements.
