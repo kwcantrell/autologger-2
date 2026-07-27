@@ -129,6 +129,23 @@ describe('V6Rail Teams button same-route guard (gate decision 1)', () => {
   });
 });
 
+describe('V6Rail footer layout (collapsed overflow)', () => {
+  it('footer carries collapsed flex-col + mobile drawer flex-row revert so Teams/Settings stack in the narrow rail', () => {
+    renderRail();
+
+    const teams = screen.getByRole('button', { name: 'Teams' });
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    const footer = teams.parentElement;
+    expect(footer).not.toBeNull();
+    expect(footer).toBe(settings.parentElement);
+    // Tailwind ancestor variants live on the element; CSS activates under
+    // body.v6-app--rail-collapsed. Lock the class contract (jsdom won't compute
+    // layout for arbitrary utilities).
+    expect(footer?.className).toContain('[.v6-app--rail-collapsed_&]:flex-col');
+    expect(footer?.className).toContain('max-md:[.v6-app--rail-collapsed_&]:flex-row');
+  });
+});
+
 describe('V6Rail session search (spec: "Real rail session search")', () => {
   it('narrows both the Recent and Archived lists as the user types, case-insensitively', () => {
     mockSessions({
