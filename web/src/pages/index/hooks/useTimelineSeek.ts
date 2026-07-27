@@ -23,23 +23,21 @@ declare global {
 
 export interface UseTimelineSeekResult {
   /**
-   * Whether a feed's jump controls should render as available right now:
-   * session status has RESOLVED, reports not-rolling, and the feed is not in
+   * Whether a feed's jump controls should render as UNAVAILABLE right now:
+   * session status hasn't RESOLVED, reports rolling, or the feed is in
    * batch-edit mode (design D5). The SAME value applies to every row in the
-   * feed — pass it straight through as each row's `available`/seekable prop
+   * feed — pass it straight through as each row's `unavailable`/seekable prop
    * so `memo`-wrapped rows re-render on the transition (design D7).
    *
    * An unresolved status (`data` still `undefined`) reads as UNAVAILABLE, not
    * as "not rolling" — `!status?.is_rolling` would fail open on first paint.
-   */
-  available: boolean;
-  /**
-   * `!available`. Every consumer, prop, and the button itself (`unavailable`
-   * on `JumpToTimeButton`) speak the negative — this hook used to speak only
-   * `available`, forcing every one of the three feeds to invert it locally
-   * with `const jumpUnavailable = !jumpAvailable;` (quality fix wave, FIX
-   * 6b). Provided alongside `available` (not instead of it) since existing
-   * callers/tests read the positive form directly.
+   *
+   * Every consumer, prop, and the button itself (`unavailable` on
+   * `JumpToTimeButton`) speak the negative — this hook used to speak only the
+   * positive `available`, forcing every one of the three feeds to invert it
+   * locally with `const jumpUnavailable = !jumpAvailable;` (quality fix wave,
+   * FIX 6b). Speaking only the negative here (re-review Minor 4) keeps that
+   * single mirrored derivation off the hook's public surface entirely.
    */
   unavailable: boolean;
   /**
@@ -49,7 +47,7 @@ export interface UseTimelineSeekResult {
    * (design D7).
    *
    * Gated: a no-op (no scrub, no scroll, no audio, no playback) while
-   * `available` is false. When available, it always moves the playhead and
+   * `unavailable` is true. When available, it always moves the playhead and
    * scrolls the timeline to `sec`; it additionally starts playback via
    * `AutoLogger_seekAudioAndPlay` ONLY when a playable clip actually covers
    * `sec` (design D6) — never the non-playing `AutoLogger_seekAudio`, which
@@ -87,7 +85,7 @@ function isCoveredByPlayableClip(sec: number, clips: readonly AudioClipLite[]): 
  * The feed-facing timeline-seek hook (design D5, D6, D7, D8): the shared home
  * for the gate, the clip-coverage check, and playback that the Event,
  * Transcript, and Topics feeds all consume. Each feed calls this ONCE and
- * passes the returned `jump` (stable) and `available` (a real prop) down to
+ * passes the returned `jump` (stable) and `unavailable` (a real prop) down to
  * its rows — rows must not call `useSessionStatus` or this hook themselves.
  *
  * Deliberately NOT layered on top of `timelineJump` (`jumpTimelineToSec`):
@@ -121,5 +119,5 @@ export function useTimelineSeek(sessionId: string, batchEditMode: boolean): UseT
     [available, clips],
   );
 
-  return { available, unavailable: !available, jump };
+  return { unavailable: !available, jump };
 }

@@ -73,7 +73,7 @@ describe('useTimelineSeek — availability gate', () => {
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, false), {
       wrapper: withClips([COVERING_CLIP]),
     });
-    expect(result.current.available).toBe(false);
+    expect(result.current.unavailable).toBe(true);
   });
 
   it('is unavailable while status is unresolved (undefined must not read as not-rolling)', () => {
@@ -81,7 +81,7 @@ describe('useTimelineSeek — availability gate', () => {
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, false), {
       wrapper: withClips([COVERING_CLIP]),
     });
-    expect(result.current.available).toBe(false);
+    expect(result.current.unavailable).toBe(true);
   });
 
   it('is unavailable in batch-edit mode', () => {
@@ -89,7 +89,7 @@ describe('useTimelineSeek — availability gate', () => {
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, true), {
       wrapper: withClips([COVERING_CLIP]),
     });
-    expect(result.current.available).toBe(false);
+    expect(result.current.unavailable).toBe(true);
   });
 
   it('is available when loaded, not rolling, and not batch-edit', () => {
@@ -97,7 +97,7 @@ describe('useTimelineSeek — availability gate', () => {
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, false), {
       wrapper: withClips([COVERING_CLIP]),
     });
-    expect(result.current.available).toBe(true);
+    expect(result.current.unavailable).toBe(false);
   });
 
   it('is unavailable (empty clips) when rendered outside any AudioClipsProvider', () => {
@@ -105,7 +105,7 @@ describe('useTimelineSeek — availability gate', () => {
     // No wrapper: falls back to AudioClipsContext's empty default — the hook
     // itself is still available (status-gated), it simply has no clips to
     // cover anything with.
-    expect(result.current.available).toBe(true);
+    expect(result.current.unavailable).toBe(false);
     result.current.jump(15);
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
@@ -262,6 +262,6 @@ describe('useTimelineSeek — stable callback (design D7)', () => {
     rerender();
 
     expect(result.current.jump).not.toBe(whileRolling);
-    expect(result.current.available).toBe(true);
+    expect(result.current.unavailable).toBe(false);
   });
 });
