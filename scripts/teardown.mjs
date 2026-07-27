@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Stops any local AutoLogger dev processes by killing whatever is listening on
 // the dev ports: the Node server (:8787), the Vite dev server (:5173) and the
-// hermetic Playwright server (:8791). Extra ports may be passed as arguments.
+// hermetic Playwright servers (:8791, :8792). Extra ports may be passed as
+// arguments.
 //
 // SIGTERM first, then SIGKILL for anything that survives the grace period.
 import { execFileSync } from 'node:child_process';
@@ -10,6 +11,7 @@ const DEFAULT_PORTS = [
   Number(process.env.PORT || '8787'), // server (server/src/main.ts)
   5173, // web dev server (web/vite.config.ts)
   8791, // e2e server (playwright.config.ts)
+  8792, // e2e login-gate server (playwright.config.ts)
 ];
 
 const extra = process.argv.slice(2).map(Number);
