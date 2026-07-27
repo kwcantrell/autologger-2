@@ -103,13 +103,13 @@
 
 ## 8. Topics feed wiring
 
-- [ ] 8.1 Write failing tests in a new `TopicsRow.test.tsx`: a parseable stored `session_time`
+- [x] 8.1 Write failing tests in a new `TopicsRow.test.tsx`: a parseable stored `session_time`
       resolves via the D3 converter; empty and unparseable values render **no control**; all four
       fields still focus and commit on blur. **Setup:** jsdom has no `ResizeObserver` and
       `TopicsRow` constructs one unconditionally in a `useLayoutEffect`, so stub it; `TopicsRow`
       calls `useUpdateTopic` internally, so wrap in a `QueryClientProvider`.
-- [ ] 8.2 Implement: `TopicsFeed` owns the hook, `TopicsRow` renders the jump cell.
-- [ ] 8.3 Mark topic jumps unavailable when the session's transcript is **wholly anchorless**
+- [x] 8.2 Implement: `TopicsFeed` owns the hook, `TopicsRow` renders the jump cell.
+- [x] 8.3 Mark topic jumps unavailable when the session's transcript is **wholly anchorless**
       (spec: "Topic jumps require an anchored transcript")
       (every word's `session_time` empty). With no `[HH:MM:SS]` prefixes to copy, the generator
       invents elapsed-from-zero times that parse perfectly — so the worst case is not an unseekable
