@@ -31,8 +31,17 @@ const COLUMNS: ColumnDef[] = [
   { key: 'word', label: 'Word(s)', sortKey: 'word', thClassName: 'text-left min-w-40' },
 ];
 
-// Approximate rendered height of a single TranscribeRow (input + cell padding + border).
-const ROW_HEIGHT = 34;
+// Approximate rendered height of a single TranscribeRow: input/button + cell
+// padding + border. feed-row-seek task 7.3: re-measured (real headless
+// Chromium against the actual compiled Tailwind CSS — jsdom has no layout
+// engine) both before and after adding the leading jump column. Baseline
+// (session-time/speaker/word only) measured ≈29.98px; with the jump column's
+// leading cell (a 24px/h-6 button in a shorter [0.1rem]-padded cell) added,
+// the row measured ≈30.48px — the jump cell does not become the tallest cell
+// (the session-time input cell still is), so the column adds only marginal
+// height. 31 covers the measured post-column height with a small margin; the
+// prior 34 was a looser overestimate.
+const ROW_HEIGHT = 31;
 
 interface Props {
   sessionId: string;
