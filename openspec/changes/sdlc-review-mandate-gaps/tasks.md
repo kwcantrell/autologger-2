@@ -77,16 +77,16 @@
 
 ## 3. Consistency read + closure
 
-- [ ] 3.1 Light-tier consistency reviewer over the final `CLAUDE.md`, `SKILL.md`, and this
+- [x] 3.1 Light-tier consistency reviewer over the final `CLAUDE.md`, `SKILL.md`, and this
       change's four artifacts: gate dispositions vs normative text, stale pre-gate
       language, cross-references (including that the marker-spec delta and D6 tell the
       same story). Outcome recorded as a dated Panel & review log line — "clean" naming
       documents read, or findings + fixes.
-- [ ] 3.2 Merge to `main` (no push without an explicit ask). Suggest archive
+- [x] 3.2 Merge to `main` (no push without an explicit ask). Suggest archive
       (`/opsx:archive`), which syncs the `sdlc-process` delta into the durable baseline;
       at sync, touch up the baseline spec's `## Purpose` narrative to mention the
       2026-07-27 evaluation (deltas sync requirements only — the Purpose edit is
       deliberate, panel-flagged).
-- [ ] 3.3 Post-landing note to the user: tag `backup-pre-rewrite` is now free to delete
+- [x] 3.3 Post-landing note to the user: tag `backup-pre-rewrite` is now free to delete
       (user's call — evidentiary role ends once the corrected artifacts have landed, not
       at the gate; F1's commits become GC-eligible on deletion).
