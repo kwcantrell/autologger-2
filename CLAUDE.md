@@ -142,7 +142,11 @@ decided 2026-07-14, replacing the code-bearing/mechanical threshold), an always-
 whole-branch review at the end that runs as a **layered scoped audit** (its package always
 includes contract/seam-relevant diffs of every surface-touching phase, full diffs of
 deferred/mechanical phases, diffs of clean phases sharing files/state with deferred ones,
-and re-reads of phases modified after their review closed; it skips only the
+re-reads of phases modified after their review closed, the branch's materialized file
+list — `git diff --stat`/`git log --stat` + stray-file scan, tree hygiene answered in
+affirmative-evidence form, package integrity verified at build with truncation a build
+failure — and all call sites of every declared seam checked against the declared
+property (both decided 2026-07-27); it skips only the
 internal-quality re-read of non-contract code in full-tier phases that closed clean —
 decided 2026-07-14, replacing the cumulative re-read), one change in flight per checkout
 (commit spike/side artifacts to their own branch before starting an apply; decided
@@ -183,8 +187,15 @@ spec makes a *perfect* plan build the wrong thing.
 fetch-and-compare reviewer verifies the *stated* checkable claims in
 `proposal.md`/`spec.md`/`design.md` against the live repo (symbol existence, caller
 counts, wire shapes, "X is dead/unused" claims, file inventories), recording per-claim
-method and evidence. CONFIRMED is reserved for mechanically checkable facts —
-judgment-laden claims stay "unverified" and reach the panel un-vouched. Corrections land
+method and evidence. An adequate method (decided 2026-07-27): however claims are
+enumerated, each states the **property to verify**, never a line to confirm — the pass
+answers the property, not the pointer; and CONFIRMED stays reserved for mechanically
+checkable facts, which for a claim about what a *function does* means reading the whole
+function plus any callee on the claim-relevant path — the log entry then quotes the
+claim-relevant code path and says which read was done, so the panel can spot-check the
+reasoning rather than inherit the verdict (a single-line read supports only a claim
+about that line). Judgment-laden claims stay "unverified" and reach the panel
+un-vouched. Corrections land
 in the draft; the pass gets a dated Panel & review log entry (claims checked / corrected /
 left unverified). The pass is an **aid, never a warrant**: the panel prompt says stated
 claims were pre-checked and points at the log, and **explicitly preserves the reviewers'
