@@ -11,8 +11,6 @@ export const WF_SEGMENT_DECODE_MIN = 256;
 export const WF_SEGMENT_DECODE_MAX = 4096;
 /** Min |ΔtotalSec| before resampling merged peaks (rolling timeline). Avoids constant morphing. */
 export const WF_MERGED_RESAMPLE_MIN_DELTA_SEC = 1.25;
-/** SVG viewBox height fraction used for 0 → full-scale peak (headroom above "loudest" bin). */
-export const WF_SVG_PEAK_SPAN = 80;
 
 export interface AudioClipLite {
   segmentId: string | null;
@@ -129,38 +127,4 @@ export function resampleTimelinePeaksToNewSpan(
     out[b] = a + f * (b0 - a);
   }
   return out;
-}
-
-function waveformPeakToSvgY(peak01: number): number {
-  const amp = Number.isFinite(peak01) ? peak01 : 0;
-  const y = 100 - amp * WF_SVG_PEAK_SPAN;
-  return Math.max(100 - WF_SVG_PEAK_SPAN, Math.min(100, y));
-}
-
-export interface WaveformSvgSpec {
-  w: number;
-  pathD: string;
-}
-
-export function waveformSvgSpec(peaks: Float32Array | null): WaveformSvgSpec {
-  if (!peaks || peaks.length === 0) {
-    return { w: 1, pathD: 'M 0 100 L 1 100 Z' };
-  }
-  const n = peaks.length;
-  if (n === 1) {
-    const pk = Number(peaks[0]);
-    const pv = Number.isFinite(pk) ? pk : 0;
-    const y = waveformPeakToSvgY(pv);
-    return { w: 1, pathD: `M 0 100 L 0 ${y} L 1 ${y} L 1 100 Z` };
-  }
-  const w = n - 1;
-  const ys: number[] = [];
-  for (let i = 0; i < n; i += 1) {
-    const p = Number(peaks[i]);
-    ys.push(waveformPeakToSvgY(Number.isFinite(p) ? p : 0));
-  }
-  let d = `M 0 100 L 0 ${ys[0]}`;
-  for (let i = 1; i < n; i++) d += ` L ${i} ${ys[i]}`;
-  d += ` L ${w} 100 Z`;
-  return { w, pathD: d };
 }

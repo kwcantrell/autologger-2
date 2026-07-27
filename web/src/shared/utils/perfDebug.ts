@@ -133,10 +133,6 @@ function syncVideoPauseWithState(): void {
   setDecorativeVideosPaused(Boolean(currentState.noDecorativeVideos));
 }
 
-export function getPerfDebugState(): FlagState {
-  return { ...currentState };
-}
-
 export interface InitPerfDebugUIOptions {
   mount?: HTMLElement | null;
 }

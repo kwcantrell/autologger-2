@@ -28,11 +28,12 @@ interface MarkerEntry {
 }
 
 // Marker positions MUST use the same coordinate space as the rendered timeline
-// markers and audio clips (eventTimelineSec, frame-rate aware). The display-only
-// parseSmpteToSec in shared/utils/timecode.ts drops the SMPTE frame field, so
-// jump targets landed ~1s before each recording's start clip — putting the
-// playhead in the inter-recording gap, where the audio player resolves forward
-// and skips/auto-plays the wrong recording.
+// markers and audio clips (eventTimelineSec, frame-rate aware). A display-only
+// parseSmpteToSec (formerly in shared/utils/timecode.ts, deleted 2026-07-27)
+// dropped the SMPTE frame field, so jump targets landed ~1s before each
+// recording's start clip — putting the playhead in the inter-recording gap,
+// where the audio player resolves forward and skips/auto-plays the wrong
+// recording.
 function groupMarkers(events: LogEvent[], status: SessionStatus | null | undefined): MarkerEntry[] {
   const grouped = new Map<string, MarkerEntry>();
   for (const e of events) {

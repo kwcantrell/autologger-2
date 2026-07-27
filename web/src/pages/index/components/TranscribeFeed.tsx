@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useMemo, useReducer, useState } from 'react';
 import { ApiError } from '../../../api/client';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
@@ -61,7 +61,6 @@ export function TranscribeFeed({ sessionId }: Props) {
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
   const jumpReasonId = 'v5-transcribe-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
-  const errorRef = useRef<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   // Latched on the first 503 (ui-refresh D9: honest capability gate — the server has no
   // capability endpoint, so unavailability is learned on first attempt and then stated
@@ -84,12 +83,9 @@ export function TranscribeFeed({ sessionId }: Props) {
       onError: (err) => {
         if (err instanceof ApiError && err.status === 503) {
           setGenUnavailable(true);
-          errorRef.current = err.message;
           return;
         }
-        const msg = err instanceof Error ? err.message : 'Generation failed.';
-        setGenError(msg);
-        errorRef.current = msg;
+        setGenError(err instanceof Error ? err.message : 'Generation failed.');
       },
     });
   }

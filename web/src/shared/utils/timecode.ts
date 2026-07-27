@@ -1,11 +1,5 @@
 import type { LogEvent } from '../../api/types';
 
-export function parseSmpteToSec(tc: string | null | undefined): number {
-  const m = /^(\d{2}):(\d{2}):(\d{2})(?:[:;]\d+)?$/.exec(String(tc ?? '').trim());
-  if (!m) return -1;
-  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
-}
-
 export function formatTimecodeHMS(tc: string | null | undefined): string {
   if (tc == null || tc === '') return '—';
   return String(tc).replace(/[:;]\d{2}$/, '');

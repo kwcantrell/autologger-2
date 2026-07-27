@@ -58,9 +58,9 @@ describe('apiFetch', () => {
 
   it('non-ok responses throw ApiError with the extracted detail', async () => {
     // Fresh Response per call — a Response body is single-use.
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(jsonResponse({ detail: 'nope' }, 403)),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse({ detail: 'nope' }, 403)));
     vi.stubGlobal('fetch', fetchMock);
     await expect(apiFetch('admin/users')).rejects.toThrow(ApiError);
     await expect(

@@ -100,7 +100,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
   const onPlaybackSecChangeRef = useRef(onPlaybackSecChange);
   onPlaybackSecChangeRef.current = onPlaybackSecChange;
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [clipIndex, setClipIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
   const clipIndexRef = useRef(0);
@@ -112,9 +111,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
   // Keep the current clip index in range when segments shrink (delete/replace mid-playback).
   useEffect(() => {
     if (clipIndexRef.current >= validSegments.length) {
-      const idx = Math.max(0, validSegments.length - 1);
-      clipIndexRef.current = idx;
-      setClipIndex(idx);
+      clipIndexRef.current = Math.max(0, validSegments.length - 1);
     }
   }, [validSegments]);
 
@@ -140,7 +137,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const seg = validSegments[idx];
       if (!seg) {
         setPlayingState(false);
-        setClipIndex(0);
         clipIndexRef.current = 0;
         return;
       }
@@ -178,7 +174,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         el.addEventListener('loadedmetadata', onMeta, { once: true });
       }
       clipIndexRef.current = idx;
-      setClipIndex(idx);
       setPlayingState(true);
     },
     [validSegments, ensureAudio, setPlayingState],
@@ -193,7 +188,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         playClip(next);
       } else {
         setPlayingState(false);
-        setClipIndex(0);
         clipIndexRef.current = 0;
       }
     };
@@ -271,7 +265,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const el = ensureAudio();
       pendingOffsetRef.current = target.offsetSec;
       clipIndexRef.current = idx;
-      setClipIndex(idx);
       // Reflect the playing state immediately when starting fresh playback (mirrors
       // playClip's synchronous UI feedback) — don't wait on the deferred applyOffset
       // below, which may not run until a loadedmetadata event fires.
@@ -354,7 +347,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     }
     pendingOffsetRef.current = null;
     setPlayingState(false);
-    setClipIndex(0);
     clipIndexRef.current = 0;
   }, [segments, setPlayingState]);
 
@@ -384,7 +376,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
 
   // Keep unused var warnings away
   void playing;
-  void clipIndex;
 
   return null;
 });
