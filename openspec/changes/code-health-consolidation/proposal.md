@@ -43,8 +43,8 @@ change, is cheaper than debugging the divergence later.
   `core.eventCounts()` helper (restoring sessionCore's stated no-cross-store-reads
   layering), aiV2 route-guard prologue, store patch-builder/ordinal-seed helpers, lease
   free-path, mime↔ext mapping, and typing the companion state payload the server builds
-  (dead-branch resolution for the PUT `internal` category included, preserving the frozen
-  400 behavior).
+  (the PUT `internal` category branch is kept and documented — the fact-check
+  established it is reachable, not dead — preserving the frozen 400 behavior).
 - **Spurious-await cleanup** (finding 5.1): make `requireSession` and the test seed
   helpers synchronous and drop the ~44 misleading `await`s on synchronous hub RPCs,
   making real suspension points visible again.

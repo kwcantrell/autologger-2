@@ -40,9 +40,11 @@
 - [ ] 4.1 Extract the v2 group-liveness kill ladder into a shared module per D2; unit
       test for the leader-exits-member-survives case; both paths consume it; delete the
       chat-path leader-exit ladder
-- [ ] 4.2 Extract the shared turn orchestrator per D3 (emit-guard swallows for both
-      paths; scrubbing stays per-path parameter); SSE pins from 1.3 stay green for both
-      paths
+- [ ] 4.2 Extract the shared OUTER turn orchestrator per D3 (rescoped: relay stays
+      per-path; hooks incl. `runRelay`/`terminate`/`release`/`onTimeoutOrAbort`;
+      emit-guard swallows for both paths; scrubbing and relay-drain policy stay
+      per-path; v2's outer try/finally hardening adopted for both); SSE pins from 1.3
+      stay green for both paths
 - [ ] 4.3 Cap `issuedClaudeSessionIds` per D4 with insertion-order eviction + unit test
 
 ## 5. Server consolidations
@@ -51,15 +53,19 @@
       (finding 2.4); output-equality tests for both call sites
 - [ ] 5.2 `core.eventCounts()` per D10; transportStore/eventStore consume it; statusLive
       results pinned before/after (finding 2.10)
-- [ ] 5.3 `guardAiV2Route` helper replacing the five copied prologues (finding 2.11);
-      route-behavior tests unchanged
+- [ ] 5.3 `guardAiV2Route` helper replacing the five copied prologues, parameterized by
+      gate set per D12 (the dashboard-CRUD routes deliberately gate only on
+      `aiV2Configured` — preserve that); route-behavior tests unchanged (finding 2.11)
 - [ ] 5.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
       stores), `freeLease()`, bidirectional mime↔ext table, `SELECT 1` existence checks
       (findings 2.12, review §1 low items folded there)
 - [ ] 5.5 Companion payload typed server-side per D11 (type-only; wire bytes pinned by
       existing companion int tests)
-- [ ] 5.6 Delete PUT `internal` dead branch per D9 (frozen 400 untouched; comment records
-      why the branch was unreachable) (finding 3.8)
+- [ ] 5.6 KEEP the PUT `internal` branch per D9 (fact-check reversed the review's
+      dead-branch reading: the branch is reachable when a profile defines category id
+      `internal`); add a comment documenting the reachability condition and the frozen
+      PUT-vs-POST asymmetry; add a test pinning the branch's behavior for such a
+      profile (finding 3.8)
 - [ ] 5.7 Catalog cleanups per finding 5.7 / D12: `authSetPrefs` upsert, `tx()` on the
       two read-modify-write pairs, `getStudioSettingsBlob` `resetToDefault()`,
       profile assembly single `listShowsForStudio`; behavior pinned by existing tests +
@@ -82,15 +88,21 @@
 - [ ] 7.3 Shared marker-grouping util consumed by Timeline + MarkerNav (finding 2.6)
       with a group-equality test over a mixed fixture
 - [ ] 7.4 `useGatedGenerate` + shared toolbar fragment for Transcribe/Topics feeds
-      (finding 2.5); latch behavior tests preserved
+      (finding 2.5); verify near-verbatim premise against the post-quick-fixes merged
+      tree (W3); reason-span content is a slot (Transcribe's carries an inline
+      `<code>` element); latch behavior tests preserved
 - [ ] 7.5 Single `normalizePalette9` + `DEFAULT_PALETTE` export consumed by
       HomeSettingsModal + EventButtonsTable (finding 2.7); reconcile the two
       implementations' diff explicitly in the test
 - [ ] 7.6 `sessionStatusKeys`/`audioSegmentsKeys` factories replacing all bare literals
-      per D6 (finding 2.8); grep-clean assertion that no bare
-      `'session-status'`/`'audio-segments'` literals remain outside the factories
-- [ ] 7.7 Unify SessionCard/ArchivedSessionCard per D12 (finding 2.9); menu behaviors
-      tested per variant
+      per D6's W6 inventory — incl. HomeSettingsModal's prefix-only `['session-status']`
+      (`.all`-style entry) and the two test files (finding 2.8); grep-clean assertion
+      that no bare `'session-status'`/`'audio-segments'` literals remain outside the
+      factories
+- [ ] 7.7 Unify SessionCard/ArchivedSessionCard per D12's W7 inventory (parameterize
+      menu items AND container selectability, title button-vs-span, rename-modal
+      ownership, `data-start-offset`/a11y markers) (finding 2.9); behaviors tested per
+      variant
 - [ ] 7.8 Small batched items (finding 5.9 subset dispositioned OS, D12): tab-panel map
       in SessionWorkspace, `colSpan={COLUMNS.length}`, memoized EventLogSheet
       filter+sort, `categories.map` index reuse, `useAudioClips` conditional tick bump,
@@ -99,8 +111,9 @@
 
 ## 8. Test-infrastructure dedupe
 
-- [ ] 8.1 Shared `parseSse` + `seededSession` in `server/src/test/helpers`; migrate the
-      2 + 8 duplicating int-test files; rename the shadowing `configuredEnv`
+- [ ] 8.1 Shared `parseSse` + seed-chain helper in `server/src/test/helpers`; migrate
+      the 2 parseSse files and the ~9–12 seed-chain-duplicating int-test files
+      (corrected count, fact-check S16); rename the shadowing `configuredEnv`
       (finding 5.10)
 - [ ] 8.2 Shared fake-core test helper replacing the three hand-rolled fakes (typed, no
       `as unknown as` casts); relocate the misplaced fakeClock suites to `node/`
