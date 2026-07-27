@@ -20,21 +20,21 @@ import { JUMP_COLUMN, JumpToTimeButton } from './JumpToTimeButton';
 //      state does not — design D2), so this assertion is genuinely falsified by an
 //      implementation that renders an aria-disabled button instead of nothing.
 //
-//   2. the keyboard-activation tests genuinely exercise Enter/Space, not a
-//      disguised click. jsdom does NOT implement the browser's native
-//      "Enter/Space activates a focused <button>" behavior (verified directly:
-//      dispatching a raw `keydown`/`keyup` on a plain jsdom <button> fires no
-//      `click` event at all — jsdom's HTMLButtonElement only implements the
-//      DOM "activation behavior" for submit/reset, not the UA-level key-to-click
-//      translation). So JumpToTimeButton implements Enter/Space handling itself
-//      (WAI-ARIA APG's button pattern: Enter activates on keydown, Space
-//      activates on keyup with keydown only suppressing scroll), and these tests
-//      dispatch real KeyboardEvents and assert the callback fires — there is no
-//      native browser behavior standing in for it here, so this could not pass by
-//      accident via a `fireEvent.click` shortcut. (Empirically cross-checked in
-//      real headless Chromium that calling preventDefault() in this component's
-//      keydown/keyup handlers suppresses the browser's own native click-on-key
-//      activation, so real-browser behavior does not double-fire alongside it.)
+//   2. keyboard activation. Whole-branch audit fix wave, finding M1: this
+//      component used to hand-roll Enter/Space handling
+//      (`handleKeyDown`/`handleKeyUp`) so jsdom — which does NOT implement the
+//      browser's native "Enter/Space activates a focused <button>" behavior —
+//      could exercise it directly. A real-Chromium audit experiment confirmed
+//      there is no double-fire: the manual handlers were REDUNDANT on a native
+//      `<button>` (which already activates on Enter/Space with no extra code),
+//      and their `preventDefault()` calls suppressed the native `click` a
+//      keyboard activation would otherwise dispatch — a latent hazard for any
+//      future ancestor-delegated click listener. They were removed; the tests
+//      that exercised them are replaced below by (a) an assertion that this
+//      renders a native `<button type="button">`, whose Enter/Space activation
+//      is then a UA guarantee rather than something to re-prove in jsdom, and
+//      (b) a real keyboard-activation check in `e2e/jump-column.spec.ts`,
+//      where an actual user agent exists to translate the keypress.
 
 describe('FeedTable + ColumnDef.ariaLabel (first consumer)', () => {
   it('renders JUMP_COLUMN header with no visible text but an accessible name', () => {
@@ -95,24 +95,11 @@ describe('JumpToTimeButton', () => {
     expect(onJump).toHaveBeenCalledWith(42);
   });
 
-  it('activates on Enter via a genuine keydown (not a synthesized click)', () => {
-    const onJump = vi.fn();
-    renderButton({ onJump });
+  it('is a native <button type="button"> — Enter/Space activation is a UA guarantee, exercised for real in e2e/jump-column.spec.ts', () => {
+    renderButton();
     const btn = screen.getByRole('button', { name: /00:12:03:07/ });
-    fireEvent.keyDown(btn, { key: 'Enter' });
-    expect(onJump).toHaveBeenCalledTimes(1);
-    expect(onJump).toHaveBeenCalledWith(42);
-  });
-
-  it('activates on Space release via a genuine keyup, not on Space keydown, and not via click', () => {
-    const onJump = vi.fn();
-    renderButton({ onJump });
-    const btn = screen.getByRole('button', { name: /00:12:03:07/ });
-    fireEvent.keyDown(btn, { key: ' ' });
-    expect(onJump).not.toHaveBeenCalled();
-    fireEvent.keyUp(btn, { key: ' ' });
-    expect(onJump).toHaveBeenCalledTimes(1);
-    expect(onJump).toHaveBeenCalledWith(42);
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn.getAttribute('type')).toBe('button');
   });
 
   it('renders no control at all when the row has no resolvable position (absence, not aria-disabled)', () => {
@@ -135,9 +122,6 @@ describe('JumpToTimeButton', () => {
     expect(btn.getAttribute('aria-describedby')).toBe('shared-reason');
 
     fireEvent.click(btn);
-    fireEvent.keyDown(btn, { key: 'Enter' });
-    fireEvent.keyDown(btn, { key: ' ' });
-    fireEvent.keyUp(btn, { key: ' ' });
     expect(onJump).not.toHaveBeenCalled();
   });
 

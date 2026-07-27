@@ -1,4 +1,3 @@
-import type { KeyboardEvent } from 'react';
 import type { ColumnDef } from './FeedTable';
 
 // --- feed-row-seek: the shared jump control (design D2, D7) ---
@@ -77,10 +76,6 @@ export interface JumpToTimeButtonProps {
   reasonId?: string;
 }
 
-function isActivationKey(key: string): boolean {
-  return key === ' ' || key === 'Spacebar';
-}
-
 export function JumpToTimeButton({
   resolvedSec,
   displayTime,
@@ -97,31 +92,16 @@ export function JumpToTimeButton({
     onJump(resolvedSec);
   };
 
-  // Enter/Space handling is explicit here (WAI-ARIA APG's button pattern: Enter
-  // activates on keydown, Space activates on release) rather than left to the
-  // browser's native <button> key-to-click translation. A real <button> already
-  // gets that translation for free in every browser — this exists so the
-  // component's keyboard path is deterministic and directly testable rather than
-  // relying on a UA behavior jsdom does not implement. `preventDefault()` on both
-  // the Enter keydown and the Space keyup suppresses the browser's own
-  // native activation for that same key press, so this does not double-fire
-  // alongside it (verified in real headless Chromium).
-  const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      activate();
-    } else if (isActivationKey(e.key)) {
-      e.preventDefault();
-    }
-  };
-
-  const handleKeyUp = (e: KeyboardEvent<HTMLButtonElement>) => {
-    if (isActivationKey(e.key)) {
-      e.preventDefault();
-      activate();
-    }
-  };
-
+  // Whole-branch audit fix wave, finding M1: this used to hand-roll
+  // Enter/Space handling (`handleKeyDown`/`handleKeyUp`) to make the keyboard
+  // path deterministic under jsdom, which has no native <button>
+  // key-to-click translation. Verified in real headless Chromium: a native
+  // `<button type="button">` already activates on Enter/Space with no
+  // double-fire against `onClick` — the hand-rolled handlers were redundant
+  // there, AND their `preventDefault()` suppressed the native `click` a
+  // keyboard activation would otherwise dispatch, so any future
+  // ancestor-delegated click listener would silently miss keyboard
+  // activations. `onClick` alone covers pointer AND keyboard activation.
   return (
     <button
       type="button"
@@ -130,8 +110,6 @@ export function JumpToTimeButton({
       aria-disabled={unavailable || undefined}
       aria-describedby={unavailable ? reasonId : undefined}
       onClick={activate}
-      onKeyDown={handleKeyDown}
-      onKeyUp={handleKeyUp}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M6 4L20 12L6 20V4Z" />
