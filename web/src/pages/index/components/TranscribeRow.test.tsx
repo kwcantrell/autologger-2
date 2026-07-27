@@ -133,6 +133,53 @@ describe('TranscribeRow — inline editing untouched', () => {
   });
 });
 
+// --- commitField dirty check (feed-row-seek, task 9.2) ---
+//
+// Before this task, `commitField` fired `onUpdate` unconditionally on blur —
+// `edit` is set by `onFocus`, so it is always truthy by blur time, and the
+// early `if (!edit) return;` never actually gates a same-value blur. Mirrors
+// `EventLogRow.handleBlur`'s dirty check (compare the committed value against
+// the row's current field value; skip the mutation when they match), taking
+// only the comparison, not `EventLogRow`'s `setTimeout` defer or its
+// `row.contains(document.activeElement)` check — those exist there to let a
+// *sibling* field's focus settle before an aggregate multi-field save, which
+// has no analogue here: each TranscribeRow field commits independently on
+// its OWN blur, so there is no sibling-focus race to defer past.
+describe('TranscribeRow — commitField dirty check (task 9.2)', () => {
+  it('blurring an unchanged field issues no update', () => {
+    const { onUpdate } = renderRow({ row: wordFixture({ session_time: '00:00:10:00' }) });
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(tcInput);
+    fireEvent.blur(tcInput);
+
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a CHANGED field still commits exactly as before, same payload shape', () => {
+    const { onUpdate } = renderRow({ row: wordFixture({ session_time: '00:00:10:00' }) });
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(tcInput);
+    fireEvent.change(tcInput, { target: { value: '00:00:20:00' } });
+    fireEvent.blur(tcInput);
+
+    expect(onUpdate).toHaveBeenCalledWith('w-1', { session_time: '00:00:20:00' });
+  });
+
+  it('focusing a field, changing nothing, then activating the jump fires no update', () => {
+    const { onUpdate, onJump } = renderRow({ row: wordFixture({ session_time: '00:00:10:00' }) });
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(tcInput);
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+    fireEvent.blur(tcInput);
+
+    expect(onJump).toHaveBeenCalledWith(10);
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+});
+
 describe('TranscribeRow — feed-wide gate (design D5/D7)', () => {
   it('renders aria-disabled with the shared reason id when jump is unavailable, and activation no-ops', () => {
     const { onJump } = renderRow({ jumpUnavailable: true, jumpReasonId: 'shared-reason-x' });

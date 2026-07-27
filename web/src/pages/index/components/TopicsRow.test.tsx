@@ -210,6 +210,75 @@ describe('TopicsRow — inline editing untouched', () => {
   });
 });
 
+// --- commitField dirty check (feed-row-seek, task 9.2) ---
+//
+// Before this task, `commitField` fired `update.mutate` unconditionally on
+// blur — mirrors the same defect fixed in `TranscribeRow`. Mirrors
+// `EventLogRow.handleBlur`'s dirty check (compare the committed/coerced value
+// against the row's current field value; skip the mutation when they match),
+// without `EventLogRow`'s `setTimeout` defer or `row.contains(activeElement)`
+// check — those exist there for an aggregate multi-field save with a
+// sibling-focus race; each TopicsRow field commits independently on its own
+// blur, so there is no such race here.
+describe('TopicsRow — commitField dirty check (task 9.2)', () => {
+  it('blurring an unchanged session_time field issues no PATCH', async () => {
+    renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+    const timeInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(timeInput);
+    fireEvent.blur(timeInput);
+
+    // A mutation's fetch call lands asynchronously relative to the blur
+    // event (react-query schedules it), so flush before asserting absence —
+    // an immediate synchronous check would pass trivially either way.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+
+  it('blurring an unchanged numeric field (duration_sec) issues no PATCH despite Number coercion', async () => {
+    renderRow({ row: topicFixture({ duration_sec: 30 }) });
+    const durationInput = screen.getByDisplayValue('30');
+
+    fireEvent.focus(durationInput);
+    fireEvent.blur(durationInput);
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+
+  it('a CHANGED field still commits exactly as before, same PATCH payload', async () => {
+    renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+    const timeInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(timeInput);
+    fireEvent.change(timeInput, { target: { value: '00:00:20:00' } });
+    fireEvent.blur(timeInput);
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenLastCalledWith(
+        'sessions/sess-1/topics/topic-1',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ session_time: '00:00:20:00' }),
+        }),
+      ),
+    );
+  });
+
+  it('focusing a field, changing nothing, then activating the jump fires no PATCH', async () => {
+    const { onJump } = renderRow({ row: topicFixture({ session_time: '00:00:10:00' }) });
+    const timeInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.focus(timeInput);
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+    fireEvent.blur(timeInput);
+
+    expect(onJump).toHaveBeenCalledWith(10);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+});
+
 describe('TopicsRow — feed-wide gate (design D5/D7)', () => {
   it('renders aria-disabled with the shared reason id when jump is unavailable, and activation no-ops', () => {
     const { onJump } = renderRow({ jumpUnavailable: true, jumpReasonId: 'shared-reason-x' });

@@ -88,9 +88,20 @@ export const TranscribeRow = memo(function TranscribeRow({
     setEdit({ session_time: row.session_time, speaker: row.speaker, word: row.word });
   }
 
+  // feed-row-seek, task 9.2: dirty check mirroring `EventLogRow.handleBlur`'s
+  // comparison against the row's current value. `edit` is set by `onFocus`
+  // and is therefore always truthy by blur time, so the early `if (!edit)
+  // return;` above never actually gated a same-value blur — every blur wrote,
+  // even an unchanged one. That matters now that a jump control shares the
+  // row: clicking it while a field is focused blurs that field, and an
+  // unconditional commit would fire an unchanged-value PATCH (invalidating
+  // the query under a virtualized list) on every such jump. Compares against
+  // `row[field]` (the last COMMITTED value), not a focus-time snapshot, same
+  // as `EventLogRow`'s comparison against its current `event` prop.
   function commitField(field: keyof EditState, value: string) {
     if (!edit) return;
     setEdit((p) => (p ? { ...p, [field]: value } : p));
+    if (value === row[field]) return;
     onUpdate(row.id, { [field]: value });
   }
 

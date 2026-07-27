@@ -95,6 +95,12 @@ export function TopicsRow({
     });
   }
 
+  // feed-row-seek, task 9.2: dirty check mirroring `EventLogRow.handleBlur`'s
+  // comparison against the row's current value (see the fuller rationale in
+  // `TranscribeRow.commitField`, which has the identical defect). Compares
+  // the COERCED patch value — the same value that would be sent — against
+  // `row[field]`, so a numeric field re-typed identically (e.g. "30" blurred
+  // back to 30) is correctly recognized as unchanged too.
   function commitField(field: keyof EditState, value: string) {
     if (!edit) return;
     setEdit((p) => (p ? { ...p, [field]: value } : p));
@@ -103,6 +109,7 @@ export function TopicsRow({
     if (field === 'duration_sec') patch.duration_sec = Number(value) || 0;
     if (field === 'topic_level') patch.topic_level = Math.max(1, Number(value) || 1);
     if (field === 'summary') patch.summary = value;
+    if (patch[field] === row[field]) return;
     update.mutate({ topicId: row.id, patch });
   }
 
