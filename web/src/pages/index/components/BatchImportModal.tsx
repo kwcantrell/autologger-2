@@ -1,8 +1,13 @@
 import clsx from 'clsx';
-import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import type { ProfilePayload } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
+import {
+  runBatchImport,
+  type BatchImportProgressState,
+} from '../batchImport/runner';
 import { Select } from './Select';
 
 interface Props {
@@ -17,6 +22,23 @@ function folderNameFromFiles(files: FileList | null): string | null {
   if (!rel) return null;
   const top = rel.split('/')[0];
   return top || null;
+}
+
+function ProgressBar({ percent }: { percent: number }) {
+  return (
+    <div
+      className="h-1.5 w-full overflow-hidden rounded bg-[rgba(255,255,255,0.08)]"
+      role="progressbar"
+      aria-valuenow={percent}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div
+        className="h-full bg-sky-400 [transition:width_0.15s_ease]"
+        style={{ width: `${percent}%` }}
+      />
+    </div>
+  );
 }
 
 /** Upload up-arrow icon (D8): rail `#v6-btn-batch-import` + modal header. */
@@ -44,17 +66,36 @@ function BatchImportIcon() {
   );
 }
 
+const EMPTY_PROGRESS: BatchImportProgressState = { current: null, percent: 0, lines: [] };
+
 export function BatchImportModal({ profile, onClose }: Props) {
   const shows = profile?.shows ?? [];
   const defaultShowId = profile?.active_show_id ?? '';
+  const queryClient = useQueryClient();
 
   const [showId, setShowId] = useState(defaultShowId || (shows[0]?.id ?? ''));
   const [folderName, setFolderName] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [progress, setProgress] = useState<BatchImportProgressState>(EMPTY_PROGRESS);
 
   const dirInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const canStart = Boolean(showId && folderName && selectedFiles && selectedFiles.length > 0);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const canStart =
+    Boolean(showId && folderName && selectedFiles && selectedFiles.length > 0) && !isImporting;
+
+  const handleClose = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    onClose();
+  };
 
   const handleImportAudio = () => {
     dirInputRef.current?.click();
@@ -66,14 +107,50 @@ export function BatchImportModal({ profile, onClose }: Props) {
     setFolderName(folderNameFromFiles(files));
   };
 
-  const handleStartImport = () => {
-    // Phase 4 wires the client import runner here.
+  const handleStartImport = async () => {
+    if (!profile || !selectedFiles || !showId) return;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsImporting(true);
+    setProgress(EMPTY_PROGRESS);
+
+    try {
+      await runBatchImport({
+        showId,
+        files: selectedFiles,
+        profile,
+        signal: controller.signal,
+        onProgress: setProgress,
+        onSessionCreated: () => {
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        },
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      const detail = err instanceof Error ? err.message : 'Import failed';
+      setProgress((prev) => ({
+        ...prev,
+        current: null,
+        lines: [...prev.lines, `Failed: ${detail}`],
+      }));
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+      setIsImporting(false);
+    }
   };
+
+  const showProgress =
+    isImporting || progress.current !== null || progress.lines.length > 0 || progress.percent > 0;
 
   return (
     <Dialog
       open
-      onOpenChange={(o) => !o && onClose()}
+      onOpenChange={(o) => !o && handleClose()}
       className="md:![transform:translate(calc(-50%+8.125rem),-50%)]"
       hideTitle
       title="Batch Import"
@@ -89,7 +166,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
           type="button"
           className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.04)] text-[1.25rem] leading-none text-v5-muted [transition:background_0.12s_ease,color_0.12s_ease,border-color_0.12s_ease] hover-always:border-v5-border-strong hover-always:text-v5-text"
           aria-label="Close"
-          onClick={onClose}
+          onClick={handleClose}
         >
           &times;
         </button>
@@ -108,7 +185,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
                 ? [{ value: '', label: 'No shows linked to this team', disabled: true }]
                 : shows.map((sh) => ({ value: sh.id, label: `${sh.name} (${sh.show_code})` }))
             }
-            disabled={shows.length === 0}
+            disabled={shows.length === 0 || isImporting}
           />
         </label>
 
@@ -118,6 +195,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
             className="btn self-start"
             id="bi-import-audio"
             onClick={handleImportAudio}
+            disabled={isImporting}
           >
             Import Audio
           </button>
@@ -141,7 +219,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
           ) : null}
         </div>
 
-        <button type="button" className="btn self-start" id="bi-import-logs">
+        <button type="button" className="btn self-start" id="bi-import-logs" disabled={isImporting}>
           Import Logs
         </button>
 
@@ -151,18 +229,41 @@ export function BatchImportModal({ profile, onClose }: Props) {
             className={clsx('btn primary', BTN_PRIMARY_SKY)}
             id="bi-start-import"
             disabled={!canStart}
-            onClick={handleStartImport}
+            onClick={() => void handleStartImport()}
           >
-            Start Import
+            {isImporting ? 'Importing…' : 'Start Import'}
           </button>
         </div>
 
         <div
           id="batch-import-progress"
-          className="min-h-0"
+          className="flex min-h-0 flex-col gap-2"
           data-testid="batch-import-progress"
           aria-live="polite"
-        />
+        >
+          {showProgress ? (
+            <>
+              {progress.current ? (
+                <div className="flex flex-col gap-1" data-testid="batch-import-current">
+                  <span className="text-[0.85rem] text-v5-text">
+                    {progress.current} ({progress.percent}%)
+                  </span>
+                  <ProgressBar percent={progress.percent} />
+                </div>
+              ) : null}
+              {progress.lines.length > 0 ? (
+                <ul
+                  className="m-0 list-none space-y-0.5 p-0 text-[0.85rem] text-v5-muted"
+                  data-testid="batch-import-lines"
+                >
+                  {progress.lines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
     </Dialog>
   );
