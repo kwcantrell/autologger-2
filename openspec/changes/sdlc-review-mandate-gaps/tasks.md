@@ -13,10 +13,10 @@
 
 ## 1. Encoding edits (one implementer pass, plain branch)
 
-- [ ] 1.1 Branch `sdlc-review-mandate-gaps` off `main`; first commit is the gated OpenSpec
+- [x] 1.1 Branch `sdlc-review-mandate-gaps` off `main`; first commit is the gated OpenSpec
       artifacts themselves (`docs(openspec): add sdlc-review-mandate-gaps gated artifacts`),
       version-pinning the plan of record.
-- [ ] 1.2 `.claude/skills/openspec-apply-change/SKILL.md` — apply D1/D3/D4 as gated:
+- [x] 1.2 `.claude/skills/openspec-apply-change/SKILL.md` — apply D1/D3/D4 as gated:
       - Step 6f + Guardrails: orchestrator bookkeeping commits stage explicit paths, never
         `git add -A`/`git add .`/`commit -a`; `git status --porcelain` read before each
         commit; every unexplained path gets a ledger disposition line (path, origin,
@@ -46,7 +46,7 @@
         named-test mutation check (working-tree-only, never committed); the scoped
         re-review **re-executes** the recorded mutation and remains expected to run one of
         its own (D4).
-- [ ] 1.3 `CLAUDE.md` — apply D2/D7 as gated, keeping the file's short-pointer posture:
+- [x] 1.3 `CLAUDE.md` — apply D2/D7 as gated, keeping the file's short-pointer posture:
       - Fact-check block: claims (however enumerated) state the property to verify, never
         a line to confirm; function-behavior claims require a whole-function (+
         relevant-callee) read, and a behavioral CONFIRMED quotes the claim-relevant code
@@ -57,21 +57,21 @@
       - "How we work" audit-package parenthetical: add tree-hygiene/package-integrity and
         declared-seam call-site items so the CLAUDE.md summary matches the skill's
         charter (D1/D3).
-- [ ] 1.4 Confirm `openspec/config.yaml` is **unchanged** (D7: no proposed rule fires at
+- [x] 1.4 Confirm `openspec/config.yaml` is **unchanged** (D7: no proposed rule fires at
       artifact-generation time; the gate ordered no re-routing).
 
 ## 2. Verification (docs-only set, per design.md D8)
 
-- [ ] 2.1 `openspec validate sdlc-review-mandate-gaps --strict` passes.
-- [ ] 2.2 Skill-load check: `openspec-apply-change` still loads (frontmatter intact,
+- [x] 2.1 `openspec validate sdlc-review-mandate-gaps --strict` passes.
+- [x] 2.2 Skill-load check: `openspec-apply-change` still loads (frontmatter intact,
       customization note + steps 6–7 present); record the result. Also record which skill
       actually loads on `/opsx:apply` (the `opsx:apply` plugin vs the customized
       `openspec-apply-change`) and confirm the customized SKILL.md remains the protocol
       home CLAUDE.md points at — closing the D6 auto-load question with observation
       rather than assumption.
-- [ ] 2.3 `npm run typecheck` + `npm test` green — proving the diff has no runtime
+- [x] 2.3 `npm run typecheck` + `npm test` green — proving the diff has no runtime
       surface (e2e/e2e:visual skipped per the declaration above).
-- [ ] 2.4 `git diff --stat main...HEAD` lists only: this change's artifacts, `CLAUDE.md`,
+- [x] 2.4 `git diff --stat main...HEAD` lists only: this change's artifacts, `CLAUDE.md`,
       the skill file — practicing D1's rule on the change that introduces it. Any other
       path is a stop-and-fix.
 
