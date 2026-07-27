@@ -6,8 +6,8 @@
 
 ## Phase 2 — Local audio import API (TDD)
 
-- [ ] 2.1 Integration tests for `POST /api/sessions/:id/local-audio-import`: happy path single blob + duration_s + anchor, 400 missing/invalid duration, 404 session, put failure rollback.
-- [ ] 2.2 Implement router reusing `addAudioSegment` / `anchorImportedTake` / rollback pattern from YouTube import (no ffmpeg, no multi-part stitch, no network fetch).
+- [x] 2.1 Integration tests for `POST /api/sessions/:id/local-audio-import`: happy path single blob + duration_s + anchor, 400 missing/invalid duration, 404 session, put failure rollback.
+- [x] 2.2 Implement router reusing `addAudioSegment` / `anchorImportedTake` / rollback pattern from YouTube import (no ffmpeg, no multi-part stitch, no network fetch).
 - [ ] 2.3 Wire route into app; update README endpoint inventory.
 
 ## Phase 3 — Batch Import UI shell
