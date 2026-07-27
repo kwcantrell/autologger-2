@@ -227,7 +227,20 @@ unsuppressed jump into a gap cues a *different take* — and under D1 would now 
 An earlier draft asserted the opposite and built its degradation story on it; three of four panel
 reviewers caught it independently.
 
-`useAudioClips(sessionId, events)` is a hook, so feeds read clips directly — React Query dedupes.
+**The coverage check MUST read the same clip layout the player does.** An earlier draft of this
+decision asserted that "feeds read clips directly — React Query dedupes"; **that was false, and it
+shipped a Critical defect caught only by the whole-branch audit.** The feeds called
+`useEvents(limit 200)` while `SessionWorkspace` fed `AudioPlayer` from `useEvents(limit 2000)` —
+different query keys, so different cache entries and no dedupe at all. Events are served ascending,
+so the 200-window truncates the *tail*, and `rebuildAudioClips` chains any segment whose
+`Recording N Started` pairing event fell outside that window at a **fabricated** position. Coverage
+then answered against a layout the player did not have: a second genuinely in an inter-recording
+gap could read "covered", and the play path would fall forward onto a *different take*.
+
+So there is exactly **one** `useAudioClips` instance, created by `SessionWorkspace` and published
+through `AudioClipsContext`; `useTimelineSeek` consumes that context rather than building its own
+layout. Layout identity is structural, not a convention two files must independently honour.
+Outside the provider the context is empty, which fails safe (no coverage ⇒ no playback).
 
 ### D7 — The feed owns the hook; rows receive a stable callback and a resolved prop
 
@@ -431,3 +444,69 @@ feed's column array, the `!cursor-pointer [&_*]:!cursor-pointer` lock, and `ROW_
    (D3) but absent from the spec. → Added a scenario.
 3. `tasks.md` said "seven gate decisions" against eight recorded escalations. → Corrected, noting
    that one reversed an earlier one.
+
+### 2026-07-26 — Whole-branch audit (layered scoped package, most capable model)
+
+Package: full diffs of every deferred/mechanical phase (1, 4, 5, 6, 7, 8, 9, 11 — the audit is
+their sole reviewer) plus full diffs of the three full-tier phases (2, 3, 10), each of which
+produced or consumed a cross-phase interface. **1 Critical, 3 Important, 7 Minor.**
+
+**Critical — the defect no phase reviewer could have caught.** The D6 clip-coverage check read a
+different clip layout than the audio player it guards (see D6 above for the full mechanism and the
+fix). It is worth recording *why* it escaped: phase 3 defined `useTimelineSeek(sessionId, events,
+batchEditMode)` with `events` as a **caller-supplied parameter** and was reviewed in isolation;
+phases 6, 7 and 8 then each independently chose an events source; and the cross-cutting transition
+test mocked `useAudioClips` outright, so no test ever observed the real layout. Every phase was
+individually correct. The defect lived entirely in the seam between them — which is the argument
+for the always-on whole-branch audit, and the clearest evidence this period that per-phase review
+cannot substitute for it.
+
+**Fixed in the fix wave:** the Critical (one `useAudioClips` behind `AudioClipsContext`); the
+Topics anchorless guard failing **open** while its transcript query was pending or errored (same
+fail-open shape D5 legislates against, on the higher-severity hazard — a loaded `[]` still reads
+anchored, preserving the deliberate empty-transcript decision); an **empty accessible name**
+(`"Jump to "`, WCAG 4.1.2) on transcript rows falling back to `start_sec`, fixed with a new
+`formatTimelineSec` that is the exact inverse of `sessionTimeToTimelineSec`; four redundant
+`useAudioClips` instances (4× `sync-from-disk` POSTs and 4× duration probes per session open);
+redundant hand-rolled Enter/Space handlers on a native button; a coverage predicate that could
+drift from `resolvePlayPosition`'s first-match semantics; an optimistic play state that could stick
+on a load failure; and a missing non-negative guard on the event resolver.
+
+**Cleared on inspection:** the phase-5 double-fire AUDIT-FLAG (direct Chromium experiment showed
+exactly one activation per key press) and the phase-6 `!static w-8` override (necessary — every
+Event Feed column overrides `FEED_TH`'s `sticky`, so shipping `JUMP_COLUMN` verbatim would pin one
+`<th>` among static siblings).
+
+**Rationale corrected (M3).** The phase-7 divergence — transcript/topics rows resolving their own
+position while event rows receive a parent-computed one — is sound and consistently applied, but
+its recorded reason ("the stored-vs-edit-buffer distinction is only visible inside the row") is
+**factually wrong**: the parent holds the same row object. The accurate distinction is that events
+resolve from a numeric field the row never edits, while transcript and topics resolve from an
+editable string, so keeping resolution adjacent to the edit state documents the hazard. Recorded
+here so a future reader does not "fix" the Event Feed to match a reason that was never true.
+
+### 2026-07-26 — Fix wave + scoped re-review
+
+Re-review was scoped to the fix diff, per protocol. **No Critical survived.** It independently
+re-ran every gate, confirmed `formatTimelineSec` is a term-for-term inverse of the converter
+(`Math.round(sec*fps)`, decomposition at `Math.round(fps)`, `% 24` wrap, drop-frame separator),
+and confirmed `MarkerNav`/`timelineJump` were byte-identical to pre-wave — D8 intact.
+
+Two Important findings, both addressed: **(1)** the Critical fix's structural guarantee was itself
+untested — the re-reviewer mutated the provider to `{ clips: [] }` and the whole web suite stayed
+green, because the parity test asserts against a hand-written workspace mirror. It fails safe, so
+nothing signalled, but D1's feature would die silently; a test through the real `SessionWorkspace`
+now covers it. **(2)** this document's D6 asserted the "React Query dedupes" premise the Critical
+refuted — corrected above.
+
+**Residuals carried to archive:** `resolvePlayPosition`'s stale `loadedmetadata` listeners across
+superseded seeks (pre-existing, adjacent to the M5 edit); the coverage/announcement divergence in
+the `start_sec` fallback case (the cell shows nothing while the control announces the resolved
+time — the right trade, but the spec sentence "as that row displays it" should be reconciled at
+sync); `AudioClipsProvider`'s value object is re-created each render (harmless today since no feed
+is `memo`-wrapped, a trap the moment one is); and every residual already listed above.
+
+**Known-red gate:** `npm run e2e` reports 14/15. `smoke.spec.ts` "narrow viewport tab strip" times
+out under default worker count and reproduces **identically on `main`** — a parallelism flake, not
+a branch regression. Worth pinning `--workers=1` for that project separately so task 11.3 stops
+reading red.
