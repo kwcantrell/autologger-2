@@ -153,6 +153,96 @@ async function seedStoppedSession(page: Page): Promise<void> {
   await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
 }
 
+// feed-row-seek, task 11.4: the transcript and topics visual fixtures
+// previously screenshot EMPTY feeds ("No transcript yet" / "No topics yet"),
+// so the new leading jump column (and any column-width regression around it)
+// was invisible to the visual gate — a baseline that never renders a row
+// can't move when a row's layout breaks. Seed real rows via the plain
+// transcript-words/topics CRUD endpoints (routers/transcribe.ts — ungated,
+// unlike …/generate), same `page.evaluate(fetch(...))` idiom smoke.spec.ts
+// already uses for out-of-band API calls against the session the UI just
+// created (cookie auth rides along automatically; same-origin, no CORS).
+//
+// The hermetic default show's frame rate is 24fps (server/src/studio.ts
+// DEFAULT_STUDIO_BLOB), so a full `HH:MM:SS:FF` timecode's frame field tops
+// out at 23 — "01:23:45:12" is a valid, in-range 11-char string, which is
+// the exact shape design D2 (JumpToTimeButton.tsx) measured as already over
+// the old 104px (`w-[6.5rem]`) time-cell capacity BEFORE the jump column
+// existed. Both feeds get one such row so a truncation/overflow regression
+// in the new layout has something to truncate.
+//
+// Transcript words are seeded first (and with non-empty `session_time`) so
+// Topics' `transcriptAnchored` gate (TopicsFeed.tsx `transcriptWhollyAnchorless`)
+// is open — otherwise every Topics row's jump control would render nothing
+// and the very column under test would be invisible in that feed too.
+//
+// ui-refresh keeps every feed tab mounted (just hidden) rather than
+// unmounting the inactive ones, so BOTH panels' rows exist in the DOM
+// simultaneously regardless of which tab is active — the transcript and
+// topics session-time values below are deliberately kept distinct (never
+// sharing a string) so an `aria-label="Jump to <time>"` lookup in one feed's
+// test can never strict-mode-collide with a same-valued row sitting hidden
+// in the other feed's mounted panel.
+async function seedTranscriptAndTopicsRows(page: Page, sessionId: string): Promise<void> {
+  await page.evaluate(
+    async ({ sid }) => {
+      const words = [
+        { session_time: '00:00:05:00', speaker: '0', word: 'Welcome' },
+        { session_time: '00:00:06:00', speaker: '0', word: 'to' },
+        { session_time: '00:00:07:00', speaker: '0', word: 'the' },
+        { session_time: '00:00:08:00', speaker: '1', word: 'show.' },
+        // Full HH:MM:SS:FF — the over-capacity shape (see comment above).
+        { session_time: '01:23:45:12', speaker: '1', word: 'Testing' },
+        { session_time: '01:23:46:00', speaker: '1', word: 'timecode overflow at full precision.' },
+      ];
+      const topics = [
+        {
+          session_time: '00:10:05:00',
+          duration_sec: 12,
+          topic_level: 1,
+          summary: 'Cold open and introductions.',
+        },
+        {
+          session_time: '00:10:20:00',
+          duration_sec: 45,
+          topic_level: 2,
+          summary:
+            'Discussion of the first segment, with a longer summary to exercise wrapping in the summary column and the auto-grow textarea.',
+        },
+        // Full HH:MM:SS:FF — the same over-capacity shape as above, at a
+        // different time than the transcript's row (see comment above).
+        {
+          session_time: '02:11:33:19',
+          duration_sec: 30,
+          topic_level: 1,
+          summary: 'Full-precision timecode topic (over-capacity check).',
+        },
+        { session_time: '02:12:10:05', duration_sec: 8, topic_level: 3, summary: 'Wrap-up.' },
+      ];
+      // Sequential, not Promise.all: each POST's `ordinal` is assigned from a
+      // server-side counter, so awaiting in order keeps row order (and hence
+      // this fixture) deterministic run to run.
+      for (const w of words) {
+        const res = await fetch(`/api/sessions/${sid}/transcript-words`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(w),
+        });
+        if (!res.ok) throw new Error(`POST /transcript-words failed: ${res.status}`);
+      }
+      for (const t of topics) {
+        const res = await fetch(`/api/sessions/${sid}/topics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(t),
+        });
+        if (!res.ok) throw new Error(`POST /topics failed: ${res.status}`);
+      }
+    },
+    { sid: sessionId },
+  );
+}
+
 // =============================================================================
 // Page-level shots
 // =============================================================================
@@ -351,6 +441,22 @@ test('feed pending-delete', async ({ page }) => {
 
 test('transcribe-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
+  // feed-row-seek task 11.4: seed real rows — this fixture previously
+  // screenshot the empty "No transcript yet" state, which can't catch a
+  // jump-column layout regression. The seed POSTs bypass React Query (raw
+  // `fetch`, no mutation hook), and ui-refresh keeps every feed tab mounted
+  // from session-load time — so `TranscribeFeed`/`TopicsFeed` already fired
+  // their (empty) initial fetch before these POSTs land, and nothing
+  // invalidates that cache. A fresh navigation (`page.goto`, mirroring
+  // smoke.spec.ts's deep-link reload) re-mounts the workspace and refetches
+  // cold, same as a real user reloading after someone else edited the
+  // transcript.
+  const sessionUrl = page.url();
+  const sessionId = new URL(sessionUrl).pathname.split('/').pop() as string;
+  await seedTranscriptAndTopicsRows(page, sessionId);
+  await page.goto(sessionUrl);
+  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
   // ui-refresh: Transcript is a top-level tab again (the ai-topics-chat
   // nested "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat
   // "Feed tabs" tablist).
@@ -361,6 +467,10 @@ test('transcribe-feed tab', async ({ page }) => {
   await expect(
     page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'Transcript' }),
   ).toHaveAttribute('aria-selected', 'true');
+  // Wait for the seeded rows (and their jump-column buttons) to actually
+  // render before shooting — the fixture's whole point is that this feed
+  // shows content, not the empty-state card.
+  await expect(page.getByRole('button', { name: 'Jump to 01:23:45:12' })).toBeVisible();
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('transcribe-feed.png', {
     mask: FEED_MASK(page),
@@ -369,6 +479,19 @@ test('transcribe-feed tab', async ({ page }) => {
 
 test('topics-feed tab', async ({ page }) => {
   await seedStoppedSession(page);
+  // feed-row-seek task 11.4: seed real rows — this fixture previously
+  // screenshot the empty "No topics yet" state, which can't catch a
+  // jump-column layout regression. Transcript words are seeded too (even
+  // though this tab doesn't show them) because Topics' jump column only
+  // renders once the session's transcript is anchored (TopicsFeed.tsx
+  // `transcriptWhollyAnchorless`). Reload after seeding — see the
+  // transcribe-feed test above for why a raw out-of-band POST needs one.
+  const sessionUrl = page.url();
+  const sessionId = new URL(sessionUrl).pathname.split('/').pop() as string;
+  await seedTranscriptAndTopicsRows(page, sessionId);
+  await page.goto(sessionUrl);
+  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
   // ui-refresh: Topics is a top-level tab again (the ai-topics-chat nested
   // "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat "Feed
   // tabs" tablist).
@@ -379,6 +502,9 @@ test('topics-feed tab', async ({ page }) => {
   await expect(
     page.getByRole('tablist', { name: 'Feed tabs' }).getByRole('tab', { name: 'Topics' }),
   ).toHaveAttribute('aria-selected', 'true');
+  // Wait for the seeded rows (and their jump-column buttons) to actually
+  // render before shooting.
+  await expect(page.getByRole('button', { name: 'Jump to 02:11:33:19' })).toBeVisible();
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('topics-feed.png', {
     mask: FEED_MASK(page),

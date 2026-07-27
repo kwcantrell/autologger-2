@@ -144,7 +144,7 @@
       needed — if one becomes necessary, the control has regressed to a non-interactive element.
 - [ ] 11.3 `npm run e2e` (which runs the `chromium` project only) **plus**
       `npx playwright test --project=login-gate`, which the npm script omits.
-- [ ] 11.4 Seed rows into the transcript and topics **visual** fixtures before running
+- [x] 11.4 Seed rows into the transcript and topics **visual** fixtures before running
       `npm run e2e:visual`. Both currently screenshot empty feeds ("No transcript yet" / "No topics
       yet"), so a new column and any column-width regression would be invisible to the visual gate.
       Baselines are expected to move; re-bless in this change's own diff (current as of 2026-07-14).
