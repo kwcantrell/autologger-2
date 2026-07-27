@@ -118,10 +118,10 @@
 
 ## 9. Cross-cutting behavior
 
-- [ ] 9.1 Write failing tests for the rolling→not-rolling **transition**: controls flip from
+- [x] 9.1 Write failing tests for the rolling→not-rolling **transition**: controls flip from
       unavailable to available without a remount, in all three feeds. A ref-stabilized gate passes
       the static tests and fails this one.
-- [ ] 9.2 Add a dirty check to `TranscribeRow`/`TopicsRow` `commitField` so blurring an unchanged
+- [x] 9.2 Add a dirty check to `TranscribeRow`/`TopicsRow` `commitField` so blurring an unchanged
       field issues no `PATCH`. Today every blur writes; jumping mid-edit therefore writes an
       unchanged value and invalidates the query under a virtualized list. `EventLogRow.handleBlur`
       already has this check — mirror it. Test: focus a field, change nothing, activate the jump →
