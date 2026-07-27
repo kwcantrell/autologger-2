@@ -269,6 +269,82 @@ describe('SessionHub broadcast frame pins (success-path byte-identity gate)', ()
   });
 });
 
+// code-health-consolidation phase 2 (design D1, delta "Broadcast atomicity with
+// the owning transaction"): the post-commit broadcast queue at the REAL seam —
+// better-sqlite3 transactions/savepoints under SessionHub.inTxn.
+describe('SessionHub post-commit broadcast queue (D1)', () => {
+  function capturingHub() {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const frames: Record<string, unknown>[] = [];
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    return { hub, frames };
+  }
+
+  // Task 2.2 — delta scenario 1 ("Failed commit emits no broadcast"). Hook-free
+  // proxy for a commit-step failure: the store call runs for real (insert +
+  // revision bump + broadcast enqueue, nothing suppressed), then a throw
+  // escapes the transaction before commit — from the queue seam's point of
+  // view this is indistinguishable from better-sqlite3's COMMIT itself
+  // throwing (both surface as a throw out of `db.transaction(fn)()`). No
+  // failure-injection hooks in production inTxn.
+  it('a throw escaping the transaction after a broadcast-enqueueing store call emits NO broadcast and persists nothing', () => {
+    const { hub, frames } = capturingHub();
+    const eventsStore = (hub as unknown as { events: { addEvent: (...a: unknown[]) => unknown } })
+      .events;
+    const original = eventsStore.addEvent.bind(eventsStore);
+    const spy = vi.spyOn(eventsStore, 'addEvent').mockImplementation((...args: unknown[]) => {
+      original(...args); // real write + real (unsuppressed) broadcast enqueue
+      throw new Error('simulated commit-step failure');
+    });
+
+    expect(() =>
+      hub.addEvent({ category: 'cam', message: 'doomed', metadataJson: '{}', markedAtUtc: null, ctx: CTX }),
+    ).toThrow('simulated commit-step failure');
+    spy.mockRestore();
+
+    // The enqueued event.changed was discarded with the rollback: clients see
+    // NO notification for the rolled-back write...
+    expect(frames).toEqual([]);
+    // ...and the write itself is gone (rollback, not just silence).
+    expect(hub.ensure().event_count).toBe(0);
+    expect(hub.statusLive(CTX).events_stream_revision).toBe(0);
+    hub.close();
+  });
+
+  // Task 2.1 — nested-txn semantics at the real seam (inner delegate inside an
+  // outer inTxn becomes a savepoint): flush at OUTERMOST commit only.
+  it('nested transactions flush at the outermost commit only', () => {
+    const { hub, frames } = capturingHub();
+    const h = hub as unknown as { inTxn<T>(fn: () => T): T };
+    h.inTxn(() => {
+      // Public delegate → nested inTxn → savepoint; its broadcast is enqueued.
+      hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+      // Inner savepoint committed, but the outermost transaction is still
+      // open: nothing may reach a socket yet.
+      expect(frames).toEqual([]);
+    });
+    // Outermost commit: the queued frame flushes, byte-identical to today's.
+    expect(frames).toEqual([{ type: 'event.changed', revision: 1 }]);
+    hub.close();
+  });
+
+  // Task 2.1 — a throw escaping the outermost transaction discards the WHOLE
+  // queue, including frames enqueued by an inner savepoint that had committed.
+  it('a throw escaping the outermost transaction discards inner-savepoint broadcasts along with the writes', () => {
+    const { hub, frames } = capturingHub();
+    const h = hub as unknown as { inTxn<T>(fn: () => T): T };
+    expect(() =>
+      h.inTxn(() => {
+        hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+        throw new Error('outer failure');
+      }),
+    ).toThrow('outer failure');
+    expect(frames).toEqual([]); // no frame for the rolled-back write
+    expect(hub.ensure().event_count).toBe(0); // savepoint rolled back with the outer txn
+    hub.close();
+  });
+});
+
 describe('SessionHub.replaceTranscriptWords', () => {
   it('inserts words with start_sec/end_sec and contiguous ordinals from 0', () => {
     const hub = new SessionHub(join(dir, 's1.db'));

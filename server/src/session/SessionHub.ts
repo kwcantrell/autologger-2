@@ -98,8 +98,17 @@ export class SessionHub {
     this.inTxn(() => this.lease.expireIfStale());
   }
 
+  /** Every mutating RPC runs through here. Broadcast atomicity
+   * (code-health-consolidation D1): the transaction runs inside a
+   * `withBroadcastsHeld` scope, so store-level `core.broadcast` calls enqueue
+   * while the transaction is open and flush — in enqueue order — only after
+   * better-sqlite3 commits (the `db.transaction(fn)()` call returning). An
+   * escaping throw (including a commit-time failure such as SQLITE_FULL)
+   * rolls the write back AND discards the queue, so clients never see
+   * `*.changed` for a rolled-back write. Nested calls become savepoints and
+   * flush at the outermost commit only. Synchronous — zero awaits. */
   private inTxn<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    return this.core.withBroadcastsHeld(() => this.db.transaction(fn)());
   }
 
   /** Single alarm slot: arming replaces any pending timer. The delay is
@@ -220,15 +229,18 @@ export class SessionHub {
    * on the second insert) rolls back the Started event AND the transport advance, never
    * leaving a dangling `Recording N Started` with no `Stopped`.
    *
-   * Phase-9 fix-wave (finding 1): the three store calls inside `inTxn` all pass
-   * `suppressBroadcast: true` — `EventStore.addEvent`/`TransportStore.stopTakeWithDuration`
-   * otherwise broadcast synchronously on each call, i.e. BEFORE `db.transaction` commits.
-   * A mid-transaction throw (e.g. SQLITE_FULL on the Stopped write) would then have
-   * already let the Started `event.changed` reach clients even though the whole
-   * transaction rolls back — contradicting design D11 ("broadcasts once after commit")
-   * and the delta scenario "Failed import emits no take messages". Broadcasting is
-   * instead done ONCE, here, after `inTxn` returns successfully — never reached on a
-   * throw, since the exception propagates out of `inTxn` before this line runs. */
+   * Phase-9 fix-wave (finding 1), rationale updated by code-health-consolidation D1:
+   * atomicity and suppression are two different jobs, split across two mechanisms.
+   * The post-commit broadcast queue (`inTxn` + `SessionCore.withBroadcastsHeld`) now
+   * owns ATOMICITY for every store — no frame for a rolled-back write, on this path
+   * and all others. The `suppressBroadcast: true` flags on the three store calls are
+   * RETAINED because they own this composite's FRAME-COUNT/PAYLOAD contract: without
+   * them the queue would faithfully flush THREE frames post-commit (two
+   * `event.changed` — including an intermediate revision no client has ever
+   * observed — plus stopTakeWithDuration's `transport.changed`) instead of the
+   * published two. So the flags suppress the intermediate store-level frames, and
+   * the composite broadcasts ONCE, here, after `inTxn` returns successfully —
+   * outside any transaction, hence an immediate send, never reached on a throw. */
   anchorImportedTake(input: { recordingOrdinal: number; durationS: number; ctx: TimecodeCtx }) {
     const { started, stopped, projection } = this.inTxn(() => {
       const { event: started } = this.events.addEvent({
