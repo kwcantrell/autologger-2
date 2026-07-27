@@ -8,10 +8,10 @@
 
 ## 1. Preconditions and behavior-pinning tests
 
-- [ ] 1.1 `quick-fixes-2026-07` merged to `main` 2026-07-27 (`721fc00`) — verify at
+- [x] 1.1 `quick-fixes-2026-07` merged to `main` 2026-07-27 (`721fc00`) — verify at
       apply start; re-locate this change's touch points against the merged tree and
       note any moved anchors in `.apply/` notes
-- [ ] 1.2 Pin current success-path broadcast behavior: int tests asserting the exact
+- [x] 1.2 Pin current success-path broadcast behavior: int tests asserting the exact
       broadcast types/payload shapes/relative order for one representative mutation per
       broadcasting store (events, transport, audio, lease) and for the ONE composite
       RPC (`anchorImportedTake` — the two `suppressBroadcast` flags are store-method
