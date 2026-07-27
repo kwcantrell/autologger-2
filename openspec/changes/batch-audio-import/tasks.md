@@ -2,7 +2,7 @@
 
 ## Phase 1 — Mime map
 
-- [ ] 1.1 Expand `audioStore` MIME→extension mapping for mp3/mpeg and aiff/aif; unit test.
+- [x] 1.1 Expand `audioStore` MIME→extension mapping for mp3/mpeg and aiff/aif; unit test.
 
 ## Phase 2 — Local audio import API (TDD)
 
