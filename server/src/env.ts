@@ -46,7 +46,7 @@ export function oauthConfigured(env: Config): boolean {
 
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
-  return Number.isFinite(n) ? n : 14.0;
+  return Number.isFinite(n) && n > 0 ? n : 14.0;
 }
 
 export function trustProxyEnabled(env: Config): boolean {

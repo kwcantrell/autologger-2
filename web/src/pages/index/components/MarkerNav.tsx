@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
-import { useEvents } from '../../../api/hooks/useEvents';
+import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { LogEvent, SessionStatus } from '../../../api/types';
 import {
@@ -82,7 +82,7 @@ interface Props {
 
 export function MarkerNav({ sessionId }: Props) {
   const { data: status } = useSessionStatus(sessionId || null);
-  const { data: eventsRes } = useEvents(sessionId || null, { limit: 1000 });
+  const { data: eventsRes } = useEvents(sessionId || null, { limit: WORKSPACE_EVENTS_LIMIT });
   const events = useMemo(() => eventsRes?.events ?? [], [eventsRes]);
 
   // session.js dispatches autologger:timeline-sec whenever the displayed timeline

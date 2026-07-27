@@ -347,25 +347,35 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
 
 // ── Process-wide singleton (the shared home task 3.2 consumes) ───────────────
 
-let singleton: AiMcpListener | null = null;
+let singletonPromise: Promise<AiMcpListener> | null = null;
 
 /**
  * Get the process-wide MCP listener, starting it on first use with the app's
  * `SessionHubRegistry`. Single Node process ⇒ one registry ⇒ one listener; the
  * CLI runner (task 3.2) calls this, then `registerTurn` / `dispose` per turn.
+ * The STARTED promise is cached (not the bare instance), so concurrent first
+ * callers all await the same completed `start()` — never an unstarted listener
+ * whose `port` getter would throw. A failed start clears the cache so a later
+ * call can retry.
  */
-export async function getAiMcpListener(registry: SessionHubRegistry): Promise<AiMcpListener> {
-  if (singleton === null) {
-    singleton = new AiMcpListener(registry);
-    await singleton.start();
-  }
-  return singleton;
+export function getAiMcpListener(registry: SessionHubRegistry): Promise<AiMcpListener> {
+  singletonPromise ??= (async () => {
+    const listener = new AiMcpListener(registry);
+    await listener.start();
+    return listener;
+  })().catch((err) => {
+    singletonPromise = null;
+    throw err;
+  });
+  return singletonPromise;
 }
 
 /** Test-only: close and clear the singleton so it doesn't leak across cases. */
 export async function __resetAiMcpListenerForTests(): Promise<void> {
-  if (singleton !== null) {
-    await singleton.close();
-    singleton = null;
+  const p = singletonPromise;
+  singletonPromise = null;
+  if (p !== null) {
+    const listener = await p.catch(() => null);
+    if (listener !== null) await listener.close();
   }
 }

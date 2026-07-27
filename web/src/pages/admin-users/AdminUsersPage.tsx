@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { useCallback, useState } from 'react';
-import { API_ROOT } from '../../api/client';
+import { apiFetch } from '../../api/client';
 import type { AdminDataResponse, AdminStudio, AdminUser } from '../../api/types';
 import logoUrl from '../../assets/logos/logo-autologger-transparent.png';
 import { showToast, Toast } from '../../shared/components/Toast';
@@ -9,28 +9,16 @@ import { Popover, PopoverItem } from '../../shared/ui/Popover';
 
 const TOKEN_KEY = 'autologger_admin_token';
 
+/** apiFetch plus the admin bearer token; apiFetch supplies the default
+ * Content-Type and detail-extraction/error behavior. */
 async function fetchAdmin<T>(path: string, token: string, opts: RequestInit = {}): Promise<T> {
-  const url = `${API_ROOT}/${path.replace(/^\//, '')}`;
-  const res = await fetch(url, {
-    credentials: 'same-origin',
+  return apiFetch<T>(path, {
+    ...opts,
     headers: {
-      'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
       ...opts.headers,
     },
-    ...opts,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = (await res.json()) as { detail?: unknown };
-      if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
-    } catch {
-      // ignore
-    }
-    throw new Error(detail || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 export function AdminUsersPage() {

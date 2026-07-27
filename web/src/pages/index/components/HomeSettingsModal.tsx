@@ -718,7 +718,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
 
         {/* Event Buttons tab */}
         <div
-          id="v6-settings-section-events"
+          id="v6-settings-section-event-buttons"
           className={SECTION_CLASS}
           role="tabpanel"
           aria-labelledby="v6-settings-tab-event-buttons"

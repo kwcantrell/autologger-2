@@ -144,10 +144,12 @@ export function V6Rail({
       return;
     }
     document.body.classList.toggle('v6-app--rail-collapsed');
-    const rail = document.getElementById('v6-rail');
+    // aria-expanded lives on the toggle button (the element with the handler),
+    // not the aside — assistive tech reads the announced state off the control.
+    const toggle = document.getElementById('v6-rail-toggle');
     const main = document.getElementById('v3-main');
     const isNowCollapsed = document.body.classList.contains('v6-app--rail-collapsed');
-    if (rail) rail.setAttribute('aria-expanded', String(!isNowCollapsed));
+    if (toggle) toggle.setAttribute('aria-expanded', String(!isNowCollapsed));
     if (main) main.classList.toggle('v6-workspace--rail-collapsed', isNowCollapsed);
   };
 

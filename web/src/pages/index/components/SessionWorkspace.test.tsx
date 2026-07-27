@@ -30,6 +30,7 @@ vi.mock('../../../api/hooks/useCompanionPresence', () => ({
 vi.mock('../../../api/hooks/useEvents', () => ({
   eventsKeys: { all: (sessionId: string) => ['events', sessionId] },
   useEvents: () => ({ data: undefined }),
+  WORKSPACE_EVENTS_LIMIT: 2000,
 }));
 
 // ai-v2-dashboards task 5.6: AiV2Panel (exercised for real here, see below)

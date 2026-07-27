@@ -96,10 +96,13 @@ describe('env flag parsing', () => {
     expect(cookieSecureForRequest(E({}), req)).toBe(false);
   });
 
-  it('sessionTtlDays — current behavior: finite passes through (incl. non-positive)', () => {
+  it('sessionTtlDays — positive finite passes through; non-positive/non-numeric falls back', () => {
     expect(sessionTtlDays(E({}))).toBe(14);
     expect(sessionTtlDays(E({ SESSION_DAYS: '30' }))).toBe(30);
-    expect(sessionTtlDays(E({ SESSION_DAYS: '0' }))).toBe(0); // quirk: not clamped
+    // 0 would make KvStore.put store expires_at = NULL (immortal login
+    // session); it falls back to the default like the sibling getters.
+    expect(sessionTtlDays(E({ SESSION_DAYS: '0' }))).toBe(14);
+    expect(sessionTtlDays(E({ SESSION_DAYS: '-1' }))).toBe(14);
     expect(sessionTtlDays(E({ SESSION_DAYS: 'abc' }))).toBe(14);
   });
 

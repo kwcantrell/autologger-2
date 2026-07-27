@@ -40,12 +40,12 @@ export function showToast(message: string, isError = false, opts: ShowOpts = {})
   push(message, isError, Boolean(opts.persistent));
 }
 
-/** Dismiss the most recent persistent toast (legacy single-toast contract). */
+/** Dismiss the most recent persistent toast (legacy single-toast contract).
+ * No persistent toast pending ⇒ no-op — never clears unrelated (auto-dismiss)
+ * toasts still in the queue. `dismiss` emits; no second emit here. */
 export function hideToast(): void {
   const last = [..._queue].reverse().find((t) => t.persistent);
   if (last) dismiss(last.id);
-  else _queue = [];
-  emit();
 }
 
 /** Convenience helpers (Phase 2 — queue store). */
