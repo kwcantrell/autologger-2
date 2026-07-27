@@ -44,7 +44,7 @@ const COVERING_CLIP: AudioClipLite = {
  *  the same mechanism `SessionWorkspace` uses in production. */
 function withClips(clips: AudioClipLite[]) {
   return function Wrapper({ children }: { children: ReactNode }) {
-    return <AudioClipsProvider value={{ clips }}>{children}</AudioClipsProvider>;
+    return <AudioClipsProvider clips={clips}>{children}</AudioClipsProvider>;
   };
 }
 

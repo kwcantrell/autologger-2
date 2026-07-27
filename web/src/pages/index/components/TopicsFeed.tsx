@@ -75,8 +75,7 @@ export function TopicsFeed({ sessionId }: Props) {
   // hidden) — React Query dedupes. ---
   const { data: status } = useSessionStatus(sessionId);
   const { data: words } = useTranscriptWords(sessionId);
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, false);
-  const jumpUnavailable = !jumpAvailable;
+  const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
   const jumpReasonId = 'v5-topics-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   // Task 8.3: computed once here from the session's transcript words, passed

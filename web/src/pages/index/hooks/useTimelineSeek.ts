@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
-import { resolvePlayPosition } from '../components/AudioPlayer';
+import { normalizeTargetSec, resolvePlayPosition } from '../components/AudioPlayer';
 import { useAudioClipsContext } from './AudioClipsContext';
 
 /**
@@ -33,6 +33,15 @@ export interface UseTimelineSeekResult {
    * as "not rolling" — `!status?.is_rolling` would fail open on first paint.
    */
   available: boolean;
+  /**
+   * `!available`. Every consumer, prop, and the button itself (`unavailable`
+   * on `JumpToTimeButton`) speak the negative — this hook used to speak only
+   * `available`, forcing every one of the three feeds to invert it locally
+   * with `const jumpUnavailable = !jumpAvailable;` (quality fix wave, FIX
+   * 6b). Provided alongside `available` (not instead of it) since existing
+   * callers/tests read the positive form directly.
+   */
+  unavailable: boolean;
   /**
    * Jump to a timeline-absolute second. Referentially STABLE across renders
    * that don't change the gate or the clip layout (`useCallback`) — safe to
@@ -67,7 +76,7 @@ export interface UseTimelineSeekResult {
  * disagree with the player about what "covered" means.
  */
 function isCoveredByPlayableClip(sec: number, clips: readonly AudioClipLite[]): boolean {
-  const target = Math.max(0, Number(sec) || 0);
+  const target = normalizeTargetSec(sec);
   const resolved = resolvePlayPosition(sec, clips);
   if (!resolved) return false;
   const clip = clips[resolved.clipIdx];
@@ -96,7 +105,7 @@ export function useTimelineSeek(sessionId: string, batchEditMode: boolean): UseT
   // instead of calling `useAudioClips` here with this feed's own,
   // differently-limited `events` — see AudioClipsContext.tsx for why that
   // mismatch was a wrong-recording-playback hazard.
-  const { clips } = useAudioClipsContext();
+  const clips = useAudioClipsContext();
 
   const available = status != null && status.is_rolling === false && !batchEditMode;
 
@@ -112,5 +121,5 @@ export function useTimelineSeek(sessionId: string, batchEditMode: boolean): UseT
     [available, clips],
   );
 
-  return { available, jump };
+  return { available, unavailable: !available, jump };
 }

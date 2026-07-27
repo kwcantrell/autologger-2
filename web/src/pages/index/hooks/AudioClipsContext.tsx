@@ -32,28 +32,35 @@ import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 // empty layout by default — the same "no coverage" default the old
 // `mockedUseAudioClips.mockReturnValue({ clips: [], ... })` pattern already
 // established, so most existing tests need no changes.
+//
+// Publishes the array DIRECTLY (quality fix wave, FIX 3) — not `{ clips:
+// AudioClipLite[] }`. The wrapper object was what made
+// `<AudioClipsProvider value={{ clips: audioClips }}>` in `SessionWorkspace`
+// structurally unable to be referentially stable: a fresh object literal every
+// render, even when `audioClips` itself was unchanged, forcing every context
+// consumer to re-render on every `SessionWorkspace` render (~60/s during
+// playback, from the rAF-driven `audioPlaybackSec` tick). Publishing the array
+// dissolves that residual with no compensating `useMemo` — `value={audioClips}`
+// is stable exactly when `useAudioClips`'s memoized result is.
 
-export interface AudioClipsContextValue {
-  clips: AudioClipLite[];
-}
+const EMPTY_CLIPS: readonly AudioClipLite[] = Object.freeze([]);
 
-const EMPTY_CONTEXT: AudioClipsContextValue = { clips: [] };
-
-const AudioClipsContext = createContext<AudioClipsContextValue>(EMPTY_CONTEXT);
+const AudioClipsContext = createContext<readonly AudioClipLite[]>(EMPTY_CLIPS);
 
 export function AudioClipsProvider({
-  value,
+  clips,
   children,
 }: {
-  value: AudioClipsContextValue;
+  clips: AudioClipLite[];
   children: ReactNode;
 }) {
-  return <AudioClipsContext.Provider value={value}>{children}</AudioClipsContext.Provider>;
+  return <AudioClipsContext.Provider value={clips}>{children}</AudioClipsContext.Provider>;
 }
 
 /** Read the session-wide audio-clip layout `SessionWorkspace` publishes. Outside a
  *  provider (e.g. a feed rendered standalone in a test) this reads as an empty
- *  layout — no clip covers anything, matching the old test-mock default. */
-export function useAudioClipsContext(): AudioClipsContextValue {
+ *  layout — no clip covers anything, matching the old test-mock default (the
+ *  fail-safe: no clips ⇒ no coverage ⇒ no playback). */
+export function useAudioClipsContext(): readonly AudioClipLite[] {
   return useContext(AudioClipsContext);
 }

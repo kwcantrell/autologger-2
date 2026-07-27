@@ -58,8 +58,7 @@ export function TranscribeFeed({ sessionId }: Props) {
   // clip layout via `AudioClipsContext` — no local `useEvents` call needed
   // here at all (whole-branch audit fix wave, finding C1/I3). ---
   const { data: status } = useSessionStatus(sessionId);
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, false);
-  const jumpUnavailable = !jumpAvailable;
+  const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
   const jumpReasonId = 'v5-transcribe-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
   const errorRef = useRef<string | null>(null);

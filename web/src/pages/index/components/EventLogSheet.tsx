@@ -232,8 +232,7 @@ export function EventLogSheet({ sessionId }: Props) {
   // `useTimelineSeek` reads the session-wide clip layout via
   // `AudioClipsContext` (whole-branch audit fix wave, finding C1) rather than
   // this feed's own (differently-limited) `events` — no `events` arg here. ---
-  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, batchEditMode);
-  const jumpUnavailable = !jumpAvailable;
+  const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, batchEditMode);
   const jumpReasonId = 'v5-event-feed-jump-reason';
 
   // Themed confirms (ui-refresh: replaces window.confirm browser chrome).

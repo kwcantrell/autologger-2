@@ -240,7 +240,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
     // `useAudioClips` layout computed above, published for `useTimelineSeek`
     // (consumed deep inside EventLogSheet/TranscribeFeed/TopicsFeed) to read
     // instead of each feed computing its own — see AudioClipsContext.tsx.
-    <AudioClipsProvider value={{ clips: audioClips }}>
+    <AudioClipsProvider clips={audioClips}>
       {
         // v3-right-wrap (SW-rendered) resolved under its always-present
         // `.main-v3.v3-layout-session-focus` ancestor + the former `.v6SessionStage`

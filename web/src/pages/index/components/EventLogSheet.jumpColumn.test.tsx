@@ -181,7 +181,7 @@ function renderSheet(clips: AudioClipLite[] = []) {
   return renderStrict(
     <QueryClientProvider client={client}>
       <TooltipProvider delayDuration={400}>
-        <AudioClipsProvider value={{ clips }}>
+        <AudioClipsProvider clips={clips}>
           <EventLogSheet sessionId={SESSION_ID} />
         </AudioClipsProvider>
       </TooltipProvider>

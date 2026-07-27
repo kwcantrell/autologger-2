@@ -283,7 +283,7 @@ function TestWorkspace({ sessionId }: { sessionId: string }) {
   const events = eventsRes?.events ?? [];
   const { clips } = useAudioClips(sessionId, events);
   return (
-    <AudioClipsProvider value={{ clips }}>
+    <AudioClipsProvider clips={clips}>
       <TranscribeFeed sessionId={sessionId} />
     </AudioClipsProvider>
   );

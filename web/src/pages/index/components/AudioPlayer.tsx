@@ -45,6 +45,18 @@ export interface AudioPlayerProps {
   onPlaybackSecChange?: (sec: number | null) => void;
 }
 
+/** Clamp an arbitrary numeric target to a non-negative second — NaN or a
+ *  negative value collapses to 0. Exported (quality fix wave, FIX 6a) so
+ *  `useTimelineSeek`'s coverage check can normalize with the SAME expression
+ *  `resolvePlayPosition` uses internally, instead of re-deriving it while
+ *  passing the raw (un-normalized) `sec` through to `resolvePlayPosition` —
+ *  the same mirrored-computation hazard the quality fix wave collapsed in
+ *  TranscribeRow. `sec` is already typed `number`, so no `Number(sec)` cast
+ *  is needed here or at either call site. */
+export function normalizeTargetSec(sec: number): number {
+  return Math.max(0, sec || 0);
+}
+
 /** Find the clip index containing `sec`, falling back to the next playable clip.
  *  Exported for `useTimelineSeek`'s coverage check (whole-branch audit fix wave,
  *  finding M4), which verifies the clip this function actually resolves to
@@ -54,7 +66,7 @@ export function resolvePlayPosition(
   clips: readonly AudioClipLite[],
 ): { clipIdx: number; offsetSec: number } | null {
   if (!clips.length) return null;
-  const target = Math.max(0, Number(sec) || 0);
+  const target = normalizeTargetSec(sec);
   const playable = (c: AudioClipLite) => Boolean(c.segmentId && c.url && !c.missingAudio);
   for (let i = 0; i < clips.length; i++) {
     const c = clips[i];
