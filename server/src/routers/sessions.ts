@@ -28,6 +28,7 @@ import {
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
+import { enforceAudioByteLimit } from './audio';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const sessionsRouter = new Hono<AppEnv>();
@@ -251,6 +252,9 @@ const YOUTUBE_IMPORT_AT_CAPACITY_DETAIL =
   'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const YOUTUBE_IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
+const LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL = 'duration_s must be a positive finite number.';
+const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
+  'Local audio import is refused while this session is actively recording; stop the recording and try again.';
 
 // design D12: `Recording N Started`/`Stopped` internal-event message shape —
 // parsed back out to compute the next collision-proof recording ordinal.
@@ -284,6 +288,74 @@ function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
   }
   return maxOrdinal + 1;
 }
+
+/** batch-audio-import design D11 — positive finite `duration_s` query param. */
+function parseLocalAudioImportDurationS(raw: string | undefined): number {
+  if (raw === undefined || raw === '') {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
+  }
+  return n;
+}
+
+sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const sessionRow = await requireSession(c, sessionId);
+  const ctx = timecodeCtx(sessionRow);
+
+  const durationS = parseLocalAudioImportDurationS(c.req.query('duration_s'));
+
+  const declared = c.req.header('content-length');
+  enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
+  const payload = await c.req.arrayBuffer();
+  if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
+  enforceAudioByteLimit(payload.byteLength);
+  const mimeType = c.req.header('content-type') ?? 'application/octet-stream';
+
+  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+    throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
+  }
+
+  const hub = getSessionHub(c, sessionId);
+  const recordingOrdinal = nextRecordingOrdinal(hub);
+  const nowMs = c.env.ports.clock.now();
+  const startedAtUtc = isoZ(new Date(nowMs));
+  const endedAtUtc = isoZ(new Date(nowMs + durationS * 1000));
+  const seg = hub.addAudioSegment({
+    sessionId,
+    mimeType,
+    startedAtUtc,
+    endedAtUtc,
+    recordingOrdinal,
+  });
+  try {
+    await c.env.ports.audio.put(seg.r2_key, payload, { contentType: mimeType });
+  } catch (err) {
+    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    throw err;
+  }
+
+  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
+  }
+
+  try {
+    getSessionHub(c, sessionId).anchorImportedTake({
+      recordingOrdinal,
+      durationS,
+      ctx,
+    });
+  } catch (err) {
+    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    throw err;
+  }
+
+  return c.json({ ok: true });
+});
 
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   const sessionId = c.req.param('sessionId');
