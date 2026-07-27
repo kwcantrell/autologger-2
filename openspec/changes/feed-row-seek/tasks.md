@@ -10,7 +10,7 @@
 
 ## 1. Characterize the seam before reshaping it
 
-- [ ] 1.1 Add `MarkerNav.test.tsx` — characterization of the existing prev/next jump, no source
+- [x] 1.1 Add `MarkerNav.test.tsx` — characterization of the existing prev/next jump, no source
       change: each button issues `AutoLogger_setManualScrubSec`, `AutoLogger_scrollTimelineToSec`,
       and `AutoLogger_seekAudio` with the same grouped-marker second; it fires **while rolling**
       (ungated); it issues the audio seek **unconditionally**, with no clip-coverage check; it
