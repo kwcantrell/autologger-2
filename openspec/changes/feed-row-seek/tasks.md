@@ -62,14 +62,14 @@
 
 ## 5. The jump column and its control
 
-- [ ] 5.1 Write failing tests for the column + control: `FeedTable` renders a header that is
+- [x] 5.1 Write failing tests for the column + control: `FeedTable` renders a header that is
       visually hidden but carries an accessible label via `ColumnDef.ariaLabel` (this is that
       field's first consumer); the control is a real `<button>` whose accessible name identifies the
       time **as the row displays it**; it activates by pointer and by Enter/Space; a row with no
       resolvable position renders **no control at all** (assert absence, not `aria-disabled`); in
       the rolling state controls are `aria-disabled` and reference **one shared reason node per
       feed**, never one per row, and never the native `disabled` attribute.
-- [ ] 5.2 Implement the column and control.
+- [x] 5.2 Implement the column and control.
 
 ## 6. Event Feed wiring
 
@@ -129,28 +129,28 @@
 
 ## 10. Collapse the duplicate jump
 
-- [ ] 10.1 Refactor `MarkerNav.handleJump` onto `timelineJump` — the **ungated,
+- [x] 10.1 Refactor `MarkerNav.handleJump` onto `timelineJump` — the **ungated,
       uncoverage-checked, non-playing** module (design D8). Task 1.1's characterization test MUST
       pass unchanged on all four properties. Pure reshape, its own commit.
-- [ ] 10.2 Confirm `MarkerNav`'s in-file comment about the coordinate-space bug still describes the
+- [x] 10.2 Confirm `MarkerNav`'s in-file comment about the coordinate-space bug still describes the
       code after the move; relocate or restate it if the reshape orphaned it. Do not convert its
       past-tense provenance into a present-tense obligation.
 
 ## 11. Final gates
 
-- [ ] 11.1 `npm run typecheck` (server + web + companion + e2e) and `npm test` clean.
-- [ ] 11.2 `npm run lint` clean. The design deliberately avoids a bare `<tr onClick>`, so no
+- [x] 11.1 `npm run typecheck` (server + web + companion + e2e) and `npm test` clean.
+- [x] 11.2 `npm run lint` clean. The design deliberately avoids a bare `<tr onClick>`, so no
       `biome-ignore` for `a11y/useKeyWithClickEvents` or `noStaticElementInteractions` should be
       needed — if one becomes necessary, the control has regressed to a non-interactive element.
-- [ ] 11.3 `npm run e2e` (which runs the `chromium` project only) **plus**
+- [x] 11.3 `npm run e2e` (which runs the `chromium` project only) **plus**
       `npx playwright test --project=login-gate`, which the npm script omits.
 - [x] 11.4 Seed rows into the transcript and topics **visual** fixtures before running
       `npm run e2e:visual`. Both currently screenshot empty feeds ("No transcript yet" / "No topics
       yet"), so a new column and any column-width regression would be invisible to the visual gate.
       Baselines are expected to move; re-bless in this change's own diff (current as of 2026-07-14).
-- [ ] 11.5 Confirm zero files under `server/` and `companion/` are touched by the branch diff — the
+- [x] 11.5 Confirm zero files under `server/` and `companion/` are touched by the branch diff — the
       contract-impact-none claim is mechanically checkable, so check it.
-- [ ] 11.6 Drive the real app once, against a session with **two recordings and a gap** at a
+- [x] 11.6 Drive the real app once, against a session with **two recordings and a gap** at a
       **non-integer frame rate**, plus a **topic set generated from an anchorless transcript**:
       jump into the gap (playhead moves, nothing plays, no take switch); jump from a row an hour in
       (lands where the timeline shows it, not seconds early); jump from a covered row (plays from
