@@ -14,24 +14,32 @@ import { jumpTimelineToSec } from './timelineJump';
 let scrubMock: ReturnType<typeof vi.fn<(sec: number | null) => void>>;
 let scrollMock: ReturnType<typeof vi.fn<(sec: number, totalSec?: number) => void>>;
 let seekMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
+let seekAndPlayMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
 
 const originalScrub = window.AutoLogger_setManualScrubSec;
 const originalScroll = window.AutoLogger_scrollTimelineToSec;
 const originalSeek = window.AutoLogger_seekAudio;
+const originalSeekAndPlay = window.AutoLogger_seekAudioAndPlay;
 
 beforeEach(() => {
   scrubMock = vi.fn();
   scrollMock = vi.fn();
   seekMock = vi.fn();
+  // Play-capable path (feed-row-seek, phase 4) — jumpTimelineToSec must never
+  // call this; see "never starts playback" below (quality fix wave, FIX 5,
+  // mirroring MarkerNav.test.tsx's identical strengthening).
+  seekAndPlayMock = vi.fn();
   window.AutoLogger_setManualScrubSec = scrubMock;
   window.AutoLogger_scrollTimelineToSec = scrollMock;
   window.AutoLogger_seekAudio = seekMock;
+  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
 });
 
 afterEach(() => {
   window.AutoLogger_setManualScrubSec = originalScrub;
   window.AutoLogger_scrollTimelineToSec = originalScroll;
   window.AutoLogger_seekAudio = originalSeek;
+  window.AutoLogger_seekAudioAndPlay = originalSeekAndPlay;
 });
 
 describe('jumpTimelineToSec', () => {
@@ -86,5 +94,13 @@ describe('jumpTimelineToSec', () => {
     for (const call of seekMock.mock.calls) {
       expect(call).toHaveLength(1);
     }
+
+    // Direct assertion (quality fix wave, FIX 5): the arity check above is a
+    // proxy that an implementation calling BOTH AutoLogger_seekAudio AND
+    // window.AutoLogger_seekAudioAndPlay?.(sec) would pass unchanged, since
+    // no spy was installed for that global and the optional chain silently
+    // no-ops. MarkerNav.test.tsx closed this exact hole for MarkerNav; this
+    // mirrors it for jumpTimelineToSec.
+    expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 });

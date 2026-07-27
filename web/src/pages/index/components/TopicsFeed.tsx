@@ -93,7 +93,13 @@ export function TopicsFeed({ sessionId }: Props) {
   // — a LOADED empty transcript (hand-entered topics, no transcript at all)
   // still yields `transcriptAnchored === true`, because that case never went
   // through the model's invented-time path.
-  const transcriptAnchored = words != null && !transcriptWhollyAnchorless(words);
+  // Quality fix wave, FIX 6c: `useMemo`'d so this doesn't re-scan every word
+  // on every feed render (each status poll) — matches the "computed once"
+  // framing of the comment above.
+  const transcriptAnchored = useMemo(
+    () => words != null && !transcriptWhollyAnchorless(words),
+    [words],
+  );
   const [genError, setGenError] = useState<string | null>(null);
   // Latched on the first 503 (ui-refresh D9: honest capability gate — topic generation has no
   // external integration wired up on this deployment). Persists across session switches (this

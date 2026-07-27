@@ -153,6 +153,23 @@ async function seedStoppedSession(page: Page): Promise<void> {
   await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
 }
 
+// Quality fix wave, FIX 6d: the transcribe-feed and topics-feed tests each
+// seeded rows via an out-of-band POST, then reloaded to force a cold refetch
+// (see `seedTranscriptAndTopicsRows`'s comment below for why the reload is
+// needed) — the exact same 6-line block, duplicated verbatim in both tests.
+// Extracted here, next to `seedStoppedSession`, so a future third
+// seeded-feed shot has one place to call, not a third copy to keep in sync.
+// (Forward reference to `seedTranscriptAndTopicsRows`, defined below — safe:
+// `async function` declarations hoist.)
+async function seedRowsAndReload(page: Page): Promise<void> {
+  const sessionUrl = page.url();
+  const sessionId = new URL(sessionUrl).pathname.split('/').pop() as string;
+  await seedTranscriptAndTopicsRows(page, sessionId);
+  await page.goto(sessionUrl);
+  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
+}
+
 // feed-row-seek, task 11.4: the transcript and topics visual fixtures
 // previously screenshot EMPTY feeds ("No transcript yet" / "No topics yet"),
 // so the new leading jump column (and any column-width regression around it)
@@ -451,12 +468,7 @@ test('transcribe-feed tab', async ({ page }) => {
   // smoke.spec.ts's deep-link reload) re-mounts the workspace and refetches
   // cold, same as a real user reloading after someone else edited the
   // transcript.
-  const sessionUrl = page.url();
-  const sessionId = new URL(sessionUrl).pathname.split('/').pop() as string;
-  await seedTranscriptAndTopicsRows(page, sessionId);
-  await page.goto(sessionUrl);
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-  await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
+  await seedRowsAndReload(page);
   // ui-refresh: Transcript is a top-level tab again (the ai-topics-chat
   // nested "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat
   // "Feed tabs" tablist).
@@ -486,12 +498,7 @@ test('topics-feed tab', async ({ page }) => {
   // renders once the session's transcript is anchored (TopicsFeed.tsx
   // `transcriptWhollyAnchorless`). Reload after seeding — see the
   // transcribe-feed test above for why a raw out-of-band POST needs one.
-  const sessionUrl = page.url();
-  const sessionId = new URL(sessionUrl).pathname.split('/').pop() as string;
-  await seedTranscriptAndTopicsRows(page, sessionId);
-  await page.goto(sessionUrl);
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-  await expect(page.locator('#v5-controls-status-value')).toHaveText('Stopped');
+  await seedRowsAndReload(page);
   // ui-refresh: Topics is a top-level tab again (the ai-topics-chat nested
   // "AI tabs" arrangement is gone — see SessionWorkspace.tsx's flat "Feed
   // tabs" tablist).
