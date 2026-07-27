@@ -64,7 +64,11 @@ interface Props {
 // `transcriptAnchored` gates ahead of the parse: while the session's
 // transcript is wholly anchorless, this returns `null` even for a row whose
 // `session_time` parses cleanly, per the spec requirement above.
-export function topicsRowTimelineSec(
+//
+// Not exported (quality fix wave, FIX 4): single-caller module helper, and
+// `export` had zero importers repo-wide — TopicsRow.test.tsx exercises it
+// only indirectly, through the rendered component.
+function topicsRowTimelineSec(
   row: SessionTopic,
   fps: number | null,
   transcriptAnchored: boolean,

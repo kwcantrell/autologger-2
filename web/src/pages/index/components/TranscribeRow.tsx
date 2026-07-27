@@ -48,7 +48,19 @@ function formatSpeaker(speaker: string, offset: number): string {
   return speaker;
 }
 
-// --- feed-row-seek, task 7.2 (design D4) ---
+// --- feed-row-seek, task 7.2 (design D4); collapsed into one resolver by the
+// quality fix wave (FIX 1) ---
+//
+// `transcribeRowTimelineSec` and a same-shaped `transcribeRowDisplayTime`
+// used to be two functions maintaining the SAME branch structure by
+// convention only — each independently parsed `row.session_time` via
+// `sessionTimeToTimelineSec`, so a future edit to one branch (e.g. the
+// `start_sec > 0` sentinel) could drift from the other without either test
+// suite catching it, silently reintroducing the exact "display names one
+// position, button jumps to another" defect finding I2 fixed. One resolver
+// returning both facts makes display-matches-resolution true by
+// construction: there is only one branch structure, and only one place a
+// future edit could touch.
 //
 // Resolves a transcript row's timeline second from its STORED (last
 // committed) `session_time` when it parses, falling back to `start_sec` only
@@ -65,43 +77,30 @@ function formatSpeaker(speaker: string, offset: number): string {
 // indistinguishable from "no timing data" on the wire, so `0` never counts as
 // a resolvable fallback. Takes `row` directly (never the `edit`/`vals`
 // buffer) so a row mid-edit still resolves to its last committed position.
-export function transcribeRowTimelineSec(row: TranscriptWord, fps: number | null): number | null {
+//
+// `display` is what becomes the jump button's `aria-label` ("Jump to
+// <time>") — the stored string when it resolved the jump, or `start_sec`
+// formatted back through `formatTimelineSec` (the D3 converter's exact
+// inverse) when the string didn't parse and the number did. Single-caller
+// module helper — not exported (FIX 4: it had zero importers repo-wide as
+// `transcribeRowTimelineSec`).
+function resolveTranscribeJump(
+  row: TranscriptWord,
+  fps: number | null,
+): { sec: number; display: string } | null {
   if (fps != null) {
     const fromString = sessionTimeToTimelineSec(row.session_time, fps);
-    if (fromString != null) return fromString;
-  }
-  return row.start_sec > 0 ? row.start_sec : null;
-}
-
-// --- feed-row-seek whole-branch audit fix wave, finding I2 ---
-//
-// `displayTime` becomes the jump button's `aria-label` ("Jump to <time>"),
-// and the spec requires that name identify the time the row is DISPLAYING —
-// but `row.session_time` is only what's displayed when it's the value that
-// resolved the jump. When it's blank or unparseable and `transcribeRowTimelineSec`
-// fell back to `start_sec` instead (design D4), the input cell shows an empty
-// or garbage string while the button silently jumps to a real, different
-// position — an accessible name identifying nothing, or the wrong thing.
-// This mirrors `transcribeRowTimelineSec`'s own string-then-number branching
-// so the displayed name always matches whichever source actually resolved
-// `resolvedSec`: the stored string when it parsed, or `start_sec` formatted
-// back through `formatTimelineSec` (the D3 converter's exact inverse) when
-// it didn't.
-function transcribeRowDisplayTime(row: TranscriptWord, fps: number | null): string {
-  if (fps != null && sessionTimeToTimelineSec(row.session_time, fps) != null) {
-    return row.session_time;
+    if (fromString != null) return { sec: fromString, display: row.session_time };
   }
   if (row.start_sec > 0) {
-    if (fps != null) {
-      const formatted = formatTimelineSec(row.start_sec, fps);
-      if (formatted != null) return formatted;
-    }
     // fps not yet loaded: no HH:MM:SS:FF rendering is possible yet, but the
     // button may still be in the tree (aria-disabled) — a plain-seconds
     // fallback beats an empty name.
-    return `${row.start_sec.toFixed(1)}s`;
+    const display =
+      (fps != null && formatTimelineSec(row.start_sec, fps)) || `${row.start_sec.toFixed(1)}s`;
+    return { sec: row.start_sec, display };
   }
-  return row.session_time;
+  return null;
 }
 
 export const TranscribeRow = memo(function TranscribeRow({
@@ -137,7 +136,7 @@ export const TranscribeRow = memo(function TranscribeRow({
   }
 
   const vals = edit ?? { session_time: row.session_time, speaker: row.speaker, word: row.word };
-  const resolvedSec = transcribeRowTimelineSec(row, fps);
+  const jumpTarget = resolveTranscribeJump(row, fps);
 
   return (
     <tr className={FEED_ROW}>
@@ -146,8 +145,8 @@ export const TranscribeRow = memo(function TranscribeRow({
           containing block are untouched by this. */}
       <td className={clsx(FEED_CELL, 'align-middle text-center')}>
         <JumpToTimeButton
-          resolvedSec={resolvedSec}
-          displayTime={transcribeRowDisplayTime(row, fps)}
+          resolvedSec={jumpTarget?.sec ?? null}
+          displayTime={jumpTarget?.display ?? ''}
           onJump={onJump}
           unavailable={jumpUnavailable}
           reasonId={jumpReasonId}

@@ -114,14 +114,16 @@ describe('TranscribeRow — jump control resolution (design D4)', () => {
 // wave, finding I2) ---
 //
 // `displayTime` used to be `row.session_time` unconditionally, even when
-// `transcribeRowTimelineSec` fell back to `start_sec` (design D4's fallback,
-// which fires when the stored string is blank or unparseable). That left the
-// button's accessible name identifying an EMPTY or garbage string — "Jump to
-// " (no name at all) or "Jump to later" while actually jumping to 742.5s —
-// while it silently jumped to a real, different position derived from
-// `start_sec`. `formatTimelineSec` (the D3 converter's exact inverse) now
-// renders that resolved second back into the same `HH:MM:SS:FF` shape the
-// stored-string path would show.
+// resolution fell back to `start_sec` (design D4's fallback, which fires
+// when the stored string is blank or unparseable). That left the button's
+// accessible name identifying an EMPTY or garbage string — "Jump to " (no
+// name at all) or "Jump to later" while actually jumping to 742.5s — while it
+// silently jumped to a real, different position derived from `start_sec`.
+// `formatTimelineSec` (the D3 converter's exact inverse) now renders that
+// resolved second back into the same `HH:MM:SS:FF` shape the stored-string
+// path would show. Quality fix wave (FIX 1): both facts now come out of a
+// single `resolveTranscribeJump` resolver internal to TranscribeRow.tsx, so
+// display and jump target can no longer drift apart.
 describe('TranscribeRow — jump control accessible name for the start_sec fallback (finding I2)', () => {
   it('names the FORMATTED start_sec when session_time is cleared (blank) but start_sec is live', () => {
     // start_sec=42 @ 24fps -> 1008 frames -> 00:00:42:00.

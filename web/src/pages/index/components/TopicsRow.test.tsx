@@ -17,8 +17,10 @@ import { TopicsRow } from './TopicsRow';
 // (`vals.session_time` is the uncommitted buffer while the field has focus,
 // design D4's "stored, not displayed" distinction is only visible inside the
 // row), so TopicsRow resolves its OWN position from `row.session_time`
-// (never `vals`), via `topicsRowTimelineSec`, unit-tested directly here.
-// Unlike Transcript, Topics has no numeric fallback field on the wire
+// (never `vals`), via the module-private `topicsRowTimelineSec` — exercised
+// only indirectly here, through the rendered `TopicsRow` (it has no
+// importers outside this file, so it is not exported; quality fix wave,
+// FIX 4). Unlike Transcript, Topics has no numeric fallback field on the wire
 // (`SessionTopic` carries only the string) — an unparseable/empty
 // session_time is simply unresolvable, full stop.
 //
