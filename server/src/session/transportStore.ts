@@ -73,7 +73,11 @@ export class TransportStore {
     return { state: { ...st, stopped: true }, projection: this.core.projection() };
   }
 
-  /** Finalize an in-progress take with an exact duration (YouTube import path).
+  /** Advance the transport by an exact duration and mark it stopped (YouTube
+   * import path). Unconditional: it never checks `is_rolling` — elapsed_frames
+   * is bumped and is_rolling forced to 0 whatever the prior state. The sole
+   * production caller (`SessionHub.anchorImportedTake`) invokes it when the
+   * transport is NOT rolling, to account an imported take's duration.
    * `suppressBroadcast` (youtube-audio-import Phase-9 fix-wave, finding 1): when
    * true, skip this call's `transport.changed` broadcast — used ONLY by
    * `SessionHub.anchorImportedTake`'s composite `inTxn`, which broadcasts once

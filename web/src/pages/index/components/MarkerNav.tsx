@@ -86,7 +86,7 @@ export function MarkerNav({ sessionId }: Props) {
   const { data: eventsRes } = useEvents(sessionId || null, { limit: WORKSPACE_EVENTS_LIMIT });
   const events = useMemo(() => eventsRes?.events ?? [], [eventsRes]);
 
-  // session.js dispatches autologger:timeline-sec whenever the displayed timeline
+  // Timeline dispatches autologger:timeline-sec whenever the displayed timeline
   // position changes (status poll, manual scrub, playhead drag). We use that override
   // as the source of truth when present so side hints update in lockstep with the playhead.
   const [scrubSec, setScrubSec] = useState<number | null>(null);
