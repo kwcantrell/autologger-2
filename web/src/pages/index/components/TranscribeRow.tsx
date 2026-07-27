@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
-import { sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
+import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import {
   FEED_CELL,
   FEED_CELL_TIME,
@@ -73,6 +73,37 @@ export function transcribeRowTimelineSec(row: TranscriptWord, fps: number | null
   return row.start_sec > 0 ? row.start_sec : null;
 }
 
+// --- feed-row-seek whole-branch audit fix wave, finding I2 ---
+//
+// `displayTime` becomes the jump button's `aria-label` ("Jump to <time>"),
+// and the spec requires that name identify the time the row is DISPLAYING —
+// but `row.session_time` is only what's displayed when it's the value that
+// resolved the jump. When it's blank or unparseable and `transcribeRowTimelineSec`
+// fell back to `start_sec` instead (design D4), the input cell shows an empty
+// or garbage string while the button silently jumps to a real, different
+// position — an accessible name identifying nothing, or the wrong thing.
+// This mirrors `transcribeRowTimelineSec`'s own string-then-number branching
+// so the displayed name always matches whichever source actually resolved
+// `resolvedSec`: the stored string when it parsed, or `start_sec` formatted
+// back through `formatTimelineSec` (the D3 converter's exact inverse) when
+// it didn't.
+function transcribeRowDisplayTime(row: TranscriptWord, fps: number | null): string {
+  if (fps != null && sessionTimeToTimelineSec(row.session_time, fps) != null) {
+    return row.session_time;
+  }
+  if (row.start_sec > 0) {
+    if (fps != null) {
+      const formatted = formatTimelineSec(row.start_sec, fps);
+      if (formatted != null) return formatted;
+    }
+    // fps not yet loaded: no HH:MM:SS:FF rendering is possible yet, but the
+    // button may still be in the tree (aria-disabled) — a plain-seconds
+    // fallback beats an empty name.
+    return `${row.start_sec.toFixed(1)}s`;
+  }
+  return row.session_time;
+}
+
 export const TranscribeRow = memo(function TranscribeRow({
   row,
   speakerOffset,
@@ -116,7 +147,7 @@ export const TranscribeRow = memo(function TranscribeRow({
       <td className={clsx(FEED_CELL, 'align-middle text-center')}>
         <JumpToTimeButton
           resolvedSec={resolvedSec}
-          displayTime={row.session_time}
+          displayTime={transcribeRowDisplayTime(row, fps)}
           onJump={onJump}
           unavailable={jumpUnavailable}
           reasonId={jumpReasonId}
