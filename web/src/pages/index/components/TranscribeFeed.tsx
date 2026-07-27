@@ -52,7 +52,7 @@ export function TranscribeFeed({ sessionId }: Props) {
   const insert = useInsertTranscriptWord(sessionId);
   const update = useUpdateTranscriptWord(sessionId);
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
-  // its `available`/`jump` handed to every row as a prop/stable callback.
+  // its `unavailable`/`jump` handed to every row as a prop/stable callback.
   // Transcript has no batch-edit mode (always editable), so the gate is just
   // loaded-status + not-rolling. `useTimelineSeek` reads the session-wide
   // clip layout via `AudioClipsContext` — no local `useEvents` call needed

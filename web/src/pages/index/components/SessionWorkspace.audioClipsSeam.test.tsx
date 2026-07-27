@@ -21,7 +21,7 @@ import { SessionWorkspace } from './SessionWorkspace';
 // `TestWorkspace` mirror, not `SessionWorkspace` itself; `SessionWorkspace.
 // test.tsx` mocks `useAudioClips` to `{ clips: [] }` and stubs `TranscribeFeed`
 // out entirely. A re-review confirmed that mutating `SessionWorkspace`'s
-// `<AudioClipsProvider value={{ clips: [] }}>` to a hard-coded empty array —
+// `<AudioClipsProvider clips={[]}>` to a hard-coded empty array —
 // dropping the provider's real value, or moving/misfeeding it — left the
 // entire web suite green: the failure mode is SAFE (no clips ⇒ nothing plays)
 // but D1's jump-and-play feature would die silently.

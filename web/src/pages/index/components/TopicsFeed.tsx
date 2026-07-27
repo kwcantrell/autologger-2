@@ -65,7 +65,7 @@ export function TopicsFeed({ sessionId }: Props) {
   const generate = useGenerateTopics(sessionId);
   const insert = useInsertTopic(sessionId);
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
-  // its `available`/`jump` handed to every row as a prop/stable callback.
+  // its `unavailable`/`jump` handed to every row as a prop/stable callback.
   // Topics has no batch-edit mode (always editable, mirroring Transcript),
   // so the gate is just loaded-status + not-rolling. `useTimelineSeek` reads
   // the session-wide clip layout via `AudioClipsContext` — no local

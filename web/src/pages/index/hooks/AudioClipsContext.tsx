@@ -51,7 +51,7 @@ export function AudioClipsProvider({
   clips,
   children,
 }: {
-  clips: AudioClipLite[];
+  clips: readonly AudioClipLite[];
   children: ReactNode;
 }) {
   return <AudioClipsContext.Provider value={clips}>{children}</AudioClipsContext.Provider>;

@@ -276,7 +276,13 @@ describe('formatTimelineSec', () => {
       for (const fps of [24, 25, 30, 23.976, 59.94, 119.88]) {
         const str = formatTimelineSec(100, fps);
         expect(str).not.toBeNull();
-        expect(str as string).toMatch(/^\d{2}:\d{2}:\d{2}:\d{1,3}$/);
+        // The frame field is zero-padded to at least 2 digits and never
+        // truncated, so only rates whose rounded fps is >= 100 (here, only
+        // 119.88) can actually emit a 3-digit frame count — every rate below
+        // that must stay exactly 2 digits, or a malformed 3-digit field would
+        // slip past a looser `{1,3}` assertion undetected.
+        const frameDigits = Math.round(fps) >= 100 ? '{2,3}' : '{2}';
+        expect(str as string).toMatch(new RegExp(`^\\d{2}:\\d{2}:\\d{2}:\\d${frameDigits}$`));
       }
     });
   });

@@ -55,7 +55,8 @@ interface Props {
 // `session_time` via the D3 frame-arithmetic converter. Topics has the SAME
 // edit-buffer situation as TranscribeRow — `vals.session_time` below is the
 // UNCOMMITTED buffer while the field has focus — so this takes `row`
-// directly, never `vals`/`edit`, mirroring `transcribeRowTimelineSec`.
+// directly, never `vals`/`edit`, mirroring `resolveTranscribeJump` in
+// TranscribeRow.tsx.
 //
 // Unlike Transcript, `SessionTopic` carries no numeric fallback field on the
 // wire — an unparseable or empty `session_time` is simply unresolvable, full
