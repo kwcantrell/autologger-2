@@ -77,6 +77,11 @@ describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
       ['audio/webm;codecs=opus', 'webm'],
       ['audio/ogg;codecs=opus', 'ogg'],
       ['audio/wav', 'wav'],
+      ['audio/mpeg', 'mp3'],
+      ['audio/mp3', 'mp3'],
+      ['audio/aiff', 'aiff'],
+      ['audio/x-aiff', 'aiff'],
+      ['audio/aif', 'aiff'],
       ['audio/mp4', 'm4a'],
       ['audio/x-m4a', 'm4a'],
       ['', 'webm'], // empty mime falls back to audio/webm
