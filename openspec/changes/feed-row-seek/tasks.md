@@ -53,11 +53,11 @@
 
 ## 4. Play-capable seek path
 
-- [ ] 4.1 Write failing tests: a play-capable path starts playback from the target on a **paused**
+- [x] 4.1 Write failing tests: a play-capable path starts playback from the target on a **paused**
       player; a playing player continues from the new position without restarting; and the existing
       `seekToTimelineSec` path is **unchanged** (still only resumes when already playing) so marker
       navigation keeps its semantics.
-- [ ] 4.2 Implement in `AudioPlayer` + publish from `SessionWorkspace`. Keep the non-playing path
+- [x] 4.2 Implement in `AudioPlayer` + publish from `SessionWorkspace`. Keep the non-playing path
       intact and separately reachable — `MarkerNav` must not gain playback (design D1, D8).
 
 ## 5. The jump column and its control
