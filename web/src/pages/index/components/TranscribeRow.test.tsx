@@ -1,0 +1,147 @@
+import { fireEvent, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import type { TranscriptWord } from '../../../api/types';
+import { renderStrict } from '../../../test/renderStrict';
+import { TranscribeRow } from './TranscribeRow';
+
+// --- TranscribeRow jump cell (feed-row-seek, task 7.1/7.2) ---
+//
+// TranscribeFeed owns `useTimelineSeek` (design D7) and hands each row a
+// stable `onJump` + the feed-wide `jumpUnavailable`/`jumpReasonId`, but —
+// unlike EventLogRow — TranscribeRow resolves its OWN position, because the
+// resolution rule (design D4) hinges on a distinction only the row can make:
+// `vals.session_time` is the UNCOMMITTED edit buffer while the session-time
+// field has focus, but the jump must target the last COMMITTED value —
+// `row.session_time`, via the frame-arithmetic converter — falling back to
+// `row.start_sec` only when that string does not parse. Resolving in the
+// parent (from a plain `TranscriptWord` snapshot) would be indistinguishable
+// from resolving from the row's own `row` prop, so the row does it directly
+// against `row`, never against `vals`/`edit`.
+//
+// Frame arithmetic itself (D3) is covered by shared/utils/timelineSec.test.ts;
+// these tests fix fps=24 throughout and only exercise the D4 precedence rule
+// (string-over-number) and the anchorless/no-control case.
+
+function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
+  return {
+    id: 'w-1',
+    session_id: 'sess-1',
+    session_time: '00:00:10:00',
+    speaker: '0',
+    word: 'hello',
+    start_sec: 0,
+    end_sec: 0,
+    ordinal: 0,
+    created_at_utc: '2026-07-21T00:00:00Z',
+    ...overrides,
+  };
+}
+
+function renderRow(overrides: Partial<ComponentProps<typeof TranscribeRow>> = {}) {
+  const onUpdate = vi.fn();
+  const onJump = vi.fn();
+  const utils = renderStrict(
+    <table>
+      <tbody>
+        <TranscribeRow
+          row={wordFixture()}
+          speakerOffset={0}
+          onUpdate={onUpdate}
+          fps={24}
+          onJump={onJump}
+          jumpUnavailable={false}
+          jumpReasonId="v5-transcribe-feed-jump-reason"
+          {...overrides}
+        />
+      </tbody>
+    </table>,
+  );
+  return { ...utils, onUpdate, onJump };
+}
+
+describe('TranscribeRow — jump control resolution (design D4)', () => {
+  it('resolves from the STORED session_time, not the uncommitted edit buffer', () => {
+    // 00:00:10:00 @ 24fps -> 240 frames / 24 = 10s.
+    const { onJump } = renderRow({ row: wordFixture({ session_time: '00:00:10:00' }) });
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+
+    // Focus + type without blurring: `edit`/`vals` now holds a DIFFERENT,
+    // uncommitted session_time. The resolved jump target must be unaffected.
+    fireEvent.focus(tcInput);
+    fireEvent.change(tcInput, { target: { value: '00:05:00:00' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+
+    expect(onJump).toHaveBeenCalledWith(10);
+    expect(onJump).not.toHaveBeenCalledWith(300);
+  });
+
+  it('an edited (committed) row resolves to the edited time, not its stale start_sec', () => {
+    // 00:00:20:00 @ 24fps -> 480 frames / 24 = 20s; start_sec left stale at 5.
+    const { onJump } = renderRow({
+      row: wordFixture({ session_time: '00:00:20:00', start_sec: 5 }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+
+    expect(onJump).toHaveBeenCalledWith(20);
+    expect(onJump).not.toHaveBeenCalledWith(5);
+  });
+
+  it('a hand-inserted row (start_sec === 0, real typed time) resolves to the typed time, not 0', () => {
+    // 00:01:00:00 @ 24fps -> 1440 frames / 24 = 60s; insertTranscriptWord
+    // omits start_sec, so it defaults to 0 even though the row has a real
+    // typed position.
+    const { onJump } = renderRow({
+      row: wordFixture({ session_time: '00:01:00:00', start_sec: 0 }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+
+    expect(onJump).toHaveBeenCalledWith(60);
+    expect(onJump).not.toHaveBeenCalledWith(0);
+  });
+
+  it('an anchorless row (empty session_time, zeroed start_sec) renders no control', () => {
+    renderRow({ row: wordFixture({ session_time: '', start_sec: 0 }) });
+
+    expect(screen.queryByRole('button', { name: /Jump to/ })).toBeNull();
+  });
+});
+
+describe('TranscribeRow — inline editing untouched', () => {
+  it('fields still focus and still commit on blur', () => {
+    const { onUpdate } = renderRow();
+    const wordInput = screen.getByDisplayValue('hello');
+
+    fireEvent.focus(wordInput);
+    fireEvent.change(wordInput, { target: { value: 'goodbye' } });
+    fireEvent.blur(wordInput);
+
+    expect(onUpdate).toHaveBeenCalledWith('w-1', { word: 'goodbye' });
+  });
+
+  it('activating the jump control focuses no field and begins no edit', () => {
+    const { onUpdate } = renderRow();
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to/ }));
+
+    expect(document.activeElement).not.toBe(tcInput);
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('TranscribeRow — feed-wide gate (design D5/D7)', () => {
+  it('renders aria-disabled with the shared reason id when jump is unavailable, and activation no-ops', () => {
+    const { onJump } = renderRow({ jumpUnavailable: true, jumpReasonId: 'shared-reason-x' });
+    const btn = screen.getByRole('button', { name: /Jump to/ });
+
+    expect(btn.getAttribute('aria-disabled')).toBe('true');
+    expect(btn.getAttribute('aria-describedby')).toBe('shared-reason-x');
+
+    fireEvent.click(btn);
+    expect(onJump).not.toHaveBeenCalled();
+  });
+});
