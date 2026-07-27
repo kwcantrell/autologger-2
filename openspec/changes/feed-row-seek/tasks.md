@@ -73,13 +73,13 @@
 
 ## 6. Event Feed wiring
 
-- [ ] 6.1 Write failing tests: an event row resolves from `timecode_total_frames / frame_rate`
+- [x] 6.1 Write failing tests: an event row resolves from `timecode_total_frames / frame_rate`
       **directly** — an event with an absent frame count renders no control rather than resolving
       to `0` via `eventTimelineSec`'s fallback (design D4); unavailable while rolling and in
       batch-edit mode; activation jumps **and starts playback**. In **wall-clock display mode** the
       control's accessible name names the wall-clock time the row shows. Assert
       `EventLogSheet.test.tsx` still passes unchanged — it renders real `EventLogRow`s.
-- [ ] 6.2 Implement: `EventLogSheet` owns the hook and passes a stable handler plus each row's
+- [x] 6.2 Implement: `EventLogSheet` owns the hook and passes a stable handler plus each row's
       resolved state as a **prop** (design D7); `EventLogRow` renders the jump cell. Reconcile the
       timecode cell's `!cursor-pointer [&_*]:!cursor-pointer` lock — it emits `!important` on every
       descendant and would defeat an unavailable-state cursor; the required outcome is that the
