@@ -1,12 +1,8 @@
+import { safeTimelineSec } from './audioClips';
 import type { AudioClipLite } from './waveformMerge';
 
 /** ViewBox height fraction used for 0 → full-scale peak (headroom above the loudest bin). */
 const WF_SVG_PEAK_SPAN = 80;
-
-function safeTimelineSec(v: unknown, fallback = 0): number {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
 
 function waveformPeakToSvgY(peak01: number): number {
   const amp = Number.isFinite(peak01) ? peak01 : 0;

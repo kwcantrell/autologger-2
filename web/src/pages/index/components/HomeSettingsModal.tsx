@@ -609,13 +609,8 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               {showAcronymWarn && (
                 <p className="modal-hint" id="profile-show-acronym-warn">
                   Tip: show code is usually initials of the show name (e.g.{' '}
-                  {currentDraft.name.trim()} &rarr;{' '}
-                  {currentDraft.name
-                    .trim()
-                    .split(/\s+/)
-                    .map((w) => w[0]?.toUpperCase() ?? '')
-                    .join('')}
-                  ). Yours differs — that is fine if intentional.
+                  {currentDraft.name.trim()} &rarr; {currentInitials}). Yours differs — that is fine
+                  if intentional.
                 </p>
               )}
             </div>

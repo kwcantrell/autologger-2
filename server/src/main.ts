@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { wireApp } from './app';
-import { requireLoginEnabled } from './env';
+import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import type { AppEnv } from './types';
 
@@ -24,7 +24,8 @@ if (!existsSync(webDist)) {
 
 // Gate decision E1: login defaults ON. If the operator explicitly opened the
 // API (REQUIRE_LOGIN=0) on a non-loopback bind with no allowlist, say so loudly.
-const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+// Same predicate the per-feature open-network refusals read (env.ts).
+const loopback = loopbackHostname(bindings.config);
 if (!loopback && !requireLoginEnabled(bindings.config) && !(bindings.config.IP_ALLOWLIST || '').trim()) {
   console.warn(
     '\n' +
