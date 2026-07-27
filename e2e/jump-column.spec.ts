@@ -51,9 +51,7 @@ test('a jump control activates by keyboard (Enter and Space), moving the timelin
   await jumpBtn.focus();
   await expect(jumpBtn).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect
-    .poll(async () => playhead.evaluate((el) => el.style.left))
-    .not.toBe(leftBefore);
+  await expect.poll(async () => playhead.evaluate((el) => el.style.left)).not.toBe(leftBefore);
 
   // Clear the manual scrub (a timeline-track double-click, per Timeline.tsx's
   // `onTrackDoubleClick`) so the playhead moves away from the jump target,
@@ -63,7 +61,5 @@ test('a jump control activates by keyboard (Enter and Space), moving the timelin
   await jumpBtn.focus();
   await expect(jumpBtn).toBeFocused();
   await page.keyboard.press(' ');
-  await expect
-    .poll(async () => playhead.evaluate((el) => el.style.left))
-    .not.toBe(leftBeforeSpace);
+  await expect.poll(async () => playhead.evaluate((el) => el.style.left)).not.toBe(leftBeforeSpace);
 });
