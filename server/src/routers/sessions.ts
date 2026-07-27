@@ -253,6 +253,11 @@ const YOUTUBE_IMPORT_AT_CAPACITY_DETAIL =
 const YOUTUBE_IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
 const LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL = 'duration_s must be a positive finite number.';
+/** batch-audio-import design D11 — upper bound keeps Date ISO timestamps and frame math representable. */
+const LOCAL_AUDIO_IMPORT_MAX_DURATION_S = 86_400; // 24 hours
+const LOCAL_AUDIO_IMPORT_DURATION_EXCEEDS_MAX_DETAIL = `duration_s exceeds the maximum supported duration of ${LOCAL_AUDIO_IMPORT_MAX_DURATION_S} seconds (24 hours).`;
+const LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL =
+  'Content-Type header is required and must be non-empty.';
 const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';
 
@@ -298,7 +303,18 @@ function parseLocalAudioImportDurationS(raw: string | undefined): number {
   if (!Number.isFinite(n) || n <= 0) {
     throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
   }
+  if (n > LOCAL_AUDIO_IMPORT_MAX_DURATION_S) {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_DURATION_EXCEEDS_MAX_DETAIL);
+  }
   return n;
+}
+
+function requireLocalAudioImportContentType(raw: string | undefined): string {
+  const trimmed = raw?.trim() ?? '';
+  if (trimmed === '') {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL);
+  }
+  return trimmed;
 }
 
 sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => {
@@ -307,13 +323,13 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   const ctx = timecodeCtx(sessionRow);
 
   const durationS = parseLocalAudioImportDurationS(c.req.query('duration_s'));
+  const mimeType = requireLocalAudioImportContentType(c.req.header('content-type'));
 
   const declared = c.req.header('content-length');
   enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
   const payload = await c.req.arrayBuffer();
   if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
   enforceAudioByteLimit(payload.byteLength);
-  const mimeType = c.req.header('content-type') ?? 'application/octet-stream';
 
   if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
     throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);

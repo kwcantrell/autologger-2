@@ -80,7 +80,10 @@ sessions (New Session pattern). No new list API.
 Client supplies `duration_s` (from decoded AudioBuffer or single-file metadata
 estimate). Server uses it for segment end timestamps + `anchorImportedTake`,
 avoiding a mandatory server-side decode dependency for v1. Reject non-finite /
-non-positive duration with `400 { detail }`.
+non-positive duration with `400 { detail }`. Reject values above
+`LOCAL_AUDIO_IMPORT_MAX_DURATION_S` (86_400 s / 24 h) with `400 { detail }` —
+keeps `Date` ISO timestamps and frame math representable. Require a non-empty
+`Content-Type` header (`400 { detail }` when missing/blank).
 
 ## Risks / Trade-offs
 
@@ -116,6 +119,16 @@ accepted no-ffmpeg / easier stitch.
 6. Import Logs no-op — accepted.
 
 **Residual minors:** AIFF decode depends on browser; 50 MB stitched WAV cap.
+
+### 2026-07-27 — Phase-2 fix-wave (review)
+
+**Fixed in place:**
+- Require non-empty `Content-Type` (`400 { detail }`); no `application/octet-stream`
+  fallback.
+- Cap `duration_s` at 86_400 s (24 h); reject above with stable `400 { detail }`.
+- Integration tests for late rolling 409 rollback, anchor throw rollback, and 413
+  oversize body.
+- README endpoint inventory lists 413.
 
 ### 2026-07-27 — Consistency read (post-gate edit)
 

@@ -131,11 +131,13 @@ already-completed sessions and attaches intact.
 ### Requirement: Local audio import HTTP surface
 
 The server SHALL expose `POST /api/sessions/:sessionId/local-audio-import` that
-accepts one audio body (raw bytes with Content-Type), requires a positive finite
-`duration_s` query parameter, stores one audio segment, anchors the imported take,
-and returns `200 { ok: true }` on success. Failure modes SHALL use JSON `{ detail }`
+accepts one audio body (raw bytes with a non-empty Content-Type), requires a
+positive finite `duration_s` query parameter not exceeding 86_400 seconds (24
+hours), stores one audio segment, anchors the imported take, and returns
+`200 { ok: true }` on success. Failure modes SHALL use JSON `{ detail }`
 with appropriate status codes and SHALL roll back segment metadata on put/anchor
-failure.
+failure. Oversized bodies SHALL be rejected with `413 { detail }` per the
+existing audio upload cap.
 
 #### Scenario: Happy path single blob
 
