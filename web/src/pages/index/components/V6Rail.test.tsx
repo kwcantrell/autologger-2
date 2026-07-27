@@ -93,6 +93,7 @@ function renderRail(initialPath = '/') {
           onSelectSession={() => {}}
           onCloseSession={() => {}}
           onNewSession={() => {}}
+          onBatchImport={() => {}}
           onOpenSettings={() => {}}
         />
       </Router>
@@ -126,6 +127,44 @@ describe('V6Rail Teams button same-route guard (gate decision 1)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
 
     expect(memory.history).toEqual(['/teams']);
+  });
+});
+
+describe('V6Rail Batch Import button', () => {
+  it('calls onBatchImport when clicked', () => {
+    const onBatchImport = vi.fn();
+    const memory = memoryLocation({ path: '/', record: true });
+    setNavigationImplForTesting((path, options) => memory.navigate(path, options));
+    const client = new QueryClient();
+    renderStrict(
+      <QueryClientProvider client={client}>
+        <Router hook={memory.hook}>
+          <V6Rail
+            activeSessionId=""
+            onSelectSession={() => {}}
+            onCloseSession={() => {}}
+            onNewSession={() => {}}
+            onBatchImport={onBatchImport}
+            onOpenSettings={() => {}}
+          />
+        </Router>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Batch Import' }));
+    expect(onBatchImport).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses an up-arrow upload icon on the Batch Import rail button', () => {
+    renderRail();
+
+    const batchBtn = document.getElementById('v6-btn-batch-import');
+    expect(batchBtn).not.toBeNull();
+    const paths = batchBtn?.querySelectorAll('path') ?? [];
+    const dValues = Array.from(paths).map((p) => p.getAttribute('d'));
+    expect(dValues).toContain('M12 3V15');
+    expect(dValues.some((d) => d?.includes('L12 15'))).toBe(true);
+    expect(dValues).toContain('M4 19H20');
   });
 });
 

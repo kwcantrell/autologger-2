@@ -114,6 +114,7 @@ interface Props {
   onSelectSession: (sid: string) => void;
   onCloseSession: () => void;
   onNewSession: () => void;
+  onBatchImport: () => void;
   onOpenSettings: () => void;
   /** Phone-first (≤767px): the rail renders as an off-canvas drawer. */
   isMobile?: boolean;
@@ -126,6 +127,7 @@ export function V6Rail({
   onSelectSession,
   onCloseSession,
   onNewSession,
+  onBatchImport,
   onOpenSettings,
   isMobile = false,
   mobileOpen = false,
@@ -200,6 +202,28 @@ export function V6Rail({
           </svg>
         </span>
         <span className={RAIL_PRIMARY_LABEL}>New Session</span>
+      </button>
+
+      <button
+        type="button"
+        className={RAIL_PRIMARY}
+        id="v6-btn-batch-import"
+        onClick={onBatchImport}
+      >
+        <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <path
+              d="M7 10L12 15L17 10"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </span>
+        <span className={RAIL_PRIMARY_LABEL}>Batch Import</span>
       </button>
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus convenience around the real <input>/<button>; keyboard users reach the button below directly */}

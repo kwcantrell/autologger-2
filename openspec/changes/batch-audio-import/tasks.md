@@ -12,9 +12,9 @@
 
 ## Phase 3 — Batch Import UI shell
 
-- [ ] 3.1 Rail Batch Import icon → up-arrow; modal header icon match; tests.
-- [ ] 3.2 Modal: Show dropdown (New Session parity), Import Audio / Import Logs / Start Import layout, progress region; Import Logs no-op test.
-- [ ] 3.3 Directory picker + folder **name** under Import Audio; close clears selection.
+- [x] 3.1 Rail Batch Import icon → up-arrow; modal header icon match; tests.
+- [x] 3.2 Modal: Show dropdown (New Session parity), Import Audio / Import Logs / Start Import layout, progress region; Import Logs no-op test.
+- [x] 3.3 Directory picker + folder **name** under Import Audio; close clears selection.
 
 ## Phase 4 — Client import runner
 
