@@ -9,10 +9,30 @@ import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
+import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventLogRow, type RowEditValues } from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
+import { JUMP_COLUMN } from './JumpToTimeButton';
+
+// --- feed-row-seek, task 6.2 (design D4) ---
+//
+// Resolves an event row's timeline second from `timecode_total_frames /
+// frame_rate` DIRECTLY. Deliberately NOT `eventTimelineSec` (shared/utils/
+// audioClips.ts) — that helper falls back to parsing the SMPTE `timecode`
+// string as literal seconds when the frame count is absent, which (a)
+// substitutes 0 for a missing/empty timecode (jumping the playhead to 0:00 —
+// the exact defect this rule exists to eliminate) and (b) carries the
+// non-integer-frame-rate drift `shared/utils/timelineSec.ts`'s converter was
+// built to fix. An event with no frame count is UNRESOLVABLE: no control.
+export function eventRowTimelineSec(event: LogEvent): number | null {
+  const frames = event.timecode_total_frames;
+  const fps = event.frame_rate;
+  if (frames == null || fps == null) return null;
+  if (!Number.isFinite(frames) || !Number.isFinite(fps) || fps <= 0) return null;
+  return frames / fps;
+}
 
 // ---------------------------------------------------------------------------
 // Sort
@@ -199,6 +219,12 @@ export function EventLogSheet({ sessionId }: Props) {
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
 
+  // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
+  // its `available`/`jump` handed to every row as a prop/stable callback. ---
+  const { available: jumpAvailable, jump } = useTimelineSeek(sessionId, events, batchEditMode);
+  const jumpUnavailable = !jumpAvailable;
+  const jumpReasonId = 'v5-event-feed-jump-reason';
+
   // Themed confirms (ui-refresh: replaces window.confirm browser chrome).
   const { confirm, confirmElement } = useConfirm();
 
@@ -377,6 +403,12 @@ export function EventLogSheet({ sessionId }: Props) {
   // `!static` carries the extracted SessionWorkspace override `.v4-log-sheet .sheet th
   // { position: static }` — the Event Feed header is NOT sticky (unlike Transcribe/Topics).
   const eventColumns: ColumnDef[] = [
+    // JUMP_COLUMN as shared across all three feeds (design D2), but its
+    // `thClassName` is overridden here to `!static` — the Event Feed's other
+    // headers all carry that override (its header row isn't sticky, unlike
+    // Transcribe/Topics) and a sticky lone column among static siblings would
+    // visibly desync on scroll. `key`/`label`/`ariaLabel` stay verbatim.
+    { ...JUMP_COLUMN, thClassName: '!static w-8' },
     {
       key: 'time',
       label: viewUtc ? 'World Clock' : 'Session Time',
@@ -481,6 +513,15 @@ export function EventLogSheet({ sessionId }: Props) {
               checked={showInternal}
             />
           </div>
+          {/* The ONE shared reason node every row's jump control references while
+              unavailable (design D2 gate decision) — never one per row. Not
+              aria-hidden: it must stay reachable via aria-describedby. */}
+          {jumpUnavailable && (
+            <span id={jumpReasonId} className="sr-only">
+              Jump is unavailable while timecode is rolling, session status is loading, or batch
+              edit is active.
+            </span>
+          )}
         </>
       }
     >
@@ -494,6 +535,7 @@ export function EventLogSheet({ sessionId }: Props) {
         emptyMessage={events.length === 0 ? '— No logged items yet.' : '— No rows visible.'}
         colgroup={
           <colgroup>
+            <col className="col-jump" />
             <col className="col-timecode" />
             <col className="col-category" />
             <col className="col-message" />
@@ -510,6 +552,10 @@ export function EventLogSheet({ sessionId }: Props) {
             pendingDelete={pendingDeleteIds.has(ev.event_id)}
             viewUtc={viewUtc}
             batchValues={batchEdits.get(ev.event_id) ?? null}
+            resolvedSec={eventRowTimelineSec(ev)}
+            onJump={jump}
+            jumpUnavailable={jumpUnavailable}
+            jumpReasonId={jumpReasonId}
             onInlineSave={handleInlineSave}
             onBatchChange={handleBatchChange}
             onDelete={handleDelete}
@@ -520,7 +566,7 @@ export function EventLogSheet({ sessionId }: Props) {
           // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
           <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">
             <td
-              colSpan={3}
+              colSpan={4}
               className={clsx(
                 'font-[family-name:var(--font-mono)] text-[0.8rem] text-muted whitespace-nowrap',
                 'faint',

@@ -92,7 +92,13 @@ function statusFixture(overrides: Partial<SessionStatus> = {}): SessionStatus {
 }
 
 function eventsResponseFixture(events: LogEvent[]): EventsResponse {
-  return { events, total: events.length, logged_event_count: events.length, offset: 0, limit: 1000 };
+  return {
+    events,
+    total: events.length,
+    logged_event_count: events.length,
+    offset: 0,
+    limit: 1000,
+  };
 }
 
 function mockHooks(events: LogEvent[], status: SessionStatus) {
