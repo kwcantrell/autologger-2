@@ -28,6 +28,54 @@ module consume (see Endpoints below; the contract is frozen).
 
 ## Architecture
 
+Everything runs in **one Node process**; the browser and Companion are thin clients that
+fetch over HTTP/WS and hold no session state. All storage lives on local disk under `DATA_DIR`;
+the config-gated integrations (DeepGram, `yt-dlp`, the `claude` CLI, the Claude Agent SDK) are
+spawned or called *by the server*, never by a client.
+
+```
+   CLIENTS                          SINGLE NODE PROCESS                        LOCAL DISK
+┌──────────────┐            ┌──────────────────────────────────┐        ┌───────────────────┐
+│ React web/   │  HTTP  ┌──▶│ Hono router + Zod + jose          │        │ DATA_DIR/         │
+│ (SPA)        │───────▶│   │  ├─ auth / profile / shows        │──SQL──▶│  catalog.db       │
+│              │◀── WS ─┤   │  ├─ sessions / events / audio     │        │  (global index,   │
+├──────────────┤        │   │  ├─ transcribe / exports          │        │   kv, presence)   │
+│ Companion    │  HTTP  │   │  └─ companion / admin             │        ├───────────────────┤
+│ module       │───────▶│   │                                   │        │  sessions/<id>.db │
+│              │◀── WS ─┤   │  SessionHubRegistry (in-memory)   │──SQL──▶│  (one per session:│
+├──────────────┤        │   │   └─ SessionHub per session ──────┼───┐    │   events, topics, │
+│ stale/ext.   │────────┘   │      (events, transport, lease,   │   │    │   transcript…)    │
+│ clients      │            │       transcript, topics, WS fan) │   │    ├───────────────────┤
+└──────────────┘            └─────────────┬────────────────────┘   └───▶│  blobs/audio/…    │
+                                          │ spawn / fetch (server-side)  │  tmp/ (staging)   │
+                       ┌──────────────────┼───────────────────┐         └───────────────────┘
+                       ▼                  ▼                   ▼
+              ┌─────────────────┐ ┌───────────────┐ ┌───────────────────────┐
+              │ DeepGram cloud  │ │ yt-dlp child  │ │ claude CLI / Agent SDK │
+              │ STT (fetch)     │ │ (audio dl)    │ │ child (AI chat/topics/ │
+              │ DEEPGRAM_API_KEY│ │ YTDLP_PATH    │ │ v2)  CLAUDE_CLI_PATH   │
+              └─────────────────┘ └───────────────┘ └───────────────────────┘
+              config-gated: each returns a frozen 503 until its key/binary is present
+```
+
+**Why server-side.** This placement is deliberate, driven by three forces no browser can satisfy:
+
+- **Subprocess execution.** The server spawns the `claude` CLI and `yt-dlp` directly with
+  `child_process.spawn` (and `yt-dlp` may in turn spawn an `ffmpeg` postprocessor of its own) —
+  native binaries a browser can't run: no process model, no `PATH`, no spawn. (The one integration that is *just* a `fetch`, DeepGram, could run in a
+  browser, but see the next point.) The pure-TS `mediabunny` audio merge is the exception that
+  proves the rule: it needs no binary, so it is the only piece that *could* run either side.
+- **Secret custody.** `DEEPGRAM_API_KEY` and Anthropic credentials must never ship to a client
+  — a browser bundle is world-readable, so client-side calls would leak billable keys to every
+  user. The server holds them and is the only caller.
+- **Shared live state.** One `SessionHub` per session with WebSocket fan-out is what lets the
+  React SPA *and* the non-browser Companion hardware module see the same session in real time.
+  Client-local storage would fork each device's copy and lock Companion out entirely. It would
+  also change observable HTTP/WS behavior — frozen by the `api-contract-freeze` spec.
+
+A browser-only build would therefore be a different, single-user, no-hardware product — not a
+refactor of this one.
+
 - **Catalog DB = global, cross-session, relational, not hot** (`DATA_DIR/catalog.db`). Also
   holds key/value rows (login sessions, OAuth CSRF, replacing KV) and a lightweight
   `sessions` index (metadata + a small live projection) so listing + status + cheap
@@ -423,6 +471,36 @@ tight loop.
   harnesses) must pass a **fresh env per request** — reusing one env object across concurrent
   requests will cross-contaminate bindings.
 
+### Environment variable reference
+
+The deployment / auth / network knobs, consolidated. `server/.env.example` is the
+authoritative, fully-commented list (including the config-gate keys below); copy it to
+`server/.env` (gitignored) and fill in what you need.
+
+| Var | Default | What it does |
+|-----|---------|--------------|
+| `DATA_DIR` | `./data` | Root for all state — `catalog.db`, per-session DBs, audio blobs, temp staging. |
+| `HOST` | `0.0.0.0` | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
+| `PORT` | `8787` | TCP port to listen on. |
+| `PUBLIC_BASE_URL` | *(empty; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
+| `REQUIRE_LOGIN` | `1` | When on, every `/api` route needs a session **or** a bearer token. Set `0` only for an open, trusted LAN box (triggers the open-bind startup warning). |
+| `IP_ALLOWLIST` | *(empty = off)* | CSV of allowed IPs/CIDRs (v4 + v6), enforced **before** auth. Empty disables it; a non-matching client gets `403`. A network-origin gate, orthogonal to `REQUIRE_LOGIN`. |
+| `TRUST_PROXY` | `0` | When `1`, read the client IP from the first `X-Forwarded-For` hop (and `X-Forwarded-Proto` for secure-cookie decisions) instead of the raw socket. Enable **only** behind a proxy you control that overwrites `X-Forwarded-For` — otherwise the header is spoofable and can bypass `IP_ALLOWLIST`. |
+| `COOKIE_SECURE` | *(auto)* | Force the session cookie's `Secure` flag on/off. Blank = auto: secure when the request itself arrived over HTTPS, **or** when `TRUST_PROXY=1` and the proxy set `X-Forwarded-Proto: https`. |
+| `API_TOKEN` | *(empty)* | Device/machine bearer token. A request with `Authorization: Bearer <API_TOKEN>` passes the login gate — this is what the Companion module and other headless clients use. |
+| `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
+| `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth credentials. OAuth is available only when both are set **and** `PUBLIC_BASE_URL` is set. |
+
+**Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
+present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
+transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import, and
+`CLAUDE_CLI_PATH` for AI chat / topics / v2 dashboards.
+
+**Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
+proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, `REQUIRE_LOGIN=1`, and an
+`API_TOKEN` for headless clients — optionally an `IP_ALLOWLIST` to further restrict access.
+
 ## Known parity windows (spec)
 
 These are accepted operational tradeoffs, not bugs to "fix" with a cross-DB transaction:
@@ -607,6 +685,68 @@ via Companion's **"Import module package"**, or extract it into a directory you 
 > newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
 > root `package.json` `overrides` keeps `@companion-module/tools` on the same 1.14.x base so
 > the packaged manifest's `apiVersion` is correct.
+
+### Connecting Bitfocus Companion to a server
+
+The module is **not published to the Bitfocus registry** (`"private": true`) — searching a
+stock Companion install won't find "AutoLogger". You load the packaged build (above) and point
+it at any reachable server, local or remote (e.g. a public `https://…` deployment behind a
+reverse proxy — the module polls the `/api/companion/*` REST endpoints over `fetch`, no
+WebSocket, so HTTPS works with no extra setup).
+
+1. **Package + load the module** — `npm run package -w companion`, then import the
+   `.tgz` via Companion's **"Import module package"** (see the loading note above).
+2. **Add the connection** — Companion GUI → **Connections → Add connection →** search
+   **AutoLogger**, then fill the three config fields (`companion/src/config.ts`):
+   - **AutoLogger server URL** — the server's base URL, e.g.
+     `https://autologger.example.com` (a trailing slash is stripped automatically).
+   - **API token** — see step 3.
+   - **Poll interval (ms)** — default `1000` (clamped to 250–10000).
+3. **Authenticate (public / `REQUIRE_LOGIN=1` servers)** — the module authenticates by
+   sending `Authorization: Bearer <token>`, which the server accepts only when it equals its
+   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the server's
+   `server/.env`, restart, and paste the **same** secret into the connection's **API token**
+   field. Leave it blank only on an open LAN box running `REQUIRE_LOGIN=0` (never a
+   public one). If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
+   so the client IP is read from the forwarded header.
+4. **Open a browser on a session** — the module acts on **whichever session an open browser
+   reports as active** (via presence); it does not pick a session itself. Load the server in a
+   browser and enter/start a session, then check the session/show name shown on the Companion
+   buttons before pressing — with multiple tabs open the active session can change.
+
+**Sanity check** the URL + token before wiring buttons — a `200` with JSON means you're set;
+`401` is a token mismatch, and a `409`/empty session means no browser is on a session yet:
+
+```bash
+curl -H "Authorization: Bearer <your-API_TOKEN>" \
+  https://autologger.example.com/api/companion/state
+```
+
+**Behind an authenticating proxy (Pangolin / SSO / any identity-aware gateway).** A *plain*
+reverse proxy (nginx/Caddy just terminating TLS) is transparent to Companion. An
+**authenticating** proxy is not: it intercepts every request and `302`-redirects unauthenticated
+ones to an SSO login page *before they reach the Node server*, so the `curl` above (or the
+module) sees a redirect to the proxy's auth portal, not AutoLogger — and the request's
+`Authorization: Bearer` header is never evaluated by AutoLogger at all. A human browser gets
+past it by completing SSO once and holding the proxy's session cookie; the headless module
+can't do that (it only sends the one static bearer token and can't complete an interactive
+login), so it fails with a generic network error. The tell is a `302` whose `location` points
+at the proxy's auth host:
+
+```bash
+curl -sSi https://autologger.example.com/api/companion/state | grep -i '^location'
+# location: https://<proxy-auth-host>/auth/resource/...?redirect=...   ← proxy SSO wall
+```
+
+**Fix it at the proxy, not in AutoLogger:** add a rule that lets the `/api/companion/*` paths
+**bypass the proxy's SSO**, then rely on AutoLogger's own `API_TOKEN` (+ optionally
+`IP_ALLOWLIST`) to secure them — that is exactly the auth model the module is built for. Keep
+the rest of the app behind SSO. (In Pangolin: the resource's **Rules** tab → match path
+`/api/companion/*` → **Accept**.) Making the whole resource public and leaning entirely on
+`API_TOKEN` also works but drops SSO from the browser flow too. Header/resource-token auth on
+the proxy generally won't work: the module sends only `Authorization: Bearer <API_TOKEN>` and
+can't add a second custom header, so a proxy that also wants `Authorization` collides with
+AutoLogger's token.
 
 The headless-Companion Playwright project is binary-gated and excluded from the default
 `npm run e2e` run. To run it where a Companion install is present, use
