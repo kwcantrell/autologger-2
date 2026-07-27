@@ -78,9 +78,14 @@ export class TransportStore {
    * is bumped and is_rolling forced to 0 whatever the prior state. The sole
    * production caller (`SessionHub.anchorImportedTake`) invokes it when the
    * transport is NOT rolling, to account an imported take's duration.
-   * `suppressBroadcast` (youtube-audio-import Phase-9 fix-wave, finding 1): when
-   * true, skip this call's `transport.changed` broadcast — used ONLY by
-   * `SessionHub.anchorImportedTake`'s composite `inTxn`, which broadcasts once
+   * `suppressBroadcast` (youtube-audio-import Phase-9 fix-wave, finding 1;
+   * rationale updated by code-health-consolidation D1): atomicity is now owned
+   * by the post-commit broadcast queue (`SessionHub.inTxn` +
+   * `SessionCore.withBroadcastsHeld`); this flag is RETAINED for a different
+   * job — SUPPRESSION, i.e. the composite's frame-count contract. Used ONLY by
+   * `SessionHub.anchorImportedTake`, whose call here would otherwise enqueue an
+   * extra `transport.changed` that the queue would faithfully flush post-commit
+   * alongside the composite's own manual pair; the composite broadcasts once
    * itself, after the transaction commits. Every other caller omits it
    * (default false), preserving the existing broadcast behavior. */
   stopTakeWithDuration(input: {
