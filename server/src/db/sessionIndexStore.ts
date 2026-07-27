@@ -82,23 +82,25 @@ export class SessionIndexStore {
     createdAtUtc: string;
   }): string {
     const id = crypto.randomUUID();
-    this.db.run(
-      `INSERT INTO sessions
-         (id, show_id, title, archived, ui_hidden, frame_rate, start_offset_frames,
-          episode, notes, started_at_utc, created_at_utc,
-          event_count, is_rolling, current_take, transport_elapsed_frames)
-       VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
-      id,
-      opts.showId,
-      opts.title,
-      opts.frameRate,
-      opts.startOffsetFrames,
-      opts.episode,
-      opts.notes,
-      opts.startedAtUtc,
-      opts.createdAtUtc,
-    );
-    this.bumpShowNextEpisodeFromEpisodeString(opts.showId, opts.episode);
+    this.db.tx(() => {
+      this.db.run(
+        `INSERT INTO sessions
+           (id, show_id, title, archived, ui_hidden, frame_rate, start_offset_frames,
+            episode, notes, started_at_utc, created_at_utc,
+            event_count, is_rolling, current_take, transport_elapsed_frames)
+         VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+        id,
+        opts.showId,
+        opts.title,
+        opts.frameRate,
+        opts.startOffsetFrames,
+        opts.episode,
+        opts.notes,
+        opts.startedAtUtc,
+        opts.createdAtUtc,
+      );
+      this.bumpShowNextEpisodeFromEpisodeString(opts.showId, opts.episode);
+    });
     return id;
   }
 

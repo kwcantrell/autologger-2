@@ -5,15 +5,14 @@ import { normalizeTargetSec, resolvePlayPosition } from '../components/AudioPlay
 import { useAudioClipsContext } from './AudioClipsContext';
 
 /**
- * Published by `SessionWorkspace` → `AudioPlayer` in a later unit of this
- * change (phase 4, design D1) — the play-capable counterpart to the existing
+ * Published by `SessionWorkspace` → `AudioPlayer` (feed-row-seek phase 4,
+ * design D1; landed) — the play-capable counterpart to the existing
  * `AutoLogger_seekAudio` (non-playing; declared in AppShell.tsx and used by
- * marker navigation only). Declared here, ahead of that phase landing, so this
- * hook — its first caller — type-checks; TypeScript merges `declare global`
- * blocks across files, same pattern as the other AutoLogger_* globals.
+ * marker navigation only). TypeScript merges `declare global` blocks across
+ * files, same pattern as the other AutoLogger_* globals.
  *
- * Every call is optional-chained: until phase 4 lands (and after unmount) this
- * is a silent no-op, never a throw.
+ * Every call is optional-chained: while SessionWorkspace is unmounted this is
+ * a silent no-op, never a throw.
  */
 declare global {
   interface Window {

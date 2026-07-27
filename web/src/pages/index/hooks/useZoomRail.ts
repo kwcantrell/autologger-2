@@ -9,7 +9,6 @@ declare global {
   interface Window {
     AutoLogger_getTimelineZoom?: () => number;
     AutoLogger_scrollTimelineToSec?: (sec: number, totalSec?: number) => void;
-    AutoLogger_resetZoom?: () => void;
   }
 }
 
@@ -99,7 +98,6 @@ export function useZoomRail(
   // Bar handle positions (pixel centers within #timeline-zoom-range).
   const zoomLCenterPxRef = useRef<number | null>(null);
   const zoomRCenterPxRef = useRef<number | null>(null);
-  const lastZoomRangeWidthRef = useRef<number | null>(null);
 
   // Drag state
   const zoomHandleDragRef = useRef<'bar' | 'left' | 'right' | null>(null);
@@ -119,9 +117,6 @@ export function useZoomRail(
   // Wheel coalescing
   const wheelZoomRafRef = useRef<number | null>(null);
   const wheelPendingFactorRef = useRef(1);
-
-  // Resize rAF
-  const resizeFlushRafRef = useRef<number | null>(null);
 
   // ---------- helpers ----------
 
@@ -396,9 +391,7 @@ export function useZoomRail(
   );
 
   const ensureZoomHandlesLayout = useRef((): boolean => {
-    const m = getZoomRangeMetrics.current();
-    if (!m) return false;
-    lastZoomRangeWidthRef.current = m.W;
+    if (!getZoomRangeMetrics.current()) return false;
     syncZoomTrackFromScroll.current();
     return true;
   });
@@ -436,9 +429,7 @@ export function useZoomRail(
     vp.scrollLeft = newMax > 0 ? ratio * newMax : 0;
     syncZoomTrackFromScroll.current();
     // Second pass — zoom-range may also have resized.
-    const m = getZoomRangeMetrics.current();
-    if (m) {
-      lastZoomRangeWidthRef.current = m.W;
+    if (getZoomRangeMetrics.current()) {
       applyTimelineZoomLayout.current();
       syncZoomTrackFromScroll.current();
     }
@@ -699,23 +690,21 @@ export function useZoomRail(
     stableBaseWidthRef.current = null;
     zoomLCenterPxRef.current = null;
     zoomRCenterPxRef.current = null;
-    lastZoomRangeWidthRef.current = null;
     lastZoomTooltipPctRef.current = null;
     setZoomValueLabel.current(1, true);
   });
 
   // ---------- effects ----------
 
-  // Publish window globals for session.js (jumpToMarker + bootstrap).
+  // Publish window globals for in-app consumers (TimelineTicks reads the zoom;
+  // timelineJump/useTimelineSeek drive the scroll).
   useEffect(() => {
     window.AutoLogger_getTimelineZoom = () => zoomRef.current;
     window.AutoLogger_scrollTimelineToSec = (sec: number, totalSec?: number) =>
       scrollToSec.current(sec, totalSec);
-    window.AutoLogger_resetZoom = () => resetZoom.current();
     return () => {
       window.AutoLogger_getTimelineZoom = undefined;
       window.AutoLogger_scrollTimelineToSec = undefined;
-      window.AutoLogger_resetZoom = undefined;
     };
   }, []);
 
@@ -855,7 +844,6 @@ export function useZoomRail(
       ro.disconnect();
       zro.disconnect();
       if (resizeRafId) cancelAnimationFrame(resizeRafId);
-      if (resizeFlushRafRef.current) cancelAnimationFrame(resizeFlushRafRef.current);
       if (wheelZoomRafRef.current) cancelAnimationFrame(wheelZoomRafRef.current);
       if (zoomDragRafRef.current) cancelAnimationFrame(zoomDragRafRef.current);
       if (zoomTooltipHideTimerRef.current) clearTimeout(zoomTooltipHideTimerRef.current);

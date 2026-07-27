@@ -83,6 +83,15 @@ describe('BlobStore', () => {
     await expect(s.delete('k')).resolves.toBeUndefined();
   });
 
+  it('put cleans up its temp file when the final rename fails', async () => {
+    const s = store();
+    // Make `audio/a` a directory so a put() targeting that exact key fails at
+    // the rename step (dest is an existing directory).
+    await s.put('audio/a/0001_x.webm', BYTES);
+    await expect(s.put('audio/a', BYTES)).rejects.toThrow();
+    expect(readdirSync(join(base, 'tmp'))).toEqual([]);
+  });
+
   it('rejects keys escaping the root', async () => {
     const s = store();
     await expect(s.put('../escape', BYTES)).rejects.toThrow();

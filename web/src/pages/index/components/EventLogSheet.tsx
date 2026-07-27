@@ -284,24 +284,6 @@ export function EventLogSheet({ sessionId }: Props) {
     setLoadedLimit(200);
   }, [sessionId]);
 
-  // --- Escape to cancel batch ---
-  useEffect(() => {
-    if (!batchEditMode) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      // Radix's DismissableLayer (the discard-confirm dialog's own Escape
-      // handling) calls preventDefault() on the Escape it consumes but does
-      // NOT stopPropagation() — so with the discard dialog open, the same
-      // Escape that just declined it would otherwise reach this listener too
-      // and re-arm the dialog it was just dismissed from. Bail once something
-      // upstream has already consumed the key.
-      if (e.defaultPrevented) return;
-      handleCancelBatch();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  });
-
   // --- Handlers ---
 
   const handleEnterBatchEdit = () => {
@@ -335,7 +317,7 @@ export function EventLogSheet({ sessionId }: Props) {
     }
   };
 
-  const handleCancelBatch = async () => {
+  const handleCancelBatch = useCallback(async () => {
     const anyDirty = pendingDeleteIds.size > 0 || batchEdits.size > 0;
     if (anyDirty) {
       const ok = await confirm({
@@ -350,7 +332,25 @@ export function EventLogSheet({ sessionId }: Props) {
     setBatchEditMode(false);
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
-  };
+  }, [pendingDeleteIds, batchEdits, confirm]);
+
+  // --- Escape to cancel batch ---
+  useEffect(() => {
+    if (!batchEditMode) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Radix's DismissableLayer (the discard-confirm dialog's own Escape
+      // handling) calls preventDefault() on the Escape it consumes but does
+      // NOT stopPropagation() — so with the discard dialog open, the same
+      // Escape that just declined it would otherwise reach this listener too
+      // and re-arm the dialog it was just dismissed from. Bail once something
+      // upstream has already consumed the key.
+      if (e.defaultPrevented) return;
+      handleCancelBatch();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [batchEditMode, handleCancelBatch]);
 
   const handleInlineSave = useCallback(
     async (event: LogEvent, values: RowEditValues) => {

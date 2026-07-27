@@ -250,8 +250,6 @@ const ZOOM_HANDLE =
 
 declare global {
   interface Window {
-    AutoLogger_getManualScrubSec?: () => number | null;
-    AutoLogger_getSelectedEventId?: () => string | null;
     AutoLogger_setManualScrubSec?: (sec: number | null) => void;
   }
 }
@@ -512,14 +510,11 @@ export function Timeline({
     );
   }, [activeSec]);
 
-  // Expose scrub state as window globals so MarkerNav can read/write without prop threading.
+  // Expose the scrub writer as a window global so timelineJump/useTimelineSeek
+  // can drive the playhead without prop threading.
   useEffect(() => {
-    window.AutoLogger_getManualScrubSec = () => manualScrubSecRef.current;
-    window.AutoLogger_getSelectedEventId = () => selectedEventIdRef.current;
     window.AutoLogger_setManualScrubSec = writeManualScrubSec;
     return () => {
-      window.AutoLogger_getManualScrubSec = undefined;
-      window.AutoLogger_getSelectedEventId = undefined;
       window.AutoLogger_setManualScrubSec = undefined;
     };
   }, [writeManualScrubSec]);

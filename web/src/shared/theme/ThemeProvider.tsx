@@ -1,14 +1,4 @@
-import { createContext, type ReactNode, useContext } from 'react';
-
-export type ThemeVariant = 'v5';
-
-type ThemeContextValue = {
-  variant: ThemeVariant;
-};
-
-const ThemeContext = createContext<ThemeContextValue>({
-  variant: 'v5',
-});
+import type { ReactNode } from 'react';
 
 /**
  * Renders the V5 ambient background glow as two DOM nodes (formerly
@@ -19,23 +9,16 @@ const ThemeContext = createContext<ThemeContextValue>({
  *
  * The `.v5-bg-glow*` rules live in `@layer base` in tailwind.css (Task 11);
  * bgGlow.css was retired when baseline.css was folded into the theme layers.
+ *
+ * The former ThemeContext/useTheme/variant machinery was deleted 2026-07-27
+ * (never consumed — this component only ever contributed the glow divs).
  */
-export function ThemeProvider({
-  children,
-  variant = 'v5',
-}: {
-  children: ReactNode;
-  variant?: ThemeVariant;
-}) {
+export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
-    <ThemeContext.Provider value={{ variant }}>
+    <>
       <div className="v5-bg-glow v5-bg-glow--grid" aria-hidden="true" />
       <div className="v5-bg-glow v5-bg-glow--corners" aria-hidden="true" />
       {children}
-    </ThemeContext.Provider>
+    </>
   );
-}
-
-export function useTheme(): ThemeContextValue {
-  return useContext(ThemeContext);
 }

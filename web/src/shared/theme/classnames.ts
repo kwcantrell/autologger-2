@@ -1,6 +1,3 @@
-export type { ClassValue } from 'clsx';
-export { default as cx } from 'clsx';
-
 /**
  * Sky-tint override for chrome `.btn.primary` inside V5 dialogs/modals.
  *

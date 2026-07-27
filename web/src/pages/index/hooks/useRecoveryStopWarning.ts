@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
-import { useEvents } from '../../../api/hooks/useEvents';
+import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { findOrphanRecording, type OrphanRecording } from '../../../shared/utils/recording';
 
@@ -29,7 +29,7 @@ export function useRecoveryStopWarning(
   sessionId: string | null,
   blocksMedia: boolean,
 ): RecoveryStopPendingDecision | null {
-  const { data: eventsRes } = useEvents(sessionId, { limit: 2000 });
+  const { data: eventsRes } = useEvents(sessionId, { limit: WORKSPACE_EVENTS_LIMIT });
   const { data: status } = useSessionStatus(sessionId);
   const warnedRef = useRef(false);
   const inFlightRef = useRef(false);

@@ -63,14 +63,21 @@ export class BlobStore {
     await mkdir(this.tmpDir, { recursive: true });
     await mkdir(dirname(dest), { recursive: true });
     const tmp = join(this.tmpDir, `put-${process.pid}-${(tmpCounter += 1)}`);
-    const fh = await open(tmp, 'w');
     try {
-      await fh.writeFile(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-      await fh.sync();
-    } finally {
-      await fh.close();
+      const fh = await open(tmp, 'w');
+      try {
+        await fh.writeFile(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
+      await rename(tmp, dest);
+    } catch (err) {
+      // Best-effort: don't orphan the temp file on a failed write/rename —
+      // nothing sweeps the `put-*` prefix.
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
     }
-    await rename(tmp, dest);
   }
 
   async get(key: string, opts: { range?: BlobRange } = {}): Promise<BlobObject | null> {

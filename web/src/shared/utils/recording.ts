@@ -1,5 +1,6 @@
 import type { LogEvent, SessionStatus } from '../../api/types';
 import { eventTimelineSec } from './audioClips';
+import { fmtHmsFromSec } from './timecode';
 
 const LEGACY_AUDIO_STARTED = 'Log Audio Recording Started';
 const LEGACY_AUDIO_STOPPED = 'Log Audio Recording Stopped';
@@ -48,14 +49,6 @@ export function computeRemoteRecordingBlocksMedia(
   const holder = status.audio_recording_lease_holder_id;
   if (!alive || !holder || holder === clientId) return false;
   return true;
-}
-
-function fmtHmsFromSec(sec: number): string {
-  const s = Math.max(0, Math.floor(Number(sec) || 0));
-  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
-  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
-  const ss = String(s % 60).padStart(2, '0');
-  return `${hh}:${mm}:${ss}`;
 }
 
 export interface OrphanRecording {

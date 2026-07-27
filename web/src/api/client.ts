@@ -14,11 +14,13 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
   const url = `${API_ROOT}/${path.replace(/^\//, '')}`;
   const res = await fetch(url, {
     credentials: 'same-origin',
+    ...opts,
+    // Merge AFTER spreading opts so caller-supplied headers extend the default
+    // Content-Type instead of replacing the whole merged object.
     headers: {
       'Content-Type': 'application/json',
       ...opts.headers,
     },
-    ...opts,
   });
 
   if (!res.ok) {

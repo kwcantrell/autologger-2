@@ -6,6 +6,7 @@ import type { Category, DropdownOption } from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
+import { isTypingTarget } from './ShortcutsDialog';
 
 // --- converted class strings (were CategoryButtonStrip.module.css) ---
 // Two live ancestor contexts drive layout via arbitrary ancestor variants (the
@@ -201,12 +202,6 @@ const CAT_HOTKEY_BADGE =
   // `.hidden` chrome hook is `display:none !important` and would beat the
   // live-slot ancestor variant.
   '[display:none] [#cat-strip-live-slot_&]:[display:flex] absolute top-[0.3rem] right-[0.35rem] h-[1.05rem] min-w-[1.05rem] items-center justify-center rounded-[0.35rem] border border-white/[0.16] bg-black/[0.35] px-[0.2rem] text-[0.6rem] font-semibold leading-none text-white/[0.78] [font-variation-settings:normal]';
-
-function isTypingTarget(el: EventTarget | null): boolean {
-  if (!el || !(el instanceof HTMLElement)) return false;
-  const t = el.tagName;
-  return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable;
-}
 
 export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle }: Props) {
   const { data, isLoading } = useShowCategories(sessionId);

@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCompanionPresence } from '../../../api/hooks/useCompanionPresence';
-import { eventsKeys, useEvents } from '../../../api/hooks/useEvents';
+import { eventsKeys, useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionSocket } from '../../../api/hooks/useSessionSocket';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { CompanionCommandType } from '../../../api/types';
@@ -50,10 +50,10 @@ interface Props {
 export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   const { data: status } = useSessionStatus(sessionId || null);
 
-  // Wide events query — also feeds session.js's timeline marker rendering.
+  // Wide events query feeding the timeline marker rendering.
   // EventLogSheet/MarkerNav also use useEvents; React Query dedupes the cache key per limit/offset,
-  // so this is a separate query that loads all events for the timeline. 2000 is the server's max limit.
-  const { data: eventsRes } = useEvents(sessionId || null, { limit: 2000 });
+  // so consumers wanting the full session share WORKSPACE_EVENTS_LIMIT (2000, the server's max limit).
+  const { data: eventsRes } = useEvents(sessionId || null, { limit: WORKSPACE_EVENTS_LIMIT });
   const events = eventsRes?.events ?? [];
 
   const { clips: audioClips, totalSec: audioTotalSec, segments } = useAudioClips(sessionId, events);

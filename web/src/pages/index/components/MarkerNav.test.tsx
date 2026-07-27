@@ -28,6 +28,7 @@ import { MarkerNav } from './MarkerNav';
 
 vi.mock('../../../api/hooks/useEvents', () => ({
   useEvents: vi.fn(),
+  WORKSPACE_EVENTS_LIMIT: 2000,
 }));
 vi.mock('../../../api/hooks/useSessionStatus', () => ({
   useSessionStatus: vi.fn(),

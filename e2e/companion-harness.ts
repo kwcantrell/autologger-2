@@ -31,7 +31,11 @@ import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
-export const COMPANION_DIR = '/home/kalen/companion-x64';
+// Single source of truth for the local Companion install location (also
+// consumed by playwright.config.ts's project gating). Override with the
+// COMPANION_DIR env var; the default matches this machine's install.
+export const COMPANION_DIR =
+  (process.env.COMPANION_DIR || '').trim() || '/home/kalen/companion-x64';
 export const COMPANION_LAUNCHER = join(COMPANION_DIR, 'companion_headless.sh');
 
 /** True when the local Companion install is present (harness is skipped otherwise). */

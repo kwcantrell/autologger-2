@@ -46,7 +46,7 @@ export function oauthConfigured(env: Config): boolean {
 
 export function sessionTtlDays(env: Config): number {
   const n = Number(env.SESSION_DAYS ?? '14');
-  return Number.isFinite(n) ? n : 14.0;
+  return Number.isFinite(n) && n > 0 ? n : 14.0;
 }
 
 export function trustProxyEnabled(env: Config): boolean {
@@ -94,7 +94,10 @@ export function deepgramModel(env: Config): string {
 // functions — not a single shared export — so each feature's call site/tests
 // read the same way the DeepGram/AI-chat precedents already do).
 
-function loopbackHostname(env: Config): boolean {
+/** True when the configured bind host is loopback; unset HOST defaults to
+ * 0.0.0.0 (non-loopback), matching the serve() default. Also the boot-time
+ * warning's predicate (main.ts). */
+export function loopbackHostname(env: Config): boolean {
   const hostname = (env.HOST || '').trim() || '0.0.0.0';
   return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
 }

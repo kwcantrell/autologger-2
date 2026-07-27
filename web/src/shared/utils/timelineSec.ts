@@ -5,10 +5,10 @@
 // server/src/timecode.ts) into a timeline second — the coordinate space the
 // timeline, markers, and audio clips use.
 //
-// Deliberately NOT either `parseSmpteToSec` (one in
-// `shared/utils/audioClips.ts`, honors the frame field; one in
-// `shared/utils/timecode.ts`, discards it) — NEITHER is correct here. Both
-// treat HH:MM:SS as literal seconds (`h*3600 + m*60 + s (+ f/fps)`), which
+// Deliberately NOT `parseSmpteToSec` (`shared/utils/audioClips.ts`; a
+// second frame-field-discarding copy in `shared/utils/timecode.ts` was
+// deleted 2026-07-27) — it is not correct here either: it
+// treats HH:MM:SS as literal seconds (`h*3600 + m*60 + s (+ f/fps)`), which
 // is wrong at every non-integer frame rate the app offers (23.976 / 29.97 /
 // 59.94): `fromTotalFrames` decomposes a linear frame count at
 // `Math.round(frameRate)`, not at the actual rate, so `HH:MM:SS` encodes
@@ -23,7 +23,7 @@
 //   const fps = Math.round(Number(row.frame_rate));
 //   const totalFrames = (hh * 3600 + mm * 60 + ss) * fps;
 // ...then divides by the ACTUAL (non-rounded) frame rate to land back in
-// timeline-second space. Do NOT "simplify" this to either `parseSmpteToSec`
+// timeline-second space. Do NOT "simplify" this to `parseSmpteToSec`
 // above — that would silently reintroduce the literal-seconds defect an
 // import auto-fix could otherwise slip back in.
 

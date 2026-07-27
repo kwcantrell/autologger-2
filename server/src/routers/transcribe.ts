@@ -1,8 +1,11 @@
 // Transcript words + topics — ported from web/routers/transcribe.py. Manual CRUD
 // is backed by the session hub; transcript generation is env-gated on
 // DEEPGRAM_API_KEY, returning a clean 503 that the frontend surfaces as a toast
-// when unconfigured. topics/generate and the legacy transcribe.csv download
-// remain intentionally unavailable on this deployment and always return 503.
+// when unconfigured. topics/generate is likewise configuration-gated (503 unless
+// CLAUDE_CLI_PATH is set): configured, it runs a one-shot CLI turn via
+// generateTopicsTurn (topic-generation change) — a paid-spend endpoint. The
+// legacy transcribe.csv download remains intentionally unavailable on this
+// deployment and always returns 503.
 
 import { Hono } from 'hono';
 import { mkdtemp, rm, stat } from 'node:fs/promises';

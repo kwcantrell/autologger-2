@@ -6,7 +6,6 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 describe('Poller', () => {
   it('applies only the newest response when two overlap (sequence fence)', async () => {
     let resolveFirst!: (v: number) => void;
-    const calls: Array<Promise<number>> = [];
     const applied: number[] = [];
     const fetchState = vi
       .fn()
@@ -27,7 +26,6 @@ describe('Poller', () => {
     p.stop();
     // Only one fetch was in flight at a time.
     expect(fetchState.mock.calls.length).toBeLessThanOrEqual(2);
-    void calls;
   });
 
   it('stop() prevents further applies', async () => {
