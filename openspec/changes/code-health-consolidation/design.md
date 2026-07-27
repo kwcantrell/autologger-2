@@ -182,6 +182,12 @@ require no client updates.
 
 ## Panel & review log
 
+> Task numbers inside the dated entries below use the PRE-SPLIT numbering (the
+> numbering in force when each entry was written). Post-split mapping: old head 9.x →
+> head 5.x; old phases 5–8 → `code-health-tail` phases 2–5 (e.g. old 5.4 → tail 2.4,
+> old 5.5 → tail 2.5, old 7.4/7.6/7.7 → tail 4.4/4.6/4.7, old 8.1/8.2 → tail 5.1/5.2).
+> Head tasks 1.x–4.x cited below are unchanged; 4.3 is struck.
+
 > Protocol: pre-panel fact-check pass → adversarial panel (requirements / assumptions /
 > failure & abuse / scope) → gate → fold-back → post-gate consistency read. `tasks.md`
 > is provisional until the gate passes.
@@ -259,8 +265,8 @@ require no client updates.
   **Minors accepted as residual:** D2's pgid-reuse probe window (pre-existing v2
   residual, kernel-level, not worsened); chat turns completing `ok` and registering an
   id after the client vanished mid-stream (server-state only); phase-1 pins must pin
-  frames-not-timing (folded into D3/task 1.3 language); 5.9 leftovers recorded above
-  as OBS.
+  frames-not-timing (folded into D3/task 1.3 language); 5.9 leftovers recorded as OBS
+  in `code-health-tail`'s design (moved there by the split).
 
   Verified-and-held notes from all four reviewers are preserved in the panel transcripts
   (`.apply/`-external; summarized: D1 covers every broadcast path incl. alarm/constructor
@@ -279,4 +285,13 @@ require no client updates.
   time implementer subagents will run top-tier (Opus/Fable) this session per the
   owner's model directive — recorded here as the ledger justification the SDLC's
   mid-tier default requires.
-- **Post-gate consistency read** — PENDING.
+- **2026-07-27 — Post-gate consistency read** (single reviewer over all nine final
+  documents: both changes' proposal/design/tasks/delta + the review doc with its gate
+  addendum). Verdict: three findings, none normative, all fixed — (1) this log's
+  pre-split task numbers annotated with the post-split mapping (above); (2) the stale
+  "5.9 leftovers recorded above" pointer redirected to `code-health-tail`; (3) the
+  tail's "no contract-surface phases" claim given its rationale (documentary delta,
+  zero observable change). Everything else verified consistent: decision-ID partition
+  (D1–D4/D7 vs D5/D6/D8–D12, all twelve accounted for), finding assignment (no finding
+  claimed by both changes or by neither), delta specs vs Capabilities sections, gate
+  addendum vs actual scopes, sequencing and merge refs.

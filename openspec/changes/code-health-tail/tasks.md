@@ -87,9 +87,10 @@
 ## 6. Final gates
 
 - [ ] 6.1 Whole-branch layered scoped audit per sdlc-process (no contract-surface
-      phases here, but full audit-package rules apply: materialized file list,
-      stray-file scan, seam call-site checks — the new shared helpers ARE declared
-      seams, package integrity)
+      phases here — the delta spec pins existing behavior, changing nothing observable,
+      so phase 2 is deliberately not review-tiered; full audit-package rules apply:
+      materialized file list, stray-file scan, seam call-site checks — the new shared
+      helpers ARE declared seams, package integrity)
 - [ ] 6.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — baselines
       last re-blessed 2026-07-26; this change intends zero visual change, so any diff
       is a defect, not a re-bless

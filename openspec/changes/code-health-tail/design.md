@@ -136,8 +136,12 @@ change's D3 rewrite.
 ## Risks / Trade-offs
 
 - [Wide file touch surface] → phases are behavior-preserving with pinning tests; no
-  contract-surface phases here, so per-phase reviews defer to the whole-branch audit
-  except where files/state are shared with deferred phases (SDLC audit-package rules).
+  contract-surface phases here — this change's `api-contract-freeze` delta is
+  documentation-of-frozen-behavior with zero observable change, so phase 2 does not
+  ALTER the contract surface and is deliberately not review-tiered as one (contrast
+  the head change's failure-path deltas) — per-phase reviews defer to the whole-branch
+  audit except where files/state are shared with deferred phases (SDLC audit-package
+  rules).
 - [Shared abstractions could subtly change UI behavior] → pin-before-extract ordering
   per task; frozen-contract suites + zero-visual-change e2e gate.
 - [Sequencing] → this change waits for the head change's merge (one change in flight);
@@ -174,4 +178,10 @@ note) remains deliberately excluded — perf-only at current scale.
   (1) split executed, this change is the tail and lands after the head; (2) finding
   1.13 deferred (not in either change); (3) toast/path-encoding convergence dropped to
   residual, `OkResponse` kept; (4) seed-chain migration at full breadth here.
-- **Post-gate consistency read** — PENDING.
+- **2026-07-27 — Post-gate consistency read** (shared with the head change; single
+  reviewer over all nine final documents). Verdict for this change's documents: one
+  finding, fixed — the "no contract-surface phases" claim in Risks/task 6.1 now states
+  its rationale (the delta pins existing behavior, changing nothing observable, so
+  phase 2 is deliberately not review-tiered). Decision-ID partition, finding
+  assignment, delta-vs-Capabilities agreement, and the inherited-log pointers to the
+  head change all verified consistent.
