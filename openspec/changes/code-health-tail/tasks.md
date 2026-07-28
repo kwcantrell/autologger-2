@@ -65,10 +65,10 @@
       per D6's inventory — incl. HomeSettingsModal's prefix-only literal (`.all`-style
       entry) and the two test files (finding 2.8); grep-clean assertion that no bare
       `'session-status'`/`'audio-segments'` literals remain outside the factories
-- [ ] 4.7 SessionCard/ArchivedSessionCard EXTRACTION per D12: shared delete-confirm
+- [x] 4.7 SessionCard/ArchivedSessionCard EXTRACTION per D12: shared delete-confirm
       hook, shared meta/runtime helper, shared menu/meta-row scaffold; two thin variant
       components remain; behaviors tested per variant (finding 2.9)
-- [ ] 4.8 Small batched items (5.9 OS subset per D12): tab-panel map in
+- [x] 4.8 Small batched items (5.9 OS subset per D12): tab-panel map in
       SessionWorkspace, `colSpan={COLUMNS.length}` (3 sites), memoized EventLogSheet
       filter+sort, `categories.map` index reuse, `useAudioClips` conditional tick bump,
       `AiV2Design.isSelected` keying, RecentSessionsList click/return cleanup,
