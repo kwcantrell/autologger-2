@@ -147,17 +147,17 @@ carry payloads and which shapes are branch-dependent.
 
 ## 6. Final gates
 
-- [ ] 6.1 `npm run typecheck` and `npm test` green across all three workspaces.
-- [ ] 6.2 `npm run lint` clean.
-- [ ] 6.3 `npm run e2e` (chromium + login-gate projects) green.
-- [ ] 6.4 `npm run e2e:visual` (visual-desktop + visual-mobile) green. 1.4 established that this
+- [x] 6.1 `npm run typecheck` and `npm test` green across all three workspaces.
+- [x] 6.2 `npm run lint` clean.
+- [x] 6.3 `npm run e2e` (chromium + login-gate projects) green.
+- [x] 6.4 `npm run e2e:visual` (visual-desktop + visual-mobile) green. 1.4 established that this
       branch changes **no** baseline pixels (the admin-users visual test never loads data, so the
       chip label is outside its capture). Baselines are current as of 2026-07-14, so **any diff
       at all at this point is an unintended regression** — investigate, do not re-bless.
-- [ ] 6.5 Browser re-verification of `/admin/users` under 1.5's precondition: page loads, chips
+- [x] 6.5 Browser re-verification of `/admin/users` under 1.5's precondition: page loads, chips
       render names, no console error.
-- [ ] 6.6 Confirm no runtime surface changed: `web/package.json` gained no dependency, and the
+- [x] 6.6 Confirm no runtime surface changed: `web/package.json` gained no dependency, and the
       built bundle carries no validation library (`web-api-response-conformance` requirement).
-- [ ] 6.7 Confirm the working tree holds no stray files — `git diff --stat` and `git log --stat`
+- [x] 6.7 Confirm the working tree holds no stray files — `git diff --stat` and `git log --stat`
       reviewed against the intended file list; `audit.md` is **tracked**, `.apply/` artifacts
       stay git-ignored.
