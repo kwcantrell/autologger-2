@@ -1,11 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
 import { eventsKeys } from './useEvents';
+import { sessionStatusKeys } from './useSessionStatus';
 
 export function useTransport(sessionId: string) {
   const qc = useQueryClient();
   const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ['session-status', sessionId] });
+    qc.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
     qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
   };
   const start = useMutation({

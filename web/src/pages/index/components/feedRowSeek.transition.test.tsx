@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
+import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type {
   Category,
   EventsResponse,
@@ -234,7 +235,7 @@ beforeEach(() => {
  *  WITHOUT unmounting anything the test has already rendered. */
 function flipToNotRolling() {
   currentStatus = statusFixture({ is_rolling: false });
-  queryClient.setQueryData(['session-status', SESSION_ID], currentStatus);
+  queryClient.setQueryData(sessionStatusKeys.bySession(SESSION_ID), currentStatus);
 }
 
 const FEEDS: [string, () => ReactElement][] = [

@@ -7,10 +7,20 @@ import type {
   AudioSegmentWaveformBody,
   SessionStatus,
 } from '../types';
+import { sessionStatusKeys } from './useSessionStatus';
+
+/**
+ * Query-key factory for the audio-segments domain (code-health-tail task 4.6,
+ * finding 2.8) — the single owner of the `'audio-segments'` literal, guarded
+ * by `queryKeyFactories.repo.test.ts`.
+ */
+export const audioSegmentsKeys = {
+  bySession: (sessionId: string | null) => ['audio-segments', sessionId] as const,
+};
 
 export function useAudioSegments(sessionId: string | null) {
   return useQuery({
-    queryKey: ['audio-segments', sessionId],
+    queryKey: audioSegmentsKeys.bySession(sessionId),
     queryFn: () => apiFetch<AudioSegmentsResponse>(`sessions/${sessionId}/audio/segments`),
     enabled: Boolean(sessionId),
   });
@@ -27,7 +37,7 @@ export function useClaimAudioLease(sessionId: string) {
     // Optimistically reflect the lease in the status cache so consumers (e.g.
     // recovery-stop warning) see lease_alive synchronously, ahead of the next poll.
     onSuccess: (_data, body) => {
-      qc.setQueryData<SessionStatus | undefined>(['session-status', sessionId], (prev) =>
+      qc.setQueryData<SessionStatus | undefined>(sessionStatusKeys.bySession(sessionId), (prev) =>
         prev
           ? {
               ...prev,
@@ -68,7 +78,7 @@ export function useUploadWaveform(sessionId: string) {
         method: 'PUT',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) }),
   });
 }
 
@@ -97,6 +107,6 @@ export function useUploadAudioSegment(sessionId: string) {
         body: blob,
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) }),
   });
 }

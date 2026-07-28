@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '../client';
 import type { NewSessionBody, Session, SessionsResponse, SessionUpdateBody } from '../types';
+import { audioSegmentsKeys } from './useAudio';
 import { eventsKeys } from './useEvents';
 
 export function useSessions() {
@@ -137,7 +138,7 @@ export function useYoutubeImport() {
       }),
     onSuccess: (_data, { sessionId: sid }) => {
       qc.invalidateQueries({ queryKey: ['sessions'] });
-      qc.invalidateQueries({ queryKey: ['audio-segments', sid] });
+      qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sid) });
       qc.invalidateQueries({ queryKey: eventsKeys.all(sid) });
     },
   });

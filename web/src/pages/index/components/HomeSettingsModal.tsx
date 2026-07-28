@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
+import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
@@ -345,7 +346,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       }
       window.Home_reloadSessionList?.();
       queryClient.invalidateQueries({ queryKey: ['events'] });
-      queryClient.invalidateQueries({ queryKey: ['session-status'] });
+      queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
       // A now-working save can rename/delete categories; without this, an open session's
       // button strip keeps serving stale ones for its 30s staleTime (design D4).
       queryClient.invalidateQueries({ queryKey: ['show-categories'] });

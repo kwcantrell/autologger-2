@@ -4,6 +4,7 @@ import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import { eventsKeys } from '../../../api/hooks/useEvents';
+import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { useRecoveryStopWarning } from './useRecoveryStopWarning';
 
@@ -147,7 +148,7 @@ afterEach(() => {
 async function refetchAll(client: QueryClient, sessionId: string) {
   await act(async () => {
     await client.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
-    await client.invalidateQueries({ queryKey: ['session-status', sessionId] });
+    await client.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
   });
 }
 
@@ -240,9 +241,9 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
     await refetchAll(client, SESSION_ID);
     rerender({ sessionId: SESSION_ID });
     await waitFor(() =>
-      expect((client.getQueryData(['session-status', SESSION_ID]) as SessionStatus).timecode).toBe(
-        '00:00:45:00',
-      ),
+      expect(
+        (client.getQueryData(sessionStatusKeys.bySession(SESSION_ID)) as SessionStatus).timecode,
+      ).toBe('00:00:45:00'),
     );
 
     expect(result.current).toBeNull();
@@ -305,7 +306,7 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
     rerender({ sessionId: SESSION_ID });
     await waitFor(() =>
       expect(
-        (client.getQueryData(['session-status', SESSION_ID]) as SessionStatus)
+        (client.getQueryData(sessionStatusKeys.bySession(SESSION_ID)) as SessionStatus)
           .audio_recording_lease_alive,
       ).toBe(true),
     );
