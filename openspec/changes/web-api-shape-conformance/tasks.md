@@ -68,13 +68,13 @@ else in the plan would notice if that broke.
 Spec: `web-api-response-conformance`. Method is D6/D7. **A grep count is not acceptance
 evidence** — the crashing call site is invisible to `grep 'apiFetch<'`.
 
-- [ ] 3.1 Enumerate every site in `web/src` where a JSON API response acquires a client type.
+- [x] 3.1 Enumerate every site in `web/src` where a JSON API response acquires a client type.
       Four populations, each counted separately: (a) direct `apiFetch<T>` calls; (b) assertions
       through local generic wrappers — `fetchAdmin<T>` in `AdminUsersPage.tsx` and its call
       sites, which is where the bug being fixed actually lives; (c) untyped `apiFetch(…)` calls;
       (d) raw `fetch(…).json() as X` ingresses (AI-v2 dashboard persistence, SSE frame parsing,
       transcribe modal, audio clips). Record endpoint, client shape, and source file per site.
-- [ ] 3.2 For each payload-bearing site, state the **property to verify** — "the emitted key set
+- [x] 3.2 For each payload-bearing site, state the **property to verify** — "the emitted key set
       and value types for `<endpoint>`, under every branch" — then answer it by following the
       response to its **producing** function, not stopping at the router (D7). Handlers known to
       need this: `transcribe.ts` (`{...w, session_id}` — shape owned by the store),
@@ -82,24 +82,24 @@ evidence** — the crashing call site is invisible to `grep 'apiFetch<'`.
       `profileAssembler.profilePayload` (three structurally distinct branches),
       `teams.ts` (`invites` attached only for admin callers). Record: endpoint, client shape,
       emitted shape, branch conditions, verdict, and the evidence read.
-- [ ] 3.3 Enumerate the `OkResponse` and `void` sites with an explicit verdict each. **They are
+- [x] 3.3 Enumerate the `OkResponse` and `void` sites with an explicit verdict each. **They are
       not all trivial** — `transport/start` and `transport/stop` both `return c.json(state)`
       while the client asserts `OkResponse`. Verify rather than assume.
-- [ ] 3.4 Write the ledger to a **tracked** file, `openspec/changes/web-api-shape-conformance/
+- [x] 3.4 Write the ledger to a **tracked** file, `openspec/changes/web-api-shape-conformance/
       audit.md` (D9 — not `.apply/`, which is git-ignored and would not survive archival).
       State in it that `CONFORMS` means "client matches emitted", not "emitted is intended"
       (D10).
-- [ ] 3.5 Fix every CLIENT-WRONG finding, each with a test. Two are already known and must be
+- [x] 3.5 Fix every CLIENT-WRONG finding, each with a test. Two are already known and must be
       verified rather than rediscovered: (i) the `transport` mismatch from 3.3; (ii) the
       `Category.dropdown_options` split — `/api/profile`'s `active_studio.categories` emits
       `string[]` (`studioToApiDict`) while `ShowCategoriesResponse` emits `{label,
       needs_context}` (`showCategoriesApiShape`), under one shared client type. This needs a
       **type split**; consumers to update: `CategoryButtonStrip` (reads `opt.label`),
       `EventButtonsTable` (constructs `{label, needs_context}`), plus their tests.
-- [ ] 3.6 Escalate every SERVER-WRONG finding in the ledger and the Panel & review log — **do
+- [x] 3.6 Escalate every SERVER-WRONG finding in the ledger and the Panel & review log — **do
       not change the server**. Per D10 this verdict is reachable only where a documented
       statement about the shape exists to contradict.
-- [ ] 3.7 `npm run typecheck` + `npm test` green.
+- [x] 3.7 `npm run typecheck` + `npm test` green.
 
 ## 4. Captured response fixtures
 
