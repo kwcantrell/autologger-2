@@ -37,7 +37,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      per-file, and iterated to a FIXED POINT so that a wrapper over a wrapper
 //      is a wrapper — this is the population `grep 'apiFetch<'` missed and the
 //      `memberships` crash lived in; five spellings it cannot name are listed
-//      below and are the second-ranked residual), every UNQUALIFIED global
+//      below and are the third-ranked residual), every UNQUALIFIED global
 //      `fetch(`, every `Response.json()`, every
 //      `JSON.parse(`, and every raw network primitive (`navigator.sendBeacon`,
 //      `new EventSource`, `new XMLHttpRequest`).
@@ -50,12 +50,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      `const x: T = <fixture>` declaration in `api/types.conformance.test.ts`
 //      — read out of detector 7's own parse of that module, so adding a real
 //      check is what makes a site pass, and importing a name is not a check;
-//      (ii) fed by a fixture the SERVER DECLARES IT CAPTURES, cross-checked
-//      against the `CaptureSpec` names in
-//      `server/src/routers/apiResponseFixtures.int.test.ts` — "the specifier
-//      contains `fixtures/api-responses/`" is a path substring over a directory
-//      OUTSIDE this scan's root, and on its own it let a hand-authored module
-//      dropped in beside the captures confer full coverage; (iii) assigned by a
+//      (ii) fed by an import whose SPECIFIER'S SPELLING names a fixture the
+//      server declares it captures — the basename after `fixtures/api-responses/`
+//      is cross-checked against the `CaptureSpec` names in
+//      `server/src/routers/apiResponseFixtures.int.test.ts`. This repairs the
+//      original bug ("the specifier contains `fixtures/api-responses/`", a path
+//      substring over a directory OUTSIDE this scan's root, which on its own let
+//      a hand-authored module dropped in beside the captures confer full
+//      coverage) but the specifier is still matched by SPELLING, never RESOLVED
+//      to a file: a hand-authored module of the same name sitting in a PARALLEL
+//      directory (e.g. `web/fixtures/api-responses/`) matches the same pattern
+//      and confers the same full coverage. Recorded, not closed — see the
+//      residual below and audit.md §11.5; (iii) assigned by a
 //      declaration that actually ASSERTS something, i.e. one that neither sits
 //      under a `@ts-expect-error` nor casts its initializer
 //      (`fixture as unknown as T` compiles whatever the capture's shape is);
@@ -123,7 +129,33 @@ import { afterEach, describe, expect, it } from 'vitest';
 // for the one-time enumeration, §11.5 the ranked version). Ordered by how
 // reachable each is by an ordinary refactor, largest first; where two are
 // equally reachable, the one that fails SILENTLY ranks higher. Nothing here is
-// stated as absolute unless the code enforces it:
+// stated as absolute unless the code enforces it. The item immediately below
+// is ranked TOP as of this documentation wave: an UNDISCLOSED hole that
+// outranks the two structural ones that follow because it fails silently on
+// ordinary new code, not on an unusual shape or an architectural choice:
+//   - An INLINE OBJECT type argument inherits coverage from a member's name.
+//     `isCovered` reduces a type expression to the PascalCase names inside it
+//     (`typeNamesIn`), so `apiFetch<{ hand_transcribed_wrong_key: SessionTopic[];
+//     total: number }>(…)` is reported COVERED — solely because `SessionTopic`
+//     is covered — with NO exemption, even though the ENVELOPE (the object
+//     shape wrapping it, e.g. a brand-new endpoint's whole response body) was
+//     never checked against any captured fixture. This is exactly the class of
+//     bug this guard exists to catch, undetected by it. The tree already
+//     carries five such inline-envelope call sites (two on
+//     `{ words: TranscriptWord[] }`, two on `{ topics: SessionTopic[] }`, one
+//     on `{ show: Show }`); only the `{ show: Show }` site's shape has a
+//     matching whole-annotation assertion in the conformance module
+//     (`const check: { show: Show } = showCreate`), and even that one
+//     contributes nothing to `covered` status — detector 7 turns a bare type
+//     name (or an array of it) into a `headType`, never an inline object, so
+//     deleting that assertion would not change any site's covered status.
+//     Reachable by writing an ordinary new endpoint call with no refactor or
+//     unusual code shape, which is why it outranks the two items below.
+//     Closing it needs a detector change — treat a type expression containing
+//     `{` as uncovered unless the conformance module carries a matching
+//     whole-annotation assertion (the `inlineObject` branch already parses
+//     those; it just never exports them as coverage) — deliberately deferred
+//     to its own review pass rather than folded into this documentation wave.
 //   - Indirect type acquisition. A JSON value passed as `unknown` into a typed
 //     helper several modules away acquires its type at no `fetch`/`.json()`/
 //     `JSON.parse` token, so no detector fires (audit §8.3). This is the
@@ -152,7 +184,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     declaration matcher broad enough to also match ordinary generic CALLS,
 //     which is a detector change this round did not review. One token of
 //     refactor away, and the same class as the three wrapper-discovery false
-//     negatives already found, which is why this ranks second.
+//     negatives already found, which is why this ranks third.
 //     The same shape one detector over: `fetch(` is matched only UNQUALIFIED.
 //     `window.fetch(…)` and `globalThis.fetch(…)` produce no rawFetch site
 //     (verified by planting) — the `(?<![.\w$])` lookbehind that stops
@@ -169,6 +201,21 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     fixture belongs to which type is the audit's per-row verdict table (§5),
 //     which is a snapshot, not a standing check; the guard cannot derive that
 //     mapping and does not pretend to.
+//   - A hand-authored module in a PARALLEL fixture directory still confers full
+//     coverage. `capturedFixtureName` matches an import specifier by SPELLING —
+//     it accepts anything ending in `fixtures/api-responses/<declared name>`,
+//     wherever that path sits — and never resolves the specifier to a real file
+//     under this repo's actual `fixtures/api-responses/`. A hand-authored
+//     `adminUsers.json` dropped in a PARALLEL directory (e.g.
+//     `web/fixtures/api-responses/`, or nested anywhere under `web/src`, such as
+//     `web/src/api/plantfix/fixtures/api-responses/`) matches the pattern and
+//     confers coverage on a brand-new, wholly hand-transcribed type, verified by
+//     planting (43/43 green). The directory/inventory equality assertion (see
+//     `declaredCaptureNames`) only checks the REAL `FIXTURE_DIR`, so it cannot
+//     see a parallel one. Recorded rather than closed: the fix is roughly three
+//     lines (resolve the specifier relative to the conformance module and
+//     require the result to be a file under `FIXTURE_DIR`) but is a detector
+//     change deliberately deferred to its own review pass.
 //   - Sites whose collision the method cannot break. Two calls on one path
 //     with the same literal method — or with the method threaded in through a
 //     variable — still normalise to one key. They are not absorbed (exemptions
@@ -194,9 +241,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     only mechanical requirement is length: `reason.trim().length >= 40`.
 //     Most entries additionally cite the audit row backing their verdict, but
 //     that is a convention the entries keep, not a rule the guard enforces —
-//     four of the fifty-two cite no row, and a forty-character sentence of
-//     nothing would pass. The reason field is written for the next reviewer to
-//     read, not for the guard to adjudicate.
+//     five of the fifty-two cite no row, three of those five naming no anchor
+//     at all, and a forty-character sentence of nothing would pass. The
+//     reason field is written for the next reviewer to read, not for the
+//     guard to adjudicate.
 //   - A declaration's BODY is located by a hand-rolled scanner, not a parser.
 //     It skips strings and comments and balances parens, angles and braces, and
 //     it distinguishes a body's `{` from an object type's by what precedes it
@@ -204,7 +252,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     shaped so that heuristic misreads it would un-discover the wrapper
 //     silently. Ranked last of the reachable items because every spelling this
 //     tree and its plausible refactors produce is covered by a test below, but
-//     recorded because "no counter-example found" is not "none exists".
+//     recorded because "no counter-example found" is not "none exists". No
+//     test PINS `opensDeclarationBody` itself, either: neutering it to always
+//     return `true` (keeping the `angleDepth === 0` guard that calls it) leaves
+//     every test in this file green, because every case below that reaches the
+//     `angleDepth === 0` branch already has a `prev` character the un-neutered
+//     function also treats as opening a body.
 
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx']);
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
