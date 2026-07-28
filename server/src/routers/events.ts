@@ -10,6 +10,7 @@ import {
   enrichEventRpc,
   mergeCategoryUiSnapshotsIntoMetadata,
   normalizeEventButtonNameForRelink,
+  sessionDeckDisplayTitle,
   type StudioProfile,
   stripCategoryUiSnapshots,
 } from '../studio';
@@ -72,7 +73,7 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const masterTc = fromTotalFrames(Math.round(sec * ctx.frameRate), ctx.frameRate);
   const episode = String(row.episode ?? '');
   const showCode = (row.show_code as string | null) ?? null;
-  const deck = sessionDeckFromRow(row, showCode, episode);
+  const deck = sessionDeckDisplayTitle({ showCode, episode, storedTitle: String(row.title ?? '') });
 
   return c.json({
     timecode: live.session_timecode,
@@ -255,15 +256,4 @@ function clampInt(raw: string | undefined, dflt: number, lo: number, hi: number)
   const n = Number(raw);
   if (!Number.isFinite(n)) return dflt;
   return Math.min(hi, Math.max(lo, Math.trunc(n)));
-}
-
-function sessionDeckFromRow(
-  row: { title?: unknown },
-  showCode: string | null,
-  episode: string,
-): string {
-  const sc = String(showCode ?? '').trim();
-  if (sc) return `${sc} - ${episode.trim() || '1'}`;
-  const t = String(row.title ?? '').trim();
-  return t || '—';
 }

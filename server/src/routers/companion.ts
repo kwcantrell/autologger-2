@@ -16,7 +16,11 @@ import {
   companionPresenceBodySchema,
   companionTransportBodySchema,
 } from '../schemas';
-import { enrichEventRpc, mergeCategoryUiSnapshotsIntoMetadata } from '../studio';
+import {
+  enrichEventRpc,
+  mergeCategoryUiSnapshotsIntoMetadata,
+  sessionDeckDisplayTitle,
+} from '../studio';
 import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, timecodeCtx } from './_helpers';
 
@@ -80,7 +84,11 @@ companionRouter.get('/api/companion/state', async (c) => {
       sessionOut = {
         id: activeSid,
         title: String(row.title ?? ''),
-        deck_title: deckTitle(row),
+        deck_title: sessionDeckDisplayTitle({
+          showCode: String(row.show_code ?? ''),
+          episode: String(row.episode ?? ''),
+          storedTitle: String(row.title ?? ''),
+        }),
         timecode: live.session_timecode,
         frame_rate: Number(row.frame_rate ?? 24.0),
         is_rolling: live.is_rolling,
@@ -215,10 +223,3 @@ companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   }
   return c.json({ ok: false });
 });
-
-function deckTitle(row: Record<string, unknown>): string {
-  const sc = String(row.show_code ?? '').trim();
-  if (sc) return `${sc} - ${String(row.episode ?? '').trim() || '1'}`;
-  const t = String(row.title ?? '').trim();
-  return t || '—';
-}
