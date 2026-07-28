@@ -35,8 +35,11 @@ import type {
   EventsResponse,
   LogEvent,
   ProfilePayload,
+  Session,
+  SessionCreateResponse,
   SessionStatus,
   SessionTopic,
+  SessionUpdateResponse,
   ShowCategoriesResponse,
   TranscriptWord,
   TransportStartResponse,
@@ -324,5 +327,49 @@ describe('CW-6 — SessionTopic declared a `session_id` the topics routes never 
       created_at_utc: '2026-07-27T00:00:00Z',
     };
     expect(word.session_id).toBe('sess-1');
+  });
+});
+
+describe('CW-7/CW-8 — session create and update are not `Session`', () => {
+  // Server: the `POST /api/sessions` handler builds this body inline.
+  const createEmitted = {
+    id: 'sess-1',
+    title: 'ATS - 2',
+    frame_rate: 24,
+    start_offset_frames: 0,
+    show_id: 'show-1',
+    episode: '2',
+    notes: '',
+  };
+  // Server: the `PUT /api/sessions/:sessionId` handler, off the updated row.
+  const updateEmitted = {
+    id: 'sess-1',
+    title: 'Renamed',
+    frame_rate: 24,
+    start_offset_frames: 0,
+  };
+
+  it('the create body is assignable to SessionCreateResponse', () => {
+    const check: SessionCreateResponse = createEmitted;
+    // `NewSessionModal` reads exactly this and nothing else.
+    expect(check.id).toBe('sess-1');
+  });
+
+  it('the update body is assignable to SessionUpdateResponse', () => {
+    const check: SessionUpdateResponse = updateEmitted;
+    expect(check.title).toBe('Renamed');
+  });
+
+  it('neither body carries the rest of `Session`', () => {
+    for (const key of ['deck_title', 'session_status', 'event_count', 'archived']) {
+      expect(key in createEmitted).toBe(false);
+      expect(key in updateEmitted).toBe(false);
+    }
+    // Both routes were typed `Session`, so these assignments must NOT compile.
+    // @ts-expect-error 12 of `Session`'s 19 keys are missing
+    const asSession: Session = createEmitted;
+    // @ts-expect-error 15 of `Session`'s 19 keys are missing
+    const asSessionToo: Session = updateEmitted;
+    expect(asSession.id).toBe(asSessionToo.id);
   });
 });

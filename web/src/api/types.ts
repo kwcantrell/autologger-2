@@ -312,6 +312,33 @@ export interface SessionsResponse {
 }
 
 /**
+ * `POST /api/sessions`. The handler builds its own body from the request plus
+ * the new id — it does **not** run `serializeSessionEntry`, so only these seven
+ * of `Session`'s nineteen keys come back (web-api-shape-conformance audit
+ * CW-7, which found the route typed `Session`). The only consumer reads `id`.
+ */
+export interface SessionCreateResponse {
+  id: string;
+  title: string;
+  frame_rate: number;
+  start_offset_frames: number;
+  show_id: string;
+  episode: string;
+  notes: string;
+}
+
+/**
+ * `PUT /api/sessions/:id` — likewise not a `Session`: the handler echoes four
+ * fields off the updated index row (audit CW-8). Nothing reads the result.
+ */
+export interface SessionUpdateResponse {
+  id: string;
+  title: string;
+  frame_rate: number;
+  start_offset_frames: number;
+}
+
+/**
  * `GET /api/sessions/:id/status`. The handler (`server/src/routers/events.ts`)
  * emits exactly 21 keys — the 20 below plus `audio_recording_lease_age_sec`,
  * which no consumer reads and which stays undeclared here (additive tolerance).
