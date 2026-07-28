@@ -1,14 +1,6 @@
 import clsx from 'clsx';
-import {
-  type FormEvent,
-  type MutableRefObject,
-  type ReactNode,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { type MutableRefObject, type ReactNode, useEffect, useRef, useState } from 'react';
 import { API_ROOT } from '../../../api/client';
-import { parseSseFrames } from './AiChat';
 import {
   type DashboardConfig,
   type DashboardInteraction,
@@ -17,7 +9,7 @@ import {
   isWidgetType,
   type WidgetLayout,
 } from './aiV2/widgetTypes';
-import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
+import { extractErrorDetail, SseTurnComposer, useSseTurn } from './useSseTurn';
 
 // AI v2 design rail (ai-v2-dashboards, tasks 4.1/4.2; design "UI design
 // brief" — canvas + docked design rail topology; spec "AI v2 tab in the
@@ -29,8 +21,10 @@ import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 // 5.4/5.5, design D10: a validated PROPOSED DashboardConfig, addressed only
 // to this turn's own stream — never the session WS) / `done` (terminal
 // success) / `error` ({ detail }, terminal failure) — no `tool` event.
-// `parseSseFrames` is reused directly from AiChat.tsx rather than
-// re-implemented: it is generic frame-splitting, not chat-specific.
+// The shared SSE transport (fetch/reader/delta-append/abort classification)
+// lives in `useSseTurn` (code-health-tail task 4.1, consolidated from the
+// formerly duplicated copies here and in AiChat.tsx); this file supplies only
+// the design vocabulary above.
 //
 // Controlled component: conversation/streaming/abort/pending-question state
 // all live one level up (AiV2Panel, task 4.1) — mirroring AiPanel's hoisting
@@ -129,24 +123,6 @@ export interface AiV2DesignProps {
 }
 
 const CONNECTION_LOST_DETAIL = 'Connection to the design turn was lost before it finished.';
-
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
-async function extractErrorDetail(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { detail?: unknown };
-    if (typeof body.detail === 'string' && body.detail.trim()) return body.detail;
-  } catch {
-    // Non-JSON or empty body — fall back below.
-  }
-  return fallback;
-}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -252,12 +228,59 @@ export function AiV2Design({
   renderOptionPreview,
   onDashboardProposed,
 }: AiV2DesignProps) {
-  const [input, setInput] = useState('');
-  const [notConfigured, setNotConfigured] = useState(false);
   const [draftAnswers, setDraftAnswers] = useState<Record<number, AiV2AnswerItem>>({});
   const [freeTextInputs, setFreeTextInputs] = useState<Record<number, string>>({});
   const [answering, setAnswering] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const { input, setInput, notConfigured, sendMessage, stop } = useSseTurn({
+    url: `${API_ROOT}/sessions/${sessionId}/ai/v2/design`,
+    buildRequestBody: (text) => ({ message: text }),
+    connectionLostDetail: CONNECTION_LOST_DETAIL,
+    requestFailedDetail: (status) => `Design turn request failed (${status}).`,
+    isStreaming,
+    onMessagesChange,
+    onStreamingChange,
+    abortControllerRef,
+    // A newly accepted send retires whatever question the previous turn left
+    // pending — its turn is over.
+    onTurnStart: () => onPendingQuestionChange(null),
+    events: {
+      question: (payload) => {
+        // Delivered ONLY on this turn's own SSE stream (spec "Design
+        // question round trip": "A question SHALL be delivered only to
+        // the client that initiated that turn") — never read off the
+        // session WebSocket.
+        const question = parsePendingQuestion(payload);
+        if (question) onPendingQuestionChange(question);
+      },
+      dashboard: (payload) => {
+        // Task 5.5 (design D10): delivered ONLY on this turn's own SSE
+        // stream, exactly like `question` above — never read off the
+        // session WebSocket. Rendered ONLY through the real catalog
+        // components by the caller (spec "No agent-authored markup is
+        // ever rendered") — this file never renders it itself.
+        const config = parseProposedDashboardConfig(payload);
+        if (config) {
+          // Fix wave (Phase 5 review, D5b completeness): the payload now
+          // also carries this turn's own `turnId` alongside `config` —
+          // read it directly here rather than folding it into
+          // `parseProposedDashboardConfig` (which stays focused on the
+          // config shape only).
+          const turnId =
+            isRecord(payload) && typeof payload.turnId === 'string' ? payload.turnId : null;
+          onDashboardProposed?.(config, turnId);
+        }
+      },
+      done: () => onPendingQuestionChange(null),
+      error: (payload) => {
+        const p = payload as { detail?: unknown } | undefined;
+        const detail = typeof p?.detail === 'string' ? p.detail : 'Design turn failed.';
+        onPendingQuestionChange(null);
+        onMessagesChange((prev) => [...prev, { id: crypto.randomUUID(), role: 'error', detail }]);
+      },
+    },
+  });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: keep the transcript pinned to the newest message as it grows
   useEffect(() => {
@@ -274,122 +297,6 @@ export function AiV2Design({
     setFreeTextInputs({});
   }, [pendingQuestion?.requestId]);
 
-  async function sendMessage(rawText: string) {
-    const text = rawText.trim();
-    if (!text || isStreaming) return;
-
-    setInput('');
-    setNotConfigured(false);
-    onMessagesChange((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', text }]);
-    onPendingQuestionChange(null);
-
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    onStreamingChange(true);
-
-    try {
-      const res = await fetch(`${API_ROOT}/sessions/${sessionId}/ai/v2/design`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-        signal: controller.signal,
-      });
-
-      // Spec "Configuration-gated AI v2 endpoints": 503 means the deployment
-      // has no AI_V2_ENABLED/key configured — an in-place explainer, not the
-      // generic error path below.
-      if (res.status === 503) {
-        setNotConfigured(true);
-        return;
-      }
-
-      if (!res.ok || !res.body) {
-        const detail = await extractErrorDetail(res, `Design turn request failed (${res.status}).`);
-        onMessagesChange((prev) => [...prev, { id: crypto.randomUUID(), role: 'error', detail }]);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parsed = parseSseFrames(buffer);
-        buffer = parsed.rest;
-
-        for (const frame of parsed.frames) {
-          if (frame.event === 'delta') {
-            const payload = safeJsonParse(frame.data) as { text?: unknown } | undefined;
-            if (!payload || typeof payload.text !== 'string') continue;
-            const delta = payload.text;
-            onMessagesChange((prev) => {
-              const last = prev[prev.length - 1];
-              if (last?.role === 'assistant') {
-                return [...prev.slice(0, -1), { ...last, text: last.text + delta }];
-              }
-              return [...prev, { id: crypto.randomUUID(), role: 'assistant', text: delta }];
-            });
-          } else if (frame.event === 'question') {
-            // Delivered ONLY on this turn's own SSE stream (spec "Design
-            // question round trip": "A question SHALL be delivered only to
-            // the client that initiated that turn") — never read off the
-            // session WebSocket.
-            const question = parsePendingQuestion(safeJsonParse(frame.data));
-            if (question) onPendingQuestionChange(question);
-          } else if (frame.event === 'dashboard') {
-            // Task 5.5 (design D10): delivered ONLY on this turn's own SSE
-            // stream, exactly like `question` above — never read off the
-            // session WebSocket. Rendered ONLY through the real catalog
-            // components by the caller (spec "No agent-authored markup is
-            // ever rendered") — this file never renders it itself.
-            const raw = safeJsonParse(frame.data);
-            const config = parseProposedDashboardConfig(raw);
-            if (config) {
-              // Fix wave (Phase 5 review, D5b completeness): the payload now
-              // also carries this turn's own `turnId` alongside `config` —
-              // read it directly here rather than folding it into
-              // `parseProposedDashboardConfig` (which stays focused on the
-              // config shape only).
-              const turnId = isRecord(raw) && typeof raw.turnId === 'string' ? raw.turnId : null;
-              onDashboardProposed?.(config, turnId);
-            }
-          } else if (frame.event === 'done') {
-            onPendingQuestionChange(null);
-          } else if (frame.event === 'error') {
-            const payload = safeJsonParse(frame.data) as { detail?: unknown } | undefined;
-            const detail =
-              typeof payload?.detail === 'string' ? payload.detail : 'Design turn failed.';
-            onPendingQuestionChange(null);
-            onMessagesChange((prev) => [
-              ...prev,
-              { id: crypto.randomUUID(), role: 'error', detail },
-            ]);
-          }
-          // Any other event type is ignored outright (forward compatibility,
-          // mirrors AiChat's "Client ignores unknown event types").
-        }
-      }
-    } catch {
-      if (controller.signal.aborted) {
-        // Stop was clicked: a client-aborted stream is NOT guaranteed a
-        // terminal event (spec). `isStreaming` flipping back to false below
-        // is the stopped-state UI signal; nothing is rendered as a failure.
-      } else {
-        onMessagesChange((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: 'error', detail: CONNECTION_LOST_DETAIL },
-        ]);
-      }
-    } finally {
-      onStreamingChange(false);
-      abortControllerRef.current = null;
-    }
-  }
-
   // Controlled "start a turn from outside" seam (e.g. the canvas empty
   // state's "Design with AI" CTA) — consumed exactly once per value.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sendMessage/onPendingStartConsumed intentionally omitted — this effect fires only on pendingStart changing, not on every render
@@ -399,15 +306,6 @@ export function AiV2Design({
       void sendMessage(pendingStart);
     }
   }, [pendingStart]);
-
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    void sendMessage(input);
-  }
-
-  function handleStop() {
-    abortControllerRef.current?.abort();
-  }
 
   async function submitAnswers(answers: AiV2AnswerItem[]) {
     if (!pendingQuestion) return;
@@ -516,42 +414,18 @@ export function AiV2Design({
               </div>
             )}
           </div>
-          <form
-            onSubmit={handleSubmit}
-            className="flex shrink-0 items-end gap-2 border-t border-v5-border p-3"
-          >
-            <textarea
-              className="flex-1 resize-none rounded-v5-sm border border-v5-border bg-transparent px-3 py-2 text-sm text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none"
-              rows={2}
-              value={input}
-              placeholder={
-                messages.length === 0 && !pendingQuestion
-                  ? 'Ask for a starting dashboard…'
-                  : 'Ask for a change: "add a question-density widget"…'
-              }
-              disabled={isStreaming}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void sendMessage(input);
-                }
-              }}
-            />
-            {isStreaming ? (
-              <button type="button" className={FEED_GLASS_BTN} onClick={handleStop}>
-                Stop
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-                disabled={!input.trim()}
-              >
-                Send
-              </button>
-            )}
-          </form>
+          <SseTurnComposer
+            input={input}
+            onInputChange={setInput}
+            placeholder={
+              messages.length === 0 && !pendingQuestion
+                ? 'Ask for a starting dashboard…'
+                : 'Ask for a change: "add a question-density widget"…'
+            }
+            isStreaming={isStreaming}
+            onSend={() => void sendMessage(input)}
+            onStop={stop}
+          />
         </>
       )}
     </div>
