@@ -3,7 +3,7 @@ import loadingVideoSrc from '../../assets/video/AutoLogger_Small.webm';
 export const AUTOLOGGER_LOADING_VIDEO_SRC = loadingVideoSrc;
 
 function applyFreezeAtFirstFrame(v: HTMLVideoElement | null | undefined): void {
-  if (!v || v.tagName !== 'VIDEO') return;
+  if (v?.tagName !== 'VIDEO') return;
   v.defaultMuted = true;
   v.muted = true;
   v.playsInline = true;

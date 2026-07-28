@@ -107,7 +107,7 @@ describe('detection predicate (mutation check — proves the guard actually fire
     expect(quotedPattern(SESSION_STATUS).test(`invalidateQueries(["${SESSION_STATUS}"])`)).toBe(
       true,
     );
-    expect(quotedPattern(AUDIO_SEGMENTS).test('`' + AUDIO_SEGMENTS + '`')).toBe(true);
+    expect(quotedPattern(AUDIO_SEGMENTS).test(`\`${AUDIO_SEGMENTS}\``)).toBe(true);
   });
 
   it('does NOT match unquoted prose naming the domain', () => {

@@ -134,7 +134,9 @@ export function TopicsRow({
   useLayoutEffect(() => {
     const el = summaryRef.current;
     if (!el) return undefined;
-    const fit = () => {
+    // Named `fitHeight`, not `fit`: biome's noFocusedTests rule reads a bare
+    // `fit(...)` call as a focused test and its autofix rewrites it to `it()`.
+    const fitHeight = () => {
       el.style.height = 'auto';
       // `scrollHeight` excludes the border, but `box-sizing: border-box` makes
       // the CSS height include it — add the border delta so the content isn't
@@ -142,8 +144,8 @@ export function TopicsRow({
       const borderY = el.offsetHeight - el.clientHeight;
       el.style.height = `${el.scrollHeight + borderY}px`;
     };
-    fit();
-    const ro = new ResizeObserver(fit);
+    fitHeight();
+    const ro = new ResizeObserver(fitHeight);
     ro.observe(el);
     return () => ro.disconnect();
   }, [vals.summary]);
