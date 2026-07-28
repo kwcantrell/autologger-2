@@ -213,9 +213,63 @@ export class SessionCore {
 
   // -- WebSocket fan-out (hibernatable; replaces polling + CompanionHub) --------
 
-  /** Send a JSON message to every attached socket (browser tabs + Companion). */
+  /** Post-commit broadcast queue (code-health-consolidation D1, delta
+   * "Broadcast atomicity with the owning transaction"): while a hold scope is
+   * open (SessionHub.inTxn wraps every mutating transaction in one),
+   * `broadcast` enqueues the already-serialized frame instead of sending, so a
+   * transaction that fails at or before commit never emits `*.changed` for a
+   * rolled-back write. Serialization happens at enqueue time, so the flushed
+   * bytes are exactly what an immediate send would have produced. */
+  private pendingBroadcasts: string[] = [];
+  private broadcastHoldDepth = 0;
+
+  /** Send a JSON message to every attached socket (browser tabs + Companion).
+   * Inside a hold scope (i.e. inside a mutating transaction) the frame is
+   * queued and flushed only after the outermost scope commits; outside any
+   * scope it is sent immediately (composite post-commit pairs,
+   * broadcastCommand, presence-path callers are unchanged). */
   broadcast(msg: Record<string, unknown>): void {
     const data = JSON.stringify(msg);
+    if (this.broadcastHoldDepth > 0) {
+      this.pendingBroadcasts.push(data);
+      return;
+    }
+    this.sendToSockets(data);
+  }
+
+  /** Run `fn` with broadcasts held (D1): flush the queue in enqueue order when
+   * the OUTERMOST scope exits successfully — the caller (SessionHub.inTxn)
+   * places the better-sqlite3 commit inside `fn`, so the flush runs strictly
+   * after commit — and discard the whole queue on an escaping throw (the
+   * transaction rolled back, so nothing may be announced). Nested scopes map
+   * to better-sqlite3 savepoints: flush at outermost commit only;
+   * inner-catch-and-continue (an inner savepoint rollback the outer
+   * transaction survives) is UNSUPPORTED and outside this contract.
+   * Synchronous throughout — zero awaits (SessionHub invariant). */
+  withBroadcastsHeld<T>(fn: () => T): T {
+    this.broadcastHoldDepth += 1;
+    try {
+      const result = fn();
+      this.broadcastHoldDepth -= 1;
+      if (this.broadcastHoldDepth === 0) this.flushPendingBroadcasts();
+      return result;
+    } catch (err) {
+      this.broadcastHoldDepth -= 1;
+      if (this.broadcastHoldDepth === 0) this.pendingBroadcasts.length = 0;
+      throw err;
+    }
+  }
+
+  private flushPendingBroadcasts(): void {
+    // Drain before sending so the queue can never be re-entered mid-flush.
+    const pending = this.pendingBroadcasts.splice(0);
+    for (const data of pending) this.sendToSockets(data);
+  }
+
+  /** Per-socket fan-out with per-socket try/catch isolation: one bad socket
+   * must not abort delivery to the remaining healthy sockets — this holds for
+   * immediate sends and for every queued frame during a post-commit flush. */
+  private sendToSockets(data: string): void {
     for (const ws of this.ctx.sockets()) {
       try {
         ws.send(data);

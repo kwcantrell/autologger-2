@@ -174,3 +174,86 @@ describe('SessionCore on a fake runtime', () => {
     expect(core.presence()).toEqual({ browsers: 1, companions: 1 });
   });
 });
+
+// code-health-consolidation task 2.1 (design D1): post-commit broadcast queue
+// mechanics at the core seam — enqueue while a hold scope is open, flush in
+// enqueue order on outermost success, discard the whole queue on an escaping
+// throw. The real commit placement (flush strictly after better-sqlite3
+// commits) is pinned at the hub level in SessionHub.test.ts.
+describe('SessionCore.withBroadcastsHeld (post-commit broadcast queue, D1)', () => {
+  it('outside any hold scope, broadcast sends immediately (composite pairs / broadcastCommand path)', () => {
+    const { core, sent } = fakeRuntime();
+    core.broadcast({ type: 'x', v: 1 });
+    expect(sent.map((d) => JSON.parse(d))).toEqual([{ type: 'x', v: 1 }]);
+  });
+
+  it('holds broadcasts during the scope and flushes them in enqueue order after it succeeds', () => {
+    const { core, sent } = fakeRuntime();
+    core.withBroadcastsHeld(() => {
+      core.broadcast({ type: 'a', n: 1 });
+      core.broadcast({ type: 'b', n: 2 });
+      // Nothing reaches a socket while the scope (i.e. the transaction) is open.
+      expect(sent).toEqual([]);
+    });
+    expect(sent.map((d) => JSON.parse(d))).toEqual([
+      { type: 'a', n: 1 },
+      { type: 'b', n: 2 },
+    ]);
+  });
+
+  it('discards the queue on a mid-scope throw — no frame for a rolled-back write', () => {
+    const { core, sent } = fakeRuntime();
+    expect(() =>
+      core.withBroadcastsHeld(() => {
+        core.broadcast({ type: 'a' });
+        throw new Error('simulated commit failure');
+      }),
+    ).toThrow('simulated commit failure');
+    expect(sent).toEqual([]);
+    // The queue is empty, not deferred: a later successful scope emits only its own frames.
+    core.withBroadcastsHeld(() => core.broadcast({ type: 'b' }));
+    expect(sent.map((d) => JSON.parse(d))).toEqual([{ type: 'b' }]);
+  });
+
+  it('nested scopes flush at the OUTERMOST successful exit only', () => {
+    const { core, sent } = fakeRuntime();
+    core.withBroadcastsHeld(() => {
+      core.withBroadcastsHeld(() => core.broadcast({ type: 'inner' }));
+      // Inner scope exited successfully, but the outer is still open: no flush yet.
+      expect(sent).toEqual([]);
+      core.broadcast({ type: 'outer' });
+    });
+    expect(sent.map((d) => JSON.parse(d))).toEqual([{ type: 'inner' }, { type: 'outer' }]);
+  });
+
+  it('a throw escaping nested scopes discards the WHOLE queue, inner enqueues included', () => {
+    const { core, sent } = fakeRuntime();
+    expect(() =>
+      core.withBroadcastsHeld(() => {
+        core.withBroadcastsHeld(() => core.broadcast({ type: 'inner' }));
+        throw new Error('outer failure');
+      }),
+    ).toThrow('outer failure');
+    expect(sent).toEqual([]);
+  });
+
+  it('flush preserves per-socket isolation: one throwing socket does not abort delivery of remaining queued frames to healthy sockets', () => {
+    const { core, sent, sockets } = fakeRuntime();
+    const healthy2: string[] = [];
+    sockets.add({
+      send: () => {
+        throw new Error('socket going away');
+      },
+      role: 'browser',
+    });
+    sockets.add({ send: (d) => healthy2.push(d), role: 'companion' });
+    core.withBroadcastsHeld(() => {
+      core.broadcast({ type: 'a' });
+      core.broadcast({ type: 'b' });
+    });
+    // Both healthy sockets received BOTH queued frames despite the bad socket
+    // throwing on every send in between.
+    expect(sent.map((d) => JSON.parse(d))).toEqual([{ type: 'a' }, { type: 'b' }]);
+    expect(healthy2.map((d) => JSON.parse(d))).toEqual([{ type: 'a' }, { type: 'b' }]);
+  });
+});

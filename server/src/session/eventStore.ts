@@ -38,13 +38,18 @@ export class EventStore {
     metadataJson: string;
     markedAtUtc: string | null;
     ctx: TimecodeCtx;
-    /** youtube-audio-import Phase-9 fix-wave (finding 1): when true, skip this
-     * call's `event.changed` broadcast. Used ONLY by
-     * `SessionHub.anchorImportedTake`'s composite `inTxn`, so a mid-transaction
-     * throw can never let a broadcast reach clients ahead of the DB commit that
-     * would make it true — the composite broadcasts once, itself, after
-     * `inTxn` returns successfully. Every other caller omits this (default
-     * false), preserving the existing per-write broadcast behavior. */
+    /** youtube-audio-import Phase-9 fix-wave (finding 1); rationale updated by
+     * code-health-consolidation D1: transaction/broadcast ATOMICITY is now owned
+     * by the post-commit broadcast queue (`SessionHub.inTxn` +
+     * `SessionCore.withBroadcastsHeld`), not by this flag. The flag is RETAINED
+     * because it does a different job — SUPPRESSION: it owns the composite's
+     * frame-count/payload contract. Used ONLY by
+     * `SessionHub.anchorImportedTake`, whose two addEvent calls would otherwise
+     * enqueue two `event.changed` frames (including an intermediate revision no
+     * client has ever observed) that the queue would faithfully flush
+     * post-commit; the composite instead broadcasts once, itself, after `inTxn`
+     * returns. Every other caller omits this (default false), preserving the
+     * existing per-write broadcast behavior. */
     suppressBroadcast?: boolean;
   }): { event: EventRpc; projection: SessionProjection } {
     const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();

@@ -200,6 +200,151 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
   });
 });
 
+// code-health-consolidation task 1.2: pin the EXACT success-path WS broadcast
+// frames — types, payload shapes/values (where deterministic), and relative
+// order — for one representative mutation per broadcasting store (events,
+// transport, audio, lease) plus the ONE composite RPC (anchorImportedTake).
+// These are the byte-identity gate the post-commit broadcast-queue change
+// (phase 2) MUST keep green: a frame-count, ordering, or payload regression on
+// the success path fails here. `toEqual` on the whole captured array is
+// deliberate — it pins the frame COUNT (extra/missing frames fail) as well as
+// each frame's shape and their order.
+describe('SessionHub broadcast frame pins (success-path byte-identity gate)', () => {
+  function capturingHub() {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const frames: Record<string, unknown>[] = [];
+    // Attach AFTER construction so the constructor's expireIfStale txn (no
+    // holder → no broadcast) can never colour the capture.
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    return { hub, frames };
+  }
+
+  it('events: addEvent emits exactly one event.changed carrying the bumped revision', () => {
+    const { hub, frames } = capturingHub();
+    hub.addEvent({ category: 'cam', message: 'hi', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+    expect(frames).toEqual([{ type: 'event.changed', revision: 1 }]);
+    hub.close();
+  });
+
+  it('transport: startTake emits exactly one transport.changed (rolling, take incremented)', () => {
+    const { hub, frames } = capturingHub();
+    hub.startTake(CTX);
+    expect(frames).toEqual([{ type: 'transport.changed', is_rolling: true, current_take: 1 }]);
+    hub.close();
+  });
+
+  it('audio: addAudioSegment emits exactly one audio.changed (no payload)', () => {
+    const { hub, frames } = capturingHub();
+    hub.addAudioSegment({
+      sessionId: 's1',
+      mimeType: 'audio/webm',
+      startedAtUtc: null,
+      endedAtUtc: null,
+      recordingOrdinal: null,
+    });
+    expect(frames).toEqual([{ type: 'audio.changed' }]);
+    hub.close();
+  });
+
+  it('lease: claimLease emits exactly one lease.changed (no payload)', () => {
+    const { hub, frames } = capturingHub();
+    hub.claimLease('client-a');
+    expect(frames).toEqual([{ type: 'lease.changed' }]);
+    hub.close();
+  });
+
+  it('composite: anchorImportedTake emits exactly [event.changed(final revision), transport.changed] in that order and NO intermediate store frames', () => {
+    const { hub, frames } = capturingHub();
+    // Two internal events (Started + Stopped) bump the revision to 2; the two
+    // per-addEvent event.changed frames and stopTakeWithDuration's
+    // transport.changed are suppressed inside the txn, and the composite
+    // manually emits ONE of each after commit (design D1: atomicity from the
+    // queue, frame-count/order from the retained suppressBroadcast flags).
+    hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX });
+    expect(frames).toEqual([
+      { type: 'event.changed', revision: 2 },
+      { type: 'transport.changed', is_rolling: false, current_take: 0 },
+    ]);
+    hub.close();
+  });
+});
+
+// code-health-consolidation phase 2 (design D1, delta "Broadcast atomicity with
+// the owning transaction"): the post-commit broadcast queue at the REAL seam —
+// better-sqlite3 transactions/savepoints under SessionHub.inTxn.
+describe('SessionHub post-commit broadcast queue (D1)', () => {
+  function capturingHub() {
+    const hub = new SessionHub(join(dir, 's1.db'));
+    const frames: Record<string, unknown>[] = [];
+    hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
+    return { hub, frames };
+  }
+
+  // Task 2.2 — delta scenario 1 ("Failed commit emits no broadcast"). Hook-free
+  // proxy for a commit-step failure: the store call runs for real (insert +
+  // revision bump + broadcast enqueue, nothing suppressed), then a throw
+  // escapes the transaction before commit — from the queue seam's point of
+  // view this is indistinguishable from better-sqlite3's COMMIT itself
+  // throwing (both surface as a throw out of `db.transaction(fn)()`). No
+  // failure-injection hooks in production inTxn.
+  it('a throw escaping the transaction after a broadcast-enqueueing store call emits NO broadcast and persists nothing', () => {
+    const { hub, frames } = capturingHub();
+    const eventsStore = (hub as unknown as { events: { addEvent: (...a: unknown[]) => unknown } })
+      .events;
+    const original = eventsStore.addEvent.bind(eventsStore);
+    const spy = vi.spyOn(eventsStore, 'addEvent').mockImplementation((...args: unknown[]) => {
+      original(...args); // real write + real (unsuppressed) broadcast enqueue
+      throw new Error('simulated commit-step failure');
+    });
+
+    expect(() =>
+      hub.addEvent({ category: 'cam', message: 'doomed', metadataJson: '{}', markedAtUtc: null, ctx: CTX }),
+    ).toThrow('simulated commit-step failure');
+    spy.mockRestore();
+
+    // The enqueued event.changed was discarded with the rollback: clients see
+    // NO notification for the rolled-back write...
+    expect(frames).toEqual([]);
+    // ...and the write itself is gone (rollback, not just silence).
+    expect(hub.ensure().event_count).toBe(0);
+    expect(hub.statusLive(CTX).events_stream_revision).toBe(0);
+    hub.close();
+  });
+
+  // Task 2.1 — nested-txn semantics at the real seam (inner delegate inside an
+  // outer inTxn becomes a savepoint): flush at OUTERMOST commit only.
+  it('nested transactions flush at the outermost commit only', () => {
+    const { hub, frames } = capturingHub();
+    const h = hub as unknown as { inTxn<T>(fn: () => T): T };
+    h.inTxn(() => {
+      // Public delegate → nested inTxn → savepoint; its broadcast is enqueued.
+      hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+      // Inner savepoint committed, but the outermost transaction is still
+      // open: nothing may reach a socket yet.
+      expect(frames).toEqual([]);
+    });
+    // Outermost commit: the queued frame flushes, byte-identical to today's.
+    expect(frames).toEqual([{ type: 'event.changed', revision: 1 }]);
+    hub.close();
+  });
+
+  // Task 2.1 — a throw escaping the outermost transaction discards the WHOLE
+  // queue, including frames enqueued by an inner savepoint that had committed.
+  it('a throw escaping the outermost transaction discards inner-savepoint broadcasts along with the writes', () => {
+    const { hub, frames } = capturingHub();
+    const h = hub as unknown as { inTxn<T>(fn: () => T): T };
+    expect(() =>
+      h.inTxn(() => {
+        hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+        throw new Error('outer failure');
+      }),
+    ).toThrow('outer failure');
+    expect(frames).toEqual([]); // no frame for the rolled-back write
+    expect(hub.ensure().event_count).toBe(0); // savepoint rolled back with the outer txn
+    hub.close();
+  });
+});
+
 describe('SessionHub.replaceTranscriptWords', () => {
   it('inserts words with start_sec/end_sec and contiguous ordinals from 0', () => {
     const hub = new SessionHub(join(dir, 's1.db'));

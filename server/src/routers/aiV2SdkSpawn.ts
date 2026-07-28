@@ -50,6 +50,8 @@ import type {
   SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
+import { runOuterAiTurn } from './aiTurnOrchestrator';
+import { killProcessGroup } from './processGroupKill';
 
 /**
  * Start a design turn against the Agent SDK. This is the spawn boundary:
@@ -281,71 +283,23 @@ export function buildDesignTurnCanUseTool(deps: DesignTurnCanUseToolDeps = {}): 
 
 // ── Task 2.6 — process-group kill ladder (no orphan on ANY exit path) ───────
 // design D8/"Resolved by the spike" 0.5, spec "Subprocess and turn lifecycle".
-// Mirrors `killAiChatProcessGroup` in aiChatRunner.ts (SIGTERM → grace →
-// SIGKILL on the negative pgid), with ONE deliberate difference the spike
-// forced: escalation is gated on GROUP liveness (`process.kill(-pgid, 0)`),
-// NOT the tracked leader's exit status. Spike 0.5 Turn 2 proved a
-// leader-exit-gated ladder leaves a real SIGTERM-ignoring group member
-// orphaned, because the SDK stops escalating once its ONE tracked process
-// looks dead; Turn 3's group-liveness-gated ladder closed it. The child is
-// spawned `detached: true` (via `createDesignTurnSpawner`) so its pid IS its
-// pgid, and `-pid` addresses the whole group (POSIX/Linux — this deployment
-// target, matching every other process-spawning path in the repo).
+// This path's group-liveness-gated ladder (escalation gated on
+// `process.kill(-pgid, 0)`, NOT the tracked leader's exit status — spike 0.5
+// Turn 2 proved a leader-exit-gated ladder leaves a SIGTERM-ignoring group
+// member orphaned; Turn 3's group-liveness gating closed it) was the PROVEN
+// implementation, so code-health-consolidation task 4.1 (design D2) extracted
+// it verbatim into the shared `processGroupKill.ts`, now consumed by BOTH this
+// path and `killAiChatProcessGroup`. The names below are stable re-exports for
+// this path's callers/tests. The child is spawned `detached: true` (via
+// `createDesignTurnSpawner`) so its pid IS its pgid, and `-pid` addresses the
+// whole group (POSIX/Linux — this deployment target, matching every other
+// process-spawning path in the repo).
 
-/** Grace window between the SIGTERM and the SIGKILL rung. Exported so tests
- * can pass a short override; production relies on the default. */
-export const DEFAULT_DESIGN_TURN_KILL_GRACE_MS = 3000;
-
-/** True iff the process GROUP led by `pgid` still has at least one live
- * member. `process.kill(-pgid, 0)` sends no signal — it only probes
- * deliverability: ESRCH means the group is gone; EPERM means it exists but is
- * unsignalable (we own it, so unlikely) — treated as alive to stay safe. */
-export function designTurnGroupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-async function waitUntilGroupGone(pgid: number, timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (designTurnGroupAlive(pgid)) {
-    if (Date.now() - start >= timeoutMs) return false;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return true;
-}
-
-/**
- * Terminate the process group led by `pgid`: SIGTERM the group, wait up to
- * `graceMs` for it to die, and — if ANY member is still alive (gated on
- * GROUP liveness, not one process's exit) — SIGKILL the group. A no-op if the
- * group is already gone. Never throws: an ESRCH on an already-dead group is
- * exactly the no-orphan outcome. Resolves once the group is confirmed gone (or
- * a bounded final wait elapses after the SIGKILL rung).
- */
-export async function killDesignTurnProcessGroup(
-  pgid: number | null | undefined,
-  graceMs: number = DEFAULT_DESIGN_TURN_KILL_GRACE_MS,
-): Promise<void> {
-  if (pgid == null || !designTurnGroupAlive(pgid)) return;
-  try {
-    process.kill(-pgid, 'SIGTERM');
-  } catch {
-    return; // ESRCH: the group went away between the probe and the signal.
-  }
-  const gone = await waitUntilGroupGone(pgid, graceMs);
-  if (!gone) {
-    try {
-      process.kill(-pgid, 'SIGKILL');
-    } catch {
-      // Raced gone between the liveness check and this signal — fine.
-    }
-    await waitUntilGroupGone(pgid, 2000);
-  }
-}
+export {
+  DEFAULT_PROCESS_GROUP_KILL_GRACE_MS as DEFAULT_DESIGN_TURN_KILL_GRACE_MS,
+  killProcessGroup as killDesignTurnProcessGroup,
+  processGroupAlive as designTurnGroupAlive,
+} from './processGroupKill';
 
 export interface DesignTurnSpawner {
   /** Pass as `Options.spawnClaudeCodeProcess`. Spawns the real CLI
@@ -384,7 +338,7 @@ export function createDesignTurnSpawner(): DesignTurnSpawner {
   const terminate = async (graceMs?: number): Promise<void> => {
     if (terminated) return;
     terminated = true;
-    await killDesignTurnProcessGroup(child?.pid ?? null, graceMs);
+    await killProcessGroup(child?.pid ?? null, graceMs);
   };
 
   return { spawnClaudeCodeProcess, terminate, getPgid: () => child?.pid ?? null };
@@ -445,6 +399,13 @@ export interface RunDesignTurnOptions {
    * resolve. Optional so callers that don't wire the Phase-3 registry
    * (e.g. 2.5/2.6's own tests) are unaffected. */
   abandonPendingQuestions?: () => void;
+  /** Turn workspace (cwd + config-dir) removal — code-health-consolidation
+   * design D3: rides in the shared orchestrator's `onFinally` alongside
+   * `abandonPendingQuestions` + `release`, so it too runs on EVERY exit path
+   * the orchestrator controls. Optional (idempotent at the source —
+   * `createDesignTurnWorkspace`); the router keeps its own defense-in-depth
+   * call for setup failures before this function ever runs. */
+  cleanupWorkspace?: () => void;
   /** Best-effort client-disconnect signal (the SSE request's abort signal). */
   abortSignal?: AbortSignal;
   killGraceMs?: number;
@@ -495,32 +456,20 @@ export function scrubDesignTurnEvent(event: DesignTurnSseEvent): DesignTurnSseEv
   return { event: 'error', data: { detail } };
 }
 
-/**
- * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
- * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
- * and a best-effort client-disconnect signal, terminate the child group on
- * every path, and release the concurrency slot in a `finally`. Guarantees
- * exactly one terminal event; a client disconnect emits none.
- */
-export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignTurnOutcome> {
-  let terminalSent = false;
-  const guardedEmit = async (event: DesignTurnSseEvent): Promise<void> => {
-    if (terminalSent) return;
-    // Task 2.8: every event — not just the ones the code below happens to
-    // construct carefully — passes through the scrubber before it can reach
-    // the client. A no-op for `delta`/`done` and for an already-valid `error`.
-    const safeEvent = scrubDesignTurnEvent(event);
-    if (safeEvent.event === 'done' || safeEvent.event === 'error') terminalSent = true;
+/** The per-path relay (design D3: the relay/message-translation is NOT
+ * symmetric across the two AI paths and stays per-path — this one translates
+ * an `AsyncIterable<SDKMessage>` inline; chat's reads a `ChildProcess`'s
+ * stdout JSONL in `aiChatRelay.ts`). Emits only through the shared guarded
+ * emitter; never rejects — the iterator throwing (our own abort/timeout
+ * per spike 0.5, or a genuine SDK error) resolves to a scrubbed
+ * `internal-error` outcome instead. */
+function relayDesignTurnMessages(
+  query: AsyncIterable<SDKMessage>,
+  guardedEmit: (event: DesignTurnSseEvent) => Promise<void>,
+): Promise<DesignTurnOutcome> {
+  return (async (): Promise<DesignTurnOutcome> => {
     try {
-      await opts.emit(safeEvent);
-    } catch {
-      // The client stream is gone; cleanup below still runs.
-    }
-  };
-
-  const relayPromise: Promise<DesignTurnOutcome> = (async () => {
-    try {
-      for await (const message of opts.query) {
+      for await (const message of query) {
         if (message.type === 'assistant') {
           const content = (message.message as { content?: unknown } | undefined)?.content;
           if (Array.isArray(content)) {
@@ -552,65 +501,54 @@ export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignT
       return { ok: false, detail: 'internal-error' };
     }
   })();
+}
 
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<'timeout'>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve('timeout'), opts.timeoutMs);
-  });
-  const abortPromise = new Promise<'abort'>((resolve) => {
-    const signal = opts.abortSignal;
-    if (!signal) return; // never resolves — Promise.race simply never picks it
-    if (signal.aborted) {
-      resolve('abort');
-      return;
-    }
-    signal.addEventListener('abort', () => resolve('abort'), { once: true });
-  });
-
-  let terminated = false;
-  const terminateOnce = async (): Promise<void> => {
-    if (terminated) return;
-    terminated = true;
-    await opts.terminate(opts.killGraceMs);
-  };
-
-  try {
-    const winner = await Promise.race([
-      relayPromise.then((outcome) => ({ kind: 'relay' as const, outcome })),
-      timeoutPromise.then(() => ({ kind: 'timeout' as const })),
-      abortPromise.then(() => ({ kind: 'abort' as const })),
-    ]);
-    clearTimeout(timeoutHandle);
-    // On the timeout/abort paths the relay may never settle (a never-yielding
-    // iterator that ignores abort) — suppress any late rejection and DO NOT
-    // await it, so those paths still end and release the slot.
-    relayPromise.catch(() => {});
-
-    if (winner.kind === 'timeout') {
-      await guardedEmit({ event: 'error', data: { detail: 'timeout' } });
+/**
+ * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
+ * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
+ * and a best-effort client-disconnect signal, terminate the child group on
+ * every path, and run the cleanup closures in a `finally`. Guarantees exactly
+ * one terminal event; a client disconnect emits none.
+ *
+ * Since code-health-consolidation (design D3, task 4.2) this is a thin
+ * adapter over the shared OUTER orchestrator (`runOuterAiTurn`), which owns
+ * the race/terminal-once/emit-guard/kill/finally scaffolding for both AI
+ * paths. This path's hook choices:
+ * - `runRelay`: `relayDesignTurnMessages` over the SDK iterator, with the
+ *   `'detach'` drain policy — the relay is NEVER awaited after the race: an
+ *   aborted SDK iterator may never yield/settle, and the turn must still end
+ *   and release its slot.
+ * - `terminate`: owns this path's `abortController.abort()` (killing the
+ *   pgid alone does not stop the SDK's iterator) plus the spawner's shared
+ *   group-liveness kill ladder (design D2); the grace override is baked into
+ *   the closure.
+ * - `scrub`: `scrubDesignTurnEvent` (task 2.8) — the four-literal allow-list
+ *   rebuild, applied by the shared guard to EVERY event (the structural
+ *   confidentiality chokepoint).
+ * - `onFinally`: `abandonPendingQuestions` (task 3.3 — the every-exit-path
+ *   abandon guarantee is load-bearing) + slot `release` + workspace cleanup,
+ *   in that order, on EVERY exit path.
+ */
+export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignTurnOutcome> {
+  return runOuterAiTurn<DesignTurnSseEvent, DesignTurnOutcome>({
+    runRelay: (guardedEmit) => ({
+      relay: relayDesignTurnMessages(opts.query, guardedEmit),
+      drain: 'detach',
+    }),
+    terminate: async () => {
       opts.abortController.abort();
-    } else if (winner.kind === 'abort') {
-      // Best-effort client disconnect: emit NO terminal event (nobody is
-      // listening) but claim the terminal slot so a late relay emit is a no-op.
-      terminalSent = true;
-      opts.abortController.abort();
-    }
-
-    await terminateOnce();
-
-    if (winner.kind === 'relay') return winner.outcome;
-    if (winner.kind === 'timeout') return { ok: false, detail: 'timeout' };
-    return { ok: false, detail: 'aborted' };
-  } finally {
-    clearTimeout(timeoutHandle);
-    // No orphan on ANY exit path — including an unexpected throw above.
-    await terminateOnce();
-    // Task 3.3: the pending-question backstop — same "every exit path"
-    // guarantee as terminate/release above, so an unanswered question never
-    // survives the turn it belongs to (see the field's own docstring).
-    opts.abandonPendingQuestions?.();
-    opts.release();
-  }
+      await opts.terminate(opts.killGraceMs);
+    },
+    scrub: scrubDesignTurnEvent,
+    timeoutMs: opts.timeoutMs,
+    emit: opts.emit,
+    abortSignal: opts.abortSignal,
+    onFinally: () => {
+      opts.abandonPendingQuestions?.();
+      opts.release();
+      opts.cleanupWorkspace?.();
+    },
+  });
 }
 
 // ── Turn workspace + credentials (runtime file I/O, kept out of the pure

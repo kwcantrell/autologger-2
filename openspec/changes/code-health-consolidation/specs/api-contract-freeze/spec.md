@@ -44,7 +44,7 @@ behavior and SHALL NOT change.
 
 ### Requirement: Suffix range against a zero-byte audio blob
 
-On the audio download endpoint (`GET /api/sessions/:sessionId/audio/:segmentId/download`,
+On the audio download endpoint (`GET /api/sessions/:sessionId/audio/segments/:segmentId`,
 the repo's only Range-consuming route), a syntactically valid suffix `Range` request
 (`bytes=-N`, `N > 0`) against a zero-byte audio blob SHALL yield the same
 unsatisfiable-range response the endpoint already produces for other unsatisfiable
