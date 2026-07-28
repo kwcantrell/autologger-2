@@ -17,12 +17,12 @@
 
 - [x] 2.1 Deck title: `events.ts` + `companion.ts` call `sessionDeckDisplayTitle`
       (finding 2.4); output-equality tests for both call sites
-- [ ] 2.2 `core.eventCounts()` per D10; transportStore/eventStore consume it; statusLive
+- [x] 2.2 `core.eventCounts()` per D10; transportStore/eventStore consume it; statusLive
       results pinned before/after (finding 2.10)
 - [ ] 2.3 `guardAiV2Route` helper replacing the five copied prologues, parameterized by
       gate set per D12 (dashboard-CRUD routes keep their deliberately narrower gate);
       route-behavior tests unchanged (finding 2.11)
-- [ ] 2.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
+- [x] 2.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
       stores), `freeLease()`, bidirectional mime↔ext table; incidental `SELECT 1` fix
       at the two sites this task already rewrites (finding 2.12)
 - [x] 2.5 Companion: payload typed server-side per D11 (incl. the two under-declared
