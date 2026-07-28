@@ -60,6 +60,17 @@ describe('BlobStore', () => {
     expect(whole!.range).toEqual({ offset: 0, length: 10 });
   });
 
+  it('throws InvalidRangeError for a suffix range against a zero-byte blob', async () => {
+    const s = store();
+    await s.put('k', new Uint8Array(0));
+    await expect(s.get('k', { range: { suffix: 1 } })).rejects.toBeInstanceOf(InvalidRangeError);
+    await expect(s.get('k', { range: { suffix: 999 } })).rejects.toBeInstanceOf(InvalidRangeError);
+    // No range at all on the same zero-byte blob still succeeds (whole body).
+    const whole = await s.get('k');
+    expect(whole!.size).toBe(0);
+    expect((await drain(whole!.body)).length).toBe(0);
+  });
+
   it('list returns keys under a prefix; partial temp files never appear', async () => {
     const s = store();
     await s.put('audio/a/0001_x.webm', BYTES);

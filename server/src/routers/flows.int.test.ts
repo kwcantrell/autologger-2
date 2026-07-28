@@ -56,6 +56,50 @@ describe('audio flow (blob-store round-trip)', () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it('returns 416 (not 500) for a suffix Range against a zero-byte blob', async () => {
+    const session = await freshSession();
+    // Zero-byte blobs can't arrive via upload (empty bodies are 400); they
+    // reach the store the way they do in the field — bytes already on disk,
+    // registered via sync-from-disk.
+    await env.ports.audio.put(`audio/${session}/0001_${crypto.randomUUID()}.webm`, new Uint8Array(0));
+    const sync = await app.request(
+      `/api/sessions/${session}/audio/segments/sync-from-disk`,
+      { method: 'POST' },
+      { ...env },
+    );
+    expect(sync.status).toBe(200);
+    const { segments } = (await sync.json()) as { segments: Array<{ url: string }> };
+    expect(segments).toHaveLength(1);
+    const res = await app.request(
+      segments[0].url,
+      { method: 'GET', headers: { range: 'bytes=-1' } },
+      { ...env },
+    );
+    expect(res.status).toBe(416);
+    expect(await res.json()).toEqual({ detail: 'Requested range not satisfiable.' });
+  });
+
+  it('serves a satisfiable suffix Range against a non-empty blob unchanged', async () => {
+    const session = await freshSession();
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const up = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: bytes },
+      { ...env },
+    );
+    expect(up.status).toBe(200);
+    const seg = (await up.json()) as { url: string };
+    const res = await app.request(
+      seg.url,
+      { method: 'GET', headers: { range: 'bytes=-2' } },
+      { ...env },
+    );
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 3-4/5');
+    expect(res.headers.get('content-length')).toBe('2');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([4, 5]));
+  });
 });
 
 describe('exports flow', () => {

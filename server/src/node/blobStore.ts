@@ -95,6 +95,11 @@ export class BlobStore {
     let length: number;
     if ('suffix' in opts.range) {
       if (opts.range.suffix <= 0) throw new InvalidRangeError('suffix must be positive');
+      // A suffix range against a zero-byte blob is unsatisfiable (RFC 9110:
+      // no byte lies within a zero-length representation). Without this guard
+      // the computed window would be {start: 0, end: -1}, which
+      // createReadStream rejects with ERR_OUT_OF_RANGE (→ 500, not 416).
+      if (size === 0) throw new InvalidRangeError(`suffix ${opts.range.suffix} of empty blob`);
       length = Math.min(opts.range.suffix, size);
       offset = size - length;
     } else {
