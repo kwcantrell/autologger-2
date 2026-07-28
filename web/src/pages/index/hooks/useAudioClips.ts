@@ -69,7 +69,9 @@ export function useAudioClips(
     }).catch(() => undefined);
   }, [sessionId]);
 
-  // Probe durations: segments without server-known duration_sec need an HTMLAudio probe.
+  // Probe durations. The server emits no duration for a segment (`segmentApiDict`
+  // has no such field — web-api-shape-conformance audit CW-5), so the
+  // HTMLAudioElement metadata probe is the only source of a decoded media length.
   // Cache keyed by segment id; survives across re-renders within a session.
   const durationsRef = useRef<Map<string, number>>(new Map());
   const [durationsTick, setDurationsTick] = useState(0);
@@ -85,26 +87,21 @@ export function useAudioClips(
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
-    let ingestedServerDurations = false;
     const pending = segments.filter((s) => {
       if (!s.id || !s.url) return false;
-      if (durationsRef.current.has(s.id)) return false;
-      // Server-provided duration_sec wins; skip probe in that case.
-      const dServ = Number(s.duration_sec);
-      if (Number.isFinite(dServ) && dServ > 0) {
-        durationsRef.current.set(s.id, dServ);
-        ingestedServerDurations = true;
-        return false;
-      }
-      return true;
+      return !durationsRef.current.has(s.id);
     });
-    if (pending.length === 0) {
-      // Bump tick only if we ingested any server-provided durations above —
-      // an unconditional bump forced a spurious layout recompute on every
-      // segments identity change (code-health-tail 4.8).
-      if (ingestedServerDurations) setDurationsTick((t) => t + 1);
-      return;
-    }
+    // No tick bump on the empty case: nothing was added to the duration cache,
+    // and an unconditional bump forced a spurious layout recompute on every
+    // segments identity change (code-health-tail 4.8). This branch used to
+    // ingest a server-provided `duration_sec` and bump on that; the server has
+    // never emitted the field, so `Number(undefined)` was always `NaN` and the
+    // fast path was dead code. Removed with the field (audit CW-5) rather than
+    // re-derived from `ended_at_utc - started_at_utc`: that difference is the
+    // recorder's wall-clock window (and `ended_at_utc` is often null), not a
+    // decoded media length, so feeding it to `rebuildAudioClips` would be a new
+    // behavior built on a weaker signal than the probe already provides.
+    if (pending.length === 0) return;
     (async () => {
       const results = await Promise.all(
         pending.map(async (s) => ({

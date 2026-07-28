@@ -29,6 +29,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
   ActiveStudioCategory,
+  AudioSegment,
+  AudioSegmentsResponse,
   Category,
   EventsResponse,
   LogEvent,
@@ -252,5 +254,37 @@ describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow ty
     };
     const check: EventsResponse = envelope;
     expect(check.events).toHaveLength(2);
+  });
+});
+
+describe('CW-5 — AudioSegment declared three fields `segmentApiDict` never emits', () => {
+  // Server: `segmentApiDict` (`server/src/routers/audio.ts`) — its nine keys.
+  const emitted = {
+    id: 'seg-a',
+    ordinal: 0,
+    started_at_utc: '2026-07-27T00:00:05Z',
+    ended_at_utc: null,
+    mime_type: 'audio/webm',
+    recording_ordinal: 1,
+    url: '/api/sessions/sess-1/audio/segments/seg-a',
+    waveform_peaks: null,
+    waveform_db_floor: null,
+  };
+
+  it('the emitted segment is assignable to AudioSegment', () => {
+    const check: AudioSegment = emitted;
+    expect(check.url).toContain('/audio/segments/');
+  });
+
+  it('the list envelope is assignable to AudioSegmentsResponse', () => {
+    const envelope = { segments: [emitted], has_audio: true };
+    const check: AudioSegmentsResponse = envelope;
+    expect(check.has_audio).toBe(true);
+  });
+
+  it('no duration, session id, or file path is on the wire', () => {
+    for (const key of ['session_id', 'duration_sec', 'file_path', 'r2_key']) {
+      expect(key in emitted).toBe(false);
+    }
   });
 });

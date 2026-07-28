@@ -387,15 +387,26 @@ export interface ShowCategoriesResponse {
 // Audio
 // ---------------------------------------------------------------------------
 
+/**
+ * An audio-segment row from `GET`/`POST /api/sessions/:id/audio/segments` —
+ * server: `segmentApiDict` (`server/src/routers/audio.ts`) over
+ * `AudioSegmentMeta`. Exactly the 9 keys below.
+ *
+ * It emits **no duration**: `AudioSegmentMeta` has no `duration_sec` or
+ * `file_path` field at all, and `r2_key` exists but is deliberately withheld.
+ * `session_id`, `duration_sec`, and `file_path` were declared here anyway
+ * (web-api-shape-conformance audit CW-5). `duration_sec` was the one *read*
+ * mismatch in the audit — see `useAudioClips` for what depended on it and why
+ * that path is gone. Clip durations come from the `HTMLAudioElement` metadata
+ * probe, which is the only source of a real decoded media length the client
+ * has; do not reintroduce `duration_sec` here without the server emitting it.
+ */
 export interface AudioSegment {
   id: string;
-  session_id: string;
   ordinal: number;
   recording_ordinal: number | null;
   started_at_utc: string | null;
   ended_at_utc: string | null;
-  duration_sec: number | null;
-  file_path: string;
   mime_type: string;
   url: string;
   waveform_peaks: number[] | null;

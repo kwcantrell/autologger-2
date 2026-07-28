@@ -167,13 +167,10 @@ const EVENTS: LogEvent[] = [
 const SEGMENTS: AudioSegment[] = [
   {
     id: 'seg-a',
-    session_id: SESSION_ID,
     ordinal: 0,
     recording_ordinal: 1,
     started_at_utc: wallAt(5),
     ended_at_utc: null,
-    duration_sec: 60,
-    file_path: '/tmp/a',
     mime_type: 'audio/webm',
     url: 'blob:seg-a',
     waveform_peaks: null,

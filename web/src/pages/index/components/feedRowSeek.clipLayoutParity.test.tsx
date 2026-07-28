@@ -160,13 +160,10 @@ function buildEvents(): LogEvent[] {
 const SEGMENTS: AudioSegment[] = [
   {
     id: 'seg-a',
-    session_id: SESSION_ID,
     ordinal: 0,
     recording_ordinal: 1,
     started_at_utc: wallAt(10),
     ended_at_utc: null,
-    duration_sec: 50,
-    file_path: '/tmp/a',
     mime_type: 'audio/webm',
     url: 'blob:seg-a',
     waveform_peaks: null,
@@ -174,13 +171,10 @@ const SEGMENTS: AudioSegment[] = [
   },
   {
     id: 'seg-b',
-    session_id: SESSION_ID,
     ordinal: 1,
     recording_ordinal: 2,
     started_at_utc: wallAt(3600),
     ended_at_utc: null,
-    duration_sec: 100,
-    file_path: '/tmp/b',
     mime_type: 'audio/webm',
     url: 'blob:seg-b',
     waveform_peaks: null,

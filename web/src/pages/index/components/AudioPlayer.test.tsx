@@ -24,13 +24,10 @@ beforeAll(() => {
 
 const SEGMENT: AudioSegment = {
   id: 'seg-1',
-  session_id: 'sess-1',
   ordinal: 0,
   recording_ordinal: 0,
   started_at_utc: null,
   ended_at_utc: null,
-  duration_sec: 10,
-  file_path: '/tmp/seg-1',
   mime_type: 'audio/webm',
   url: 'blob:seg-1',
   waveform_peaks: null,
