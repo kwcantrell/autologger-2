@@ -487,6 +487,54 @@ describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () =
   it('is a no-op (never throws) when the child has no pid', async () => {
     await expect(killAiChatProcessGroup({ pid: undefined, exitCode: null, signalCode: null } as unknown as ChildProcess)).resolves.toBeUndefined();
   });
+
+  // Task 4.1 (code-health-consolidation, design D2): the exact scenario the
+  // old leader-exit-gated ladder failed — the tracked leader exits but a
+  // group MEMBER (a real `claude` turn's MCP/helper child) survives. A ladder
+  // gated on the leader's exit status sees "already exited" and returns
+  // without signaling, orphaning the member; the shared group-liveness ladder
+  // (`process.kill(-pgid, 0)` gating, ported from the spike-proven AI-v2
+  // path) probes the GROUP and kills the survivor.
+  it('leader-exits-member-survives: a group member that outlives the exited leader is ' +
+    'still killed (design D2 — group-liveness gating, not leader-exit gating)', async () => {
+    // A detached leader (its own pgid) that spawns a same-group member,
+    // prints the member pid, then exits — leaving the member alive inside
+    // the leader's (now leaderless) process group.
+    const LEADER_SCRIPT =
+      "const {spawn}=require('node:child_process');" +
+      "const m=spawn(process.execPath,['-e','setInterval(()=>{},1e9)'],{stdio:'ignore'});" +
+      "m.unref();console.log('member:'+m.pid);";
+    const child = spawn(process.execPath, ['-e', LEADER_SCRIPT], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const memberPid = await new Promise<number>((resolve, reject) => {
+      let buffered = '';
+      child.stdout?.on('data', (chunk: Buffer) => {
+        buffered += chunk.toString();
+        const match = buffered.match(/member:(\d+)/);
+        if (match) resolve(Number(match[1]));
+      });
+      child.once('error', reject);
+    });
+    try {
+      // The leader exits on its own; the member survives in the leader's group.
+      await new Promise((resolve) => child.once('exit', resolve));
+      expect(child.exitCode).toBe(0);
+      expect(isProcessAlive(memberPid)).toBe(true); // the would-be orphan
+
+      await killAiChatProcessGroup(child, 2000);
+
+      expect(isProcessAlive(memberPid)).toBe(false); // group-liveness gating killed it
+    } finally {
+      // Belt-and-braces: never leak the member if an assertion failed.
+      try {
+        process.kill(memberPid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  });
 });
 
 describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event, kill on every path', () => {

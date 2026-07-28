@@ -63,6 +63,7 @@ import { join } from 'node:path';
 import type { AiChatRelayOutcome, AiChatSseEvent } from './aiChatRelay';
 import { relayAiChatTurn } from './aiChatRelay';
 import { AI_MCP_TOOL_NAMES, type AiMcpToolName } from './aiMcpServer';
+import { DEFAULT_PROCESS_GROUP_KILL_GRACE_MS, killProcessGroup } from './processGroupKill';
 
 /** D7 system prompt brief — guidance, not a security boundary (the boundary
  * is the lockdown flags above); prompt injection via transcript content is
@@ -295,55 +296,25 @@ export function spawnAiChatTurn(opts: AiChatSpawnOptions): AiChatSpawnResult {
 
 /** Grace window between SIGTERM and the uncatchable SIGKILL escalation.
  * Exported so tests can pass a short override; production callers rely on
- * the default. */
-export const DEFAULT_KILL_GRACE_MS = 3000;
-
-function childAlreadyExited(child: ChildProcess): boolean {
-  return child.exitCode !== null || child.signalCode !== null;
-}
+ * the default (the shared ladder's own). */
+export const DEFAULT_KILL_GRACE_MS = DEFAULT_PROCESS_GROUP_KILL_GRACE_MS;
 
 /**
- * Terminate `child`'s entire process group: SIGTERM first, escalating to
- * SIGKILL only if the group hasn't exited within `graceMs` (spec: "SIGTERM,
- * SIGKILL after grace"). A no-op — resolves immediately, no signal sent — if
- * the child has no pid or has already exited (the common case: on normal
+ * Terminate `child`'s entire process group via the SHARED group-liveness kill
+ * ladder (design D2, `processGroupKill.ts`): SIGTERM the group, escalate to
+ * SIGKILL only if any GROUP member is still alive after `graceMs`. Gating on
+ * group liveness (`process.kill(-pgid, 0)`) rather than the tracked leader's
+ * exit status closes the orphan this path used to have (review finding 1.1):
+ * a leader that exits while an MCP/helper member survives no longer skips the
+ * kill. A no-op — resolves immediately, no signal sent — if the child has no
+ * pid or its whole group is already gone (the common case: on normal
  * completion `relayAiChatTurn` only resolves once the child has genuinely
  * exited, so this call is a fast confirmation, not a real kill). Resolves
- * once the process group is confirmed gone. Never throws: `process.kill` on
- * an already-dead group raises ESRCH, which is swallowed — killing a group
- * that's already gone is exactly the no-orphan outcome we want.
+ * once the process group is confirmed gone. Never throws.
  */
-export async function killAiChatProcessGroup(
-  child: ChildProcess,
-  graceMs: number = DEFAULT_KILL_GRACE_MS,
-): Promise<void> {
-  if (child.pid == null || childAlreadyExited(child)) return;
-  const exited = new Promise<void>((resolve) => {
-    if (childAlreadyExited(child)) {
-      resolve();
-      return;
-    }
-    child.once('exit', () => resolve());
-  });
-  try {
-    process.kill(-child.pid, 'SIGTERM');
-  } catch {
-    return; // ESRCH: the group is already gone.
-  }
-  const stillAlive = await Promise.race([
-    exited.then(() => false),
-    new Promise<boolean>((resolve) => {
-      setTimeout(() => resolve(true), graceMs);
-    }),
-  ]);
-  if (stillAlive && !childAlreadyExited(child) && child.pid != null) {
-    try {
-      process.kill(-child.pid, 'SIGKILL');
-    } catch {
-      // Already gone between the check above and this signal — fine.
-    }
-    await exited;
-  }
+export async function killAiChatProcessGroup(child: ChildProcess, graceMs?: number): Promise<void> {
+  // `detached: true` in spawnAiChatTurn makes child.pid the group's pgid.
+  await killProcessGroup(child.pid, graceMs);
 }
 
 export type AiChatTurnOutcome = AiChatRelayOutcome | { ok: false; detail: 'timeout' | 'aborted' };

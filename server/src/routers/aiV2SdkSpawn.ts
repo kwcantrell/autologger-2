@@ -50,6 +50,7 @@ import type {
   SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
+import { killProcessGroup } from './processGroupKill';
 
 /**
  * Start a design turn against the Agent SDK. This is the spawn boundary:
@@ -281,71 +282,23 @@ export function buildDesignTurnCanUseTool(deps: DesignTurnCanUseToolDeps = {}): 
 
 // ── Task 2.6 — process-group kill ladder (no orphan on ANY exit path) ───────
 // design D8/"Resolved by the spike" 0.5, spec "Subprocess and turn lifecycle".
-// Mirrors `killAiChatProcessGroup` in aiChatRunner.ts (SIGTERM → grace →
-// SIGKILL on the negative pgid), with ONE deliberate difference the spike
-// forced: escalation is gated on GROUP liveness (`process.kill(-pgid, 0)`),
-// NOT the tracked leader's exit status. Spike 0.5 Turn 2 proved a
-// leader-exit-gated ladder leaves a real SIGTERM-ignoring group member
-// orphaned, because the SDK stops escalating once its ONE tracked process
-// looks dead; Turn 3's group-liveness-gated ladder closed it. The child is
-// spawned `detached: true` (via `createDesignTurnSpawner`) so its pid IS its
-// pgid, and `-pid` addresses the whole group (POSIX/Linux — this deployment
-// target, matching every other process-spawning path in the repo).
+// This path's group-liveness-gated ladder (escalation gated on
+// `process.kill(-pgid, 0)`, NOT the tracked leader's exit status — spike 0.5
+// Turn 2 proved a leader-exit-gated ladder leaves a SIGTERM-ignoring group
+// member orphaned; Turn 3's group-liveness gating closed it) was the PROVEN
+// implementation, so code-health-consolidation task 4.1 (design D2) extracted
+// it verbatim into the shared `processGroupKill.ts`, now consumed by BOTH this
+// path and `killAiChatProcessGroup`. The names below are stable re-exports for
+// this path's callers/tests. The child is spawned `detached: true` (via
+// `createDesignTurnSpawner`) so its pid IS its pgid, and `-pid` addresses the
+// whole group (POSIX/Linux — this deployment target, matching every other
+// process-spawning path in the repo).
 
-/** Grace window between the SIGTERM and the SIGKILL rung. Exported so tests
- * can pass a short override; production relies on the default. */
-export const DEFAULT_DESIGN_TURN_KILL_GRACE_MS = 3000;
-
-/** True iff the process GROUP led by `pgid` still has at least one live
- * member. `process.kill(-pgid, 0)` sends no signal — it only probes
- * deliverability: ESRCH means the group is gone; EPERM means it exists but is
- * unsignalable (we own it, so unlikely) — treated as alive to stay safe. */
-export function designTurnGroupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-async function waitUntilGroupGone(pgid: number, timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (designTurnGroupAlive(pgid)) {
-    if (Date.now() - start >= timeoutMs) return false;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return true;
-}
-
-/**
- * Terminate the process group led by `pgid`: SIGTERM the group, wait up to
- * `graceMs` for it to die, and — if ANY member is still alive (gated on
- * GROUP liveness, not one process's exit) — SIGKILL the group. A no-op if the
- * group is already gone. Never throws: an ESRCH on an already-dead group is
- * exactly the no-orphan outcome. Resolves once the group is confirmed gone (or
- * a bounded final wait elapses after the SIGKILL rung).
- */
-export async function killDesignTurnProcessGroup(
-  pgid: number | null | undefined,
-  graceMs: number = DEFAULT_DESIGN_TURN_KILL_GRACE_MS,
-): Promise<void> {
-  if (pgid == null || !designTurnGroupAlive(pgid)) return;
-  try {
-    process.kill(-pgid, 'SIGTERM');
-  } catch {
-    return; // ESRCH: the group went away between the probe and the signal.
-  }
-  const gone = await waitUntilGroupGone(pgid, graceMs);
-  if (!gone) {
-    try {
-      process.kill(-pgid, 'SIGKILL');
-    } catch {
-      // Raced gone between the liveness check and this signal — fine.
-    }
-    await waitUntilGroupGone(pgid, 2000);
-  }
-}
+export {
+  DEFAULT_PROCESS_GROUP_KILL_GRACE_MS as DEFAULT_DESIGN_TURN_KILL_GRACE_MS,
+  killProcessGroup as killDesignTurnProcessGroup,
+  processGroupAlive as designTurnGroupAlive,
+} from './processGroupKill';
 
 export interface DesignTurnSpawner {
   /** Pass as `Options.spawnClaudeCodeProcess`. Spawns the real CLI
@@ -384,7 +337,7 @@ export function createDesignTurnSpawner(): DesignTurnSpawner {
   const terminate = async (graceMs?: number): Promise<void> => {
     if (terminated) return;
     terminated = true;
-    await killDesignTurnProcessGroup(child?.pid ?? null, graceMs);
+    await killProcessGroup(child?.pid ?? null, graceMs);
   };
 
   return { spawnClaudeCodeProcess, terminate, getPgid: () => child?.pid ?? null };
