@@ -57,7 +57,7 @@
 
 ## 5. Final gates
 
-- [ ] 5.1 Whole-branch layered scoped audit per sdlc-process (contract/seam diffs of
+- [x] 5.1 Whole-branch layered scoped audit per sdlc-process (contract/seam diffs of
       phases 2–4 — all three are review-tier phases, so the audit package includes
       their contract/seam-relevant diffs; materialized file list + stray-file scan,
       seam call-site checks, package integrity)
