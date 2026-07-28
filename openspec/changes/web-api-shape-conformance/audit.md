@@ -421,8 +421,10 @@ reader will need, and `.apply/` does not survive archival.
 
 Fixtures live at repo-root **`fixtures/api-responses/`** — outside both workspaces, because
 the server captures them and the web tier consumes them, so a path under `server/src` or
-`web/src` would assert an ownership that does not exist. Both `tsc` runs reach them by import
-resolution; neither biome scope covers them, which is correct for generated output.
+`web/src` would assert an ownership that does not exist. Only the **web** `tsc` run reaches
+them, by import resolution; the server never imports a fixture — `server/src/test/apiFixtures.ts`
+reads them as text — so they are outside `server/tsconfig.json`'s `include` and are not
+type-checked there. Neither biome scope covers them, which is correct for generated output.
 
 Captured by `server/src/routers/apiResponseFixtures.int.test.ts` (one dedicated suite, so
 regeneration is one command over one file and the inventory is reviewable in one place) via
