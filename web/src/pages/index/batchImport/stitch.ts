@@ -3,6 +3,7 @@ import { encodeAudioBufferToWav } from './wavEncode';
 export interface StitchResult {
   blob: Blob;
   durationS: number;
+  partDurationsS: number[];
 }
 
 function resampleChannel(src: Float32Array, targetLength: number): Float32Array {
@@ -104,8 +105,14 @@ export async function stitchAudioFiles(
 
     const merged = concatAudioBuffers(decoded);
     const durationS = merged.duration;
+    const sampleRate = merged.sampleRate;
+    const partDurationsS = decoded.map((b) => {
+      const len =
+        b.sampleRate === sampleRate ? b.length : Math.round((b.length * sampleRate) / b.sampleRate);
+      return len / sampleRate;
+    });
     const blob = encodeAudioBufferToWav(merged);
-    return { blob, durationS };
+    return { blob, durationS, partDurationsS };
   } finally {
     if (ownsContext) {
       await ctx.close().catch(() => {});

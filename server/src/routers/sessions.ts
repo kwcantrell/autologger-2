@@ -26,6 +26,10 @@ import {
   youtubeImportBodySchema,
 } from '../schemas';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
+import {
+  AUDIO_SEAM_PARTS_HEADER,
+  parseAudioSeamPartsHeader,
+} from '../session/audioSeamParts';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
 import { enforceAudioByteLimit } from './audio';
@@ -324,6 +328,12 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
 
   const durationS = parseLocalAudioImportDurationS(c.req.query('duration_s'));
   const mimeType = requireLocalAudioImportContentType(c.req.header('content-type'));
+  let seamParts;
+  try {
+    seamParts = parseAudioSeamPartsHeader(c.req.header(AUDIO_SEAM_PARTS_HEADER), durationS);
+  } catch (err) {
+    throw new ApiError(400, err instanceof Error ? err.message : 'Invalid X-Audio-Seam-Parts.');
+  }
 
   const declared = c.req.header('content-length');
   enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
@@ -365,6 +375,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
       durationS,
       ctx,
     });
+    getSessionHub(c, sessionId).setAudioSeamParts(seamParts);
   } catch (err) {
     await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
     throw err;

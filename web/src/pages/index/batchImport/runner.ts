@@ -102,13 +102,18 @@ async function importLocalAudio(
   sessionId: string,
   blob: Blob,
   durationS: number,
+  partDurationsS: number[],
   signal: AbortSignal,
 ): Promise<void> {
   throwIfAborted(signal);
   const qs = `duration_s=${encodeURIComponent(String(durationS))}`;
+  const seamParts = partDurationsS.map((duration_s) => ({ duration_s }));
   await apiFetch(`sessions/${encodeURIComponent(sessionId)}/local-audio-import?${qs}`, {
     method: 'POST',
-    headers: { 'Content-Type': blob.type },
+    headers: {
+      'Content-Type': blob.type,
+      'X-Audio-Seam-Parts': JSON.stringify(seamParts),
+    },
     body: blob,
     signal,
   });
@@ -181,11 +186,13 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
 
     let blob: Blob;
     let durationS: number;
+    let partDurationsS: number[];
     try {
       const segmentFiles = group.segments.map((s) => s.file);
       const stitched = await stitchAudioFiles(segmentFiles);
       blob = stitched.blob;
       durationS = stitched.durationS;
+      partDurationsS = stitched.partDurationsS;
     } catch (err) {
       const detail = errorDetail(err, 'Stitch failed');
       state.lines.push(formatFailedLine(stem, detail));
@@ -221,7 +228,7 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
     });
 
     try {
-      await importLocalAudio(sessionId, blob, durationS, signal);
+      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal);
       state.lines.push(formatCompletedLine(stem));
     } catch (err) {
       const detail = errorDetail(err, 'Upload failed');
