@@ -28,6 +28,10 @@
 
 import { describe, expect, it } from 'vitest';
 import type {
+  ActiveStudioCategory,
+  Category,
+  ProfilePayload,
+  ShowCategoriesResponse,
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
@@ -74,5 +78,71 @@ describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', (
     const asStop: TransportStateSnapshot = stopEmitted;
     expect(asStart.roll_started_at_utc).not.toBeUndefined();
     expect(asStop.roll_started_at_utc).toBeNull();
+  });
+});
+
+describe('CW-2 — `dropdown_options` is two different shapes on two endpoints', () => {
+  // Server: `showCategoriesApiShape` → `dropdownOptionsApiShape`
+  // (`server/src/db/showsStore.ts`). Objects, and `[]` for non-DROPDOWN types.
+  const showCategoriesEmitted = {
+    categories: [
+      {
+        id: 'cat-mic',
+        label: 'Mic',
+        color: '#7cb7ff',
+        type: 'DROPDOWN' as const,
+        dropdown_options: [
+          { label: 'Lav', needs_context: false },
+          { label: 'Boom', needs_context: true },
+        ],
+        on_label: '',
+        off_label: '',
+      },
+    ],
+    show_name: 'All The Smoke',
+    show_code: 'ATS',
+  };
+
+  // Server: `studioToApiDict` (`server/src/studio.ts`) over `blobToProfile`'s
+  // `optLabels: string[]` — bare labels, the option objects already flattened.
+  const activeStudioEmitted = {
+    id: 'studio-1',
+    name: 'Studio One',
+    categories: [
+      {
+        id: 'cat-mic',
+        label: 'Mic',
+        color: '#7cb7ff',
+        type: 'DROPDOWN' as const,
+        dropdown_options: ['Lav', 'Boom'],
+        on_label: '',
+        off_label: '',
+      },
+    ],
+  };
+
+  it('/show-categories keeps the `{label, needs_context}` option objects', () => {
+    const check: ShowCategoriesResponse = showCategoriesEmitted;
+    const opt = check.categories[0].dropdown_options[0];
+    // `CategoryButtonStrip` renders `opt.label`; this is the shape that feeds it.
+    expect(opt.label).toBe('Lav');
+    expect(opt.needs_context).toBe(false);
+  });
+
+  it('/api/profile `active_studio.categories` carries bare label strings', () => {
+    const check: ProfilePayload['active_studio'] = activeStudioEmitted;
+    const asCategory: ActiveStudioCategory = check.categories[0];
+    expect(asCategory.dropdown_options).toEqual(['Lav', 'Boom']);
+  });
+
+  it('the two category types are not interchangeable', () => {
+    // Both directives fail to compile ("unused '@ts-expect-error' directive")
+    // the moment someone collapses the split back into one type — which is the
+    // regression this finding exists to prevent.
+    // @ts-expect-error `string[]` is not `DropdownOption[]`
+    const wrongWay: Category = activeStudioEmitted.categories[0];
+    // @ts-expect-error `DropdownOption[]` is not `string[]`
+    const otherWay: ActiveStudioCategory = showCategoriesEmitted.categories[0];
+    expect(wrongWay.id).toBe(otherWay.id);
   });
 });

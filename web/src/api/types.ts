@@ -10,6 +10,18 @@ export interface DropdownOption {
   needs_context: boolean;
 }
 
+/**
+ * Category shape for `GET /api/sessions/:id/show-categories` — server:
+ * `showCategoriesApiShape` + `dropdownOptionsApiShape`
+ * (`server/src/db/showsStore.ts`). `dropdown_options` carries the full
+ * `{label, needs_context}` objects (and is `[]` for any non-`DROPDOWN`
+ * category).
+ *
+ * NOT the shape of `profile.active_studio.categories` — that one is
+ * `ActiveStudioCategory` below, whose `dropdown_options` is a bare `string[]`.
+ * The two shared this type until web-api-shape-conformance audit CW-2 found
+ * the divergence.
+ */
 export interface Category {
   id: string;
   label: string;
@@ -21,11 +33,32 @@ export interface Category {
 }
 
 /**
+ * `profile.active_studio.categories[]` — server: `studioToApiDict`
+ * (`server/src/studio.ts`), fed by `blobToProfile`. Same key set as `Category`
+ * and likewise `label`-keyed, but `blobToProfile` flattens every stored option
+ * to its bare label, so `dropdown_options` is `string[]`, not
+ * `DropdownOption[]` (web-api-shape-conformance audit CW-2 — the client
+ * declared `Category` here, which was wrong for any DROPDOWN category).
+ * `GET /api/studio` emits this same shape; it has no web caller.
+ */
+export interface ActiveStudioCategory {
+  id: string;
+  label: string;
+  color: string;
+  type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
+  dropdown_options: string[];
+  on_label: string;
+  off_label: string;
+}
+
+/**
  * Category shape for `profile.shows[].categories` and the `show_updates[].categories`
  * request payload — the *stored* `CategoryRecord` (server: `server/src/studio.ts`), keyed
  * `name`. `showApiDict` (server: `server/src/db/showsStore.ts`) passes this through
  * verbatim; only the events/Companion/`active_studio` read shapes go through the
- * `label`-mapping shaper and keep the `Category` type above (teams-settings-nav, D3).
+ * `label`-mapping shaper (teams-settings-nav, D3) — of those, events/Companion keep the
+ * `Category` type above, while `active_studio` has its own `ActiveStudioCategory`
+ * (see the CW-2 note there).
  * `label` stays optional here defensively, in case a `label`-keyed shape ever feeds this
  * type — readers should hydrate with `c.name ?? c.label ?? ''`.
  */
@@ -196,7 +229,7 @@ export interface AdminInfo {
 export interface ProfilePayload {
   active_studio_id: string;
   active_show_id: string;
-  active_studio: { id: string; name: string; categories: Category[] };
+  active_studio: { id: string; name: string; categories: ActiveStudioCategory[] };
   studios: StudioBrief[];
   studio_settings: Record<string, Record<string, unknown>>;
   shows: Show[];
