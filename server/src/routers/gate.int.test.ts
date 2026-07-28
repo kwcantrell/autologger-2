@@ -30,11 +30,11 @@ describe('auth gate', () => {
 
 describe('tenancy', () => {
   it('returns 404 for a session outside the caller’s studio', async () => {
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const show = await seedShow({ studioId: studioB });
-    const session = await seedSession({ showId: show });
-    const user = await seedUser({ studios: [studioA] }); // NOT in studioB
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const show = seedShow({ studioId: studioB });
+    const session = seedSession({ showId: show });
+    const user = seedUser({ studios: [studioA] }); // NOT in studioB
     const cookie = await loginCookie(user);
     const res = await app.request(
       `/api/sessions/${session}/status`,
@@ -47,9 +47,9 @@ describe('tenancy', () => {
 
 describe('validation + caps', () => {
   it('422 on a log body with oversized metadata', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const session = seedSession({ showId: show });
     const res = await app.request(
       `/api/sessions/${session}/events`,
       {
@@ -63,9 +63,9 @@ describe('validation + caps', () => {
   });
 
   it('413 on an oversized audio upload (Content-Length over cap)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const session = seedSession({ showId: show });
     const res = await app.request(
       `/api/sessions/${session}/audio/segments`,
       { method: 'POST', headers: { 'content-length': String(60 * 1024 * 1024) }, body: 'x' },

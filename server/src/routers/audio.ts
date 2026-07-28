@@ -39,8 +39,8 @@ export function enforceAudioByteLimit(bytes: number | null): void {
 
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
-  const segs = await getSessionHub(c, sessionId).listAudioSegments();
+  requireSession(c, sessionId);
+  const segs = getSessionHub(c, sessionId).listAudioSegments();
   return c.json({
     segments: segs.map((s) => segmentApiDict(sessionId, s)),
     has_audio: segs.length > 0,
@@ -49,7 +49,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
 
 audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   const declared = c.req.header('content-length');
   enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
   const payload = await c.req.arrayBuffer();
@@ -61,7 +61,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const roRaw = c.req.query('recording_ordinal');
   const recordingOrdinal = roRaw !== undefined && /^\d+$/.test(roRaw) ? Number(roRaw) : null;
 
-  const seg = await getSessionHub(c, sessionId).addAudioSegment({
+  const seg = getSessionHub(c, sessionId).addAudioSegment({
     sessionId,
     mimeType: mime,
     startedAtUtc: started,
@@ -72,7 +72,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: seg.mime_type });
   } catch (e) {
     // Roll back the dangling metadata row if the bytes never landed.
-    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
     throw e;
   }
   return c.json(segmentApiDict(sessionId, seg));
@@ -80,7 +80,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
 
 audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   const prefix = `audio/${sessionId}/`;
   const known: Array<{ r2_key: string; ordinal: number }> = [];
   let cursor: string | undefined;
@@ -94,8 +94,8 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
   } while (cursor);
 
   const hub = getSessionHub(c, sessionId);
-  const out = await hub.syncAudioFromBlobs(known);
-  const segs = await hub.listAudioSegments();
+  const out = hub.syncAudioFromBlobs(known);
+  const segs = hub.listAudioSegments();
   return c.json({
     inserted: out.inserted,
     updated: 0,
@@ -108,8 +108,8 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
 audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
-  await requireSession(c, sessionId);
-  const got = await getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
+  requireSession(c, sessionId);
+  const got = getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
 
   const rangeHeader = c.req.header('range');
@@ -159,14 +159,14 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
 audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', async (c) => {
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   const body = audioSegmentWaveformBodySchema.parse(await c.req.json());
   for (const x of body.peaks) {
     if (!Number.isFinite(x) || x < -0.02 || x > 1.02) {
       throw new ApiError(400, 'waveform peaks must be in [0, 1].');
     }
   }
-  const ok = await getSessionHub(c, sessionId).setAudioSegmentWaveform({
+  const ok = getSessionHub(c, sessionId).setAudioSegmentWaveform({
     segmentId,
     peaks: body.peaks,
   });

@@ -106,7 +106,7 @@ describe('GET /auth/google/start', () => {
 describe('callback -- existing user', () => {
   it('updates (does not duplicate) a user with a known google sub', async () => {
     const sub = 'sub-existing';
-    const seededId = await seedUser({ sub });
+    const seededId = seedUser({ sub });
     const res = await runCallback({ sub });
     expect(res.status).toBe(302);
     const user = catalogFor().auth.authGetUserByGoogleSub(sub);
@@ -334,7 +334,7 @@ describe('callback -- error branches', () => {
 
 describe('callback -- invite materialization (task 3.1, design D2)', () => {
   it('materializes a pending invite into a member membership, consuming it (case-insensitive match)', async () => {
-    const teamId = await seedStudio();
+    const teamId = seedStudio();
     catalogFor().auth.authUpsertInvite(teamId, 'new.person@example.com', 'seed-inviter');
 
     const res = await runCallback({
@@ -353,7 +353,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 
   it('email_verified: false -- user is created, invite remains, no membership', async () => {
-    const teamId = await seedStudio();
+    const teamId = seedStudio();
     catalogFor().auth.authUpsertInvite(teamId, 'unverified-false@example.com', 'seed-inviter');
 
     const res = await runCallback({
@@ -372,7 +372,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 
   it('email_verified absent -- user is created, invite remains, no membership', async () => {
-    const teamId = await seedStudio();
+    const teamId = seedStudio();
     catalogFor().auth.authUpsertInvite(teamId, 'unverified-absent@example.com', 'seed-inviter');
 
     const res = await runCallback({
@@ -391,7 +391,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 
   it('a revoked invite never materializes', async () => {
-    const teamId = await seedStudio();
+    const teamId = seedStudio();
     catalogFor().auth.authUpsertInvite(teamId, 'revoked@example.com', 'seed-inviter');
     catalogFor().auth.authDeleteInvite(teamId, 'revoked@example.com');
 
@@ -409,9 +409,9 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 
   it('an existing user sign-in does not re-scan invites seeded after their account existed', async () => {
-    const teamId = await seedStudio();
+    const teamId = seedStudio();
     const sub = 'sub-existing-rescan';
-    const existingId = await seedUser({ sub, email: 'existing@example.com' });
+    const existingId = seedUser({ sub, email: 'existing@example.com' });
     catalogFor().auth.authUpsertInvite(teamId, 'existing@example.com', 'seed-inviter');
 
     const res = await runCallback({
@@ -434,7 +434,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
       NEW_USER_ALL_TEAMS: '1',
     });
-    await seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
+    seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
     const res = await runCallback(
       { sub: 'sub-no-blanket-grant', email: 'no-invites@example.com', state: 'state-all-teams-1' },
       allTeamsEnv,
@@ -452,7 +452,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
   it('a disabled account signing in is redirected without a cookie or any write (design D11)', async () => {
     const sub = 'sub-disabled';
-    const userId = await seedUser({ sub, email: 'disabled@example.com' });
+    const userId = seedUser({ sub, email: 'disabled@example.com' });
     catalogFor().auth.authSetUserDisabled(userId, true);
     const before = catalogFor().auth.authGetUserRowAny(userId);
 
@@ -472,7 +472,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   it(
     'atomicity: a throw mid-materialization rolls back user creation (no user row persists)',
     async () => {
-      const teamId = await seedStudio();
+      const teamId = seedStudio();
       catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
       const spy = vi
         .spyOn(AuthStore.prototype, 'authConsumeInvitesForEmail')
@@ -510,7 +510,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
 describe('logout', () => {
   it('GET clears the session cookie and redirects', async () => {
-    const cookie = await loginCookie(await seedUser({}));
+    const cookie = await loginCookie(seedUser({}));
     const res = await app.request(
       '/auth/logout',
       { method: 'GET', headers: { Cookie: cookie } },

@@ -6,7 +6,7 @@ describe('catalog studio + auth stores', () => {
     // The StudioRegistry is in-memory: isKnownStudio/listStudiosBrief read
     // `this.names`, populated by init() from studio_definitions + built-ins.
     // So seed → init() (loads the new row) → it is now known.
-    const id = await seedStudio({ name: 'Acme' });
+    const id = seedStudio({ name: 'Acme' });
     const cat = catalogFor();
     cat.init();
     expect(cat.studios.isKnownStudio(id)).toBe(true);
@@ -23,8 +23,8 @@ describe('catalog studio + auth stores', () => {
 
   it('user membership: add, query, remove', async () => {
     const cat = catalogFor();
-    const studio = await seedStudio();
-    const user = await seedUser({ studios: [studio] });
+    const studio = seedStudio();
+    const user = seedUser({ studios: [studio] });
     expect(cat.auth.authUserHasStudio(user, studio)).toBe(true);
     cat.auth.authRemoveMembership(user, studio);
     expect(cat.auth.authUserHasStudio(user, studio)).toBe(false);
@@ -34,18 +34,18 @@ describe('catalog studio + auth stores', () => {
 describe('catalog session index store', () => {
   it('createSessionIndex bumps the show next_episode', async () => {
     const cat = catalogFor();
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    await seedSession({ showId: show, episode: '005' });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    seedSession({ showId: show, episode: '005' });
     const row = cat.shows.getShowRow(show);
     expect(Number(row?.next_episode ?? 0)).toBeGreaterThanOrEqual(5);
   });
 
   it('getSessionStudioId resolves the owning studio', async () => {
     const cat = catalogFor();
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const session = seedSession({ showId: show });
     expect(cat.sessions.getSessionStudioId(session)).toBe(studio);
   });
 
@@ -59,12 +59,12 @@ describe('catalog session index store', () => {
 
   it('listSessionsForShow scopes to the show (tenant isolation)', async () => {
     const cat = catalogFor();
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const showA = await seedShow({ studioId: studioA });
-    const showB = await seedShow({ studioId: studioB });
-    const sA = await seedSession({ showId: showA });
-    await seedSession({ showId: showB });
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const showA = seedShow({ studioId: studioA });
+    const showB = seedShow({ studioId: studioB });
+    const sA = seedSession({ showId: showA });
+    seedSession({ showId: showB });
     const list = cat.sessions.listSessionsForShow(showA);
     expect(list.map((r) => String(r.id))).toEqual([sA]);
   });

@@ -9,7 +9,7 @@ import { app, env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 
 async function seeded(): Promise<string> {
-  const show = await seedShow({ studioId: await seedStudio() });
+  const show = seedShow({ studioId: seedStudio() });
   return seedSession({ showId: show });
 }
 

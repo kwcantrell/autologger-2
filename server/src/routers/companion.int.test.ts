@@ -5,8 +5,8 @@ import { seedSession, seedShow, seedStudio, setCompanionPresence } from '../test
 const J = { 'content-type': 'application/json' };
 
 async function seededSession(categoriesJson?: string): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio, categoriesJson });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio, categoriesJson });
   return seedSession({ showId: show });
 }
 async function state(): Promise<Record<string, unknown>> {
@@ -144,10 +144,10 @@ describe('categories + commands/wait', () => {
 
 describe('primarySession is global / unscoped (current behavior)', () => {
   it('selects the visibly-fresher session regardless of studio', async () => {
-    const showA = await seedShow({ studioId: await seedStudio() });
-    const sA = await seedSession({ showId: showA });
-    const showB = await seedShow({ studioId: await seedStudio() });
-    const sB = await seedSession({ showId: showB });
+    const showA = seedShow({ studioId: seedStudio() });
+    const sA = seedSession({ showId: showA });
+    const showB = seedShow({ studioId: seedStudio() });
+    const sB = seedSession({ showId: showB });
     await setCompanionPresence('cA', sA, { visible: false });
     await setCompanionPresence('cB', sB, { visible: true });
     expect((await state()).active_session_id).toBe(sB);

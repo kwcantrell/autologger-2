@@ -153,9 +153,9 @@ afterEach(() => {
 });
 
 async function seededSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  const id = await seedSession({ showId: show });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio });
+  const id = seedSession({ showId: show });
   seededSessionIds.push(id);
   return id;
 }
@@ -208,9 +208,9 @@ describe('ai/chat — session resolution masks before 503/409', () => {
   });
 
   it('404 for an out-of-studio session — never 503/409 — even unconfigured with a turn in flight', async () => {
-    const outsiderStudio = await seedStudio();
+    const outsiderStudio = seedStudio();
     const s = await seededSession();
-    const outsider = await seedUser({ studios: [outsiderStudio] });
+    const outsider = seedUser({ studios: [outsiderStudio] });
     // A turn is "in flight" for this session AND the feature is unconfigured: if
     // the config/single-flight gates ran before session scoping we'd see 503/409.
     aiChatTurns.tryAcquire(s, 2);

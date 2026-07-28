@@ -84,7 +84,7 @@ function primarySession(presence: PresenceRegistry): string | null {
 
 /** Resolve the primary session AND its catalog row — callers reuse the row
  *  instead of re-fetching (and non-null-casting) it per handler. */
-async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
+function requireActiveSession(c: Context<AppEnv>): { sid: string; row: Row } {
   const sid = primarySession(c.env.ports.presence);
   const row = sid
     ? c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
@@ -124,10 +124,8 @@ companionRouter.get('/api/companion/state', async (c) => {
       resolvedSid = null;
     } else {
       const hub = getSessionHub(c, activeSid);
-      const [live, lease] = await Promise.all([
-        hub.statusLive(timecodeCtx(row)),
-        hub.leaseStatus(),
-      ]);
+      const live = hub.statusLive(timecodeCtx(row));
+      const lease = hub.leaseStatus();
       const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
       sessionOut = {
         id: activeSid,
@@ -151,7 +149,7 @@ companionRouter.get('/api/companion/state', async (c) => {
       };
     }
   }
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
   const payload: CompanionStatePayload = {
     connected_clients: presences.length,
     active_session_id: resolvedSid,
@@ -163,7 +161,7 @@ companionRouter.get('/api/companion/state', async (c) => {
 
 companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
-  const { sid, row } = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
   const profile = catalog.sessions.studioProfileForSession(sid);
   let cat = null;
@@ -178,7 +176,7 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const { event, projection } = await getSessionHub(c, sid).addEvent({
+  const { event, projection } = getSessionHub(c, sid).addEvent({
     category: cat.id,
     message: body.message,
     metadataJson: JSON.stringify(meta),
@@ -191,17 +189,17 @@ companionRouter.post('/api/companion/log', async (c) => {
 
 companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
-  const { sid, row } = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
   const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sid);
   let action: 'start' | 'stop' = body.action === 'start' ? 'start' : 'stop';
   if (body.action === 'toggle') {
-    const tr = await hub.transportSnapshot(ctx);
+    const tr = hub.transportSnapshot(ctx);
     action = tr.is_rolling ? 'stop' : 'start';
   }
   const { state, projection } =
-    action === 'start' ? await hub.startTake(ctx) : await hub.stopTake(ctx);
+    action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
   catalog.sessions.projectSessionLive(sid, projection);
   return c.json({
     ok: true,
@@ -212,9 +210,9 @@ companionRouter.post('/api/companion/transport', async (c) => {
 
 companionRouter.post('/api/companion/command', async (c) => {
   const body = companionCommandBodySchema.parse(await c.req.json());
-  const { sid } = await requireActiveSession(c);
+  const { sid } = requireActiveSession(c);
   const commandId = crypto.randomUUID();
-  await getSessionHub(c, sid).broadcastCommand(body.type);
+  getSessionHub(c, sid).broadcastCommand(body.type);
   const last: CompanionLastCommand = {
     id: commandId,
     type: body.type,
@@ -224,12 +222,12 @@ companionRouter.post('/api/companion/command', async (c) => {
     ok: false,
     error: null,
   };
-  await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+  c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
   return c.json({ ok: true, command_id: commandId, active_session_id: sid });
 });
 
 companionRouter.get('/api/companion/categories', async (c) => {
-  const { sid, row } = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
   const raw = catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
@@ -254,14 +252,14 @@ companionRouter.get('/api/companion/commands/wait', async (c) => {
 companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   const commandId = c.req.param('commandId');
   const body = companionCommandAckBodySchema.parse(await c.req.json());
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
   if (lastRaw) {
     const last = JSON.parse(lastRaw) as CompanionLastCommand;
     if (last.id === commandId) {
       last.ok = body.ok;
       last.error = body.error ?? null;
       last.delivered_to = body.client_id;
-      await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+      c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
       return c.json({ ok: true });
     }
   }

@@ -192,13 +192,13 @@ function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string):
  * the PUT dashboard route binds it for `createdBy`; the answer route
  * re-checks non-null for its own no-anonymous-answer rule (its step 6).
  */
-async function guardAiV2Route(
+function guardAiV2Route(
   c: Context<AppEnv>,
   sessionId: string,
   notFoundDetail: string,
   gates: 'design-turn' | 'configured-only',
-): Promise<AuthUser | null> {
-  await requireSession(c, sessionId);
+): AuthUser | null {
+  requireSession(c, sessionId);
   const principal = requireIndividualPrincipal(c, notFoundDetail);
   if (!aiV2Configured(c.env.config)) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
@@ -226,7 +226,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // as 404" / "Configuration-gated AI v2 endpoints" / "Open-network
   // refusal" / "Agent credentials"). No guard below this line can ever run
   // for a device token.
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
+  guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
 
   // 5. Body validation — ZodError → 422, malformed JSON → 400 (both via the
   // global onError handler in app.ts), spawning nothing. c.req.json() throws
@@ -407,7 +407,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   // (`REQUIRE_LOGIN=0`, no credentials at all), which is handled separately
   // at step 6 below, since it must still be allowed to reach the
   // config/body-validation gates first.
-  await guardAiV2Route(c, sessionId, ANSWER_NOT_FOUND_DETAIL, 'design-turn');
+  guardAiV2Route(c, sessionId, ANSWER_NOT_FOUND_DETAIL, 'design-turn');
 
   // 5. Body validation — ZodError → 422 (also rejects an 'option' answer
   // naming a widget type outside the closed catalog, since `widgetType` is
@@ -487,7 +487,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 // explicitly in this task's report for gate review.
 aiV2Router.get('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
   const hub = getSessionHub(c, sessionId);
   const stored = hub.getDashboard(PRIMARY_DASHBOARD_ID);
   // `config: null` means "no dashboard saved yet" (never a fabricated empty
@@ -499,7 +499,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
   // The one route that BINDS the prologue's returned principal — recorded
   // as `createdBy` on the write below.
-  const principal = await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  const principal = guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
   // Malformed JSON -> 400 via the global onError handler (c.req.json() throws
   // SyntaxError), same as the design/answer routes.
   const body = await c.req.json();
@@ -535,7 +535,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
 
 aiV2Router.delete('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
+  guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'configured-only');
   const hub = getSessionHub(c, sessionId);
   hub.deleteDashboard(PRIMARY_DASHBOARD_ID);
   return c.json({ ok: true });

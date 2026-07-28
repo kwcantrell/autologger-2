@@ -12,7 +12,7 @@ import { app, env } from '../test/harness';
 import { seedSession, seedShow, seedStudio, SEED_CATEGORY_ID } from '../test/helpers';
 
 async function seeded(): Promise<string> {
-  const show = await seedShow({ studioId: await seedStudio() });
+  const show = seedShow({ studioId: seedStudio() });
   return seedSession({ showId: show });
 }
 

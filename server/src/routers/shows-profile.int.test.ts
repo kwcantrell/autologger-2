@@ -21,9 +21,9 @@ describe('GET /api/studio + /api/profile', () => {
   });
 
   it('auth.user.teams[] entries carry role (teams-self-serve, task 4.1)', async () => {
-    const teamA = await seedStudio();
-    const teamB = await seedStudio();
-    const userId = await seedUser({});
+    const teamA = seedStudio();
+    const teamB = seedStudio();
+    const userId = seedUser({});
     catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
     catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
     const cookie = await loginCookie(userId);
@@ -46,9 +46,9 @@ describe('GET /api/studio + /api/profile', () => {
   // task 2.7 / finding 5.7): the shows fetched once for the active studio must
   // still land in shows[] exactly once, with active_show_id resolved from them.
   it('logged-in: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
-    const studio = await seedStudio();
-    const showId = await seedShow({ studioId: studio, name: 'Pinned Show', code: 'PS' });
-    const userId = await seedUser({ studios: [studio] });
+    const studio = seedStudio();
+    const showId = seedShow({ studioId: studio, name: 'Pinned Show', code: 'PS' });
+    const userId = seedUser({ studios: [studio] });
     catalogFor().auth.authSetPrefs(userId, studio, showId);
     const cookie = await loginCookie(userId);
 
@@ -77,7 +77,7 @@ describe('GET /api/studio + /api/profile', () => {
 
   it('anonymous: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
     const sid = await activeStudioId();
-    const showId = await seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
+    const showId = seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
 
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);

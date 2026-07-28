@@ -9,8 +9,8 @@ import { stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
 
 async function seededSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio });
   return seedSession({ showId: show });
 }
 const J = { 'content-type': 'application/json' };

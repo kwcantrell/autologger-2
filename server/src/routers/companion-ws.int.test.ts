@@ -39,7 +39,7 @@ beforeAll(async () => {
 afterAll(() => server.close());
 
 async function seededSession(): Promise<string> {
-  const show = await seedShow({ studioId: await seedStudio() });
+  const show = seedShow({ studioId: seedStudio() });
   return seedSession({ showId: show });
 }
 

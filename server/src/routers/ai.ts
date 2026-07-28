@@ -82,7 +82,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // 2. Session resolution/scoping — 404 for nonexistent/deleted/out-of-studio.
   // Runs first (after the authContext 401 gate) so an unauthorized session is
   // masked as 404 before the config/single-flight state below can leak.
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
 
   // 3. Configuration gate + open-network refusal — both 503, before body parse
   // and before any spawn (design D8).

@@ -37,8 +37,8 @@ function categoriesJsonWithInternal(internalId: string): string {
 }
 
 async function seededSession(categoriesJson?: string): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio, categoriesJson });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio, categoriesJson });
   return seedSession({ showId: show });
 }
 

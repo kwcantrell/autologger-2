@@ -12,9 +12,9 @@ const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
 async function seededSession(): Promise<{ studio: string; session: string }> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  const session = await seedSession({ showId: show });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio });
+  const session = seedSession({ showId: show });
   return { studio, session };
 }
 
@@ -52,9 +52,9 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
 
 describe('cross-studio masking (task 7.3)', () => {
   it('an authenticated non-member gets 404 — never 403', async () => {
-    const outsider = await seedStudio();
+    const outsider = seedStudio();
     const { session } = await seededSession();
-    const user = await seedUser({ studios: [outsider] });
+    const user = seedUser({ studios: [outsider] });
     const res = await app.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },
@@ -66,7 +66,7 @@ describe('cross-studio masking (task 7.3)', () => {
 
   it('a member of the session’s studio gets 200', async () => {
     const { studio, session } = await seededSession();
-    const user = await seedUser({ studios: [studio] });
+    const user = seedUser({ studios: [studio] });
     const res = await app.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },
@@ -93,8 +93,8 @@ describe('admin token semantics (task 7.3)', () => {
   });
 
   it('a session cookie alone grants no admin access (401)', async () => {
-    const studio = await seedStudio();
-    const user = await seedUser({ studios: [studio] });
+    const studio = seedStudio();
+    const user = seedUser({ studios: [studio] });
     const res = await app.request(
       '/api/admin/users',
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },

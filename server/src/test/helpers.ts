@@ -10,15 +10,15 @@ export function catalogFor(): Catalog {
 let counter = 0;
 const uid = (p: string): string => `${p}-${(counter += 1)}`;
 
-export async function seedStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
+export function seedStudio(opts: { id?: string; name?: string } = {}): string {
   const id = opts.id ?? uid('studio');
   catalogFor().studios.adminCreateStudio(id, opts.name ?? `Studio ${id}`);
   return id;
 }
 
-export async function seedUser(
+export function seedUser(
   opts: { email?: string; sub?: string; studios?: string[] } = {},
-): Promise<string> {
+): string {
   const cat = catalogFor();
   const id = cat.auth.authCreateUserGoogle({
     email: opts.email ?? `${uid('user')}@example.com`,
@@ -46,12 +46,12 @@ const SEED_CATEGORIES_JSON = JSON.stringify([
   },
 ]);
 
-export async function seedShow(opts: {
+export function seedShow(opts: {
   studioId: string;
   name?: string;
   code?: string;
   categoriesJson?: string;
-}): Promise<string> {
+}): string {
   return catalogFor().shows.createShow({
     studioId: opts.studioId,
     name: opts.name ?? 'Test Show',
@@ -62,12 +62,12 @@ export async function seedShow(opts: {
   });
 }
 
-export async function seedSession(opts: {
+export function seedSession(opts: {
   showId: string;
   episode?: string;
   title?: string;
   frameRate?: number;
-}): Promise<string> {
+}): string {
   const now = new Date().toISOString();
   return catalogFor().sessions.createSessionIndex({
     showId: opts.showId,

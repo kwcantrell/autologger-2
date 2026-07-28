@@ -160,7 +160,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
     createdAtUtc: now,
   });
   // Instantiate the hub so its transport row exists.
-  await getSessionHub(c, id).ensure();
+  getSessionHub(c, id).ensure();
   return c.json({
     id,
     title,
@@ -179,7 +179,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
 // requester's active-show/active-studio prefs or archived state.
 sessionsRouter.get('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   const row = c.get('catalog').sessions.getSessionJoinedRow(sessionId);
   if (row === null) throw new ApiError(404, 'Session not found');
   return c.json(serializeSessionEntry(c, row));
@@ -187,7 +187,7 @@ sessionsRouter.get('/api/sessions/:sessionId', async (c) => {
 
 sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   const body = sessionUpdateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
   let row: Row | null;
@@ -211,7 +211,7 @@ sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
 
 sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   if (!(c.get('catalog').sessions.setSessionArchived(sessionId, true))) {
     throw new ApiError(404, 'Session not found');
   }
@@ -220,7 +220,7 @@ sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
 
 sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
+  requireSession(c, sessionId);
   if (!(c.get('catalog').sessions.setSessionArchived(sessionId, false))) {
     throw new ApiError(404, 'Session not found');
   }
@@ -229,7 +229,7 @@ sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
 
 sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId, { includeHidden: true });
+  requireSession(c, sessionId, { includeHidden: true });
   if (!(c.get('catalog').sessions.setSessionUiHidden(sessionId, true))) {
     throw new ApiError(404, 'Session not found');
   }
@@ -287,7 +287,7 @@ function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
 
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const sessionRow = await requireSession(c, sessionId);
+  const sessionRow = requireSession(c, sessionId);
   const ctx = timecodeCtx(sessionRow);
 
   // Configuration gate, THEN open-network refusal (matches the AI chat/AI v2
@@ -370,7 +370,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     } catch (err) {
       // Atomic rollback (D7): a put failure must never leave a metadata row
       // pointing at a missing blob — mirrors audio.ts's own rollback.
-      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
       throw err;
     }
 
@@ -380,7 +380,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // put-failure rollback shape above: the segment is already attached, so a
     // refusal here rolls it back rather than leaving an unanchored orphan.
     if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
-      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
@@ -397,7 +397,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
         ctx,
       });
     } catch (err) {
-      await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+      getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
       throw err;
     }
 

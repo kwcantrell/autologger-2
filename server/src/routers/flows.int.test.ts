@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 
 async function freshSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
+  const studio = seedStudio();
+  const show = seedShow({ studioId: studio });
   return seedSession({ showId: show });
 }
 
