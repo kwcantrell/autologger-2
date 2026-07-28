@@ -1085,6 +1085,63 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
   });
 });
 
+// ── code-health-tail 2.3 (finding 2.11) — guardAiV2Route's gate set is a ──
+// PER-ROUTE parameter, not uniform (fact-check S10): under the SAME env,
+// /design and /answer 503 on the open-network/credentials refusals while
+// every dashboard-CRUD route still serves. A shared prologue that
+// accidentally uniformized the gate set (giving the CRUD routes all three
+// gates, or the design/answer routes only one) would satisfy "all five
+// routes use the helper" and still fail here — this suite pins the
+// DIFFERENCE itself, not helper adoption.
+describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameterized, not uniform)', () => {
+  /** BOTH refusal predicates true at once: anonymous + non-loopback + no
+   * allowlist (aiV2OpenNetworkRefused) and no key + non-loopback
+   * (aiV2CredentialsRefused). Fresh env per request (app.ts invariant). */
+  const refusedEnv = () =>
+    envWith({
+      AI_V2_ENABLED: '1',
+      HOST: '0.0.0.0',
+      REQUIRE_LOGIN: '0',
+      IP_ALLOWLIST: '',
+      AI_V2_API_KEY: '',
+    });
+
+  it('under an open-network + credentials-refused env, /design and /answer 503 while dashboard PUT/GET/DELETE serve', async () => {
+    const s = await seededSession();
+
+    const designRes = await post(s, { message: 'hi' }, refusedEnv());
+    expect(designRes.status).toBe(503);
+    expect(spawnSpy).not.toHaveBeenCalled();
+    const answerRes = await postAnswer(s, { turnId: 't', requestId: 'r', answers: [] }, refusedEnv());
+    expect(answerRes.status).toBe(503);
+
+    // The dashboard-CRUD routes never spend the operator's credentials, so
+    // they are deliberately NOT gated on either refusal (see aiV2.ts's
+    // dashboard block comment) — the full write/read/delete cycle works.
+    const putRes = await putDashboard(s, VALID_DASHBOARD, refusedEnv());
+    expect(putRes.status).toBe(200);
+    const getRes = await getDashboard(s, refusedEnv());
+    expect(getRes.status).toBe(200);
+    expect(await getRes.json()).toEqual({ config: VALID_DASHBOARD });
+    const delRes = await deleteDashboard(s, refusedEnv());
+    expect(delRes.status).toBe(200);
+  });
+
+  it('under a credentials-only-refused env (login REQUIRED lifts open-network), /design still 503s while dashboard GET serves', async () => {
+    const { sessionId: s, studioId } = await seededSessionWithStudio();
+    const headers = { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) };
+    const credsEnv = () =>
+      envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' });
+
+    const designRes = await post(s, { message: 'hi' }, credsEnv(), headers);
+    expect(designRes.status).toBe(503);
+    expect(((await designRes.json()) as { detail: string }).detail).toMatch(/AI_V2_API_KEY|loopback/i);
+
+    const getRes = await getDashboard(s, credsEnv(), headers);
+    expect(getRes.status).toBe(200);
+  });
+});
+
 // ── Task 5.4/5.5 — propose_dashboard -> `dashboard` SSE event (design D10, ──
 // spec "Dashboards are edited directly, not only by conversation") — no live
 // SDK turn, no Anthropic spend. Exercises the REAL wiring the route builds:
