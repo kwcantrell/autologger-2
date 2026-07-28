@@ -400,7 +400,7 @@ export interface AdminUser {
   given_name: string;
   family_name: string;
   disabled: boolean;
-  memberships: string[];
+  studios: StudioBrief[];
 }
 
 export interface AdminDataResponse {

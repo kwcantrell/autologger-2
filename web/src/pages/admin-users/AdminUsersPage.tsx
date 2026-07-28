@@ -259,14 +259,14 @@ export function AdminUsersPage() {
                       </td>
                       <td>
                         <div className="flex flex-wrap gap-1">
-                          {u.memberships.map((sid) => (
-                            <span key={sid} className="inline-flex gap-1 items-center">
-                              <code>{sid}</code>
+                          {u.studios.map((m) => (
+                            <span key={m.id} className="inline-flex gap-1 items-center">
+                              <code>{m.id}</code>
                               <button
                                 type="button"
                                 className="btn btn-icon danger text-[10px] px-1 py-0"
-                                aria-label={`Remove from ${sid}`}
-                                onClick={() => removeMembership(u.id, sid)}
+                                aria-label={`Remove from ${m.id}`}
+                                onClick={() => removeMembership(u.id, m.id)}
                               >
                                 ×
                               </button>
@@ -285,7 +285,7 @@ export function AdminUsersPage() {
                             align="start"
                           >
                             {studios
-                              .filter((s) => !u.memberships.includes(s.id))
+                              .filter((s) => !u.studios.some((m) => m.id === s.id))
                               .map((s) => (
                                 <PopoverItem key={s.id} onClick={() => addMembership(u.id, s.id)}>
                                   {s.name}
