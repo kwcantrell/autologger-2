@@ -441,3 +441,43 @@ of capture fidelity. This is a concrete instance of D1's named "production data 
 residual, not a defect in how phase 4 executes its capture. Recorded here so phase 4 does not
 treat a passing captured-fixture check as evidence this nullability class is covered — it isn't,
 and no mechanism in this change's scope covers it (see D1's residual and the risk table).
+
+### 2026-07-28 — Phase 5 outcome (tasks 5.1–5.5)
+
+The web-tier conformance module (`api/types.conformance.test.ts`) and the repo-invariant guard
+(`apiResponseShapes.repo.test.ts`, new) are both in place, per D5. Guard population: **117
+response-consuming sites — 65 covered, 52 exempted, 0 unverified.** All 26 fixtures captured in
+phase 4 now carry a conformance assignment (`tsc --listFiles` reaches 27/27 files under
+`fixtures/api-responses/`, the 27th being the hand-written `_mutable.ts` support module, not a
+fixture); additive tolerance (task 5.2) is asserted via a branded `ExpectUndeclared<T, K>`
+conditional type that itself fails closed if reduced to a no-op, not merely enjoyed for free.
+Full breakdown, per-exemption reasons, and the dead-type distinction for
+`CompanionRemoteCommand`/`CompanionCommandsWaitResponse` are recorded in `audit.md` §11 (D9 — the
+tracked deliverable).
+
+**Demonstrated to fail, both directions (task 5.4).** A planted new typed `apiFetch` site, a
+planted new local generic wrapper plus its call site, and a planted raw-`fetch`-plus-assertion
+site were each caught and named individually (file, line, detector, acquired type), then removed.
+Separately, the guard was shown non-vacuous when its own scan is broken: pointing the file walk
+at a nonexistent extension failed 12 of 17 tests (population/detector floors, canaries, and the
+stale-exemption check) while the headline "no unverified site" assertion passed vacuously on the
+dead scan — exactly the failure mode those floor/canary checks exist to catch. Disabling only the
+wrapper detector failed 5 tests, naming the disabled detector, the `AdminDataResponse` canary lost
+through it, and the 6 `fetchAdmin` exemptions that went stale as a result.
+
+**Named blind spots** (guard header + `audit.md` §11.5): test files excluded from the scan;
+indirect type acquisition through an `unknown`-typed helper is undetectable and is the guard's
+largest structural hole; coverage is keyed by client type *name*, not by (site, endpoint) pair, so
+a type already checked on one endpoint passes silently if reused on a new one; a re-assertion
+downstream of an already-flagged parse is not separately detected; data-dependent branches
+(CW-9's nullability, CW-4's orphan branch) remain uncovered by any fixture, per D1's
+production-data-variance residual; WebSocket is an explicit Non-Goal; and an exemption's
+reliability rests entirely on its reason text, which the guard enforces the *presence* of but
+cannot verify the *correctness* of.
+
+**52 exemptions vs. the brief's ~28 estimate.** The 24-entry gap is not new discoveries about the
+tree — it is 14 `OkResponse` + 2 `void` sites with no captured fixture, 6 seam/wrapper-plumbing
+sites, and 2 raw-fetch request-half sites the brief's category list didn't separately enumerate.
+Blanket-exempting a whole type (e.g. all `OkResponse` sites) was considered and rejected: that is
+the same shortcut that let CW-1 (`transport/start`/`transport/stop` not actually conforming) go
+unnoticed once already; every exemption stays one entry per site.

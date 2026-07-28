@@ -528,3 +528,150 @@ No mechanism in this change's scope pins `_mutable.ts`'s content (e.g., a checks
 dedicated repo-invariant test asserting its exact text). If a future change wants to close this,
 that is where it starts — a small, targeted guard rather than a redesign, since the file is one
 line of load-bearing logic.
+
+---
+
+## 11. The repo-invariant guard (phase 5) — population, exemptions, and residual
+
+Added by tasks 5.1–5.4: a web-tier conformance module
+(`web/src/api/types.conformance.test.ts`, extended) that checks every captured fixture against
+its client type, and a repo-invariant guard (`web/src/apiResponseShapes.repo.test.ts`, new) that
+fails when a `web/src` site acquires a client type without either a conformance check or a
+recorded exemption. This section is the durable record §5.5 of the plan of record requires: a
+future maintainer asking "what isn't covered, and why" should get the answer here, not by
+re-deriving it from `.apply/task-5.3-5.4-report.md` (git-ignored, does not survive archival).
+
+### 11.1 Population totals
+
+**117 response-consuming sites — 65 covered, 52 exempted, 0 unverified.**
+
+A site is *covered* only when every client type it acquires appears in the conformance module's
+own `import type { … }` list from `./types` — i.e. it is asserted against a fixture captured by
+executing the handler (D2), never a hand-written one. Everything else must carry an individually
+reasoned exemption; there is no third, silent state. The guard proves this isn't vacuous by
+construction: population and per-detector floors are asserted at run time (117 actual against a
+100 floor; per-detector floors for each of the six site-shaped detectors plus the conformance-
+module's own detector), five canary sites must be found by name, and an exemption matching no
+current site is itself a test failure (a stale exemption is as much a lie about the tree as an
+uncovered site).
+
+### 11.2 The 26/26 fixture conformance check (task 5.1) and additive tolerance (task 5.2)
+
+Every one of the 26 fixtures captured in phase 4 now carries at least one type-level assignment
+against the client type its real call site names — verified mechanically by
+`tsc --listFiles`, which reaches 27 of 27 files under `fixtures/api-responses/` (the 27th being
+the hand-written `_mutable.ts` support module, not a fixture — see §9/§10). The check was
+demonstrated to actually catch the class of bug this change exists for: reintroducing
+`memberships: string[]` on `AdminUser`, making `TeamDetail.invites` required, mistyping a scalar,
+and adding a required field to `TranscriptWord` each independently failed `tsc`, and each was
+reverted to a clean build.
+
+Additive tolerance — a fixture may carry fields the client type does not declare, and this must
+not fail — is asserted from both sides, not merely enjoyed for free: the assignment compiling is
+the tolerance itself (`AdminUser` vs. the fixture's undeclared `picture_url`/`created_at_utc`;
+`SessionStatus` vs. `audio_recording_lease_age_sec`), and a second, branded `ExpectUndeclared<T,
+K>` conditional type pins each tolerated key as *currently undeclared*, so that a future edit
+that declares the field on the client type turns the tolerance check itself into a compile error
+naming the key — rather than the check quietly continuing to pass for a reason that has nothing
+to do with tolerance. That helper is in turn guarded against being reduced to a no-op: a third,
+`@ts-expect-error`-paired assignment against an already-declared key confirms `ExpectUndeclared`
+still resolves to its message tuple rather than passing everything through.
+
+### 11.3 The 52 exemptions, grouped by kind
+
+**One entry always means one site** — no file-wide, type-wide, or category-wide exemptions. A
+blanket rule would let a genuinely new unverified site hide behind an old one, which is the
+class of failure this guard exists to prevent (fourteen separate `OkResponse` entries below pay
+for exactly this: two of the audit's own `OkResponse` sites, per CW-1, turned out not to conform,
+and a blanket exemption would have hidden that). Every entry's `reason` must be ≥40 characters and
+cites the audit row backing its verdict; a bare path is rejected by the guard's own tests.
+
+| kind | count | why these are exempt rather than covered |
+|---|---:|---|
+| Shared seam/wrapper plumbing | 6 | `client.ts`'s `apiFetch<T>` declaration, its `fetch(url)` call, its error-probe `.json()`, and its unchecked `res.json() as Promise<T>` cast; `AdminUsersPage`'s `fetchAdmin<T>` declaration and its forwarding `apiFetch<T>(path)` call. An **unresolved** type parameter acquires no concrete shape — there is nothing to check a fixture against at the seam itself, only at its call sites (which are separately covered or exempted). |
+| `apiFetch<OkResponse>` | 14 | Population (a)/(b) sites typed `OkResponse` with **no captured fixture** — phase 4's inventory captured none, per D3's "no fixture, no check" rule. Each cites its audit §5 row and the emitted body (e.g. lease claim `{ok:true}`, archive's extra `archived` key). Kept as 14 separate entries specifically so a *new* `OkResponse` site starts unverified — see CW-1. |
+| `apiFetch<void>` | 2 | 204 + empty body + no `content-type`, so `apiFetch` takes its `res.text()` branch (`''` cast to `void`): topic delete, transcript-word delete. Nothing is asserted about an empty body. |
+| Untyped `apiFetch(…)` | 6 | Population (c): no type argument, response discarded (`.catch(() => {})` or unused `await`). Enumerated because the guard's detector must see them (D5/D6), not because any is a mismatch. |
+| Untyped `fetchAdmin(…)` | 5 | Population (b) minus the one typed call: four admin mutation endpoints plus create-team, all inferred `unknown` and discarded. |
+| Raw `fetch(` request-half sites | 7 | The **request** side of an ingress acquires no type by itself — its typing site (if any) is a separate, independently listed row. Covers the SSE POST, the AI-v2 answer POST, the permanent-503 `transcribe.csv` stub, `dashboardPersistence`'s GET and PUT requests, the audio-clip sync-from-disk POST, and the waveform blob fetch (`arrayBuffer()`, not JSON). |
+| `Response.json()` outside `apiFetch` | 3 | `dashboardPersistence`'s error-probe `.json()`, and `useSseTurn.extractErrorDetail`'s `.json()` — both narrowed by a runtime guard, not trusted as a client type. The third is `dashboardPersistence`'s own `.json() as { config: DashboardConfig \| null }` **ingress** (row 41, `d1`) — the one raw-`fetch` site that *is* `CONFORMS`, verified against the handler and cross-checked element-by-element against the write-side schema; still an exemption because it sits outside the conformance module's fixture mechanism, not because it is unverified. |
+| `JSON.parse(` sites | 5 | `useSseTurn.safeJsonParse` (returns `unknown`, every consumer runtime-guarded); the `TranscribeModal` error-body probe; `useSessionSocket`'s WebSocket frame parse (WebSocket validation is an explicit Non-Goal — see 11.4); `perfDebug`'s localStorage debug-flag record; and **`dashboardPersistence`'s `localStorage` `JSON.parse(raw) as unknown`** — the deliberate exclusion named in §8.8: the source is browser storage this client itself wrote, not the wire, so it sits outside this audit's universe even though it is the same assertion *class* as the one `CONFORMS` raw-fetch site above. |
+| `navigator.sendBeacon(` | 2 | Fire-and-forget calls with no `Response` object to type: the audio-lease release beacon and the Companion-presence-clear beacon. |
+| Conformance-module source-read literals | 2 | The two hand-written values already named in §9 (CW-4's unreachable `enrichEventRpc` orphan branch, CW-9's four `?? null` fields) — labelled as source-reads, not evidence about the wire, per D1's production-data-variance residual. Exempted at the *conformance-module* level (detector 7) rather than at an application-code call site. |
+
+**Total: 52**, cross-checked against the guard's own count.
+
+**Why 52, not the ~28 the brief estimated.** The brief's six categories totalled roughly 28–30
+entries. The 24-entry gap is **not** new discoveries about the tree — every one of the 24 is a
+site the guard legitimately detects that the brief's list simply didn't enumerate: the 14
+`OkResponse` + 2 `void` sites (16), the 6 seam/wrapper-plumbing sites, and 2 of the 7 raw-fetch
+request-half sites (the `dashboardPersistence` GET/PUT requests specifically) — 16 + 6 + 2 = 24.
+Blanket-exempting the `OkResponse` class instead of listing it site-by-site was considered and
+rejected: that is the exact shortcut that let the `transport/start`/`transport/stop` mismatch
+(CW-1) go unnoticed once already.
+
+### 11.4 `CompanionRemoteCommand` / `CompanionCommandsWaitResponse` are dead types, not exemptions
+
+These two client types (§8.7, §9) have **zero call sites** in `web/src` — their real consumer is
+the Companion module, which mirrors the shapes independently in `companion/src/state.ts`. They
+are deliberately **not** entries in the exemption list. An exemption is a statement about a site
+("this site is unverified, and here is why that's acceptable"); these have no site to make that
+statement about. Had they been encoded as exemptions anyway, the guard's own stale-exemption
+check — which fails the suite the moment an exemption matches zero sites in the tree — would trip
+on them permanently, for a reason unrelated to what that check exists to catch. Instead they are
+a named `DEAD_CLIENT_TYPES` constant plus a standing assertion that they still produce zero
+sites: if a future change starts consuming either type, that assertion fails (flagging the
+now-false "dead" claim) *and* the new call site shows up as unverified in its own right — two
+independent signals instead of one silently-stale entry.
+
+### 11.5 The guard's blind spots — read before trusting it
+
+Recorded in the guard's own file header too, so a reader meets them before relying on a green
+run:
+
+1. **Test files are outside the scan.** `*.test.ts(x)` and `test/` under `web/src` are excluded
+   from the application-code walk (per §8.1); the one deliberate exception is the conformance
+   module itself, read narrowly for its own `import type` list and source-read literals.
+2. **Indirect type acquisition is the largest hole.** A JSON value threaded through as `unknown`
+   into a typed helper several modules downstream acquires its client type with no
+   `fetch`/`.json()`/`JSON.parse`/wrapper token anywhere near it, so no detector fires (§8.3).
+   This is a structural limit of matching on deserialization syntax, not a tuning gap.
+3. **Coverage is keyed by client type *name*, not by (site, endpoint).** The guard answers "has
+   this type ever been checked against a real response?", not "is it checked against *this*
+   endpoint's response?" A type that is genuinely conformant on the endpoint it was captured from
+   passes silently the moment it is reused as the return type of a brand-new endpoint. Only this
+   audit's per-row verdict table (§5) answers the endpoint-specific question, and it is a
+   snapshot, not a standing check.
+4. **A re-assertion downstream of an already-flagged parse is not a separate site.** Only the
+   deserialization token itself (`JSON.parse(...)`, `.json()`) is detected; a second, unrelated
+   `as SomeOtherType` two lines later on the same parsed value is invisible to the scan.
+5. **Data-dependent branches are uncovered.** CW-9's nullability (a session missing its joined
+   show row) and CW-4's `enrichEventRpc` orphan branch are real, confirmed divergences that no
+   captured fixture reaches, because seeded test state never produces the branch that triggers
+   them (§8.4, D1's production-data-variance residual). A covered site is not a verified branch.
+6. **WebSocket is an explicit Non-Goal.** The one `JSON.parse(ev.data)` WS-frame site is exempted
+   as such; a *second* WS parse site introduced later would still surface as its own unverified
+   site rather than being silently absorbed into the same exemption.
+7. **An exemption is only as good as its reason.** The guard forces every unchecked site to carry
+   a recorded, non-trivial-length justification; it has no way to verify that the justification is
+   *correct*. A careless or dishonest exemption for a real defect still passes the suite — the
+   reason field is written for the next reviewer to read, not for the guard to adjudicate.
+
+Two smaller items are already recorded in §8 and are not repeated in full here: prose mentions
+inside comments are deliberately not sites (§8, matching `noAgentAuthoredMarkup.repo.test.ts`'s
+own concession), and a dynamically constructed path is detected as a site but cannot be
+attributed to a specific endpoint (§8.5).
+
+### 11.6 Guard demonstrated in both failure directions (task 5.4)
+
+Not merely asserted — run. A planted new typed `apiFetch` site, a planted new local generic
+wrapper (undeclared to the guard) plus its call site, and a planted raw `fetch(...)` with a body
+assertion were each caught and named individually by file, line, detector, and acquired type, then
+removed. Separately, the guard was shown non-vacuous when its *own* scan is broken: pointing its
+file walk at a nonexistent extension failed 12 of its 17 tests (floors, canaries, and the
+stale-exemption check all fire), while the headline "no unverified site" assertion passed
+vacuously on the dead scan — which is exactly the failure mode the floor/canary checks exist to
+catch. Disabling only the wrapper detector failed 5 tests, naming the disabled detector, the
+`AdminDataResponse` canary that stopped being found through it, and the 6 `fetchAdmin` exemptions
+that went stale as a result. Both probes were reverted; the working tree carried nothing but the
+new guard file when this unit closed.
