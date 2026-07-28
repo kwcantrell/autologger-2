@@ -57,11 +57,11 @@ untested (its 5 existing tests cover header merging and `ApiError` only). These 
 on their own merit: `apiFetch` keeps its current behavior throughout this change, and nothing
 else in the plan would notice if that broke.
 
-- [ ] 2.1 Add tests to `web/src/api/client.test.ts` pinning current success-path behavior: a
+- [x] 2.1 Add tests to `web/src/api/client.test.ts` pinning current success-path behavior: a
       JSON content-type returns the parsed body; a non-JSON content-type returns the raw text;
       a JSON content-type with parameters (e.g. `application/json; charset=utf-8`) still takes
       the JSON branch. These describe today's behavior and must pass **before** any change.
-- [ ] 2.2 `npm test` green — confirm the new tests pass against unmodified `client.ts`.
+- [x] 2.2 `npm test` green — confirm the new tests pass against unmodified `client.ts`.
 
 ## 3. Conformance audit — semantic enumeration
 
