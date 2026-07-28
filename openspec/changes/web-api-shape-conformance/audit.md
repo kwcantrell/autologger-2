@@ -559,29 +559,48 @@ A site is *covered* only when **both** of the following hold for every client ty
    `@ts-expect-error` directive, or assigned through a **type assertion** (`fixture as unknown as
    T`, which compiles whatever the capture's real shape is) is **not** checked against a real
    response and does not count;
-2. the name is in scope in the **site's own file** through an import whose specifier *resolves* —
+2. that binding comes from a fixture the **server declares it captures**. Until the branch audit
+   (11.9, I4) the requirement was that the specifier *contain* `fixtures/api-responses/` — a path
+   substring, over a directory that sits outside the guard's scan root, so a hand-authored module
+   dropped in beside the captures was indistinguishable from one and conferred full coverage. The
+   specifier's basename is now cross-checked against the `CaptureSpec` names in
+   `server/src/routers/apiResponseFixtures.int.test.ts`, and the two sets are additionally
+   asserted equal, so an unaccounted-for file in that directory fails the suite by name;
+3. the name is in scope in the **site's own file** through an import whose specifier *resolves* —
    relative to that file — to the canonical `api/types` module, under the export name that was
    checked. Matching the specifier's *basename* is not enough and was the second review round's
    NEW-2: a per-feature `src/pages/*/types.ts` is standard React layout, and the names it would
    plausibly redeclare (`Session`, `Category`, `LogEvent`, `AudioSegment`) are exactly the checked
    ones. Import aliases resolve to the original export name, so `{ Checked as Local }` carries the
    check and `{ BrandNew as Checked }` does not. A specifier that does not resolve inside the tree
-   contributes no coverage at all, so its sites surface rather than pass.
+   contributes no coverage at all, so its sites surface rather than pass. Alias resolution is
+   **symmetric** since the branch audit (11.9, M3): the conformance module records its check under
+   the ORIGINAL export name too, so `import type { Session as LogEvent }` there checks `Session`
+   and lends `LogEvent` nothing.
 
 Everything else must carry an individually reasoned exemption; there is no third, silent state.
 The guard proves this isn't vacuous by construction: population and per-detector floors are
-asserted at run time (120 actual against a 100 floor; per-detector floors for each of the six
-site-shaped detectors plus the conformance-module's own detector), five canary sites must be
-found by name, and a surplus exemption entry — one with no matching site, or an Nth entry on a
-key that only N-1 sites match — is itself a test failure (a stale exemption is as much a lie
-about the tree as an uncovered site).
+asserted at run time (120 actual against a 115 floor; per-detector floors for each of the six
+site-shaped detectors plus the conformance-module's own detector, each within a few sites of its
+current count and annotated with the slack it allows), five canary sites must be found by name,
+and a surplus exemption entry — one with no matching site, or an Nth entry on a key that only N-1
+sites match — is itself a test failure (a stale exemption is as much a lie about the tree as an
+uncovered site). The floor was 100 against 120 until the branch audit (11.9, M8), i.e. it
+tolerated losing a sixth of the population in silence — the same vacuity the floors exist to
+prevent, one level up.
 
 ### 11.2 The 26/26 fixture conformance check (task 5.1) and additive tolerance (task 5.2)
 
 Every one of the 26 fixtures captured in phase 4 now carries at least one type-level assignment
-against the client type its real call site names — verified mechanically by
-`tsc --listFiles`, which reaches 27 of 27 files under `fixtures/api-responses/` (the 27th being
-the hand-written `_mutable.ts` support module, not a fixture — see §9/§10). The check was
+against the client type its real call site names — verified by enumerating the fixture directory
+and matching each name against the `const x: T = <binding>` initialisers parsed out of
+`web/src/api/types.conformance.test.ts`: **26 of 26 assigned, 0 unassigned**. That is the claim's
+actual evidence. It was previously attributed to `tsc --listFiles` reaching 27 of 27 files under
+`fixtures/api-responses/` (the 27th being the hand-written `_mutable.ts` support module, not a
+fixture — see §9/§10), which is a true observation about a *different* property: `--listFiles`
+establishes that the files are REACHED by the type-check, not that any of them is assigned to a
+client type. The stronger claim happens to hold, but that run was not what showed it (branch
+audit, M4). The check was
 demonstrated to actually catch the class of bug this change exists for: reintroducing
 `memberships: string[]` on `AdminUser`, making `TeamDetail.invites` required, mistyping a scalar,
 and adding a required field to `TranscriptWord` each independently failed `tsc`, and each was
@@ -604,8 +623,18 @@ still resolves to its message tuple rather than passing everything through.
 blanket rule would let a genuinely new unverified site hide behind an old one, which is the
 class of failure this guard exists to prevent (fourteen separate `OkResponse` entries below pay
 for exactly this: two of the audit's own `OkResponse` sites, per CW-1, turned out not to conform,
-and a blanket exemption would have hidden that). Every entry's `reason` must be ≥40 characters and
-cites the audit row backing its verdict; a bare path is rejected by the guard's own tests.
+and a blanket exemption would have hidden that).
+
+**What the guard enforces about a `reason`, exactly: its length.** `reason.trim().length >= 40`,
+nothing more — a bare path is rejected, a forty-character sentence of nothing is not. Naming the
+audit row behind the verdict is a convention the entries keep, not a rule (this section previously
+said every entry "cites the audit row", which is false as written): **five of the fifty-two name
+no audit row**, and three of those five name no anchor at all. The five are the shared-helper
+declaration, its `fetch(url)` seam, the `res.json() as Promise<T>` cast (anchored to task 2.1
+instead), the wrapper's forwarding call (anchored to design D6 instead), and `perfDebug`'s
+localStorage parse. All five are seam or non-wire sites for which no audit row exists, so the
+omission is correct in substance — but "the guard makes every exemption cite its evidence" was
+not, and is not, true.
 
 "One entry, one site" is **enforced**, not merely intended (phase-5 review fix, 11.7). Entries are
 *consumed* one per matching site, so N sites sharing a key require N entries and a surplus entry is
@@ -666,26 +695,51 @@ here is stated as absolute unless the code enforces it.
    `fetch`/`.json()`/`JSON.parse`/wrapper token anywhere near it, so no detector fires (§8.3).
    This is a structural limit of matching on deserialization syntax, not a tuning gap: closing it
    needs type-level analysis, not another pattern.
-2. **A callee reached under a name rebound *outside* the calling file.** The scan resolves
-   `apiFetch` through a named import (including `import { apiFetch as x }`) and through a
-   namespace qualifier (`import * as api` … `api.apiFetch<T>(…)`, closed in the second review
-   round), and it resolves wrappers by their *declared* name anywhere in the tree, iterating
-   discovery to a fixed point. It does **not** follow a re-export that renames
-   (`export { apiFetch as request } from './client'` in a third module), nor a wrapper imported
-   under an alias (`import { fetchTyped as ft }`). Under either, the call site is invisible — not
-   merely mis-keyed. One token of refactor away, and the same class as the two false negatives the
-   second round found, which is why it ranks above the two below.
+2. **A callee this scanner cannot name.** The scan resolves `apiFetch` through a named import
+   (including `import { apiFetch as x }`) and through a namespace qualifier (`import * as api` …
+   `api.apiFetch<T>(…)`, closed in the second review round); it resolves wrappers by matching two
+   declaration forms — `function name<T>(…)` and `const name = <T>(…)` / `const name = async
+   <T>(…)` — and then by that *declared* name anywhere in the tree, iterating discovery to a fixed
+   point. **Five spellings defeat that, every one of them verified by planting against the current
+   code** (branch audit, M1 — this item previously listed two and therefore understated itself):
+   - (a) an **in-file rebinding**: `const call = apiFetch;` followed by `call<T>(p)` produces
+     **zero** sites — not even the rebinding line. No import alias, no second module, no refactor
+     across files;
+   - (b) a **re-export that renames**, `export { apiFetch as request } from './client'` in a third
+     module;
+   - (c) a **wrapper imported under an alias**, `import { fetchTyped as ft }`;
+   - (d) a **class-method wrapper**: `class Api { async get<T>(p): Promise<T> { return
+     apiFetch<T>(p) } }`. Only the forwarding `apiFetch<T>(p)` plumbing site appears — and it is a
+     near-verbatim match for a recorded exemption, so the file's own precedent invites exempting
+     it — while `api.get<Thing>(…)` does not appear at all;
+   - (e) an **annotated arrow const**: `const f: <T>(p: string) => Promise<T> = <T>(p) =>
+     apiFetch<T>(p)`. The annotation's `:` defeats the `const name =` declaration form, with the
+     same outcome as (d).
+
+   Under every one the call site is invisible, not merely mis-keyed. (d) and (e) were left as
+   residuals rather than closed: matching them needs a declaration pattern broad enough to also
+   match ordinary generic *calls*, which is a detector widening the branch audit did not review.
+   This ranks second because three of the four gaps found across four rounds have been wrapper
+   discovery, each one token of refactor away.
+
+   The same shape sits one detector over: `fetch(` is matched **unqualified only**.
+   `window.fetch(…)` and `globalThis.fetch(…)` produce no `rawFetch` site — the `(?<![.\w$])`
+   lookbehind that stops `foo.fetch(` from matching the global rejects them too (verified by
+   planting). A typed `.json()` on the result is still detected, so this loses the *request* half
+   of the ingress, not the typing site.
 3. **Coverage is keyed by client type *name*, not by (site, endpoint) — and the fixture only has
-   to *be* a fixture.** The guard answers "has this type ever been checked against a captured
-   response?", not "is it checked against *this* endpoint's response?" A type that is genuinely
-   conformant on the endpoint it was captured from passes silently the moment it is reused as the
-   return type of a brand-new endpoint. The same looseness sits one level in: a
-   `const x: T = <binding>` counts when the binding is *any* captured fixture, so a slice of an
-   unrelated capture (`const s: Session = adminUsers.users[0]`) would register as `Session`'s
-   check. Requiring the fixture to *relate* to the type was considered and rejected as not
-   reliably decidable — the type↔endpoint↔fixture mapping is exactly what this audit's per-row
-   verdict table (§5) records by hand, and it is a snapshot, not a standing check. Recorded as a
-   residual rather than half-implemented.
+   to be a *declared capture*.** The guard answers "has this type ever been checked against a
+   captured response?", not "is it checked against *this* endpoint's response?" A type that is
+   genuinely conformant on the endpoint it was captured from passes silently the moment it is
+   reused as the return type of a brand-new endpoint. The same looseness sits one level in: a
+   `const x: T = <binding>` counts when the binding is *any* declared capture, so a slice of an
+   unrelated one (`const s: Session = adminUsers.users[0]`) would register as `Session`'s check.
+   Since the branch audit (11.9, I4) the binding must at least *be* a capture the server declares
+   it produces, which is a strictly weaker property than being the *right* one. Requiring the
+   fixture to *relate* to the type was considered and rejected as not reliably decidable — the
+   type↔endpoint↔fixture mapping is exactly what this audit's per-row verdict table (§5) records
+   by hand, and it is a snapshot, not a standing check. Recorded as a residual rather than
+   half-implemented.
 4. **Two sites can still share one key when the method cannot separate them.** The descriptor
    carries the literal HTTP method, which splits the common `{ok}`-mutation collisions; it does
    not split two calls on the same path with the *same* method, nor a call whose method arrives
@@ -706,10 +760,20 @@ here is stated as absolute unless the code enforces it.
 8. **WebSocket is an explicit Non-Goal.** The one `JSON.parse(ev.data)` WS-frame site is exempted
    as such; a *second* WS parse site introduced later would still surface as its own unverified
    site rather than being silently absorbed into the same exemption.
-9. **An exemption is only as good as its reason.** The guard forces every unchecked site to carry
-   a recorded, non-trivial-length justification; it has no way to verify that the justification is
-   *correct*. A careless or dishonest exemption for a real defect still passes the suite — the
-   reason field is written for the next reviewer to read, not for the guard to adjudicate.
+9. **An exemption is only as good as its reason, and the guard checks only its length.** Every
+   unchecked site must carry a `reason` of at least 40 characters. That is the entire mechanical
+   requirement: the guard cannot verify that the justification is *correct*, and does not require
+   it to cite anything (see 11.3). A careless or dishonest exemption for a real defect still
+   passes the suite — the reason field is written for the next reviewer to read, not for the guard
+   to adjudicate.
+10. **A declaration's body is located by a heuristic, not a grammar.** `readDeclarationBody`
+   skips strings and comments and balances parens, angles and braces, and tells a body's `{` from
+   an object type's by the character preceding it. Every spelling this tree and its plausible
+   refactors produce is covered by a permanent test, and the two that were *not* — an object
+   return-type annotation, an object type-parameter constraint — are exactly what the branch audit
+   found as I2. A declaration shaped so the heuristic misreads it would un-discover the wrapper
+   silently. Ranked last because no remaining counter-example is known; recorded because "none
+   found" is not "none exists", and this is the third round in which that distinction mattered.
 
 Two smaller items are already recorded in §8 and are not repeated in full here: prose mentions
 inside comments are deliberately not sites (§8, matching `noAgentAuthoredMarkup.repo.test.ts`'s
@@ -796,13 +860,108 @@ module is now stated explicitly under rank 3 instead of going unmentioned.
 
 **Regression coverage.** Five permanent multi-file cases were added — a wrapper over a wrapper, a
 sibling `types.ts` shadow, an import alias in both directions, a namespace-qualified `apiFetch`
-(call site *and* wrapper forwarding), and a cast-defeated conformance assignment. Each was
-verified non-vacuous by reverting its own fix and confirming that exactly that test goes red.
-Every plant above was reproduced on the pre-fix code and re-planted after the fix; all plants were
+(call site *and* wrapper forwarding), and a cast-defeated conformance assignment. Every plant
+above was reproduced on the pre-fix code and re-planted after the fix; all plants were
 working-tree only and none was ever staged.
+
+> **Correction (branch audit, I3).** This paragraph originally continued: "Each was verified
+> non-vacuous by reverting its own fix and confirming that exactly that test goes red." That was
+> **false for the fixed-point case**. Inserting `break` after round 0 of the wrapper-discovery
+> loop left all 33 tests green, including `'a wrapper over a WRAPPER is a wrapper — discovery runs
+> to a fixed point'`: its synthetic files happened to resolve in round 0 by walk order, so the
+> test demonstrated the fix without requiring it. The check was claimed and not performed. The
+> guard's walk now sorts, an ordered second case makes ≥2 rounds unavoidable, and every claim of
+> this kind in 11.9 below names the run that produced it.
 
 **Population unchanged: 120 sites / 68 covered / 52 exempted**, with the same per-detector
 breakdown (apiFetch 52, wrapper 7, rawFetch 8, jsonBody 5, jsonParse 5, beacon 2,
 conformanceAssertion 41). That is the expected result — these fixes close shapes the tree does not
 yet contain — and it is asserted, not assumed: the floors and canaries would have moved otherwise.
 
+
+### 11.9 Whole-branch audit — two more silent gaps, one vacuous test, and an unenforced absolute
+
+The pre-merge whole-branch audit planted against the guard as fixed in 11.8. **Two plants passed a
+fully green 33/33 suite**, a third finding showed one of 11.8's own regression tests was vacuous,
+and a fourth showed a property the guard's header called "mechanically enforced" was enforced only
+as a path substring.
+
+**Three rounds had now each found a stated absolute the code did not enforce.** That pattern is
+itself the finding: everything below is written so a fifth round tests a claim that is true.
+
+| # | what slipped through | why | fix |
+|---|---|---|---|
+| I1 | `apiFetch<{ ok: boolean; detail: string }>('probe/semi')` — **0 sites, 33/33 green**. The comma-separated spelling of the same call WAS reported, and `npx biome format` (which `npm run lint` runs) rewrites the comma form into the semicolon form: linting a detectable site converted it into an undetectable one. `apiFetch<{ cb: () => void }>` vanished the same way. The tree already carries three inline envelopes (`{ topics: SessionTopic[] }`, `{ words: TranscriptWord[] }`, `{ show: Show }`), so the next two-member one would have been invisible. | `readAngles` bailed to `null` on any `;` — but `;` separates the MEMBERS of an inline object type — and counted the `>` of `() => T` as a closer. `scanFile` then did `if (!angles) continue`, so the occurrence was deleted entirely: not even recorded as an untyped call. | A `;` is a statement break only outside `{…}`; an arrow's `>` is not a closer; and — the load-bearing half — a bail now **records the site** with an unparsed type expression and no acquired names, so it is uncovered by construction. Same for a parse that lands somewhere other than a `(`. Dropping is the one direction this guard must never fail in. |
+| I2 | `function fetchEnvelope<T>(p): Promise<{ data: T; total: number }>` forwarding to `apiFetch<T>`, called as `fetchEnvelope<PlantEnvelopeResponse>('probe/envelope')` with the original `memberships: string[]` defect shape. The call site produced **zero** sites; only the wrapper's own plumbing appeared, a near-verbatim match for a recorded exemption, so the file's precedent invites exempting it — and with that one entry added the suite was **33/33 green**. The C1/NEW-1 class, a third time. | `readDeclarationBody` returned at the first balanced `{…}` at paren depth 0, which for that signature is the **return-type annotation**. The forwarding call sat past it. This directly contradicted 11.7's "it now matches `apiFetch<… T …>` and reads the declaration's balanced body". | The body's `{` is now found by paren depth, angle depth, and what precedes it (`opensDeclarationBody`): a type annotation's `{` follows an operator still expecting a type, a body's follows a completed one. Non-body braces are balanced past, not returned at. Comments are skipped too, so a brace or semicolon inside one cannot mis-place the body. |
+| I3 | Not a plant: 11.8's `'a wrapper over a WRAPPER is a wrapper — discovery runs to a fixed point'` **passed with `break` inserted after round 0**, all 33 green. Its files (`api/inner.ts`, `api/outer.ts`) happened to resolve in round 0 by walk order. 11.8 claimed "each was verified non-vacuous by reverting its own fix"; for this one the check was claimed and not performed. | Discovery visits files in filesystem order and the declaring file came first, so one round sufficed for that particular tree. | `walk` now sorts its entries, making order a property of the tree. A second case (`api/aaOuter.ts` → `api/zzInner.ts`) is ordered so the outer wrapper is read *before* the name it forwards to is known, which cannot converge in one round. The original pair is kept as a second case. Re-inserting `break` after round 0 now fails exactly the new test (run below). |
+| I4 | "Fed by a captured fixture" — the property the guard's header called what keeps design D2 from being quietly undone, and which commit `ed0d9c5` called "mechanically enforced" — was enforced as `'[^']*fixtures/api-responses/[^']*'`, a **path substring**, with no check on what the file is. That directory sits at the repo root, outside `walk()`'s `web/src` root, so a hand-authored module dropped there was indistinguishable from a capture and conferred full `covered` status. | Only "lives in the fixture directory" was ever checked. | **Closed mechanically, in both directions.** The specifier's basename is cross-checked against the `CaptureSpec` names parsed out of `server/src/routers/apiResponseFixtures.int.test.ts` (26 today, with a floor of 20 so a pattern that stops matching fails loudly rather than shrinking the set); an import naming anything else confers nothing and its declaration surfaces as unverified. A second assertion requires the fixture directory and that inventory to be **the same set**, so an unaccounted-for file there fails the suite by name rather than merely being unable to confer coverage. |
+
+Smaller corrections in the same wave: `transportStart`'s `volatileNumbers: ['elapsed_frames']`
+(M2) was over-broad and its justifying comment factually wrong — `TransportStore.startTake` never
+writes that column and the value is deterministically `0` on a fresh seed; alias resolution was
+one-sided (M3), so an aliased annotation in the conformance module recorded coverage under the
+local spelling rather than the checked export; `POPULATION_FLOOR` was 100 against an actual 120
+(M8), tolerating a 20-site silent loss. All three closed. The honesty corrections M1, M4 and M5
+are folded into 11.5, 11.2 and 11.3 above.
+
+#### Demonstrated, not asserted
+
+Every claim below names the command that produced it:
+`cd web && npx vitest run src/apiResponseShapes.repo.test.ts`.
+
+- **I1 pre-fix.** `apiFetch<{ ok: boolean; detail: string }>('probe/semi')` planted in
+  `web/src/api/hooks/`: **33/33 passed**. The comma-separated spelling of the same call: **1
+  failed**, reporting the site. `cd web && npx biome format --write src/api/hooks/<plant>.ts`
+  rewrote the comma into a semicolon, after which the suite returned to **33/33** with two planted
+  sites invisible.
+- **I1 post-fix.** The same plant, re-formatted with `npx biome format` first: **1 failed**, naming
+  `apiFetch<{ ok: boolean; detail: string }>('probe/semi')` and `apiFetch<{ cb: () => void }>('probe/arrow')`
+  by file, line and descriptor.
+- **I2 pre-fix.** The envelope wrapper plus its typed call site: only the plumbing
+  `apiFetch<T>(p)` reported; adding the one exemption that plumbing invites gave **33/33 green**
+  with `fetchEnvelope<PlantEnvelopeResponse>('probe/envelope')` un-enumerated.
+- **I2 post-fix.** Same plant, no exemption: **1 failed**, naming that call site with
+  `acquires: PlantEnvelopeResponse`.
+- **I3.** `break` after round 0, pre-fix: **33/33 green**. Post-fix, same edit: **1 failed**, and
+  it is the new ordered test.
+- **I4 pre-fix.** `fixtures/api-responses/handAuthored.json` (a hand-written literal) imported into
+  the conformance module and assigned to `Show`: the real-tree "no unverified site" assertion
+  **passed**. Post-fix: **2 failed** — the assignment surfaces as
+  `const Show = handAuthored`, and the directory/inventory sets no longer match.
+- **M2.** `TransportStore.startTake` mutated to emit `elapsed_frames: 987`: **26/26 passed** under
+  the old spec, **1 failed** (`-"elapsed_frames": 0 / +"elapsed_frames": 987`) under the new one.
+  Re-captured via `npm run fixtures:capture -w server`; the fixture bytes are unchanged, because
+  the real value was already 0.
+
+**Non-vacuity of the new regression tests, each RUN** (not claimed — this finding exists because
+11.8 claimed it without running it). Reverting only the named fix, in the working tree:
+
+| fix reverted | tests that go red |
+|---|---|
+| `;` allowed inside `{…}` in `readAngles` | the semicolon-separated inline type-argument test (1) |
+| arrow `>` not treated as a closer | the arrow-typed member test (1) |
+| unparsed sites recorded instead of `continue` | the unparseable-type-argument test (1) |
+| `opensDeclarationBody` gate in `readDeclarationBody` | the object return-type test and the object type-parameter-constraint test (2) |
+| comment skipping in `readDeclarationBody` | the commented-signature test (1) |
+| the fixed-point loop (`break` after round 0) | the ordered wrapper-over-wrapper test (1) |
+| the declared-capture cross-check | the hand-authored-fixture test (1) |
+| alias-symmetric `headType` | the aliased-conformance-annotation test (1) |
+| `POPULATION_FLOOR` raised above the actual count | the population-floor test (1) |
+
+**Population unchanged: 120 sites / 68 covered / 52 exempted**, same per-detector breakdown
+(apiFetch 52, wrapper 7, rawFetch 8, jsonBody 5, jsonParse 5, beacon 2, conformanceAssertion 41).
+Expected — these fixes close shapes the tree does not yet contain — and asserted rather than
+assumed. Guard suite: 33 tests → **43**.
+
+**Frozen surface.** No handler, route, response shape, status code, header, or WebSocket message
+was touched by this wave. The only server-side change is a test-fixture capture *declaration*
+(`volatileNumbers`), which alters what the capture suite compares, not what any handler emits; the
+re-captured fixture bytes are byte-identical to the committed ones.
+
+**What is still not enforced, plainly.** The guard does not resolve callees through an in-file
+rebinding, a renaming re-export, an aliased wrapper import, a class-method wrapper, or an
+annotated arrow const (11.5 rank 2, all five verified by planting). It does not know whether a
+covered type was checked against the *right* endpoint's capture (rank 3). It does not adjudicate,
+or even require, an exemption's evidence — only that the `reason` is 40 characters long (rank 9).
+And it locates declaration bodies with a heuristic rather than a grammar (rank 10). None of these
+is stated anywhere in the guard or in this section as something the code enforces.
