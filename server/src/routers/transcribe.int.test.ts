@@ -3,21 +3,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, env, envWith } from '../test/harness';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedSession, seedShow, seedStudio } from '../test/helpers';
+import { seededSession } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
 
-async function seededSession(): Promise<string> {
-  const studio = seedStudio();
-  const show = seedShow({ studioId: studio });
-  return seedSession({ showId: show });
-}
 const J = { 'content-type': 'application/json' };
 
 describe('unavailable endpoints (503)', () => {
   it('transcribe.csv, transcript-words/generate, topics/generate are 503', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     for (const path of [
       `/api/sessions/${s}/transcribe.csv`,
       `/api/sessions/${s}/transcript-words/generate`,
@@ -30,7 +25,7 @@ describe('unavailable endpoints (503)', () => {
   });
 
   it('unconfigured generate is byte-identical to the pre-change frozen response', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/generate`,
       { method: 'POST' },
@@ -48,7 +43,7 @@ describe('unavailable endpoints (503)', () => {
   // with that change, not before.
 
   it('topics/generate is byte-identical to the pre-change frozen 503', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${s}/topics/generate`,
       { method: 'POST' },
@@ -124,13 +119,17 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     await __resetAiMcpListenerForTests();
   });
 
-  async function newSession(): Promise<string> {
-    const s = await seededSession();
+  function newSession(): string {
+    const s = seededSession().sessionId;
     seededIds.push(s);
     return s;
   }
 
-  function configuredEnv(cliPath: string, overrides: Record<string, unknown> = {}) {
+  // Named for its gate (CLAUDE_CLI_PATH) — this file also has a module-level
+  // `deepgramConfiguredEnv` for the transcript-generation suite below; the two
+  // used to share the name `configuredEnv`, the inner silently shadowing the
+  // outer (code-health-tail task 5.1, finding 5.10).
+  function claudeConfiguredEnv(cliPath: string, overrides: Record<string, unknown> = {}) {
     return envWith({
       CLAUDE_CLI_PATH: cliPath,
       HOST: '127.0.0.1',
@@ -182,7 +181,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   }
 
   it('unconfigured: 503 byte-identical to the pre-change detail, no spawn (configured-vs-unconfigured contrast)', async () => {
-    const s = await newSession();
+    const s = newSession();
     const res = await generateReq(s, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
@@ -192,7 +191,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('open-network + configured: 503 with a distinct detail, no spawn', async () => {
-    const s = await newSession();
+    const s = newSession();
     seedTranscript(s);
     const res = await generateReq(
       s,
@@ -211,9 +210,9 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('configured + no transcript words: 400, no spawn', async () => {
-    const s = await newSession();
+    const s = newSession();
     // Deliberately no seedTranscript(s) call.
-    const res = await generateReq(s, configuredEnv(SUCCESS_STREAM_FIXTURE));
+    const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
     expect(res.status).toBe(400);
     const detail = ((await res.json()) as { detail: string }).detail;
     expect(detail).toMatch(/transcript/i);
@@ -221,12 +220,12 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('configured + concurrency: a turn already holding the session slot → 409, no spawn', async () => {
-    const s = await newSession();
+    const s = newSession();
     seedTranscript(s);
     const slot = aiChatTurns.tryAcquire(s, 2);
     expect(slot.ok).toBe(true);
     try {
-      const res = await generateReq(s, configuredEnv(SUCCESS_STREAM_FIXTURE));
+      const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
       expect(res.status).toBe(409);
       const detail = ((await res.json()) as { detail: string }).detail;
       expect(detail).toMatch(/progress|busy|generat/i);
@@ -238,13 +237,13 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
   it('configured + transcript + success: 200 {topics} — the OLD topics are gone, the fresh ' +
     'set (real create_topic calls) replaces them, and the shape matches GET …/topics', async () => {
-    const s = await newSession();
+    const s = newSession();
     seedTranscript(s);
     const oldA = seedTopic(s, 'Old topic A');
     const oldB = seedTopic(s, 'Old topic B');
     expect(currentTopics(s).map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
 
-    const res = await generateReq(s, configuredEnv(REAL_SUCCESS_FIXTURE));
+    const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { topics: Array<Record<string, unknown>> };
 
@@ -289,14 +288,14 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   it('configured + transcript + CLI failure (partial-new state): 502 with a FIXED detail, and the ' +
     'prior topics are BYTE-FOR-BYTE unchanged — deleteTopics(newIds) removes only the topics THIS ' +
     'run created, proven against real create_topic calls made before the failure', async () => {
-    const s = await newSession();
+    const s = newSession();
     seedTranscript(s);
     const oldA = seedTopic(s, 'Old topic A');
     const oldB = seedTopic(s, 'Old topic B');
     const preRunSnapshot = currentTopics(s);
     expect(preRunSnapshot).toHaveLength(2);
 
-    const res = await generateReq(s, configuredEnv(REAL_PARTIAL_FAIL_FIXTURE));
+    const res = await generateReq(s, claudeConfiguredEnv(REAL_PARTIAL_FAIL_FIXTURE));
     expect(res.status).toBe(502);
     const body = (await res.json()) as { detail: string };
     // Fixed, handler-owned detail — never the CLI's raw outcome token.
@@ -323,12 +322,12 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   it('configured + transcript + zero-topics-created (CLI reports success but creates nothing): ' +
     '502, prior topics intact — the simulated fake-claude.mjs success stream never makes a real ' +
     'MCP call, so newIds.length === 0 even though outcome.ok is true', async () => {
-    const s = await newSession();
+    const s = newSession();
     seedTranscript(s);
     const old = seedTopic(s, 'Only old topic');
     const preRunSnapshot = currentTopics(s);
 
-    const res = await generateReq(s, configuredEnv(SUCCESS_STREAM_FIXTURE));
+    const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
     expect(res.status).toBe(502);
     const body = (await res.json()) as { detail: string };
     expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
@@ -339,11 +338,11 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('transcribe.csv stays frozen 503 even on a fully configured deployment', async () => {
-    const s = await newSession();
+    const s = newSession();
     const res = await app.request(
       `/api/sessions/${s}/transcribe.csv`,
       { method: 'GET' },
-      configuredEnv(SUCCESS_STREAM_FIXTURE),
+      claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE),
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
@@ -354,7 +353,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
 describe('transcript-words CRUD', () => {
   it('create → list → patch → delete', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const create = await app.request(
       `/api/sessions/${s}/transcript-words`,
       { method: 'POST', headers: J, body: JSON.stringify({ speaker: 'Host', word: 'hello' }) },
@@ -387,7 +386,7 @@ describe('transcript-words CRUD', () => {
   });
 
   it('404 patching an unknown word', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/nope`,
       { method: 'PATCH', headers: J, body: JSON.stringify({ word: 'x' }) },
@@ -399,7 +398,7 @@ describe('transcript-words CRUD', () => {
 
 describe('topics CRUD', () => {
   it('create → list → patch → delete', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const create = await app.request(
       `/api/sessions/${s}/topics`,
       { method: 'POST', headers: J, body: JSON.stringify({ summary: 'Intro', topic_level: 1 }) },
@@ -427,7 +426,7 @@ describe('topics CRUD', () => {
   });
 
   it('404 deleting an unknown topic', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await app.request(`/api/sessions/${s}/topics/nope`, { method: 'DELETE' }, { ...env });
     expect(res.status).toBe(404);
   });
@@ -443,7 +442,7 @@ function deepgramResponse(words: unknown[]) {
   return { results: { channels: [{ alternatives: [{ words }] }] } };
 }
 
-function configuredEnv(overrides: Record<string, unknown> = {}) {
+function deepgramConfiguredEnv(overrides: Record<string, unknown> = {}) {
   return envWith({ DEEPGRAM_API_KEY: 'test-deepgram-key', DEEPGRAM_MODEL: 'nova-3', ...overrides });
 }
 
@@ -489,7 +488,7 @@ async function listWords(sessionId: string): Promise<Array<{ word: string }>> {
   return ((await res.json()) as { words: Array<{ word: string }> }).words;
 }
 
-function generate(sessionId: string, init: RequestInit = {}, envOverride = configuredEnv()) {
+function generate(sessionId: string, init: RequestInit = {}, envOverride = deepgramConfiguredEnv()) {
   return app.request(
     `/api/sessions/${sessionId}/transcript-words/generate`,
     { method: 'POST', ...init },
@@ -503,7 +502,7 @@ describe('transcript generation', () => {
   });
 
   it('200 {words}: session_time/speaker strings, start_sec/end_sec, contiguous ordinals, ordinal order', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
 
@@ -552,7 +551,7 @@ describe('transcript generation', () => {
   });
 
   it('400 no-audio: a session with zero audio segments', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await generate(s);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { detail: string };
@@ -560,20 +559,20 @@ describe('transcript generation', () => {
   });
 
   it('400 all-unreadable: segments exist but none is readable (distinct detail from no-audio)', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, CORRUPT);
 
     const res = await generate(s);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { detail: string };
 
-    const noAudioRes = await generate(await seededSession());
+    const noAudioRes = await generate(seededSession().sessionId);
     const noAudioBody = (await noAudioRes.json()) as { detail: string };
     expect(body.detail).not.toBe(noAudioBody.detail);
   });
 
   it('400 zero-word result does not wipe the transcript (gate decision 2)', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'existing');
 
@@ -592,7 +591,7 @@ describe('transcript generation', () => {
   });
 
   it('abandons the run without provider spend when the request is already aborted', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
 
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(deepgramResponse([])), { status: 200 }));
@@ -609,7 +608,7 @@ describe('transcript generation', () => {
   });
 
   it('409 concurrent: a second run is rejected with no additional provider spend', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
 
     const release: { fn: (() => void) | null } = { fn: null };
@@ -641,7 +640,7 @@ describe('transcript generation', () => {
   });
 
   it('502 upstream failure preserves existing words', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'existing');
 
@@ -675,7 +674,7 @@ describe('transcript generation', () => {
   }
 
   it('persists real-fixture enrichment and reads it back in ordinal order (anchored)', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
     stubFetchWithFixture();
@@ -708,7 +707,7 @@ describe('transcript generation', () => {
   });
 
   it('anchorless-group enrichment reads back with NULL start/end, not zeros', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     // No "Recording N Started" event logged — the segment's group resolves
     // no recording-start anchor (3-step chain step 3: anchorless).
     await uploadSegment(s, SEG1);
@@ -731,7 +730,7 @@ describe('transcript generation', () => {
   });
 
   it('a never-generated session reads listTranscriptEnrichment as empty arrays', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     expect(env.ports.sessions.get(s).listTranscriptEnrichment()).toEqual({
       paragraphs: [],
       sentiment: [],
@@ -739,7 +738,7 @@ describe('transcript generation', () => {
   });
 
   it('GET transcript-words shape is unchanged after enrichment is persisted', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
     stubFetchWithFixture();
@@ -759,7 +758,7 @@ describe('transcript generation', () => {
   });
 
   it('no transcript-enrichment HTTP route exists (in-process read only, design D5)', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-enrichment`,
       { method: 'GET' },
@@ -769,7 +768,7 @@ describe('transcript generation', () => {
   });
 
   it('replace-on-rerun: a successful run replaces prior words atomically', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'stale');
 

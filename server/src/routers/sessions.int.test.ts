@@ -1,15 +1,10 @@
 import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser, seededSession } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
   return ((await res.json()) as { id: string }).id;
-}
-async function seededSession(): Promise<string> {
-  const studio = seedStudio();
-  const show = seedShow({ studioId: studio });
-  return seedSession({ showId: show });
 }
 
 describe('GET /api/sessions', () => {
@@ -54,7 +49,7 @@ describe('POST /api/sessions', () => {
 
 describe('session lifecycle (PUT / archive / restore / delete)', () => {
   it('PUT renames and updates the start offset', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${session}`,
       {
@@ -71,7 +66,7 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('archive then restore toggles the flag', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const a = await app.request(`/api/sessions/${session}/archive`, { method: 'POST' }, { ...env });
     expect(a.status).toBe(200);
     expect((await a.json()) as { archived: boolean }).toMatchObject({ archived: true });
@@ -80,14 +75,14 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('DELETE hides the session', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(`/api/sessions/${session}`, { method: 'DELETE' }, { ...env });
     expect(res.status).toBe(200);
     expect((await res.json()) as { hidden: boolean }).toMatchObject({ hidden: true });
   });
 
   it('youtube-import is 503 with the current unconditional-refusal detail body', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST' },
@@ -113,7 +108,7 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
       { ...env },
     );
 
-    const hiddenSession = await seededSession();
+    const hiddenSession = seededSession().sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}/youtube-import`,
@@ -229,7 +224,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('200 for an archived session, reflecting its archived state', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const archiveRes = await app.request(
       `/api/sessions/${session}/archive`,
       { method: 'POST' },
@@ -247,7 +242,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   it('masked 404 (identical shape) for nonexistent, ui_hidden, and foreign-studio ids', async () => {
     const nonexistent = await app.request('/api/sessions/does-not-exist', { method: 'GET' }, { ...env });
 
-    const hiddenSession = await seededSession();
+    const hiddenSession = seededSession().sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}`,

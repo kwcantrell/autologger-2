@@ -9,7 +9,7 @@
 import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
 import { UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
-import { seedSession, seedShow, seedStudio } from '../test/helpers';
+import { seededSession } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 
@@ -34,12 +34,6 @@ function categoriesJsonWithInternal(internalId: string): string {
       off_label: '',
     },
   ]);
-}
-
-async function seededSession(categoriesJson?: string): Promise<string> {
-  const studio = seedStudio();
-  const show = seedShow({ studioId: studio, categoriesJson });
-  return seedSession({ showId: show });
 }
 
 interface EventOut {
@@ -82,7 +76,7 @@ async function putEvent(
 
 describe('PUT event update — profile-defined internal category (frozen edge)', () => {
   it('strips category UI snapshots when the profile defines id `internal`', async () => {
-    const session = await seededSession(categoriesJsonWithInternal('internal'));
+    const session = seededSession({ categoriesJson: categoriesJsonWithInternal('internal') }).sessionId;
     const ev = await postEvent(session, 'cam');
     expect(ev.metadata[UI_SNAPSHOT_LABEL_KEY]).toBe('Camera');
     expect(ev.metadata[UI_SNAPSHOT_COLOR_KEY]).toBe('#112233');
@@ -99,7 +93,7 @@ describe('PUT event update — profile-defined internal category (frozen edge)',
   });
 
   it('strips snapshots for any letter case of the profile-defined id', async () => {
-    const session = await seededSession(categoriesJsonWithInternal('Internal'));
+    const session = seededSession({ categoriesJson: categoriesJsonWithInternal('Internal') }).sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'Internal',
@@ -114,7 +108,7 @@ describe('PUT event update — profile-defined internal category (frozen edge)',
 
 describe('PUT event update — non-profile category rejected (frozen asymmetry)', () => {
   it('400s on `internal` when the profile does not define it (default seed profile)', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'internal',
@@ -125,7 +119,7 @@ describe('PUT event update — non-profile category rejected (frozen asymmetry)'
   });
 
   it('400s on any other non-profile category', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'nope',
@@ -135,7 +129,7 @@ describe('PUT event update — non-profile category rejected (frozen asymmetry)'
   });
 
   it('POST (asymmetrically) admits the built-in `internal` even off-profile', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const ev = await postEvent(session, 'internal');
     expect(ev.category).toBe('internal');
   });

@@ -1,14 +1,8 @@
 import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { seedSession, seedShow, seedStudio, setCompanionPresence } from '../test/helpers';
+import { seededSession, setCompanionPresence } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
-
-async function seededSession(categoriesJson?: string): Promise<string> {
-  const studio = seedStudio();
-  const show = seedShow({ studioId: studio, categoriesJson });
-  return seedSession({ showId: show });
-}
 async function state(): Promise<Record<string, unknown>> {
   const res = await app.request('/api/companion/state', { method: 'GET' }, { ...env });
   return (await res.json()) as Record<string, unknown>;
@@ -16,7 +10,7 @@ async function state(): Promise<Record<string, unknown>> {
 
 describe('presence + state', () => {
   it('a registered presence surfaces in state', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s, { visible: true });
     const body = await state();
     expect(Number(body.connected_clients)).toBeGreaterThanOrEqual(1);
@@ -26,7 +20,7 @@ describe('presence + state', () => {
   });
 
   it('POST presence with closing:true removes it', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     await app.request(
       '/api/companion/presence',
@@ -39,7 +33,7 @@ describe('presence + state', () => {
 
 describe('log', () => {
   it('logs an event by category_id for the active session', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request(
       '/api/companion/log',
@@ -59,7 +53,7 @@ describe('log', () => {
   });
 
   it('400 on an unknown category', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request(
       '/api/companion/log',
@@ -72,7 +66,7 @@ describe('log', () => {
 
 describe('transport', () => {
   it('start then stop flips is_rolling', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     const start = await app.request(
       '/api/companion/transport',
@@ -95,7 +89,7 @@ describe('transport', () => {
 
 describe('command + ack', () => {
   it('records last_command and acks by id', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     const cmd = await app.request(
       '/api/companion/command',
@@ -124,7 +118,7 @@ describe('command + ack', () => {
 
 describe('categories + commands/wait', () => {
   it('returns the active session show categories', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request('/api/companion/categories', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
@@ -144,10 +138,8 @@ describe('categories + commands/wait', () => {
 
 describe('primarySession is global / unscoped (current behavior)', () => {
   it('selects the visibly-fresher session regardless of studio', async () => {
-    const showA = seedShow({ studioId: seedStudio() });
-    const sA = seedSession({ showId: showA });
-    const showB = seedShow({ studioId: seedStudio() });
-    const sB = seedSession({ showId: showB });
+    const sA = seededSession().sessionId;
+    const sB = seededSession().sessionId;
     await setCompanionPresence('cA', sA, { visible: false });
     await setCompanionPresence('cB', sB, { visible: true });
     expect((await state()).active_session_id).toBe(sB);

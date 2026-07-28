@@ -9,16 +9,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
-import { seedSession, seedShow, seedStudio, SEED_CATEGORY_ID } from '../test/helpers';
-
-async function seeded(): Promise<string> {
-  const show = seedShow({ studioId: seedStudio() });
-  return seedSession({ showId: show });
-}
+import { SEED_CATEGORY_ID, seededSession } from '../test/helpers';
 
 describe('hub ↔ catalog projection', () => {
   it('logging an event bumps the projected event_count on the catalog row', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -37,7 +32,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('start/stop take round-trips is_rolling through hub and projection', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     const start = await app.request(`/api/sessions/${s}/transport/start`, { method: 'POST' }, env);
     expect(start.status).toBe(200);
     const startBody = (await start.json()) as { started: boolean; is_rolling: boolean };
@@ -67,7 +62,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('hub state persists across registry eviction (reopen from disk)', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -84,7 +79,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('recording lease claim/conflict/release over HTTP', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     const claim = (cid: string) =>
       app.request(
         `/api/sessions/${s}/audio-recording-lease`,
@@ -111,7 +106,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('status payload exposes event counts, revision, and lease fields (old-suite parity)', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -138,7 +133,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('audio segment add/list round-trips through the hub over HTTP (add→list; delete has no HTTP route)', async () => {
-    const s = await seeded();
+    const s = seededSession().sessionId;
     const bytes = new Uint8Array([9, 8, 7]);
     const up = await app.request(
       `/api/sessions/${s}/audio/segments`,

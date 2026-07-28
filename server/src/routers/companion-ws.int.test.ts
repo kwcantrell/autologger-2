@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import { env } from '../test/harness';
-import { seedSession, seedShow, seedStudio, setCompanionPresence } from '../test/helpers';
+import { seededSession, setCompanionPresence } from '../test/helpers';
 import type { AppEnv } from '../types';
 
 let server: ServerType;
@@ -38,11 +38,6 @@ beforeAll(async () => {
 
 afterAll(() => server.close());
 
-async function seededSession(): Promise<string> {
-  const show = seedShow({ studioId: seedStudio() });
-  return seedSession({ showId: show });
-}
-
 function connect(sessionId: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`);
@@ -63,7 +58,7 @@ function nextMessage(ws: WebSocket, ms = 3000): Promise<string> {
 
 describe('companion WebSocket relay (Node)', () => {
   it('delivers a posted command over the session WebSocket', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const ws = await connect(s);
     const got = nextMessage(ws);
     setCompanionPresence('c1', s);
@@ -78,7 +73,7 @@ describe('companion WebSocket relay (Node)', () => {
   });
 
   it('re-broadcasts a command sent BY a connected client', async () => {
-    const s = await seededSession();
+    const s = seededSession().sessionId;
     const sender = await connect(s);
     const receiver = await connect(s);
     const got = nextMessage(receiver);
