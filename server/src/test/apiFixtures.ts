@@ -181,7 +181,7 @@ function readFixture(spec: CaptureSpec): Json | undefined {
   }
   if (!text.endsWith(footer)) {
     throw new Error(
-      `Fixture ${spec.name}.ts does not end with the generated footer exporting \`${spec.exportName ?? spec.name}\` — it was hand-edited, so what web/ imports is no longer what the server emitted. ${hint}`,
+      `Fixture ${spec.name}.ts does not end with the generated footer exporting \`${spec.exportName ?? spec.name}\` — it was hand-edited, so this file no longer matches its generated form and can no longer be trusted as captured output (this holds regardless of whether web/ currently imports it). ${hint}`,
     );
   }
   return JSON.parse(text.slice(header.length, text.length - footer.length)) as Json;

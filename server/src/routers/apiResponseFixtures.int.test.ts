@@ -404,16 +404,25 @@ describe('events', () => {
 
   it('GET /api/sessions/:id/events matches the captured fixture', async () => {
     const { sessionId } = await seedActiveChain();
-    for (const [category, message] of [
-      ['cam', 'Cut to 2'],
-      ['internal', 'Recording started'],
+    // `eventStore.listEvents` orders `ORDER BY wall_time_utc ASC, id ASC`, so
+    // two events landing in the same millisecond would tie-break on the
+    // random uuid `id`, making the emitted array order nondeterministic (N1,
+    // web-api-shape-conformance phase-4 fix-2 re-review). Explicit,
+    // second-apart `marked_at_utc` values remove the tie outright rather than
+    // relying on real wall-clock separation between two sequential requests —
+    // this doesn't touch `timecode_total_frames`, since the transport here
+    // never rolls (`is_rolling` is false), so `timecodeForMark` ignores the
+    // mark instant entirely.
+    for (const [category, message, markedAtUtc] of [
+      ['cam', 'Cut to 2', '2026-06-25T00:00:00.000Z'],
+      ['internal', 'Recording started', '2026-06-25T00:00:01.000Z'],
     ]) {
       await app.request(
         `/api/sessions/${sessionId}/events`,
         {
           method: 'POST',
           headers: JSON_HEADERS,
-          body: JSON.stringify({ category, message }),
+          body: JSON.stringify({ category, message, marked_at_utc: markedAtUtc }),
         },
         { ...env },
       );

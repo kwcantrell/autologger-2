@@ -489,3 +489,42 @@ established by reading the producing function; the corresponding literals in
 `web/src/api/types.conformance.test.ts` are labelled as source-reads rather than captures, and
 they are the only hand-written values left in that file. This is D1's named production-data-
 variance residual, not a defect in the capture.
+
+---
+
+## 10. Residual (recorded, not fixed) — `fixtures/api-responses/_mutable.ts` is an unverified hinge
+
+Found by the phase-4 fix-2 re-review (2026-07-28), recorded here rather than fixed because it
+is mitigated, not a blocker.
+
+`_mutable.ts` supplies `Mutable<T>`, which every generated `.ts` fixture imports to strip the
+`readonly` that `as const` adds back on (§9's rationale). The generated header pins the **import
+specifier** (`import type { Mutable } from './_mutable';`) via the byte-identical header/footer
+check in `readFixture` (`server/src/test/apiFixtures.ts`) — but nothing pins that file's
+**content**, and the server-side capture suite never reads it (it only reads the `.ts` fixtures
+it captured, as text, to reconstruct and compare header/payload/footer). A conditional type in
+`_mutable.ts` can therefore be edited to quietly defeat a conformance check while leaving the
+capture suite green.
+
+**Demonstrated, not hypothetical.** The re-reviewer added a field to `Session` that the server
+never emits, then edited `Mutable<T>` with a surgical conditional targeting that field's type,
+and three of `web/src/api/types.conformance.test.ts`'s conformance assignments went silent — no
+`@ts-expect-error` fired, no fixture check failed.
+
+**Why this is a residual, not a fix task:**
+
+- `_mutable.ts` is **declared hand-written source** under D4 (the file's own header says so) —
+  it is deliberately outside the "captured, never hand-authored" guarantee D2 establishes for the
+  fixtures it supports, the same way `types.ts`'s interfaces are hand-written and checked
+  *against* captures rather than captured themselves.
+- The blunt version of this attack — `export type Mutable<T> = any;` — **is** caught: an `any`
+  hinge would make every conformance assignment in `types.conformance.test.ts` trivially pass,
+  including ones with a deliberate `@ts-expect-error`, so those guards would start failing to
+  fail, which is itself an observable, test-visible break. Only a *surgical*, type-specific
+  conditional evades detection, which raises the bar from "one careless edit" to "a targeted one
+  aimed at a specific field."
+
+No mechanism in this change's scope pins `_mutable.ts`'s content (e.g., a checksum or a
+dedicated repo-invariant test asserting its exact text). If a future change wants to close this,
+that is where it starts — a small, targeted guard rather than a redesign, since the file is one
+line of load-bearing logic.
