@@ -56,6 +56,8 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
       appendLogImportLine(job.id, `Loaded ${sheets.length} sheet(s).`);
 
       const sessions = catalog.sessions.listSessionsForShow(showId);
+      let sessionsOk = 0;
+      let sessionsFailed = 0;
 
       for (const sheet of sheets) {
         const title = sheet.name.trim();
@@ -96,16 +98,31 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
           for (const line of result.lines) {
             appendLogImportLine(job.id, `  ${title}: ${line}`);
           }
+          sessionsOk += 1;
         } catch (err) {
+          sessionsFailed += 1;
           const detail = err instanceof Error ? err.message : String(err);
           appendLogImportLine(job.id, `Failed “${title}”: ${detail}`);
-          setLogImportStatus(job.id, 'failed', detail);
-          return;
+          appendLogImportLine(job.id, `Continuing with remaining sheets…`);
+          // Per-session failure must not abort the rest of the workbook.
         }
       }
 
-      appendLogImportLine(job.id, 'Done.');
-      setLogImportStatus(job.id, 'completed');
+      appendLogImportLine(
+        job.id,
+        `Done. ${sessionsOk} session(s) imported, ${sessionsFailed} failed.`,
+      );
+      if (sessionsFailed > 0 && sessionsOk === 0) {
+        setLogImportStatus(job.id, 'failed', 'All matched sessions failed to import.');
+      } else if (sessionsFailed > 0) {
+        setLogImportStatus(
+          job.id,
+          'completed',
+          `${sessionsFailed} session(s) failed; see progress lines.`,
+        );
+      } else {
+        setLogImportStatus(job.id, 'completed');
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       appendLogImportLine(job.id, `Failed: ${detail}`);

@@ -55,7 +55,7 @@ export async function ensureTimedTranscript(input: {
   }
 
   input.onProgress('Generating transcript (DeepGram)…');
-  try {
+  const attempt = async (): Promise<TranscriptToken[]> => {
     const words = await generateTranscriptWords({
       config: input.config,
       audio: input.audio,
@@ -63,15 +63,40 @@ export async function ensureTimedTranscript(input: {
       ctx: input.ctx,
       sessionId: input.sessionId,
     });
-    tokens = timedTranscriptTokens(input.getHub());
-    if (tokens.length === 0) {
+    const next = timedTranscriptTokens(input.getHub());
+    if (next.length === 0) {
       throw new Error(
         `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
       );
     }
+    return next;
+  };
+
+  try {
+    tokens = await attempt();
     input.onProgress(`Transcript ready (${tokens.length} timed words).`);
     return tokens;
   } catch (err) {
+    const isUpstream =
+      err instanceof TranscriptGenerateError &&
+      (err.code === 'upstream' || err.code === 'in_flight');
+    if (isUpstream) {
+      input.onProgress(
+        `Transcript generation failed (${err.message}); retrying once…`,
+      );
+      // Brief pause: clears in-flight slot races and transient DeepGram blips.
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        tokens = await attempt();
+        input.onProgress(`Transcript ready after retry (${tokens.length} timed words).`);
+        return tokens;
+      } catch (retryErr) {
+        if (retryErr instanceof TranscriptGenerateError) {
+          throw new Error(`Transcript generation failed: ${retryErr.message}`);
+        }
+        throw retryErr;
+      }
+    }
     if (err instanceof TranscriptGenerateError) {
       throw new Error(`Transcript generation failed: ${err.message}`);
     }
