@@ -33,13 +33,11 @@ const SESSION_ID = 'sess-recovery-1';
 function orphanStartEvent(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
     event_id: 'ev-start-1',
-    session_id: SESSION_ID,
     category: 'internal',
     category_label: 'Internal',
     category_color: '#000000',
     message: 'Recording 1 Started',
     timecode: '00:00:10:00',
-    timecode_hms: '00:00:10',
     timecode_total_frames: 240,
     frame_rate: 24,
     wall_time_utc: '2026-07-21T00:00:10Z',
@@ -54,7 +52,6 @@ function matchingStopEvent(): LogEvent {
     event_id: 'ev-stop-1',
     message: 'Recording 1 Stopped',
     timecode: '00:00:20:00',
-    timecode_hms: '00:00:20',
     timecode_total_frames: 480,
     wall_time_utc: '2026-07-21T00:00:20Z',
   };

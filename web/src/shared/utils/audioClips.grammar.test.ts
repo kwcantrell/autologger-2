@@ -27,13 +27,11 @@ import {
 function ev(partial: Partial<LogEvent>): LogEvent {
   return {
     event_id: 'e',
-    session_id: 's',
     category: 'internal',
     category_label: 'Internal',
     category_color: '#000000',
     message: '',
     timecode: '00:00:00',
-    timecode_hms: '00:00:00',
     timecode_total_frames: null,
     frame_rate: null,
     wall_time_utc: null,

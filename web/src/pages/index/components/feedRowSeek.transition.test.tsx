@@ -145,13 +145,11 @@ function statusFixture(overrides: Partial<SessionStatus> = {}): SessionStatus {
 function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
     event_id: 'ev-1',
-    session_id: SESSION_ID,
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: 'Row',
     timecode: '00:00:10:00',
-    timecode_hms: '00:00:10',
     timecode_total_frames: 240,
     frame_rate: 24,
     wall_time_utc: '2026-07-26T00:00:10Z',

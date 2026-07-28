@@ -30,6 +30,8 @@ import { describe, expect, it } from 'vitest';
 import type {
   ActiveStudioCategory,
   Category,
+  EventsResponse,
+  LogEvent,
   ProfilePayload,
   SessionStatus,
   ShowCategoriesResponse,
@@ -190,5 +192,65 @@ describe('CW-3 — SessionStatus declared three fields /status never emits', () 
   it('tolerates the undeclared `audio_recording_lease_age_sec`', () => {
     const check: SessionStatus = emitted;
     expect('audio_recording_lease_age_sec' in check).toBe(true);
+  });
+});
+
+describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow types', () => {
+  // Server: `enrichEventRpc` (`server/src/studio.ts`) over `eventRowToRpc`.
+  // The profile-hit branch: category found, so label/color come from it.
+  const resolvedEmitted = {
+    event_id: 'ev-1',
+    wall_time_utc: '2026-07-27T00:00:10Z',
+    timecode: '00:00:10:00',
+    frame_rate: 24,
+    timecode_total_frames: 240,
+    category: 'cat-mic',
+    message: 'Mic check',
+    metadata: {},
+    category_label: 'Mic',
+    category_color: '#7cb7ff',
+  };
+
+  // The orphan branch with a NULL `timecode_total_frames`: `eventRowToRpc`
+  // nulls `timecode` and `frame_rate` together, and `enrichEventRpc` leaves
+  // `category_color` null when no usable `al_category_color_snapshot` exists.
+  const orphanEmitted = {
+    event_id: 'ev-2',
+    wall_time_utc: '2026-07-27T00:00:11Z',
+    timecode: null,
+    frame_rate: null,
+    timecode_total_frames: null,
+    category: 'deleted-cat',
+    message: 'Manually entered',
+    metadata: {},
+    category_label: 'deleted-cat',
+    category_color: null,
+  };
+
+  it('both emitted branches are assignable to LogEvent', () => {
+    const resolved: LogEvent = resolvedEmitted;
+    const orphan: LogEvent = orphanEmitted;
+    expect(resolved.category_color).toBe('#7cb7ff');
+    // Declaring these `string` was the defect: the orphan branch emits null.
+    expect(orphan.category_color).toBeNull();
+    expect(orphan.timecode).toBeNull();
+  });
+
+  it('`session_id` and `timecode_hms` are absent from the wire', () => {
+    for (const key of ['session_id', 'timecode_hms']) {
+      expect(key in resolvedEmitted).toBe(false);
+    }
+  });
+
+  it('an events envelope of both branches is assignable to EventsResponse', () => {
+    const envelope = {
+      events: [resolvedEmitted, orphanEmitted],
+      total: 2,
+      logged_event_count: 1,
+      offset: 0,
+      limit: 200,
+    };
+    const check: EventsResponse = envelope;
+    expect(check.events).toHaveLength(2);
   });
 });

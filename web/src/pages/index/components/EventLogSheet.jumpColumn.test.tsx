@@ -65,13 +65,11 @@ function categoryFixture(): Category {
 function resolvableEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
     event_id: 'ev-resolvable',
-    session_id: SESSION_ID,
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: 'Resolvable row',
     timecode: '00:00:10:00',
-    timecode_hms: '00:00:10',
     timecode_total_frames: 240,
     frame_rate: 24,
     wall_time_utc: '2026-07-21T00:00:10Z',
@@ -86,13 +84,11 @@ function resolvableEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
 function positionlessEventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
     event_id: 'ev-positionless',
-    session_id: SESSION_ID,
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: 'Positionless row',
     timecode: '00:00:20:00',
-    timecode_hms: '00:00:20',
     timecode_total_frames: null,
     frame_rate: null,
     wall_time_utc: '2026-07-21T00:00:20Z',

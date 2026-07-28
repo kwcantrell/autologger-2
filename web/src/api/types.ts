@@ -342,15 +342,27 @@ export interface SessionStatus {
 // Events
 // ---------------------------------------------------------------------------
 
+/**
+ * An events-list / event-mutation row — server: `enrichEventRpc`
+ * (`server/src/studio.ts`) over `eventRowToRpc`
+ * (`server/src/session/eventStore.ts`). Exactly the 10 keys below.
+ *
+ * Web-api-shape-conformance audit CW-4 corrected four things here:
+ * `session_id` and `timecode_hms` were declared but are **not emitted** (rows
+ * derive their own HMS from `timecode`); and two fields were over-narrow —
+ * `timecode` is `null` whenever the row's `timecode_total_frames` is NULL (the
+ * already-nullable `frame_rate` is null on that same branch), and
+ * `category_color` is `null` on `enrichEventRpc`'s orphan branch, when the
+ * event's category is gone from the profile and its
+ * `al_category_color_snapshot` is missing or not `#RRGGBB`.
+ */
 export interface LogEvent {
   event_id: string;
-  session_id: string;
   category: string;
   category_label: string;
-  category_color: string;
+  category_color: string | null;
   message: string;
-  timecode: string;
-  timecode_hms: string;
+  timecode: string | null;
   timecode_total_frames: number | null;
   frame_rate: number | null;
   wall_time_utc: string | null;

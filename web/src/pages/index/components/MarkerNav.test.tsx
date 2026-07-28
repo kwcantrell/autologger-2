@@ -43,13 +43,11 @@ const FPS = 24;
 function eventFixture(id: string, totalFrames: number): LogEvent {
   return {
     event_id: id,
-    session_id: SESSION_ID,
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: `event ${id}`,
     timecode: '00:00:00:00',
-    timecode_hms: '00:00:00',
     timecode_total_frames: totalFrames,
     frame_rate: FPS,
     wall_time_utc: null,

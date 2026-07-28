@@ -81,13 +81,11 @@ function wallAt(offsetSec: number): string {
 function ev(overrides: Partial<LogEvent>): LogEvent {
   return {
     event_id: `ev-${Math.random()}`,
-    session_id: SESSION_ID,
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: '',
     timecode: '00:00:00:00',
-    timecode_hms: '00:00:00',
     timecode_total_frames: 0,
     frame_rate: 24,
     wall_time_utc: wallAt(0),
