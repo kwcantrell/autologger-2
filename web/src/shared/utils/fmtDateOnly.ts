@@ -38,8 +38,15 @@ const DATE_FORMAT_OPTS: Intl.DateTimeFormatOptions = {
  * (rendered on its literal calendar day, no timezone shift) or a full ISO
  * timestamp (rendered as a local-zone instant, same as before). Returns `''`
  * for an empty/nullish input and echoes back anything unparseable.
+ *
+ * `null` is in the parameter type because both callers pass
+ * `episode_date ?? created_at_utc` and **both** of those are nullable on the
+ * wire (web-api-shape-conformance audit CW-9 corrected `created_at_utc`, which
+ * the client had declared `string`). The empty-input branch already handled
+ * this at runtime — the signature now says so, rather than a caller inventing
+ * a placeholder date to satisfy the old type.
  */
-export function fmtDateOnly(iso: string): string {
+export function fmtDateOnly(iso: string | null | undefined): string {
   if (!iso) return '';
 
   const bareMatch = BARE_DATE_RE.exec(iso);

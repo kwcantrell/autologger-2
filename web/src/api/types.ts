@@ -284,19 +284,31 @@ export interface SessionTopic {
 // Sessions
 // ---------------------------------------------------------------------------
 
+/**
+ * A session row from `GET /api/sessions` and `GET /api/sessions/:id` — both
+ * built by the single `serializeSessionEntry` (`server/src/routers/sessions.ts`).
+ *
+ * The four nullable-looking fields really are nullable
+ * (web-api-shape-conformance audit CW-9, which found them declared `string`):
+ * `show_id`/`show_code`/`show_name` come from a LEFT JOIN and are `?? null`
+ * when the show row is gone, and `created_at_utc` is null when the column is
+ * empty. Seeded test data never produces those nulls, so a captured fixture
+ * cannot demonstrate this class — the nullability is established from the
+ * serializer, not from an observation.
+ */
 export interface Session {
   id: string;
   title: string;
   deck_title: string;
-  show_id: string;
-  show_code: string;
-  show_name: string;
+  show_id: string | null;
+  show_code: string | null;
+  show_name: string | null;
   episode: string;
   notes: string;
   session_status: 'active' | 'archived' | 'deleted';
   frame_rate: number;
   start_offset_frames: number;
-  created_at_utc: string;
+  created_at_utc: string | null;
   episode_date: string | null;
   event_count: number;
   is_rolling: boolean;

@@ -27,6 +27,7 @@
 // about. They are here because task 3.5 requires a test per corrected shape.
 
 import { describe, expect, it } from 'vitest';
+import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
   ActiveStudioCategory,
   AudioSegment,
@@ -38,6 +39,7 @@ import type {
   Session,
   SessionCreateResponse,
   SessionStatus,
+  SessionsResponse,
   SessionTopic,
   SessionUpdateResponse,
   ShowCategoriesResponse,
@@ -371,5 +373,53 @@ describe('CW-7/CW-8 — session create and update are not `Session`', () => {
     // @ts-expect-error 15 of `Session`'s 19 keys are missing
     const asSessionToo: Session = updateEmitted;
     expect(asSession.id).toBe(asSessionToo.id);
+  });
+});
+
+describe('CW-9 — four Session fields are nullable on the wire', () => {
+  // Server: `serializeSessionEntry` (`server/src/routers/sessions.ts`), the
+  // single builder behind both the list and the detail route. This is the
+  // orphaned-show branch: the LEFT JOIN found no show row and the index row
+  // carries no `created_at_utc`. Seeded fixtures never reach it, which is why
+  // phase 4's captured fixtures cannot cover this finding.
+  const orphanedEmitted = {
+    id: 'sess-1',
+    title: 'Untitled',
+    deck_title: 'Untitled',
+    show_id: null,
+    show_code: null,
+    show_name: null,
+    episode: '1',
+    notes: '',
+    session_status: 'active' as const,
+    frame_rate: 24,
+    start_offset_frames: 0,
+    created_at_utc: null,
+    episode_date: null,
+    event_count: 0,
+    is_rolling: false,
+    current_take: 0,
+    rolling_timecode: '00:00:00:00',
+    total_runtime_hms: '00:00:00',
+    archived: false,
+  };
+
+  it('the orphaned-show branch is assignable to Session', () => {
+    const check: Session = orphanedEmitted;
+    expect(check.show_id).toBeNull();
+    expect(check.created_at_utc).toBeNull();
+  });
+
+  it('a list envelope of such rows is assignable to SessionsResponse', () => {
+    const envelope = { active: [orphanedEmitted], archived: [] };
+    const check: SessionsResponse = envelope;
+    expect(check.active[0].show_name).toBeNull();
+  });
+
+  it('the meta-line date formatter accepts the null both callers can pass', () => {
+    // `RecentSessionsList` / `HomeRoute` render `episode_date ?? created_at_utc`;
+    // with both null that is `null`, and it must render as an empty date rather
+    // than a fabricated one.
+    expect(fmtDateOnly(orphanedEmitted.episode_date ?? orphanedEmitted.created_at_utc)).toBe('');
   });
 });

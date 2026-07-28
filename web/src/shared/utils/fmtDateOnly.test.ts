@@ -56,6 +56,15 @@ describe('fmtDateOnly', () => {
     expect(fmtDateOnly('')).toBe('');
   });
 
+  // web-api-shape-conformance audit CW-9: `Session.created_at_utc` is nullable
+  // on the wire, and both callers pass `episode_date ?? created_at_utc` — so
+  // `null` genuinely reaches here when a session has neither. It renders as an
+  // empty date rather than a fabricated one.
+  it('returns empty string for a null or undefined date', () => {
+    expect(fmtDateOnly(null)).toBe('');
+    expect(fmtDateOnly(undefined)).toBe('');
+  });
+
   it('echoes back unparseable input', () => {
     expect(fmtDateOnly('not-a-date')).toBe('not-a-date');
   });
