@@ -410,3 +410,80 @@ Stated deliberately, because the spec forbids treating a count as completeness e
    round-trips the client itself wrote. The exclusion is recorded here because phase 5's guard
    (matching `JSON.parse … as`) will hit this line: when it does, the guard needs a named
    exemption for it, not a surprise finding.
+
+---
+
+## 9. Captured fixtures — inventory and the `.json` vs `.ts as const` choice (phase 4)
+
+Added by tasks 4.1–4.3. Recorded here rather than only in `.apply/` because D9's
+reasoning applies unchanged: the per-endpoint format decision is a deliverable a future
+reader will need, and `.apply/` does not survive archival.
+
+Fixtures live at repo-root **`fixtures/api-responses/`** — outside both workspaces, because
+the server captures them and the web tier consumes them, so a path under `server/src` or
+`web/src` would assert an ownership that does not exist. Both `tsc` runs reach them by import
+resolution; neither biome scope covers them, which is correct for generated output.
+
+Captured by `server/src/routers/apiResponseFixtures.int.test.ts` (one dedicated suite, so
+regeneration is one command over one file and the inventory is reviewable in one place) via
+`npm run fixtures:capture -w server`. **Assert-only otherwise:** a missing or mismatched
+fixture fails, is never written on the fly, and regeneration is refused outright under `CI`.
+
+`.json` is the default. `.ts` + `as const` is the exception, taken **only** where the client
+type reachable from the response contains a string-literal union, because a JSON import widens
+the literal and produces a false positive (D4's verified wrinkle).
+
+| fixture | endpoint / branch | format | reason |
+|---|---|---|---|
+| `adminUsers.json` | `GET /api/admin/users` | `.json` | `AdminDataResponse`/`AdminUser`/`AdminStudio`/`StudioBrief` — no union |
+| `profileAnonymous.ts` | `GET /api/profile`, anonymous + oauth unconfigured | `.ts` | `ActiveStudioCategory.type`, `ShowCategory.type` (in `shows[]`) |
+| `profileAuthenticated.ts` | `GET /api/profile`, logged in, two memberships | `.ts` | as above + `TeamMembershipBrief.role: TeamRole` |
+| `profileLoggedOutOauth.ts` | `GET /api/profile`, logged out + oauth configured | `.ts` | same type, third branch of `profilePayload` |
+| `showCreate.ts` | `POST /api/shows` | `.ts` | `Show.categories[].type` (`ShowCategory`) |
+| `showCategories.ts` | `GET /api/sessions/:id/show-categories` | `.ts` | `Category.type` |
+| `sessionsList.ts` | `GET /api/sessions` (active + archived) | `.ts` | `Session.session_status` |
+| `sessionDetail.ts` | `GET /api/sessions/:id` | `.ts` | `Session.session_status` |
+| `sessionCreate.json` | `POST /api/sessions` | `.json` | `SessionCreateResponse` — 7 keys, no union |
+| `sessionUpdate.json` | `PUT /api/sessions/:id` | `.json` | `SessionUpdateResponse` — 4 keys, no union |
+| `sessionStatus.json` | `GET /api/sessions/:id/status` | `.json` | `SessionStatus` — no union |
+| `eventCreate.json` | `POST /api/sessions/:id/events` | `.json` | `LogEvent` — no union |
+| `eventsList.json` | `GET /api/sessions/:id/events` | `.json` | `EventsResponse` — no union |
+| `transportStart.json` | `POST …/transport/start` | `.json` | `TransportStartResponse` — no union |
+| `transportStop.json` | `POST …/transport/stop` | `.json` | `TransportStopResponse` — no union |
+| `audioSegmentCreate.json` | `POST …/audio/segments` | `.json` | `AudioSegment` — no union |
+| `audioSegmentsList.json` | `GET …/audio/segments` | `.json` | `AudioSegmentsResponse` — no union |
+| `transcriptWordCreate.json` | `POST …/transcript-words` (201) | `.json` | `TranscriptWord` — no union |
+| `transcriptWordsList.json` | `GET …/transcript-words` | `.json` | `{words: TranscriptWord[]}` — no union |
+| `topicCreate.json` | `POST …/topics` (201) | `.json` | `SessionTopic` — no union |
+| `topicsList.json` | `GET …/topics` | `.json` | `{topics: SessionTopic[]}` — no union |
+| `teamCreate.ts` | `POST /api/teams` | `.ts` | `TeamCreateResponse.role: TeamRole` |
+| `teamDetailAdmin.ts` | `GET /api/teams/:id`, caller is a team **admin** | `.ts` | `TeamDetail.role` + `TeamMember.role`; this branch carries `invites` |
+| `teamDetailMember.ts` | `GET /api/teams/:id`, caller is a plain **member** | `.ts` | same types; this branch has **no** `invites` key |
+| `teamRename.json` | `PATCH /api/teams/:id` | `.json` | `TeamRenameResponse {id, name}` — no union |
+| `teamRoleChange.ts` | `POST …/members/:uid/role` | `.ts` | `TeamRoleChangeResponse.role: TeamRole` |
+
+Branch coverage taken deliberately, per task 4.2 and the "shape authority" requirement:
+`/api/profile` all **three** branches of `profilePayload` (audit row 1), `/api/teams/:id` **both**
+caller roles (row 26), `GET /api/sessions` both partitions, transport start **and** stop as two
+separate types (so neither can pass by omitting the other's flag), and `enrichEventRpc`'s
+resolved and `internal` category branches inside `eventsList.json`.
+
+**Unions from task 4.3's list with no fixture, and why.**
+
+- `CompanionCommandType` — `CompanionRemoteCommand` / `CompanionCommandsWaitResponse` have
+  **zero** call sites in `web/src` (§8.7). They are not response-consuming sites; the real
+  consumer is the Companion module, which mirrors the shapes in `companion/src/state.ts`. No
+  fixture is captured, and phase 5's guard should treat them as dead client types, not as an
+  unverified site.
+- `ActiveStudioCategory.type` — a fourth `'BUTTON'|'DROPDOWN'|'TEXT'|'ON_OFF'` union created by
+  phase 3's CW-2 split; not in 4.3's original list. Covered by the three `profile*.ts` fixtures.
+
+**What these fixtures still cannot establish** (unchanged from §6 CW-9 and §8.4, restated here
+because a green fixture check invites the opposite conclusion): the nullability class. A seeded
+session always has a joined show row and a `created_at_utc`, and a seeded event always logs
+against a category that exists, so `serializeSessionEntry`'s four `?? null` branches and
+`enrichEventRpc`'s orphan branch never fire against any capture. Those two shapes remain
+established by reading the producing function; the corresponding literals in
+`web/src/api/types.conformance.test.ts` are labelled as source-reads rather than captures, and
+they are the only hand-written values left in that file. This is D1's named production-data-
+variance residual, not a defect in the capture.

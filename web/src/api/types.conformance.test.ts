@@ -1,32 +1,64 @@
 // Conformance checks for the CLIENT-WRONG findings corrected by
-// `openspec/changes/web-api-shape-conformance` task 3.5 (audit.md §6, CW-1…CW-9).
+// `openspec/changes/web-api-shape-conformance` task 3.5 (audit.md §6, CW-1…CW-9),
+// now driven by CAPTURED responses (task 4.2/4.3).
+//
+// WHERE THESE VALUES COME FROM. Every `emitted` binding below is imported from
+// `fixtures/api-responses/`, whose files are produced by issuing the real
+// request against the real handler in
+// `server/src/routers/apiResponseFixtures.int.test.ts` and are re-asserted
+// against that handler on every server test run. Nothing here is transcribed
+// from a reading of the client type or of the handler source — that
+// transcription step is the defect this change exists to remove (design D2),
+// and the previous revision of this file did exactly that, deliberately and
+// temporarily, until the captures existed.
 //
 // WHY THESE ARE TYPE-LEVEL, NOT BEHAVIOURAL. Eight of the nine findings are
 // *latent*: the client declared a field the server never emits (or narrower
 // than it emits) and **no component reads it**. Nothing observable changes when
 // such a type is wrong, so there is no runtime behaviour to assert — the type
-// checker is the only instrument that can catch the defect. Each finding below
-// therefore gets a `const emitted = {…}` literal in the shape the server
-// actually emits (transcribed from the producing function named in the audit's
-// "evidence read" column) and an assignment of it to the client type. `npm run
-// typecheck` is the gate: reintroducing a deleted field, re-narrowing a widened
-// one, or collapsing a split type makes one of these assignments fail to
-// compile. The one finding with live consequences (CW-5, `duration_sec`) also
-// has behavioural coverage — see `useAudioClips.durationProbe.test.tsx`.
+// checker is the only instrument that can catch the defect. `npm run typecheck`
+// is the gate: reintroducing a deleted field, re-narrowing a widened one, or
+// collapsing a split type makes one of the assignments below fail to compile.
+// The one finding with live consequences (CW-5, `duration_sec`) also has
+// behavioural coverage — see `useAudioClips.durationProbe.test.tsx`.
 //
-// ADDITIVE TOLERANCE IS PRESERVED BY CONSTRUCTION. Every literal is bound to a
-// `const` first and only then assigned to the client type. That makes the
-// expression non-fresh, so TypeScript's excess-property check does not fire and
-// a response carrying keys the client does not declare still passes — the
-// forward-compatibility property the spec requires. Two literals below
-// deliberately carry an undeclared key to keep that honest.
+// ADDITIVE TOLERANCE IS PRESERVED BY CONSTRUCTION. Every fixture is a module
+// binding, never a fresh object literal at the assignment site, so TypeScript's
+// excess-property check does not fire and a response carrying keys the client
+// does not declare still passes — the forward-compatibility property the spec
+// requires. `sessionStatus` below carries such a key on purpose.
 //
-// THESE ARE TRANSCRIPTIONS, NOT CAPTURES. Phase 4 replaces them with fixtures
-// recorded from real server responses; until then they encode a *read* of the
-// producing function, which is exactly the weaker evidence the spec warns
-// about. They are here because task 3.5 requires a test per corrected shape.
+// UNSTABLE VALUES ARE REDACTED, NOT REMOVED. Ids, timestamps, and clock
+// readouts appear as `#`-masked strings of the original length. See
+// `server/src/test/apiFixtures.ts` for why that keeps the check honest about
+// key presence, JSON type, and nullability.
+//
+// WHAT A CAPTURED FIXTURE STRUCTURALLY CANNOT COVER (audit CW-9, and the
+// `enrichEventRpc` orphan branch inside CW-4). Both turn on a data state that
+// seeded test rows do not produce — a session whose joined show row is gone, an
+// event whose category has been deleted from the profile. No amount of capture
+// fidelity reaches them; this is the "production data variance" residual named
+// in design D1 and the risk table, not a gap in how phase 4 was executed. The
+// two describe blocks that cover those branches say so at their literals, which
+// remain the only hand-written values in this file.
 
 import { describe, expect, it } from 'vitest';
+import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
+import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
+import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
+import eventsList from '../../../fixtures/api-responses/eventsList.json';
+import { profileAnonymous } from '../../../fixtures/api-responses/profileAnonymous';
+import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
+import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
+import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
+import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
+import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
+import { showCategories } from '../../../fixtures/api-responses/showCategories';
+import topicCreate from '../../../fixtures/api-responses/topicCreate.json';
+import topicsList from '../../../fixtures/api-responses/topicsList.json';
+import transcriptWordsList from '../../../fixtures/api-responses/transcriptWordsList.json';
+import transportStart from '../../../fixtures/api-responses/transportStart.json';
+import transportStop from '../../../fixtures/api-responses/transportStop.json';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
   ActiveStudioCategory,
@@ -50,376 +82,233 @@ import type {
 } from './types';
 
 describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', () => {
-  // Server: `TransportStore.startTake` → `{...transportStateDict(ctx), started}`.
-  const startEmitted = {
-    is_rolling: true,
-    current_take: 1,
-    roll_started_at_utc: '2026-07-27T00:00:00Z',
-    elapsed_frames: 0,
-    timecode: '00:00:00:00',
-    timecode_total_frames: 0,
-    started: true,
-  };
-  // Server: `TransportStore.stopTake` → `{...transportStateDict(ctx), stopped}`.
-  // The already-stopped early return emits `stopped: false` with no DB write.
-  const stopEmitted = {
-    is_rolling: false,
-    current_take: 1,
-    roll_started_at_utc: null,
-    elapsed_frames: 240,
-    timecode: '00:00:10:00',
-    timecode_total_frames: 240,
-    stopped: false,
-  };
-
-  it('the emitted start body is assignable to TransportStartResponse', () => {
-    const check: TransportStartResponse = startEmitted;
+  it('the captured start body is assignable to TransportStartResponse', () => {
+    const check: TransportStartResponse = transportStart;
     expect(check.started).toBe(true);
-    // `ok` was the old (wrong) declaration; it is absent from this transcribed emission.
-    expect('ok' in startEmitted).toBe(false);
+    // `ok` was the old (wrong) declaration. This is a captured response, so
+    // its absence is an observation about the server, not an assumption.
+    expect('ok' in transportStart).toBe(false);
   });
 
-  it('the emitted stop body is assignable to TransportStopResponse', () => {
-    const check: TransportStopResponse = stopEmitted;
-    expect(check.stopped).toBe(false);
-    expect('ok' in stopEmitted).toBe(false);
+  it('the captured stop body is assignable to TransportStopResponse', () => {
+    const check: TransportStopResponse = transportStop;
+    expect(check.stopped).toBe(true);
+    expect('ok' in transportStop).toBe(false);
   });
 
   it('both responses share the transport snapshot key set', () => {
-    const asStart: TransportStateSnapshot = startEmitted;
-    const asStop: TransportStateSnapshot = stopEmitted;
-    expect(asStart.roll_started_at_utc).not.toBeUndefined();
+    const asStart: TransportStateSnapshot = transportStart;
+    const asStop: TransportStateSnapshot = transportStop;
+    // Split into two types rather than one with both flags optional, so
+    // neither fixture can satisfy the other's contract by omission:
+    expect('stopped' in asStart).toBe(false);
+    expect('started' in asStop).toBe(false);
+    // `roll_started_at_utc` is `string | null` and the two captures land on
+    // opposite sides of that — start while rolling, stop after.
+    expect(typeof asStart.roll_started_at_utc).toBe('string');
     expect(asStop.roll_started_at_utc).toBeNull();
   });
 });
 
 describe('CW-2 — `dropdown_options` is two different shapes on two endpoints', () => {
-  // Server: `showCategoriesApiShape` → `dropdownOptionsApiShape`
-  // (`server/src/db/showsStore.ts`). Objects, and `[]` for non-DROPDOWN types.
-  const showCategoriesEmitted = {
-    categories: [
-      {
-        id: 'cat-mic',
-        label: 'Mic',
-        color: '#7cb7ff',
-        type: 'DROPDOWN' as const,
-        dropdown_options: [
-          { label: 'Lav', needs_context: false },
-          { label: 'Boom', needs_context: true },
-        ],
-        on_label: '',
-        off_label: '',
-      },
-    ],
-    show_name: 'All The Smoke',
-    show_code: 'ATS',
-  };
-
-  // Server: `studioToApiDict` (`server/src/studio.ts`) over `blobToProfile`'s
-  // `optLabels: string[]` — bare labels, the option objects already flattened.
-  const activeStudioEmitted = {
-    id: 'studio-1',
-    name: 'Studio One',
-    categories: [
-      {
-        id: 'cat-mic',
-        label: 'Mic',
-        color: '#7cb7ff',
-        type: 'DROPDOWN' as const,
-        dropdown_options: ['Lav', 'Boom'],
-        on_label: '',
-        off_label: '',
-      },
-    ],
-  };
-
   it('/show-categories keeps the `{label, needs_context}` option objects', () => {
-    const check: ShowCategoriesResponse = showCategoriesEmitted;
-    const opt = check.categories[0].dropdown_options[0];
+    const check: ShowCategoriesResponse = showCategories;
+    const dropdown = check.categories.find((c) => c.type === 'DROPDOWN');
     // `CategoryButtonStrip` renders `opt.label`; this is the shape that feeds it.
-    expect(opt.label).toBe('Lav');
-    expect(opt.needs_context).toBe(false);
+    expect(dropdown?.dropdown_options).toEqual([
+      { label: 'Lav', needs_context: false },
+      { label: 'Boom', needs_context: true },
+    ]);
   });
 
   it('/api/profile `active_studio.categories` carries bare label strings', () => {
-    const check: ProfilePayload['active_studio'] = activeStudioEmitted;
-    const asCategory: ActiveStudioCategory = check.categories[0];
-    expect(asCategory.dropdown_options).toEqual(['Lav', 'Boom']);
+    const check: ProfilePayload['active_studio'] = profileAnonymous.active_studio;
+    const dropdown = check.categories.find(
+      (c: ActiveStudioCategory) => c.type === 'DROPDOWN',
+    ) as ActiveStudioCategory;
+    // Same seeded categories, same DROPDOWN, two different emitted shapes —
+    // captured from the two endpoints in the same test run.
+    expect(dropdown.dropdown_options).toEqual(['Lav', 'Boom']);
   });
 
   it('the two category types are not interchangeable', () => {
+    // Index 1 is the DROPDOWN in both captures, and it has to be: a BUTTON's
+    // `dropdown_options` is `[]`, whose type is assignable to BOTH `string[]`
+    // and `DropdownOption[]`, so the non-DROPDOWN rows cannot express the
+    // incompatibility at all. The runtime guard below fails loudly if a
+    // re-capture ever reorders them, rather than letting the two directives
+    // silently start passing for the wrong reason.
+    expect(profileAnonymous.active_studio.categories[1].type).toBe('DROPDOWN');
+    expect(showCategories.categories[1].type).toBe('DROPDOWN');
+
     // Both directives fail to compile ("unused '@ts-expect-error' directive")
     // the moment someone collapses the split back into one type — which is the
     // regression this finding exists to prevent.
     // @ts-expect-error `string[]` is not `DropdownOption[]`
-    const wrongWay: Category = activeStudioEmitted.categories[0];
+    const wrongWay: Category = profileAnonymous.active_studio.categories[1];
     // @ts-expect-error `DropdownOption[]` is not `string[]`
-    const otherWay: ActiveStudioCategory = showCategoriesEmitted.categories[0];
+    const otherWay: ActiveStudioCategory = showCategories.categories[1];
     expect(wrongWay.id).toBe(otherWay.id);
   });
 });
 
 describe('CW-3 — SessionStatus declared three fields /status never emits', () => {
-  // Server: the `GET /api/sessions/:sessionId/status` handler
-  // (`server/src/routers/events.ts`) — its 21 emitted keys, verbatim.
-  const emitted = {
-    timecode: '00:00:10:00',
-    master_timecode: '00:00:12:00',
-    session_timecode: '00:00:10:00',
-    now_utc: '2026-07-27T00:00:12Z',
-    session_created_at_utc: '2026-07-27T00:00:00Z',
-    frame_rate: 24,
-    event_count: 3,
-    logged_event_count: 2,
-    events_stream_revision: 7,
-    title: 'ATS - 2',
-    deck_title: 'ATS - 2',
-    show_id: 'show-1',
-    show_name: 'All The Smoke',
-    show_code: 'ATS',
-    episode: '2',
-    notes: '',
-    is_rolling: true,
-    current_take: 1,
-    audio_recording_lease_holder_id: null,
-    audio_recording_lease_alive: false,
-    // Emitted but undeclared on the client type — the additive-tolerance case.
-    audio_recording_lease_age_sec: null,
-  };
-
-  it('the emitted body is assignable to SessionStatus', () => {
-    const check: SessionStatus = emitted;
-    expect(check.logged_event_count).toBe(2);
+  it('the captured body is assignable to SessionStatus', () => {
+    const check: SessionStatus = sessionStatus;
+    expect(check.logged_event_count).toBe(0);
   });
 
-  it('the three removed fields are absent from the transcribed emission', () => {
+  it('the three removed fields are absent from the captured response', () => {
     for (const key of ['timecode_total_frames', 'start_offset_frames', 'audio_segment_count']) {
-      expect(key in emitted).toBe(false);
+      expect(key in sessionStatus).toBe(false);
     }
   });
 
   it('tolerates the undeclared `audio_recording_lease_age_sec`', () => {
-    const check: SessionStatus = emitted;
-    expect('audio_recording_lease_age_sec' in check).toBe(true);
+    // The captured response carries a key `SessionStatus` does not declare and
+    // the assignment above still compiles — additive tolerance, observed.
+    expect('audio_recording_lease_age_sec' in sessionStatus).toBe(true);
   });
 });
 
 describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow types', () => {
-  // Server: `enrichEventRpc` (`server/src/studio.ts`) over `eventRowToRpc`.
-  // The profile-hit branch: category found, so label/color come from it.
-  const resolvedEmitted = {
-    event_id: 'ev-1',
-    wall_time_utc: '2026-07-27T00:00:10Z',
-    timecode: '00:00:10:00',
-    frame_rate: 24,
-    timecode_total_frames: 240,
-    category: 'cat-mic',
-    message: 'Mic check',
-    metadata: {},
-    category_label: 'Mic',
-    category_color: '#7cb7ff',
-  };
-
-  // The orphan branch with a NULL `timecode_total_frames`: `eventRowToRpc`
-  // nulls `timecode` and `frame_rate` together, and `enrichEventRpc` leaves
-  // `category_color` null when no usable `al_category_color_snapshot` exists.
-  const orphanEmitted = {
-    event_id: 'ev-2',
-    wall_time_utc: '2026-07-27T00:00:11Z',
-    timecode: null,
-    frame_rate: null,
-    timecode_total_frames: null,
-    category: 'deleted-cat',
-    message: 'Manually entered',
-    metadata: {},
-    category_label: 'deleted-cat',
-    category_color: null,
-  };
-
-  it('both emitted branches are assignable to LogEvent', () => {
-    const resolved: LogEvent = resolvedEmitted;
-    const orphan: LogEvent = orphanEmitted;
-    expect(resolved.category_color).toBe('#7cb7ff');
-    // Declaring these `string` was the defect: the orphan branch emits null.
-    expect(orphan.category_color).toBeNull();
-    expect(orphan.timecode).toBeNull();
+  it('the captured event-create body is assignable to LogEvent', () => {
+    const check: LogEvent = eventCreate;
+    expect(check.category_label).toBe('Camera');
   });
 
-  it('`session_id` and `timecode_hms` are absent from the transcribed emission', () => {
-    for (const key of ['session_id', 'timecode_hms']) {
-      expect(key in resolvedEmitted).toBe(false);
+  it('the captured events envelope is assignable to EventsResponse', () => {
+    const check: EventsResponse = eventsList;
+    // Two captured branches of `enrichEventRpc`: a category resolved from the
+    // profile, and the `internal` category with its fixed label/colour.
+    expect(check.events.map((e) => e.category_label)).toEqual(['Camera', 'Internal']);
+  });
+
+  it('`session_id` and `timecode_hms` are absent from the captured rows', () => {
+    for (const event of eventsList.events) {
+      for (const key of ['session_id', 'timecode_hms']) {
+        expect(key in event).toBe(false);
+      }
     }
   });
 
-  it('an events envelope of both branches is assignable to EventsResponse', () => {
-    const envelope = {
-      events: [resolvedEmitted, orphanEmitted],
-      total: 2,
-      logged_event_count: 1,
-      offset: 0,
-      limit: 200,
+  it('the orphan branch — NOT CAPTURABLE, established from the producing function', () => {
+    // `enrichEventRpc`'s third branch fires when the event's category is gone
+    // from the profile and its `al_category_color_snapshot` is missing or not
+    // `#RRGGBB`; `eventRowToRpc` nulls `timecode`/`frame_rate` together when
+    // `timecode_total_frames` is NULL. Neither state is reachable by seeding —
+    // seeds create the category they log against — so this literal is written
+    // from the audit's read of those two functions, not captured. It is here
+    // to hold the widened types in place; it is NOT evidence about the wire.
+    const orphanFromSourceRead = {
+      event_id: '00000000-0000-0000-0000-000000000000',
+      wall_time_utc: '2026-07-27T00:00:11Z',
+      timecode: null,
+      frame_rate: null,
+      timecode_total_frames: null,
+      category: 'deleted-cat',
+      message: 'Manually entered',
+      metadata: {},
+      category_label: 'deleted-cat',
+      category_color: null,
     };
-    const check: EventsResponse = envelope;
-    expect(check.events).toHaveLength(2);
+    const orphan: LogEvent = orphanFromSourceRead;
+    expect(orphan.category_color).toBeNull();
+    expect(orphan.timecode).toBeNull();
   });
 });
 
 describe('CW-5 — AudioSegment declared three fields `segmentApiDict` never emits', () => {
-  // Server: `segmentApiDict` (`server/src/routers/audio.ts`) — its nine keys.
-  const emitted = {
-    id: 'seg-a',
-    ordinal: 0,
-    started_at_utc: '2026-07-27T00:00:05Z',
-    ended_at_utc: null,
-    mime_type: 'audio/webm',
-    recording_ordinal: 1,
-    url: '/api/sessions/sess-1/audio/segments/seg-a',
-    waveform_peaks: null,
-    waveform_db_floor: null,
-  };
-
-  it('the emitted segment is assignable to AudioSegment', () => {
-    const check: AudioSegment = emitted;
+  it('the captured upload body is assignable to AudioSegment', () => {
+    const check: AudioSegment = audioSegmentCreate;
     expect(check.url).toContain('/audio/segments/');
   });
 
-  it('the list envelope is assignable to AudioSegmentsResponse', () => {
-    const envelope = { segments: [emitted], has_audio: true };
-    const check: AudioSegmentsResponse = envelope;
+  it('the captured list envelope is assignable to AudioSegmentsResponse', () => {
+    const check: AudioSegmentsResponse = audioSegmentsList;
     expect(check.has_audio).toBe(true);
   });
 
-  it('no duration, session id, or file path appears in the transcribed emission', () => {
+  it('no duration, session id, or file path appears in the captured segment', () => {
     for (const key of ['session_id', 'duration_sec', 'file_path', 'r2_key']) {
-      expect(key in emitted).toBe(false);
+      expect(key in audioSegmentCreate).toBe(false);
+      expect(key in audioSegmentsList.segments[0]).toBe(false);
     }
   });
 });
 
 describe('CW-6 — SessionTopic declared a `session_id` the topics routes never add', () => {
-  // Server: `topicRow` (`server/src/session/topicStore.ts`), returned verbatim.
-  const emitted = {
-    id: 'topic-1',
-    session_time: '00:00:10:00',
-    duration_sec: 30,
-    topic_level: 1,
-    summary: 'A summary',
-    ordinal: 0,
-    created_at_utc: '2026-07-27T00:00:00Z',
-  };
-
-  it('the emitted topic is assignable to SessionTopic', () => {
-    const check: SessionTopic = emitted;
+  it('the captured topic is assignable to SessionTopic', () => {
+    const check: SessionTopic = topicCreate;
     expect(check.ordinal).toBe(0);
+    const listed: SessionTopic[] = topicsList.topics;
+    expect(listed).toHaveLength(1);
   });
 
-  it('`session_id` is absent from the transcribed topic — unlike the transcript-words rows', () => {
-    expect('session_id' in emitted).toBe(false);
-    // The contrast that made this easy to get wrong: the transcript-words
-    // handlers DO spread `{...w, session_id}` onto every row.
-    const word: TranscriptWord = {
-      id: 'w-1',
-      session_id: 'sess-1',
-      session_time: '00:00:10:00',
-      speaker: '0',
-      word: 'hello',
-      start_sec: 0,
-      end_sec: 0,
-      ordinal: 0,
-      created_at_utc: '2026-07-27T00:00:00Z',
-    };
-    expect(word.session_id).toBe('sess-1');
+  it('`session_id` is absent from the captured topic — unlike the transcript-words rows', () => {
+    expect('session_id' in topicCreate).toBe(false);
+    // The contrast that made this easy to get wrong, both sides captured in
+    // the same run: the transcript-words handlers DO spread
+    // `{...w, session_id}` onto every row.
+    const word: TranscriptWord = transcriptWordsList.words[0];
+    expect(word.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
   });
 });
 
 describe('CW-7/CW-8 — session create and update are not `Session`', () => {
-  // Server: the `POST /api/sessions` handler builds this body inline.
-  const createEmitted = {
-    id: 'sess-1',
-    title: 'ATS - 2',
-    frame_rate: 24,
-    start_offset_frames: 0,
-    show_id: 'show-1',
-    episode: '2',
-    notes: '',
-  };
-  // Server: the `PUT /api/sessions/:sessionId` handler, off the updated row.
-  const updateEmitted = {
-    id: 'sess-1',
-    title: 'Renamed',
-    frame_rate: 24,
-    start_offset_frames: 0,
-  };
-
-  it('the create body is assignable to SessionCreateResponse', () => {
-    const check: SessionCreateResponse = createEmitted;
+  it('the captured create body is assignable to SessionCreateResponse', () => {
+    const check: SessionCreateResponse = sessionCreate;
     // `NewSessionModal` reads exactly this and nothing else.
-    expect(check.id).toBe('sess-1');
+    expect(check.id).toBeTruthy();
   });
 
-  it('the update body is assignable to SessionUpdateResponse', () => {
-    const check: SessionUpdateResponse = updateEmitted;
+  it('the captured update body is assignable to SessionUpdateResponse', () => {
+    const check: SessionUpdateResponse = sessionUpdate;
     expect(check.title).toBe('Renamed');
   });
 
-  it('neither body carries the rest of `Session`', () => {
+  it('neither captured body carries the rest of `Session`', () => {
     for (const key of ['deck_title', 'session_status', 'event_count', 'archived']) {
-      expect(key in createEmitted).toBe(false);
-      expect(key in updateEmitted).toBe(false);
+      expect(key in sessionCreate).toBe(false);
+      expect(key in sessionUpdate).toBe(false);
     }
     // Both routes were typed `Session`, so these assignments must NOT compile.
     // @ts-expect-error 12 of `Session`'s 19 keys are missing
-    const asSession: Session = createEmitted;
+    const asSession: Session = sessionCreate;
     // @ts-expect-error 15 of `Session`'s 19 keys are missing
-    const asSessionToo: Session = updateEmitted;
+    const asSessionToo: Session = sessionUpdate;
     expect(asSession.id).toBe(asSessionToo.id);
   });
 });
 
 describe('CW-9 — four Session fields are nullable on the wire', () => {
-  // Server: `serializeSessionEntry` (`server/src/routers/sessions.ts`), the
-  // single builder behind both the list and the detail route. This is the
-  // orphaned-show branch: the LEFT JOIN found no show row and the index row
-  // carries no `created_at_utc`. Seeded fixtures never reach it, which is why
-  // phase 4's captured fixtures cannot cover this finding.
-  const orphanedEmitted = {
-    id: 'sess-1',
-    title: 'Untitled',
-    deck_title: 'Untitled',
-    show_id: null,
-    show_code: null,
-    show_name: null,
-    episode: '1',
-    notes: '',
-    session_status: 'active' as const,
-    frame_rate: 24,
-    start_offset_frames: 0,
-    created_at_utc: null,
-    episode_date: null,
-    event_count: 0,
-    is_rolling: false,
-    current_take: 0,
-    rolling_timecode: '00:00:00:00',
-    total_runtime_hms: '00:00:00',
-    archived: false,
-  };
-
-  it('the orphaned-show branch is assignable to Session', () => {
-    const check: Session = orphanedEmitted;
-    expect(check.show_id).toBeNull();
-    expect(check.created_at_utc).toBeNull();
+  it('the captured list and detail bodies are assignable to their types', () => {
+    const list: SessionsResponse = sessionsList;
+    const detail: Session = sessionDetail;
+    expect(list.active).toHaveLength(1);
+    expect(list.archived[0].session_status).toBe('archived');
+    expect(detail.session_status).toBe('active');
+    // Captured from seeded state, every one of the four is populated — which
+    // is precisely why the capture cannot establish the finding:
+    expect(detail.show_id).not.toBeNull();
+    expect(detail.created_at_utc).not.toBeNull();
   });
 
-  it('a list envelope of such rows is assignable to SessionsResponse', () => {
-    const envelope = { active: [orphanedEmitted], archived: [] };
-    const check: SessionsResponse = envelope;
-    expect(check.active[0].show_name).toBeNull();
-  });
-
-  it('the meta-line date formatter accepts the null both callers can pass', () => {
-    // `RecentSessionsList` / `HomeRoute` render `episode_date ?? created_at_utc`;
-    // with both null that is `null`, and it must render as an empty date rather
-    // than a fabricated one.
-    expect(fmtDateOnly(orphanedEmitted.episode_date ?? orphanedEmitted.created_at_utc)).toBe('');
+  it('the orphaned-show branch — NOT CAPTURABLE, established from `serializeSessionEntry`', () => {
+    // A seeded session always has a joined show row and a `created_at_utc`, so
+    // the `?? null` branches never fire against seed data no matter how the
+    // capture is done (audit CW-9's caveat, and design D1's production-data-
+    // variance residual). This literal is written from the serializer, not
+    // captured, and is the only thing holding the four widened types in place.
+    const orphanedFromSourceRead = {
+      ...sessionDetail,
+      show_id: null,
+      show_code: null,
+      show_name: null,
+      created_at_utc: null,
+    };
+    const check: Session = orphanedFromSourceRead;
+    expect(check.show_name).toBeNull();
+    expect(fmtDateOnly(check.episode_date ?? check.created_at_utc)).toBe('');
   });
 });
