@@ -366,7 +366,15 @@ describe('sessions', () => {
       { ...env },
     );
     await expectCapturedResponse(
-      { name: 'sessionStatus', endpoint: 'GET /api/sessions/:id/status', format: 'json' },
+      {
+        name: 'sessionStatus',
+        endpoint: 'GET /api/sessions/:id/status',
+        format: 'json',
+        // `now − lease acquisition`. `null` in this capture because no client
+        // holds the recording lease; declared so a future capture that does
+        // hold one is not flaky.
+        volatileNumbers: ['audio_recording_lease_age_sec'],
+      },
       res,
     );
   });
@@ -439,6 +447,9 @@ describe('transport', () => {
         name: 'transportStart',
         endpoint: 'POST /api/sessions/:id/transport/start',
         format: 'json',
+        // The transport is rolling in this response, so both numbers advance
+        // with wall-clock time between the request and the next capture.
+        volatileNumbers: ['elapsed_frames', 'timecode_total_frames'],
       },
       res,
     );
@@ -453,7 +464,14 @@ describe('transport', () => {
       { ...env },
     );
     await expectCapturedResponse(
-      { name: 'transportStop', endpoint: 'POST /api/sessions/:id/transport/stop', format: 'json' },
+      {
+        name: 'transportStop',
+        endpoint: 'POST /api/sessions/:id/transport/stop',
+        format: 'json',
+        // `stopTake` folds the rolled duration into `elapsed_frames`, so both
+        // numbers depend on how long the preceding start→stop pair took.
+        volatileNumbers: ['elapsed_frames', 'timecode_total_frames'],
+      },
       res,
     );
   });

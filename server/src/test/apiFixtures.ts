@@ -32,9 +32,11 @@ import { expect } from 'vitest';
 /** Repo-root `fixtures/api-responses/`. Deliberately outside both workspaces:
  * the server captures these files and the web tier consumes them, so they
  * belong to neither and a path under `server/src` or `web/src` would imply an
- * owner that does not exist. Both `tsc` runs reach them by import resolution
- * (verified: `web`'s `include: ["src"]` still type-checks an imported file
- * outside it), and neither biome scope covers them, which is correct for
+ * owner that does not exist. Only the **web** `tsc` run reaches them, by import
+ * resolution (verified: `web`'s `include: ["src"]` still type-checks an
+ * imported file outside it); the server never imports a fixture — this helper
+ * reads them as text — so `server/tsconfig.json` does not type-check them and
+ * does not need to. Neither biome scope covers them, which is correct for
  * generated output. */
 const FIXTURE_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -73,9 +75,12 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
  *     `########-####-####-####-############`, an ISO instant becomes
  *     `####-##-##T##:##:##.###Z`, a timecode becomes `##:##:##:##`.
  *   - Non-strings are never pattern-redacted. `null` stays `null`, booleans
- *     stay themselves. Only the handful of genuinely clock-derived NUMBERS
- *     listed in `VOLATILE_NUMBER_KEYS` are collapsed, and only to `0`, which
- *     is still a number.
+ *     stay themselves. Only the genuinely clock-derived NUMBERS a spec names in
+ *     its `volatileNumbers` are collapsed, and only to `0`, which is still a
+ *     number. That declaration is **per endpoint, never global**: a key like
+ *     `timecode_total_frames` is wall-clock-driven only while the transport is
+ *     rolling, so zeroing it everywhere would stop the event fixtures — whose
+ *     seed never rolls — from constraining a value that is in fact stable.
  *
  * What still fails, which is the whole point:
  *
@@ -97,15 +102,6 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 const ISO_INSTANT_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
 /** `HH:MM:SS`, `HH:MM:SS:FF`, `HH:MM:SS.mmm` — timecode and runtime readouts. */
 const CLOCK_RE = /\b\d{2,}:\d{2}:\d{2}(?:[:.;]\d{1,3})?\b/g;
-
-/** Clock-derived numeric fields. Pattern matching cannot reach a number, so
- * these few are named. Kept as short as possible: every key here is one the
- * comparison no longer constrains beyond "still a number". */
-const VOLATILE_NUMBER_KEYS: readonly string[] = [
-  'elapsed_frames',
-  'timecode_total_frames',
-  'audio_recording_lease_age_sec',
-];
 
 function redactString(value: string): string {
   return value
@@ -155,29 +151,40 @@ const TS_FOOTER = (exportName: string) => ` as const;
 export const ${exportName} = captured as Mutable<typeof captured>;
 `;
 
-const JSON_START = 'const captured = ';
-const JSON_END = ' as const;';
-
 function fixturePath(name: string, format: 'json' | 'ts'): string {
   return join(FIXTURE_DIR, `${name}.${format}`);
 }
 
-function readFixture(name: string, format: 'json' | 'ts'): Json | undefined {
-  const path = fixturePath(name, format);
+function readFixture(spec: CaptureSpec): Json | undefined {
+  const path = fixturePath(spec.name, spec.format);
   if (!existsSync(path)) return undefined;
   const text = readFileSync(path, 'utf8');
-  if (format === 'json') return JSON.parse(text) as Json;
-  // The `.ts` module's payload is a plain JSON literal between two fixed
-  // markers this helper wrote. A hand-edit that breaks that round trip throws
-  // here — which is the intended outcome: fixtures are outputs, not source.
-  const start = text.indexOf(JSON_START);
-  const end = text.lastIndexOf(JSON_END);
-  if (start < 0 || end < 0) {
+  if (spec.format === 'json') return JSON.parse(text) as Json;
+  // WHY THE WHOLE FILE IS CHECKED, NOT JUST THE PAYLOAD. A `.ts` fixture is
+  // generated wholesale as header + JSON payload + footer, and the *footer* is
+  // the part `web/` actually imports. Validating only the payload would let
+  //
+  //     export const teamCreate = { ...captured, role: 'admin' };
+  //
+  // pass here — the payload still equals the live response — while the web
+  // tier's conformance assignment checks a hand-authored value masquerading as
+  // a captured one. That is precisely D2's failure mode. So the file is
+  // reconstructed from the same builders that wrote it: anything outside the
+  // payload must be byte-identical to what a capture would emit.
+  const header = TS_HEADER(spec.endpoint);
+  const footer = TS_FOOTER(spec.exportName ?? spec.name);
+  const hint = `Regenerate with: npm run fixtures:capture -w server`;
+  if (!text.startsWith(header)) {
     throw new Error(
-      `Fixture ${name}.ts is not in the generated form (markers missing) — it was hand-edited. Regenerate with: npm run fixtures:capture -w server`,
+      `Fixture ${spec.name}.ts does not start with the generated header for \`${spec.endpoint}\` — it was hand-edited (or its spec's endpoint changed). ${hint}`,
     );
   }
-  return JSON.parse(text.slice(start + JSON_START.length, end)) as Json;
+  if (!text.endsWith(footer)) {
+    throw new Error(
+      `Fixture ${spec.name}.ts does not end with the generated footer exporting \`${spec.exportName ?? spec.name}\` — it was hand-edited, so what web/ imports is no longer what the server emitted. ${hint}`,
+    );
+  }
+  return JSON.parse(text.slice(header.length, text.length - footer.length)) as Json;
 }
 
 function writeFixture(
@@ -204,8 +211,12 @@ export interface CaptureSpec {
   format: 'json' | 'ts';
   /** Export name for a `.ts` fixture. Ignored for `.json`. */
   exportName?: string;
-  /** Extra clock-derived numeric keys beyond `VOLATILE_NUMBER_KEYS`, for this
-   * endpoint only. String volatility needs no declaration — it is matched by
+  /** Clock-derived numeric keys **this** endpoint emits, collapsed to `0`.
+   * Pattern matching cannot reach a number, so these are the only numbers the
+   * comparison stops constraining beyond "still a number" — keep the list as
+   * short as the endpoint truly requires. There is deliberately no global
+   * default: the same key name is volatile on one endpoint and stable on
+   * another. String volatility needs no declaration — it is matched by
    * pattern. */
   volatileNumbers?: readonly string[];
   /** Expected HTTP status. Defaults to 200; asserted, not recorded. */
@@ -235,7 +246,7 @@ function updateMode(): boolean {
 export async function expectCapturedResponse(spec: CaptureSpec, res: Response): Promise<Json> {
   expect(res.status, `${spec.endpoint} status`).toBe(spec.status ?? 200);
   const raw = (await res.json()) as Json;
-  const numberKeys = new Set([...VOLATILE_NUMBER_KEYS, ...(spec.volatileNumbers ?? [])]);
+  const numberKeys = new Set(spec.volatileNumbers ?? []);
   const normalized = normalize(raw, numberKeys);
 
   if (updateMode()) {
@@ -243,7 +254,7 @@ export async function expectCapturedResponse(spec: CaptureSpec, res: Response): 
     return normalized;
   }
 
-  const expected = readFixture(spec.name, spec.format);
+  const expected = readFixture(spec);
   if (expected === undefined) {
     throw new Error(
       `Missing captured fixture ${spec.name}.${spec.format} for ${spec.endpoint}. Fixtures are never written on the fly (that would bless drift) — capture it deliberately with: npm run fixtures:capture -w server`,
