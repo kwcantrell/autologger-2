@@ -31,6 +31,7 @@ import type {
   ActiveStudioCategory,
   Category,
   ProfilePayload,
+  SessionStatus,
   ShowCategoriesResponse,
   TransportStartResponse,
   TransportStateSnapshot,
@@ -144,5 +145,50 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
     // @ts-expect-error `DropdownOption[]` is not `string[]`
     const otherWay: ActiveStudioCategory = showCategoriesEmitted.categories[0];
     expect(wrongWay.id).toBe(otherWay.id);
+  });
+});
+
+describe('CW-3 — SessionStatus declared three fields /status never emits', () => {
+  // Server: the `GET /api/sessions/:sessionId/status` handler
+  // (`server/src/routers/events.ts`) — its 21 emitted keys, verbatim.
+  const emitted = {
+    timecode: '00:00:10:00',
+    master_timecode: '00:00:12:00',
+    session_timecode: '00:00:10:00',
+    now_utc: '2026-07-27T00:00:12Z',
+    session_created_at_utc: '2026-07-27T00:00:00Z',
+    frame_rate: 24,
+    event_count: 3,
+    logged_event_count: 2,
+    events_stream_revision: 7,
+    title: 'ATS - 2',
+    deck_title: 'ATS - 2',
+    show_id: 'show-1',
+    show_name: 'All The Smoke',
+    show_code: 'ATS',
+    episode: '2',
+    notes: '',
+    is_rolling: true,
+    current_take: 1,
+    audio_recording_lease_holder_id: null,
+    audio_recording_lease_alive: false,
+    // Emitted but undeclared on the client type — the additive-tolerance case.
+    audio_recording_lease_age_sec: null,
+  };
+
+  it('the emitted body is assignable to SessionStatus', () => {
+    const check: SessionStatus = emitted;
+    expect(check.logged_event_count).toBe(2);
+  });
+
+  it('the three removed fields are genuinely absent from the wire', () => {
+    for (const key of ['timecode_total_frames', 'start_offset_frames', 'audio_segment_count']) {
+      expect(key in emitted).toBe(false);
+    }
+  });
+
+  it('tolerates the undeclared `audio_recording_lease_age_sec`', () => {
+    const check: SessionStatus = emitted;
+    expect('audio_recording_lease_age_sec' in check).toBe(true);
   });
 });

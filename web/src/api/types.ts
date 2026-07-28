@@ -303,20 +303,28 @@ export interface SessionsResponse {
   archived: Session[];
 }
 
+/**
+ * `GET /api/sessions/:id/status`. The handler (`server/src/routers/events.ts`)
+ * emits exactly 21 keys — the 20 below plus `audio_recording_lease_age_sec`,
+ * which no consumer reads and which stays undeclared here (additive tolerance).
+ *
+ * It does **not** emit `timecode_total_frames`, `start_offset_frames`, or
+ * `audio_segment_count`; those three were declared here and never read
+ * anywhere in `web/src` (web-api-shape-conformance audit CW-3). Don't
+ * reintroduce them without checking the handler — `timecode_total_frames` in
+ * particular exists on `LogEvent`, which is a different shape.
+ */
 export interface SessionStatus {
   is_rolling: boolean;
   timecode: string;
   session_timecode: string;
   master_timecode: string;
-  timecode_total_frames: number;
   frame_rate: number;
-  start_offset_frames: number;
   current_take: number;
   audio_recording_lease_alive: boolean;
   audio_recording_lease_holder_id: string | null;
   event_count: number;
   logged_event_count: number;
-  audio_segment_count: number;
   // Session identity fields (from /status response)
   title: string;
   deck_title: string;
