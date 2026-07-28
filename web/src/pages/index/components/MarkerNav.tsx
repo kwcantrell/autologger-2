@@ -2,12 +2,9 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
-import type { LogEvent, SessionStatus } from '../../../api/types';
-import {
-  eventTimelineSec,
-  parseSmpteToSec,
-  sessionFrameRate,
-} from '../../../shared/utils/audioClips';
+import type { LogEvent } from '../../../api/types';
+import { parseSmpteToSec, sessionFrameRate } from '../../../shared/utils/audioClips';
+import { groupTimelineMarkers, type TimelineMarkerGroup } from '../utils/markerGrouping';
 import { jumpTimelineToSec } from '../utils/timelineJump';
 
 // .v4-session-nav-btn: local --v4-session-nav-border fallback (transparent) is
@@ -21,38 +18,15 @@ const NAV_BTN =
 const NAV_HINT =
   '[--v4-session-nav-icon-r:calc(1.05rem/2)] [--v4-session-nav-hint-r:0.225rem] pointer-events-none absolute top-1/2 box-border h-[calc(var(--v4-session-nav-hint-r)*2)] w-[calc(var(--v4-session-nav-hint-r)*2)] translate-x-[-50%] translate-y-[-50%] rounded-full bg-transparent opacity-0';
 
-interface MarkerEntry {
-  sec: number;
-  event: LogEvent;
-  isInternal: boolean;
-}
-
 // Marker positions MUST use the same coordinate space as the rendered timeline
-// markers and audio clips (eventTimelineSec, frame-rate aware). A display-only
-// parseSmpteToSec (formerly in shared/utils/timecode.ts, deleted 2026-07-27)
-// dropped the SMPTE frame field, so jump targets landed ~1s before each
-// recording's start clip — putting the playhead in the inter-recording gap,
-// where the audio player resolves forward and skips/auto-plays the wrong
-// recording.
-function groupMarkers(events: LogEvent[], status: SessionStatus | null | undefined): MarkerEntry[] {
-  const grouped = new Map<string, MarkerEntry>();
-  for (const e of events) {
-    const sec = eventTimelineSec(e, status);
-    if (!(Number.isFinite(sec) && sec >= 0)) continue;
-    const key = sec.toFixed(3);
-    const isInternal = String(e.category ?? '').toLowerCase() === 'internal';
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, { sec, event: e, isInternal });
-    } else if (existing.isInternal && !isInternal) {
-      grouped.set(key, { sec, event: e, isInternal });
-    }
-  }
-  return Array.from(grouped.values()).sort((a, b) => a.sec - b.sec);
-}
-
+// markers and audio clips (eventTimelineSec, frame-rate aware — the shared
+// groupTimelineMarkers util). A display-only parseSmpteToSec (formerly in
+// shared/utils/timecode.ts, deleted 2026-07-27) dropped the SMPTE frame field,
+// so jump targets landed ~1s before each recording's start clip — putting the
+// playhead in the inter-recording gap, where the audio player resolves forward
+// and skips/auto-plays the wrong recording.
 function neighborEvents(
-  markers: MarkerEntry[],
+  markers: TimelineMarkerGroup[],
   currentSec: number,
 ): { prevEvent: LogEvent | null; nextEvent: LogEvent | null } {
   if (markers.length === 0) return { prevEvent: null, nextEvent: null };
@@ -100,7 +74,7 @@ export function MarkerNav({ sessionId }: Props) {
     return () => document.body.removeEventListener(TIMELINE_SEC_EVENT, handler);
   }, []);
 
-  const markers = useMemo(() => groupMarkers(events, status), [events, status]);
+  const markers = useMemo(() => groupTimelineMarkers(events, status), [events, status]);
   const enabled = markers.length > 0;
 
   const currentSec = useMemo(() => {

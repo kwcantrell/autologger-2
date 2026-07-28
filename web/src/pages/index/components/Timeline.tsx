@@ -23,6 +23,7 @@ import { fmtHmsFromSec } from '../../../shared/utils/timecode';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { clipIndexContainingTimelineSec } from '../../../shared/utils/waveformSvg';
 import { useZoomRail } from '../hooks/useZoomRail';
+import { groupTimelineMarkers } from '../utils/markerGrouping';
 import { TimelineClips } from './timeline/TimelineClips';
 import { TimelineMarkers } from './timeline/TimelineMarkers';
 import { TimelineTicks } from './timeline/TimelineTicks';
@@ -463,28 +464,16 @@ export function Timeline({
   );
 
   // Current sidebar nav marker: last marker at or before the playhead.
+  // Grouping is the shared groupTimelineMarkers util (same buckets/preference as
+  // MarkerNav's jump targets — finding 2.6); only the display derivation is local.
   const currentNavMarker = useMemo(() => {
-    const grouped = new Map<
-      string,
-      { sec: number; cat: string; msg: string; col: string; isInternal: boolean }
-    >();
-    for (const e of events) {
-      const sec = eventTimelineSec(e, status);
-      if (!Number.isFinite(sec) || sec < 0) continue;
-      const key = sec.toFixed(3);
-      const isInternal = String(e.category ?? '').toLowerCase() === 'internal';
-      const existing = grouped.get(key);
-      if (!existing || (existing.isInternal && !isInternal)) {
-        grouped.set(key, {
-          sec,
-          cat: String(e.category_label || e.category || '—'),
-          msg: String(e.message || '—'),
-          col: String(e.category_color || '').trim() || '#6b7280',
-          isInternal,
-        });
-      }
-    }
-    const marks = Array.from(grouped.values()).sort((a, b) => a.sec - b.sec);
+    const marks = groupTimelineMarkers(events, status).map(({ sec, event: e, isInternal }) => ({
+      sec,
+      cat: String(e.category_label || e.category || '—'),
+      msg: String(e.message || '—'),
+      col: String(e.category_color || '').trim() || '#6b7280',
+      isInternal,
+    }));
     if (!marks.length) return null;
     let chosen = marks[0];
     for (const m of marks) {
