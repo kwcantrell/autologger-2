@@ -6,6 +6,7 @@ import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
+import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
@@ -75,26 +76,6 @@ interface ShowDraft {
 type TabId = 'general' | 'event-buttons' | 'autosync' | 'debug';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function normalizePalette9(arr: string[]): string[] {
-  const defaults = [
-    '#64748b',
-    '#e53935',
-    '#fb8c00',
-    '#fdd835',
-    '#43a047',
-    '#00acc1',
-    '#1e88e5',
-    '#8e24aa',
-    '#ec407a',
-  ];
-  const out: string[] = [];
-  for (let i = 0; i < 9; i++) {
-    const h = (arr[i] ?? '').toLowerCase();
-    out.push(/^#[0-9a-f]{6}$/.test(h) ? h : defaults[i % defaults.length]);
-  }
-  return out;
-}
 
 function showToShowDraft(show: Show): ShowDraft {
   const palette = normalizePalette9(show.event_palette ?? []);

@@ -5,6 +5,7 @@ import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
 import { Tooltip } from '../../../shared/ui/Tooltip';
+import { DEFAULT_PALETTE, normalizePalette9, PALETTE_SLOT_INDICES } from '../utils/palette9';
 import { EventOptionsModal } from './EventOptionsModal';
 import { Select } from './Select';
 
@@ -103,28 +104,6 @@ const EVENT_COLOR_PRESETS: Record<string, string[]> = {
     '#cfe583',
   ],
 };
-const DEFAULT_PALETTE = [
-  '#64748b',
-  '#e53935',
-  '#fb8c00',
-  '#fdd835',
-  '#43a047',
-  '#00acc1',
-  '#1e88e5',
-  '#8e24aa',
-  '#ec407a',
-];
-
-// Fixed positional slot indices — using array content (not .map index) avoids noArrayIndexKey lint
-const PALETTE_SLOT_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
-
-function normalizePalette9(arr: string[]): string[] {
-  return PALETTE_SLOT_INDICES.map((i) => {
-    const h = (arr[i] ?? '').toLowerCase();
-    return /^#[0-9a-f]{6}$/.test(h) ? h : DEFAULT_PALETTE[i % DEFAULT_PALETTE.length];
-  });
-}
-
 function optionsSummary(opts: DropdownOption[]): string {
   if (!opts.length) return '—';
   const s = opts.map((o) => o.label).join(', ');
