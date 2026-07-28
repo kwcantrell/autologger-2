@@ -555,10 +555,18 @@ A site is *covered* only when **both** of the following hold for every client ty
 1. the conformance module contains a `const x: T = <fixture binding>` declaration — the bare type
    name (or an array of it), initialised from a binding imported from `fixtures/api-responses/`,
    and expected to COMPILE. A name that is merely imported, used only inside a helper type such
-   as `ExpectUndeclared<T, K>`, reached only through an indexed slice, or assigned under a
-   `@ts-expect-error` directive is **not** checked against a real response and does not count;
-2. the name resolves to `api/types` **from the site's own file**, so a locally declared type can
-   never inherit a checked type's coverage by sharing its spelling.
+   as `ExpectUndeclared<T, K>`, reached only through an indexed slice, assigned under a
+   `@ts-expect-error` directive, or assigned through a **type assertion** (`fixture as unknown as
+   T`, which compiles whatever the capture's real shape is) is **not** checked against a real
+   response and does not count;
+2. the name is in scope in the **site's own file** through an import whose specifier *resolves* —
+   relative to that file — to the canonical `api/types` module, under the export name that was
+   checked. Matching the specifier's *basename* is not enough and was the second review round's
+   NEW-2: a per-feature `src/pages/*/types.ts` is standard React layout, and the names it would
+   plausibly redeclare (`Session`, `Category`, `LogEvent`, `AudioSegment`) are exactly the checked
+   ones. Import aliases resolve to the original export name, so `{ Checked as Local }` carries the
+   check and `{ BrandNew as Checked }` does not. A specifier that does not resolve inside the tree
+   contributes no coverage at all, so its sites surface rather than pass.
 
 Everything else must carry an individually reasoned exemption; there is no third, silent state.
 The guard proves this isn't vacuous by construction: population and per-detector floors are
@@ -647,29 +655,43 @@ independent signals instead of one silently-stale entry.
 ### 11.5 The guard's blind spots — read before trusting it
 
 Recorded in the guard's own file header too, so a reader meets them before relying on a green run.
-**Ordered by how reachable each is by an ordinary refactor, largest first** — the point of this
-list is that a reader can trust its ranking, and the first delivery's ranking was wrong (11.7).
+**Ordered by how reachable each is by an ordinary refactor, largest first**; where two are
+equally reachable, the one that fails *silently* ranks higher. The point of this list is that a
+reader can trust its ranking — the first delivery's ranking was wrong (11.7), and the second
+review round (11.8) both promoted an item and deleted half of another as no longer true. Nothing
+here is stated as absolute unless the code enforces it.
 
 1. **Indirect type acquisition — the largest remaining hole.** A JSON value threaded through as
    `unknown` into a typed helper several modules downstream acquires its client type with no
    `fetch`/`.json()`/`JSON.parse`/wrapper token anywhere near it, so no detector fires (§8.3).
    This is a structural limit of matching on deserialization syntax, not a tuning gap: closing it
    needs type-level analysis, not another pattern.
-2. **Coverage is keyed by client type *name*, not by (site, endpoint).** The guard answers "has
-   this type ever been checked against a real response?", not "is it checked against *this*
-   endpoint's response?" A type that is genuinely conformant on the endpoint it was captured from
-   passes silently the moment it is reused as the return type of a brand-new endpoint. Only this
-   audit's per-row verdict table (§5) answers the endpoint-specific question, and it is a
-   snapshot, not a standing check.
-3. **Two sites can still share one key when the method cannot separate them.** The descriptor
+2. **A callee reached under a name rebound *outside* the calling file.** The scan resolves
+   `apiFetch` through a named import (including `import { apiFetch as x }`) and through a
+   namespace qualifier (`import * as api` … `api.apiFetch<T>(…)`, closed in the second review
+   round), and it resolves wrappers by their *declared* name anywhere in the tree, iterating
+   discovery to a fixed point. It does **not** follow a re-export that renames
+   (`export { apiFetch as request } from './client'` in a third module), nor a wrapper imported
+   under an alias (`import { fetchTyped as ft }`). Under either, the call site is invisible — not
+   merely mis-keyed. One token of refactor away, and the same class as the two false negatives the
+   second round found, which is why it ranks above the two below.
+3. **Coverage is keyed by client type *name*, not by (site, endpoint) — and the fixture only has
+   to *be* a fixture.** The guard answers "has this type ever been checked against a captured
+   response?", not "is it checked against *this* endpoint's response?" A type that is genuinely
+   conformant on the endpoint it was captured from passes silently the moment it is reused as the
+   return type of a brand-new endpoint. The same looseness sits one level in: a
+   `const x: T = <binding>` counts when the binding is *any* captured fixture, so a slice of an
+   unrelated capture (`const s: Session = adminUsers.users[0]`) would register as `Session`'s
+   check. Requiring the fixture to *relate* to the type was considered and rejected as not
+   reliably decidable — the type↔endpoint↔fixture mapping is exactly what this audit's per-row
+   verdict table (§5) records by hand, and it is a snapshot, not a standing check. Recorded as a
+   residual rather than half-implemented.
+4. **Two sites can still share one key when the method cannot separate them.** The descriptor
    carries the literal HTTP method, which splits the common `{ok}`-mutation collisions; it does
    not split two calls on the same path with the *same* method, nor a call whose method arrives
    through a variable. Those sites are no longer *absorbed* — exemptions are consumed one per
    site, so the second surfaces as unverified — but the two entries are told apart only by their
-   `reason` prose.
-4. **`apiFetch` reached other than through a named import.** A namespace import
-   (`import * as api from './client'` … `api.apiFetch<T>(…)`) or a re-export under a new name in a
-   third module is invisible to the callee scan. `import { apiFetch as request }` *is* covered.
+   `reason` prose. Ranked below 2 and 3 because it is not a false negative: the site is reported.
 5. **Test files are outside the scan.** `*.test.ts(x)` and `test/` under `web/src` are excluded
    from the application-code walk (per §8.1); the one deliberate exception is the conformance
    module itself, parsed for its `const x: T = <fixture>` declarations and its source-read
@@ -717,10 +739,10 @@ works, so each is recorded here with the mechanism that let it through.
 
 | # | what slipped through | why | fix |
 |---|---|---|---|
-| C1 | A generic wrapper exported from its own module (`fetchTyped<T>` in `api/typedFetchPlant.ts`), called as `fetchTyped<PlantBResponse>(…)` from another file. Only two sites appeared, **both inside the wrapper's own file**; the call site carrying the concrete hand-transcribed type never appeared at all — and the two that did appear closely resemble two recorded exemptions, so a maintainer following the file's own precedent would exempt them and ship a wholly un-enumerated population. | Wrapper discovery ran **per file**. It worked only because `fetchAdmin` happens to be declared and called in the same file. This is exactly the blind spot **D6** exists to close, and it contradicted the header's own claim that a second `fetchAdmin` would bring its call sites in automatically. | Wrapper discovery hoisted into a **tree-wide pre-pass**: the union of `discoverWrappers` over every application file is collected before any file is scanned, then passed into every file's scan as extra callees. |
+| C1 | A generic wrapper exported from its own module (`fetchTyped<T>` in `api/typedFetchPlant.ts`), called as `fetchTyped<PlantBResponse>(…)` from another file. Only two sites appeared, **both inside the wrapper's own file**; the call site carrying the concrete hand-transcribed type never appeared at all — and the two that did appear closely resemble two recorded exemptions, so a maintainer following the file's own precedent would exempt them and ship a wholly un-enumerated population. | Wrapper discovery ran **per file**. It worked only because `fetchAdmin` happens to be declared and called in the same file. This is exactly the blind spot **D6** exists to close, and it contradicted the header's own claim that a second `fetchAdmin` would bring its call sites in automatically. | Wrapper discovery hoisted into a **tree-wide pre-pass**: the union of `discoverWrappers` over every application file is collected before any file is scanned, then passed into every file's scan as extra callees. *This closed depth one only — see 11.8 NEW-1, where a wrapper over a wrapper defeated it.* |
 | C2 | A brand-new, never-audited `apiFetch<OkResponse>` on `sessions/:id` with `{ method: 'PUT' }` added to `useSessions.ts`. Suite stayed 17/17 green — it silently inherited the audited **DELETE**'s exemption. | The descriptor captured only the first argument, so `DELETE` and `PUT` on one path produced an identical key; and matching was Set membership, so N sites sharing a key were all exempted by one entry. This falsified the file's own load-bearing claim that "a NEW `OkResponse` site is covered by none of them" — and `OkResponse` is the bucket CW-1 hid in. | The literal `method: '…'` is now part of the site key, and exemptions are **consumed one-for-one**: N sites need N entries, and surplus entries are reported as stale with their counts. |
-| C3a | A new file declaring its **own** `interface Session` and calling `apiFetch<Session>(…)`. Green — a wholly hand-transcribed new response type read as covered because it shared a name with a checked one. | `covered` meant "the name appears in the conformance module's `import type` list". | Coverage is now derived from detector 7's own parse, **and** a site's type must be imported from `api/types` in the site's own file. |
-| C3b | A type added to `api/types.ts` and to the conformance module's import list, used **only** in an `ExpectUndeclared<…>` position. Green, and it marked every site repo-wide naming that type as covered, with zero assertion against any captured response. | Same mechanism. `audit.md` §11.5 claimed the guard answers "has this type ever been checked against a real response?"; it answered "is this name imported?". | A name counts only when a `const x: T = <fixture binding>` declaration assigns it a capture — bare name or array of it, and **not** under a `@ts-expect-error` directive. |
+| C3a | A new file declaring its **own** `interface Session` and calling `apiFetch<Session>(…)`. Green — a wholly hand-transcribed new response type read as covered because it shared a name with a checked one. | `covered` meant "the name appears in the conformance module's `import type` list". | Coverage is now derived from detector 7's own parse, **and** a site's type must be imported from `api/types` in the site's own file. *The import test matched the specifier's basename, which was not sufficient — see 11.8 NEW-2.* |
+| C3b | A type added to `api/types.ts` and to the conformance module's import list, used **only** in an `ExpectUndeclared<…>` position. Green, and it marked every site repo-wide naming that type as covered, with zero assertion against any captured response. | Same mechanism. `audit.md` §11.5 claimed the guard answers "has this type ever been checked against a real response?"; it answered "is this name imported?". | A name counts only when a `const x: T = <fixture binding>` declaration assigns it a capture — bare name or array of it, and **not** under a `@ts-expect-error` directive. *Nor, since 11.8 NEW-3, through a type assertion in the initializer.* |
 | I6 | A raw `fetch('https://…')` followed by `.json() as X` on the same line: the **typed read** was discarded, because the `.json()` index sits after the `//` in `https://`. Combined with exemptions whose reason reads "the typed read of its body is the `.json()` site below", a maintainer could write that reason for a site where no `.json()` entry exists. | `isProse` treated any `//` earlier on the line as a comment opener. | String and template literals are masked (contents blanked, offsets preserved) before the prose test. Masking only ever removes apparent comment openers, so the failure direction is the cheap, visible one. |
 
 Two further fragilities were fixed at the same time. Wrapper *forwarding* detection matched
@@ -747,3 +769,40 @@ forwarding, and a forwarding call past the old window), two sites on one path di
 method, exemption consumption in both directions, a locally declared type shadowing a checked
 name, an import-list-only "covered" type, a `@ts-expect-error` assignment, an aliased `apiFetch`,
 and a URL literal beside a typed read. Each was verified to fail when its fix is reverted.
+
+### 11.8 Second review round — three more silent gaps, and one disclosed residual closed
+
+An independent re-reviewer planted **ten** further synthetic sites against the guard as fixed in
+11.7. **Three passed a fully green suite**, and a fourth was already disclosed as a residual in
+11.5 rather than closed. Two rounds of planting have now found real gaps, so a third should be
+assumed.
+
+| # | what slipped through | why | fix |
+|---|---|---|---|
+| NEW-1 | A wrapper **over a wrapper**: `fetchInner<T>` forwards to `apiFetch<T>`, `fetchOuter<T>` forwards to `fetchInner<T>`, and a hook calls `fetchOuter<HopResponse>(…)` where `HopResponse` carries the original `memberships: string[]` defect shape. The guard reported only **three plumbing sites with an unresolved `T`**, all near-verbatim matches for recorded exemptions — so the file's own precedent invites a maintainer to exempt them — and 28/28 stayed green with the hand-transcribed type un-enumerated. C1's class was therefore not actually closed. | The tree-wide pre-pass called `discoverWrappers(f.content, apiFetchBindings(f.content))`: the forwarding predicate was anchored to `apiFetch` bindings only, so the accumulated wrapper set never fed back into discovery. Depth one only. | Discovery iterates to a **fixed point** — each round re-runs with everything found so far as additional forwarding targets, until no new wrapper appears. The set only grows and is bounded by the tree's identifiers, so it terminates; a round cap throws a named error rather than hanging. |
+| NEW-2 | `src/pages/plantzone/types.ts` declaring its own `interface Session`, imported as `from './types'` into a file calling `apiFetch<Session>(…)`. **28/28 green** — no exemption even needed. | `clientTypeImports` gated on `/(^\|\/)types(\.ts)?$/` against the *specifier*, i.e. **any module whose basename is `types`**. A per-feature `types.ts` is standard React layout, and the colliding names (`Session`, `Category`, `LogEvent`, `AudioSegment`) are exactly what such a module redeclares. | The specifier is **resolved relative to the importing file** and must be the canonical `api/types`. Import aliases now map to the ORIGINAL export name, so coverage moves in both directions: `{ Checked as Local }` carries the check, `{ BrandNew as Checked }` does not. A specifier that does not resolve inside the tree contributes no coverage, so its sites surface. |
+| NEW-3 | `const plantCast: PlantCastResponse = adminUsers as unknown as PlantCastResponse;` in the conformance module — bare annotation, fixture-binding root, no `@ts-expect-error` — marked the type covered while asserting nothing. **28/28 green.** Same class as the `@ts-expect-error` case the previous round *did* guard, so a reader reasonably expects it caught. | Clauses (i)–(iii) were all satisfied; nothing looked at the initializer for a cast. | A fourth clause: an initializer containing a type assertion (`as X`, `as unknown as X`, `as const`, or the prefix `<X>expr`) disqualifies the declaration **and** costs it its `covered` status, so it surfaces as unverified rather than sitting in the module looking like a check. |
+| (residual) | `import * as api from './client'` + `api.apiFetch<T>(…)`. Accurately *disclosed* in 11.5 as a residual, but `import * as` is a live idiom in this tree (five Radix modules plus a test) and closing it was one optional-qualifier away. | The callee scan's `(?<![.\w$])` lookbehind — which exists so `foo.fetch(` does not match the global `fetch` — rejected the qualified form outright. | Namespace-import bindings are collected per file and allowed as an optional qualifier before the callee, in the call scan **and** in wrapper-forwarding detection. Disclosed-and-cheap is now closed, not documented. |
+
+**Honesty correction.** The 11.7 round's own fix introduced a *false claim*: the guard header's
+clause (ii) and §11.1 clause 2 both stated as an absolute that a locally declared type can "never"
+inherit a checked type's coverage by sharing its spelling. NEW-2 shows that was false as
+implemented. Both texts now state the property the code actually enforces — resolution of the
+specifier, not its spelling — and 11.5's ranking has been re-derived accordingly: the namespace-
+import half of the old item 4 is deleted as no longer true, the surviving half (a re-export that
+renames, or a wrapper imported under an alias) is **promoted to rank 2** as a genuine false
+negative one token of refactor away, and the fixture-relatedness looseness inside the conformance
+module is now stated explicitly under rank 3 instead of going unmentioned.
+
+**Regression coverage.** Five permanent multi-file cases were added — a wrapper over a wrapper, a
+sibling `types.ts` shadow, an import alias in both directions, a namespace-qualified `apiFetch`
+(call site *and* wrapper forwarding), and a cast-defeated conformance assignment. Each was
+verified non-vacuous by reverting its own fix and confirming that exactly that test goes red.
+Every plant above was reproduced on the pre-fix code and re-planted after the fix; all plants were
+working-tree only and none was ever staged.
+
+**Population unchanged: 120 sites / 68 covered / 52 exempted**, with the same per-detector
+breakdown (apiFetch 52, wrapper 7, rawFetch 8, jsonBody 5, jsonParse 5, beacon 2,
+conformanceAssertion 41). That is the expected result — these fixes close shapes the tree does not
+yet contain — and it is asserted, not assumed: the floors and canaries would have moved otherwise.
+
