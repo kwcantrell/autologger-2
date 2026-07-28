@@ -177,3 +177,34 @@ describe('AdminUsersPage — membership rendering (spec: web-admin-users)', () =
     );
   });
 });
+
+// --- Membership chips are labelled with the team display name (task 1.3,
+// spec: web-admin-users D8) ---
+describe('AdminUsersPage — membership chip labelling (spec: web-admin-users, D8)', () => {
+  it('shows the display name on the chip, not the slug id', async () => {
+    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+
+    const { container } = await renderAndLoad();
+
+    const tbody = usersTbody(container);
+    expect(within(tbody).getByText('My Crew')).not.toBeNull();
+    expect(within(tbody).queryByText('my-crew')).toBeNull();
+  });
+
+  it("the remove control's accessible name is 'Remove from <name>', but the request stays keyed by id", async () => {
+    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+    const { container } = await renderAndLoad();
+
+    const removeButton = within(usersTbody(container)).getByRole('button', {
+      name: 'Remove from My Crew',
+    });
+    fireEvent.click(removeButton);
+
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith(
+        'admin/users/user-1/memberships/my-crew',
+        expect.objectContaining({ method: 'DELETE' }),
+      ),
+    );
+  });
+});

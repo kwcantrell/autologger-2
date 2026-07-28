@@ -261,11 +261,11 @@ export function AdminUsersPage() {
                         <div className="flex flex-wrap gap-1">
                           {u.studios.map((m) => (
                             <span key={m.id} className="inline-flex gap-1 items-center">
-                              <code>{m.id}</code>
+                              <code>{m.name}</code>
                               <button
                                 type="button"
                                 className="btn btn-icon danger text-[10px] px-1 py-0"
-                                aria-label={`Remove from ${m.id}`}
+                                aria-label={`Remove from ${m.name}`}
                                 onClick={() => removeMembership(u.id, m.id)}
                               >
                                 ×
