@@ -43,10 +43,10 @@
 
 ## 4. AI process lifecycle (concurrency-sensitive phase — per-phase review required)
 
-- [ ] 4.1 Extract the v2 group-liveness kill ladder into a shared module per D2; unit
+- [x] 4.1 Extract the v2 group-liveness kill ladder into a shared module per D2; unit
       test for the leader-exits-member-survives case; both paths consume it; delete the
       chat-path leader-exit ladder
-- [ ] 4.2 Extract the shared OUTER turn orchestrator per D3 (five hooks max:
+- [x] 4.2 Extract the shared OUTER turn orchestrator per D3 (five hooks max:
       `runRelay` [owns drain policy], `terminate` [owns v2's abort calls], `scrub`
       [applied by the shared guard to every event; chat's is identity], `timeoutMs`,
       `onFinally` [every exit path; carries v2's release + abandonPendingQuestions];
