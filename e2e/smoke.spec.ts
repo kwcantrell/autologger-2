@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createSession } from './createSession';
 
 test('workspace shell renders with no page errors', async ({ page }) => {
   const errors: Error[] = [];
@@ -18,23 +19,15 @@ test('/admin/users renders', async ({ page }) => {
 });
 
 test('create a session, log via UI, and see an out-of-band event live (WS)', async ({ page }) => {
-  await page.goto('/');
-
-  // Scenario 2: create a session through the UI. #ns-show is a Radix Select
-  // trigger (not a native <select>); the anonymous default studio owns exactly
-  // one show, so "Autolog Test Show" is preselected — assert, don't select.
-  await page.locator('#v6-btn-new-session').click();
-  await expect(page.locator('#new-session-form')).toBeVisible();
-  await expect(page.locator('#ns-show')).toBeEnabled();
-  await expect(page.locator('#ns-show')).toContainText('Autolog Test Show');
-  await page.locator('#ns-submit').click();
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-
-  // session-deep-links (task 8.1): sessions are URL-driven — the active
-  // session lives in the address bar (`/sessions/<id>`), not in a
+  // Scenario 2: create a session through the UI (shared helper). #ns-show is a
+  // Radix Select trigger (not a native <select>); the anonymous default studio
+  // owns exactly one show, so "Autolog Test Show" is preselected — assert,
+  // don't select. session-deep-links (task 8.1): sessions are URL-driven — the
+  // active session lives in the address bar (`/sessions/<id>`), not in a
   // `body.dataset.sessionId` attribute (that legacy spine was removed in
-  // phase 3; see web-session-routing "Legacy selection spine retired").
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  // phase 3; see web-session-routing "Legacy selection spine retired") — the
+  // helper asserts the URL.
+  await createSession(page, { expectShowText: 'Autolog Test Show' });
 
   // Roll timecode so category buttons enable, then log via the "Scene" button.
   await page.locator('#btn-ctl-2').click();
@@ -84,13 +77,7 @@ test('create a session, log via UI, and see an out-of-band event live (WS)', asy
 test('deep-linking: a fresh reload on /sessions/<id> restores the session; a garbage id renders not-found', async ({
   page,
 }) => {
-  await page.goto('/');
-  await page.locator('#v6-btn-new-session').click();
-  await expect(page.locator('#new-session-form')).toBeVisible();
-  await expect(page.locator('#ns-show')).toBeEnabled();
-  await page.locator('#ns-submit').click();
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  await createSession(page);
   const sessionUrl = page.url();
 
   // Fresh navigation (full page load, not an in-app transition) to the exact
@@ -122,17 +109,9 @@ test.describe('narrow viewport tab strip', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test('Feed tabs tablist scrolls horizontally and every tab stays reachable', async ({ page }) => {
-    await page.goto('/');
-    // The rail is an off-canvas drawer below 768px (V6Rail.tsx) — open it to
-    // reach New Session, same as visual.spec.ts's openRailIfMobile helper.
-    const openNav = page.getByRole('button', { name: 'Open navigation' });
-    if (await openNav.isVisible()) await openNav.click();
-    await page.locator('#v6-btn-new-session').click();
-    await expect(page.locator('#new-session-form')).toBeVisible();
-    await expect(page.locator('#ns-show')).toBeEnabled();
-    await page.locator('#ns-submit').click();
-    await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+    // The rail is an off-canvas drawer below 768px (V6Rail.tsx) — the shared
+    // helper opens it (openRailIfMobile) before reaching New Session.
+    await createSession(page);
 
     const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
     await expect(feedTabs).toBeVisible();
