@@ -126,24 +126,24 @@ carry payloads and which shapes are branch-dependent.
 
 ## 5. Conformance checks + repo-invariant guard
 
-- [ ] 5.1 Add the web-tier conformance module: for each captured fixture, a type-level
+- [x] 5.1 Add the web-tier conformance module: for each captured fixture, a type-level
       assignment against the client type (`const _check: AdminUser = fixture.users[0]`). Verify
       it actually catches the bug — temporarily reintroduce `memberships: string[]` and confirm
       `npm run typecheck` fails, then revert. **A check that cannot be shown to fail is not a
       check.**
-- [ ] 5.2 Confirm additive tolerance: a fixture field absent from the client type must **not**
+- [x] 5.2 Confirm additive tolerance: a fixture field absent from the client type must **not**
       fail (excess-property checking does not apply to non-fresh expressions). Assert this
       deliberately — it is the forward-compatibility property the spec requires.
-- [ ] 5.3 Add `web/src/apiResponseShapes.repo.test.ts` (D5), following the existing idiom in
+- [x] 5.3 Add `web/src/apiResponseShapes.repo.test.ts` (D5), following the existing idiom in
       `queryKeyFactories.repo.test.ts` / `noAgentAuthoredMarkup.repo.test.ts`: fail when a site
       from any of 3.1's four populations has neither a conformance check nor a recorded
       exemption, naming the offending site. Cover the raw-`fetch` population too (design Open
       Question) — that is where the next instance is most likely.
-- [ ] 5.4 Verify the guard fails as designed: add a throwaway unverified response site, confirm
+- [x] 5.4 Verify the guard fails as designed: add a throwaway unverified response site, confirm
       the test fails and names it, then remove it.
-- [ ] 5.5 Record in the ledger every recorded exemption and every site deliberately left
+- [x] 5.5 Record in the ledger every recorded exemption and every site deliberately left
       unverified, so the residual is measured rather than forgotten.
-- [ ] 5.6 `npm run typecheck` + `npm test` + `npm run lint` green.
+- [x] 5.6 `npm run typecheck` + `npm test` + `npm run lint` green.
 
 ## 6. Final gates
 
