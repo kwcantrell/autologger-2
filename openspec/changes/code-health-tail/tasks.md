@@ -55,13 +55,13 @@
       unit tests consolidated (finding 2.3)
 - [x] 4.3 Shared marker-grouping util consumed by Timeline + MarkerNav (finding 2.6)
       with a group-equality test over a mixed fixture
-- [ ] 4.4 `useGatedGenerate` + shared toolbar fragment for Transcribe/Topics feeds per
+- [x] 4.4 `useGatedGenerate` + shared toolbar fragment for Transcribe/Topics feeds per
       D12 (verify premise against merged tree; reason-span content is a slot carrying
       Transcribe's inline `<code>`); latch behavior tests preserved (finding 2.5)
 - [x] 4.5 Single `normalizePalette9` + `DEFAULT_PALETTE` export per D12 consumed by
       HomeSettingsModal + EventButtonsTable; reconcile the two implementations
       explicitly in the test (finding 2.7)
-- [ ] 4.6 `sessionStatusKeys`/`audioSegmentsKeys` factories replacing all bare literals
+- [x] 4.6 `sessionStatusKeys`/`audioSegmentsKeys` factories replacing all bare literals
       per D6's inventory — incl. HomeSettingsModal's prefix-only literal (`.all`-style
       entry) and the two test files (finding 2.8); grep-clean assertion that no bare
       `'session-status'`/`'audio-segments'` literals remain outside the factories
