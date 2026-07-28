@@ -50,15 +50,15 @@
 - [x] 4.1 `useSseTurn` hook + shared composer per D5 (string `placeholder` prop);
       AiChat and AiV2Design consume; component tests for both vocabularies; dedupe
       `safeJsonParse`/`extractErrorDetail` (finding 2.1)
-- [ ] 4.2 Internal-audio grammar: recording.ts imports predicates/parse/sort from
+- [x] 4.2 Internal-audio grammar: recording.ts imports predicates/parse/sort from
       audioClips.ts per D12 (reconcile `??`/`||`, decide export visibility); grammar
       unit tests consolidated (finding 2.3)
-- [ ] 4.3 Shared marker-grouping util consumed by Timeline + MarkerNav (finding 2.6)
+- [x] 4.3 Shared marker-grouping util consumed by Timeline + MarkerNav (finding 2.6)
       with a group-equality test over a mixed fixture
 - [ ] 4.4 `useGatedGenerate` + shared toolbar fragment for Transcribe/Topics feeds per
       D12 (verify premise against merged tree; reason-span content is a slot carrying
       Transcribe's inline `<code>`); latch behavior tests preserved (finding 2.5)
-- [ ] 4.5 Single `normalizePalette9` + `DEFAULT_PALETTE` export per D12 consumed by
+- [x] 4.5 Single `normalizePalette9` + `DEFAULT_PALETTE` export per D12 consumed by
       HomeSettingsModal + EventButtonsTable; reconcile the two implementations
       explicitly in the test (finding 2.7)
 - [ ] 4.6 `sessionStatusKeys`/`audioSegmentsKeys` factories replacing all bare literals
