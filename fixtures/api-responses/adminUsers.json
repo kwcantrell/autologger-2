@@ -1,0 +1,51 @@
+{
+  "studios_catalog": [
+    {
+      "id": "test-studios",
+      "name": "Test Studio",
+      "builtin": true
+    },
+    {
+      "id": "test-studio-2",
+      "name": "Test Studio 2",
+      "builtin": true
+    },
+    {
+      "id": "my-crew",
+      "name": "My Crew",
+      "builtin": false
+    },
+    {
+      "id": "ymhs",
+      "name": "YMHS",
+      "builtin": false
+    }
+  ],
+  "users": [
+    {
+      "id": "########-####-####-####-############",
+      "email": "bo@example.com",
+      "given_name": "Test",
+      "family_name": "User",
+      "picture_url": "",
+      "created_at_utc": "####-##-##T##:##:##.###Z",
+      "disabled": false,
+      "studios": []
+    },
+    {
+      "id": "########-####-####-####-############",
+      "email": "ann@example.com",
+      "given_name": "Test",
+      "family_name": "User",
+      "picture_url": "",
+      "created_at_utc": "####-##-##T##:##:##.###Z",
+      "disabled": false,
+      "studios": [
+        {
+          "id": "my-crew",
+          "name": "My Crew"
+        }
+      ]
+    }
+  ]
+}

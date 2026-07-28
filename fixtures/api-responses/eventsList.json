@@ -1,0 +1,35 @@
+{
+  "events": [
+    {
+      "event_id": "########-####-####-####-############",
+      "wall_time_utc": "####-##-##T##:##:##.###Z",
+      "timecode": "##:##:##:##",
+      "frame_rate": 24,
+      "timecode_total_frames": 0,
+      "category": "cam",
+      "message": "Cut to 2",
+      "metadata": {
+        "al_category_label_snapshot": "Camera",
+        "al_category_color_snapshot": "#112233"
+      },
+      "category_label": "Camera",
+      "category_color": "#112233"
+    },
+    {
+      "event_id": "########-####-####-####-############",
+      "wall_time_utc": "####-##-##T##:##:##.###Z",
+      "timecode": "##:##:##:##",
+      "frame_rate": 24,
+      "timecode_total_frames": 0,
+      "category": "internal",
+      "message": "Recording started",
+      "metadata": {},
+      "category_label": "Internal",
+      "category_color": "var(--muted)"
+    }
+  ],
+  "total": 2,
+  "logged_event_count": 1,
+  "offset": 0,
+  "limit": 200
+}

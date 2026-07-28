@@ -1,0 +1,15 @@
+{
+  "event_id": "########-####-####-####-############",
+  "wall_time_utc": "####-##-##T##:##:##.###Z",
+  "timecode": "##:##:##:##",
+  "frame_rate": 24,
+  "timecode_total_frames": 0,
+  "category": "cam",
+  "message": "Cut to 2",
+  "metadata": {
+    "al_category_label_snapshot": "Camera",
+    "al_category_color_snapshot": "#112233"
+  },
+  "category_label": "Camera",
+  "category_color": "#112233"
+}

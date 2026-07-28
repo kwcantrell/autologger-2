@@ -1,0 +1,23 @@
+{
+  "timecode": "##:##:##:##",
+  "master_timecode": "##:##:##:##",
+  "session_timecode": "##:##:##:##",
+  "now_utc": "####-##-##T##:##:##.###Z",
+  "session_created_at_utc": "####-##-##T##:##:##.###Z",
+  "frame_rate": 24,
+  "event_count": 0,
+  "logged_event_count": 0,
+  "events_stream_revision": 0,
+  "title": "ATS - 2",
+  "deck_title": "ATS - 002",
+  "show_id": "########-####-####-####-############",
+  "show_name": "All The Smoke",
+  "show_code": "ATS",
+  "episode": "002",
+  "notes": "",
+  "is_rolling": false,
+  "current_take": 0,
+  "audio_recording_lease_holder_id": null,
+  "audio_recording_lease_alive": false,
+  "audio_recording_lease_age_sec": null
+}
