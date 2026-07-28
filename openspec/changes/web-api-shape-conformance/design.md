@@ -398,3 +398,46 @@ rejected option, never as forward-looking direction. The old capability name
 `web-api-client-validation` appears nowhere. Requirement↔task coverage is complete in both
 directions. Call-site counts re-checked against the live repo. Scenario headers all use exactly
 four hashtags; every requirement carries ≥1 scenario; no should/may in normative text.
+
+### 2026-07-27 — Phase 3 audit outcome (tasks 3.1–3.6)
+
+The semantic enumeration (D6/D7) is complete and its ledger is tracked at
+`openspec/changes/web-api-shape-conformance/audit.md` (D9 — verified not git-ignored via
+`git check-ignore`, exit 1, both before and after the file was written).
+
+**Populations enumerated, four, each counted separately:** (a) direct `apiFetch<T>` calls — 44
+sites / 10 files; (b) assertions through the local generic wrapper `fetchAdmin<T>` — 6 call sites
+in `AdminUsersPage.tsx` (this is where the `memberships` bug lived, and where a textual
+`grep 'apiFetch<'` count would still miss it today); (c) untyped `apiFetch(…)` calls, response
+discarded — 6 sites; (d) raw `fetch(…).json()`/`JSON.parse` ingresses — 13, of which exactly 1
+(`dashboardPersistence.ts`'s `load`) gives a payload a client type by unchecked assertion outside
+`apiFetch`. Total verdict rows: 42 (some rows share one endpoint's envelope vs. its element type,
+per D7).
+
+**Verdict split: 9 `CLIENT-WRONG`, 0 `SERVER-WRONG`.** The two pre-identified findings from D6/the
+panel — the `transport/start`/`transport/stop` `OkResponse` mismatch and the
+`Category.dropdown_options` two-shapes split — were both **independently re-derived and confirmed**
+by reading the producing handler/store function end-to-end, not taken on the panel's word. Seven
+further `CLIENT-WRONG` findings are new (missing/extra keys and under-specified nullability on
+`SessionStatus`, `LogEvent`, `AudioSegment`, `SessionTopic`, `POST`/`PUT /api/sessions`, and
+`Session` itself). Full detail, fix, and consumer-impact per finding is in `audit.md` §6.
+
+**`SERVER-WRONG`: 0 findings, and the reason is recorded, not just the count.** Per D10, that
+verdict is reachable only against a documented statement about a response shape, and
+`api-contract-freeze` documents routes and status codes, not shapes — so for essentially every
+endpoint the escalation path in task 3.6 had nothing to fire on. `audit.md` §0 and §7 state this
+explicitly: "zero findings" and "the verdict was structurally unreachable" are recorded as two
+distinct facts, so a future reader does not read the empty list as "the server was checked and
+passed." Two non-verdict observations (the `dropdown_options` divergence and unvalidated
+`categories_json` reads) are recorded as escalation-adjacent notes for a future change, per task
+3.6's escalate-don't-fix instruction — no server file was touched.
+
+**Fixture-coverage concern carried forward to phase 4:** the nullability-class findings (CW-9:
+`Session.show_id`/`show_code`/`show_name`/`created_at_utc` declared non-null but emitted `null`
+on a data-dependent branch; similarly the `enrichEventRpc` orphan branch in CW-4) are
+**structurally invisible to a fixture captured from seeded test state** — seeded rows populate the
+joined show and `created_at_utc`, so the nullable branch never fires against seed data regardless
+of capture fidelity. This is a concrete instance of D1's named "production data variance"
+residual, not a defect in how phase 4 executes its capture. Recorded here so phase 4 does not
+treat a passing captured-fixture check as evidence this nullability class is covered — it isn't,
+and no mechanism in this change's scope covers it (see D1's residual and the risk table).
