@@ -32,7 +32,7 @@
 - [x] 2.6 KEEP the PUT `internal` branch per D9; add the reachability/asymmetry
       comment; add the pinning test for a profile-defined `internal` category (delta
       spec scenarios) (finding 3.8)
-- [ ] 2.7 Catalog cleanups per D12: `authSetPrefs` upsert, `tx()` on the two
+- [x] 2.7 Catalog cleanups per D12: `authSetPrefs` upsert, `tx()` on the two
       read-modify-write pairs, `getStudioSettingsBlob` `resetToDefault()`, single
       `listShowsForStudio` per profile assembly; new upsert test (finding 5.7)
 
