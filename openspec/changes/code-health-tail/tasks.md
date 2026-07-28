@@ -47,7 +47,7 @@
 
 ## 4. Web consolidations
 
-- [ ] 4.1 `useSseTurn` hook + shared composer per D5 (string `placeholder` prop);
+- [x] 4.1 `useSseTurn` hook + shared composer per D5 (string `placeholder` prop);
       AiChat and AiV2Design consume; component tests for both vocabularies; dedupe
       `safeJsonParse`/`extractErrorDetail` (finding 2.1)
 - [ ] 4.2 Internal-audio grammar: recording.ts imports predicates/parse/sort from
