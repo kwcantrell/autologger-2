@@ -5,6 +5,7 @@ import type {
   AudioSegment,
   AudioSegmentsResponse,
   AudioSegmentWaveformBody,
+  OkResponse,
   SessionStatus,
 } from '../types';
 import { sessionStatusKeys } from './useSessionStatus';
@@ -30,7 +31,7 @@ export function useClaimAudioLease(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -53,7 +54,7 @@ export function useClaimAudioLease(sessionId: string) {
 export function useHeartbeatAudioLease(sessionId: string) {
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease/heartbeat`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/heartbeat`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -63,7 +64,7 @@ export function useHeartbeatAudioLease(sessionId: string) {
 export function useReleaseAudioLease(sessionId: string) {
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease/release`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/release`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -74,7 +75,7 @@ export function useUploadWaveform(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ segmentId, body }: { segmentId: string; body: AudioSegmentWaveformBody }) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio/segments/${segmentId}/waveform`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio/segments/${segmentId}/waveform`, {
         method: 'PUT',
         body: JSON.stringify(body),
       }),

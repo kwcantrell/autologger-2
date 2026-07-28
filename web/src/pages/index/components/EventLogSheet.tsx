@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useDeleteEvent, useEvents, useUpdateEvent } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
@@ -241,10 +241,15 @@ export function EventLogSheet({ sessionId }: Props) {
   // --- Derived ---
   const inlineEdit = isLogSheetRolling && !batchEditMode;
 
-  const filtered = showInternal
-    ? events
-    : events.filter((e) => e.category.toLowerCase() !== 'internal');
-  const sorted = doSortEvents(filtered, sortState, status);
+  // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
+  // every render (each keystroke in an inline edit re-sorts the whole feed);
+  // keyed on its actual inputs, output unchanged.
+  const sorted = useMemo(() => {
+    const filtered = showInternal
+      ? events
+      : events.filter((e) => e.category.toLowerCase() !== 'internal');
+    return doSortEvents(filtered, sortState, status);
+  }, [events, showInternal, sortState, status]);
 
   // Mirror showInternal onto body so timeline markers can hide internal-cat markers via CSS.
   useEffect(() => {
@@ -576,7 +581,7 @@ export function EventLogSheet({ sessionId }: Props) {
           // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
           <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">
             <td
-              colSpan={4}
+              colSpan={eventColumns.length}
               className={clsx(
                 'font-[family-name:var(--font-mono)] text-[0.8rem] text-muted whitespace-nowrap',
                 'faint',

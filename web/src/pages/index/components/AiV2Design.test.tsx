@@ -338,6 +338,61 @@ describe('AiV2Design — question round trip', () => {
     await waitFor(() => expect(screen.queryByTestId('aiv2-question-pending')).toBeNull());
   });
 
+  it('keys the pressed option by its index — two options sharing a widgetType never both render pressed (code-health-tail 4.8)', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(
+      fakeFetchResponse([
+        sseFrame('question', {
+          requestId: 'req-3',
+          turnId: 'turn-3',
+          questions: [
+            {
+              question: 'Pick a talk-time style',
+              header: '',
+              multiSelect: false,
+              options: [
+                // Same catalog widgetType on both, deliberately: widgetType is
+                // NOT a unique identity for the pressed state.
+                { label: 'Compact bars', widgetType: 'talk_time_by_speaker' },
+                { label: 'Detailed bars', widgetType: 'talk_time_by_speaker' },
+              ],
+            },
+            // A second, unanswered question keeps the pending view open so the
+            // pressed state is observable before the batched POST fires.
+            {
+              question: 'And event counts?',
+              header: '',
+              multiSelect: false,
+              options: [{ label: 'Counts', widgetType: 'event_count_by_category' }],
+            },
+          ],
+        }),
+      ]) as unknown as Response,
+    );
+    fetchMock.mockResolvedValueOnce(fakeJsonOkResponse() as unknown as Response);
+
+    renderHarness();
+    await sendViaUi('go');
+
+    const cards = await screen.findAllByTestId('aiv2-question-card');
+    fireEvent.click(within(cards[0]).getByText('Detailed bars'));
+
+    const compact = within(cards[0]).getByText('Compact bars').closest('button');
+    const detailed = within(cards[0]).getByText('Detailed bars').closest('button');
+    await waitFor(() => expect(detailed?.getAttribute('aria-pressed')).toBe('true'));
+    expect(compact?.getAttribute('aria-pressed')).toBe('false');
+
+    // Answering the remaining question fires the batched POST; the wire shape
+    // stays exactly { kind, widgetType } — no UI-only optionIndex leaks.
+    fireEvent.click(within(cards[1]).getByText('Counts'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body));
+    expect(body.answers).toEqual([
+      { kind: 'option', widgetType: 'talk_time_by_speaker' },
+      { kind: 'option', widgetType: 'event_count_by_category' },
+    ]);
+  });
+
   it('submitting free text POSTs the distinct { kind: "text" } answer shape', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(fakeFetchResponse([questionSse()]) as unknown as Response);

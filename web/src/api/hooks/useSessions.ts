@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiFetch } from '../client';
-import type { NewSessionBody, Session, SessionsResponse, SessionUpdateBody } from '../types';
+import type {
+  NewSessionBody,
+  OkResponse,
+  Session,
+  SessionsResponse,
+  SessionUpdateBody,
+} from '../types';
 import { audioSegmentsKeys } from './useAudio';
 import { eventsKeys } from './useEvents';
 
@@ -92,7 +98,7 @@ export function useArchiveSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (sessionId: string) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/archive`, { method: 'POST' }),
+      apiFetch<OkResponse>(`sessions/${sessionId}/archive`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   });
 }
@@ -101,7 +107,7 @@ export function useRestoreSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (sessionId: string) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/restore`, { method: 'POST' }),
+      apiFetch<OkResponse>(`sessions/${sessionId}/restore`, { method: 'POST' }),
     onSuccess: (_data, sessionId) => {
       qc.invalidateQueries({ queryKey: ['sessions'] });
       // Re-resolve the per-id query: from the archived interstitial, Restore
@@ -115,7 +121,7 @@ export function useDeleteSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (sessionId: string) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}`, { method: 'DELETE' }),
+      apiFetch<OkResponse>(`sessions/${sessionId}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   });
 }
@@ -132,7 +138,7 @@ export function useYoutubeImport() {
       url: string;
       usePublishDate: boolean;
     }) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/youtube-import`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/youtube-import`, {
         method: 'POST',
         body: JSON.stringify({ url, use_publish_date: usePublishDate }),
       }),

@@ -282,12 +282,13 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           <button
             type="button"
             className={DECK_TITLE}
+            // On the active card the title is a no-op (the session is already
+            // selected); aria-disabled says so to AT without changing the
+            // rendered look or the tab order (code-health-tail 4.8).
+            aria-disabled={isActive || undefined}
             onClick={(e) => {
               e.stopPropagation();
-              if (!isActive) {
-                onSelect();
-                return;
-              }
+              if (!isActive) onSelect();
             }}
           >
             {s.title}

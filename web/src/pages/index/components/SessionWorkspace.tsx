@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCompanionPresence } from '../../../api/hooks/useCompanionPresence';
 import { eventsKeys, useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
@@ -41,6 +41,19 @@ declare global {
     AutoLogger_stopTransportIfNeeded?: () => void;
   }
 }
+
+// Feed tab inventory — one source for the tablist buttons AND the tabpanel
+// wrappers below (code-health-tail 4.8). `label` doubles as each panel's
+// aria-label.
+const FEED_TABS = [
+  { id: 'events', label: 'Event Feed' },
+  { id: 'transcript', label: 'Transcript' },
+  { id: 'topics', label: 'Topics' },
+  { id: 'assistant', label: 'Assistant' },
+  { id: 'dashboards', label: 'Dashboards' },
+] as const;
+
+type FeedTabId = (typeof FEED_TABS)[number]['id'];
 
 interface Props {
   sessionId: string;
@@ -115,9 +128,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
   // ui-refresh IA: Transcript/Topics were nested under an "AI" tab; they are
   // session DATA, so they sit beside the Event Feed now. The two agent
   // surfaces carry human names (Assistant, Dashboards) instead of "AI"/"AI v2".
-  const [feedTab, setFeedTab] = useState<
-    'events' | 'transcript' | 'topics' | 'assistant' | 'dashboards'
-  >('events');
+  const [feedTab, setFeedTab] = useState<FeedTabId>('events');
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
     setOnOffState((prev) => {
@@ -234,6 +245,24 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
       window.AutoLogger_invalidateEvents = undefined;
     };
   }, [sessionId, qc]);
+
+  // One panel per feed tab, keyed to FEED_TABS (code-health-tail 4.8). All
+  // five render every pass — the wrapper map below hides, never unmounts.
+  const feedPanels: Record<FeedTabId, ReactNode> = {
+    events: <EventLogSheet sessionId={sessionId} />,
+    transcript: <TranscribeFeed sessionId={sessionId} />,
+    topics: <TopicsFeed sessionId={sessionId} />,
+    assistant: <AiPanel sessionId={sessionId} />,
+    // `key={sessionId}` (whole-branch audit fix wave, Fix 1): forces a remount
+    // on SESSION change only — orthogonal to the tab-mount discipline below,
+    // which never remounts on a tab switch. Without it, `useSession`'s
+    // `staleTime: Infinity` lets navigating between two already-cached
+    // sessions update this `sessionId` prop without remounting, leaking
+    // `editingDashboard`/`proposedDashboard`/`proposedDashboardTurnId`/
+    // `messages`/`pendingQuestion` from the prior session (a not-yet-Kept
+    // proposal from session A could be Kept onto session B).
+    dashboards: <AiV2Panel key={sessionId} sessionId={sessionId} />,
+  };
 
   return (
     // AudioClipsProvider (whole-branch audit fix wave, finding C1/I3): the ONE
@@ -613,15 +642,7 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     role="tablist"
                     aria-label="Feed tabs"
                   >
-                    {(
-                      [
-                        { id: 'events', label: 'Event Feed' },
-                        { id: 'transcript', label: 'Transcript' },
-                        { id: 'topics', label: 'Topics' },
-                        { id: 'assistant', label: 'Assistant' },
-                        { id: 'dashboards', label: 'Dashboards' },
-                      ] as const
-                    ).map((tab) => {
+                    {FEED_TABS.map((tab) => {
                       const active = feedTab === tab.id;
                       return (
                         <button
@@ -647,72 +668,20 @@ export function SessionWorkspace({ sessionId, ytImportPending }: Props) {
                     Transcript/Topics inherit the same discipline so their
                     fetch state stays warm across switches (as it did when
                     they were AI subtabs). */}
-                  <div
-                    className={clsx(
-                      'flex flex-col flex-1 min-h-0',
-                      feedTab !== 'events' && 'hidden',
-                    )}
-                    hidden={feedTab !== 'events'}
-                    role="tabpanel"
-                    aria-label="Event Feed"
-                  >
-                    <EventLogSheet sessionId={sessionId} />
-                  </div>
-                  <div
-                    className={clsx(
-                      'flex flex-col flex-1 min-h-0',
-                      feedTab !== 'transcript' && 'hidden',
-                    )}
-                    hidden={feedTab !== 'transcript'}
-                    role="tabpanel"
-                    aria-label="Transcript"
-                  >
-                    <TranscribeFeed sessionId={sessionId} />
-                  </div>
-                  <div
-                    className={clsx(
-                      'flex flex-col flex-1 min-h-0',
-                      feedTab !== 'topics' && 'hidden',
-                    )}
-                    hidden={feedTab !== 'topics'}
-                    role="tabpanel"
-                    aria-label="Topics"
-                  >
-                    <TopicsFeed sessionId={sessionId} />
-                  </div>
-                  <div
-                    className={clsx(
-                      'flex flex-col flex-1 min-h-0',
-                      feedTab !== 'assistant' && 'hidden',
-                    )}
-                    hidden={feedTab !== 'assistant'}
-                    role="tabpanel"
-                    aria-label="Assistant"
-                  >
-                    <AiPanel sessionId={sessionId} />
-                  </div>
-                  <div
-                    className={clsx(
-                      'flex flex-col flex-1 min-h-0',
-                      feedTab !== 'dashboards' && 'hidden',
-                    )}
-                    hidden={feedTab !== 'dashboards'}
-                    role="tabpanel"
-                    aria-label="Dashboards"
-                  >
-                    {/* `key={sessionId}` (whole-branch audit fix wave, Fix 1):
-                      forces a remount on SESSION change only — orthogonal to
-                      the tab-mount discipline above, which never remounts on
-                      a tab switch. Without it, `useSession`'s
-                      `staleTime: Infinity` lets navigating between two
-                      already-cached sessions update this `sessionId` prop
-                      without remounting, leaking `editingDashboard`/
-                      `proposedDashboard`/`proposedDashboardTurnId`/
-                      `messages`/`pendingQuestion` from the prior session
-                      (a not-yet-Kept proposal from session A could be Kept
-                      onto session B). */}
-                    <AiV2Panel key={sessionId} sessionId={sessionId} />
-                  </div>
+                  {FEED_TABS.map((tab) => (
+                    <div
+                      key={tab.id}
+                      className={clsx(
+                        'flex flex-col flex-1 min-h-0',
+                        feedTab !== tab.id && 'hidden',
+                      )}
+                      hidden={feedTab !== tab.id}
+                      role="tabpanel"
+                      aria-label={tab.label}
+                    >
+                      {feedPanels[tab.id]}
+                    </div>
+                  ))}
                 </div>
               )}
             </section>

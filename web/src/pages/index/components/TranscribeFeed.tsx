@@ -188,7 +188,10 @@ export function TranscribeFeed({ sessionId }: Props) {
       >
         {paddingTop > 0 && (
           <tr>
-            <td colSpan={4} style={{ height: paddingTop, padding: 0, border: 'none' }} />
+            <td
+              colSpan={COLUMNS.length}
+              style={{ height: paddingTop, padding: 0, border: 'none' }}
+            />
           </tr>
         )}
         {sortedWords &&
@@ -209,7 +212,10 @@ export function TranscribeFeed({ sessionId }: Props) {
           })}
         {paddingBottom > 0 && (
           <tr>
-            <td colSpan={4} style={{ height: paddingBottom, padding: 0, border: 'none' }} />
+            <td
+              colSpan={COLUMNS.length}
+              style={{ height: paddingBottom, padding: 0, border: 'none' }}
+            />
           </tr>
         )}
       </FeedTable>

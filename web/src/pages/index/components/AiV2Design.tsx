@@ -78,6 +78,16 @@ export type AiV2AnswerItem =
   | { kind: 'option'; widgetType: string }
   | { kind: 'text'; text: string };
 
+/** UI-side draft of an answer (code-health-tail 4.8): the option variant
+ * additionally carries the option's index within its question, because
+ * `widgetType` is not a unique identity — two options may legitimately offer
+ * the same catalog widget type, and keying the pressed state on it rendered
+ * both as selected. The index is stripped before POST: the wire shape stays
+ * exactly `AiV2AnswerItem` (frozen contract). */
+type AiV2DraftAnswer =
+  | { kind: 'option'; widgetType: string; optionIndex: number }
+  | { kind: 'text'; text: string };
+
 export interface AiV2DesignProps {
   sessionId: string;
   messages: AiV2Message[];
@@ -228,7 +238,7 @@ export function AiV2Design({
   renderOptionPreview,
   onDashboardProposed,
 }: AiV2DesignProps) {
-  const [draftAnswers, setDraftAnswers] = useState<Record<number, AiV2AnswerItem>>({});
+  const [draftAnswers, setDraftAnswers] = useState<Record<number, AiV2DraftAnswer>>({});
   const [freeTextInputs, setFreeTextInputs] = useState<Record<number, string>>({});
   const [answering, setAnswering] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -344,7 +354,7 @@ export function AiV2Design({
     }
   }
 
-  function answerQuestion(questionIndex: number, answer: AiV2AnswerItem) {
+  function answerQuestion(questionIndex: number, answer: AiV2DraftAnswer) {
     const next = { ...draftAnswers, [questionIndex]: answer };
     setDraftAnswers(next);
     if (!pendingQuestion) return;
@@ -352,7 +362,8 @@ export function AiV2Design({
     for (let i = 0; i < pendingQuestion.questions.length; i += 1) {
       const a = next[i];
       if (!a) return; // not every question answered yet — wait for the rest
-      answers.push(a);
+      // Strip the UI-only optionIndex — the POSTed answer shape is frozen.
+      answers.push(a.kind === 'option' ? { kind: 'option', widgetType: a.widgetType } : a);
     }
     void submitAnswers(answers);
   }
@@ -397,8 +408,8 @@ export function AiV2Design({
                     disabled={answering}
                     selected={draftAnswers[qi]}
                     freeText={freeTextInputs[qi] ?? ''}
-                    onSelectOption={(widgetType) =>
-                      answerQuestion(qi, { kind: 'option', widgetType })
+                    onSelectOption={(widgetType, optionIndex) =>
+                      answerQuestion(qi, { kind: 'option', widgetType, optionIndex })
                     }
                     onFreeTextChange={(value) =>
                       setFreeTextInputs((prev) => ({ ...prev, [qi]: value }))
@@ -456,9 +467,9 @@ function AiV2MessageRow({ message }: { message: AiV2Message }) {
 interface QuestionCardProps {
   question: AiV2Question;
   disabled: boolean;
-  selected: AiV2AnswerItem | undefined;
+  selected: AiV2DraftAnswer | undefined;
   freeText: string;
-  onSelectOption: (widgetType: string) => void;
+  onSelectOption: (widgetType: string, optionIndex: number) => void;
   onFreeTextChange: (value: string) => void;
   onSubmitFreeText: () => void;
   renderOptionPreview?: (widgetType: string | undefined, option: AiV2QuestionOption) => ReactNode;
@@ -488,8 +499,10 @@ function QuestionCard({
       <p className="m-0 text-sm font-semibold text-v5-text">{question.question}</p>
       <div className="flex flex-col gap-2">
         {question.options.map((option, oi) => {
-          const isSelected =
-            selected?.kind === 'option' && selected.widgetType === option.widgetType;
+          // Pressed state keys on the option's INDEX, not its widgetType —
+          // two options sharing a widgetType must not both render selected
+          // (code-health-tail 4.8).
+          const isSelected = selected?.kind === 'option' && selected.optionIndex === oi;
           const selectable = Boolean(option.widgetType) && !disabled;
           return (
             <button
@@ -499,7 +512,7 @@ function QuestionCard({
               disabled={!selectable}
               aria-pressed={isSelected}
               onClick={() => {
-                if (option.widgetType) onSelectOption(option.widgetType);
+                if (option.widgetType) onSelectOption(option.widgetType, oi);
               }}
               className={clsx(
                 'flex flex-col gap-1 rounded-v5-sm border p-2 text-left text-sm transition-colors',

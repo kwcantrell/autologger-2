@@ -207,10 +207,18 @@ describe('SessionCard (active-list variant)', () => {
       { activeSessionId: 'sess-2', onSelectSession, onCloseSession },
     );
 
-    fireEvent.click(within(card(container, 'sess-1')).getByText('Session One'));
+    const inactiveTitle = within(card(container, 'sess-1')).getByText('Session One');
+    expect(inactiveTitle.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(inactiveTitle);
     expect(onSelectSession).toHaveBeenCalledWith('sess-1');
 
-    // Active variant: hidden a11y marker + Close session menu item.
+    // Active variant: its title is a no-op, marked aria-disabled (4.8), plus
+    // the hidden a11y marker and the Close session menu item.
+    const activeTitle = within(card(container, 'sess-2')).getByText('Session Two');
+    expect(activeTitle.getAttribute('aria-disabled')).toBe('true');
+    onSelectSession.mockClear();
+    fireEvent.click(activeTitle);
+    expect(onSelectSession).not.toHaveBeenCalled();
     expect(within(card(container, 'sess-2')).getByText('ACTIVE SESSION')).toBeTruthy();
     openMenu(card(container, 'sess-2'));
     fireEvent.click(await screen.findByText('Close session'));
