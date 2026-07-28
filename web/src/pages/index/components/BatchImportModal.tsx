@@ -76,6 +76,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
   const [showId, setShowId] = useState(defaultShowId || (shows[0]?.id ?? ''));
   const [folderName, setFolderName] = useState<string | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [logsUrl, setLogsUrl] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [progress, setProgress] = useState<BatchImportProgressState>(EMPTY_PROGRESS);
 
@@ -88,8 +89,9 @@ export function BatchImportModal({ profile, onClose }: Props) {
     };
   }, []);
 
-  const canStart =
-    Boolean(showId && folderName && selectedFiles && selectedFiles.length > 0) && !isImporting;
+  const hasAudio = Boolean(folderName && selectedFiles && selectedFiles.length > 0);
+  const hasLogs = Boolean(logsUrl && logsUrl.trim());
+  const canStart = Boolean(showId && (hasAudio || hasLogs) && !isImporting);
 
   const handleClose = () => {
     abortRef.current?.abort();
@@ -101,6 +103,13 @@ export function BatchImportModal({ profile, onClose }: Props) {
     dirInputRef.current?.click();
   };
 
+  const handleImportLogs = () => {
+    const raw = window.prompt('Paste a public Google Sheets URL (anyone with the link can view):');
+    if (raw === null) return;
+    const trimmed = raw.trim();
+    setLogsUrl(trimmed || null);
+  };
+
   const handleFolderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     setSelectedFiles(files);
@@ -108,24 +117,59 @@ export function BatchImportModal({ profile, onClose }: Props) {
   };
 
   const handleStartImport = async () => {
-    if (!profile || !selectedFiles || !showId) return;
+    if (!profile || !showId) return;
+    if (!hasAudio && !hasLogs) return;
 
     const controller = new AbortController();
     abortRef.current = controller;
     setIsImporting(true);
     setProgress(EMPTY_PROGRESS);
 
+    const mergeLines = (extra: string[]) => {
+      setProgress((prev) => ({
+        ...prev,
+        lines: [...prev.lines, ...extra],
+      }));
+    };
+
     try {
-      await runBatchImport({
-        showId,
-        files: selectedFiles,
-        profile,
-        signal: controller.signal,
-        onProgress: setProgress,
-        onSessionCreated: () => {
-          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-        },
-      });
+      if (hasAudio && selectedFiles) {
+        await runBatchImport({
+          showId,
+          files: selectedFiles,
+          profile,
+          signal: controller.signal,
+          onProgress: setProgress,
+          onSessionCreated: () => {
+            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          },
+        });
+      }
+
+      if (hasLogs && logsUrl) {
+        const { startLogImport, pollLogImportJob } = await import('../batchImport/logImportClient');
+        setProgress((prev) => ({
+          ...prev,
+          current: 'Importing logs…',
+          percent: hasAudio ? Math.max(prev.percent, 90) : 10,
+        }));
+        const jobId = await startLogImport(showId, logsUrl, controller.signal);
+        const job = await pollLogImportJob(jobId, controller.signal, (j) => {
+          setProgress((prev) => ({
+            ...prev,
+            current: j.status === 'running' || j.status === 'queued' ? 'Importing logs…' : null,
+            percent: j.status === 'completed' || j.status === 'failed' ? 100 : prev.percent,
+            lines: [
+              ...prev.lines.filter((l) => !l.startsWith('[logs] ')),
+              ...j.lines.map((l) => `[logs] ${l}`),
+            ],
+          }));
+        });
+        if (job.status === 'failed') {
+          mergeLines([`Failed logs: ${job.error ?? 'Log import failed'}`]);
+        }
+        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         return;
@@ -141,6 +185,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
         abortRef.current = null;
       }
       setIsImporting(false);
+      setProgress((prev) => ({ ...prev, current: null, percent: 100 }));
     }
   };
 
@@ -219,9 +264,22 @@ export function BatchImportModal({ profile, onClose }: Props) {
           ) : null}
         </div>
 
-        <button type="button" className="btn self-start" id="bi-import-logs" disabled={isImporting}>
-          Import Logs
-        </button>
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            className="btn self-start"
+            id="bi-import-logs"
+            onClick={handleImportLogs}
+            disabled={isImporting}
+          >
+            Import Logs
+          </button>
+          {logsUrl ? (
+            <span className="truncate text-[0.85rem] text-v5-muted" data-testid="batch-import-logs-url">
+              {logsUrl}
+            </span>
+          ) : null}
+        </div>
 
         <div className="modal-actions">
           <button

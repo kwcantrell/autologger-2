@@ -85,16 +85,24 @@ describe('BatchImportModal', () => {
     expect(screen.getByText('Your Mom (YMH)')).not.toBeNull();
   });
 
-  it('Import Logs is a no-op (no file picker, no import side effects)', () => {
+  it('Import Logs prompts for a Sheets URL and stores it', () => {
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
-
-    const dirInput = screen.getByTestId('batch-import-dir-input');
-    expect(dirInput).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
 
-    expect(screen.queryByTestId('batch-import-folder-name')).toBeNull();
-    expect((dirInput as HTMLInputElement).files?.length ?? 0).toBe(0);
+    expect(prompt).toHaveBeenCalled();
+    expect(screen.getByTestId('batch-import-logs-url').textContent).toContain('abc123');
+    prompt.mockRestore();
+  });
+
+  it('Start Import is enabled when only a logs URL is set', () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
+    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
+    expect((screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 
   it('shows the folder name after simulating a directory file input change', () => {
@@ -174,6 +182,7 @@ describe('BatchImportModal', () => {
     mockedStitch.mockResolvedValue({
       blob: new Blob(['wav'], { type: 'audio/wav' }),
       durationS: 3,
+      partDurationsS: [3],
     });
 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -218,7 +227,7 @@ describe('BatchImportModal', () => {
   });
 
   it('abort on close clears progress on remount', async () => {
-    let resolveStitch: ((v: { blob: Blob; durationS: number }) => void) | undefined;
+    let resolveStitch: ((v: { blob: Blob; durationS: number; partDurationsS: number[] }) => void) | undefined;
     mockedStitch.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -250,7 +259,7 @@ describe('BatchImportModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     unmount();
 
-    resolveStitch?.({ blob: new Blob(['wav'], { type: 'audio/wav' }), durationS: 1 });
+    resolveStitch?.({ blob: new Blob(['wav'], { type: 'audio/wav' }), durationS: 1, partDurationsS: [1] });
 
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
     expect(screen.getByTestId('batch-import-progress').textContent).toBe('');

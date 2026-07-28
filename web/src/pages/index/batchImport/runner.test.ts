@@ -113,6 +113,7 @@ describe('runBatchImport', () => {
     mockedStitch.mockResolvedValue({
       blob: new Blob(['wav'], { type: 'audio/wav' }),
       durationS: 12.5,
+      partDurationsS: [12.5],
     });
 
     const created: string[] = [];
@@ -134,7 +135,10 @@ describe('runBatchImport', () => {
       expect.stringContaining('sessions/new-session/local-audio-import?duration_s=12.5'),
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'audio/wav' },
+        headers: {
+          'Content-Type': 'audio/wav',
+          'X-Audio-Seam-Parts': JSON.stringify([{ duration_s: 12.5 }]),
+        },
       }),
     );
     expect(lines).toContain('Completed YMH_002');
@@ -153,6 +157,7 @@ describe('runBatchImport', () => {
     mockedStitch.mockResolvedValue({
       blob: new Blob(['wav'], { type: 'audio/wav' }),
       durationS: 1,
+      partDurationsS: [1],
     });
 
     await runBatchImport({
@@ -249,6 +254,7 @@ describe('runBatchImport', () => {
     mockedStitch.mockResolvedValue({
       blob: new Blob(['wav'], { type: 'audio/wav' }),
       durationS: 3,
+      partDurationsS: [3],
     });
 
     const lines: string[] = [];

@@ -192,6 +192,9 @@ export class SessionHub {
   addEvent(input: Parameters<EventStore['addEvent']>[0]) {
     return this.inTxn(() => this.events.addEvent(input));
   }
+  addEventAtTotalFrames(input: Parameters<EventStore['addEventAtTotalFrames']>[0]) {
+    return this.inTxn(() => this.events.addEventAtTotalFrames(input));
+  }
   listEvents(input: Parameters<EventStore['listEvents']>[0]) {
     return this.events.listEvents(input);
   }
