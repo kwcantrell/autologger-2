@@ -130,6 +130,44 @@ export interface OkResponse {
   ok: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Transport
+// ---------------------------------------------------------------------------
+
+/**
+ * The transport snapshot both transport routes return — server:
+ * `TransportStore.transportStateDict` (`server/src/session/transportStore.ts`),
+ * typed there as `TransportState`.
+ */
+export interface TransportStateSnapshot {
+  is_rolling: boolean;
+  current_take: number;
+  roll_started_at_utc: string | null;
+  elapsed_frames: number;
+  timecode: string;
+  timecode_total_frames: number;
+}
+
+/**
+ * `POST /api/sessions/:id/transport/start`. The route `return c.json(state)`s
+ * the transport snapshot plus `started` — there is **no `ok` key on any path**
+ * (web-api-shape-conformance audit CW-1; it was typed `OkResponse`).
+ * `started` is `false` on the already-rolling early return, which writes nothing.
+ */
+export interface TransportStartResponse extends TransportStateSnapshot {
+  started: boolean;
+}
+
+/**
+ * `POST /api/sessions/:id/transport/stop` — as above, with `stopped` (`false`
+ * on the already-stopped early return). Kept a **separate** type from the start
+ * response rather than one type with both flags optional, so a fixture check
+ * cannot pass by omitting whichever flag it happens not to carry.
+ */
+export interface TransportStopResponse extends TransportStateSnapshot {
+  stopped: boolean;
+}
+
 export interface AuthUser {
   id: string;
   email: string;

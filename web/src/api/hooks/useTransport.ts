@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
-import type { OkResponse } from '../types';
+import type { TransportStartResponse, TransportStopResponse } from '../types';
 import { eventsKeys } from './useEvents';
 import { sessionStatusKeys } from './useSessionStatus';
 
@@ -12,12 +12,12 @@ export function useTransport(sessionId: string) {
   };
   const start = useMutation({
     mutationFn: () =>
-      apiFetch<OkResponse>(`sessions/${sessionId}/transport/start`, { method: 'POST' }),
+      apiFetch<TransportStartResponse>(`sessions/${sessionId}/transport/start`, { method: 'POST' }),
     onSuccess: invalidate,
   });
   const stop = useMutation({
     mutationFn: () =>
-      apiFetch<OkResponse>(`sessions/${sessionId}/transport/stop`, { method: 'POST' }),
+      apiFetch<TransportStopResponse>(`sessions/${sessionId}/transport/stop`, { method: 'POST' }),
     onSuccess: invalidate,
   });
   return { start, stop };
