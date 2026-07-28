@@ -1,6 +1,8 @@
 import type { CategoryRecord } from '../studio';
 import type { SessionHub } from '../session/SessionHub';
 import type { TimecodeCtx } from '../session/sessionCore';
+import type { Bindings, Config } from '../types';
+import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
 import { mapLogCategory } from './categoryMatch';
 import type { ParsedLogRow } from './sheetsFetch';
 import { secondsToTotalFrames } from './sheetTimecode';
@@ -12,7 +14,7 @@ export interface SessionLogImportResult {
   lines: string[];
 }
 
-function timedTranscriptTokens(hub: SessionHub): TranscriptToken[] {
+export function timedTranscriptTokens(hub: SessionHub): TranscriptToken[] {
   const words = hub.listTranscriptWords();
   const out: TranscriptToken[] = [];
   for (const w of words) {
@@ -29,14 +31,52 @@ function seamPartsForSession(hub: SessionHub): { duration_s: number }[] {
   if (seams && seams.length > 0) return seams;
   const segs = hub.listAudioSegments();
   if (segs.length === 0) throw new Error('Session has no audio segments.');
-  // Fallback: one part from first segment wall clock span if present.
   const seg = segs[0];
   if (seg.started_at_utc && seg.ended_at_utc) {
-    const ms =
-      Date.parse(seg.ended_at_utc) - Date.parse(seg.started_at_utc);
+    const ms = Date.parse(seg.ended_at_utc) - Date.parse(seg.started_at_utc);
     if (Number.isFinite(ms) && ms > 0) return [{ duration_s: ms / 1000 }];
   }
   throw new Error('Session is missing stitch seam metadata; re-import audio with seam parts.');
+}
+
+/** Ensure timed transcript words exist; generate via DeepGram when missing. */
+export async function ensureTimedTranscript(input: {
+  sessionId: string;
+  getHub: () => SessionHub;
+  config: Config;
+  audio: Bindings['ports']['audio'];
+  ctx: TimecodeCtx;
+  onProgress: (line: string) => void;
+}): Promise<TranscriptToken[]> {
+  let tokens = timedTranscriptTokens(input.getHub());
+  if (tokens.length > 0) {
+    input.onProgress(`Transcript already present (${tokens.length} timed words).`);
+    return tokens;
+  }
+
+  input.onProgress('Generating transcript (DeepGram)…');
+  try {
+    const words = await generateTranscriptWords({
+      config: input.config,
+      audio: input.audio,
+      getHub: input.getHub,
+      ctx: input.ctx,
+      sessionId: input.sessionId,
+    });
+    tokens = timedTranscriptTokens(input.getHub());
+    if (tokens.length === 0) {
+      throw new Error(
+        `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
+      );
+    }
+    input.onProgress(`Transcript ready (${tokens.length} timed words).`);
+    return tokens;
+  } catch (err) {
+    if (err instanceof TranscriptGenerateError) {
+      throw new Error(`Transcript generation failed: ${err.message}`);
+    }
+    throw err;
+  }
 }
 
 /** Import parsed log rows into a session event feed (sync + create-at-frames). */
@@ -45,6 +85,8 @@ export function runSessionLogImport(input: {
   rows: ParsedLogRow[];
   categories: CategoryRecord[];
   ctx: TimecodeCtx;
+  /** Pre-resolved timed transcript tokens (after ensureTimedTranscript). */
+  transcript: TranscriptToken[];
   projectLive: (projection: {
     event_count: number;
     max_timecode_total_frames: number | null;
@@ -55,18 +97,15 @@ export function runSessionLogImport(input: {
   }) => void;
 }): SessionLogImportResult {
   const lines: string[] = [];
-  const transcript = timedTranscriptTokens(input.hub);
-  if (transcript.length === 0) {
-    throw new Error(
-      'Transcript is missing or untimed. Generate the transcript before importing logs.',
-    );
+  if (input.transcript.length === 0) {
+    throw new Error('Transcript is missing or untimed after ensure step.');
   }
 
   const parts = seamPartsForSession(input.hub);
   const sync = syncLogRowsToSeams(
     input.rows.map((r) => ({ sheetSec: r.sheetSec, message: r.message, type: r.type })),
     parts,
-    transcript,
+    input.transcript,
   );
 
   for (const p of sync.parts) {

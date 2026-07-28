@@ -8,7 +8,7 @@ import {
   getLogImportJob,
   setLogImportStatus,
 } from '../logImport/jobStore';
-import { runSessionLogImport } from '../logImport/runSessionLogImport';
+import { runSessionLogImport, ensureTimedTranscript } from '../logImport/runSessionLogImport';
 import { fetchPublicWorkbookSheets } from '../logImport/sheetsFetch';
 import { ApiError, timecodeCtx } from './_helpers';
 
@@ -71,14 +71,24 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         const sessionId = String(session.id);
         appendLogImportLine(job.id, `Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
         try {
-          const hub = env.ports.sessions.get(sessionId);
+          const getHub = () => env.ports.sessions.get(sessionId);
           const row = catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: true });
           if (!row) throw new Error('Session not found.');
+          const ctx = timecodeCtx(row);
+          const transcript = await ensureTimedTranscript({
+            sessionId,
+            getHub,
+            config: env.config,
+            audio: env.ports.audio,
+            ctx,
+            onProgress: (line) => appendLogImportLine(job.id, `  ${title}: ${line}`),
+          });
           const result = runSessionLogImport({
-            hub,
+            hub: getHub(),
             rows: sheet.rows,
             categories,
-            ctx: timecodeCtx(row),
+            ctx,
+            transcript,
             projectLive: (projection) => {
               catalog.sessions.projectSessionLive(sessionId, projection);
             },
