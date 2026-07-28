@@ -37,7 +37,7 @@
 
 ## 3. Zero-byte suffix range (contract-surface phase — per-phase review required)
 
-- [ ] 3.1 Blob-store range computation raises `InvalidRangeError` for suffix ranges on
+- [x] 3.1 Blob-store range computation raises `InvalidRangeError` for suffix ranges on
       zero-byte blobs per D7; unit test + int test asserting `416` end-to-end (delta
       spec scenarios); existing satisfiable-range tests unchanged
 
