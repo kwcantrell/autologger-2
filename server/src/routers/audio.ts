@@ -115,7 +115,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   const rangeHeader = c.req.header('range');
   if (rangeHeader) {
     const parsed = parseRange(rangeHeader);
-    let obj;
+    let obj: Awaited<ReturnType<typeof c.env.ports.audio.get>>;
     try {
       obj = await c.env.ports.audio.get(got.r2_key, parsed ? { range: parsed } : undefined);
     } catch (e) {

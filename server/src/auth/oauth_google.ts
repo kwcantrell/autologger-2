@@ -97,7 +97,7 @@ export class GoogleIdentityVerifier implements IdentityVerifier {
       audience: clientId,
       issuer: ['https://accounts.google.com', 'accounts.google.com'],
     };
-    let result;
+    let result: Awaited<ReturnType<typeof jwtVerify>>;
     try {
       result = await jwtVerify(idToken, await this.googleJwks(), options);
     } catch (e) {

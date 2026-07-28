@@ -42,13 +42,13 @@ async function readBack(path: string) {
   const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
   try {
     const track = await input.getPrimaryAudioTrack();
-    expect(track).not.toBeNull();
-    const duration = await track!.computeDuration();
+    if (track === null) throw new Error(`no primary audio track in '${path}'`);
+    const duration = await track.computeDuration();
     let packets = 0;
     const { EncodedPacketSink } = await import('mediabunny');
-    const sink = new EncodedPacketSink(track!);
+    const sink = new EncodedPacketSink(track);
     for await (const _ of sink.packets()) packets += 1;
-    return { codec: track!.codec, duration, packets };
+    return { codec: track.codec, duration, packets };
   } finally {
     input.dispose();
   }

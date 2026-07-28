@@ -12,6 +12,18 @@ function store(): BlobStore {
   return new BlobStore(join(base, 'audio'), join(base, 'tmp'));
 }
 
+// Narrowing wrapper: every get() below is expected to hit, so a miss should
+// fail with the key that missed rather than a bare TypeError on `null!`.
+async function getOrThrow(
+  s: BlobStore,
+  key: string,
+  opts?: Parameters<BlobStore['get']>[1],
+): Promise<NonNullable<Awaited<ReturnType<BlobStore['get']>>>> {
+  const obj = await s.get(key, opts);
+  if (obj === null) throw new Error(`expected a blob at '${key}'`);
+  return obj;
+}
+
 async function drain(body: ReadableStream): Promise<Buffer> {
   const chunks: Uint8Array[] = [];
   for await (const c of body as unknown as AsyncIterable<Uint8Array>) chunks.push(c);
@@ -24,10 +36,9 @@ describe('BlobStore', () => {
   it('put/get round-trip with nested keys, and size is reported', async () => {
     const s = store();
     await s.put('audio/sess1/0001_x.webm', BYTES);
-    const obj = await s.get('audio/sess1/0001_x.webm');
-    expect(obj).not.toBeNull();
-    expect(obj!.size).toBe(10);
-    expect((await drain(obj!.body)).toString()).toBe('0123456789');
+    const obj = await getOrThrow(s, 'audio/sess1/0001_x.webm');
+    expect(obj.size).toBe(10);
+    expect((await drain(obj.body)).toString()).toBe('0123456789');
   });
 
   it('get returns null for a missing key', async () => {
@@ -38,14 +49,14 @@ describe('BlobStore', () => {
   it('serves offset/length and suffix ranges, normalized to offset/length', async () => {
     const s = store();
     await s.put('k', BYTES);
-    const mid = await s.get('k', { range: { offset: 2, length: 3 } });
-    expect(mid!.range).toEqual({ offset: 2, length: 3 });
-    expect((await drain(mid!.body)).toString()).toBe('234');
-    const tail = await s.get('k', { range: { suffix: 4 } });
-    expect(tail!.range).toEqual({ offset: 6, length: 4 });
-    expect((await drain(tail!.body)).toString()).toBe('6789');
-    const openEnd = await s.get('k', { range: { offset: 7 } });
-    expect(openEnd!.range).toEqual({ offset: 7, length: 3 });
+    const mid = await getOrThrow(s, 'k', { range: { offset: 2, length: 3 } });
+    expect(mid.range).toEqual({ offset: 2, length: 3 });
+    expect((await drain(mid.body)).toString()).toBe('234');
+    const tail = await getOrThrow(s, 'k', { range: { suffix: 4 } });
+    expect(tail.range).toEqual({ offset: 6, length: 4 });
+    expect((await drain(tail.body)).toString()).toBe('6789');
+    const openEnd = await getOrThrow(s, 'k', { range: { offset: 7 } });
+    expect(openEnd.range).toEqual({ offset: 7, length: 3 });
   });
 
   it('throws InvalidRangeError on out-of-bounds or non-positive ranges', async () => {
@@ -56,8 +67,8 @@ describe('BlobStore', () => {
       InvalidRangeError,
     );
     // suffix larger than the file → whole file (HTTP semantics), not an error
-    const whole = await s.get('k', { range: { suffix: 999 } });
-    expect(whole!.range).toEqual({ offset: 0, length: 10 });
+    const whole = await getOrThrow(s, 'k', { range: { suffix: 999 } });
+    expect(whole.range).toEqual({ offset: 0, length: 10 });
   });
 
   it('throws InvalidRangeError for a suffix range against a zero-byte blob', async () => {
@@ -66,9 +77,9 @@ describe('BlobStore', () => {
     await expect(s.get('k', { range: { suffix: 1 } })).rejects.toBeInstanceOf(InvalidRangeError);
     await expect(s.get('k', { range: { suffix: 999 } })).rejects.toBeInstanceOf(InvalidRangeError);
     // No range at all on the same zero-byte blob still succeeds (whole body).
-    const whole = await s.get('k');
-    expect(whole!.size).toBe(0);
-    expect((await drain(whole!.body)).length).toBe(0);
+    const whole = await getOrThrow(s, 'k');
+    expect(whole.size).toBe(0);
+    expect((await drain(whole.body)).length).toBe(0);
   });
 
   it('list returns keys under a prefix; partial temp files never appear', async () => {

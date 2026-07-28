@@ -7,7 +7,7 @@
 // (SessionHub is the sole substrate today; tests may supply a fake).
 
 import type { Clock } from '../clock';
-import { type TransportFields } from '../timecode';
+import type { TransportFields } from '../timecode';
 
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;

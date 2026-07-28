@@ -8,7 +8,10 @@ export function catalogFor(): Catalog {
 }
 
 let counter = 0;
-const uid = (p: string): string => `${p}-${(counter += 1)}`;
+const uid = (p: string): string => {
+  counter += 1;
+  return `${p}-${counter}`;
+};
 
 export function seedStudio(opts: { id?: string; name?: string } = {}): string {
   const id = opts.id ?? uid('studio');

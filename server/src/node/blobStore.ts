@@ -3,7 +3,7 @@
 // and reconciliation never see partials), fsync, rename. Range gets normalize
 // to {offset,length}; unsatisfiable ranges throw InvalidRangeError (→ 416).
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, type Dirent } from 'node:fs';
 import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
@@ -62,7 +62,8 @@ export class BlobStore {
     const dest = this.pathFor(key);
     await mkdir(this.tmpDir, { recursive: true });
     await mkdir(dirname(dest), { recursive: true });
-    const tmp = join(this.tmpDir, `put-${process.pid}-${(tmpCounter += 1)}`);
+    tmpCounter += 1;
+    const tmp = join(this.tmpDir, `put-${process.pid}-${tmpCounter}`);
     try {
       const fh = await open(tmp, 'w');
       try {
@@ -129,7 +130,7 @@ export class BlobStore {
     const startDir = this.pathFor(opts.prefix.endsWith('/') ? opts.prefix : dirname(opts.prefix));
     const objects: Array<{ key: string }> = [];
     const walk = async (dir: string): Promise<void> => {
-      let entries;
+      let entries: Dirent[];
       try {
         entries = await readdir(dir, { withFileTypes: true });
       } catch {

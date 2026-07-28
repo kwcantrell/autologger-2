@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { type Context, Hono } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
 import { authContext } from './middleware/auth';

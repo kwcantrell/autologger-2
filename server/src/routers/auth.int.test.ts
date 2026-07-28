@@ -321,6 +321,7 @@ describe('callback -- error branches', () => {
       expect(logged).not.toContain(tailMarker);
       // None of the forbidden code points may appear in the log line,
       // literally or otherwise-untransformed.
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the assertion is that these control characters are absent — the class must name them.
       const forbidden = /[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
       expect(forbidden.test(logged)).toBe(false);
       // Non-reversible: sanitization must not be a JSON/\u-style escape that

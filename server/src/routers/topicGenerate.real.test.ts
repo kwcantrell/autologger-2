@@ -92,8 +92,8 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
     });
 
     const topics = registry.get(sessionId).listTopics();
-    // Surface what actually happened so a 0-topics run is diagnosable.
-    // biome-ignore lint/suspicious/noConsole: operator-facing diagnostic for a gated real test.
+    // Surface what actually happened so a 0-topics run is diagnosable —
+    // operator-facing output, deliberate in this gated real test.
     console.log(
       `[real topic gen] outcome=${JSON.stringify(outcome)} topics=${topics.length}: ` +
         topics.map((t) => t.summary).join(' | '),

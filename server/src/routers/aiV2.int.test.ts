@@ -890,7 +890,8 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
       // Read incrementally (the stream is still open, gated on the answer) —
       // draining with res.text() here would hang until the answer arrives,
       // which this test hasn't sent yet.
-      const reader = res.body!.getReader();
+      if (res.body === null) throw new Error('SSE response had no body stream');
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffered = '';
       const deadline = Date.now() + 5000;

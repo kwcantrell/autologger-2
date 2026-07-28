@@ -38,6 +38,7 @@ export const authRouter = new Hono<AppEnv>();
 // downstream.
 const LOG_SANITIZE_MAX_LEN = 256;
 const FORBIDDEN_LOG_CHARS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point — this is the log-injection deny-list, not an accidental escape.
   /[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
 function sanitizeForLog(value: unknown): string {
@@ -170,7 +171,7 @@ authRouter.get('/auth/google/callback', async (c) => {
   // falling through to the new-user branch would trip the unique google_sub
   // constraint (the former latent 500).
   const anyExisting = catalog.auth.authGetUserByGoogleSubAny(googleSub);
-  if (anyExisting && Boolean(anyExisting.disabled_at_utc)) {
+  if (anyExisting?.disabled_at_utc) {
     console.warn('OAuth callback: disabled account attempted sign-in', sanitizeForLog(googleSub));
     return c.redirect('/?login_error=account_disabled', 302);
   }

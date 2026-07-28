@@ -406,9 +406,9 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
       const first = await post(sessionA, { message: 'start on A' }, fixtureEnv());
       expect(first.status).toBe(200);
       const firstEvents = parseSse(await first.text());
-      const issuedId = (
-        firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string }
-      ).claude_session_id;
+      const firstDone = firstEvents.find((e) => e.event === 'done');
+      if (!firstDone) throw new Error('turn one emitted no `done` event');
+      const issuedId = (firstDone.data as { claude_session_id: string }).claude_session_id;
       expect(issuedId).toBe('fixture-cli-session-id');
       expect(neverSpawned(sessionB)).toBe(true); // sanity: B untouched so far
 
@@ -430,9 +430,9 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
     const first = await post(s, { message: 'start' }, fixtureEnv());
     expect(first.status).toBe(200);
     const firstEvents = parseSse(await first.text());
-    const issuedId = (
-      firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string }
-    ).claude_session_id;
+    const firstDone = firstEvents.find((e) => e.event === 'done');
+    if (!firstDone) throw new Error('turn one emitted no `done` event');
+    const issuedId = (firstDone.data as { claude_session_id: string }).claude_session_id;
 
     const second = await post(
       s,

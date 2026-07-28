@@ -46,7 +46,7 @@ profileRouter.put('/api/profile', async (c) => {
 
   // Logged-in user with no team memberships: only name edits allowed.
   if (user !== null && catalog.auth.authListStudioIdsForUser(user.id).length === 0) {
-    if (rawSid || body.settings != null || (body.show_updates && body.show_updates.length)) {
+    if (rawSid || body.settings != null || body.show_updates?.length) {
       return c.json({ detail: 'No team access.' }, 403);
     }
     if (body.given_name != null || body.family_name != null) {
@@ -67,7 +67,7 @@ profileRouter.put('/api/profile', async (c) => {
     catalog.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError
   }
 
-  if (body.show_updates && body.show_updates.length) {
+  if (body.show_updates?.length) {
     for (const ent of body.show_updates) {
       const sid = ent.show_id.trim();
       const row = catalog.shows.getShowRow(sid);

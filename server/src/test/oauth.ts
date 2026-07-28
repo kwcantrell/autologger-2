@@ -12,7 +12,8 @@ export async function makeKeypair(): Promise<{
   publicJwk: JsonWebKey;
 }> {
   const { privateKey, publicKey } = await generateKeyPair('RS256', { extractable: true });
-  const kid = `test-kid-${(kidCounter += 1)}`;
+  kidCounter += 1;
+  const kid = `test-kid-${kidCounter}`;
   const publicJwk = { ...(await exportJWK(publicKey)), kid, alg: 'RS256', use: 'sig' };
   return { kid, privateKey: privateKey as CryptoKey, publicJwk };
 }

@@ -523,7 +523,7 @@ aiV2Router.put('/api/sessions/:sessionId/ai/v2/dashboard', async (c) => {
   // not a body field) so this route never needs a second config-shaped
   // schema alongside `validateDashboardConfig`.
   const turnIdRaw = c.req.query('turnId');
-  const turnId = turnIdRaw && turnIdRaw.trim() ? turnIdRaw.trim().slice(0, 64) : null;
+  const turnId = turnIdRaw?.trim() ? turnIdRaw.trim().slice(0, 64) : null;
 
   const hub = getSessionHub(c, sessionId);
   let stored: ReturnType<typeof hub.saveDashboard>;

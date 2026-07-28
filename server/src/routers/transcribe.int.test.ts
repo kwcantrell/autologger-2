@@ -97,7 +97,12 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
 
   const seededIds: string[] = [];
-  afterEach(() => {
+  // One afterEach for the whole describe. These were two hooks; vitest's
+  // default 'stack' hook order ran the later-registered reset before this
+  // cwd cleanup, so the merged body keeps the reset first.
+  afterEach(async () => {
+    aiChatTurns.reset();
+    await __resetAiMcpListenerForTests();
     for (const id of seededIds.splice(0)) {
       rmSync(stableSessionCwd(id), { recursive: true, force: true });
     }
@@ -112,10 +117,6 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     // — otherwise a real create_topic MCP call in this test would write into
     // a stale registry from an earlier test, invisible to this test's own
     // `env.ports.sessions` reads (mirrors topicGenerate.test.ts's afterEach).
-    await __resetAiMcpListenerForTests();
-  });
-  afterEach(async () => {
-    aiChatTurns.reset();
     await __resetAiMcpListenerForTests();
   });
 

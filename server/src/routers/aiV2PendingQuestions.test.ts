@@ -290,7 +290,11 @@ describe('buildPendingQuestionOnQuestion — the onQuestion seam (registers, rel
       },
     });
     void onQuestion({ questions: [] });
-    const requestId = captured!.requestId;
+    // Re-widened: TS's control-flow analysis doesn't see the assignment inside
+    // the emitQuestion callback, so `captured` reads as the initial `null`.
+    const emitted = captured as { requestId: string } | null;
+    if (emitted === null) throw new Error('emitQuestion was never called');
+    const requestId = emitted.requestId;
 
     const outcome = registry.resolveAnswer({ sessionId: 's1', turnId: 't1', requestId }, 'user-b', [
       { kind: 'text', text: 'x' },
