@@ -175,10 +175,21 @@ export function BatchImportModal({ profile, onClose }: Props) {
         return;
       }
       const detail = err instanceof Error ? err.message : 'Import failed';
+      const status =
+        err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+          ? err.status
+          : null;
+      const hint =
+        status === 404
+          ? ' (API route missing — restart the Node server on the sheets-log-import branch, then retry)'
+          : '';
       setProgress((prev) => ({
         ...prev,
         current: null,
-        lines: [...prev.lines, `Failed: ${detail}`],
+        lines: [
+          ...prev.lines,
+          `Failed: ${status ? `HTTP ${status} — ` : ''}${detail}${hint}`,
+        ],
       }));
     } finally {
       if (abortRef.current === controller) {

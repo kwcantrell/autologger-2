@@ -66,19 +66,50 @@ export async function fetchPublicWorkbookSheets(
 ): Promise<ParsedSheet[]> {
   const id = extractSpreadsheetId(spreadsheetUrl);
   if (!id) throw new Error('Could not parse Google Sheets spreadsheet id from URL.');
-  const res = await fetchImpl(xlsxExportUrl(id), { redirect: 'follow' });
-  if (!res.ok) {
-    throw new Error(
-      `Could not download spreadsheet (HTTP ${res.status}). Ensure it is shared as anyone-with-the-link.`,
-    );
+
+  const urls = [
+    xlsxExportUrl(id),
+    // Some share links resolve more reliably with the uc export endpoint.
+    `https://docs.google.com/spreadsheets/d/${id}/export?format=xlsx&id=${id}`,
+  ];
+
+  let lastErr: Error | null = null;
+  for (const url of urls) {
+    try {
+      const res = await fetchImpl(url, {
+        redirect: 'follow',
+        headers: {
+          // Google sometimes serves a soft block / HTML interstitial to bare clients.
+          'User-Agent': 'AutologgerLogImport/1.0 (compatible; +https://localhost)',
+          Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*',
+        },
+      });
+      if (!res.ok) {
+        lastErr = new Error(
+          `Could not download spreadsheet (HTTP ${res.status} ${res.statusText || ''}). Ensure it is shared as anyone-with-the-link can view.`.trim(),
+        );
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const head = buf.subarray(0, 64).toString('utf8');
+      if (head.includes('<!DOCTYPE') || head.includes('<html') || head.includes('<HTML')) {
+        lastErr = new Error(
+          'Spreadsheet download returned HTML instead of XLSX. Ensure the sheet is shared as anyone-with-the-link can view.',
+        );
+        continue;
+      }
+      // XLSX is a zip — PK magic
+      if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
+        lastErr = new Error(
+          'Spreadsheet download was not a valid XLSX file. Ensure the sheet is shared as anyone-with-the-link can view.',
+        );
+        continue;
+      }
+      return parseWorkbookBuffer(buf);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
   }
-  const buf = Buffer.from(await res.arrayBuffer());
-  // Google often returns HTML login page for private sheets
-  const head = buf.subarray(0, 32).toString('utf8');
-  if (head.includes('<!DOCTYPE') || head.includes('<html')) {
-    throw new Error(
-      'Spreadsheet download returned HTML instead of XLSX. Ensure the sheet is shared as anyone-with-the-link.',
-    );
-  }
-  return parseWorkbookBuffer(buf);
+  throw lastErr ?? new Error('Could not download spreadsheet.');
 }
+
