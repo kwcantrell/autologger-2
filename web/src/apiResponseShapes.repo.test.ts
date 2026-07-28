@@ -31,9 +31,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 //
 //   1. The population is the union of SIX detectors over application code,
 //      deliberately over-broad: every `apiFetch` call (typed or not, under its
-//      imported name or an alias), every call to a generic wrapper over
-//      `apiFetch` (DISCOVERED tree-wide, not hardcoded and not per-file — this
-//      is the population `grep 'apiFetch<'` missed and the `memberships` crash
+//      imported name, under an import alias, or under a namespace qualifier
+//      from `import * as api`), every call to a generic wrapper over `apiFetch`
+//      (DISCOVERED tree-wide, not hardcoded and not per-file, and iterated to a
+//      FIXED POINT so that a wrapper over a wrapper is a wrapper — this is the
+//      population `grep 'apiFetch<'` missed and the `memberships` crash
 //      lived in), every global `fetch(`, every `Response.json()`, every
 //      `JSON.parse(`, and every raw network primitive (`navigator.sendBeacon`,
 //      `new EventSource`, `new XMLHttpRequest`).
@@ -45,10 +47,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      client type it acquires is (i) assigned a CAPTURED fixture by a
 //      `const x: T = <fixture>` declaration in `api/types.conformance.test.ts`
 //      — read out of detector 7's own parse of that module, so adding a real
-//      check is what makes a site pass, and importing a name is not a check —
-//      and (ii) imported from `api/types` IN THE SITE'S OWN FILE, so a locally
-//      declared type can never inherit a checked type's coverage by sharing
-//      its spelling. Everything else must be exempted BY SITE, with a reason,
+//      check is what makes a site pass, and importing a name is not a check;
+//      (ii) assigned by a declaration that actually ASSERTS something, i.e. one
+//      that neither sits under a `@ts-expect-error` nor casts its initializer
+//      (`fixture as unknown as T` compiles whatever the capture's shape is);
+//      and (iii) in scope in the SITE'S OWN FILE via an import whose specifier
+//      RESOLVES — relative to that file, not merely spelled `types` — to the
+//      canonical `api/types` module, under the export name that was checked.
+//      Clause (iii) is what stops a locally declared type, or one imported from
+//      a sibling per-feature `types.ts`, or one aliased onto a checked name,
+//      from inheriting coverage by sharing a spelling; a specifier that does not
+//      resolve inside the tree contributes no coverage at all, so its sites
+//      surface. Everything else must be exempted BY SITE, with a reason,
 //      in EXEMPTIONS below — never by file, never by glob, never by a type-wide
 //      or category-wide rule that a future site could fall into unnoticed.
 //      `apiFetch<OkResponse>` is the cautionary case: it reads as trivially
@@ -67,34 +77,50 @@ import { afterEach, describe, expect, it } from 'vitest';
 //   4. The detectors are mutation-checked, over MULTI-FILE synthetic trees as
 //      well as single-file ones. The first describe block runs the real scanner
 //      over trees carrying a planted unverified site of each shape — including
-//      a wrapper declared in one file and called from another, two sites on one
-//      path differing only in method, and a locally declared type shadowing a
-//      checked name — and over a clean tree, so "the guard fires" and "the
-//      guard does not just always-fire" are both demonstrated rather than
-//      assumed. Single-file fixtures alone hid three of those gaps for a whole
-//      review cycle; every cross-file case below is a former false negative.
+//      a wrapper declared in one file and called from another, a wrapper over a
+//      wrapper, a namespace-qualified `api.apiFetch<T>`, two sites on one path
+//      differing only in method, a locally declared type shadowing a checked
+//      name, a sibling `types.ts` shadowing one, an import alias in both
+//      directions, and a cast-defeated conformance assignment — and over a
+//      clean tree, so "the guard fires" and "the guard does not just
+//      always-fire" are both demonstrated rather than assumed. Single-file
+//      fixtures alone hid three gaps for a whole review cycle, and a second
+//      adversarial round found three more; EVERY case below is a former false
+//      negative, each verified to go red when its own fix is reverted.
 //
 // WHAT IT CANNOT SEE — stated, not glossed (audit.md §8 records the same list
-// for the one-time enumeration). These are ordered by how reachable each is by
-// an ordinary refactor, largest first:
+// for the one-time enumeration, §11.5 the ranked version). Ordered by how
+// reachable each is by an ordinary refactor, largest first; where two are
+// equally reachable, the one that fails SILENTLY ranks higher. Nothing here is
+// stated as absolute unless the code enforces it:
 //   - Indirect type acquisition. A JSON value passed as `unknown` into a typed
 //     helper several modules away acquires its type at no `fetch`/`.json()`/
 //     `JSON.parse` token, so no detector fires (audit §8.3). This is the
 //     largest REMAINING structural hole: it is a limit of matching on
 //     deserialization syntax, not a tuning gap.
+//   - A callee reached under a name rebound OUTSIDE the calling file. The scan
+//     resolves `apiFetch` through a named import (including
+//     `import { apiFetch as x }`) and through a namespace qualifier
+//     (`import * as api` … `api.apiFetch<T>(…)`), and it resolves wrappers by
+//     their DECLARED name anywhere in the tree. It does not follow a re-export
+//     that renames (`export { apiFetch as request } from './client'`), nor a
+//     wrapper imported under an alias (`import { fetchTyped as ft }`): under
+//     either, the call site is invisible, not merely mis-keyed. One token of
+//     refactor, and the same class as the two false negatives already found.
 //   - Whether a COVERED type is checked against the RIGHT endpoint's fixture.
 //     Coverage is per type NAME, not per (site, endpoint) pair: reusing an
-//     already-checked type on a new endpoint passes silently. The audit's
-//     per-site verdict table is what answers that question.
+//     already-checked type on a new endpoint passes silently. The same
+//     looseness sits inside the conformance module — a `const x: T = <binding>`
+//     counts when the binding is ANY captured fixture, so a slice of an
+//     unrelated capture (`const s: Session = adminUsers.users[0]`) would count
+//     as `Session`'s check. Deciding which fixture belongs to which type is the
+//     audit's per-row verdict table (§5), which is a snapshot, not a standing
+//     check; the guard cannot derive that mapping and does not pretend to.
 //   - Sites whose collision the method cannot break. Two calls on one path
 //     with the same literal method — or with the method threaded in through a
 //     variable — still normalise to one key. They are not absorbed (exemptions
 //     are consumed one-for-one, so the second surfaces), but the two entries
 //     are told apart only by their `reason` text.
-//   - `apiFetch` reached other than through a named import: a namespace import
-//     (`import * as api` … `api.apiFetch<T>(…)`) or a re-export under a new
-//     name in a third module. The alias FORM that is covered is
-//     `import { apiFetch as x }`.
 //   - Test files. `*.test.ts(x)` and `test/` under web/src are outside the
 //     application-code scan. Detector 7 is the one deliberate exception and it
 //     covers only the conformance module.
@@ -120,6 +146,11 @@ const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage',
 /** The conformance module — the sole authority on which client types are
  * checked against a captured response, and the target of detector 7. */
 const CONFORMANCE_MODULE = 'api/types.conformance.test.ts';
+
+/** The canonical client response-type module, as a path relative to the scan
+ * root. A type name only inherits a conformance check when the site's own file
+ * imports it from THIS module — resolved, not merely spelled. */
+const CLIENT_TYPES_MODULE = 'api/types';
 
 // ---------------------------------------------------------------------------
 // Filesystem walk
@@ -150,6 +181,27 @@ function isTestFile(rel: string): boolean {
 
 function relOf(root: string, file: string): string {
   return path.relative(root, file).split(path.sep).join('/');
+}
+
+/** Resolves an import specifier written inside `rel` to a scan-root-relative
+ * module path, or `null` when it does not resolve inside the tree (a bare
+ * package name, a tsconfig path alias).
+ *
+ * Exists because "the specifier is spelled `types`" is not the same question as
+ * "the specifier IS the client response-type module". `src/pages/x/types.ts` is
+ * an ordinary per-feature module in a React tree, and the names it would
+ * plausibly redeclare — `Session`, `Category`, `LogEvent`, `AudioSegment` — are
+ * exactly the checked ones. Matching on the basename let such a module lend its
+ * locally declared shapes the coverage of the real `api/types`.
+ *
+ * Returning `null` for a non-relative specifier is the SAFE direction: an
+ * unresolvable import contributes no covered names, so its sites surface as
+ * unverified rather than silently passing. */
+function resolveSpecifier(rel: string, spec: string): string | null {
+  if (!spec.startsWith('.')) return null;
+  const joined = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
+  if (joined.startsWith('..')) return null; // escapes the scan root
+  return joined.replace(/\.(tsx?|jsx?)$/, '').replace(/\/index$/, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -433,23 +485,60 @@ function apiFetchBindings(content: string): string[] {
   return [...names];
 }
 
-/** Type names this file imports from `api/types` — the client response-type
- * module. A site's type only counts as COVERED when its name resolves HERE,
- * so a file declaring its own `interface Session` cannot borrow the coverage of
- * the checked `Session` merely by sharing its spelling. */
-function clientTypeImports(content: string): Set<string> {
+/** Local names bound by a NAMESPACE import (`import * as api from './client'`).
+ *
+ * `api.apiFetch<T>(…)` is `apiFetch` under a qualifier, and the callee scan's
+ * `(?<![.\w$])` lookbehind — which exists to stop `foo.fetch(` from matching the
+ * global `fetch` — rejects it. `import * as` is a live idiom in this tree (five
+ * Radix modules and a test), so the qualified form is one refactor away. */
+function namespaceBindings(content: string): string[] {
   const out = new Set<string>();
+  const re = /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"][^'"]*['"]/g;
+  for (let m = re.exec(content); m !== null; m = re.exec(content)) out.add(m[1]);
+  return [...out];
+}
+
+/** A regex source matching `callee` either bare or qualified by one of this
+ * file's namespace-import bindings. The match ENDS at the callee name, so a
+ * caller advances its cursor by the whole match, not by the callee's length.
+ *
+ * The lookbehind sits before the optional qualifier, so `api.apiFetch` matches
+ * once (at `api`) rather than twice, and a bare `apiFetch` in the same file
+ * still matches — `api` is a prefix of `apiFetch`, but the qualifier alternative
+ * requires a following `.` and backtracks out. */
+function calleePattern(callee: string, nsNames: readonly string[]): string {
+  const qualifier = nsNames.length > 0 ? `(?:(?:${nsNames.join('|')})\\s*\\.\\s*)?` : '';
+  return `(?<![.\\w$])${qualifier}${callee}`;
+}
+
+/** Maps each type name this file has in scope from the CANONICAL client
+ * response-type module (`api/types`) to the name it is exported under there.
+ *
+ * A site's type only counts as COVERED when its name resolves HERE, so a file
+ * declaring its own `interface Session` — or importing one from a sibling
+ * `types.ts` — cannot borrow the coverage of the checked `Session` merely by
+ * sharing its spelling. The specifier is RESOLVED against the importing file
+ * (see `resolveSpecifier`); matching its basename would readmit every
+ * per-feature `types.ts` in the tree.
+ *
+ * The value is the ORIGINAL export name, not the local one, because an import
+ * alias moves coverage in both directions: `import type { Session as S }` must
+ * let `apiFetch<S>` inherit `Session`'s check, and `import type { BrandNew as
+ * Session }` must NOT let `apiFetch<Session>` inherit it. */
+function clientTypeImports(rel: string, content: string): Map<string, string> {
+  const out = new Map<string, string>();
   const imports = /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]*)['"]/g;
   for (let m = imports.exec(content); m !== null; m = imports.exec(content)) {
-    if (!/(^|\/)types(\.ts)?$/.test(m[2])) continue;
+    if (resolveSpecifier(rel, m[2]) !== CLIENT_TYPES_MODULE) continue;
     for (const part of m[1].split(',')) {
-      const local = part
+      const [original, alias] = part
         .trim()
         .replace(/^type\s+/, '')
         .split(/\s+as\s+/)
-        .pop()
-        ?.trim();
-      if (local && /^[A-Za-z_$][\w$]*$/.test(local)) out.add(local);
+        .map((s) => s.trim());
+      const local = alias ?? original ?? '';
+      if (/^[A-Za-z_$][\w$]*$/.test(local) && /^[A-Za-z_$][\w$]*$/.test(original ?? ''))
+        out.set(local, original);
     }
   }
   return out;
@@ -466,15 +555,19 @@ function clientTypeImports(content: string): Set<string> {
  * is the most natural next wrapper in this codebase, and the exact-match test
  * would have laundered every one of its call sites.
  *
- * The RESULT of this function is unioned across the whole tree before any file
- * is scanned (see `scanTree`). Per-file discovery only worked because
- * `fetchAdmin` happens to be declared and called in the same file; a wrapper
- * exported from its own module would contribute nothing but its own plumbing,
- * and the call site carrying the concrete hand-transcribed type — the one that
- * matters, the one the `memberships` crash lived at — would never appear. */
+ * The RESULT of this function is unioned across the whole tree AND ITERATED TO A
+ * FIXED POINT before any file is scanned (see `scanTree`). Per-file discovery
+ * only worked because `fetchAdmin` happens to be declared and called in the same
+ * file; a wrapper exported from its own module would contribute nothing but its
+ * own plumbing, and the call site carrying the concrete hand-transcribed type —
+ * the one that matters, the one the `memberships` crash lived at — would never
+ * appear. Anchoring `baseNames` to `apiFetch` alone had the same shape one level
+ * up: `fetchOuter<T>` forwarding to `fetchInner<T>` forwarding to `apiFetch<T>`
+ * is still a wrapper, and its call sites are still hand-transcribed types. */
 function discoverWrappers(content: string, baseNames: readonly string[]): string[] {
   const found: string[] = [];
   const base = new Set(baseNames);
+  const nsNames = namespaceBindings(content);
   const decl =
     /(?:function\s+([A-Za-z_$][\w$]*)\s*<([^>]*)>|const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?<([^>]*)>)/g;
   for (let m = decl.exec(content); m !== null; m = decl.exec(content)) {
@@ -486,7 +579,9 @@ function discoverWrappers(content: string, baseNames: readonly string[]): string
       .filter((p) => /^[A-Za-z_$][\w$]*$/.test(p));
     const body = readDeclarationBody(content, m.index);
     const forwards = params.some((p) =>
-      baseNames.some((b) => new RegExp(`(?<![.\\w$])${b}\\s*<[^>]*\\b${p}\\b`).test(body)),
+      baseNames.some((b) =>
+        new RegExp(`${calleePattern(b, nsNames)}\\s*<[^>]*\\b${p}\\b`).test(body),
+      ),
     );
     if (forwards) found.push(name);
   }
@@ -501,11 +596,15 @@ function scanFile(
 ): Site[] {
   const sites: Site[] = [];
   const masked = maskLiterals(content);
-  const typeImports = clientTypeImports(content);
-  /** A type name counts only when it is BOTH fixture-checked and resolves to
-   * `api/types` from this file. */
+  const typeImports = clientTypeImports(rel, content);
+  /** A type name counts only when it resolves to the canonical `api/types` from
+   * this file AND the name it resolves to is fixture-checked there. */
   const isCovered = (names: string[]) =>
-    names.length > 0 && names.every((n) => coveredTypes.has(n) && typeImports.has(n));
+    names.length > 0 &&
+    names.every((n) => {
+      const original = typeImports.get(n);
+      return original !== undefined && coveredTypes.has(original);
+    });
   const push = (
     detector: Detector,
     index: number,
@@ -527,13 +626,16 @@ function scanFile(
   // Detectors 1 + 2 — every `apiFetch` binding (alias included) and every
   // wrapper discovered ANYWHERE in the tree, not just in this file.
   const baseNames = apiFetchBindings(content);
+  const nsNames = namespaceBindings(content);
   const callees = [...new Set([...baseNames, ...treeWrappers])];
   for (const callee of callees) {
     const detector: Detector = baseNames.includes(callee) ? 'apiFetch' : 'wrapper';
-    const re = new RegExp(`(?<![.\\w$])${callee}\\s*(?=[<(])`, 'g');
+    const re = new RegExp(`${calleePattern(callee, nsNames)}\\s*(?=[<(])`, 'g');
     for (let m = re.exec(content); m !== null; m = re.exec(content)) {
       if (isProse(masked, m.index)) continue;
-      let cursor = m.index + callee.length;
+      // The match may carry a namespace qualifier (`api.apiFetch`), so advance
+      // by the matched text, not by the callee's own length.
+      let cursor = m.index + m[0].length;
       while (/\s/.test(content[cursor] ?? '')) cursor++;
       let typeExpr = '';
       if (content[cursor] === '<') {
@@ -546,7 +648,10 @@ function scanFile(
       if (content[cursor] !== '(') continue; // a re-export/reference, not a call
       const args = readArgs(content, cursor);
       const names = typeNamesIn(typeExpr);
-      const call = `${callee}<${typeExpr}>(${normalizeArg(args[0] ?? '')})`;
+      // The callee as WRITTEN (qualifier included), so `api.apiFetch<T>(…)` and
+      // a bare `apiFetch<T>(…)` in the same file are two distinct keys.
+      const written = collapse(m[0]).replace(/\s/g, '');
+      const call = `${written}<${typeExpr}>(${normalizeArg(args[0] ?? '')})`;
       push(detector, m.index, withMethod(call, literalMethodOf(args)), names, isCovered(names));
     }
   }
@@ -642,8 +747,20 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
     // matters: this module deliberately contains `@ts-expect-error` assignments
     // whose whole point is that the fixture is NOT assignable to that type.
     const bare = annotation.match(/^(?:readonly\s+)?([A-Za-z_$][\w$]*)(?:\[\])*$/)?.[1];
+    // Clause (iv): the initializer must not contain a type ASSERTION. `const x:
+    // T = fixture as unknown as T` is a bare annotation fed by a fixture binding
+    // with no `@ts-expect-error` above it — it satisfies (i)-(iii) exactly — and
+    // asserts NOTHING: the cast makes the declaration compile whatever the
+    // capture's real shape is. That is the same class of defeat as the
+    // `@ts-expect-error` case, so it is rejected the same way, and it also costs
+    // the declaration its `covered` status so it must be exempted rather than
+    // sit in the module looking like a check.
+    const cast = containsTypeAssertion(init);
     const asserted =
-      bare !== undefined && fixtureBindings.has(root) && !precededByTsExpectError(content, m.index);
+      bare !== undefined &&
+      fixtureBindings.has(root) &&
+      !precededByTsExpectError(content, m.index) &&
+      !cast;
     sites.push({
       detector: 'conformanceAssertion',
       file: rel,
@@ -651,11 +768,25 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
       key: `${rel} :: const ${annotation} = ${root}`,
       descriptor: `const ${annotation} = ${root}`,
       typeNames: typeNamesIn(annotation),
-      covered: fixtureBindings.has(root),
+      covered: fixtureBindings.has(root) && !cast,
       ...(asserted ? { headType: bare } : {}),
     });
   }
   return sites;
+}
+
+/** True when a declaration's initializer contains a TYPE ASSERTION — `as X`,
+ * `as unknown as X`, `as const`, or the prefix form `<X>expr`.
+ *
+ * An assertion in the initializer of a conformance assignment defeats the
+ * assignment: `const check: T = fixture as unknown as T` compiles no matter what
+ * shape the capture really has, so it is evidence about nothing. Rejecting `as
+ * const` too is deliberate — the fixtures that need it already carry it in their
+ * own module (audit §9), so an `as const` at the assignment is either redundant
+ * or is doing narrowing work the check should not depend on. */
+function containsTypeAssertion(init: string): boolean {
+  if (/\bas\s+[A-Za-z_$({[<]/.test(init)) return true;
+  return /^<[^<>]+>\s*\S/.test(init.trim());
 }
 
 /** True when the nearest preceding non-blank line carries `@ts-expect-error` —
@@ -1018,6 +1149,11 @@ interface ScanResult {
   unusedExemptions: string[];
 }
 
+/** Rounds of wrapper discovery before the fixed-point loop gives up. Each round
+ * that does not converge adds at least one wrapper name, so real trees converge
+ * in (chain depth + 1) rounds — 2 for this repo. */
+const WRAPPER_DISCOVERY_ROUND_CAP = 32;
+
 function scanTree(root: string, exemptions: readonly Exemption[] = EXEMPTIONS): ScanResult {
   const typesPath = path.join(root, 'api', 'types.ts');
   const typesSource = fs.existsSync(typesPath) ? fs.readFileSync(typesPath, 'utf8') : '';
@@ -1043,10 +1179,31 @@ function scanTree(root: string, exemptions: readonly Exemption[] = EXEMPTIONS): 
   // called from twenty others is the ordinary shape of this refactor; scanning
   // per file would see only the wrapper's own plumbing and would never see a
   // single one of those twenty concrete, hand-transcribed call sites.
+  //
+  // ITERATED TO A FIXED POINT, because a wrapper over a wrapper is a wrapper.
+  // Seeding discovery from the `apiFetch` bindings alone stopped at depth one:
+  // `fetchOuter<T>` → `fetchInner<T>` → `apiFetch<T>` reported only the three
+  // plumbing sites with an unresolved `T` — each a near-verbatim match for a
+  // recorded exemption, so the file's own precedent invites a maintainer to
+  // exempt them — while `fetchOuter<HopResponse>(…)`, the site carrying the
+  // hand-transcribed shape, never appeared at all. Each round re-runs discovery
+  // with everything found so far as additional forwarding targets.
   const treeWrappers = new Set<string>();
-  for (const f of appFiles) {
-    for (const name of discoverWrappers(f.content, apiFetchBindings(f.content))) {
-      treeWrappers.add(name);
+  for (let round = 0; ; round++) {
+    const before = treeWrappers.size;
+    for (const f of appFiles) {
+      const bases = [...new Set([...apiFetchBindings(f.content), ...treeWrappers])];
+      for (const name of discoverWrappers(f.content, bases)) treeWrappers.add(name);
+    }
+    if (treeWrappers.size === before) break;
+    // The set only ever GROWS and is bounded by the identifiers in the tree, so
+    // this terminates; the cap exists so a pathological input fails loudly here
+    // instead of hanging a test run with no explanation.
+    if (round >= WRAPPER_DISCOVERY_ROUND_CAP) {
+      throw new Error(
+        `wrapper discovery did not converge in ${WRAPPER_DISCOVERY_ROUND_CAP} rounds ` +
+          `(${treeWrappers.size} wrappers so far: ${[...treeWrappers].sort().join(', ')})`,
+      );
     }
   }
 
@@ -1117,7 +1274,11 @@ const WEB_SRC = here;
 // (Was 117/65/52 when coverage was read off the conformance module's import
 // list; the three added sites are the direct `Show`, `Category` and
 // `ActiveStudioCategory` fixture assignments that the corrected covered-set
-// rule showed were missing.)
+// rule showed were missing.) The second review round's fixes — fixed-point
+// wrapper discovery, resolved type-import specifiers, cast rejection, and
+// namespace-qualified callees — left all four numbers unchanged on this tree,
+// which is the expected result: they close shapes the tree does not yet
+// contain.
 // The floors sit under those with enough headroom that deleting a call site is
 // not a failure, but losing a detector or over-narrowing the walk is.
 const POPULATION_FLOOR = 100;
@@ -1305,6 +1466,91 @@ describe('detection predicates (mutation checks — prove the detectors actually
     expect(sites.find((s) => s.file === 'pages/Late.tsx')?.detector).toBe('wrapper');
   });
 
+  it('a wrapper over a WRAPPER is a wrapper — discovery runs to a fixed point', () => {
+    // Second review round, NEW-1. Seeding discovery from the `apiFetch`
+    // bindings alone stopped at depth one: this tree reported only the three
+    // plumbing sites carrying an unresolved `T`, each a near-verbatim match for
+    // a recorded exemption, while the site holding the hand-transcribed shape
+    // never appeared at all.
+    const sites = scanOnly({
+      'api/inner.ts':
+        "import { apiFetch } from './client';\n" +
+        'export async function fetchInner<T>(p: string): Promise<T> { return apiFetch<T>(p); }\n',
+      'api/outer.ts':
+        "import { fetchInner } from './inner';\n" +
+        'export async function fetchOuter<T>(p: string): Promise<T> { return fetchInner<T>(p); }\n',
+      'pages/Hop.tsx':
+        "import { fetchOuter } from '../api/outer';\n" +
+        "import type { BrandNewResponse } from '../api/types';\n" +
+        "export const go = () => fetchOuter<BrandNewResponse>('hop/thing');\n",
+    });
+    expect(sites.find((s) => s.file === 'pages/Hop.tsx')).toMatchObject({
+      detector: 'wrapper',
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+      descriptor: "fetchOuter<BrandNewResponse>('hop/thing')",
+    });
+  });
+
+  it('a SIBLING `types.ts` cannot lend its locally declared shapes a checked type name', () => {
+    // Second review round, NEW-2. A per-feature `types.ts` is standard React
+    // layout, and the names it would plausibly redeclare (`Session`,
+    // `Category`, `LogEvent`) are exactly the checked ones. Gating on the
+    // specifier's BASENAME made every such module an alias for `api/types`.
+    const sites = scanOnly({
+      'pages/plantzone/types.ts':
+        'export interface AdminDataResponse { totally_hand_transcribed: string }\n',
+      'pages/plantzone/Page.tsx':
+        "import type { AdminDataResponse } from './types';\n" +
+        "export const go = () => apiFetch<AdminDataResponse>('things');\n",
+    });
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ file: 'pages/plantzone/Page.tsx', covered: false });
+  });
+
+  it('an import ALIAS moves coverage with the ORIGINAL name, in both directions', () => {
+    // `import { Checked as Local }` must carry the check to `Local`; the
+    // reverse spelling — a NEW type aliased to a checked name — must not
+    // acquire it. Resolving the module without also resolving the alias would
+    // close the sibling-`types.ts` hole and leave this one open.
+    const sites = scanOnly({
+      'api/hooks/useAliased.ts':
+        "import type { AdminDataResponse as Checked } from '../types';\n" +
+        "export const ok = () => apiFetch<Checked>('admin/users');\n",
+      'api/hooks/useMasquerade.ts':
+        "import type { BrandNewResponse as AdminDataResponse } from '../types';\n" +
+        "export const nope = () => apiFetch<AdminDataResponse>('things');\n",
+    });
+    expect(sites.find((s) => s.file === 'api/hooks/useAliased.ts')?.covered).toBe(true);
+    expect(sites.find((s) => s.file === 'api/hooks/useMasquerade.ts')?.covered).toBe(false);
+  });
+
+  it('a NAMESPACE-imported `apiFetch` (`import * as api`) is still `apiFetch`', () => {
+    // Second review round. `import * as` is a live idiom in this tree, and the
+    // callee scan's `(?<![.\w$])` lookbehind — there to stop `foo.fetch(` from
+    // matching the global `fetch` — rejected the qualified form outright.
+    const sites = scanOnly({
+      'api/nsWrap.ts':
+        "import * as api from './client';\n" +
+        'export async function wrap<T>(p: string): Promise<T> { return api.apiFetch<T>(p); }\n',
+      'pages/Ns.tsx':
+        "import * as client from '../api/client';\n" +
+        "import { wrap } from '../api/nsWrap';\n" +
+        "import type { BrandNewResponse } from '../api/types';\n" +
+        "export const direct = () => client.apiFetch<BrandNewResponse>('things');\n" +
+        "export const viaWrapper = () => wrap<BrandNewResponse>('things');\n",
+    });
+    const inNs = sites.filter((s) => s.file === 'pages/Ns.tsx');
+    expect(inNs.map((s) => s.descriptor).sort()).toEqual([
+      "client.apiFetch<BrandNewResponse>('things')",
+      "wrap<BrandNewResponse>('things')",
+    ]);
+    expect(inNs.every((s) => s.covered === false)).toBe(true);
+    // The namespace-qualified forwarding call is what makes `wrap` a wrapper at
+    // all — without it, `viaWrapper` above does not exist as a site.
+    expect(sites.find((s) => s.file === 'api/nsWrap.ts' && s.detector === 'wrapper')).toBeDefined();
+  });
+
   it('`apiFetch` imported under an ALIAS is still `apiFetch`', () => {
     const sites = scanOnly({
       'pages/Aliased.tsx':
@@ -1420,6 +1666,36 @@ describe('detection predicates (mutation checks — prove the detectors actually
     });
     const site = scanTree(tmpRoot).sites.find((s) => s.file === 'api/hooks/useThing.ts');
     expect(site?.covered).toBe(false);
+  });
+
+  it('a CAST-defeated conformance assignment is not a conformance check', () => {
+    // Second review round, NEW-3. `fixture as unknown as T` is a bare
+    // annotation, initialised from a fixture binding, with no
+    // `@ts-expect-error` above it — it satisfies every other clause — and it
+    // compiles whatever the capture's real shape is, so it asserts nothing.
+    tmpRoot = fixtureTree({
+      'api/types.ts': TYPES_STUB,
+      [CONFORMANCE_MODULE]: [
+        "import adminUsers from '../../../fixtures/api-responses/adminUsers.json';",
+        "import type { AdminDataResponse, BrandNewResponse } from './types';",
+        'const check: AdminDataResponse = adminUsers;',
+        'const cast: BrandNewResponse = adminUsers as unknown as BrandNewResponse;',
+      ].join('\n'),
+      'api/hooks/useThing.ts':
+        "import type { BrandNewResponse } from '../types';\n" +
+        "export const load = () => apiFetch<BrandNewResponse>('things');\n",
+    });
+    const result = scanTree(tmpRoot);
+    // The consuming site does not inherit coverage from it…
+    expect(result.sites.find((s) => s.file === 'api/hooks/useThing.ts')).toMatchObject({
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+    });
+    // …and the assignment itself surfaces as unverified rather than sitting in
+    // the conformance module looking like a check.
+    expect(result.unverified.map((s) => s.key)).toContain(
+      `${CONFORMANCE_MODULE} :: const BrandNewResponse = adminUsers`,
+    );
   });
 
   it('a URL in a string literal does not comment out the typed read beside it', () => {
