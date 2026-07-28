@@ -177,6 +177,20 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
     const otherWay: ActiveStudioCategory = showCategories.categories[1];
     expect(wrongWay.id).toBe(otherWay.id);
   });
+
+  it('each split type IS assignable to the capture it belongs to', () => {
+    // The positive half of the pair above. Two directives asserting what does
+    // NOT compile say nothing about what does, and a `@ts-expect-error`
+    // assignment is precisely NOT a conformance check — so neither type was
+    // fixture-checked before this, even though both were named in the file.
+    const fromShowCategories: Category = showCategories.categories[1];
+    const fromProfile: ActiveStudioCategory = profileAnonymous.active_studio.categories[1];
+    expect(fromShowCategories.dropdown_options).toEqual([
+      { label: 'Lav', needs_context: false },
+      { label: 'Boom', needs_context: true },
+    ]);
+    expect(fromProfile.dropdown_options).toEqual(['Lav', 'Boom']);
+  });
 });
 
 describe('CW-3 — SessionStatus declared three fields /status never emits', () => {
@@ -426,6 +440,14 @@ describe('POST /api/shows — the created show', () => {
     const check: { show: Show } = showCreate;
     expect(check.show.show_code).toBe('ATS');
     expect(check.show.event_palette.length).toBeGreaterThan(0);
+
+    // …and `Show` itself, directly. The inline annotation above checks the same
+    // bytes, but only the bare-name assignment counts `Show` as fixture-checked
+    // for `apiResponseShapes.repo.test.ts` — coverage read out of an inline
+    // object type would be coverage inferred from a mention, which is the
+    // weaker property that guard was reported for asserting.
+    const show: Show = showCreate.show;
+    expect(show.id).toBe(check.show.id);
   });
 
   it('its categories are `ShowCategory`, i.e. `{label, needs_context}` options', () => {
