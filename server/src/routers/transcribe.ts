@@ -22,6 +22,10 @@ import {
 import { mergeAudioSegments } from '../node/audioMerge';
 import type { TranscribeGroupResult } from '../node/deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
+import {
+  generationInFlightDetail,
+  transcriptGenerationLock,
+} from '../node/transcriptGenerationLock';
 import type { EnrichmentGroup, SegmentAnchorInfo } from '../node/transcriptRemap';
 import {
   recordingStartAnchors,
@@ -45,8 +49,6 @@ const UNAVAILABLE = 'Transcription is unavailable on this deployment.';
 
 // ── Transcript generation (design: deepgram-transcription) ──────────────────
 
-const GENERATION_IN_FLIGHT_DETAIL =
-  'A transcript generation run is already in progress on this deployment; try again once it completes.';
 const NO_AUDIO_DETAIL = 'This session has no recorded audio to transcribe.';
 const ALL_UNREADABLE_DETAIL =
   "None of this session's recorded audio segments could be read for transcription.";
@@ -77,11 +79,30 @@ export function enforceGroupSizeLimit(bytes: number): void {
   }
 }
 
-/** Single process-wide slot (design D9): at most one generation run at a
- * time, across every session — a stricter bound than "one per session", so a
- * plain module-level flag suffices without a per-session map. Cleared in the
- * route's `finally`, so it can never wedge true across requests. */
-let generationInFlight = false;
+function resolveCatalogSessionTitle(
+  catalog: AppEnv['Variables']['catalog'],
+  sessionId: string,
+): string | null {
+  const row = catalog.sessions.getSessionIndexRow(sessionId);
+  if (row === null) return null;
+  return String(row.title ?? '');
+}
+
+// ── Transcript generation lock status (transcript-gen-lock-status) ───────────
+
+transcribeRouter.get('/api/transcript-generation/status', async (c) => {
+  const holder = transcriptGenerationLock.getLock();
+  if (holder === null) {
+    return c.json({ in_flight: false });
+  }
+  const catalog = c.get('catalog');
+  return c.json({
+    in_flight: true,
+    session_id: holder.sessionId,
+    session_title: resolveCatalogSessionTitle(catalog, holder.sessionId),
+    started_at: new Date(holder.startedAtMs).toISOString(),
+  });
+});
 
 // ── Legacy CSV download (transcription unavailable) ─────────────────────────────
 
@@ -106,10 +127,14 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   if (!deepgramConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
-  if (generationInFlight) {
-    throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
+  if (!transcriptGenerationLock.tryAcquire(sessionId)) {
+    const holder = transcriptGenerationLock.getLock()!;
+    const title = resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId);
+    throw new ApiError(
+      409,
+      generationInFlightDetail(holder.sessionId, title, holder.startedAtMs),
+    );
   }
-  generationInFlight = true;
 
   const blobStore = c.env.ports.audio;
   let scratchDir: string | null = null;
@@ -205,7 +230,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     );
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
   } finally {
-    generationInFlight = false;
+    transcriptGenerationLock.release();
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true });
   }
 });
