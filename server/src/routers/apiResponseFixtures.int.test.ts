@@ -123,6 +123,22 @@ describe('GET /api/admin/users', () => {
     // tie and the row order would be arbitrary, making the fixture flaky.
     await new Promise((resolve) => setTimeout(resolve, 2));
     seedUser({ email: 'bo@example.com', sub: 'sub-bo' }); // no memberships → `studios: []`
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    // A membership row pointing at a studio id with no catalog entry —
+    // `authAddMemberships` has no FK check, so this is reachable in production
+    // whenever a team is deleted out from under a member. Captures admin.ts's
+    // `names[m] ?? m` fallback, i.e. a membership whose `name` equals its
+    // `id` (the `web-admin-users` spec scenario; task 4.4).
+    seedUser({ email: 'cleo@example.com', sub: 'sub-cleo', studios: ['ghost-team'] });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    // A member of every studio in the catalog, including both built-ins —
+    // captures the add-membership control's "offered nothing" branch
+    // (task 4.4).
+    seedUser({
+      email: 'dee@example.com',
+      sub: 'sub-dee',
+      studios: ['test-studios', 'test-studio-2', 'my-crew', 'ymhs'],
+    });
 
     const res = await app.request(
       '/api/admin/users',

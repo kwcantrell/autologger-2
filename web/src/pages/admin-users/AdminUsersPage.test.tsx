@@ -1,21 +1,29 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import adminUsersFixture from '../../../../fixtures/api-responses/adminUsers.json';
 import { apiFetch } from '../../api/client';
-import type { AdminStudio } from '../../api/types';
+import type { AdminDataResponse, AdminUser } from '../../api/types';
 import { renderStrict } from '../../test/renderStrict';
 import { AdminUsersPage } from './AdminUsersPage';
 
-// --- AdminUsersPage regression coverage (web-api-shape-conformance, task 1.1) ---
+// --- AdminUsersPage regression coverage (web-api-shape-conformance, task 4.4) ---
 //
 // The client previously typed a user's team memberships as `memberships:
 // string[]`, but `GET /api/admin/users` has always emitted `studios:
 // [{id, name}]` (server/src/routers/admin.ts's `usersOut.push({…studios:
 // mids.map(…)})`) — `u.memberships.map(...)` threw on every real response,
 // white-screening the page (no error boundary exists anywhere in web/src).
-// These fixtures are deliberately wire-accurate: a hand-authored fixture
-// that restates the client's own (wrong) belief would pass while the real
-// page stayed broken (design.md D2). Superseded by the captured fixture in
-// phase 4 (task 4.4).
+//
+// Phase 1 rendered these tests against a hand-authored (but wire-accurate)
+// fixture, with a note that phase 4 would swap it for the captured artifact.
+// This is that swap (`web-admin-users` requirement: "the admin tests and the
+// conformance check validate against the same file"). `adminUsersFixture` is
+// imported straight from `fixtures/api-responses/adminUsers.json` — the same
+// file `server/src/routers/apiResponseFixtures.int.test.ts` captures by
+// issuing a real `GET /api/admin/users` request, and the same file 5.1 will
+// assign to `AdminUser`/`AdminDataResponse` for the type-level conformance
+// check. Nothing here is hand-authored: every user/team object below is read
+// out of that fixture by email, never constructed as a literal.
 //
 // `apiFetch` is the sole network seam, mocked at the module boundary (the
 // TeamsRoute.test.tsx idiom); `fetchAdmin` in AdminUsersPage.tsx is a thin
@@ -39,43 +47,29 @@ if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined
   window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
 }
 
-// Wire shape of a `GET /api/admin/users` user row, declared locally (not
-// imported from api/types) so this fixture stays wire-accurate independent
-// of whatever the client type currently declares.
-interface WireAdminUser {
-  id: string;
-  email: string;
-  given_name: string;
-  family_name: string;
-  picture_url: string;
-  created_at_utc: string;
-  disabled: boolean;
-  studios: { id: string; name: string }[];
+const FIXTURE: AdminDataResponse = adminUsersFixture;
+
+// The fixture's captured seed (server/src/routers/apiResponseFixtures.int.test.ts):
+//   ann@example.com  — one membership, `my-crew`
+//   bo@example.com   — zero memberships
+//   cleo@example.com — one membership, `{id: 'ghost-team', name: 'ghost-team'}`
+//                       (admin.ts's `names[m] ?? m` fallback for an orphaned team)
+//   dee@example.com  — a membership in every catalog studio (both built-ins
+//                       plus `my-crew`/`ymhs`)
+// and a `studios_catalog` of four teams: the two built-ins (`test-studios`,
+// `test-studio-2`) plus `my-crew` and `ymhs`.
+function userByEmail(email: string): AdminUser {
+  const user = FIXTURE.users.find((u) => u.email === email);
+  if (!user) {
+    throw new Error(
+      `captured fixture fixtures/api-responses/adminUsers.json has no user ${email} — re-check server/src/routers/apiResponseFixtures.int.test.ts's admin seed`,
+    );
+  }
+  return user;
 }
 
-function studiosCatalog(): AdminStudio[] {
-  return [
-    { id: 'my-crew', name: 'My Crew', builtin: false },
-    { id: 'ymhs', name: 'YMHS', builtin: false },
-  ];
-}
-
-function wireUser(overrides: Partial<WireAdminUser> = {}): WireAdminUser {
-  return {
-    id: 'user-1',
-    email: 'user1@example.com',
-    given_name: 'Ann',
-    family_name: 'Admin',
-    picture_url: '',
-    created_at_utc: '2026-07-14T00:00:00Z',
-    disabled: false,
-    studios: [{ id: 'my-crew', name: 'My Crew' }],
-    ...overrides,
-  };
-}
-
-function mockUsersResponse(users: WireAdminUser[], studios: AdminStudio[] = studiosCatalog()) {
-  mockedApiFetch.mockResolvedValue({ studios_catalog: studios, users });
+function mockUsersResponse(users: AdminUser[]) {
+  mockedApiFetch.mockResolvedValue({ studios_catalog: FIXTURE.studios_catalog, users });
 }
 
 function usersTbody(container: HTMLElement): HTMLElement {
@@ -100,63 +94,60 @@ beforeEach(() => {
 
 describe('AdminUsersPage — membership rendering (spec: web-admin-users)', () => {
   it('renders a user with memberships as a chip and does not crash', async () => {
-    mockUsersResponse([wireUser()]);
+    mockUsersResponse([userByEmail('ann@example.com')]);
 
     const { container } = await renderAndLoad();
 
     const tbody = usersTbody(container);
-    expect(within(tbody).getByText('user1@example.com')).not.toBeNull();
+    expect(within(tbody).getByText('ann@example.com')).not.toBeNull();
     expect(within(tbody).getAllByRole('button', { name: /^Remove from/ })).toHaveLength(1);
   });
 
   it('renders a user with zero memberships and still offers the add control', async () => {
-    mockUsersResponse([wireUser({ studios: [] })]);
+    mockUsersResponse([userByEmail('bo@example.com')]);
 
     const { container } = await renderAndLoad();
 
     const tbody = usersTbody(container);
     expect(within(tbody).queryAllByRole('button', { name: /^Remove from/ })).toHaveLength(0);
     expect(
-      within(tbody).getByRole('button', { name: 'Add team membership for user1@example.com' }),
+      within(tbody).getByRole('button', { name: 'Add team membership for bo@example.com' }),
     ).not.toBeNull();
   });
 
   it('renders a membership whose name equals its id (orphaned-team fallback)', async () => {
-    mockUsersResponse([wireUser({ studios: [{ id: 'ghost', name: 'ghost' }] })]);
+    mockUsersResponse([userByEmail('cleo@example.com')]);
 
     const { container } = await renderAndLoad();
 
-    expect(within(usersTbody(container)).getByText('ghost')).not.toBeNull();
+    expect(within(usersTbody(container)).getByText('ghost-team')).not.toBeNull();
   });
 
   it('offers only teams the user is not already in', async () => {
-    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+    mockUsersResponse([userByEmail('ann@example.com')]);
     const { container } = await renderAndLoad();
 
     fireEvent.click(
       within(usersTbody(container)).getByRole('button', {
-        name: 'Add team membership for user1@example.com',
+        name: 'Add team membership for ann@example.com',
       }),
     );
 
-    expect(await screen.findByRole('menuitem', { name: 'YMHS' })).not.toBeNull();
+    // ann's only membership is `my-crew`; the catalog also holds the two
+    // built-ins and `ymhs`, so all three of those (and only those) are offered.
+    expect(await screen.findByRole('menuitem', { name: 'Test Studio' })).not.toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Test Studio 2' })).not.toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'YMHS' })).not.toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'My Crew' })).toBeNull();
   });
 
   it('a user in every team is offered nothing', async () => {
-    mockUsersResponse([
-      wireUser({
-        studios: [
-          { id: 'my-crew', name: 'My Crew' },
-          { id: 'ymhs', name: 'YMHS' },
-        ],
-      }),
-    ]);
+    mockUsersResponse([userByEmail('dee@example.com')]);
     const { container } = await renderAndLoad();
 
     fireEvent.click(
       within(usersTbody(container)).getByRole('button', {
-        name: 'Add team membership for user1@example.com',
+        name: 'Add team membership for dee@example.com',
       }),
     );
 
@@ -164,14 +155,15 @@ describe('AdminUsersPage — membership rendering (spec: web-admin-users)', () =
   });
 
   it('the remove control issues DELETE …/memberships/<id>', async () => {
-    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+    const ann = userByEmail('ann@example.com');
+    mockUsersResponse([ann]);
     const { container } = await renderAndLoad();
 
     fireEvent.click(within(usersTbody(container)).getByRole('button', { name: /^Remove from/ }));
 
     await waitFor(() =>
       expect(mockedApiFetch).toHaveBeenCalledWith(
-        'admin/users/user-1/memberships/my-crew',
+        `admin/users/${encodeURIComponent(ann.id)}/memberships/${encodeURIComponent(ann.studios[0].id)}`,
         expect.objectContaining({ method: 'DELETE' }),
       ),
     );
@@ -182,7 +174,7 @@ describe('AdminUsersPage — membership rendering (spec: web-admin-users)', () =
 // spec: web-admin-users D8) ---
 describe('AdminUsersPage — membership chip labelling (spec: web-admin-users, D8)', () => {
   it('shows the display name on the chip, not the slug id', async () => {
-    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+    mockUsersResponse([userByEmail('ann@example.com')]);
 
     const { container } = await renderAndLoad();
 
@@ -192,7 +184,8 @@ describe('AdminUsersPage — membership chip labelling (spec: web-admin-users, D
   });
 
   it("the remove control's accessible name is 'Remove from <name>', but the request stays keyed by id", async () => {
-    mockUsersResponse([wireUser({ studios: [{ id: 'my-crew', name: 'My Crew' }] })]);
+    const ann = userByEmail('ann@example.com');
+    mockUsersResponse([ann]);
     const { container } = await renderAndLoad();
 
     const removeButton = within(usersTbody(container)).getByRole('button', {
@@ -202,7 +195,7 @@ describe('AdminUsersPage — membership chip labelling (spec: web-admin-users, D
 
     await waitFor(() =>
       expect(mockedApiFetch).toHaveBeenCalledWith(
-        'admin/users/user-1/memberships/my-crew',
+        `admin/users/${encodeURIComponent(ann.id)}/memberships/${encodeURIComponent(ann.studios[0].id)}`,
         expect.objectContaining({ method: 'DELETE' }),
       ),
     );
