@@ -456,9 +456,17 @@ describe('transport', () => {
         name: 'transportStart',
         endpoint: 'POST /api/sessions/:id/transport/start',
         format: 'json',
-        // The transport is rolling in this response, so both numbers advance
-        // with wall-clock time between the request and the next capture.
-        volatileNumbers: ['elapsed_frames', 'timecode_total_frames'],
+        // ONLY `timecode_total_frames`. The transport is rolling in this
+        // response, so the live timecode advances with wall-clock time between
+        // the request and the next capture. `elapsed_frames` does NOT:
+        // `TransportStore.startTake` writes `is_rolling`, `current_take` and
+        // `roll_started_at_utc` and nothing else, and the emitted value is the
+        // stored column, deterministically `0` on a fresh seed. Declaring it
+        // volatile zeroed a value the fixture can and should pin (branch-audit
+        // finding M2 — a `startTake` mutated to emit 987 passed 26/26 before
+        // this line changed, and fails now). `transportStop`'s identical
+        // declaration below IS correct: `stopTake` folds the rolled duration in.
+        volatileNumbers: ['timecode_total_frames'],
       },
       res,
     );
