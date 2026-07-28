@@ -106,23 +106,23 @@ evidence** — the crashing call site is invisible to `grep 'apiFetch<'`.
 Spec: `web-api-response-conformance`. Depends on phase 3 — the audit tells us which endpoints
 carry payloads and which shapes are branch-dependent.
 
-- [ ] 4.1 Build the capture helper in the `server/` integration tier: issue a real request
+- [x] 4.1 Build the capture helper in the `server/` integration tier: issue a real request
       through `app.request` with the existing seed helpers, and assert the emitted body against
       a committed fixture. **Assert-only, with an explicit update path** (design Open Question)
       — auto-write-on-miss would silently bless drift, which is the failure mode being designed
       against.
-- [ ] 4.2 Capture fixtures for the payload-bearing endpoints identified in 3.2, starting with
+- [x] 4.2 Capture fixtures for the payload-bearing endpoints identified in 3.2, starting with
       `GET /api/admin/users` (`admin.int.test.ts` already issues this request — extend it).
       For branch-dependent shapes, capture **each** branch: `/api/profile` anonymous and
       authenticated; `/api/teams/:id` as admin and as member.
-- [ ] 4.3 For any endpoint whose client type includes a string-literal union, emit that fixture
+- [x] 4.3 For any endpoint whose client type includes a string-literal union, emit that fixture
       as a `.ts` module with `as const` instead of `.json` (D4's verified wrinkle — JSON imports
       widen `"active"` to `string`, producing a false positive). Known affected types:
       `Category.type`, `ShowCategory.type`, `Session.session_status`, the seven `role: TeamRole`
       fields, and `CompanionCommandType`. Record the choice per endpoint in the ledger.
-- [ ] 4.4 Swap the phase-1 admin-page test fixture for the captured artifact, so the admin tests
+- [x] 4.4 Swap the phase-1 admin-page test fixture for the captured artifact, so the admin tests
       and the conformance check validate against the same file (`web-admin-users` requirement).
-- [ ] 4.5 `npm run typecheck` + `npm test` green.
+- [x] 4.5 `npm run typecheck` + `npm test` green.
 
 ## 5. Conformance checks + repo-invariant guard
 
