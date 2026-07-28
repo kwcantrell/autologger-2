@@ -543,17 +543,30 @@ re-deriving it from `.apply/task-5.3-5.4-report.md` (git-ignored, does not survi
 
 ### 11.1 Population totals
 
-**117 response-consuming sites — 65 covered, 52 exempted, 0 unverified.**
+**120 response-consuming sites — 68 covered, 52 exempted, 0 unverified.**
 
-A site is *covered* only when every client type it acquires appears in the conformance module's
-own `import type { … }` list from `./types` — i.e. it is asserted against a fixture captured by
-executing the handler (D2), never a hand-written one. Everything else must carry an individually
-reasoned exemption; there is no third, silent state. The guard proves this isn't vacuous by
-construction: population and per-detector floors are asserted at run time (117 actual against a
-100 floor; per-detector floors for each of the six site-shaped detectors plus the conformance-
-module's own detector), five canary sites must be found by name, and an exemption matching no
-current site is itself a test failure (a stale exemption is as much a lie about the tree as an
-uncovered site).
+*(Was 117 / 65 / 52 as first delivered. The phase-5 review found the covered set was being read
+off the conformance module's `import type { … }` list — see 11.7 — and correcting it revealed
+that `Show`, `Category` and `ActiveStudioCategory` had never been assigned a captured value at
+all. The three direct assignments added to close that are the three new sites.)*
+
+A site is *covered* only when **both** of the following hold for every client type it acquires:
+
+1. the conformance module contains a `const x: T = <fixture binding>` declaration — the bare type
+   name (or an array of it), initialised from a binding imported from `fixtures/api-responses/`,
+   and expected to COMPILE. A name that is merely imported, used only inside a helper type such
+   as `ExpectUndeclared<T, K>`, reached only through an indexed slice, or assigned under a
+   `@ts-expect-error` directive is **not** checked against a real response and does not count;
+2. the name resolves to `api/types` **from the site's own file**, so a locally declared type can
+   never inherit a checked type's coverage by sharing its spelling.
+
+Everything else must carry an individually reasoned exemption; there is no third, silent state.
+The guard proves this isn't vacuous by construction: population and per-detector floors are
+asserted at run time (120 actual against a 100 floor; per-detector floors for each of the six
+site-shaped detectors plus the conformance-module's own detector), five canary sites must be
+found by name, and a surplus exemption entry — one with no matching site, or an Nth entry on a
+key that only N-1 sites match — is itself a test failure (a stale exemption is as much a lie
+about the tree as an uncovered site).
 
 ### 11.2 The 26/26 fixture conformance check (task 5.1) and additive tolerance (task 5.2)
 
@@ -585,6 +598,13 @@ class of failure this guard exists to prevent (fourteen separate `OkResponse` en
 for exactly this: two of the audit's own `OkResponse` sites, per CW-1, turned out not to conform,
 and a blanket exemption would have hidden that). Every entry's `reason` must be ≥40 characters and
 cites the audit row backing its verdict; a bare path is rejected by the guard's own tests.
+
+"One entry, one site" is **enforced**, not merely intended (phase-5 review fix, 11.7). Entries are
+*consumed* one per matching site, so N sites sharing a key require N entries and a surplus entry is
+reported as stale; and each site's key carries the literal HTTP method found in its arguments, so
+`DELETE /api/sessions/:id` and a later `PUT` on the same path are two keys rather than one. Under
+the first delivery neither held: a single entry was an unbounded licence for every future site that
+normalised to the same string, which for `{ok}`-shaped mutation endpoints is the common case.
 
 | kind | count | why these are exempt rather than covered |
 |---|---:|---|
@@ -626,41 +646,54 @@ independent signals instead of one silently-stale entry.
 
 ### 11.5 The guard's blind spots — read before trusting it
 
-Recorded in the guard's own file header too, so a reader meets them before relying on a green
-run:
+Recorded in the guard's own file header too, so a reader meets them before relying on a green run.
+**Ordered by how reachable each is by an ordinary refactor, largest first** — the point of this
+list is that a reader can trust its ranking, and the first delivery's ranking was wrong (11.7).
 
-1. **Test files are outside the scan.** `*.test.ts(x)` and `test/` under `web/src` are excluded
-   from the application-code walk (per §8.1); the one deliberate exception is the conformance
-   module itself, read narrowly for its own `import type` list and source-read literals.
-2. **Indirect type acquisition is the largest hole.** A JSON value threaded through as `unknown`
-   into a typed helper several modules downstream acquires its client type with no
+1. **Indirect type acquisition — the largest remaining hole.** A JSON value threaded through as
+   `unknown` into a typed helper several modules downstream acquires its client type with no
    `fetch`/`.json()`/`JSON.parse`/wrapper token anywhere near it, so no detector fires (§8.3).
-   This is a structural limit of matching on deserialization syntax, not a tuning gap.
-3. **Coverage is keyed by client type *name*, not by (site, endpoint).** The guard answers "has
+   This is a structural limit of matching on deserialization syntax, not a tuning gap: closing it
+   needs type-level analysis, not another pattern.
+2. **Coverage is keyed by client type *name*, not by (site, endpoint).** The guard answers "has
    this type ever been checked against a real response?", not "is it checked against *this*
    endpoint's response?" A type that is genuinely conformant on the endpoint it was captured from
    passes silently the moment it is reused as the return type of a brand-new endpoint. Only this
    audit's per-row verdict table (§5) answers the endpoint-specific question, and it is a
    snapshot, not a standing check.
-4. **A re-assertion downstream of an already-flagged parse is not a separate site.** Only the
+3. **Two sites can still share one key when the method cannot separate them.** The descriptor
+   carries the literal HTTP method, which splits the common `{ok}`-mutation collisions; it does
+   not split two calls on the same path with the *same* method, nor a call whose method arrives
+   through a variable. Those sites are no longer *absorbed* — exemptions are consumed one per
+   site, so the second surfaces as unverified — but the two entries are told apart only by their
+   `reason` prose.
+4. **`apiFetch` reached other than through a named import.** A namespace import
+   (`import * as api from './client'` … `api.apiFetch<T>(…)`) or a re-export under a new name in a
+   third module is invisible to the callee scan. `import { apiFetch as request }` *is* covered.
+5. **Test files are outside the scan.** `*.test.ts(x)` and `test/` under `web/src` are excluded
+   from the application-code walk (per §8.1); the one deliberate exception is the conformance
+   module itself, parsed for its `const x: T = <fixture>` declarations and its source-read
+   literals.
+6. **A re-assertion downstream of an already-flagged parse is not a separate site.** Only the
    deserialization token itself (`JSON.parse(...)`, `.json()`) is detected; a second, unrelated
    `as SomeOtherType` two lines later on the same parsed value is invisible to the scan.
-5. **Data-dependent branches are uncovered.** CW-9's nullability (a session missing its joined
+7. **Data-dependent branches are uncovered.** CW-9's nullability (a session missing its joined
    show row) and CW-4's `enrichEventRpc` orphan branch are real, confirmed divergences that no
    captured fixture reaches, because seeded test state never produces the branch that triggers
    them (§8.4, D1's production-data-variance residual). A covered site is not a verified branch.
-6. **WebSocket is an explicit Non-Goal.** The one `JSON.parse(ev.data)` WS-frame site is exempted
+8. **WebSocket is an explicit Non-Goal.** The one `JSON.parse(ev.data)` WS-frame site is exempted
    as such; a *second* WS parse site introduced later would still surface as its own unverified
    site rather than being silently absorbed into the same exemption.
-7. **An exemption is only as good as its reason.** The guard forces every unchecked site to carry
+9. **An exemption is only as good as its reason.** The guard forces every unchecked site to carry
    a recorded, non-trivial-length justification; it has no way to verify that the justification is
    *correct*. A careless or dishonest exemption for a real defect still passes the suite — the
    reason field is written for the next reviewer to read, not for the guard to adjudicate.
 
 Two smaller items are already recorded in §8 and are not repeated in full here: prose mentions
 inside comments are deliberately not sites (§8, matching `noAgentAuthoredMarkup.repo.test.ts`'s
-own concession), and a dynamically constructed path is detected as a site but cannot be
-attributed to a specific endpoint (§8.5).
+own concession — though string and template literals are now masked before that test, so a URL's
+`//` no longer hides the rest of its line), and a dynamically constructed path is detected as a
+site but cannot be attributed to a specific endpoint (§8.5).
 
 ### 11.6 Guard demonstrated in both failure directions (task 5.4)
 
@@ -675,3 +708,42 @@ catch. Disabling only the wrapper detector failed 5 tests, naming the disabled d
 `AdminDataResponse` canary that stopped being found through it, and the 6 `fetchAdmin` exemptions
 that went stale as a result. Both probes were reverted; the working tree carried nothing but the
 new guard file when this unit closed.
+
+### 11.7 Phase-5 review — five silent gaps found by planting, and what closed them
+
+The phase-5 reviewer planted nine synthetic response sites against the guard as first delivered.
+**Five passed a fully green suite.** A guard with a silent gap is indistinguishable from one that
+works, so each is recorded here with the mechanism that let it through.
+
+| # | what slipped through | why | fix |
+|---|---|---|---|
+| C1 | A generic wrapper exported from its own module (`fetchTyped<T>` in `api/typedFetchPlant.ts`), called as `fetchTyped<PlantBResponse>(…)` from another file. Only two sites appeared, **both inside the wrapper's own file**; the call site carrying the concrete hand-transcribed type never appeared at all — and the two that did appear closely resemble two recorded exemptions, so a maintainer following the file's own precedent would exempt them and ship a wholly un-enumerated population. | Wrapper discovery ran **per file**. It worked only because `fetchAdmin` happens to be declared and called in the same file. This is exactly the blind spot **D6** exists to close, and it contradicted the header's own claim that a second `fetchAdmin` would bring its call sites in automatically. | Wrapper discovery hoisted into a **tree-wide pre-pass**: the union of `discoverWrappers` over every application file is collected before any file is scanned, then passed into every file's scan as extra callees. |
+| C2 | A brand-new, never-audited `apiFetch<OkResponse>` on `sessions/:id` with `{ method: 'PUT' }` added to `useSessions.ts`. Suite stayed 17/17 green — it silently inherited the audited **DELETE**'s exemption. | The descriptor captured only the first argument, so `DELETE` and `PUT` on one path produced an identical key; and matching was Set membership, so N sites sharing a key were all exempted by one entry. This falsified the file's own load-bearing claim that "a NEW `OkResponse` site is covered by none of them" — and `OkResponse` is the bucket CW-1 hid in. | The literal `method: '…'` is now part of the site key, and exemptions are **consumed one-for-one**: N sites need N entries, and surplus entries are reported as stale with their counts. |
+| C3a | A new file declaring its **own** `interface Session` and calling `apiFetch<Session>(…)`. Green — a wholly hand-transcribed new response type read as covered because it shared a name with a checked one. | `covered` meant "the name appears in the conformance module's `import type` list". | Coverage is now derived from detector 7's own parse, **and** a site's type must be imported from `api/types` in the site's own file. |
+| C3b | A type added to `api/types.ts` and to the conformance module's import list, used **only** in an `ExpectUndeclared<…>` position. Green, and it marked every site repo-wide naming that type as covered, with zero assertion against any captured response. | Same mechanism. `audit.md` §11.5 claimed the guard answers "has this type ever been checked against a real response?"; it answered "is this name imported?". | A name counts only when a `const x: T = <fixture binding>` declaration assigns it a capture — bare name or array of it, and **not** under a `@ts-expect-error` directive. |
+| I6 | A raw `fetch('https://…')` followed by `.json() as X` on the same line: the **typed read** was discarded, because the `.json()` index sits after the `//` in `https://`. Combined with exemptions whose reason reads "the typed read of its body is the `.json()` site below", a maintainer could write that reason for a site where no `.json()` entry exists. | `isProse` treated any `//` earlier on the line as a comment opener. | String and template literals are masked (contents blanked, offsets preserved) before the prose test. Masking only ever removes apparent comment openers, so the failure direction is the cheap, visible one. |
+
+Two further fragilities were fixed at the same time. Wrapper *forwarding* detection matched
+`apiFetch<T>` exactly against a fixed 1500-character slice, so `apiFetch<T[]>`, `apiFetch<T | null>`
+and `apiFetch<Envelope<T>>` were not recognised — a `fetchList<T>(): Promise<T[]>` helper is the
+most natural next wrapper in this codebase — and a wrapper whose forwarding call sat past the
+cutoff was missed entirely; it now matches `apiFetch<… T …>` and reads the declaration's balanced
+body. And `import { apiFetch as request }` + `request<T>(…)` produced **zero** sites; the local
+binding name is now read from the import statement.
+
+**What correcting C3 exposed.** Three types the guard had been counting as covered had never been
+assigned a captured value: `Show` (checked only through the inline `{ show: Show }` annotation),
+and `Category` / `ActiveStudioCategory` (present only in `@ts-expect-error` assignments, whose
+whole point is that the assignment does *not* compile — the negative half of the CW-2 split with
+no positive half). This was papered over by neither exemption nor silence: three direct
+assignments were added to `api/types.conformance.test.ts` — `const show: Show = showCreate.show`,
+and the two positive-direction category assignments against the two captures. All 27 client types
+the conformance module names are now genuinely fixture-checked.
+
+**Regression coverage.** The original mutation-check block used only **single-file** synthetic
+trees, which is precisely why C1 went unnoticed. The committed block now includes multi-file
+cases: a wrapper declared in one file and called from another (three variants — plain, `T[]`
+forwarding, and a forwarding call past the old window), two sites on one path differing only in
+method, exemption consumption in both directions, a locally declared type shadowing a checked
+name, an import-list-only "covered" type, a `@ts-expect-error` assignment, an aliased `apiFetch`,
+and a URL literal beside a typed read. Each was verified to fail when its fix is reverted.
