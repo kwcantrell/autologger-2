@@ -1,6 +1,13 @@
 // Conformance checks for the CLIENT-WRONG findings corrected by
 // `openspec/changes/web-api-shape-conformance` task 3.5 (audit.md §6, CW-1…CW-9),
-// now driven by CAPTURED responses (task 4.2/4.3).
+// now driven by CAPTURED responses (task 4.2/4.3), and — since task 5.1 — for
+// EVERY captured fixture, including the ones that map to no CW finding.
+//
+// COVERAGE RULE (task 5.1). Every file in `fixtures/api-responses/` gets at
+// least one type-level assignment against the client type its endpoint's call
+// site names, or a recorded reason why it does not. `_mutable.ts` is the sole
+// exception and is not a fixture: it is the hand-written support type the
+// generated `.ts` modules import (audit §9, and the residual in §10).
 //
 // WHERE THESE VALUES COME FROM. Every `emitted` binding below is imported from
 // `fixtures/api-responses/`, whose files are produced by issuing the real
@@ -26,7 +33,8 @@
 // binding, never a fresh object literal at the assignment site, so TypeScript's
 // excess-property check does not fire and a response carrying keys the client
 // does not declare still passes — the forward-compatibility property the spec
-// requires. `sessionStatus` below carries such a key on purpose.
+// requires. That property is asserted deliberately, not left incidental: see
+// the "additive tolerance" describe block at the end of this file (task 5.2).
 //
 // UNSTABLE VALUES ARE REDACTED, NOT REMOVED. Ids, timestamps, and clock
 // readouts appear as `#`-masked strings of the original length. See
@@ -43,25 +51,38 @@
 // remain the only hand-written values in this file.
 
 import { describe, expect, it } from 'vitest';
+import adminUsers from '../../../fixtures/api-responses/adminUsers.json';
 import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCreate.json';
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
 import { profileAnonymous } from '../../../fixtures/api-responses/profileAnonymous';
+import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
+import { profileLoggedOutOauth } from '../../../fixtures/api-responses/profileLoggedOutOauth';
 import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
 import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
 import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
 import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
 import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
 import { showCategories } from '../../../fixtures/api-responses/showCategories';
+import { showCreate } from '../../../fixtures/api-responses/showCreate';
+import { teamCreate } from '../../../fixtures/api-responses/teamCreate';
+import { teamDetailAdmin } from '../../../fixtures/api-responses/teamDetailAdmin';
+import { teamDetailMember } from '../../../fixtures/api-responses/teamDetailMember';
+import teamRename from '../../../fixtures/api-responses/teamRename.json';
+import { teamRoleChange } from '../../../fixtures/api-responses/teamRoleChange';
 import topicCreate from '../../../fixtures/api-responses/topicCreate.json';
 import topicsList from '../../../fixtures/api-responses/topicsList.json';
+import transcriptWordCreate from '../../../fixtures/api-responses/transcriptWordCreate.json';
 import transcriptWordsList from '../../../fixtures/api-responses/transcriptWordsList.json';
 import transportStart from '../../../fixtures/api-responses/transportStart.json';
 import transportStop from '../../../fixtures/api-responses/transportStop.json';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
 import type {
   ActiveStudioCategory,
+  AdminDataResponse,
+  AdminStudio,
+  AdminUser,
   AudioSegment,
   AudioSegmentsResponse,
   Category,
@@ -74,7 +95,13 @@ import type {
   SessionsResponse,
   SessionTopic,
   SessionUpdateResponse,
+  Show,
   ShowCategoriesResponse,
+  TeamCreateResponse,
+  TeamDetail,
+  TeamMember,
+  TeamRenameResponse,
+  TeamRoleChangeResponse,
   TranscriptWord,
   TransportStartResponse,
   TransportStateSnapshot,
@@ -164,11 +191,9 @@ describe('CW-3 — SessionStatus declared three fields /status never emits', () 
     }
   });
 
-  it('tolerates the undeclared `audio_recording_lease_age_sec`', () => {
-    // The captured response carries a key `SessionStatus` does not declare and
-    // the assignment above still compiles — additive tolerance, observed.
-    expect('audio_recording_lease_age_sec' in sessionStatus).toBe(true);
-  });
+  // `sessionStatus` also carries an *undeclared* key. That is not a CW-3
+  // property — it is additive tolerance, asserted deliberately in the last
+  // describe block of this file (task 5.2).
 });
 
 describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow types', () => {
@@ -310,5 +335,216 @@ describe('CW-9 — four Session fields are nullable on the wire', () => {
     const check: Session = orphanedFromSourceRead;
     expect(check.show_name).toBeNull();
     expect(fmtDateOnly(check.episode_date ?? check.created_at_utc)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 5.1 — the captured fixtures that map to no CW finding.
+//
+// Phase 4 captured 26 fixtures but only the CW blocks above consumed them, so
+// nine files were reaching neither this module nor any other `tsc` input:
+// `adminUsers` (typechecked only incidentally, by `AdminUsersPage.test.tsx`),
+// both remaining `profile*` branches, `showCreate`, all four team responses,
+// and `transcriptWordCreate`. A fixture no `tsc` run reads checks nothing.
+//
+// Each block below names the client type **the real call site names**, so the
+// assignment fails when the client type and the captured response diverge —
+// the same instrument as the CW blocks, applied to the conforming endpoints so
+// they cannot quietly stop conforming.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/admin/users — the original `memberships` defect', () => {
+  it('the captured body is assignable to AdminDataResponse', () => {
+    // `AdminUsersPage.fetchAdmin<AdminDataResponse>('admin/users', token)` —
+    // the call whose type argument was wrong, laundered through a local generic
+    // wrapper so `grep 'apiFetch<'` never saw it (design D6).
+    const check: AdminDataResponse = adminUsers;
+    expect(check.users.length).toBeGreaterThan(0);
+    expect(check.studios_catalog.length).toBeGreaterThan(0);
+  });
+
+  it('a user row is assignable to AdminUser, with and without memberships', () => {
+    // Two runtime-guarded rows, so a re-capture that drops either shape fails
+    // here rather than silently reducing what the assignments cover.
+    // `.filter(…)[0]` rather than `.find(…)!` or a cast: an assertion would let
+    // a diverging fixture through, which is the one thing this must not do.
+    const populated: AdminUser = adminUsers.users.filter((u) => u.studios.length > 0)[0];
+    const empty: AdminUser = adminUsers.users.filter((u) => u.studios.length === 0)[0];
+    expect(populated.studios[0].name).toBeTruthy();
+    expect(empty.studios).toEqual([]);
+  });
+
+  it('the wire has `studios: [{id, name}]` and no `memberships` key at all', () => {
+    // This is the whole defect, stated against a captured response: the client
+    // declared `memberships: string[]`, the server has never emitted the key,
+    // and `u.memberships.map(…)` unmounted the page. Reintroducing that field
+    // on `AdminUser` makes the assignments above fail with TS2741.
+    const row = adminUsers.users[0];
+    expect('memberships' in row).toBe(false);
+    expect(row.studios.every((s) => typeof s.id === 'string' && typeof s.name === 'string')).toBe(
+      true,
+    );
+    // The fixture's own type has no such property either — this directive goes
+    // unused (a compile error) the moment a re-capture starts emitting one,
+    // which is the signal to re-check `AdminUser`, not to delete this line.
+    // @ts-expect-error `memberships` is not on the captured response
+    const gone = row.memberships;
+    expect(gone).toBeUndefined();
+  });
+
+  it('a studios-catalog row is assignable to AdminStudio', () => {
+    const check: AdminStudio = adminUsers.studios_catalog[0];
+    expect(typeof check.builtin).toBe('boolean');
+  });
+});
+
+describe('GET /api/profile — the two branches with no CW finding', () => {
+  it('the logged-in capture is assignable to ProfilePayload', () => {
+    const check: ProfilePayload = profileAuthenticated;
+    // Runtime guard on the branch identity: this fixture is only evidence about
+    // the authenticated shape while it really is the authenticated capture.
+    expect(check.auth.logged_in).toBe(true);
+    expect(check.auth.user).not.toBeNull();
+    // Both `TeamRole` literals appear here, which is why this fixture is a `.ts`
+    // module with `as const` (audit §9) — a `.json` import would widen them.
+    expect(check.auth.user?.teams.map((t) => t.role)).toEqual(['admin', 'member']);
+  });
+
+  it('the logged-out + oauth-configured capture is assignable to ProfilePayload', () => {
+    const check: ProfilePayload = profileLoggedOutOauth;
+    expect(check.auth.logged_in).toBe(false);
+    expect(check.auth.oauth_configured).toBe(true);
+    // `user: null` on this branch — the field is declared `AuthUser | null`,
+    // and this is the capture that exercises the null side.
+    expect(check.auth.user).toBeNull();
+  });
+});
+
+describe('POST /api/shows — the created show', () => {
+  it("the captured body is assignable to the call site's `{show: Show}`", () => {
+    // `useProfile.ts` names this type inline: `apiFetch<{ show: Show }>('shows', …)`.
+    const check: { show: Show } = showCreate;
+    expect(check.show.show_code).toBe('ATS');
+    expect(check.show.event_palette.length).toBeGreaterThan(0);
+  });
+
+  it('its categories are `ShowCategory`, i.e. `{label, needs_context}` options', () => {
+    // The other side of the CW-2 split, on a third endpoint: `Show.categories`
+    // uses `ShowCategory`, whose `dropdown_options` are option OBJECTS.
+    const dropdown = showCreate.show.categories.find((c) => c.type === 'DROPDOWN');
+    expect(dropdown).toBeDefined();
+    expect(dropdown?.dropdown_options).toEqual([
+      { label: 'Lav', needs_context: false },
+      { label: 'Boom', needs_context: false },
+    ]);
+  });
+});
+
+describe('Teams — the four responses `useTeams.ts` types', () => {
+  it('POST /api/teams is assignable to TeamCreateResponse', () => {
+    const check: TeamCreateResponse = teamCreate;
+    expect(check.role).toBe('admin');
+  });
+
+  it('PATCH /api/teams/:id is assignable to TeamRenameResponse', () => {
+    const check: TeamRenameResponse = teamRename;
+    expect(check.name).toBe('My Crew Renamed');
+    // Rename emits `{id, name}` only — no `role`, unlike create.
+    expect('role' in teamRename).toBe(false);
+  });
+
+  it('POST …/members/:uid/role is assignable to TeamRoleChangeResponse', () => {
+    const check: TeamRoleChangeResponse = teamRoleChange;
+    expect(check.ok).toBe(true);
+    expect(check.role).toBe('admin');
+  });
+
+  it('both caller branches of GET /api/teams/:id are assignable to TeamDetail', () => {
+    const asAdmin: TeamDetail = teamDetailAdmin;
+    const asMember: TeamDetail = teamDetailMember;
+    // The caller-dependent key (audit row 26): `invites` is emitted only for
+    // admins, which is why `TeamDetail.invites` is optional. Captured from the
+    // same seeded state with the same pending invite present, so the member
+    // body's missing key is an observation about the caller branch, not about
+    // there being nothing to send.
+    expect(asAdmin.role).toBe('admin');
+    expect(asMember.role).toBe('member');
+    expect(asAdmin.invites?.[0]?.email).toBe('pending@example.com');
+    expect('invites' in teamDetailMember).toBe(false);
+    expect(asMember.invites).toBeUndefined();
+  });
+
+  it('a member row is assignable to TeamMember and carries both roles', () => {
+    const members: TeamMember[] = teamDetailAdmin.members;
+    expect(members.map((m) => m.role)).toEqual(['admin', 'member']);
+  });
+});
+
+describe('POST …/transcript-words — the created word', () => {
+  it('the captured 201 body is assignable to TranscriptWord', () => {
+    const check: TranscriptWord = transcriptWordCreate;
+    expect(check.word).toBe('hello');
+    // The asymmetry CW-6 turns on, captured on the create route too: the
+    // transcript-words handlers spread `{...w, session_id}`; topics do not.
+    expect(check.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 5.2 — ADDITIVE TOLERANCE, asserted deliberately.
+//
+// The spec requires that a response carrying fields the client does not declare
+// must NOT fail verification (forward compatibility: the server may add keys
+// without breaking the client). TypeScript gives us this for free — excess-
+// property checking applies only to *fresh* object literals, and every fixture
+// here is an imported module binding — but "for free" and "unasserted" is how a
+// property silently disappears. So it is asserted from both sides:
+//
+//   1. the assignments above compile (that IS the tolerance), and
+//   2. `ExpectUndeclared` pins that the tolerated keys really are absent from
+//      the client type. If someone later "tightens" a client type by declaring
+//      one of these captured extras, this block fails with a message naming
+//      exactly what happened, instead of the tolerance check quietly becoming
+//      vacuous.
+//
+// The failure mode this guards against is subtle: without (2), a future edit
+// that declares every captured key makes these checks pass for a reason that
+// has nothing to do with tolerance, and the property stops being tested while
+// the suite stays green.
+// ---------------------------------------------------------------------------
+
+/** `K` unless the client type `T` declares it — in which case a tuple whose
+ * text is the failure message. */
+type ExpectUndeclared<T, K extends string> = K extends keyof T
+  ? ['ADDITIVE TOLERANCE: the client type now DECLARES this captured key', K]
+  : K;
+
+describe('additive tolerance — captured keys the client does not declare', () => {
+  it('AdminUser tolerates `picture_url` and `created_at_utc`', () => {
+    // `GET /api/admin/users` emits eight keys per user; `AdminUser` declares
+    // six. The assignments in the admin block above compile anyway.
+    const undeclared = ['picture_url', 'created_at_utc'] as const;
+    for (const key of undeclared) {
+      expect(key in adminUsers.users[0]).toBe(true);
+    }
+    const pictureUrl: ExpectUndeclared<AdminUser, 'picture_url'> = 'picture_url';
+    const createdAt: ExpectUndeclared<AdminUser, 'created_at_utc'> = 'created_at_utc';
+    expect([pictureUrl, createdAt]).toEqual(undeclared.slice());
+  });
+
+  it('SessionStatus tolerates `audio_recording_lease_age_sec`', () => {
+    expect('audio_recording_lease_age_sec' in sessionStatus).toBe(true);
+    const ageSec: ExpectUndeclared<SessionStatus, 'audio_recording_lease_age_sec'> =
+      'audio_recording_lease_age_sec';
+    expect(ageSec).toBe('audio_recording_lease_age_sec');
+  });
+
+  it('the helper itself is not vacuous — a DECLARED key does not typecheck', () => {
+    // Without this, `ExpectUndeclared` could be broken (or reduced to `K`) and
+    // the two checks above would keep passing. `email` IS declared on
+    // `AdminUser`, so the conditional must resolve to the failure tuple.
+    // @ts-expect-error `email` is declared, so this resolves to the message tuple
+    const declared: ExpectUndeclared<AdminUser, 'email'> = 'email';
+    expect(declared).toBe('email');
   });
 });
