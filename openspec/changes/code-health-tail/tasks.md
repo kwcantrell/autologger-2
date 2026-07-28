@@ -77,14 +77,14 @@
 
 ## 5. Test-infrastructure dedupe
 
-- [ ] 5.1 Shared `parseSse` + seed-chain helper in `server/src/test/helpers`; migrate
+- [x] 5.1 Shared `parseSse` + seed-chain helper in `server/src/test/helpers`; migrate
       the 2 parseSse files and the ~9–12 seed-chain-duplicating int-test files (full
       breadth per gate ruling 4); rename the shadowing `configuredEnv` (finding 5.10)
-- [ ] 5.2 Shared fake-core test helper replacing the TWO remaining hand-rolled cast
+- [x] 5.2 Shared fake-core test helper replacing the TWO remaining hand-rolled cast
       fakes (leaseStore/transportStore tests — the head change already typed
       sessionCore.test.ts's fake; 1.1 flag 1); relocate the misplaced fakeClock
       suites to `node/`
-- [ ] 5.3 Shared e2e `createSession` helper adopted at the 7 inline creation sites +
+- [x] 5.3 Shared e2e `createSession` helper adopted at the 7 inline creation sites +
       visual.spec's promoted helper (1.1 flag 3); visual.spec's two deliberate
       new-session-modal TESTS (button-click assertions) are NOT migrated
 
