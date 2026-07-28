@@ -225,6 +225,15 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     oldMeta = {};
   }
   let meta = { ...oldMeta };
+  // FROZEN edge (api-contract-freeze): this `internal` branch is REACHABLE, not
+  // dead — category-id validation (validateCategoriesList) reserves no ids, so
+  // a studio profile MAY define a category whose id case-insensitively equals
+  // 'internal'; the profile-membership 400 above then passes and this branch
+  // strips the UI snapshots. The PUT-vs-POST asymmetry is deliberate frozen
+  // behavior: POST admits the built-in 'internal' category even when the
+  // profile does not define it, PUT requires profile membership first. Do not
+  // remove this branch as dead code, and do not align PUT to POST — either is
+  // an observable contract change (pinned by events.putInternal.int.test.ts).
   if (body.category.toLowerCase() === 'internal') meta = stripCategoryUiSnapshots(meta);
   else meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
 
