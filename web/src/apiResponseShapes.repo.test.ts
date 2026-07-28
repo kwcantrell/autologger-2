@@ -26,7 +26,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // A GUARD WITH A SILENT GAP LOOKS EXACTLY LIKE A GUARD THAT WORKS. The failure
 // mode designed against here is the false NEGATIVE — a new hand-transcribed
 // response type the scan never sees. A false positive is cheap and visible; a
-// false negative is how the original bug shipped. Four structural choices
+// false negative is how the original bug shipped. Five structural choices
 // follow from that:
 //
 //   1. The population is the union of SIX detectors over application code,
@@ -48,17 +48,26 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      `const x: T = <fixture>` declaration in `api/types.conformance.test.ts`
 //      — read out of detector 7's own parse of that module, so adding a real
 //      check is what makes a site pass, and importing a name is not a check;
-//      (ii) assigned by a declaration that actually ASSERTS something, i.e. one
-//      that neither sits under a `@ts-expect-error` nor casts its initializer
+//      (ii) fed by a fixture the SERVER DECLARES IT CAPTURES, cross-checked
+//      against the `CaptureSpec` names in
+//      `server/src/routers/apiResponseFixtures.int.test.ts` — "the specifier
+//      contains `fixtures/api-responses/`" is a path substring over a directory
+//      OUTSIDE this scan's root, and on its own it let a hand-authored module
+//      dropped in beside the captures confer full coverage; (iii) assigned by a
+//      declaration that actually ASSERTS something, i.e. one that neither sits
+//      under a `@ts-expect-error` nor casts its initializer
 //      (`fixture as unknown as T` compiles whatever the capture's shape is);
-//      and (iii) in scope in the SITE'S OWN FILE via an import whose specifier
+//      and (iv) in scope in the SITE'S OWN FILE via an import whose specifier
 //      RESOLVES — relative to that file, not merely spelled `types` — to the
 //      canonical `api/types` module, under the export name that was checked.
-//      Clause (iii) is what stops a locally declared type, or one imported from
+//      Clause (iv) is what stops a locally declared type, or one imported from
 //      a sibling per-feature `types.ts`, or one aliased onto a checked name,
 //      from inheriting coverage by sharing a spelling; a specifier that does not
 //      resolve inside the tree contributes no coverage at all, so its sites
-//      surface. Everything else must be exempted BY SITE, with a reason,
+//      surface. Alias resolution runs on BOTH sides — the conformance module
+//      records its check under the ORIGINAL export name, so
+//      `import type { Session as LogEvent }` there checks `Session` and lends
+//      `LogEvent` nothing. Everything else must be exempted BY SITE, with a reason,
 //      in EXEMPTIONS below — never by file, never by glob, never by a type-wide
 //      or category-wide rule that a future site could fall into unnoticed.
 //      `apiFetch<OkResponse>` is the cautionary case: it reads as trivially
@@ -73,20 +82,37 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      CANARY_SITES all fail loudly if the walk or a pattern is over-narrowed,
 //      so an empty scan cannot masquerade as a clean repo. Surplus exemption
 //      entries (more entries than matching sites) are also an error — the same
-//      vacuity check from the other direction.
-//   4. The detectors are mutation-checked, over MULTI-FILE synthetic trees as
+//      vacuity check from the other direction. Floors sit a few sites under
+//      today's counts, and how much slack each allows is written next to it: a
+//      floor far below its count is itself a way to lose sites silently.
+//   4. NOTHING IS EVER DROPPED FOR BEING UNPARSEABLE. A call whose type-argument
+//      list this scanner cannot take apart is recorded with an unparsed type
+//      expression and no acquired names, which makes it uncovered and forces a
+//      decision. It used to `continue`, so `apiFetch<{ ok: boolean; detail:
+//      string }>(…)` — the spelling `npx biome format` writes, since it rewrites
+//      the comma form into it — produced no site AT ALL. "I could not parse
+//      this" and "there is nothing here" must never be the same outcome.
+//   5. The detectors are mutation-checked, over MULTI-FILE synthetic trees as
 //      well as single-file ones. The first describe block runs the real scanner
 //      over trees carrying a planted unverified site of each shape — including
 //      a wrapper declared in one file and called from another, a wrapper over a
-//      wrapper, a namespace-qualified `api.apiFetch<T>`, two sites on one path
-//      differing only in method, a locally declared type shadowing a checked
-//      name, a sibling `types.ts` shadowing one, an import alias in both
-//      directions, and a cast-defeated conformance assignment — and over a
-//      clean tree, so "the guard fires" and "the guard does not just
-//      always-fire" are both demonstrated rather than assumed. Single-file
-//      fixtures alone hid three gaps for a whole review cycle, and a second
-//      adversarial round found three more; EVERY case below is a former false
-//      negative, each verified to go red when its own fix is reverted.
+//      wrapper (twice: once ORDERED so a single discovery round provably cannot
+//      suffice), a wrapper with an object return-type annotation and one with an
+//      object type-parameter constraint, a namespace-qualified `api.apiFetch<T>`,
+//      a semicolon-separated and an arrow-typed inline type argument, an
+//      unparseable one, two sites on one path differing only in method, a
+//      locally declared type shadowing a checked name, a sibling `types.ts`
+//      shadowing one, an import alias in both directions on both sides, a
+//      cast-defeated conformance assignment, and a hand-authored module sitting
+//      in the fixture directory — and over a clean tree, so "the guard fires"
+//      and "the guard does not just always-fire" are both demonstrated rather
+//      than assumed. Single-file fixtures alone hid three gaps for a whole
+//      review cycle; a second adversarial round found three more, and a third
+//      found three more again. EVERY case below is a former false negative, and
+//      each fix's own test was RUN with only that fix reverted and confirmed to
+//      go red (audit §11.9 records the executed runs — the previous round
+//      claimed this check without performing it, and one of its tests turned out
+//      to pass with its fix reverted).
 //
 // WHAT IT CANNOT SEE — stated, not glossed (audit.md §8 records the same list
 // for the one-time enumeration, §11.5 the ranked version). Ordered by how
@@ -98,24 +124,41 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     `JSON.parse` token, so no detector fires (audit §8.3). This is the
 //     largest REMAINING structural hole: it is a limit of matching on
 //     deserialization syntax, not a tuning gap.
-//   - A callee reached under a name rebound OUTSIDE the calling file. The scan
-//     resolves `apiFetch` through a named import (including
-//     `import { apiFetch as x }`) and through a namespace qualifier
-//     (`import * as api` … `api.apiFetch<T>(…)`), and it resolves wrappers by
-//     their DECLARED name anywhere in the tree. It does not follow a re-export
-//     that renames (`export { apiFetch as request } from './client'`), nor a
-//     wrapper imported under an alias (`import { fetchTyped as ft }`): under
-//     either, the call site is invisible, not merely mis-keyed. One token of
-//     refactor, and the same class as the two false negatives already found.
+//   - A CALLEE THIS SCANNER CANNOT NAME. The scan resolves `apiFetch` through a
+//     named import (including `import { apiFetch as x }`) and through a
+//     namespace qualifier (`import * as api` … `api.apiFetch<T>(…)`), and it
+//     resolves wrappers by matching two declaration forms — `function name<T>(…)`
+//     and `const name = <T>(…)` / `const name = async <T>(…)` — and then by that
+//     DECLARED name anywhere in the tree. Five spellings defeat that, EACH
+//     VERIFIED BY PLANTING against this code; under every one the call site is
+//     invisible, not merely mis-keyed:
+//       (a) an in-file rebinding — `const call = apiFetch;` then `call<T>(p)`
+//           produces ZERO sites, not even the rebinding;
+//       (b) a re-export that renames, `export { apiFetch as request } from
+//           './client'` in a third module;
+//       (c) a wrapper imported under an alias, `import { fetchTyped as ft }`;
+//       (d) a CLASS-METHOD wrapper — `class Api { async get<T>(p): Promise<T>
+//           { return apiFetch<T>(p) } }`; only the forwarding `apiFetch<T>(p)`
+//           plumbing site appears, and `api.get<Thing>(…)` does not;
+//       (e) an ANNOTATED arrow const — `const f: <T>(p: string) => Promise<T> =
+//           <T>(p) => apiFetch<T>(p)`; the annotation's `:` defeats the `const
+//           name =` form, with the same result as (d).
+//     Left as a documented residual rather than widened: (d) and (e) need a
+//     declaration matcher broad enough to also match ordinary generic CALLS,
+//     which is a detector change this round did not review. One token of
+//     refactor away, and the same class as the three wrapper-discovery false
+//     negatives already found, which is why this ranks second.
 //   - Whether a COVERED type is checked against the RIGHT endpoint's fixture.
 //     Coverage is per type NAME, not per (site, endpoint) pair: reusing an
 //     already-checked type on a new endpoint passes silently. The same
 //     looseness sits inside the conformance module — a `const x: T = <binding>`
-//     counts when the binding is ANY captured fixture, so a slice of an
-//     unrelated capture (`const s: Session = adminUsers.users[0]`) would count
-//     as `Session`'s check. Deciding which fixture belongs to which type is the
-//     audit's per-row verdict table (§5), which is a snapshot, not a standing
-//     check; the guard cannot derive that mapping and does not pretend to.
+//     counts when the binding is ANY declared capture, so a slice of an
+//     unrelated one (`const s: Session = adminUsers.users[0]`) would count as
+//     `Session`'s check. The fixture must now BE a declared capture, which is a
+//     different and weaker property than being the RIGHT one. Deciding which
+//     fixture belongs to which type is the audit's per-row verdict table (§5),
+//     which is a snapshot, not a standing check; the guard cannot derive that
+//     mapping and does not pretend to.
 //   - Sites whose collision the method cannot break. Two calls on one path
 //     with the same literal method — or with the method threaded in through a
 //     variable — still normalise to one key. They are not absorbed (exemptions
@@ -137,11 +180,42 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     after a `//` on the same line would be missed. String and template
 //     literals are masked before that test, so a URL's `//` no longer hides
 //     the rest of its line.
-//   - Whether an exemption's `reason` is TRUE. The guard forces a recorded,
-//     non-trivial justification; it cannot adjudicate one.
+//   - Whether an exemption's `reason` is TRUE, or even what it CONTAINS. The
+//     only mechanical requirement is length: `reason.trim().length >= 40`.
+//     Most entries additionally cite the audit row backing their verdict, but
+//     that is a convention the entries keep, not a rule the guard enforces —
+//     four of the fifty-two cite no row, and a forty-character sentence of
+//     nothing would pass. The reason field is written for the next reviewer to
+//     read, not for the guard to adjudicate.
+//   - A declaration's BODY is located by a hand-rolled scanner, not a parser.
+//     It skips strings and comments and balances parens, angles and braces, and
+//     it distinguishes a body's `{` from an object type's by what precedes it
+//     (see `opensDeclarationBody`) — a heuristic, not a grammar. A declaration
+//     shaped so that heuristic misreads it would un-discover the wrapper
+//     silently. Ranked last of the reachable items because every spelling this
+//     tree and its plausible refactors produce is covered by a test below, but
+//     recorded because "no counter-example found" is not "none exists".
 
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx']);
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
+
+/** This file's own directory (`web/src`), and the repo root above it. The
+ * capture-spec inventory the fixture cross-check reads (see
+ * `declaredCaptureNames`) lives outside both workspaces. */
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(THIS_DIR, '..', '..');
+const FIXTURE_DIR = path.join(REPO_ROOT, 'fixtures', 'api-responses');
+const CAPTURE_SPEC_SOURCE = path.join(
+  REPO_ROOT,
+  'server',
+  'src',
+  'routers',
+  'apiResponseFixtures.int.test.ts',
+);
+/** The one file under `fixtures/api-responses/` that is NOT a capture: the
+ * hand-written `Mutable<T>` support type the generated `.ts` fixtures import
+ * (audit §9, and the residual in §10). */
+const FIXTURE_SUPPORT_MODULES = new Set(['_mutable.ts']);
 
 /** The conformance module — the sole authority on which client types are
  * checked against a captured response, and the target of detector 7. */
@@ -163,6 +237,11 @@ function walk(dir: string, out: string[] = []): string[] {
   } catch {
     return out;
   }
+  // SORTED, so the walk order — and therefore the order wrapper discovery
+  // visits files in — is a property of the tree rather than of the filesystem.
+  // A fixed-point test that only converges because the declaring file happens
+  // to be read first is a test that proves nothing (audit §11.9, I3).
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const entry of entries) {
     if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
@@ -305,19 +384,39 @@ function isProse(masked: string, index: number): boolean {
 }
 
 /** Reads a balanced `<…>` starting at `open` (which must index a `<`).
- * Returns the inner text and the index just past the closing `>`, or null. */
+ * Returns the inner text and the index just past the closing `>`, or null when
+ * the list cannot be parsed — in which case the CALLER still records the site
+ * (see `scanFile`), because dropping one is the single direction this guard
+ * must never fail in.
+ *
+ * Two things a type-argument list does that a naive angle-balancer gets wrong,
+ * both of which silently deleted real sites (audit §11.9, I1):
+ *
+ *   - `;` separates the MEMBERS of an inline object type. Treating every `;` as
+ *     a statement break made `apiFetch<{ ok: boolean; detail: string }>` — the
+ *     only spelling `npx biome format` produces, since it rewrites the comma
+ *     form into it — unparseable, and therefore invisible. A `;` is a statement
+ *     break only outside `{…}`; inside one it is ordinary punctuation.
+ *   - The `>` of an arrow type (`{ cb: () => void }`) is not a closer. Counting
+ *     it as one closed the list early, after which the next character was not
+ *     `(` and the whole call was discarded as "a reference, not a call".
+ *
+ * The `;`-outside-braces bail is kept so that a stray `<` cannot swallow the
+ * rest of the file, but it is no longer a silent drop. */
 function readAngles(content: string, open: number): { inner: string; end: number } | null {
   if (content[open] !== '<') return null;
   let depth = 0;
+  let braceDepth = 0;
   for (let i = open; i < content.length; i++) {
     const ch = content[i];
     if (ch === '<') depth++;
     else if (ch === '>') {
+      if (content[i - 1] === '=') continue; // the `>` of `() => T`, not a closer
       depth--;
       if (depth === 0) return { inner: content.slice(open + 1, i), end: i + 1 };
-    } else if (ch === ';') {
-      // A type-argument list never spans a statement break here; bailing keeps
-      // a stray `<` from swallowing the rest of the file.
+    } else if (ch === '{') braceDepth++;
+    else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1);
+    else if (ch === ';' && braceDepth === 0) {
       return null;
     }
   }
@@ -381,19 +480,87 @@ function literalMethodOf(args: readonly string[]): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+/** True when a `{` at this position OPENS A BODY rather than an object type.
+ *
+ * `prev` is the last non-whitespace character before it. Inside a type
+ * annotation a `{` can only follow an operator that is still expecting a type
+ * (`:`, `|`, `&`, `<`, `,`, `(`, `=`, `?`, `[`, `extends`… ), whereas a body's
+ * `{` always follows a COMPLETED thing — the parameter list's `)`, the `>` of
+ * `Promise<…>` or of `=>`, a closing `}`/`]`, or the last character of a type
+ * name. That distinction is the whole of the I2 fix: `function f<T>(p):
+ * Promise<{ data: T; total: number }> { … }` opens two top-level-looking braces
+ * and only the second is the body. */
+function opensDeclarationBody(prev: string): boolean {
+  return prev === ')' || prev === '}' || prev === ']' || prev === '>' || /[A-Za-z0-9_$]/.test(prev);
+}
+
+/** The index just past a comment starting at `i`, or `i` when none starts
+ * there. Braces and semicolons inside a comment are not syntax, and a
+ * declaration scanner that counted them could mis-place a body and thereby
+ * un-discover a wrapper — a silent false negative. */
+function skipComment(content: string, i: number): number {
+  if (content[i] === '/' && content[i + 1] === '/') {
+    const nl = content.indexOf('\n', i);
+    return nl === -1 ? content.length : nl;
+  }
+  if (content[i] === '/' && content[i + 1] === '*') {
+    const end = content.indexOf('*/', i + 2);
+    return end === -1 ? content.length : end + 2;
+  }
+  return i;
+}
+
+/** Skips a balanced `{…}` starting at `open`, returning the index of its
+ * closing `}` (or the end of input). Quote- and comment-aware, so a brace
+ * inside either does not unbalance it. */
+function skipBalancedBraces(content: string, open: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = open; i < content.length; i++) {
+    const ch = content[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    const past = skipComment(content, i);
+    if (past !== i) {
+      i = past - 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') quote = ch;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return content.length - 1;
+}
+
 /** The source text of a function declaration starting at `start`, read to its
  * BALANCED closing brace (or, for a concise arrow body, its terminating `;`).
  *
  * A fixed-size window would silently stop looking partway through a long
  * function, so a wrapper whose forwarding call sits past the cutoff would be
  * laundered out of the population — the same class of miss this guard exists
- * to prevent. Braces inside the parameter list (destructuring, object type
- * literals) are not body braces and are skipped by tracking paren depth. */
+ * to prevent.
+ *
+ * TWO KINDS OF `{` ARE NOT THE BODY, and returning at either of them ends the
+ * read before the forwarding call, which un-discovers the wrapper and deletes
+ * every one of its call sites from the population — the C1/NEW-1 class, found a
+ * third time as I2 (audit §11.9). Braces in the PARAMETER list (destructuring,
+ * inline parameter types) are skipped by paren depth, as before. Braces in the
+ * TYPE-PARAMETER list (`<T extends { id: string }>`) and in a RETURN-TYPE
+ * annotation (`: Promise<{ data: T }>`, `: { data: T }`) are skipped by angle
+ * depth plus `opensDeclarationBody`, and are balanced past rather than
+ * returned at. */
 function readDeclarationBody(content: string, start: number): string {
   let parenDepth = 0;
-  let braceDepth = 0;
-  let entered = false;
+  let angleDepth = 0;
   let quote: string | null = null;
+  let prev = '';
+  let bodyOpen = -1;
   for (let i = start; i < content.length; i++) {
     const ch = content[i];
     if (quote) {
@@ -401,23 +568,36 @@ function readDeclarationBody(content: string, start: number): string {
       else if (ch === quote) quote = null;
       continue;
     }
+    const past = skipComment(content, i);
+    if (past !== i) {
+      i = past - 1;
+      continue;
+    }
     if (ch === "'" || ch === '"' || ch === '`') {
       quote = ch;
+      prev = ch;
       continue;
     }
     if (ch === '(') parenDepth++;
     else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1);
-    else if (parenDepth === 0 && ch === '{') {
-      braceDepth++;
-      entered = true;
-    } else if (parenDepth === 0 && ch === '}') {
-      braceDepth--;
-      if (entered && braceDepth <= 0) return content.slice(start, i + 1);
-    } else if (ch === ';' && parenDepth === 0 && braceDepth === 0) {
-      return content.slice(start, i + 1);
+    else if (parenDepth === 0 && ch === '<') angleDepth++;
+    else if (parenDepth === 0 && ch === '>' && prev !== '=') {
+      angleDepth = Math.max(0, angleDepth - 1);
+    } else if (parenDepth === 0 && ch === '{') {
+      if (angleDepth === 0 && opensDeclarationBody(prev)) {
+        bodyOpen = i;
+        break;
+      }
+      i = skipBalancedBraces(content, i);
+      prev = '}';
+      continue;
+    } else if (ch === ';' && parenDepth === 0 && angleDepth === 0) {
+      return content.slice(start, i + 1); // a concise arrow body, or a bare signature
     }
+    if (!/\s/.test(ch)) prev = ch;
   }
-  return content.slice(start);
+  if (bodyOpen === -1) return content.slice(start);
+  return content.slice(start, skipBalancedBraces(content, bodyOpen) + 1);
 }
 
 /** The PascalCase type names mentioned anywhere in a type expression. */
@@ -637,20 +817,46 @@ function scanFile(
       // by the matched text, not by the callee's own length.
       let cursor = m.index + m[0].length;
       while (/\s/.test(content[cursor] ?? '')) cursor++;
+      // The callee as WRITTEN (qualifier included), so `api.apiFetch<T>(…)` and
+      // a bare `apiFetch<T>(…)` in the same file are two distinct keys.
+      const written = collapse(m[0]).replace(/\s/g, '');
+      /** A call this scanner could not take apart. It is STILL A SITE.
+       *
+       * The pre-I1 code did `continue` here, which deleted the occurrence
+       * entirely — not even recorded as an untyped call — so an unparseable
+       * type argument was the cheapest possible hiding place for a new
+       * hand-transcribed shape. Recording it with no acquired type names makes
+       * it uncovered by construction, so it must be looked at. Over-reporting
+       * costs a one-line exemption; under-reporting costs the next outage. */
+      const pushUnparsed = () => {
+        push(
+          detector,
+          m.index,
+          `${written}<unparsed> ${normalizeArg(lineTextAt(content, m.index))}`,
+          [],
+          false,
+        );
+      };
       let typeExpr = '';
       if (content[cursor] === '<') {
         const angles = readAngles(content, cursor);
-        if (!angles) continue;
+        if (!angles) {
+          pushUnparsed();
+          continue;
+        }
         typeExpr = collapse(angles.inner);
         cursor = angles.end;
         while (/\s/.test(content[cursor] ?? '')) cursor++;
       }
-      if (content[cursor] !== '(') continue; // a re-export/reference, not a call
+      if (content[cursor] !== '(') {
+        // Not a call as this scanner reads it. Recorded rather than dropped,
+        // for the same reason as above: "I could not parse this" and "there is
+        // nothing here" must not be the same observable outcome.
+        pushUnparsed();
+        continue;
+      }
       const args = readArgs(content, cursor);
       const names = typeNamesIn(typeExpr);
-      // The callee as WRITTEN (qualifier included), so `api.apiFetch<T>(…)` and
-      // a bare `apiFetch<T>(…)` in the same file are two distinct keys.
-      const written = collapse(m[0]).replace(/\s/g, '');
       const call = `${written}<${typeExpr}>(${normalizeArg(args[0] ?? '')})`;
       push(detector, m.index, withMethod(call, literalMethodOf(args)), names, isCovered(names));
     }
@@ -702,17 +908,78 @@ function withMethod(call: string, method: string | null): string {
   return method === null ? call : `${call} [${method}]`;
 }
 
+/** Fixture names the SERVER declares it captures — the `name` of every
+ * `CaptureSpec` passed to `expectCapturedResponse` in
+ * `server/src/routers/apiResponseFixtures.int.test.ts`.
+ *
+ * WHY A CROSS-TIER READ. Detector 7's job is to keep design D2 ("fixtures are
+ * captured by executing the handler, never hand-authored") from being undone.
+ * Until this existed it enforced only "the specifier contains
+ * `fixtures/api-responses/`" — a PATH SUBSTRING, over a directory that sits
+ * OUTSIDE this scan's root (`web/src`), so a hand-authored module dropped in
+ * beside the captures was indistinguishable from one and conferred full
+ * `covered` status on every type assigned out of it. The capture inventory is
+ * the only in-repo statement of which of those files a handler actually
+ * produced, so the guard reads it (audit §11.9, I4).
+ *
+ * Throws rather than degrading: if this file moves or its call shape changes,
+ * a loud failure naming the path is correct, and silently trusting every
+ * fixture-directory import again is not. */
+let declaredCaptureNamesCache: Set<string> | null = null;
+const DECLARED_CAPTURE_FLOOR = 20;
+function declaredCaptureNames(): Set<string> {
+  if (declaredCaptureNamesCache) return declaredCaptureNamesCache;
+  let source: string;
+  try {
+    source = fs.readFileSync(CAPTURE_SPEC_SOURCE, 'utf8');
+  } catch {
+    throw new Error(
+      `apiResponseShapes.repo.test.ts: cannot read the capture-spec inventory at ` +
+        `${CAPTURE_SPEC_SOURCE}. Detector 7 needs it to tell a CAPTURED fixture from a ` +
+        `hand-authored module sitting in the same directory. If that suite moved, update ` +
+        `CAPTURE_SPEC_SOURCE here.`,
+    );
+  }
+  const names = new Set<string>();
+  const re = /expectCapturedResponse\(\s*\{\s*(?:\/\/[^\n]*\n\s*)*name:\s*'([A-Za-z_$][\w$]*)'/g;
+  for (let m = re.exec(source); m !== null; m = re.exec(source)) names.add(m[1]);
+  if (names.size < DECLARED_CAPTURE_FLOOR) {
+    throw new Error(
+      `apiResponseShapes.repo.test.ts: read only ${names.size} CaptureSpec name(s) from ` +
+        `${CAPTURE_SPEC_SOURCE} (floor ${DECLARED_CAPTURE_FLOOR}). A pattern that stops ` +
+        `matching would silently shrink the set of fixtures that count as captured.`,
+    );
+  }
+  declaredCaptureNamesCache = names;
+  return names;
+}
+
+/** The DECLARED capture an import specifier names, or null when the specifier
+ * is not a fixture import at all — or is one the server never declared it
+ * captures, which is the case this exists to reject. */
+function capturedFixtureName(spec: string, declared: ReadonlySet<string>): string | null {
+  const m = spec.match(/(?:^|\/)fixtures\/api-responses\/([A-Za-z_$][\w$]*)(?:\.(?:json|ts))?$/);
+  if (!m) return null;
+  return declared.has(m[1]) ? m[1] : null;
+}
+
 /** Detector 7 — the conformance module's own inputs, scanned only there.
  * Every `const x: <ClientType> = <expr>` in that module must be fed by a
- * binding imported from `fixtures/api-responses/`. This is what keeps design
- * D2 — "fixtures are captured by executing the handler, never hand-authored" —
- * from being quietly undone by someone adding a hand-written literal back into
- * the checks, which is precisely the transcription step that caused the bug. */
-function scanConformanceModule(rel: string, content: string, vocabulary: Set<string>): Site[] {
+ * binding imported from a DECLARED CAPTURE under `fixtures/api-responses/`.
+ * This is what keeps design D2 — "fixtures are captured by executing the
+ * handler, never hand-authored" — from being quietly undone by someone adding a
+ * hand-written literal back into the checks, which is precisely the
+ * transcription step that caused the bug. */
+function scanConformanceModule(
+  rel: string,
+  content: string,
+  vocabulary: Set<string>,
+  declaredCaptures: ReadonlySet<string>,
+): Site[] {
   const fixtureBindings = new Set<string>();
-  const imports =
-    /import\s+(?:type\s+)?(?:(\w+)|\{([^}]*)\})\s+from\s+'[^']*fixtures\/api-responses\/[^']*'/g;
+  const imports = /import\s+(?:type\s+)?(?:(\w+)|\{([^}]*)\})\s+from\s+'([^']*)'/g;
   for (let m = imports.exec(content); m !== null; m = imports.exec(content)) {
+    if (capturedFixtureName(m[3], declaredCaptures) === null) continue;
     if (m[1]) fixtureBindings.add(m[1]);
     for (const part of (m[2] ?? '').split(',')) {
       const name = part
@@ -724,6 +991,12 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
     }
   }
 
+  /** Alias map for THIS module's own `api/types` imports. Coverage is recorded
+   * under the ORIGINAL export name, symmetrically with the call-site side: an
+   * `import type { Session as LogEvent }` here checks `Session`, and recording
+   * `LogEvent` would hand every `LogEvent` site in the tree a check that was
+   * never performed. */
+  const typeAliases = clientTypeImports(rel, content);
   const masked = maskLiterals(content);
   const sites: Site[] = [];
   const decl = /\bconst\s+[A-Za-z_$][\w$]*\s*:\s*([^=]+?)\s*=\s*([^;]+);/g;
@@ -736,9 +1009,10 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
     // `ExpectUndeclared<AdminUser, 'picture_url'>` is not a conformance
     // assertion about a response and is not a site.
     const head = annotation.match(/^[A-Za-z_$][\w$]*/)?.[0] ?? '';
+    const headOriginal = typeAliases.get(head) ?? head;
     const inlineObject =
       annotation.startsWith('{') && typeNamesIn(annotation).some((n) => vocabulary.has(n));
-    if (!vocabulary.has(head) && !inlineObject) continue;
+    if (!vocabulary.has(headOriginal) && !inlineObject) continue;
     const root = init.match(/^[A-Za-z_$][\w$]*/)?.[0] ?? '';
     // A type name is FIXTURE-CHECKED only by a declaration that (i) annotates
     // the bare type (or an array of it) — not an indexed slice, not an inline
@@ -756,8 +1030,12 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
     // the declaration its `covered` status so it must be exempted rather than
     // sit in the module looking like a check.
     const cast = containsTypeAssertion(init);
+    // Clause (v): the annotated name must resolve, through this module's own
+    // imports, to an export of the canonical `api/types` — and the check is
+    // recorded under that ORIGINAL name, not the local spelling.
+    const bareOriginal = bare === undefined ? undefined : typeAliases.get(bare);
     const asserted =
-      bare !== undefined &&
+      bareOriginal !== undefined &&
       fixtureBindings.has(root) &&
       !precededByTsExpectError(content, m.index) &&
       !cast;
@@ -769,7 +1047,7 @@ function scanConformanceModule(rel: string, content: string, vocabulary: Set<str
       descriptor: `const ${annotation} = ${root}`,
       typeNames: typeNamesIn(annotation),
       covered: fixtureBindings.has(root) && !cast,
-      ...(asserted ? { headType: bare } : {}),
+      ...(asserted ? { headType: bareOriginal } : {}),
     });
   }
   return sites;
@@ -1169,7 +1447,12 @@ function scanTree(root: string, exemptions: readonly Exemption[] = EXEMPTIONS): 
 
   const conformanceSource = files.find((f) => f.rel === CONFORMANCE_MODULE)?.content ?? '';
   const conformanceSites = conformanceSource
-    ? scanConformanceModule(CONFORMANCE_MODULE, conformanceSource, vocabulary)
+    ? scanConformanceModule(
+        CONFORMANCE_MODULE,
+        conformanceSource,
+        vocabulary,
+        declaredCaptureNames(),
+      )
     : [];
   const covered = coveredTypeNames(conformanceSites);
 
@@ -1257,9 +1540,8 @@ function report(sites: Site[]): string {
     .join('\n');
 }
 
-const here = path.dirname(fileURLToPath(import.meta.url));
 // this file: web/src/apiResponseShapes.repo.test.ts -> the scan root is web/src.
-const WEB_SRC = here;
+const WEB_SRC = THIS_DIR;
 
 // ---------------------------------------------------------------------------
 // Vacuity floors. A guard whose scan matches nothing passes forever, so the
@@ -1268,29 +1550,41 @@ const WEB_SRC = here;
 // losing a whole detector or an over-narrowed walk is.
 // ---------------------------------------------------------------------------
 
-// Measured after the phase-5 review fixes (2026-07-28): 120 sites — apiFetch
+// Measured after the branch-audit fixes (2026-07-28): 120 sites — apiFetch
 // 52, wrapper 7, rawFetch 8, jsonBody 5, jsonParse 5, beacon 2,
 // conformanceAssertion 41 — of which 68 are COVERED and 52 are EXEMPTED.
 // (Was 117/65/52 when coverage was read off the conformance module's import
 // list; the three added sites are the direct `Show`, `Category` and
 // `ActiveStudioCategory` fixture assignments that the corrected covered-set
-// rule showed were missing.) The second review round's fixes — fixed-point
-// wrapper discovery, resolved type-import specifiers, cast rejection, and
-// namespace-qualified callees — left all four numbers unchanged on this tree,
-// which is the expected result: they close shapes the tree does not yet
-// contain.
-// The floors sit under those with enough headroom that deleting a call site is
-// not a failure, but losing a detector or over-narrowing the walk is.
-const POPULATION_FLOOR = 100;
+// rule showed were missing.) Neither the second review round's fixes
+// (fixed-point wrapper discovery, resolved type-import specifiers, cast
+// rejection, namespace-qualified callees) nor the branch audit's (semicolon and
+// arrow-typed type arguments, unparsed-site recording, object return-type
+// annotations, the declared-capture cross-check, alias-symmetric coverage) moved
+// any of the four numbers on this tree. That is the expected result — they close
+// shapes the tree does not yet contain — and it is asserted, not assumed.
+//
+// HOW MUCH SLACK EACH FLOOR ALLOWS, stated rather than left to be inferred. A
+// floor far below its count lets a scan regression lose sites silently, which
+// is the same vacuity this block exists to prevent (branch audit, M8): the old
+// POPULATION_FLOOR of 100 against 120 tolerated a 20-site loss. Each floor now
+// sits a few sites under today's count — enough that deleting a feature's call
+// sites is not a failure, little enough that a regression is. Deleting more
+// than the slack means re-measuring these numbers deliberately, which is the
+// intended cost.
+const POPULATION_FLOOR = 115; // 120 today; tolerates a 5-site loss
 const DETECTOR_FLOORS: Record<Detector, number> = {
-  apiFetch: 45,
-  wrapper: 5,
-  rawFetch: 6,
-  jsonBody: 4,
-  jsonParse: 4,
-  beacon: 1,
-  conformanceAssertion: 30,
+  apiFetch: 48, // 52 today
+  wrapper: 6, // 7 today
+  rawFetch: 7, // 8 today
+  jsonBody: 4, // 5 today
+  jsonParse: 4, // 5 today
+  beacon: 1, // 2 today — a 2-site detector cannot have both slack and rigour
+  conformanceAssertion: 37, // 41 today
 };
+/** Today's covered count is 68. Same reasoning as the floors above: the
+ * previous value of 60 tolerated losing eight conformance checks in silence. */
+const COVERED_FLOOR = 64;
 
 /** Sites that must be found by name. Each one exercises a different detector
  * path, so an over-narrowed pattern or a broken walk fails here with a
@@ -1466,6 +1760,34 @@ describe('detection predicates (mutation checks — prove the detectors actually
     expect(sites.find((s) => s.file === 'pages/Late.tsx')?.detector).toBe('wrapper');
   });
 
+  it('wrapper discovery needs a SECOND round when the outer wrapper is read first', () => {
+    // I3. The pair below is the same shape as the case that follows, ORDERED so
+    // that one round cannot possibly suffice: `walk` visits files in sorted
+    // order, `aaOuter.ts` sorts before `zzInner.ts`, and on round 0 `fetchOuter`
+    // forwards only to a name that is not yet known to be a wrapper. The
+    // original fixed-point case passes with `break` after round 0 — its files
+    // happen to resolve in walk order — so it demonstrated the fix without
+    // requiring it. This one goes red the moment the loop stops iterating.
+    const sites = scanOnly({
+      'api/aaOuter.ts':
+        "import { fetchInner } from './zzInner';\n" +
+        'export async function fetchOuter<T>(p: string): Promise<T> { return fetchInner<T>(p); }\n',
+      'api/zzInner.ts':
+        "import { apiFetch } from './client';\n" +
+        'export async function fetchInner<T>(p: string): Promise<T> { return apiFetch<T>(p); }\n',
+      'pages/Ordered.tsx':
+        "import { fetchOuter } from '../api/aaOuter';\n" +
+        "import type { BrandNewResponse } from '../api/types';\n" +
+        "export const go = () => fetchOuter<BrandNewResponse>('ordered/thing');\n",
+    });
+    expect(sites.find((s) => s.file === 'pages/Ordered.tsx')).toMatchObject({
+      detector: 'wrapper',
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+      descriptor: "fetchOuter<BrandNewResponse>('ordered/thing')",
+    });
+  });
+
   it('a wrapper over a WRAPPER is a wrapper — discovery runs to a fixed point', () => {
     // Second review round, NEW-1. Seeding discovery from the `apiFetch`
     // bindings alone stopped at depth one: this tree reported only the three
@@ -1490,6 +1812,171 @@ describe('detection predicates (mutation checks — prove the detectors actually
       covered: false,
       descriptor: "fetchOuter<BrandNewResponse>('hop/thing')",
     });
+  });
+
+  it('an inline type argument separated by SEMICOLONS is a site — the formatter writes that form', () => {
+    // I3-round finding I1, the most reachable of the three. `readAngles` bailed
+    // on any `;`, and `scanFile` turned a bail into `continue`, so the site
+    // vanished ENTIRELY — not even recorded as an untyped call. `npx biome
+    // format`, which `npm run lint` runs, rewrites `{ a: X, b: Y }` into
+    // `{ a: X; b: Y }`, so linting a detectable site converted it into an
+    // undetectable one. The tree already carries three inline envelopes.
+    const sites = scanOnly({
+      'api/hooks/useEnvelope.ts':
+        "import { apiFetch } from '../client';\n" +
+        "export const semi = () => apiFetch<{ ok: boolean; detail: string }>('probe/semi');\n",
+    });
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({
+      detector: 'apiFetch',
+      covered: false,
+      descriptor: "apiFetch<{ ok: boolean; detail: string }>('probe/semi')",
+    });
+  });
+
+  it('an ARROW-typed member inside a type argument does not close the angles early', () => {
+    // Same finding, second half: the `>` of `() => void` was counted as the
+    // closer, after which the next character was not `(` and the call was
+    // discarded as "a reference, not a call". Comma-separated on purpose, so
+    // that this case and the semicolon case above fail independently of each
+    // other when either fix alone is reverted.
+    const sites = scanOnly({
+      'api/hooks/useArrow.ts':
+        "import { apiFetch } from '../client';\n" +
+        "export const cb = () => apiFetch<{ cb: () => void, id: BrandNewResponse }>('probe/arrow');\n",
+    });
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({
+      detector: 'apiFetch',
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+    });
+  });
+
+  it('a type argument this scanner CANNOT parse is recorded, never dropped', () => {
+    // The residual half of I1's fix. A statement break still ends the angle
+    // read — that bail is what stops a stray `<` swallowing the file — but the
+    // occurrence is now recorded with an unparsed type expression and no
+    // acquired names, so it is uncovered by construction and must be looked at.
+    const sites = scanOnly({
+      'api/hooks/useUnparsed.ts':
+        "import { apiFetch } from '../client';\n" +
+        'export const weird = (a: number, b: number) => apiFetch<a; b>(1);\n',
+    });
+    expect(sites).toHaveLength(1);
+    expect(sites[0]).toMatchObject({ detector: 'apiFetch', typeNames: [], covered: false });
+    expect(sites[0].descriptor).toContain('<unparsed>');
+  });
+
+  it('a wrapper with an OBJECT return-type annotation is still a wrapper', () => {
+    // I2, and the third sighting of the C1/NEW-1 class. `readDeclarationBody`
+    // returned at the first balanced `{…}` outside the parameter list, which
+    // for `: Promise<{ data: T; total: number }>` is the RETURN-TYPE
+    // annotation. The forwarding `apiFetch` sat past it, so the wrapper was
+    // never discovered and its hand-transcribed call site produced ZERO sites.
+    const sites = scanOnly({
+      'api/envelope.ts':
+        "import { apiFetch } from './client';\n" +
+        'export async function fetchEnvelope<T>(p: string): Promise<{ data: T; total: number }> {\n' +
+        '  return apiFetch<T>(p).then((data) => ({ data, total: 0 }));\n}\n',
+      'pages/Envelope.tsx':
+        "import { fetchEnvelope } from '../api/envelope';\n" +
+        "import type { BrandNewResponse } from '../api/types';\n" +
+        "export const go = () => fetchEnvelope<BrandNewResponse>('probe/envelope');\n",
+    });
+    expect(sites.find((s) => s.file === 'pages/Envelope.tsx')).toMatchObject({
+      detector: 'wrapper',
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+      descriptor: "fetchEnvelope<BrandNewResponse>('probe/envelope')",
+    });
+  });
+
+  it('a wrapper whose TYPE PARAMETER carries an object constraint is still a wrapper', () => {
+    // The same read, one brace earlier: `<T extends { id: string }>` is not a
+    // body either, and returning at it would delete the wrapper just as surely.
+    const sites = scanOnly({
+      'api/constrained.ts':
+        "import { apiFetch } from './client';\n" +
+        'export async function fetchById<T extends { id: string }>(p: string): Promise<T> {\n' +
+        '  return apiFetch<T>(p);\n}\n',
+      'pages/ById.tsx': "export const go = () => fetchById<BrandNewResponse>('probe/by-id');\n",
+    });
+    expect(sites.find((s) => s.file === 'pages/ById.tsx')?.detector).toBe('wrapper');
+  });
+
+  it('a COMMENT in a wrapper signature does not mis-place its body', () => {
+    // Braces and semicolons inside a comment are not syntax. A declaration
+    // scanner that counted them would end the body read before the forwarding
+    // call, which un-discovers the wrapper and silently deletes every one of
+    // its call sites — the same consequence as I2, by a different route.
+    const sites = scanOnly({
+      'api/commented.ts':
+        "import { apiFetch } from './client';\n" +
+        'export async function fetchCommented<T>(p: string) /* ; { */ : Promise<T> {\n' +
+        '  return apiFetch<T>(p);\n}\n',
+      'pages/Commented.tsx':
+        "export const go = () => fetchCommented<BrandNewResponse>('probe/commented');\n",
+    });
+    expect(sites.find((s) => s.file === 'pages/Commented.tsx')?.detector).toBe('wrapper');
+  });
+
+  it('a fixture-directory import the SERVER never declared capturing is not a check', () => {
+    // I4. `covered` used to mean "the specifier contains
+    // `fixtures/api-responses/`" — a path substring over a directory outside
+    // this scan's root, so a hand-authored module dropped in beside the real
+    // captures conferred full coverage. The name must now appear in the
+    // server's own CaptureSpec inventory.
+    tmpRoot = fixtureTree({
+      'api/types.ts': TYPES_STUB,
+      [CONFORMANCE_MODULE]: [
+        "import adminUsers from '../../../fixtures/api-responses/adminUsers.json';",
+        "import handAuthored from '../../../fixtures/api-responses/handAuthored.json';",
+        "import type { AdminDataResponse, BrandNewResponse } from './types';",
+        'const check: AdminDataResponse = adminUsers;',
+        'const fake: BrandNewResponse = handAuthored;',
+      ].join('\n'),
+      'api/hooks/useThing.ts':
+        "import type { BrandNewResponse } from '../types';\n" +
+        "export const load = () => apiFetch<BrandNewResponse>('things');\n",
+    });
+    const result = scanTree(tmpRoot);
+    expect(result.sites.find((s) => s.file === 'api/hooks/useThing.ts')).toMatchObject({
+      typeNames: ['BrandNewResponse'],
+      covered: false,
+    });
+    // …and the assignment itself surfaces rather than sitting in the module
+    // looking like a check.
+    expect(result.unverified.map((s) => s.key)).toContain(
+      `${CONFORMANCE_MODULE} :: const BrandNewResponse = handAuthored`,
+    );
+  });
+
+  it('an ALIASED conformance annotation records the ORIGINAL checked name', () => {
+    // M3. Alias resolution was one-sided: call sites mapped alias→original,
+    // the conformance module read the raw annotation. So
+    // `import type { AdminDataResponse as BrandNewResponse }` plus
+    // `const c: BrandNewResponse = adminUsers` marked `BrandNewResponse`
+    // covered while only `AdminDataResponse` had been checked.
+    tmpRoot = fixtureTree({
+      'api/types.ts': TYPES_STUB,
+      [CONFORMANCE_MODULE]: [
+        "import adminUsers from '../../../fixtures/api-responses/adminUsers.json';",
+        "import type { AdminDataResponse as BrandNewResponse } from './types';",
+        'const check: BrandNewResponse = adminUsers;',
+      ].join('\n'),
+      'api/hooks/useThing.ts':
+        "import type { BrandNewResponse } from '../types';\n" +
+        "export const load = () => apiFetch<BrandNewResponse>('things');\n",
+      'api/hooks/useAdmin.ts':
+        "import type { AdminDataResponse } from '../types';\n" +
+        "export const load = () => apiFetch<AdminDataResponse>('admin/users');\n",
+    });
+    const sites = scanTree(tmpRoot).sites;
+    // The check was against `AdminDataResponse`; that is what it covers…
+    expect(sites.find((s) => s.file === 'api/hooks/useAdmin.ts')?.covered).toBe(true);
+    // …and NOT the local spelling it happened to be imported under.
+    expect(sites.find((s) => s.file === 'api/hooks/useThing.ts')?.covered).toBe(false);
   });
 
   it('a SIBLING `types.ts` cannot lend its locally declared shapes a checked type name', () => {
@@ -1797,12 +2284,29 @@ describe('web/src — the guard sees the tree it claims to (anti-vacuity)', () =
 
   it('knows which client types are conformance-checked, and it is not an empty set', () => {
     const covered = result.sites.filter((s) => s.covered);
-    expect(covered.length).toBeGreaterThanOrEqual(60);
+    expect(covered.length).toBeGreaterThanOrEqual(COVERED_FLOOR);
     // Population (b)'s one typed call — the endpoint this whole change exists
     // for — must be COVERED, not merely enumerated.
     expect(
       covered.some((s) => s.typeNames.includes('AdminDataResponse') && s.detector === 'wrapper'),
     ).toBe(true);
+  });
+
+  it('the fixture directory and the server capture inventory are the same set', () => {
+    // The reverse direction of I4. Detector 7 refuses coverage to a
+    // fixture-directory import the server never declared capturing; this
+    // asserts the converse — that nothing is sitting in that directory
+    // unaccounted for, and that every declared capture actually landed. Without
+    // it, a hand-authored module could live there indefinitely, merely unable
+    // to confer coverage.
+    const declared = [...declaredCaptureNames()].sort();
+    const onDisk = fs
+      .readdirSync(FIXTURE_DIR)
+      .filter((f) => !FIXTURE_SUPPORT_MODULES.has(f))
+      .map((f) => f.replace(/\.(json|ts)$/, ''))
+      .sort();
+    expect(onDisk).toEqual(declared);
+    expect(declared.length).toBeGreaterThanOrEqual(DECLARED_CAPTURE_FLOOR);
   });
 
   it('the dead Companion client types still have zero response sites', () => {
