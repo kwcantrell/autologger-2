@@ -38,7 +38,7 @@
 
 ## 3. De-async sweep
 
-- [ ] 3.1 `requireSession` synchronous per D8; remove the ~45 spurious hub-RPC `await`s
+- [x] 3.1 `requireSession` synchronous per D8; remove the ~45 spurious hub-RPC `await`s
       and both sync `Promise.all` wraps across transcribe/events/audio/companion/
       exports/sessions, AND the now-spurious `await requireSession` at every caller
       incl. sessionWs.ts/ai.ts/aiV2.ts (1.1 flag 2); completeness check is a grep
