@@ -61,9 +61,9 @@
       phases 2–4 — all three are review-tier phases, so the audit package includes
       their contract/seam-relevant diffs; materialized file list + stray-file scan,
       seam call-site checks, package integrity)
-- [ ] 5.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — visual
+- [x] 5.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — visual
       baselines last re-blessed 2026-07-26 (feed-row-seek; panel corrected the stale
       2026-07-14 date); this change intends zero visual change, so any diff is a
       defect, not a re-bless
-- [ ] 5.3 Full `npm test` + `npm run typecheck` + `npm run lint` across workspaces;
+- [x] 5.3 Full `npm test` + `npm run typecheck` + `npm run lint` across workspaces;
       update README/CLAUDE.md only if this change moved a documented seam
