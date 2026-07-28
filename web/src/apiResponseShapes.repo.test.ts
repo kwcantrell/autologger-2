@@ -33,10 +33,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      deliberately over-broad: every `apiFetch` call (typed or not, under its
 //      imported name, under an import alias, or under a namespace qualifier
 //      from `import * as api`), every call to a generic wrapper over `apiFetch`
-//      (DISCOVERED tree-wide, not hardcoded and not per-file, and iterated to a
-//      FIXED POINT so that a wrapper over a wrapper is a wrapper — this is the
-//      population `grep 'apiFetch<'` missed and the `memberships` crash
-//      lived in), every global `fetch(`, every `Response.json()`, every
+//      THIS SCANNER CAN NAME (DISCOVERED tree-wide, not hardcoded and not
+//      per-file, and iterated to a FIXED POINT so that a wrapper over a wrapper
+//      is a wrapper — this is the population `grep 'apiFetch<'` missed and the
+//      `memberships` crash lived in; five spellings it cannot name are listed
+//      below and are the second-ranked residual), every UNQUALIFIED global
+//      `fetch(`, every `Response.json()`, every
 //      `JSON.parse(`, and every raw network primitive (`navigator.sendBeacon`,
 //      `new EventSource`, `new XMLHttpRequest`).
 //      Detector 7 additionally scans the conformance module itself. Anything a
@@ -108,11 +110,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 //      and "the guard does not just always-fire" are both demonstrated rather
 //      than assumed. Single-file fixtures alone hid three gaps for a whole
 //      review cycle; a second adversarial round found three more, and a third
-//      found three more again. EVERY case below is a former false negative, and
-//      each fix's own test was RUN with only that fix reverted and confirmed to
-//      go red (audit §11.9 records the executed runs — the previous round
-//      claimed this check without performing it, and one of its tests turned out
-//      to pass with its fix reverted).
+//      found three more again. Every case below is a former false negative.
+//      Non-vacuity — reverting one fix and confirming that its own test, and
+//      only its own test, goes red — was RUN for each of the nine fixes added in
+//      the branch-audit round, and audit §11.9 tabulates those nine runs. It is
+//      NOT re-asserted for the earlier rounds' tests: the third round claimed
+//      exactly that check without performing it, and one of those tests turned
+//      out to pass with its fix reverted. Treat "verified" as covering the nine
+//      tabulated runs and nothing else.
 //
 // WHAT IT CANNOT SEE — stated, not glossed (audit.md §8 records the same list
 // for the one-time enumeration, §11.5 the ranked version). Ordered by how
@@ -148,6 +153,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 //     which is a detector change this round did not review. One token of
 //     refactor away, and the same class as the three wrapper-discovery false
 //     negatives already found, which is why this ranks second.
+//     The same shape one detector over: `fetch(` is matched only UNQUALIFIED.
+//     `window.fetch(…)` and `globalThis.fetch(…)` produce no rawFetch site
+//     (verified by planting) — the `(?<![.\w$])` lookbehind that stops
+//     `foo.fetch(` from matching rejects them too. A typed `.json()` on the
+//     result is still a site, so this loses the REQUEST half only.
 //   - Whether a COVERED type is checked against the RIGHT endpoint's fixture.
 //     Coverage is per type NAME, not per (site, endpoint) pair: reusing an
 //     already-checked type on a new endpoint passes silently. The same
