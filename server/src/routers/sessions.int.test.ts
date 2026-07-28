@@ -1,15 +1,10 @@
 import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser, seededSession } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
   return ((await res.json()) as { id: string }).id;
-}
-async function seededSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  return seedSession({ showId: show });
 }
 
 describe('GET /api/sessions', () => {
@@ -24,7 +19,7 @@ describe('GET /api/sessions', () => {
 
 describe('POST /api/sessions', () => {
   it('creates a session under the active studio’s show', async () => {
-    const show = await seedShow({ studioId: await activeStudioId() });
+    const show = seedShow({ studioId: await activeStudioId() });
     const res = await app.request(
       '/api/sessions',
       {
@@ -54,7 +49,7 @@ describe('POST /api/sessions', () => {
 
 describe('session lifecycle (PUT / archive / restore / delete)', () => {
   it('PUT renames and updates the start offset', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${session}`,
       {
@@ -71,7 +66,7 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('archive then restore toggles the flag', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const a = await app.request(`/api/sessions/${session}/archive`, { method: 'POST' }, { ...env });
     expect(a.status).toBe(200);
     expect((await a.json()) as { archived: boolean }).toMatchObject({ archived: true });
@@ -80,14 +75,14 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('DELETE hides the session', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(`/api/sessions/${session}`, { method: 'DELETE' }, { ...env });
     expect(res.status).toBe(200);
     expect((await res.json()) as { hidden: boolean }).toMatchObject({ hidden: true });
   });
 
   it('youtube-import is 503 with the current unconditional-refusal detail body', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST' },
@@ -113,7 +108,7 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
       { ...env },
     );
 
-    const hiddenSession = await seededSession();
+    const hiddenSession = seededSession().sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}/youtube-import`,
@@ -121,11 +116,11 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
       { ...env },
     );
 
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const showB = await seedShow({ studioId: studioB });
-    const foreignSession = await seedSession({ showId: showB });
-    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const showB = seedShow({ studioId: studioB });
+    const foreignSession = seedSession({ showId: showB });
+    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
     const foreign = await app.request(
       `/api/sessions/${foreignSession}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
@@ -139,10 +134,10 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
   });
 
   it('a member of the session’s studio still reaches the 503 stub (guard passes through)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
-    const cookie = await loginCookie(await seedUser({ studios: [studio] }));
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const session = seedSession({ showId: show });
+    const cookie = await loginCookie(seedUser({ studios: [studio] }));
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
@@ -157,11 +152,11 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
 
 describe('tenancy', () => {
   it('404 on PUT for a logged-in non-member', async () => {
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const show = await seedShow({ studioId: studioB });
-    const session = await seedSession({ showId: show });
-    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const show = seedShow({ studioId: studioB });
+    const session = seedSession({ showId: show });
+    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
     const res = await app.request(
       `/api/sessions/${session}`,
       {
@@ -180,10 +175,10 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     // A logged-in user with explicit active prefs, so the list scope is
     // deterministic regardless of other tests' shared anonymous-mode
     // app_settings active-show state.
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show, episode: '042' });
-    const userId = await seedUser({ studios: [studio] });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const session = seedSession({ showId: show, episode: '042' });
+    const userId = seedUser({ studios: [studio] });
     catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
@@ -208,12 +203,12 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('200 for an authorized session outside the requester’s active show/studio prefs', async () => {
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const showA = await seedShow({ studioId: studioA });
-    const showB = await seedShow({ studioId: studioB });
-    const session = await seedSession({ showId: showA });
-    const userId = await seedUser({ studios: [studioA, studioB] });
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const showA = seedShow({ studioId: studioA });
+    const showB = seedShow({ studioId: studioB });
+    const session = seedSession({ showId: showA });
+    const userId = seedUser({ studios: [studioA, studioB] });
     catalogFor().auth.authSetPrefs(userId, studioB, showB);
     const cookie = await loginCookie(userId);
 
@@ -229,7 +224,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('200 for an archived session, reflecting its archived state', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const archiveRes = await app.request(
       `/api/sessions/${session}/archive`,
       { method: 'POST' },
@@ -247,7 +242,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   it('masked 404 (identical shape) for nonexistent, ui_hidden, and foreign-studio ids', async () => {
     const nonexistent = await app.request('/api/sessions/does-not-exist', { method: 'GET' }, { ...env });
 
-    const hiddenSession = await seededSession();
+    const hiddenSession = seededSession().sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}`,
@@ -255,11 +250,11 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
       { ...env },
     );
 
-    const studioA = await seedStudio();
-    const studioB = await seedStudio();
-    const showB = await seedShow({ studioId: studioB });
-    const foreignSession = await seedSession({ showId: showB });
-    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
+    const studioA = seedStudio();
+    const studioB = seedStudio();
+    const showB = seedShow({ studioId: studioB });
+    const foreignSession = seedSession({ showId: showB });
+    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
     const foreign = await app.request(
       `/api/sessions/${foreignSession}`,
       { method: 'GET', headers: { Cookie: cookie } },

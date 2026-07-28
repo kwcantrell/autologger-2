@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   useArchiveSession,
   useDeleteSession,
@@ -8,7 +8,7 @@ import {
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
 import type { Session, SessionsResponse } from '../../../api/types';
-import { useConfirm } from '../../../shared/ui/ConfirmDialog';
+import { type ConfirmOptions, useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { Tooltip } from '../../../shared/ui/Tooltip';
@@ -123,6 +123,97 @@ function formatTimecodeHMS(tc: string | null): string {
   return tc.replace(/[:;]\d{2}$/, '');
 }
 
+// --- Shared card pieces (code-health-tail 4.7, finding 2.9) ---
+// The material below was verbatim-duplicated between SessionCard and
+// ArchivedSessionCard. Extraction only, not unification: the two variants
+// remain separate components and keep their genuinely different behavior
+// (container selectability, title button-vs-span, rename-modal ownership,
+// data-start-offset, hidden a11y markers, per-variant menu items).
+
+/**
+ * Confirm-then-delete flow shared by both card variants. Takes the caller's
+ * `confirm` (rather than owning its own `useConfirm`) so each variant keeps a
+ * single ConfirmDialog instance serving all of its confirmations.
+ */
+function useDeleteSessionConfirm(
+  session: Session,
+  confirm: (opts: ConfirmOptions) => Promise<boolean>,
+) {
+  const { mutate: deleteSession } = useDeleteSession();
+  return async () => {
+    const ok = await confirm({
+      title: 'Delete session',
+      message: `Permanently delete “${session.title}”? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    deleteSession(session.id, {
+      onSuccess: () => showToast('Session permanently deleted.'),
+      onError: (err: unknown) =>
+        showToast(err instanceof Error ? err.message : 'Failed to delete', true),
+    });
+  };
+}
+
+/** Meta-line + runtime derivation shared by both card variants. */
+function sessionCardMeta(s: Session): { metaLine: string; runtime: string } {
+  const evCount = Number(s.event_count);
+  const metaLine = `${fmtDateOnly(s.episode_date ?? s.created_at_utc)} · ${Number.isFinite(evCount) ? evCount : 0} events`;
+  const runtime = (s.total_runtime_hms || '00:00:00').trim() || '00:00:00';
+  return { metaLine, runtime };
+}
+
+/**
+ * ⋮ menu scaffold (trail wrapper + Popover + trigger button) shared by both
+ * card variants; the menu items differ per variant and arrive as children.
+ */
+function SessionCardMenu({
+  open,
+  onOpenChange,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={DECK_TRAIL}>
+      <Popover
+        open={open}
+        onOpenChange={onOpenChange}
+        ariaLabel="Session options"
+        trigger={
+          <button
+            type="button"
+            className={RAIL_MENU}
+            aria-label="Session options"
+            data-open={open || undefined}
+            onClick={(e) => e.stopPropagation()}
+          >
+            ⋮
+          </button>
+        }
+      >
+        {children}
+      </Popover>
+    </div>
+  );
+}
+
+/** Meta row (date · event count + runtime tooltip) shared by both variants. */
+function SessionCardMetaRow({ session }: { session: Session }) {
+  const { metaLine, runtime } = sessionCardMeta(session);
+  return (
+    <div className={META_ROW}>
+      <span className={CARD_META}>{metaLine}</span>
+      <Tooltip content="Total runtime">
+        <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
+      </Tooltip>
+    </div>
+  );
+}
+
 interface SessionCardProps {
   session: Session;
   isActive: boolean;
@@ -135,8 +226,8 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   const [menuOpen, setMenuOpen] = useState(false);
   const { mutate: updateSession, isPending: renamePending } = useUpdateSession(s.id);
   const { mutate: archiveSession } = useArchiveSession();
-  const { mutate: deleteSession } = useDeleteSession();
   const { confirm, confirmElement } = useConfirm();
+  const handleDelete = useDeleteSessionConfirm(s, confirm);
 
   const handleCardClick = (e: React.MouseEvent) => {
     const target = e.target as Element;
@@ -172,25 +263,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     });
   };
 
-  const handleDelete = async () => {
-    const ok = await confirm({
-      title: 'Delete session',
-      message: `Permanently delete “${s.title}”? This cannot be undone.`,
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
-    deleteSession(s.id, {
-      onSuccess: () => showToast('Session permanently deleted.'),
-      onError: (err: unknown) =>
-        showToast(err instanceof Error ? err.message : 'Failed to delete', true),
-    });
-  };
-
   const rowClass = clsx(RAIL_SESSION, isActive && RAIL_SESSION_ACTIVE);
-  const runtime = (s.total_runtime_hms || '00:00:00').trim() || '00:00:00';
-  const evCount = Number(s.event_count);
-  const metaLine = `${fmtDateOnly(s.episode_date ?? s.created_at_utc)} · ${Number.isFinite(evCount) ? evCount : 0} events`;
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: clickable-card convenience around real <button>s (selection also via the inner title button); a native button is impossible here due to nested interactive children
@@ -209,77 +282,56 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
           <button
             type="button"
             className={DECK_TITLE}
+            // On the active card the title is a no-op (the session is already
+            // selected); aria-disabled says so to AT without changing the
+            // rendered look or the tab order (code-health-tail 4.8).
+            aria-disabled={isActive || undefined}
             onClick={(e) => {
               e.stopPropagation();
-              if (!isActive) {
-                onSelect();
-                return;
-              }
+              if (!isActive) onSelect();
             }}
           >
             {s.title}
           </button>
-          <div className={DECK_TRAIL}>
-            <Popover
-              open={menuOpen}
-              onOpenChange={setMenuOpen}
-              ariaLabel="Session options"
-              trigger={
-                <button
-                  type="button"
-                  className={RAIL_MENU}
-                  aria-label="Session options"
-                  data-open={menuOpen || undefined}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  ⋮
-                </button>
-              }
+          <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            {isActive && (
+              <PopoverItem
+                onClick={() => {
+                  setMenuOpen(false);
+                  onClose();
+                }}
+              >
+                Close session
+              </PopoverItem>
+            )}
+            <PopoverItem
+              onClick={() => {
+                setMenuOpen(false);
+                setEditing(true);
+              }}
             >
-              {isActive && (
-                <PopoverItem
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onClose();
-                  }}
-                >
-                  Close session
-                </PopoverItem>
-              )}
-              <PopoverItem
-                onClick={() => {
-                  setMenuOpen(false);
-                  setEditing(true);
-                }}
-              >
-                Rename
-              </PopoverItem>
-              <PopoverItem
-                onClick={() => {
-                  setMenuOpen(false);
-                  handleArchive();
-                }}
-              >
-                Archive
-              </PopoverItem>
-              <PopoverItem
-                danger
-                onClick={() => {
-                  setMenuOpen(false);
-                  handleDelete();
-                }}
-              >
-                Delete
-              </PopoverItem>
-            </Popover>
-          </div>
+              Rename
+            </PopoverItem>
+            <PopoverItem
+              onClick={() => {
+                setMenuOpen(false);
+                handleArchive();
+              }}
+            >
+              Archive
+            </PopoverItem>
+            <PopoverItem
+              danger
+              onClick={() => {
+                setMenuOpen(false);
+                handleDelete();
+              }}
+            >
+              Delete
+            </PopoverItem>
+          </SessionCardMenu>
         </div>
-        <div className={META_ROW}>
-          <span className={CARD_META}>{metaLine}</span>
-          <Tooltip content="Total runtime">
-            <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
-          </Tooltip>
-        </div>
+        <SessionCardMetaRow session={s} />
         {s.is_rolling && (
           <span className="hidden">● Rolling - {formatTimecodeHMS(s.rolling_timecode)}</span>
         )}
@@ -300,8 +352,8 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
 function ArchivedSessionCard({ session: s }: { session: Session }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { mutate: restoreSession } = useRestoreSession();
-  const { mutate: deleteSession } = useDeleteSession();
   const { confirm, confirmElement } = useConfirm();
+  const handleDelete = useDeleteSessionConfirm(s, confirm);
 
   const handleRestore = async () => {
     const ok = await confirm({
@@ -317,73 +369,32 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
     });
   };
 
-  const handleDelete = async () => {
-    const ok = await confirm({
-      title: 'Delete session',
-      message: `Permanently delete “${s.title}”? This cannot be undone.`,
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
-    deleteSession(s.id, {
-      onSuccess: () => showToast('Session permanently deleted.'),
-      onError: (err: unknown) =>
-        showToast(err instanceof Error ? err.message : 'Failed to delete', true),
-    });
-  };
-
-  const evCount = Number(s.event_count);
-  const metaLine = `${fmtDateOnly(s.episode_date ?? s.created_at_utc)} · ${Number.isFinite(evCount) ? evCount : 0} events`;
-  const runtime = (s.total_runtime_hms || '00:00:00').trim() || '00:00:00';
-
   return (
     <div className={RAIL_SESSION} data-session-id={s.id} data-menu-open={menuOpen || undefined}>
       <div className={CARD_LINK}>
         <div className={DECK_ROW}>
           <span className={DECK_TITLE}>{s.title}</span>
-          <div className={DECK_TRAIL}>
-            <Popover
-              open={menuOpen}
-              onOpenChange={setMenuOpen}
-              ariaLabel="Session options"
-              trigger={
-                <button
-                  type="button"
-                  className={RAIL_MENU}
-                  aria-label="Session options"
-                  data-open={menuOpen || undefined}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  ⋮
-                </button>
-              }
+          <SessionCardMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverItem
+              onClick={() => {
+                setMenuOpen(false);
+                handleRestore();
+              }}
             >
-              <PopoverItem
-                onClick={() => {
-                  setMenuOpen(false);
-                  handleRestore();
-                }}
-              >
-                Restore
-              </PopoverItem>
-              <PopoverItem
-                danger
-                onClick={() => {
-                  setMenuOpen(false);
-                  handleDelete();
-                }}
-              >
-                Delete
-              </PopoverItem>
-            </Popover>
-          </div>
+              Restore
+            </PopoverItem>
+            <PopoverItem
+              danger
+              onClick={() => {
+                setMenuOpen(false);
+                handleDelete();
+              }}
+            >
+              Delete
+            </PopoverItem>
+          </SessionCardMenu>
         </div>
-        <div className={META_ROW}>
-          <span className={CARD_META}>{metaLine}</span>
-          <Tooltip content="Total runtime">
-            <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
-          </Tooltip>
-        </div>
+        <SessionCardMetaRow session={s} />
       </div>
       {confirmElement}
     </div>

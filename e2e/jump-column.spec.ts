@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { createSession } from './createSession';
 
 /**
  * Presses Tab from whatever currently holds focus until `target` does,
@@ -34,13 +35,7 @@ async function tabUntilFocused(page: Page, target: Locator, maxPresses = 60): Pr
 test('a jump control activates by keyboard (Enter and Space), moving the timeline playhead', async ({
   page,
 }) => {
-  await page.goto('/');
-  await page.locator('#v6-btn-new-session').click();
-  await expect(page.locator('#new-session-form')).toBeVisible();
-  await expect(page.locator('#ns-show')).toBeEnabled();
-  await page.locator('#ns-submit').click();
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  await createSession(page);
 
   // Roll, log one event via a category button, then stop — the feed jump is
   // gated to not-rolling (design D5), so a row only gets an active control

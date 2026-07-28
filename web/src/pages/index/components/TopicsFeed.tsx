@@ -1,13 +1,14 @@
-import { useMemo, useReducer, useState } from 'react';
-import { ApiError } from '../../../api/client';
+import { useMemo, useReducer } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
 import type { TranscriptWord } from '../../../api/types';
+import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
+import { type ColumnDef, FeedTable } from './FeedTable';
+import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TopicsRow } from './TopicsRow';
 
@@ -100,26 +101,11 @@ export function TopicsFeed({ sessionId }: Props) {
     () => words != null && !transcriptWhollyAnchorless(words),
     [words],
   );
-  const [genError, setGenError] = useState<string | null>(null);
-  // Latched on the first 503 (ui-refresh D9: honest capability gate — topic generation has no
-  // external integration wired up on this deployment). Persists across session switches (this
-  // panel is mounted-hidden and unkeyed); cleared only by a full page reload.
-  const [genUnavailable, setGenUnavailable] = useState(false);
+  // Latched on the first 503 (ui-refresh D9: honest capability gate — topic
+  // generation has no external integration wired up on this deployment); see
+  // `useGatedGenerate` for the full rationale.
+  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
-
-  function handleGenerate() {
-    setGenError(null);
-    generate.mutate(undefined, {
-      // Single error channel (ui-refresh): inline in the panel only, no duplicate toast.
-      onError: (err) => {
-        if (err instanceof ApiError && err.status === 503) {
-          setGenUnavailable(true);
-          return;
-        }
-        setGenError(err instanceof Error ? err.message : 'Generation failed.');
-      },
-    });
-  }
 
   function handleInsert() {
     insert.mutate({});
@@ -140,45 +126,22 @@ export function TopicsFeed({ sessionId }: Props) {
 
   const topicCount = topics?.length ?? 0;
 
-  // A11y divergence from the spike (spec-mandated, D9): the spike used `disabled` + a mouse
-  // `title`, unreachable via keyboard/AT. Here the control stays focusable via `aria-disabled`
-  // (not `disabled`) with the reason exposed via `aria-describedby` + an always-visible span,
-  // and the click handler no-ops while latched. See TranscribeFeed for the fuller rationale.
+  // Shared aria-disabled latch toolbar — the a11y rationale (focusable
+  // aria-disabled button + always-visible reason span) lives on GenerateToolbar.
   const genReasonId = 'v5-topics-gen-reason';
   const toolbar = (
-    <>
-      {genError && (
-        <span role="alert" className="ml-2 self-center text-[0.78rem] text-v5-danger">
-          {genError}
-        </span>
-      )}
-      <button
-        type="button"
-        className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
-        disabled={generate.isPending}
-        aria-disabled={genUnavailable || undefined}
-        aria-describedby={genUnavailable ? genReasonId : undefined}
-        onClick={() => {
-          if (genUnavailable) return;
-          handleGenerate();
-        }}
-      >
-        {generate.isPending ? 'Generating…' : 'Auto Generate'}
-      </button>
-      {genUnavailable && (
-        <span id={genReasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
-          Topic generation isn&apos;t available on this server (no integration configured).
-        </span>
-      )}
-      <button
-        type="button"
-        className={FEED_GLASS_BTN}
-        disabled={insert.isPending}
-        onClick={handleInsert}
-      >
-        Insert
-      </button>
-    </>
+    <GenerateToolbar
+      genError={genError}
+      genUnavailable={genUnavailable}
+      onGenerate={handleGenerate}
+      generatePending={generate.isPending}
+      reasonId={genReasonId}
+      reason={
+        <>Topic generation isn&apos;t available on this server (no integration configured).</>
+      }
+      onInsert={handleInsert}
+      insertPending={insert.isPending}
+    />
   );
 
   return (

@@ -86,9 +86,9 @@ describe('GET /sessions/:id — deep-link HTML route (session-deep-links delta)'
   });
 
   it('real vs. nonexistent id responses are byte-identical (no existence oracle)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const sessionId = await seedSession({ showId: show });
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const sessionId = seedSession({ showId: show });
 
     const real = await app.request(`/sessions/${sessionId}`, {}, env);
     const fake = await app.request('/sessions/definitely-does-not-exist', {}, env);

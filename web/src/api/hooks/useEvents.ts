@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
-import type { EventsResponse, EventUpdateBody, LogBody, LogEvent } from '../types';
+import type { EventsResponse, EventUpdateBody, LogBody, LogEvent, OkResponse } from '../types';
 
 /**
  * Query-key factory for the events domain. Pages cache under `page(...)`;
@@ -67,7 +67,7 @@ export function useDeleteEvent(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (eventId: string) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/events/${eventId}`, { method: 'DELETE' }),
+      apiFetch<OkResponse>(`sessions/${sessionId}/events/${eventId}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) }),
   });
 }

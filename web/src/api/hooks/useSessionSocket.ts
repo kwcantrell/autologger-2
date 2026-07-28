@@ -3,7 +3,9 @@ import { useEffect, useRef } from 'react';
 import { toast } from '../../shared/components/Toast';
 import { wsUrl } from '../client';
 import type { CompanionCommandType } from '../types';
+import { audioSegmentsKeys } from './useAudio';
 import { eventsKeys } from './useEvents';
+import { sessionStatusKeys } from './useSessionStatus';
 
 interface Options {
   /** Invoked for `{type:'command'}` frames (Companion record/play relay). No WS ack. */
@@ -52,9 +54,9 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     // Re-anchor every cache the deleted polls used to refresh — the catch-up for
     // any frames missed while the socket was down.
     const resync = () => {
-      qc.invalidateQueries({ queryKey: ['session-status', sessionId] });
+      qc.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
       qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
-      qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] });
+      qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) });
     };
 
     const scheduleReconnect = () => {
@@ -115,13 +117,13 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
             break;
           case 'transport.changed':
             // Re-anchor the clock + take at the transition.
-            qc.invalidateQueries({ queryKey: ['session-status', sessionId] });
+            qc.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
             break;
           case 'audio.changed':
-            qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] });
+            qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) });
             break;
           case 'lease.changed':
-            qc.invalidateQueries({ queryKey: ['session-status', sessionId] });
+            qc.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
             break;
           case 'command':
             if (typeof msg.command === 'string') {

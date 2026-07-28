@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { fakeRuntime } from '../test/fakeCore';
 import { formatSmpte, fromTotalFrames } from '../timecode';
-import { eventRowToRpc } from './eventStore';
+import { EventStore, eventRowToRpc } from './eventStore';
 
 describe('eventRowToRpc', () => {
   it('maps a row with a timecode', () => {
@@ -45,5 +46,42 @@ describe('eventRowToRpc', () => {
       message: 'rec start',
       metadata_json: '{}',
     });
+  });
+});
+
+// code-health-tail task 2.2 (design D10) — behavior pin over a REAL core
+// (in-memory SQLite), written BEFORE the count SQL moved into
+// core.eventCounts(): listEvents' total/loggedTotal must exclude
+// internal-category rows regardless of casing/whitespace, and near-miss
+// categories must still count as logged.
+describe('listEvents counts over a real core (D10 pin)', () => {
+  it('total counts every event; loggedTotal excludes internal (any casing/whitespace)', () => {
+    const { core } = fakeRuntime();
+    const categories = [
+      'mark', // logged
+      'note', // logged
+      'internal', // filtered
+      'Internal', // filtered (casing)
+      ' INTERNAL ', // filtered (casing + surrounding spaces)
+      '\tinternal', // logged — SQLite trim() strips SPACES only, a tab survives
+      'INTERNAL', // filtered
+      'internally', // logged
+      'x internal', // logged
+    ];
+    categories.forEach((cat, i) => {
+      core.db.run(
+        `INSERT INTO events (id, wall_time_utc, frame_rate, category, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        `e${i}`,
+        '2026-06-25T00:00:00.000Z',
+        30,
+        cat,
+        `m${i}`,
+      );
+    });
+    const out = new EventStore(core).listEvents({ limit: 100, offset: 0 });
+    expect(out.total).toBe(9);
+    expect(out.loggedTotal).toBe(5);
+    expect(out.events).toHaveLength(9);
   });
 });

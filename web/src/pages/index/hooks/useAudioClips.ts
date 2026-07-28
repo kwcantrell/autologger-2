@@ -85,6 +85,7 @@ export function useAudioClips(
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    let ingestedServerDurations = false;
     const pending = segments.filter((s) => {
       if (!s.id || !s.url) return false;
       if (durationsRef.current.has(s.id)) return false;
@@ -92,13 +93,16 @@ export function useAudioClips(
       const dServ = Number(s.duration_sec);
       if (Number.isFinite(dServ) && dServ > 0) {
         durationsRef.current.set(s.id, dServ);
+        ingestedServerDurations = true;
         return false;
       }
       return true;
     });
     if (pending.length === 0) {
-      // Bump tick if we ingested any server-provided durations above.
-      setDurationsTick((t) => t + 1);
+      // Bump tick only if we ingested any server-provided durations above —
+      // an unconditional bump forced a spurious layout recompute on every
+      // segments identity change (code-health-tail 4.8).
+      if (ingestedServerDurations) setDurationsTick((t) => t + 1);
       return;
     }
     (async () => {

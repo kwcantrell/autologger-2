@@ -38,11 +38,11 @@ export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHub
  * catalog row. Authentication (the unauthenticated-401 decision) happens once,
  * in the authContext middleware via apiRequestRequiresLogin — every caller of
  * this helper is an /api/ route that middleware already gates. */
-export async function requireSession(
+export function requireSession(
   c: Context<AppEnv>,
   sessionId: string,
   opts: { includeHidden?: boolean } = {},
-): Promise<Row> {
+): Row {
   const catalog = c.get('catalog');
   const user = c.get('user');
   const row = catalog.sessions.getSessionIndexRow(sessionId, { includeHidden: opts.includeHidden });

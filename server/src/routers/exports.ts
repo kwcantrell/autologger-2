@@ -15,12 +15,12 @@ const COLUMNS = ['TIMECODE', 'UTC', 'CATEGORY', 'MESSAGE'] as const;
 const NO_TC = 10 ** 15;
 
 /** Sort key (timecode_total_frames or 1e15, wall_time_utc, event_id), then build rows. */
-async function exportRows(
+function exportRows(
   c: Context<AppEnv>,
   sessionId: string,
-): Promise<Array<Record<(typeof COLUMNS)[number], string>>> {
+): Array<Record<(typeof COLUMNS)[number], string>> {
   const profile = c.get('catalog').sessions.studioProfileForSession(sessionId);
-  const events = await getSessionHub(c, sessionId).exportEvents();
+  const events = getSessionHub(c, sessionId).exportEvents();
   events.sort((a, b) => {
     const ka = a.timecode_total_frames ?? NO_TC;
     const kb = b.timecode_total_frames ?? NO_TC;
@@ -38,8 +38,8 @@ async function exportRows(
 
 exportsRouter.get('/api/sessions/:sessionId/export.csv', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
-  const rows = await exportRows(c, sessionId);
+  requireSession(c, sessionId);
+  const rows = exportRows(c, sessionId);
   const body = rows.length ? toCsv(rows) : '';
   return new Response(body, {
     headers: {
@@ -51,8 +51,8 @@ exportsRouter.get('/api/sessions/:sessionId/export.csv', async (c) => {
 
 exportsRouter.get('/api/sessions/:sessionId/export.jsonl', async (c) => {
   const sessionId = c.req.param('sessionId');
-  await requireSession(c, sessionId);
-  const rows = await exportRows(c, sessionId);
+  requireSession(c, sessionId);
+  const rows = exportRows(c, sessionId);
   const body = rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
   return new Response(body, {
     headers: {

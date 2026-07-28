@@ -16,6 +16,15 @@ export class LeaseStore {
     return Number.isFinite(n) ? n : 0;
   }
 
+  /** The single free-path (code-health-tail D12): clear both lease meta keys
+   * and announce `lease.changed` — shared by explicit release and stale
+   * expiry so the triple can never drift. */
+  private freeLease(): void {
+    this.core.metaDelete('lease_holder');
+    this.core.metaDelete('lease_seen_ms');
+    this.core.broadcast({ type: 'lease.changed' });
+  }
+
   claimLease(clientId: string): boolean {
     const cid = clientId.trim();
     if (!cid) return false;
@@ -46,9 +55,7 @@ export class LeaseStore {
     const cid = clientId.trim();
     if (!cid) return;
     if (this.core.metaGet('lease_holder') !== cid) return;
-    this.core.metaDelete('lease_holder');
-    this.core.metaDelete('lease_seen_ms');
-    this.core.broadcast({ type: 'lease.changed' });
+    this.freeLease();
   }
 
   leaseStatus(): {
@@ -76,9 +83,7 @@ export class LeaseStore {
     if (holder === null) return;
     const seen = this.finiteMs('lease_seen_ms');
     if (this.core.now() - seen >= LeaseStore.LEASE_STALE_MS) {
-      this.core.metaDelete('lease_holder');
-      this.core.metaDelete('lease_seen_ms');
-      this.core.broadcast({ type: 'lease.changed' });
+      this.freeLease();
     } else {
       this.core.setAlarm(seen + LeaseStore.LEASE_STALE_MS);
     }

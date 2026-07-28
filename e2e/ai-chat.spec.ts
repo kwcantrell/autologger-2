@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createSession } from './createSession';
 
 // ai-topics-chat (task 5.2) — hermetic happy-path chat e2e.
 //
@@ -43,16 +44,10 @@ test('hermetic chat turn: send a message, see the streamed reply, and the AI-cre
   const pageErrors: Error[] = [];
   page.on('pageerror', (e) => pageErrors.push(e));
 
-  // Create a session through the UI (same flow as smoke.spec.ts) — this
-  // server runs anonymous (REQUIRE_LOGIN=0), so no login/session-seeding is
-  // needed for the chat endpoint itself.
-  await page.goto('/');
-  await page.locator('#v6-btn-new-session').click();
-  await expect(page.locator('#new-session-form')).toBeVisible();
-  await expect(page.locator('#ns-show')).toBeEnabled();
-  await page.locator('#ns-submit').click();
-  await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);
-  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  // Create a session through the UI (shared helper, same flow as
+  // smoke.spec.ts) — this server runs anonymous (REQUIRE_LOGIN=0), so no
+  // login/session-seeding is needed for the chat endpoint itself.
+  await createSession(page);
 
   // Top-level Feed tabs → Assistant (ui-refresh IA: SessionWorkspace.tsx
   // owns one flat "Feed tabs" tablist — Event Feed, Transcript, Topics,

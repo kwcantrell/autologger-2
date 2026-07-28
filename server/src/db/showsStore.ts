@@ -144,40 +144,44 @@ export class ShowsStore {
       event_palette_custom_json?: string;
     },
   ): boolean {
-    const row = this.getShowRow(showId);
-    if (row === null) return false;
-    const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
-    const sc =
-      fields.show_code !== undefined
-        ? fields.show_code.trim().toUpperCase()
-        : String(row.show_code ?? '')
-            .trim()
-            .toUpperCase();
-    const ne =
-      fields.next_episode !== undefined ? fields.next_episode : Number(row.next_episode) || 1;
-    const cj = fields.categories_json ?? String(row.categories_json ?? '[]');
-    const pj = fields.event_palette_json ?? String(row.event_palette_json ?? '[]');
-    const pp =
-      fields.event_palette_preset !== undefined
-        ? fields.event_palette_preset.trim().toLowerCase()
-        : String(row.event_palette_preset ?? 'custom')
-            .trim()
-            .toLowerCase() || 'custom';
-    const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
-    this.db.run(
-      `UPDATE shows
-         SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
-             event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
-       WHERE id = ?`,
-      nm,
-      sc,
-      ne,
-      cj,
-      pj,
-      pp,
-      pcj,
-      showId,
-    );
-    return true;
+    // Read-modify-write: the merge reads the current row, so the pair runs in
+    // one transaction (CatalogDb.tx nests as a savepoint under outer tx()).
+    return this.db.tx(() => {
+      const row = this.getShowRow(showId);
+      if (row === null) return false;
+      const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
+      const sc =
+        fields.show_code !== undefined
+          ? fields.show_code.trim().toUpperCase()
+          : String(row.show_code ?? '')
+              .trim()
+              .toUpperCase();
+      const ne =
+        fields.next_episode !== undefined ? fields.next_episode : Number(row.next_episode) || 1;
+      const cj = fields.categories_json ?? String(row.categories_json ?? '[]');
+      const pj = fields.event_palette_json ?? String(row.event_palette_json ?? '[]');
+      const pp =
+        fields.event_palette_preset !== undefined
+          ? fields.event_palette_preset.trim().toLowerCase()
+          : String(row.event_palette_preset ?? 'custom')
+              .trim()
+              .toLowerCase() || 'custom';
+      const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
+      this.db.run(
+        `UPDATE shows
+           SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
+               event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
+         WHERE id = ?`,
+        nm,
+        sc,
+        ne,
+        cj,
+        pj,
+        pp,
+        pcj,
+        showId,
+      );
+      return true;
+    });
   }
 }

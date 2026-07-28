@@ -66,7 +66,13 @@ function fakeJsonOkResponse(body: unknown = { ok: true }) {
   };
 }
 
-function Harness({ sessionId = 'sess-1' }: { sessionId?: string }) {
+function Harness({
+  sessionId = 'sess-1',
+  onDashboardProposed,
+}: {
+  sessionId?: string;
+  onDashboardProposed?: (config: unknown, turnId: string | null) => void;
+}) {
   const [messages, setMessages] = useState<AiV2Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -85,12 +91,49 @@ function Harness({ sessionId = 'sess-1' }: { sessionId?: string }) {
       renderOptionPreview={(widgetType) =>
         widgetType ? <span data-testid="preview-stub">{widgetType}</span> : null
       }
+      onDashboardProposed={onDashboardProposed}
     />
   );
 }
 
-function renderHarness(sessionId = 'sess-1') {
-  return renderStrict(<Harness sessionId={sessionId} />);
+function renderHarness(
+  sessionId = 'sess-1',
+  onDashboardProposed?: (config: unknown, turnId: string | null) => void,
+) {
+  return renderStrict(<Harness sessionId={sessionId} onDashboardProposed={onDashboardProposed} />);
+}
+
+/** Like `fakeFetchResponse`, but `read()` blocks before delivering the chunk
+ * at `gateIndex` until the returned `release()` is called — so a test can
+ * assert intermediate UI state (e.g. a pending question) deterministically
+ * before the stream's later frames arrive. */
+function gatedFakeFetchResponse(chunks: string[], gateIndex: number) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let index = 0;
+  const encoder = new TextEncoder();
+  const response = {
+    status: 200,
+    ok: true,
+    body: {
+      getReader() {
+        return {
+          read: async () => {
+            if (index === gateIndex) await gate;
+            if (index >= chunks.length) return { done: true, value: undefined };
+            const value = encoder.encode(chunks[index]);
+            index += 1;
+            return { done: false, value };
+          },
+          cancel: async () => {},
+        };
+      },
+    },
+    json: async () => ({}),
+  };
+  return { response, release };
 }
 
 async function sendViaUi(text: string) {
@@ -295,6 +338,61 @@ describe('AiV2Design — question round trip', () => {
     await waitFor(() => expect(screen.queryByTestId('aiv2-question-pending')).toBeNull());
   });
 
+  it('keys the pressed option by its index — two options sharing a widgetType never both render pressed (code-health-tail 4.8)', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(
+      fakeFetchResponse([
+        sseFrame('question', {
+          requestId: 'req-3',
+          turnId: 'turn-3',
+          questions: [
+            {
+              question: 'Pick a talk-time style',
+              header: '',
+              multiSelect: false,
+              options: [
+                // Same catalog widgetType on both, deliberately: widgetType is
+                // NOT a unique identity for the pressed state.
+                { label: 'Compact bars', widgetType: 'talk_time_by_speaker' },
+                { label: 'Detailed bars', widgetType: 'talk_time_by_speaker' },
+              ],
+            },
+            // A second, unanswered question keeps the pending view open so the
+            // pressed state is observable before the batched POST fires.
+            {
+              question: 'And event counts?',
+              header: '',
+              multiSelect: false,
+              options: [{ label: 'Counts', widgetType: 'event_count_by_category' }],
+            },
+          ],
+        }),
+      ]) as unknown as Response,
+    );
+    fetchMock.mockResolvedValueOnce(fakeJsonOkResponse() as unknown as Response);
+
+    renderHarness();
+    await sendViaUi('go');
+
+    const cards = await screen.findAllByTestId('aiv2-question-card');
+    fireEvent.click(within(cards[0]).getByText('Detailed bars'));
+
+    const compact = within(cards[0]).getByText('Compact bars').closest('button');
+    const detailed = within(cards[0]).getByText('Detailed bars').closest('button');
+    await waitFor(() => expect(detailed?.getAttribute('aria-pressed')).toBe('true'));
+    expect(compact?.getAttribute('aria-pressed')).toBe('false');
+
+    // Answering the remaining question fires the batched POST; the wire shape
+    // stays exactly { kind, widgetType } — no UI-only optionIndex leaks.
+    fireEvent.click(within(cards[1]).getByText('Counts'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body));
+    expect(body.answers).toEqual([
+      { kind: 'option', widgetType: 'talk_time_by_speaker' },
+      { kind: 'option', widgetType: 'event_count_by_category' },
+    ]);
+  });
+
   it('submitting free text POSTs the distinct { kind: "text" } answer shape', async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(fakeFetchResponse([questionSse()]) as unknown as Response);
@@ -339,6 +437,116 @@ describe('AiV2Design — question round trip', () => {
     const button = within(card).getByText('No type').closest('button');
     expect(button).not.toBeNull();
     expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('AiV2Design — dashboard proposal', () => {
+  it('fires onDashboardProposed with the parsed config and the frame turnId', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const onDashboardProposed = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      fakeFetchResponse([
+        sseFrame('dashboard', {
+          turnId: 'turn-9',
+          config: {
+            widgets: [
+              { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+            ],
+            interactions: [],
+          },
+        }),
+        sseFrame('done', {}),
+      ]) as unknown as Response,
+    );
+
+    renderHarness('sess-1', onDashboardProposed);
+    await sendViaUi('propose a dashboard');
+
+    await waitFor(() => expect(onDashboardProposed).toHaveBeenCalledTimes(1));
+    expect(onDashboardProposed).toHaveBeenCalledWith(
+      {
+        widgets: [
+          { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+        ],
+        interactions: [],
+      },
+      'turn-9',
+    );
+  });
+
+  it('drops a malformed dashboard frame without firing the callback', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const onDashboardProposed = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      fakeFetchResponse([
+        sseFrame('dashboard', { turnId: 'turn-9', config: { widgets: [], interactions: [] } }),
+        sseFrame('delta', { text: 'still fine' }),
+        sseFrame('done', {}),
+      ]) as unknown as Response,
+    );
+
+    renderHarness('sess-1', onDashboardProposed);
+    await sendViaUi('propose a dashboard');
+
+    await waitFor(() => expect(screen.getByText('still fine')).toBeTruthy());
+    expect(onDashboardProposed).not.toHaveBeenCalled();
+  });
+});
+
+describe('AiV2Design — terminal events clear an actually-pending question', () => {
+  function pendingQuestionFrame() {
+    return sseFrame('question', {
+      requestId: 'req-9',
+      turnId: 'turn-9',
+      questions: [
+        {
+          question: 'Pick one',
+          header: '',
+          multiSelect: false,
+          options: [{ label: 'A', widgetType: 'session_duration' }],
+        },
+      ],
+    });
+  }
+
+  it('clears the pending question when the turn ends in a terminal error', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const { response, release } = gatedFakeFetchResponse(
+      [pendingQuestionFrame(), sseFrame('error', { detail: 'turn blew up' })],
+      1,
+    );
+    fetchMock.mockResolvedValueOnce(response as unknown as Response);
+
+    renderHarness();
+    await sendViaUi('go');
+
+    // The question is genuinely pending before the terminal frame arrives.
+    await screen.findByTestId('aiv2-question-pending');
+
+    release();
+
+    const errorEl = await screen.findByTestId('aiv2-design-error');
+    expect(errorEl.textContent).toContain('turn blew up');
+    expect(screen.queryByTestId('aiv2-question-pending')).toBeNull();
+  });
+
+  it('clears the pending question when the turn ends in done', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const { response, release } = gatedFakeFetchResponse(
+      [pendingQuestionFrame(), sseFrame('done', {})],
+      1,
+    );
+    fetchMock.mockResolvedValueOnce(response as unknown as Response);
+
+    renderHarness();
+    await sendViaUi('go');
+
+    await screen.findByTestId('aiv2-question-pending');
+
+    release();
+
+    await waitFor(() => expect(screen.queryByTestId('aiv2-question-pending')).toBeNull());
+    expect(screen.queryByTestId('aiv2-design-error')).toBeNull();
   });
 });
 

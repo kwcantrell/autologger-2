@@ -6,21 +6,14 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, envWith } from '../test/harness';
-import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { loginCookie, seedStudio, seedUser, seededSession } from '../test/helpers';
 
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
-async function seededSession(): Promise<{ studio: string; session: string }> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  const session = await seedSession({ showId: show });
-  return { studio, session };
-}
-
 describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   it('reaches a session in a studio it is not a member of, under REQUIRE_LOGIN=1', async () => {
-    const { session } = await seededSession();
+    const { sessionId: session } = seededSession();
     // Machine client: bearer API_TOKEN, no cookie, no user, no membership anywhere.
     const res = await app.request(
       `/api/sessions/${session}/status`,
@@ -31,7 +24,7 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   });
 
   it('a wrong API token is NOT authenticated: 401 under REQUIRE_LOGIN=1', async () => {
-    const { session } = await seededSession();
+    const { sessionId: session } = seededSession();
     const res = await app.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: bearer('wrong-token') },
@@ -52,9 +45,9 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
 
 describe('cross-studio masking (task 7.3)', () => {
   it('an authenticated non-member gets 404 — never 403', async () => {
-    const outsider = await seedStudio();
-    const { session } = await seededSession();
-    const user = await seedUser({ studios: [outsider] });
+    const outsider = seedStudio();
+    const { sessionId: session } = seededSession();
+    const user = seedUser({ studios: [outsider] });
     const res = await app.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },
@@ -65,8 +58,8 @@ describe('cross-studio masking (task 7.3)', () => {
   });
 
   it('a member of the session’s studio gets 200', async () => {
-    const { studio, session } = await seededSession();
-    const user = await seedUser({ studios: [studio] });
+    const { studioId: studio, sessionId: session } = seededSession();
+    const user = seedUser({ studios: [studio] });
     const res = await app.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },
@@ -93,8 +86,8 @@ describe('admin token semantics (task 7.3)', () => {
   });
 
   it('a session cookie alone grants no admin access (401)', async () => {
-    const studio = await seedStudio();
-    const user = await seedUser({ studios: [studio] });
+    const studio = seedStudio();
+    const user = seedUser({ studios: [studio] });
     const res = await app.request(
       '/api/admin/users',
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },

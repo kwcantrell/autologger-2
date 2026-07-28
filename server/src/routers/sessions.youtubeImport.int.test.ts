@@ -43,7 +43,7 @@ import { recordingStartAnchors } from '../node/transcriptRemap';
 import { YOUTUBE_IMPORT_MAX_CONCURRENT, youtubeImportGuard } from '../node/youtubeImportGuard';
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { app, env, envWith } from '../test/harness';
-import { seedSession, seedShow, seedStudio } from '../test/helpers';
+import { seededSession } from '../test/helpers';
 import type { Bindings } from '../types';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-ytdlp.mjs', import.meta.url));
@@ -119,12 +119,6 @@ function configuredEnv(binaryPath: string, overrides: Record<string, unknown> = 
   });
 }
 
-async function seededSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  return seedSession({ showId: show });
-}
-
 async function postImport(sessionId: string, body: unknown, bindings: Bindings): Promise<Response> {
   return app.request(
     `/api/sessions/${sessionId}/youtube-import`,
@@ -160,7 +154,7 @@ afterEach(() => {
 
 describe('unconfigured deployment — byte-for-byte 503 (matrix; spec "No yt-dlp available is unavailable")', () => {
   it('POST returns the exact pre-change 503 {detail} with no yt-dlp binary resolved', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     // The base test env's YTDLP_RESOLVED_PATH is null: `resetTestEnv`'s
     // `createBindings` call never passes a PATH var, so `resolveYtDlpPath`
     // finds nothing — hermetic regardless of the actual test machine's PATH.
@@ -179,7 +173,7 @@ describe('unconfigured deployment — byte-for-byte 503 (matrix; spec "No yt-dlp
 
 describe('503-precedence — unconfigured wins over the open-network refusal (Phase 5 review must-cover)', () => {
   it('a deployment that is BOTH unconfigured AND open-network-refused returns the legacy NOT_CONFIGURED detail, not the open-network detail', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     // REQUIRE_LOGIN off + non-loopback + no allowlist == open-network-refused
     // ...AND YTDLP_RESOLVED_PATH is left at its base-env default (null) ==
     // unconfigured — both conditions hold simultaneously.
@@ -194,7 +188,7 @@ describe('503-precedence — unconfigured wins over the open-network refusal (Ph
 
 describe('open-network refusal — 503, no spawn even though yt-dlp IS configured (spec D9)', () => {
   it('REQUIRE_LOGIN disabled + non-loopback bind + no IP_ALLOWLIST refuses even a configured deployment', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const res = await postImport(
       session,
@@ -211,7 +205,7 @@ describe('open-network refusal — 503, no spawn even though yt-dlp IS configure
 
 describe('body/URL validation — 400, no spawn', () => {
   it('malformed body (missing url) → 400 {detail}, no spawn', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const res = await postImport(session, { use_publish_date: true }, configuredEnv(binaryPath));
     expect(res.status).toBe(400);
@@ -224,7 +218,7 @@ describe('body/URL validation — 400, no spawn', () => {
     'https://evil-youtube.com/watch?v=x',
     'https://youtube.com@evil.com/watch?v=x',
   ])('non-allowlisted/look-alike host %s → 400 {detail}, no spawn', async (url) => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const res = await postImport(session, { url, use_publish_date: false }, configuredEnv(binaryPath));
     expect(res.status).toBe(400);
@@ -238,7 +232,7 @@ describe('body/URL validation — 400, no spawn', () => {
 
 describe('configured success (matrix: youtu.be accepted + success + episode_date; task 6.2 byte-identical/seekable)', () => {
   it('200 {ok:true}; exactly one new segment, byte-identical to the produced file, retrievable/seekable via the blob route; use_publish_date writes the un-shifted episode_date', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary(); // default success mode: ext m4a, upload_date "20240115"
     const testEnv = configuredEnv(binaryPath);
 
@@ -279,7 +273,7 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
   });
 
   it('use_publish_date:false leaves episode_date untouched (spec: opt-out is a no-op)', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary();
     const res = await postImport(
       session,
@@ -301,7 +295,7 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
 
 describe('anchored import (task 9.1 → 9.4: timeline-anchored take, design D10-D13)', () => {
   it('a successful import produces a segment with recording_ordinal=1, non-null started/ended_at_utc, and a Recording 1 Started/Stopped event pair', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary(); // default success mode: ext m4a, duration 125s, upload_date "20240115"
     const testEnv = configuredEnv(binaryPath);
 
@@ -338,7 +332,7 @@ describe('anchored import (task 9.1 → 9.4: timeline-anchored take, design D10-
 
 describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on PATH counts as configured")', () => {
   it('resolveYtDlpPath (the real startup PATH-lookup) finds a bare binary with no explicit path var, and the route treats it as configured', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const dir = dirname(binaryPath);
 
@@ -363,7 +357,7 @@ describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on
 
 describe('concurrency guards through the real route (matrix: both 409 causes; Phase 5 review must-cover)', () => {
   it('409 session-busy when the SAME session already has an import in flight, no spawn', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const lease = youtubeImportGuard.tryAcquire(session);
     expect(lease).not.toBeNull();
@@ -378,7 +372,7 @@ describe('concurrency guards through the real route (matrix: both 409 causes; Ph
   });
 
   it('409 at-capacity when the GLOBAL ceiling is reached by OTHER (distinct) sessions, no spawn', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const held = Array.from({ length: YOUTUBE_IMPORT_MAX_CONCURRENT }, (_, i) =>
       youtubeImportGuard.tryAcquire(`ceiling-other-${i}`),
@@ -406,7 +400,7 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
   ];
 
   it.each(cases)('mode=%s → 502 {detail}, audio-segment listing byte-for-byte unchanged', async (mode, expectedDetail) => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary({ mode });
     const testEnv = configuredEnv(binaryPath);
 
@@ -424,7 +418,7 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
 
 describe('atomic rollback on blob-write failure (task 6.2, design D7)', () => {
   it('a disk-full put() failure rolls back the inserted segment row: 502, and the audio-segment listing is byte-for-byte unchanged', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
@@ -448,7 +442,7 @@ describe('atomic rollback on blob-write failure (task 6.2, design D7)', () => {
 
 describe('sibling stubs stay frozen even with yt-dlp configured', () => {
   it('topics/generate and transcribe.csv still respond 503, unaffected by youtube-import configuration', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
@@ -538,7 +532,7 @@ async function listEvents(
 
 describe('task 9.5 — anchored success: exact timecodes, transport advance, WS emissions', () => {
   it('Started is anchored at the pre-import transport position, Stopped at +trunc(duration*fps), elapsed_frames advances by the same amount, and event.changed/transport.changed/audio.changed all fire', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary(); // default success mode: duration 125s @ 24fps -> 3000 frames
     const testEnv = configuredEnv(binaryPath);
 
@@ -596,7 +590,7 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
 
 describe('task 9.5 — non-overlap: a second import is anchored after the first, not at position 0', () => {
   it('second import gets recording_ordinal=2, Started at the first take\'s end position', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const testEnv = configuredEnv(freshBinary().binaryPath);
 
     const first = await postImport(session, VALID_BODY, testEnv);
@@ -628,7 +622,7 @@ describe('task 9.5 — non-overlap: a second import is anchored after the first,
 // matches the `Recording <n> Started/Stopped` message text can't inflate N.
 describe('task 9.5 — N-scan category guard: a non-internal "Recording 99 Started" event does not inflate N', () => {
   it('a logged event with a Recording-shaped message in a non-internal category is ignored by the ordinal scan', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const testEnv = configuredEnv(freshBinary().binaryPath);
 
     // Seed a NON-internal event whose message text collides with the
@@ -663,7 +657,7 @@ describe('task 9.5 — N-scan category guard: a non-internal "Recording 99 Start
 
 describe('task 9.5 — refused while rolling (409): live roll untouched, no Recording events', () => {
   it('a live recording blocks the import, and the roll/current_take/events are byte-identical before and after the 409', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
@@ -715,7 +709,7 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
   // download proceed for real (proven by the marker file) and the late guard
   // fire off a REAL is_rolling=true read, not a fully-mocked one.
   it('the LATE guard (post-download, pre-synthesis) refuses a recording that started during the download: 409, segment rolled back, live roll untouched, no Recording events', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
@@ -767,7 +761,7 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
 
 describe('task 9.5 — failed import: zero events, transport not advanced', () => {
   it('a download failure leaves the event log and transport position exactly as they were', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const { binaryPath } = freshBinary({ mode: 'download-fail' });
     const testEnv = configuredEnv(binaryPath);
 
@@ -801,7 +795,7 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
   // the same production seam (server/src/node/transcriptRemap.ts), not a
   // reimplementation of its logic.
   it('recordingStartAnchors resolves the imported take: recordingOrdinal=1, anchorSeconds=0 at position 0', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const testEnv = configuredEnv(freshBinary().binaryPath);
 
     const res = await postImport(session, VALID_BODY, testEnv);
@@ -815,7 +809,7 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
 
 describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouched', () => {
   it('a session already holding an anchorless imported segment is byte-for-byte unchanged after the change\'s read/startup paths run', async () => {
-    const session = await seededSession();
+    const session = seededSession().sessionId;
     const hub = env.ports.sessions.get(session);
 
     // A pre-existing anchorless take: recording_ordinal/timestamps null, no

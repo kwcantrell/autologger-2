@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createSession } from './createSession';
 import { CHROMIUM_DATA_DIR, injectSessionCookie, seedSession } from './seededSession';
 
 // ai-v2-dashboards (task 6.2) — hermetic e2e over REAL SSE for the design
@@ -42,15 +43,9 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     const pageErrors: Error[] = [];
     page.on('pageerror', (e) => pageErrors.push(e));
 
-    await page.goto('/');
-    await expect(page.locator('#v6-app')).toBeVisible();
-
-    // Create a session as the seeded (real) principal.
-    await page.locator('#v6-btn-new-session').click();
-    await expect(page.locator('#new-session-form')).toBeVisible();
-    await expect(page.locator('#ns-show')).toBeEnabled();
-    await page.locator('#ns-submit').click();
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+    // Create a session as the seeded (real) principal (shared helper — it
+    // waits for the app shell to mount before clicking).
+    await createSession(page);
 
     // Feed tabs -> Dashboards (ui-refresh tab name for the AI v2 surface;
     // SessionWorkspace.tsx: role="tablist" aria-label "Feed tabs").
@@ -140,14 +135,7 @@ test.describe('ai-v2-dashboards (seeded-session fixture, real SSE, fake agent)',
     });
     await injectSessionCookie(context, baseURL as string, seeded.token);
 
-    await page.goto('/');
-    await expect(page.locator('#v6-app')).toBeVisible();
-
-    await page.locator('#v6-btn-new-session').click();
-    await expect(page.locator('#new-session-form')).toBeVisible();
-    await expect(page.locator('#ns-show')).toBeEnabled();
-    await page.locator('#ns-submit').click();
-    await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+    await createSession(page);
 
     const feedTabs = page.getByRole('tablist', { name: 'Feed tabs' });
     await feedTabs.getByRole('tab', { name: 'Dashboards' }).click();

@@ -67,7 +67,7 @@ export function isRecordingStoppedMessage(msg: string | null | undefined): boole
   return /^Recording (\d+) Stopped$/.test(s) || s === LEGACY_AUDIO_STOPPED;
 }
 
-function sortAudioInternalByOrdinalThenTime(events: LogEvent[]): LogEvent[] {
+export function sortAudioInternalByOrdinalThenTime(events: LogEvent[]): LogEvent[] {
   return [...events].sort((a, b) => {
     const oa = parseRecordingOrdinalFromMessage(a.message);
     const ob = parseRecordingOrdinalFromMessage(b.message);

@@ -44,6 +44,34 @@ export function audioRowToMeta(r: Row): AudioSegmentMeta {
   };
 }
 
+/** ONE bidirectional mime↔ext table (code-health-tail D12), replacing the
+ * mime→ext if/else chain in addAudioSegment and the ext→mime nested ternary
+ * in the blob-scan backfill. `tokens` are the mime substrings probed in
+ * declaration order (matching the original chain: ogg, wav, then mp4/m4a);
+ * `mime` is the canonical type the backfill restores for that extension.
+ * webm is the fallback in both directions. */
+const AUDIO_FORMATS = [
+  { ext: 'ogg', tokens: ['ogg'], mime: 'audio/ogg' },
+  { ext: 'wav', tokens: ['wav'], mime: 'audio/wav' },
+  { ext: 'm4a', tokens: ['mp4', 'm4a'], mime: 'audio/mp4' },
+] as const;
+const FALLBACK_FORMAT = { ext: 'webm', mime: 'audio/webm' } as const;
+
+function extForMime(mimeType: string): string {
+  const mt = mimeType.toLowerCase();
+  for (const f of AUDIO_FORMATS) {
+    if (f.tokens.some((t) => mt.includes(t))) return f.ext;
+  }
+  return FALLBACK_FORMAT.ext;
+}
+
+function mimeForExt(ext: string): string {
+  for (const f of AUDIO_FORMATS) {
+    if (f.ext === ext) return f.mime;
+  }
+  return FALLBACK_FORMAT.mime;
+}
+
 export class AudioStore {
   constructor(private core: SessionCore) {}
 
@@ -55,11 +83,7 @@ export class AudioStore {
     recordingOrdinal: number | null;
   }): AudioSegmentMeta {
     const segId = crypto.randomUUID();
-    const mt = (input.mimeType || 'audio/webm').toLowerCase();
-    let ext = 'webm';
-    if (mt.includes('ogg')) ext = 'ogg';
-    else if (mt.includes('wav')) ext = 'wav';
-    else if (mt.includes('mp4') || mt.includes('m4a')) ext = 'm4a';
+    const ext = extForMime(input.mimeType || 'audio/webm');
     const ordinal = Number(
       this.core.first('SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments')?.n ??
         1,
@@ -141,15 +165,7 @@ export class AudioStore {
       const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a)$/i.exec(k.r2_key);
       if (m === null) continue;
       const segId = m[2];
-      const ext = m[3].toLowerCase();
-      const mime =
-        ext === 'ogg'
-          ? 'audio/ogg'
-          : ext === 'wav'
-            ? 'audio/wav'
-            : ext === 'm4a'
-              ? 'audio/mp4'
-              : 'audio/webm';
+      const mime = mimeForExt(m[3].toLowerCase());
       this.core.db.run(
         `INSERT INTO session_audio_segments
            (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)

@@ -21,8 +21,8 @@ function initedCatalog() {
 }
 
 async function seedTeamWithAdmin(): Promise<{ team: string; adminId: string; cookie: string }> {
-  const team = await seedStudio();
-  const adminId = await seedUser();
+  const team = seedStudio();
+  const adminId = seedUser();
   catalogFor().auth.authAddMembershipWithRole(adminId, team, 'admin');
   const cookie = await loginCookie(adminId);
   return { team, adminId, cookie };
@@ -33,7 +33,7 @@ async function addToTeam(
   role: 'admin' | 'member' = 'member',
   opts: { email?: string } = {},
 ): Promise<{ userId: string; cookie: string }> {
-  const userId = await seedUser({ email: opts.email });
+  const userId = seedUser({ email: opts.email });
   catalogFor().auth.authAddMembershipWithRole(userId, team, role);
   const cookie = await loginCookie(userId);
   return { userId, cookie };
@@ -85,7 +85,7 @@ describe('auth: 401 anonymous on every route', () => {
 describe('auth: masked 404 vs nonexistent', () => {
   it('a non-member and a nonexistent team get the identical masked 404', async () => {
     const { team } = await seedTeamWithAdmin();
-    const outsiderCookie = (await addToTeam(await seedStudio(), 'admin')).cookie;
+    const outsiderCookie = (await addToTeam(seedStudio(), 'admin')).cookie;
     const resReal = await req('GET', `/api/teams/${team}`, { cookie: outsiderCookie });
     const resFake = await req('GET', '/api/teams/does-not-exist-at-all', { cookie: outsiderCookie });
     expect(resReal.status).toBe(404);
@@ -95,7 +95,7 @@ describe('auth: masked 404 vs nonexistent', () => {
 
   it('masks a mutating route the same way', async () => {
     const { team } = await seedTeamWithAdmin();
-    const outsiderCookie = (await addToTeam(await seedStudio(), 'admin')).cookie;
+    const outsiderCookie = (await addToTeam(seedStudio(), 'admin')).cookie;
     const res = await req('PATCH', `/api/teams/${team}`, {
       cookie: outsiderCookie,
       body: { display_name: 'x' },
@@ -125,7 +125,7 @@ describe('auth: 403 member-on-admin-route', () => {
 
 describe('built-in teams excluded wholesale', () => {
   it('400s every /api/teams/:id/* operation on both built-in ids', async () => {
-    const userId = await seedUser();
+    const userId = seedUser();
     const cookie = await loginCookie(userId);
     for (const bid of BUILTIN_STUDIO_ORDER) {
       const cases: Array<[string, string, unknown?]> = [
@@ -148,7 +148,7 @@ describe('built-in teams excluded wholesale', () => {
 
 describe('POST /api/teams — self-serve creation', () => {
   it('creates the team and the creator becomes its admin', async () => {
-    const userId = await seedUser();
+    const userId = seedUser();
     const cookie = await loginCookie(userId);
     const res = await req('POST', '/api/teams', {
       cookie,
@@ -164,7 +164,7 @@ describe('POST /api/teams — self-serve creation', () => {
   });
 
   it('rejects a built-in id, no team created', async () => {
-    const cookie = await loginCookie(await seedUser());
+    const cookie = await loginCookie(seedUser());
     const res = await req('POST', '/api/teams', {
       cookie,
       body: { id: 'test-studios', display_name: 'Nope' },
@@ -173,8 +173,8 @@ describe('POST /api/teams — self-serve creation', () => {
   });
 
   it('rejects a duplicate id', async () => {
-    const cookie = await loginCookie(await seedUser());
-    const existing = await seedStudio();
+    const cookie = await loginCookie(seedUser());
+    const existing = seedStudio();
     const res = await req('POST', '/api/teams', {
       cookie,
       body: { id: existing, display_name: 'Dup' },
@@ -183,7 +183,7 @@ describe('POST /api/teams — self-serve creation', () => {
   });
 
   it('rejects an id that fails the shared slug regex', async () => {
-    const cookie = await loginCookie(await seedUser());
+    const cookie = await loginCookie(seedUser());
     const res = await req('POST', '/api/teams', {
       cookie,
       body: { id: 'Not_A_Slug!', display_name: 'Bad' },
@@ -192,7 +192,7 @@ describe('POST /api/teams — self-serve creation', () => {
   });
 
   it('rejects an empty or too-long display name', async () => {
-    const cookie = await loginCookie(await seedUser());
+    const cookie = await loginCookie(seedUser());
     const empty = await req('POST', '/api/teams', {
       cookie,
       body: { id: 'empty-name-team', display_name: '' },
@@ -206,7 +206,7 @@ describe('POST /api/teams — self-serve creation', () => {
   });
 
   it('creation cap: rejects a 21st team once the caller admins 20 non-built-in teams', async () => {
-    const userId = await seedUser();
+    const userId = seedUser();
     const cookie = await loginCookie(userId);
     for (let i = 0; i < 20; i += 1) {
       const res = await req('POST', '/api/teams', {
@@ -246,7 +246,7 @@ describe('PATCH /api/teams/:id — rename', () => {
 describe('DELETE /api/teams/:id — delete', () => {
   it('blocks while the team still has shows', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    await seedShow({ studioId: team });
+    seedShow({ studioId: team });
     const res = await req('DELETE', `/api/teams/${team}`, { cookie });
     expect(res.status).toBe(400);
     expect(initedCatalog().studios.studioNamesDict()[team]).toBeTruthy();
@@ -269,7 +269,7 @@ describe('DELETE /api/teams/:id — delete', () => {
 describe('POST /api/teams/:id/invites — email invites', () => {
   it('grants immediate membership to an existing matching user (uniform 200, no pending row)', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const invitee = await seedUser({ email: 'invitee@example.com' });
+    const invitee = seedUser({ email: 'invitee@example.com' });
     const res = await req('POST', `/api/teams/${team}/invites`, {
       cookie,
       body: { email: 'Invitee@Example.com' }, // exercises normalization
@@ -281,8 +281,8 @@ describe('POST /api/teams/:id/invites — email invites', () => {
 
   it('grants membership to ALL matching rows for a duplicated email', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const u1 = await seedUser({ email: 'dup@example.com' });
-    const u2 = await seedUser({ email: 'dup@example.com' });
+    const u1 = seedUser({ email: 'dup@example.com' });
+    const u2 = seedUser({ email: 'dup@example.com' });
     const res = await req('POST', `/api/teams/${team}/invites`, { cookie, body: { email: 'dup@example.com' } });
     expect(res.status).toBe(200);
     expect(catalogFor().auth.authGetMembershipRole(u1, team)).toBe('member');
@@ -405,7 +405,7 @@ describe('POST /api/teams/:id/members/:userId/role — role change', () => {
 
   it('404s an unknown/non-member userId', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const stranger = await seedUser();
+    const stranger = seedUser();
     const res = await req('POST', `/api/teams/${team}/members/${stranger}/role`, {
       cookie,
       body: { role: 'admin' },
@@ -446,7 +446,7 @@ describe('DELETE /api/teams/:id/members/:userId — remove', () => {
 
   it('404s an unknown userId', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const stranger = await seedUser();
+    const stranger = seedUser();
     const res = await req('DELETE', `/api/teams/${team}/members/${stranger}`, { cookie });
     expect(res.status).toBe(404);
   });

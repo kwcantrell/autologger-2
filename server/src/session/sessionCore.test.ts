@@ -1,37 +1,13 @@
 // SessionCore against a fake SessionRuntime — proves the seam is substitutable:
 // in-memory SQL (no database file), fake sockets, captured alarms. Domain
-// stores run unmodified on the fake substrate.
+// stores run unmodified on the fake substrate. The typed fake runtime this
+// file established now lives in ../test/fakeCore (code-health-tail task 5.2)
+// so the store unit tests share it.
 
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './SessionHub';
-import { SessionCore } from './sessionCore';
-import type { AttachedSocket, SessionRuntime } from './sessionCore';
+import { fakeRuntime } from '../test/fakeCore';
 import { EventStore } from './eventStore';
 import { TopicStore } from './topicStore';
-
-function fakeRuntime(): {
-  core: SessionCore;
-  sent: string[];
-  alarms: number[];
-  sockets: Set<AttachedSocket>;
-  time: { now: number };
-} {
-  const sent: string[] = [];
-  const alarms: number[] = [];
-  const time = { now: 1_000_000 };
-  const sockets = new Set<AttachedSocket>();
-  sockets.add({ send: (d) => sent.push(d), role: 'browser' });
-  const runtime: SessionRuntime = {
-    sql: sqliteSessionSql(new Database(':memory:')),
-    clock: { now: () => time.now },
-    sockets: () => sockets,
-    setAlarm: (atMs) => alarms.push(atMs),
-  };
-  const core = new SessionCore(runtime);
-  core.initSchema();
-  return { core, sent, alarms, sockets, time };
-}
 
 describe('SessionCore on a fake runtime', () => {
   it('initSchema is idempotent and seeds the revision counter', () => {
@@ -166,6 +142,26 @@ describe('SessionCore on a fake runtime', () => {
     expect(core.projection().event_count).toBe(1);
     expect(core.revision()).toBe(1); // revision still bumped
     expect(sent).toEqual([]); // no event.changed reached the socket
+  });
+
+  // code-health-tail D10: the core owns the event-count SQL; both consumers
+  // (EventStore.listEvents, TransportStore.statusLive) pin the same semantics
+  // over a real core in their own suites.
+  it('eventCounts: total counts all rows, logged excludes internal (case/space-insensitively)', () => {
+    const { core } = fakeRuntime();
+    const categories = ['mark', 'internal', ' Internal ', 'INTERNAL', 'internally'];
+    categories.forEach((cat, i) => {
+      core.db.run(
+        `INSERT INTO events (id, wall_time_utc, frame_rate, category, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        `e${i}`,
+        '2026-06-25T00:00:00.000Z',
+        30,
+        cat,
+        `m${i}`,
+      );
+    });
+    expect(core.eventCounts()).toEqual({ total: 5, logged: 2 });
   });
 
   it('presence counts fake sockets by role', () => {

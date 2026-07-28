@@ -1,6 +1,6 @@
 import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
+import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
@@ -21,9 +21,9 @@ describe('GET /api/studio + /api/profile', () => {
   });
 
   it('auth.user.teams[] entries carry role (teams-self-serve, task 4.1)', async () => {
-    const teamA = await seedStudio();
-    const teamB = await seedStudio();
-    const userId = await seedUser({});
+    const teamA = seedStudio();
+    const teamB = seedStudio();
+    const userId = seedUser({});
     catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
     catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
     const cookie = await loginCookie(userId);
@@ -40,6 +40,55 @@ describe('GET /api/studio + /api/profile', () => {
     const byId = new Map(body.auth.user.teams.map((t) => [t.id, t.role]));
     expect(byId.get(teamA)).toBe('admin');
     expect(byId.get(teamB)).toBe('member');
+  });
+
+  // Pins for the active-studio-with-shows assembly path (code-health-tail
+  // task 2.7 / finding 5.7): the shows fetched once for the active studio must
+  // still land in shows[] exactly once, with active_show_id resolved from them.
+  it('logged-in: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
+    const studio = seedStudio();
+    const showId = seedShow({ studioId: studio, name: 'Pinned Show', code: 'PS' });
+    const userId = seedUser({ studios: [studio] });
+    catalogFor().auth.authSetPrefs(userId, studio, showId);
+    const cookie = await loginCookie(userId);
+
+    const res = await app.request(
+      '/api/profile',
+      { method: 'GET', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      active_studio_id: string;
+      active_show_id: string;
+      shows: Array<{ id: string; studio_id: string; name: string; show_code: string }>;
+    };
+    expect(body.active_studio_id).toBe(studio);
+    expect(body.active_show_id).toBe(showId);
+    const matches = body.shows.filter((s) => s.id === showId);
+    expect(matches).toHaveLength(1); // present, and not duplicated
+    expect(matches[0]).toMatchObject({
+      id: showId,
+      studio_id: studio,
+      name: 'Pinned Show',
+      show_code: 'PS',
+    });
+  });
+
+  it('anonymous: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
+
+    const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      active_studio_id: string;
+      active_show_id: string;
+      shows: Array<{ id: string; studio_id: string }>;
+    };
+    expect(body.active_studio_id).toBe(sid);
+    expect(body.active_show_id).toBe(showId); // only show → becomes active
+    expect(body.shows.filter((s) => s.id === showId)).toHaveLength(1);
   });
 });
 

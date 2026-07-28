@@ -7,7 +7,7 @@
 // The thin HTTP endpoints still drive the per-session hub.
 
 import { type Context, Hono } from 'hono';
-import { showCategoriesApiShape } from '../db/catalog';
+import { type Row, showCategoriesApiShape } from '../db/catalog';
 import type { PresenceRegistry } from '../node/presence';
 import {
   companionCommandAckBodySchema,
@@ -16,11 +16,58 @@ import {
   companionPresenceBodySchema,
   companionTransportBodySchema,
 } from '../schemas';
-import { enrichEventRpc, mergeCategoryUiSnapshotsIntoMetadata } from '../studio';
+import {
+  enrichEventRpc,
+  mergeCategoryUiSnapshotsIntoMetadata,
+  sessionDeckDisplayTitle,
+} from '../studio';
 import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
+
+// ── /api/companion/state wire payload (server-side declaration) ──────────────
+// FROZEN wire shapes (capability spec api-contract-freeze). The Companion
+// module mirrors these in companion/src/state.ts — documented mirroring, the
+// same pattern as web/src/api/types.ts; keep the copies in sync by hand.
+// Companion's `LastCommand` deliberately under-declares `session_id` and
+// `created_at_utc`: both ARE sent (written in /api/companion/command below),
+// and the extra fields are benign to a structural TS consumer. Do not change
+// field names/shapes without an authorizing OpenSpec delta.
+
+interface CompanionSessionState {
+  id: string;
+  title: string;
+  deck_title: string;
+  timecode: string;
+  frame_rate: number;
+  is_rolling: boolean;
+  current_take: number;
+  is_recording: boolean;
+  is_playing: boolean;
+  logged_event_count: number;
+  events_stream_revision: number;
+  show_id: string | null;
+  show_name: string | null;
+  show_code: string | null;
+}
+
+interface CompanionLastCommand {
+  id: string;
+  type: string;
+  session_id: string;
+  created_at_utc: string;
+  delivered_to: string | null;
+  ok: boolean;
+  error: string | null;
+}
+
+interface CompanionStatePayload {
+  connected_clients: number;
+  active_session_id: string | null;
+  session: CompanionSessionState | null;
+  last_command: CompanionLastCommand | null;
+}
 
 const LAST_COMMAND_KEY = 'companion:last_command';
 
@@ -35,12 +82,17 @@ function primarySession(presence: PresenceRegistry): string | null {
   return live[0].session_id;
 }
 
-async function requireActiveSession(c: Context<AppEnv>): Promise<string> {
+/** Resolve the primary session AND its catalog row — callers reuse the row
+ *  instead of re-fetching (and non-null-casting) it per handler. */
+function requireActiveSession(c: Context<AppEnv>): { sid: string; row: Row } {
   const sid = primarySession(c.env.ports.presence);
-  if (!sid || (c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })) === null) {
+  const row = sid
+    ? c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
+    : null;
+  if (!sid || row === null) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
   }
-  return sid;
+  return { sid, row };
 }
 
 companionRouter.post('/api/companion/presence', async (c) => {
@@ -64,7 +116,7 @@ companionRouter.get('/api/companion/state', async (c) => {
   const catalog = c.get('catalog');
   const presences = c.env.ports.presence.list();
   const activeSid = primarySession(c.env.ports.presence);
-  let sessionOut: Record<string, unknown> | null = null;
+  let sessionOut: CompanionSessionState | null = null;
   let resolvedSid: string | null = activeSid;
   if (activeSid) {
     const row = catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
@@ -72,15 +124,17 @@ companionRouter.get('/api/companion/state', async (c) => {
       resolvedSid = null;
     } else {
       const hub = getSessionHub(c, activeSid);
-      const [live, lease] = await Promise.all([
-        hub.statusLive(timecodeCtx(row)),
-        hub.leaseStatus(),
-      ]);
+      const live = hub.statusLive(timecodeCtx(row));
+      const lease = hub.leaseStatus();
       const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
       sessionOut = {
         id: activeSid,
         title: String(row.title ?? ''),
-        deck_title: deckTitle(row),
+        deck_title: sessionDeckDisplayTitle({
+          showCode: String(row.show_code ?? ''),
+          episode: String(row.episode ?? ''),
+          storedTitle: String(row.title ?? ''),
+        }),
         timecode: live.session_timecode,
         frame_rate: Number(row.frame_rate ?? 24.0),
         is_rolling: live.is_rolling,
@@ -95,18 +149,19 @@ companionRouter.get('/api/companion/state', async (c) => {
       };
     }
   }
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
-  return c.json({
+  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const payload: CompanionStatePayload = {
     connected_clients: presences.length,
     active_session_id: resolvedSid,
     session: sessionOut,
-    last_command: lastRaw ? JSON.parse(lastRaw) : null,
-  });
+    last_command: lastRaw ? (JSON.parse(lastRaw) as CompanionLastCommand) : null,
+  };
+  return c.json(payload);
 });
 
 companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
-  const sid = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
   const profile = catalog.sessions.studioProfileForSession(sid);
   let cat = null;
@@ -121,13 +176,12 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
-  const { event, projection } = await getSessionHub(c, sid).addEvent({
+  const { event, projection } = getSessionHub(c, sid).addEvent({
     category: cat.id,
     message: body.message,
     metadataJson: JSON.stringify(meta),
     markedAtUtc: null,
-    ctx: timecodeCtx(row as NonNullable<typeof row>),
+    ctx: timecodeCtx(row),
   });
   catalog.sessions.projectSessionLive(sid, projection);
   return c.json(enrichEventRpc(event, profile));
@@ -135,18 +189,17 @@ companionRouter.post('/api/companion/log', async (c) => {
 
 companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
-  const sid = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
-  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
-  const ctx = timecodeCtx(row as NonNullable<typeof row>);
+  const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sid);
   let action: 'start' | 'stop' = body.action === 'start' ? 'start' : 'stop';
   if (body.action === 'toggle') {
-    const tr = await hub.transportSnapshot(ctx);
+    const tr = hub.transportSnapshot(ctx);
     action = tr.is_rolling ? 'stop' : 'start';
   }
   const { state, projection } =
-    action === 'start' ? await hub.startTake(ctx) : await hub.stopTake(ctx);
+    action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
   catalog.sessions.projectSessionLive(sid, projection);
   return c.json({
     ok: true,
@@ -157,31 +210,28 @@ companionRouter.post('/api/companion/transport', async (c) => {
 
 companionRouter.post('/api/companion/command', async (c) => {
   const body = companionCommandBodySchema.parse(await c.req.json());
-  const sid = await requireActiveSession(c);
+  const { sid } = requireActiveSession(c);
   const commandId = crypto.randomUUID();
-  await getSessionHub(c, sid).broadcastCommand(body.type);
-  await c.env.ports.kv.put(
-    LAST_COMMAND_KEY,
-    JSON.stringify({
-      id: commandId,
-      type: body.type,
-      session_id: sid,
-      created_at_utc: new Date(c.env.ports.clock.now()).toISOString(),
-      delivered_to: null,
-      ok: false,
-      error: null,
-    }),
-  );
+  getSessionHub(c, sid).broadcastCommand(body.type);
+  const last: CompanionLastCommand = {
+    id: commandId,
+    type: body.type,
+    session_id: sid,
+    created_at_utc: new Date(c.env.ports.clock.now()).toISOString(),
+    delivered_to: null,
+    ok: false,
+    error: null,
+  };
+  c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
   return c.json({ ok: true, command_id: commandId, active_session_id: sid });
 });
 
 companionRouter.get('/api/companion/categories', async (c) => {
-  const sid = await requireActiveSession(c);
+  const { sid, row } = requireActiveSession(c);
   const catalog = c.get('catalog');
   const raw = catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
-  const row = catalog.sessions.getSessionIndexRow(sid, { includeHidden: true });
-  const showId = row ? ((row.show_id as string | null) ?? null) : null;
+  const showId = (row.show_id as string | null) ?? null;
   return c.json({
     session_id: sid,
     show_id: showId,
@@ -202,23 +252,16 @@ companionRouter.get('/api/companion/commands/wait', async (c) => {
 companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   const commandId = c.req.param('commandId');
   const body = companionCommandAckBodySchema.parse(await c.req.json());
-  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
   if (lastRaw) {
-    const last = JSON.parse(lastRaw) as Record<string, unknown>;
+    const last = JSON.parse(lastRaw) as CompanionLastCommand;
     if (last.id === commandId) {
       last.ok = body.ok;
       last.error = body.error ?? null;
       last.delivered_to = body.client_id;
-      await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+      c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
       return c.json({ ok: true });
     }
   }
   return c.json({ ok: false });
 });
-
-function deckTitle(row: Record<string, unknown>): string {
-  const sc = String(row.show_code ?? '').trim();
-  if (sc) return `${sc} - ${String(row.episode ?? '').trim() || '1'}`;
-  const t = String(row.title ?? '').trim();
-  return t || '—';
-}

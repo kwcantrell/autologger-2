@@ -346,7 +346,7 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
   return (
     <>
       <div className={CAT_STRIP} role="toolbar" aria-label="Log category">
-        {categories.map((cat) => {
+        {categories.map((cat, idx) => {
           const typ = (cat.type || 'BUTTON').toUpperCase();
           const phase = onOffState.get(cat.id) ?? 'off';
           const isOn = typ === 'ON_OFF' && phase === 'on';
@@ -358,7 +358,6 @@ export function CategoryButtonStrip({ sessionId, isRolling, onOffState, onToggle
                 : cat.off_label?.trim() || cat.label
               : cat.label;
 
-          const idx = categories.indexOf(cat);
           return (
             <button
               key={cat.id}

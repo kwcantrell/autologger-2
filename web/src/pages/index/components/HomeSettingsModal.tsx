@@ -2,10 +2,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
+import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
+import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
@@ -75,26 +77,6 @@ interface ShowDraft {
 type TabId = 'general' | 'event-buttons' | 'autosync' | 'debug';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function normalizePalette9(arr: string[]): string[] {
-  const defaults = [
-    '#64748b',
-    '#e53935',
-    '#fb8c00',
-    '#fdd835',
-    '#43a047',
-    '#00acc1',
-    '#1e88e5',
-    '#8e24aa',
-    '#ec407a',
-  ];
-  const out: string[] = [];
-  for (let i = 0; i < 9; i++) {
-    const h = (arr[i] ?? '').toLowerCase();
-    out.push(/^#[0-9a-f]{6}$/.test(h) ? h : defaults[i % defaults.length]);
-  }
-  return out;
-}
 
 function showToShowDraft(show: Show): ShowDraft {
   const palette = normalizePalette9(show.event_palette ?? []);
@@ -364,7 +346,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       }
       window.Home_reloadSessionList?.();
       queryClient.invalidateQueries({ queryKey: ['events'] });
-      queryClient.invalidateQueries({ queryKey: ['session-status'] });
+      queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
       // A now-working save can rename/delete categories; without this, an open session's
       // button strip keeps serving stale ones for its 30s staleTime (design D4).
       queryClient.invalidateQueries({ queryKey: ['show-categories'] });

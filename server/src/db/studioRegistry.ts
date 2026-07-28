@@ -83,25 +83,22 @@ export class StudioRegistry {
   getStudioSettingsBlob(studioIdIn: string): Record<string, unknown> {
     let studioId = studioIdIn;
     if (!this.isKnownStudio(studioId)) studioId = DEFAULT_STUDIO_ID;
-    const raw = this.getSetting(studioConfigKey(studioId));
-    if (!raw) {
+    // Self-healing read (deliberate, ported behavior): a missing/corrupt blob
+    // is rewritten with defaults during the read.
+    const resetToDefault = (): Record<string, unknown> => {
       const blob = defaultSettingsBlob(studioId);
       this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
       return blob as unknown as Record<string, unknown>;
-    }
+    };
+    const raw = this.getSetting(studioConfigKey(studioId));
+    if (!raw) return resetToDefault();
     let data: unknown;
     try {
       data = JSON.parse(raw);
     } catch {
-      const blob = defaultSettingsBlob(studioId);
-      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
-      return blob as unknown as Record<string, unknown>;
+      return resetToDefault();
     }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      const blob = defaultSettingsBlob(studioId);
-      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
-      return blob as unknown as Record<string, unknown>;
-    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return resetToDefault();
     const base = defaultSettingsBlob(studioId);
     const merged: Record<string, unknown> = { ...base, ...(data as Record<string, unknown>) };
     const dataCats = (data as Record<string, unknown>).categories;

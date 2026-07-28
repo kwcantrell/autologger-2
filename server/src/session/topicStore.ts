@@ -2,7 +2,8 @@
 // the original single-file session spine.
 
 import { isoZ } from '../timecode';
-import type { Row, SessionCore, SqlValue } from './sessionCore';
+import type { Row, SessionCore } from './sessionCore';
+import { buildPatch, nextOrdinal } from './storeHelpers';
 
 export interface Topic {
   id: string;
@@ -41,9 +42,7 @@ export class TopicStore {
     summary: string;
   }): Topic {
     const id = crypto.randomUUID();
-    const ordinal = Number(
-      this.core.first('SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_topics')?.n ?? 0,
-    );
+    const ordinal = nextOrdinal(this.core, 'session_topics');
     this.core.db.run(
       `INSERT INTO session_topics (id, session_time, duration_sec, topic_level, summary, ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -62,16 +61,14 @@ export class TopicStore {
     topicId: string,
     patch: { session_time?: string; duration_sec?: number; topic_level?: number; summary?: string },
   ): Topic | null {
-    const existing = this.core.first('SELECT * FROM session_topics WHERE id = ?', topicId);
+    const existing = this.core.first('SELECT 1 AS x FROM session_topics WHERE id = ?', topicId);
     if (existing === null) return null;
-    const cols: string[] = [];
-    const vals: SqlValue[] = [];
-    for (const key of ['session_time', 'duration_sec', 'topic_level', 'summary'] as const) {
-      if (patch[key] !== undefined) {
-        cols.push(`${key} = ?`);
-        vals.push(patch[key] as SqlValue);
-      }
-    }
+    const { cols, vals } = buildPatch(patch, [
+      'session_time',
+      'duration_sec',
+      'topic_level',
+      'summary',
+    ] as const);
     if (cols.length) {
       this.core.db.run(
         `UPDATE session_topics SET ${cols.join(', ')} WHERE id = ?`,

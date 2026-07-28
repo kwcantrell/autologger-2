@@ -5,12 +5,23 @@ import type {
   AudioSegment,
   AudioSegmentsResponse,
   AudioSegmentWaveformBody,
+  OkResponse,
   SessionStatus,
 } from '../types';
+import { sessionStatusKeys } from './useSessionStatus';
+
+/**
+ * Query-key factory for the audio-segments domain (code-health-tail task 4.6,
+ * finding 2.8) — the single owner of the `'audio-segments'` literal, guarded
+ * by `queryKeyFactories.repo.test.ts`.
+ */
+export const audioSegmentsKeys = {
+  bySession: (sessionId: string | null) => ['audio-segments', sessionId] as const,
+};
 
 export function useAudioSegments(sessionId: string | null) {
   return useQuery({
-    queryKey: ['audio-segments', sessionId],
+    queryKey: audioSegmentsKeys.bySession(sessionId),
     queryFn: () => apiFetch<AudioSegmentsResponse>(`sessions/${sessionId}/audio/segments`),
     enabled: Boolean(sessionId),
   });
@@ -20,14 +31,14 @@ export function useClaimAudioLease(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
     // Optimistically reflect the lease in the status cache so consumers (e.g.
     // recovery-stop warning) see lease_alive synchronously, ahead of the next poll.
     onSuccess: (_data, body) => {
-      qc.setQueryData<SessionStatus | undefined>(['session-status', sessionId], (prev) =>
+      qc.setQueryData<SessionStatus | undefined>(sessionStatusKeys.bySession(sessionId), (prev) =>
         prev
           ? {
               ...prev,
@@ -43,7 +54,7 @@ export function useClaimAudioLease(sessionId: string) {
 export function useHeartbeatAudioLease(sessionId: string) {
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease/heartbeat`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/heartbeat`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -53,7 +64,7 @@ export function useHeartbeatAudioLease(sessionId: string) {
 export function useReleaseAudioLease(sessionId: string) {
   return useMutation({
     mutationFn: (body: AudioRecordingLeaseBody) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio-recording-lease/release`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio-recording-lease/release`, {
         method: 'POST',
         body: JSON.stringify(body),
       }),
@@ -64,11 +75,11 @@ export function useUploadWaveform(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ segmentId, body }: { segmentId: string; body: AudioSegmentWaveformBody }) =>
-      apiFetch<{ ok: boolean }>(`sessions/${sessionId}/audio/segments/${segmentId}/waveform`, {
+      apiFetch<OkResponse>(`sessions/${sessionId}/audio/segments/${segmentId}/waveform`, {
         method: 'PUT',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) }),
   });
 }
 
@@ -97,6 +108,6 @@ export function useUploadAudioSegment(sessionId: string) {
         body: blob,
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['audio-segments', sessionId] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) }),
   });
 }

@@ -1,6 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useReducer, useState } from 'react';
-import { ApiError } from '../../../api/client';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useGenerateTranscript,
@@ -8,10 +7,12 @@ import {
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
+import { type ColumnDef, FeedTable } from './FeedTable';
+import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TranscribeRow } from './TranscribeRow';
 
@@ -61,34 +62,16 @@ export function TranscribeFeed({ sessionId }: Props) {
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
   const jumpReasonId = 'v5-transcribe-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
-  const [genError, setGenError] = useState<string | null>(null);
-  // Latched on the first 503 (ui-refresh D9: honest capability gate — the server has no
-  // capability endpoint, so unavailability is learned on first attempt and then stated
-  // plainly instead of inviting repeat failures). Persists across session switches because
-  // this panel is mounted-hidden and unkeyed; cleared only by a full page reload, which is
-  // deliberate — the copy below tells the operator to reload after configuring.
-  const [genUnavailable, setGenUnavailable] = useState(false);
+  // Latched on the first 503 (ui-refresh D9: honest capability gate) — see
+  // `useGatedGenerate` for the full rationale; the copy below tells the
+  // operator to reload after configuring.
+  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
   // Reactive scroll viewport: OverlayScrollbars publishes its viewport via the
   // `scrollRef` callback below. Storing it in state (not a ref) re-renders so
   // useVirtualizer re-attaches the instant OS initializes, instead of waiting
   // for an unrelated background re-render (~1.5–2 s later).
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
-
-  function handleGenerate() {
-    setGenError(null);
-    generate.mutate(undefined, {
-      // Single error channel (ui-refresh): inline in the panel only, no duplicate toast.
-      // A 503 latches the control instead of surfacing a one-off error message.
-      onError: (err) => {
-        if (err instanceof ApiError && err.status === 503) {
-          setGenUnavailable(true);
-          return;
-        }
-        setGenError(err instanceof Error ? err.message : 'Generation failed.');
-      },
-    });
-  }
 
   function handleInsert() {
     insert.mutate({});
@@ -136,50 +119,25 @@ export function TranscribeFeed({ sessionId }: Props) {
 
   const wordCount = words?.length ?? 0;
 
-  // A11y divergence from the spike (spec-mandated, D9): the spike used `disabled` + a mouse
-  // `title` — invisible to keyboard/AT users since a native-disabled control can't receive
-  // focus and has no accessible description. Here the control stays a real, focusable button
-  // (no `disabled` attribute) using `aria-disabled` instead, with the reason exposed two ways:
-  // `aria-describedby` pointing at an always-visible reason span (not sr-only — sighted
-  // keyboard users get it too), and the click handler no-ops while latched. Visual "disabled"
-  // styling is reproduced via the `aria-disabled:` variant since `disabled:` utilities key off
-  // the native attribute.
+  // Shared aria-disabled latch toolbar — the a11y rationale (focusable
+  // aria-disabled button + always-visible reason span) lives on GenerateToolbar.
   const genReasonId = 'v5-transcribe-gen-reason';
   const toolbar = (
-    <>
-      {genError && (
-        <span role="alert" className="ml-2 self-center text-[0.78rem] text-v5-danger">
-          {genError}
-        </span>
-      )}
-      <button
-        type="button"
-        className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
-        disabled={generate.isPending}
-        aria-disabled={genUnavailable || undefined}
-        aria-describedby={genUnavailable ? genReasonId : undefined}
-        onClick={() => {
-          if (genUnavailable) return;
-          handleGenerate();
-        }}
-      >
-        {generate.isPending ? 'Generating…' : 'Auto Generate'}
-      </button>
-      {genUnavailable && (
-        <span id={genReasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
+    <GenerateToolbar
+      genError={genError}
+      genUnavailable={genUnavailable}
+      onGenerate={handleGenerate}
+      generatePending={generate.isPending}
+      reasonId={genReasonId}
+      reason={
+        <>
           Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
           Reload after configuring.
-        </span>
-      )}
-      <button
-        type="button"
-        className={FEED_GLASS_BTN}
-        disabled={insert.isPending}
-        onClick={handleInsert}
-      >
-        Insert
-      </button>
-    </>
+        </>
+      }
+      onInsert={handleInsert}
+      insertPending={insert.isPending}
+    />
   );
 
   return (
@@ -230,7 +188,10 @@ export function TranscribeFeed({ sessionId }: Props) {
       >
         {paddingTop > 0 && (
           <tr>
-            <td colSpan={4} style={{ height: paddingTop, padding: 0, border: 'none' }} />
+            <td
+              colSpan={COLUMNS.length}
+              style={{ height: paddingTop, padding: 0, border: 'none' }}
+            />
           </tr>
         )}
         {sortedWords &&
@@ -251,7 +212,10 @@ export function TranscribeFeed({ sessionId }: Props) {
           })}
         {paddingBottom > 0 && (
           <tr>
-            <td colSpan={4} style={{ height: paddingBottom, padding: 0, border: 'none' }} />
+            <td
+              colSpan={COLUMNS.length}
+              style={{ height: paddingBottom, padding: 0, border: 'none' }}
+            />
           </tr>
         )}
       </FeedTable>
