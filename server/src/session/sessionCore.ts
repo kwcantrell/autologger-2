@@ -186,6 +186,21 @@ export class SessionCore {
     };
   }
 
+  /** Single owner of the event-count SQL (code-health-tail D10): `total` is
+   * every events row; `logged` excludes internal-category rows via
+   * `lower(trim(category)) != 'internal'` (SQLite trim() strips spaces only —
+   * a tab-prefixed 'internal' still counts as logged; pinned in the store
+   * tests). Lives on the core, not a store, so TransportStore.statusLive
+   * never reads the events table across the store boundary. */
+  eventCounts(): { total: number; logged: number } {
+    const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
+    const logged = Number(
+      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")
+        ?.c ?? 0,
+    );
+    return { total, logged };
+  }
+
   bumpRevision(): void {
     this.db.run(
       "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'events_stream_revision'",

@@ -90,15 +90,11 @@ export class EventStore {
       Math.trunc(input.limit),
       Math.trunc(input.offset),
     );
-    const total = Number(this.core.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
-    const loggedTotal = Number(
-      this.core.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")
-        ?.c ?? 0,
-    );
+    const counts = this.core.eventCounts();
     return {
       events: rows.map((r) => eventRowToRpc(r)),
-      total,
-      loggedTotal,
+      total: counts.total,
+      loggedTotal: counts.logged,
       revision: this.core.revision(),
     };
   }

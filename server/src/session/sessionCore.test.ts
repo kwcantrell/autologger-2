@@ -168,6 +168,26 @@ describe('SessionCore on a fake runtime', () => {
     expect(sent).toEqual([]); // no event.changed reached the socket
   });
 
+  // code-health-tail D10: the core owns the event-count SQL; both consumers
+  // (EventStore.listEvents, TransportStore.statusLive) pin the same semantics
+  // over a real core in their own suites.
+  it('eventCounts: total counts all rows, logged excludes internal (case/space-insensitively)', () => {
+    const { core } = fakeRuntime();
+    const categories = ['mark', 'internal', ' Internal ', 'INTERNAL', 'internally'];
+    categories.forEach((cat, i) => {
+      core.db.run(
+        `INSERT INTO events (id, wall_time_utc, frame_rate, category, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        `e${i}`,
+        '2026-06-25T00:00:00.000Z',
+        30,
+        cat,
+        `m${i}`,
+      );
+    });
+    expect(core.eventCounts()).toEqual({ total: 5, logged: 2 });
+  });
+
   it('presence counts fake sockets by role', () => {
     const { core, sockets } = fakeRuntime();
     sockets.add({ send: () => {}, role: 'companion' });

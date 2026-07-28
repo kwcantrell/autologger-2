@@ -122,16 +122,14 @@ export class TransportStore {
     session_timecode_total_frames: number;
   } {
     const st = this.transportStateDict(ctx);
-    const total = Number(this.core.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
-    const logged = Number(
-      this.core.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")
-        ?.c ?? 0,
-    );
+    // Counts come from the core's single owner of the event-count SQL (D10) —
+    // this store never reads the events table itself.
+    const counts = this.core.eventCounts();
     return {
       is_rolling: st.is_rolling,
       current_take: st.current_take,
-      event_count: total,
-      logged_event_count: logged,
+      event_count: counts.total,
+      logged_event_count: counts.logged,
       events_stream_revision: this.core.revision(),
       session_timecode: st.timecode,
       session_timecode_total_frames: st.timecode_total_frames,

@@ -1,5 +1,8 @@
+import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionCore, TimecodeCtx } from './sessionCore';
+import { sqliteSessionSql } from './SessionHub';
+import { SessionCore, type TimecodeCtx } from './sessionCore';
+import type { SessionRuntime } from './sessionCore';
 import { TransportStore } from './transportStore';
 
 interface TRow {
@@ -46,7 +49,10 @@ function fakeCore(initial: Partial<TRow> = {}) {
       transport_elapsed_frames: row.elapsed_frames,
       roll_started_at_utc: row.roll_started_at_utc,
     }),
-    first: (sql: string): { c: number } => (sql.includes("!= 'internal'") ? { c: 2 } : { c: 3 }),
+    // statusLive consumes core.eventCounts() (code-health-tail D10) instead of
+    // running count SQL itself; the filter's semantics are pinned over a real
+    // core in the D10 describe below.
+    eventCounts: (): { total: number; logged: number } => ({ total: 3, logged: 2 }),
     revision: (): number => 7,
   };
   return { core: core as unknown as SessionCore, row, broadcasts };
@@ -141,5 +147,61 @@ describe('TransportStore', () => {
     expect(s.event_count).toBe(3);
     expect(s.logged_event_count).toBe(2);
     expect(s.events_stream_revision).toBe(7);
+  });
+});
+
+// code-health-tail task 2.2 (design D10) — behavior pin over a REAL core
+// (in-memory SQLite), written BEFORE the count SQL moved into
+// core.eventCounts(). The `lower(trim(category)) != 'internal'` filter's
+// subtleties are the point: internal-category rows with odd casing/whitespace
+// are excluded from logged_event_count; near-misses ('internally', 'x internal')
+// are not.
+describe('statusLive event counts over a real core (D10 pin)', () => {
+  function realCore(): SessionCore {
+    const runtime: SessionRuntime = {
+      sql: sqliteSessionSql(new Database(':memory:')),
+      clock: { now: () => 1_000_000 },
+      sockets: () => [],
+      setAlarm: () => {},
+    };
+    const core = new SessionCore(runtime);
+    core.initSchema();
+    return core;
+  }
+
+  it('excludes internal-category events (any casing/whitespace) from logged_event_count only', () => {
+    const core = realCore();
+    const categories = [
+      'mark', // logged
+      'note', // logged
+      'internal', // filtered
+      'Internal', // filtered (casing)
+      ' INTERNAL ', // filtered (casing + surrounding spaces)
+      '\tinternal', // logged — SQLite trim() strips SPACES only, a tab survives
+      'INTERNAL', // filtered
+      'internally', // logged — trim/lower never turns this into 'internal'
+      'x internal', // logged — interior match is not a match
+    ];
+    categories.forEach((cat, i) => {
+      core.db.run(
+        `INSERT INTO events (id, wall_time_utc, frame_rate, category, message)
+         VALUES (?, ?, ?, ?, ?)`,
+        `e${i}`,
+        '2026-06-25T00:00:00.000Z',
+        30,
+        cat,
+        `m${i}`,
+      );
+    });
+    const s = new TransportStore(core).statusLive({ frameRate: 30, startOffsetFrames: 0 });
+    expect(s.event_count).toBe(9);
+    expect(s.logged_event_count).toBe(5);
+  });
+
+  it('reports zero counts on an empty events table', () => {
+    const core = realCore();
+    const s = new TransportStore(core).statusLive({ frameRate: 30, startOffsetFrames: 0 });
+    expect(s.event_count).toBe(0);
+    expect(s.logged_event_count).toBe(0);
   });
 });
