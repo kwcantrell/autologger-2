@@ -113,8 +113,9 @@ guard, not because any of them is a mismatch.
 
 Enumeration method: `grep -rn "fetch(" web/src` minus `apiFetch`, plus `grep -rn "\.json()"`, plus
 `grep -rn "JSON.parse"`, plus `grep -rn "EventSource\|sendBeacon\|XMLHttpRequest"`; each hit opened
-and read. **Count: 13 ingresses, of which exactly 1 gives a payload a client type by unchecked
-assertion.**
+and read. **Count: 16 ingresses, of which exactly 1 gives a payload a client type by unchecked
+assertion.** (Corrected from an initial count of 13 — three raw-network sites the same grep
+spellings surface were originally omitted from this table; see d14–d16.)
 
 | # | site | endpoint / source | how a type is acquired | in scope? |
 |---|---|---|---|---|
@@ -131,6 +132,9 @@ assertion.**
 | d11 | `useAudioClips.ts:66` | `POST …/audio/segments/sync-from-disk` | response fully discarded | no |
 | d12 | `shared/utils/waveformDecode.ts:35` | segment blob URL | `res.arrayBuffer()` | non-JSON |
 | d13 | `useSessionSocket.ts:110` | WebSocket frames | `JSON.parse(ev.data)` | **WebSocket — explicit Non-Goal of this change** |
+| d14 | `useSseTurn.tsx:165` (the `fetch` call site itself) | `POST …/ai/chat`, `…/ai/v2/design`, `…/ai/v2/answer` | **no type acquired at this site** — the raw `Response` is only branched on `res.status`/`res.ok`/`res.body`; its JSON body is read (and typed) downstream at d4 (error) and d5 (`delta` frame), not here | no verdict — nothing to type-check at the call site |
+| d15 | `AudioRecorder.tsx:117` (`navigator.sendBeacon`) | `POST …/audio-recording-lease/release` | **no type acquired** — `sendBeacon` is fire-and-forget; there is no `Response` object and no return value to type | no verdict — nothing to type-check |
+| d16 | `useCompanionPresence.ts:38` (`navigator.sendBeacon`) | `POST /api/companion/presence` | **no type acquired** — same as d15, fire-and-forget with no response handle | no verdict — nothing to type-check |
 | — | `api/client.ts:29` | any non-2xx body | `as { detail?: unknown }` | the shared error probe itself |
 
 ---
@@ -396,3 +400,13 @@ Stated deliberately, because the spec forbids treating a count as completeness e
    consumer is the Companion module, which mirrors the shapes in `companion/src/state.ts`). They
    are not response-consuming sites and carry no verdict; noted so phase 5's guard does not trip
    on them and so a later reader does not mistake their absence for an enumeration gap.
+8. **`dashboardPersistence.ts:119,125` (`localStorageDashboardPersistence.load`) is a deliberate
+   exclusion, not an oversight.** It does `JSON.parse(raw) as unknown` then, after an
+   `Array.isArray((parsed as DashboardConfig).widgets)` narrowing check, `return parsed as
+   DashboardConfig` — applying a `DashboardConfig` belief to unvalidated JSON, the same defect
+   *class* as d1 (`dashboardPersistence.ts:74`, the only in-scope `CLIENT-WRONG`-eligible
+   assertion in §4). It is excluded from §4's population because the source is **`localStorage`,
+   not an API response** — this audit's universe is the server↔client wire, not browser-storage
+   round-trips the client itself wrote. The exclusion is recorded here because phase 5's guard
+   (matching `JSON.parse … as`) will hit this line: when it does, the guard needs a named
+   exemption for it, not a surprise finding.
