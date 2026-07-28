@@ -19,7 +19,7 @@
       (finding 2.4); output-equality tests for both call sites
 - [x] 2.2 `core.eventCounts()` per D10; transportStore/eventStore consume it; statusLive
       results pinned before/after (finding 2.10)
-- [ ] 2.3 `guardAiV2Route` helper replacing the five copied prologues, parameterized by
+- [x] 2.3 `guardAiV2Route` helper replacing the five copied prologues, parameterized by
       gate set per D12 (dashboard-CRUD routes keep their deliberately narrower gate);
       route-behavior tests unchanged (finding 2.11)
 - [x] 2.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
