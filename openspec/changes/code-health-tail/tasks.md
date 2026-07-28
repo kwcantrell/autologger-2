@@ -9,7 +9,7 @@
 
 ## 1. Preconditions
 
-- [ ] 1.1 Confirm the head change (`code-health-consolidation`) is merged to `main`;
+- [x] 1.1 Confirm the head change (`code-health-consolidation`) is merged to `main`;
       re-locate this change's touch points against the merged tree (the head's D3
       rewrite moved the AI turn-runner internals) and note moved anchors in `.apply/`
 
@@ -40,8 +40,10 @@
 
 - [ ] 3.1 `requireSession` synchronous per D8; remove the ~45 spurious hub-RPC `await`s
       and both sync `Promise.all` wraps across transcribe/events/audio/companion/
-      exports/sessions; make `server/src/test/helpers.ts` seeds sync; typecheck is the
-      completeness check, frozen-contract int suites the behavior check (finding 5.1)
+      exports/sessions, AND the now-spurious `await requireSession` at every caller
+      incl. sessionWs.ts/ai.ts/aiV2.ts (1.1 flag 2); completeness check is a grep
+      sweep for awaits-on-sync-values (typecheck can't flag them) + typecheck;
+      frozen-contract int suites the behavior check (finding 5.1)
 
 ## 4. Web consolidations
 
@@ -78,11 +80,13 @@
 - [ ] 5.1 Shared `parseSse` + seed-chain helper in `server/src/test/helpers`; migrate
       the 2 parseSse files and the ~9–12 seed-chain-duplicating int-test files (full
       breadth per gate ruling 4); rename the shadowing `configuredEnv` (finding 5.10)
-- [ ] 5.2 Shared fake-core test helper replacing the three hand-rolled fakes (typed —
-      eliminates the two `as unknown as` casts); relocate the misplaced fakeClock
+- [ ] 5.2 Shared fake-core test helper replacing the TWO remaining hand-rolled cast
+      fakes (leaseStore/transportStore tests — the head change already typed
+      sessionCore.test.ts's fake; 1.1 flag 1); relocate the misplaced fakeClock
       suites to `node/`
-- [ ] 5.3 Shared e2e `createSession` helper adopted at the 8 sites across 5 spec files
-      (promote visual.spec's private helper)
+- [ ] 5.3 Shared e2e `createSession` helper adopted at the 7 inline creation sites +
+      visual.spec's promoted helper (1.1 flag 3); visual.spec's two deliberate
+      new-session-modal TESTS (button-click assertions) are NOT migrated
 
 ## 6. Final gates
 
