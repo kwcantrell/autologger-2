@@ -238,6 +238,52 @@ describe('AuthStore: email invites (design D2)', () => {
   });
 });
 
+describe('AuthStore: authSetPrefs upsert (code-health-tail task 2.7, finding 5.7)', () => {
+  it('creates the prefs row when absent', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const user = await seedUser();
+    expect(cat.auth.authGetPrefs(user)).toBeNull();
+    cat.auth.authSetPrefs(user, studio, 'show-1');
+    expect(cat.auth.authGetPrefs(user)).toMatchObject({
+      user_id: user,
+      active_studio_id: studio,
+      active_show_id: 'show-1',
+    });
+  });
+
+  it('updates BOTH columns when the row exists (no stale column survives)', async () => {
+    const cat = catalogFor();
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const user = await seedUser();
+    cat.auth.authSetPrefs(user, studioA, 'show-a');
+    cat.auth.authSetPrefs(user, studioB, 'show-b');
+    expect(cat.auth.authGetPrefs(user)).toMatchObject({
+      user_id: user,
+      active_studio_id: studioB,
+      active_show_id: 'show-b',
+    });
+  });
+
+  it('overwrites a row pre-seeded empty by authEnsurePrefsRow (the former ensure+UPDATE path)', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const user = await seedUser();
+    cat.auth.authEnsurePrefsRow(user);
+    expect(cat.auth.authGetPrefs(user)).toMatchObject({
+      active_studio_id: '',
+      active_show_id: '',
+    });
+    cat.auth.authSetPrefs(user, studio, 'show-1');
+    expect(cat.auth.authGetPrefs(user)).toMatchObject({
+      user_id: user,
+      active_studio_id: studio,
+      active_show_id: 'show-1',
+    });
+  });
+});
+
 describe('AuthStore: user lookup by normalized email (design D2 multi-match)', () => {
   it('authListUsersByEmailNorm matches case/whitespace-insensitively via JS normalization', async () => {
     const cat = catalogFor();

@@ -11,7 +11,7 @@ import {
 } from '../studio';
 import type { StudioProfile } from '../studio';
 import type { AuthStore } from './authStore';
-import type { AuthUser, ProfileCtx } from './shared';
+import type { AuthUser, ProfileCtx, Row } from './shared';
 import { showApiDict } from './showsStore';
 import type { ShowsStore } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
@@ -23,8 +23,9 @@ export class ProfileAssembler {
     private shows: ShowsStore,
   ) {}
 
-  private resolveActiveShowIdForStudio(studioId: string, preferredShowId: string): string {
-    const shows = this.shows.listShowsForStudio(studioId);
+  /** Resolves the active show id against a pre-fetched show list, so callers
+   * fetch each studio's shows at most once per request (finding 5.7). */
+  private resolveActiveShowIdForStudio(shows: Row[], preferredShowId: string): string {
     const valid = new Set(shows.map((r) => String(r.id)));
     const raw = (preferredShowId || '').trim();
     if (raw && valid.has(raw)) return raw;
@@ -32,11 +33,14 @@ export class ProfileAssembler {
     return '';
   }
 
-  /** _profile_studio_for_user → [profile|null, activeShowId, allowedSet]. */
-  profileStudioForUser(userId: string): [StudioProfile | null, string, Set<string>] {
+  /** _profile_studio_for_user → [profile|null, activeShowId, allowedSet,
+   * activeStudioShows] — the 4th element hands the active studio's show rows
+   * (already fetched to resolve the active show) back to the assembler so it
+   * never re-queries them (finding 5.7). */
+  profileStudioForUser(userId: string): [StudioProfile | null, string, Set<string>, Row[]] {
     const allowed = this.auth.authListStudioIdsForUser(userId);
     const alset = new Set(allowed);
-    if (alset.size === 0) return [null, '', alset];
+    if (alset.size === 0) return [null, '', alset, []];
     this.auth.authEnsurePrefsRow(userId);
     const row = this.auth.authGetPrefs(userId);
     const rawS = row ? String(row.active_studio_id ?? '').trim() : '';
@@ -52,8 +56,9 @@ export class ProfileAssembler {
     }
     if (!studioId) studioId = DEFAULT_STUDIO_ID;
     const prefShow = rawS === studioId ? rawSh : '';
-    const activeShowId = this.resolveActiveShowIdForStudio(studioId, prefShow);
-    return [this.studios.loadStudioProfile(studioId), activeShowId, alset];
+    const activeShows = this.shows.listShowsForStudio(studioId);
+    const activeShowId = this.resolveActiveShowIdForStudio(activeShows, prefShow);
+    return [this.studios.loadStudioProfile(studioId), activeShowId, alset, activeShows];
   }
 
   getEffectiveStudioForUser(user: AuthUser | null, oauthConfigured: boolean): StudioProfile | null {
@@ -125,7 +130,9 @@ export class ProfileAssembler {
       const studiosForList = this.studios.listStudiosBrief();
       const showsOut: Record<string, unknown>[] = [];
       for (const s of studiosForList) {
-        for (const r of this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
+        // Reuse the active studio's rows fetched above (finding 5.7).
+        const rows = s.id === active.id ? showsRaw : this.shows.listShowsForStudio(s.id);
+        for (const r of rows) showsOut.push(showApiDict(r));
       }
       return {
         active_studio_id: active.id,
@@ -144,7 +151,7 @@ export class ProfileAssembler {
     }
 
     // Logged-in user.
-    const [active, computedShowId, alset] = this.profileStudioForUser(user.id);
+    const [active, computedShowId, alset, activeShows] = this.profileStudioForUser(user.id);
     const studioSettings = this.studios.allStudioSettingsForAllowedStudios(alset);
     const studiosForList = this.studios.listStudiosBriefAllowed(alset);
     let shapeActiveStudio: Record<string, unknown>;
@@ -160,9 +167,11 @@ export class ProfileAssembler {
       shapeActiveStudio = emptyActiveStudioApiDict();
       nsDefaults = { title_prefix: 'Episode ', default_frame_rate: 24.0 };
     } else {
-      const showsRaw = this.shows.listShowsForStudio(active.id);
+      // profileStudioForUser already fetched the active studio's shows (5.7).
+      const showsRaw = activeShows;
       for (const s of studiosForList) {
-        for (const r of this.shows.listShowsForStudio(s.id)) showsOut.push(showApiDict(r));
+        const rows = s.id === active.id ? showsRaw : this.shows.listShowsForStudio(s.id);
+        for (const r of rows) showsOut.push(showApiDict(r));
       }
       activeShowId = computedShowId;
       const validIds = new Set(showsRaw.map((r) => String(r.id)));

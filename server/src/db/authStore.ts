@@ -59,21 +59,25 @@ export class AuthStore {
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
   ): boolean {
-    const row = this.authGetUserById(userId);
-    if (row === null) return false;
-    const em = fields.email ?? String(row.email);
-    const gn = fields.givenName ?? String(row.given_name);
-    const fn = fields.familyName ?? String(row.family_name);
-    const pic = fields.pictureUrl ?? String(row.picture_url);
-    this.db.run(
-      'UPDATE users SET email = ?, given_name = ?, family_name = ?, picture_url = ? WHERE id = ?',
-      em,
-      gn,
-      fn,
-      pic,
-      userId,
-    );
-    return true;
+    // Read-modify-write: the merge reads the current row, so the pair runs in
+    // one transaction (CatalogDb.tx nests as a savepoint under outer tx()).
+    return this.db.tx(() => {
+      const row = this.authGetUserById(userId);
+      if (row === null) return false;
+      const em = fields.email ?? String(row.email);
+      const gn = fields.givenName ?? String(row.given_name);
+      const fn = fields.familyName ?? String(row.family_name);
+      const pic = fields.pictureUrl ?? String(row.picture_url);
+      this.db.run(
+        'UPDATE users SET email = ?, given_name = ?, family_name = ?, picture_url = ? WHERE id = ?',
+        em,
+        gn,
+        fn,
+        pic,
+        userId,
+      );
+      return true;
+    });
   }
 
   authUpdateUserNames(userId: string, givenName: string, familyName: string): boolean {
@@ -137,12 +141,16 @@ export class AuthStore {
   }
 
   authSetPrefs(userId: string, activeStudioId: string, activeShowId: string): void {
-    this.authEnsurePrefsRow(userId);
+    // Single upsert (user_prefs has no other columns to preserve), replacing
+    // the former ensure-row + UPDATE pair — same authUpsertMembershipRole idiom.
     this.db.run(
-      'UPDATE user_prefs SET active_studio_id = ?, active_show_id = ? WHERE user_id = ?',
+      `INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET
+         active_studio_id = excluded.active_studio_id,
+         active_show_id = excluded.active_show_id`,
+      userId,
       activeStudioId,
       activeShowId,
-      userId,
     );
   }
 
