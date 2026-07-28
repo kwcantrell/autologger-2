@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:real": "RUN_REAL_AI_TESTS=1 vitest run real.test",
+    "fixtures:capture": "UPDATE_API_FIXTURES=1 vitest run --project integration src/routers/apiResponseFixtures.int.test.ts",
     "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts",
     "capture:deepgram-fixture": "node --env-file-if-exists=.env scripts/capture-deepgram-fixture.mjs"
   },

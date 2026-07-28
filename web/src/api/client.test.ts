@@ -13,6 +13,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function textResponse(body: string, contentType: string, status = 200): Response {
+  return new Response(body, { status, headers: { 'content-type': contentType } });
+}
+
+// A body given as raw bytes (rather than a string) does not trigger the Response
+// constructor's own content-type sniffing default (`text/plain;charset=UTF-8` for a
+// string body) — so `res.headers.get('content-type')` is genuinely `null`, pinning
+// the case where a real server response omits the header entirely.
+function noContentTypeResponse(body: string, status = 200): Response {
+  return new Response(new TextEncoder().encode(body), { status });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -54,6 +66,38 @@ describe('apiFetch', () => {
     expect(init.body).toBe('{"title":"x"}');
     expect(init.credentials).toBe('same-origin');
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
+  });
+
+  it('a JSON content-type returns the parsed body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 7, title: 'x' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await apiFetch('sessions/7');
+    expect(result).toEqual({ id: 7, title: 'x' });
+  });
+
+  it('a non-JSON content-type returns the raw text', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(textResponse('id,title\n7,x\n', 'text/csv'));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await apiFetch('sessions/7/export.csv');
+    expect(result).toBe('id,title\n7,x\n');
+  });
+
+  it('a JSON content-type with parameters still takes the JSON branch', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        textResponse(JSON.stringify({ ok: true }), 'application/json; charset=utf-8'),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await apiFetch('sessions');
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('a missing content-type header takes the text branch (pinned, not asserted-desirable)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(noContentTypeResponse('plain body'));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await apiFetch('sessions/7/raw');
+    expect(result).toBe('plain body');
   });
 
   it('non-ok responses throw ApiError with the extracted detail', async () => {

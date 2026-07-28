@@ -75,13 +75,11 @@ function ev(partial: Partial<LogEvent>): LogEvent {
   seq += 1;
   return {
     event_id: `e${seq}`,
-    session_id: 's',
     category: 'take',
     category_label: 'Take',
     category_color: '#e53935',
     message: `msg-${seq}`,
     timecode: '00:00:00',
-    timecode_hms: '00:00:00',
     // frame_rate 10000 → sec = timecode_total_frames / 10000, giving exact
     // sub-millisecond control over toFixed(3) bucketing.
     timecode_total_frames: 0,

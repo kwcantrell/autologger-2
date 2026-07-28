@@ -1,0 +1,16 @@
+{
+  "segments": [
+    {
+      "id": "########-####-####-####-############",
+      "ordinal": 1,
+      "started_at_utc": null,
+      "ended_at_utc": null,
+      "mime_type": "audio/webm",
+      "recording_ordinal": null,
+      "url": "/api/sessions/########-####-####-####-############/audio/segments/########-####-####-####-############",
+      "waveform_peaks": null,
+      "waveform_db_floor": null
+    }
+  ],
+  "has_audio": true
+}

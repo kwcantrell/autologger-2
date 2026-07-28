@@ -4,8 +4,10 @@ import type {
   NewSessionBody,
   OkResponse,
   Session,
+  SessionCreateResponse,
   SessionsResponse,
   SessionUpdateBody,
+  SessionUpdateResponse,
 } from '../types';
 import { audioSegmentsKeys } from './useAudio';
 import { eventsKeys } from './useEvents';
@@ -80,7 +82,10 @@ export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: NewSessionBody) =>
-      apiFetch<Session>('sessions', { method: 'POST', body: JSON.stringify(body) }),
+      apiFetch<SessionCreateResponse>('sessions', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   });
 }
@@ -89,7 +94,10 @@ export function useUpdateSession(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: SessionUpdateBody) =>
-      apiFetch<Session>(`sessions/${sessionId}`, { method: 'PUT', body: JSON.stringify(body) }),
+      apiFetch<SessionUpdateResponse>(`sessions/${sessionId}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
   });
 }

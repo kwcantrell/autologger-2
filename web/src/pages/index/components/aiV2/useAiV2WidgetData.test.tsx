@@ -66,7 +66,6 @@ const NO_TIMING_WORDS: TranscriptWord[] = [
 const TOPICS: SessionTopic[] = [
   {
     id: 't1',
-    session_id: 'sess-1',
     session_time: '0:00',
     duration_sec: 60,
     topic_level: 0,
@@ -78,10 +77,8 @@ const TOPICS: SessionTopic[] = [
 
 function event(overrides: Partial<LogEvent> & Pick<LogEvent, 'event_id' | 'category'>): LogEvent {
   return {
-    session_id: 'sess-1',
     wall_time_utc: '2026-07-21T00:00:00.000Z',
     timecode: '00:00:00:00',
-    timecode_hms: '00:00:00',
     frame_rate: 30,
     timecode_total_frames: 0,
     category_label: overrides.category,

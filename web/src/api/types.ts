@@ -10,6 +10,18 @@ export interface DropdownOption {
   needs_context: boolean;
 }
 
+/**
+ * Category shape for `GET /api/sessions/:id/show-categories` — server:
+ * `showCategoriesApiShape` + `dropdownOptionsApiShape`
+ * (`server/src/db/showsStore.ts`). `dropdown_options` carries the full
+ * `{label, needs_context}` objects (and is `[]` for any non-`DROPDOWN`
+ * category).
+ *
+ * NOT the shape of `profile.active_studio.categories` — that one is
+ * `ActiveStudioCategory` below, whose `dropdown_options` is a bare `string[]`.
+ * The two shared this type until web-api-shape-conformance audit CW-2 found
+ * the divergence.
+ */
 export interface Category {
   id: string;
   label: string;
@@ -21,11 +33,32 @@ export interface Category {
 }
 
 /**
+ * `profile.active_studio.categories[]` — server: `studioToApiDict`
+ * (`server/src/studio.ts`), fed by `blobToProfile`. Same key set as `Category`
+ * and likewise `label`-keyed, but `blobToProfile` flattens every stored option
+ * to its bare label, so `dropdown_options` is `string[]`, not
+ * `DropdownOption[]` (web-api-shape-conformance audit CW-2 — the client
+ * declared `Category` here, which was wrong for any DROPDOWN category).
+ * `GET /api/studio` emits this same shape; it has no web caller.
+ */
+export interface ActiveStudioCategory {
+  id: string;
+  label: string;
+  color: string;
+  type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
+  dropdown_options: string[];
+  on_label: string;
+  off_label: string;
+}
+
+/**
  * Category shape for `profile.shows[].categories` and the `show_updates[].categories`
  * request payload — the *stored* `CategoryRecord` (server: `server/src/studio.ts`), keyed
  * `name`. `showApiDict` (server: `server/src/db/showsStore.ts`) passes this through
  * verbatim; only the events/Companion/`active_studio` read shapes go through the
- * `label`-mapping shaper and keep the `Category` type above (teams-settings-nav, D3).
+ * `label`-mapping shaper (teams-settings-nav, D3) — of those, events/Companion keep the
+ * `Category` type above, while `active_studio` has its own `ActiveStudioCategory`
+ * (see the CW-2 note there).
  * `label` stays optional here defensively, in case a `label`-keyed shape ever feeds this
  * type — readers should hydrate with `c.name ?? c.label ?? ''`.
  */
@@ -130,6 +163,44 @@ export interface OkResponse {
   ok: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Transport
+// ---------------------------------------------------------------------------
+
+/**
+ * The transport snapshot both transport routes return — server:
+ * `TransportStore.transportStateDict` (`server/src/session/transportStore.ts`),
+ * typed there as `TransportState`.
+ */
+export interface TransportStateSnapshot {
+  is_rolling: boolean;
+  current_take: number;
+  roll_started_at_utc: string | null;
+  elapsed_frames: number;
+  timecode: string;
+  timecode_total_frames: number;
+}
+
+/**
+ * `POST /api/sessions/:id/transport/start`. The route `return c.json(state)`s
+ * the transport snapshot plus `started` — there is **no `ok` key on any path**
+ * (web-api-shape-conformance audit CW-1; it was typed `OkResponse`).
+ * `started` is `false` on the already-rolling early return, which writes nothing.
+ */
+export interface TransportStartResponse extends TransportStateSnapshot {
+  started: boolean;
+}
+
+/**
+ * `POST /api/sessions/:id/transport/stop` — as above, with `stopped` (`false`
+ * on the already-stopped early return). Kept a **separate** type from the start
+ * response rather than one type with both flags optional, so a fixture check
+ * cannot pass by omitting whichever flag it happens not to carry.
+ */
+export interface TransportStopResponse extends TransportStateSnapshot {
+  stopped: boolean;
+}
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -158,7 +229,7 @@ export interface AdminInfo {
 export interface ProfilePayload {
   active_studio_id: string;
   active_show_id: string;
-  active_studio: { id: string; name: string; categories: Category[] };
+  active_studio: { id: string; name: string; categories: ActiveStudioCategory[] };
   studios: StudioBrief[];
   studio_settings: Record<string, Record<string, unknown>>;
   shows: Show[];
@@ -190,9 +261,17 @@ export interface TranscriptWord {
   created_at_utc: string;
 }
 
+/**
+ * A topics row — server: `topicRow` (`server/src/session/topicStore.ts`),
+ * returned **verbatim** by all four `transcribe.ts` topic handlers.
+ *
+ * Note the asymmetry with `TranscriptWord` above: the transcript-words routes
+ * spread `{...w, session_id: sessionId}` onto every row, the topics routes do
+ * not, and `Topic` has no `session_id` column. The client declared one anyway
+ * (web-api-shape-conformance audit CW-6).
+ */
 export interface SessionTopic {
   id: string;
-  session_id: string;
   session_time: string;
   duration_sec: number;
   topic_level: number;
@@ -205,19 +284,31 @@ export interface SessionTopic {
 // Sessions
 // ---------------------------------------------------------------------------
 
+/**
+ * A session row from `GET /api/sessions` and `GET /api/sessions/:id` — both
+ * built by the single `serializeSessionEntry` (`server/src/routers/sessions.ts`).
+ *
+ * The four nullable-looking fields really are nullable
+ * (web-api-shape-conformance audit CW-9, which found them declared `string`):
+ * `show_id`/`show_code`/`show_name` come from a LEFT JOIN and are `?? null`
+ * when the show row is gone, and `created_at_utc` is null when the column is
+ * empty. Seeded test data never produces those nulls, so a captured fixture
+ * cannot demonstrate this class — the nullability is established from the
+ * serializer, not from an observation.
+ */
 export interface Session {
   id: string;
   title: string;
   deck_title: string;
-  show_id: string;
-  show_code: string;
-  show_name: string;
+  show_id: string | null;
+  show_code: string | null;
+  show_name: string | null;
   episode: string;
   notes: string;
   session_status: 'active' | 'archived' | 'deleted';
   frame_rate: number;
   start_offset_frames: number;
-  created_at_utc: string;
+  created_at_utc: string | null;
   episode_date: string | null;
   event_count: number;
   is_rolling: boolean;
@@ -232,20 +323,55 @@ export interface SessionsResponse {
   archived: Session[];
 }
 
+/**
+ * `POST /api/sessions`. The handler builds its own body from the request plus
+ * the new id — it does **not** run `serializeSessionEntry`, so only these seven
+ * of `Session`'s nineteen keys come back (web-api-shape-conformance audit
+ * CW-7, which found the route typed `Session`). The only consumer reads `id`.
+ */
+export interface SessionCreateResponse {
+  id: string;
+  title: string;
+  frame_rate: number;
+  start_offset_frames: number;
+  show_id: string;
+  episode: string;
+  notes: string;
+}
+
+/**
+ * `PUT /api/sessions/:id` — likewise not a `Session`: the handler echoes four
+ * fields off the updated index row (audit CW-8). Nothing reads the result.
+ */
+export interface SessionUpdateResponse {
+  id: string;
+  title: string;
+  frame_rate: number;
+  start_offset_frames: number;
+}
+
+/**
+ * `GET /api/sessions/:id/status`. The handler (`server/src/routers/events.ts`)
+ * emits exactly 21 keys — the 20 below plus `audio_recording_lease_age_sec`,
+ * which no consumer reads and which stays undeclared here (additive tolerance).
+ *
+ * It does **not** emit `timecode_total_frames`, `start_offset_frames`, or
+ * `audio_segment_count`; those three were declared here and never read
+ * anywhere in `web/src` (web-api-shape-conformance audit CW-3). Don't
+ * reintroduce them without checking the handler — `timecode_total_frames` in
+ * particular exists on `LogEvent`, which is a different shape.
+ */
 export interface SessionStatus {
   is_rolling: boolean;
   timecode: string;
   session_timecode: string;
   master_timecode: string;
-  timecode_total_frames: number;
   frame_rate: number;
-  start_offset_frames: number;
   current_take: number;
   audio_recording_lease_alive: boolean;
   audio_recording_lease_holder_id: string | null;
   event_count: number;
   logged_event_count: number;
-  audio_segment_count: number;
   // Session identity fields (from /status response)
   title: string;
   deck_title: string;
@@ -263,15 +389,27 @@ export interface SessionStatus {
 // Events
 // ---------------------------------------------------------------------------
 
+/**
+ * An events-list / event-mutation row — server: `enrichEventRpc`
+ * (`server/src/studio.ts`) over `eventRowToRpc`
+ * (`server/src/session/eventStore.ts`). Exactly the 10 keys below.
+ *
+ * Web-api-shape-conformance audit CW-4 corrected four things here:
+ * `session_id` and `timecode_hms` were declared but are **not emitted** (rows
+ * derive their own HMS from `timecode`); and two fields were over-narrow —
+ * `timecode` is `null` whenever the row's `timecode_total_frames` is NULL (the
+ * already-nullable `frame_rate` is null on that same branch), and
+ * `category_color` is `null` on `enrichEventRpc`'s orphan branch, when the
+ * event's category is gone from the profile and its
+ * `al_category_color_snapshot` is missing or not `#RRGGBB`.
+ */
 export interface LogEvent {
   event_id: string;
-  session_id: string;
   category: string;
   category_label: string;
-  category_color: string;
+  category_color: string | null;
   message: string;
-  timecode: string;
-  timecode_hms: string;
+  timecode: string | null;
   timecode_total_frames: number | null;
   frame_rate: number | null;
   wall_time_utc: string | null;
@@ -296,15 +434,26 @@ export interface ShowCategoriesResponse {
 // Audio
 // ---------------------------------------------------------------------------
 
+/**
+ * An audio-segment row from `GET`/`POST /api/sessions/:id/audio/segments` —
+ * server: `segmentApiDict` (`server/src/routers/audio.ts`) over
+ * `AudioSegmentMeta`. Exactly the 9 keys below.
+ *
+ * It emits **no duration**: `AudioSegmentMeta` has no `duration_sec` or
+ * `file_path` field at all, and `r2_key` exists but is deliberately withheld.
+ * `session_id`, `duration_sec`, and `file_path` were declared here anyway
+ * (web-api-shape-conformance audit CW-5). `duration_sec` was the one *read*
+ * mismatch in the audit — see `useAudioClips` for what depended on it and why
+ * that path is gone. Clip durations come from the `HTMLAudioElement` metadata
+ * probe, which is the only source of a real decoded media length the client
+ * has; do not reintroduce `duration_sec` here without the server emitting it.
+ */
 export interface AudioSegment {
   id: string;
-  session_id: string;
   ordinal: number;
   recording_ordinal: number | null;
   started_at_utc: string | null;
   ended_at_utc: string | null;
-  duration_sec: number | null;
-  file_path: string;
   mime_type: string;
   url: string;
   waveform_peaks: number[] | null;
@@ -400,7 +549,7 @@ export interface AdminUser {
   given_name: string;
   family_name: string;
   disabled: boolean;
-  memberships: string[];
+  studios: StudioBrief[];
 }
 
 export interface AdminDataResponse {

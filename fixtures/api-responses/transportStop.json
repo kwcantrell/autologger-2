@@ -1,0 +1,9 @@
+{
+  "is_rolling": false,
+  "current_take": 1,
+  "roll_started_at_utc": null,
+  "elapsed_frames": 0,
+  "timecode": "##:##:##:##",
+  "timecode_total_frames": 0,
+  "stopped": true
+}

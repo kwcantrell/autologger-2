@@ -45,15 +45,12 @@ function statusFixture(): SessionStatus {
     timecode: '00:00:30:00',
     session_timecode: '00:00:30:00',
     master_timecode: '00:00:30:00',
-    timecode_total_frames: 720,
     frame_rate: 24,
-    start_offset_frames: 0,
     current_take: 0,
     audio_recording_lease_alive: false,
     audio_recording_lease_holder_id: null,
     event_count: 0,
     logged_event_count: 0,
-    audio_segment_count: 0,
     title: 'Anchor guard test session',
     deck_title: '',
     show_name: null,
@@ -70,7 +67,6 @@ function statusFixture(): SessionStatus {
 function topicFixture(overrides: Partial<SessionTopic> = {}): SessionTopic {
   return {
     id: 'topic-1',
-    session_id: SESSION_ID,
     session_time: '00:00:10:00',
     duration_sec: 30,
     topic_level: 1,

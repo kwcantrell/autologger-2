@@ -32,13 +32,11 @@ function categoryFixture(): Category {
 function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   return {
     event_id: 'ev-1',
-    session_id: 'sess-1',
     category: 'general',
     category_label: 'General',
     category_color: '#4488ff',
     message: 'A logged note',
     timecode: '00:00:10:00',
-    timecode_hms: '00:00:10',
     timecode_total_frames: 240,
     frame_rate: 24,
     wall_time_utc: '2026-07-21T00:00:10Z',
