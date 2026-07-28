@@ -75,7 +75,7 @@ describe('CW-1 — transport start/stop emit the transport state, not `{ok}`', (
   it('the emitted start body is assignable to TransportStartResponse', () => {
     const check: TransportStartResponse = startEmitted;
     expect(check.started).toBe(true);
-    // `ok` was the old (wrong) declaration; it is absent from the wire.
+    // `ok` was the old (wrong) declaration; it is absent from this transcribed emission.
     expect('ok' in startEmitted).toBe(false);
   });
 
@@ -192,7 +192,7 @@ describe('CW-3 — SessionStatus declared three fields /status never emits', () 
     expect(check.logged_event_count).toBe(2);
   });
 
-  it('the three removed fields are genuinely absent from the wire', () => {
+  it('the three removed fields are absent from the transcribed emission', () => {
     for (const key of ['timecode_total_frames', 'start_offset_frames', 'audio_segment_count']) {
       expect(key in emitted).toBe(false);
     }
@@ -245,7 +245,7 @@ describe('CW-4 — LogEvent declared two unemitted fields and two over-narrow ty
     expect(orphan.timecode).toBeNull();
   });
 
-  it('`session_id` and `timecode_hms` are absent from the wire', () => {
+  it('`session_id` and `timecode_hms` are absent from the transcribed emission', () => {
     for (const key of ['session_id', 'timecode_hms']) {
       expect(key in resolvedEmitted).toBe(false);
     }
@@ -289,7 +289,7 @@ describe('CW-5 — AudioSegment declared three fields `segmentApiDict` never emi
     expect(check.has_audio).toBe(true);
   });
 
-  it('no duration, session id, or file path is on the wire', () => {
+  it('no duration, session id, or file path appears in the transcribed emission', () => {
     for (const key of ['session_id', 'duration_sec', 'file_path', 'r2_key']) {
       expect(key in emitted).toBe(false);
     }
@@ -313,7 +313,7 @@ describe('CW-6 — SessionTopic declared a `session_id` the topics routes never 
     expect(check.ordinal).toBe(0);
   });
 
-  it('`session_id` is absent — unlike the transcript-words rows', () => {
+  it('`session_id` is absent from the transcribed topic — unlike the transcript-words rows', () => {
     expect('session_id' in emitted).toBe(false);
     // The contrast that made this easy to get wrong: the transcript-words
     // handlers DO spread `{...w, session_id}` onto every row.
