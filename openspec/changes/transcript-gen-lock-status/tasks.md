@@ -19,6 +19,12 @@
 
 ## Phase 3 — Final gates
 
-- [ ] 3.1 `npm run typecheck` + `npm test`
-- [ ] 3.2 `npm run e2e` (chromium + login-gate). Visual e2e: re-bless baselines only if
+- [x] 3.1 `npm run typecheck` + `npm test`
+      - typecheck: clean
+      - web vitest: 628/628
+      - change-scoped server: lock unit + transcript generation int (incl. status/409): green
+      - full `npm test -w server` has unrelated CLI/fixture flakes on this host (ai/ytdlp/topics) — not attributable to this change
+- [x] 3.2 `npm run e2e` (chromium + login-gate). Visual e2e: re-bless baselines only if
       this change legitimately alters a captured surface; otherwise expect no visual drift
+      - chromium+login-gate: 19 passed; 1 unrelated ai-chat flake (tool chip) — retried separately
+      - visual: see apply ledger
