@@ -15,7 +15,7 @@
 
 ## 2. Server consolidations
 
-- [ ] 2.1 Deck title: `events.ts` + `companion.ts` call `sessionDeckDisplayTitle`
+- [x] 2.1 Deck title: `events.ts` + `companion.ts` call `sessionDeckDisplayTitle`
       (finding 2.4); output-equality tests for both call sites
 - [ ] 2.2 `core.eventCounts()` per D10; transportStore/eventStore consume it; statusLive
       results pinned before/after (finding 2.10)
@@ -25,11 +25,11 @@
 - [ ] 2.4 Store helpers: shared patch-builder + ordinal-seed helpers (topic/transcript
       stores), `freeLease()`, bidirectional mime↔ext table; incidental `SELECT 1` fix
       at the two sites this task already rewrites (finding 2.12)
-- [ ] 2.5 Companion: payload typed server-side per D11 (incl. the two under-declared
+- [x] 2.5 Companion: payload typed server-side per D11 (incl. the two under-declared
       `last_command` fields; wire bytes pinned by existing companion int tests); row
       returned from `requireActiveSession`, three re-fetch sites consume it, both
       non-null casts deleted (findings 2.14, 5.6)
-- [ ] 2.6 KEEP the PUT `internal` branch per D9; add the reachability/asymmetry
+- [x] 2.6 KEEP the PUT `internal` branch per D9; add the reachability/asymmetry
       comment; add the pinning test for a profile-defined `internal` category (delta
       spec scenarios) (finding 3.8)
 - [ ] 2.7 Catalog cleanups per D12: `authSetPrefs` upsert, `tx()` on the two
