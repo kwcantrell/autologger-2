@@ -95,8 +95,8 @@
       so phase 2 is deliberately not review-tiered; full audit-package rules apply:
       materialized file list, stray-file scan, seam call-site checks — the new shared
       helpers ARE declared seams, package integrity)
-- [ ] 6.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — baselines
+- [x] 6.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — baselines
       last re-blessed 2026-07-26; this change intends zero visual change, so any diff
       is a defect, not a re-bless
-- [ ] 6.3 Full `npm test` + `npm run typecheck` + `npm run lint` across workspaces;
+- [x] 6.3 Full `npm test` + `npm run typecheck` + `npm run lint` across workspaces;
       update README/CLAUDE.md only if a consolidation moved a documented seam
