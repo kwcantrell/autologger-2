@@ -2,7 +2,8 @@
 // (generation is stubbed in the router). Moved verbatim out of the original single-file session spine.
 
 import { isoZ } from '../timecode';
-import type { Row, SessionCore, SqlValue } from './sessionCore';
+import type { Row, SessionCore } from './sessionCore';
+import { buildPatch, nextOrdinal } from './storeHelpers';
 
 export interface TranscriptWord {
   id: string;
@@ -120,11 +121,7 @@ export class TranscriptStore {
     word: string;
   }): TranscriptWord {
     const id = crypto.randomUUID();
-    const ordinal = Number(
-      this.core.first(
-        'SELECT COALESCE(MAX(ordinal), -1) + 1 AS n FROM session_transcript_words',
-      )?.n ?? 0,
-    );
+    const ordinal = nextOrdinal(this.core, 'session_transcript_words');
     this.core.db.run(
       `INSERT INTO session_transcript_words (id, session_time, speaker, word, ordinal, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -144,16 +141,12 @@ export class TranscriptStore {
     wordId: string,
     patch: { session_time?: string; speaker?: string; word?: string },
   ): TranscriptWord | null {
-    const existing = this.core.first('SELECT * FROM session_transcript_words WHERE id = ?', wordId);
+    const existing = this.core.first(
+      'SELECT 1 AS x FROM session_transcript_words WHERE id = ?',
+      wordId,
+    );
     if (existing === null) return null;
-    const cols: string[] = [];
-    const vals: SqlValue[] = [];
-    for (const key of ['session_time', 'speaker', 'word'] as const) {
-      if (patch[key] !== undefined) {
-        cols.push(`${key} = ?`);
-        vals.push(patch[key] as string);
-      }
-    }
+    const { cols, vals } = buildPatch(patch, ['session_time', 'speaker', 'word'] as const);
     if (cols.length) {
       this.core.db.run(
         `UPDATE session_transcript_words SET ${cols.join(', ')} WHERE id = ?`,
