@@ -90,7 +90,7 @@
 
 ## 6. Final gates
 
-- [ ] 6.1 Whole-branch layered scoped audit per sdlc-process (no contract-surface
+- [x] 6.1 Whole-branch layered scoped audit per sdlc-process (no contract-surface
       phases here — the delta spec pins existing behavior, changing nothing observable,
       so phase 2 is deliberately not review-tiered; full audit-package rules apply:
       materialized file list, stray-file scan, seam call-site checks — the new shared
