@@ -183,8 +183,20 @@ single shape.
 accessible name is `Remove from <name>`; the request it issues is keyed by `id`.
 
 **Rationale.** The name is already in the response. Owner-selected as part of this change's
-scope, so it is specced rather than smuggled in. Its full cost is re-blessing two committed
-visual baselines, done in the same phase that changes the pixels.
+scope, so it is specced rather than smuggled in.
+
+**Corrected during apply (2026-07-27):** this decision was drafted as costing "re-blessing two
+committed visual baselines". It costs **nothing** — verified empirically at task 1.4, where
+`e2e:visual` was green before and after `--update-snapshots` with an empty snapshot diff. The
+`admin-users` visual test never enters an admin token, so `loadAll()` never runs and no chip is
+ever rendered into the screenshot. The pre-panel fact-check inferred the re-bless requirement
+from the baseline's mere existence and it was carried unverified into D8, `tasks.md` 1.4, and
+6.4; all three are corrected.
+
+**What this exposes:** the only e2e test that visits `/admin/users` asserts the heading and
+stops. It is structurally incapable of observing the crash this whole change exists to fix —
+which is precisely why the crash shipped. The scope reviewer named this during the panel. It is
+**not** closed by this change's plan of record; see the Panel & review log escalation.
 
 ### D9 — The audit ledger is version-controlled
 

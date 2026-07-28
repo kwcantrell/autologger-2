@@ -13,31 +13,41 @@ code by content before editing, since earlier phases shift line numbers.
 Standalone and shippable on its own. Spec: `web-admin-users`. TDD pair — 1.1 and 1.2 are one
 dispatch unit.
 
-- [ ] 1.1 Write failing tests for `AdminUsersPage` against a fixture in the **real** response
+- [x] 1.1 Write failing tests for `AdminUsersPage` against a fixture in the **real** response
       shape (`studios: [{id, name}]`): a user with memberships renders; a user with
       `studios: []` renders and still offers the add control; a membership whose `name` equals
       its `id` renders; the offered-teams set excludes existing memberships by `id`; the remove
       control issues `DELETE …/memberships/<id>`. Tests must fail against current `main`.
       Note: this fixture is superseded in phase 4 by the **captured** one — write it wire-
       accurate now, and 4.4 swaps it for the captured artifact.
-- [ ] 1.2 Retype `AdminUser` in `web/src/api/types.ts` — replace `memberships: string[]` with a
+- [x] 1.2 Retype `AdminUser` in `web/src/api/types.ts` — replace `memberships: string[]` with a
       `studios` array of `{id, name}`, **reusing the existing `StudioBrief`** rather than
       declaring a new shape — and update its consumers in `AdminUsersPage.tsx`: the two direct
       reads of the field (chip list, add-membership filter: `Array.includes` → `.some(m => m.id
       === s.id)`) plus the remove-handler argument threaded out of the chip list.
-- [ ] 1.3 Render the team **display name** on membership chips (D8). The remove control's
+- [x] 1.3 Render the team **display name** on membership chips (D8). The remove control's
       accessible name becomes `Remove from <name>` while the request stays keyed by `id`.
       Extend the phase-1 tests to assert both.
-- [ ] 1.4 Re-bless the two committed visual baselines this changes —
+- [x] 1.4 Re-bless the two committed visual baselines this changes —
       `admin-users-visual-{desktop,mobile}-linux.png` — in this phase, not at the end, so the
       branch is never left red across phases (`npm run e2e:visual:update`, then confirm the
       diff touches only the admin-users snapshots).
-- [ ] 1.5 Verify in a real browser against the running dev server. **Precondition: `ADMIN_TOKEN`
+      **Resolved 2026-07-27: no re-bless was needed, and the premise was wrong.** `npm run
+      e2e:visual` was green before *and* after `--update-snapshots` (44 passed, 4 skipped);
+      `git diff --exit-code` over `e2e/visual.spec.ts-snapshots/` was empty. Cause: the
+      `admin-users` visual test never enters an admin token, so `loadAll()` never fires and no
+      membership chips are ever rendered into the screenshot — D8's label change is outside what
+      that baseline captures. The pre-panel fact-check asserted the re-bless would be needed;
+      that inference was never verified and is now corrected. **This also confirms the coverage
+      gap the scope reviewer named: the one e2e test that visits `/admin/users` cannot see the
+      crash, which is why it shipped.** Tracked as a residual — see design.md D8 and the
+      escalation in the Panel & review log.
+- [x] 1.5 Verify in a real browser against the running dev server. **Precondition: `ADMIN_TOKEN`
       set AND at least one seeded user with at least one membership** — dev auth is anonymous
       and creates no OAuth user rows, so an empty users table would make this observation
       vacuous. Confirm name-labelled chips render and the React root stays mounted with no
       console error. Record the observation in the ledger.
-- [ ] 1.6 `npm run typecheck` + `npm test` green; `npm run lint` clean.
+- [x] 1.6 `npm run typecheck` + `npm test` green; `npm run lint` clean.
 
 ## 2. Characterize the `apiFetch` success path
 
@@ -140,10 +150,10 @@ carry payloads and which shapes are branch-dependent.
 - [ ] 6.1 `npm run typecheck` and `npm test` green across all three workspaces.
 - [ ] 6.2 `npm run lint` clean.
 - [ ] 6.3 `npm run e2e` (chromium + login-gate projects) green.
-- [ ] 6.4 `npm run e2e:visual` (visual-desktop + visual-mobile) green against the baselines
-      re-blessed in 1.4. Baselines are otherwise current as of 2026-07-14, so **any diff on a
-      non-admin-users baseline at this point is an unintended regression** — investigate, do not
-      re-bless.
+- [ ] 6.4 `npm run e2e:visual` (visual-desktop + visual-mobile) green. 1.4 established that this
+      branch changes **no** baseline pixels (the admin-users visual test never loads data, so the
+      chip label is outside its capture). Baselines are current as of 2026-07-14, so **any diff
+      at all at this point is an unintended regression** — investigate, do not re-bless.
 - [ ] 6.5 Browser re-verification of `/admin/users` under 1.5's precondition: page loads, chips
       render names, no console error.
 - [ ] 6.6 Confirm no runtime surface changed: `web/package.json` gained no dependency, and the
