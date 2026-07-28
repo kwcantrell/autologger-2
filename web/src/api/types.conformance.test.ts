@@ -36,7 +36,9 @@ import type {
   LogEvent,
   ProfilePayload,
   SessionStatus,
+  SessionTopic,
   ShowCategoriesResponse,
+  TranscriptWord,
   TransportStartResponse,
   TransportStateSnapshot,
   TransportStopResponse,
@@ -286,5 +288,41 @@ describe('CW-5 — AudioSegment declared three fields `segmentApiDict` never emi
     for (const key of ['session_id', 'duration_sec', 'file_path', 'r2_key']) {
       expect(key in emitted).toBe(false);
     }
+  });
+});
+
+describe('CW-6 — SessionTopic declared a `session_id` the topics routes never add', () => {
+  // Server: `topicRow` (`server/src/session/topicStore.ts`), returned verbatim.
+  const emitted = {
+    id: 'topic-1',
+    session_time: '00:00:10:00',
+    duration_sec: 30,
+    topic_level: 1,
+    summary: 'A summary',
+    ordinal: 0,
+    created_at_utc: '2026-07-27T00:00:00Z',
+  };
+
+  it('the emitted topic is assignable to SessionTopic', () => {
+    const check: SessionTopic = emitted;
+    expect(check.ordinal).toBe(0);
+  });
+
+  it('`session_id` is absent — unlike the transcript-words rows', () => {
+    expect('session_id' in emitted).toBe(false);
+    // The contrast that made this easy to get wrong: the transcript-words
+    // handlers DO spread `{...w, session_id}` onto every row.
+    const word: TranscriptWord = {
+      id: 'w-1',
+      session_id: 'sess-1',
+      session_time: '00:00:10:00',
+      speaker: '0',
+      word: 'hello',
+      start_sec: 0,
+      end_sec: 0,
+      ordinal: 0,
+      created_at_utc: '2026-07-27T00:00:00Z',
+    };
+    expect(word.session_id).toBe('sess-1');
   });
 });

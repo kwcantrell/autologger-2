@@ -67,7 +67,6 @@ function statusFixture(): SessionStatus {
 function topicFixture(overrides: Partial<SessionTopic> = {}): SessionTopic {
   return {
     id: 'topic-1',
-    session_id: SESSION_ID,
     session_time: '00:00:10:00',
     duration_sec: 30,
     topic_level: 1,

@@ -66,7 +66,6 @@ const NO_TIMING_WORDS: TranscriptWord[] = [
 const TOPICS: SessionTopic[] = [
   {
     id: 't1',
-    session_id: 'sess-1',
     session_time: '0:00',
     duration_sec: 60,
     topic_level: 0,

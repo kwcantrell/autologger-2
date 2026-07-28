@@ -261,9 +261,17 @@ export interface TranscriptWord {
   created_at_utc: string;
 }
 
+/**
+ * A topics row — server: `topicRow` (`server/src/session/topicStore.ts`),
+ * returned **verbatim** by all four `transcribe.ts` topic handlers.
+ *
+ * Note the asymmetry with `TranscriptWord` above: the transcript-words routes
+ * spread `{...w, session_id: sessionId}` onto every row, the topics routes do
+ * not, and `Topic` has no `session_id` column. The client declared one anyway
+ * (web-api-shape-conformance audit CW-6).
+ */
 export interface SessionTopic {
   id: string;
-  session_id: string;
   session_time: string;
   duration_sec: number;
   topic_level: number;
