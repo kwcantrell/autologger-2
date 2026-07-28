@@ -12,8 +12,8 @@
 
 import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
-import type { AuthUser, Catalog, Row } from '../db/catalog';
 import type { TeamRole } from '../db/authStore';
+import type { AuthUser, Catalog, Row } from '../db/catalog';
 import { normalizeEmail } from '../db/shared';
 import {
   teamCreateBodySchema,
@@ -67,10 +67,7 @@ function requireNotBuiltin(teamId: string): void {
 /** requireTeamMember (design D3): 401 with no user; the built-in guard runs
  * before membership is even consulted; masked 404 for a team the caller isn't
  * a member of (nonexistent and foreign teams are indistinguishable). */
-function requireTeamMember(
-  c: Context<AppEnv>,
-  teamId: string,
-): { user: AuthUser; role: TeamRole } {
+function requireTeamMember(c: Context<AppEnv>, teamId: string): { user: AuthUser; role: TeamRole } {
   const user = requireUser(c);
   requireNotBuiltin(teamId);
   const role = c.get('catalog').auth.authGetMembershipRole(user.id, teamId);
@@ -309,6 +306,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
 teamsRouter.post('/api/teams/:id/leave', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user } = requireTeamMember(c, teamId);
-  guardedAgainstLastAdmin(c, teamId, user.id, (cat) => cat.auth.authRemoveMembership(user.id, teamId));
+  guardedAgainstLastAdmin(c, teamId, user.id, (cat) =>
+    cat.auth.authRemoveMembership(user.id, teamId),
+  );
   return c.json({ ok: true });
 });

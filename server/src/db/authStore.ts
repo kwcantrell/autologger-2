@@ -2,8 +2,8 @@
 // Moved verbatim out of catalog.ts (Catalog). Self-contained on this.db.
 
 import type { CatalogDb } from '../node/catalogStore';
-import { normalizeEmail, nowIso } from './shared';
 import type { Row } from './shared';
+import { normalizeEmail, nowIso } from './shared';
 
 export type TeamRole = 'admin' | 'member';
 
@@ -109,7 +109,10 @@ export class AuthStore {
       'SELECT studio_id, role FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
       userId,
     );
-    return results.map((r) => ({ studioId: String(r.studio_id), role: String(r.role) as TeamRole }));
+    return results.map((r) => ({
+      studioId: String(r.studio_id),
+      role: String(r.role) as TeamRole,
+    }));
   }
 
   authAddMemberships(userId: string, studioIds: string[]): void {

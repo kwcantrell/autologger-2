@@ -37,9 +37,9 @@ describe('newSessionBodySchema', () => {
     if (r.success) expect(r.data).toMatchObject({ frame_rate: 24, start_offset_frames: 0 });
   });
   it('rejects frame_rate out of [1,120]', () => {
-    expect(newSessionBodySchema.safeParse({ show_id: 's', episode: '1', frame_rate: 0 }).success).toBe(
-      false,
-    );
+    expect(
+      newSessionBodySchema.safeParse({ show_id: 's', episode: '1', frame_rate: 0 }).success,
+    ).toBe(false);
     expect(
       newSessionBodySchema.safeParse({ show_id: 's', episode: '1', frame_rate: 121 }).success,
     ).toBe(false);
@@ -52,7 +52,9 @@ describe('newSessionBodySchema', () => {
 describe('eventUpdateBodySchema', () => {
   it('requires exactly-8-char timecode_hms', () => {
     const base = { category: 'c', message: 'm', wall_time_utc: 'w' };
-    expect(eventUpdateBodySchema.safeParse({ ...base, timecode_hms: '00:00:00' }).success).toBe(true);
+    expect(eventUpdateBodySchema.safeParse({ ...base, timecode_hms: '00:00:00' }).success).toBe(
+      true,
+    );
     expect(eventUpdateBodySchema.safeParse({ ...base, timecode_hms: '1:2:3' }).success).toBe(false);
   });
 });
@@ -63,12 +65,18 @@ describe('enum + bound schemas', () => {
     expect(companionCommandBodySchema.safeParse({ type: 'nope' }).success).toBe(false);
   });
   it('adminStudioCreateBodySchema enforces id length 2..63', () => {
-    expect(adminStudioCreateBodySchema.safeParse({ id: 'a', display_name: 'x' }).success).toBe(false);
-    expect(adminStudioCreateBodySchema.safeParse({ id: 'ab', display_name: 'x' }).success).toBe(true);
+    expect(adminStudioCreateBodySchema.safeParse({ id: 'a', display_name: 'x' }).success).toBe(
+      false,
+    );
+    expect(adminStudioCreateBodySchema.safeParse({ id: 'ab', display_name: 'x' }).success).toBe(
+      true,
+    );
   });
   it('audioSegmentWaveformBodySchema bounds peaks 8..4096', () => {
     expect(audioSegmentWaveformBodySchema.safeParse({ peaks: [1, 2, 3] }).success).toBe(false);
-    expect(audioSegmentWaveformBodySchema.safeParse({ peaks: Array(8).fill(0) }).success).toBe(true);
+    expect(audioSegmentWaveformBodySchema.safeParse({ peaks: Array(8).fill(0) }).success).toBe(
+      true,
+    );
   });
 });
 

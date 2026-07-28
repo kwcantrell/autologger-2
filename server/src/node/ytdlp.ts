@@ -114,7 +114,12 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
  * parent's env, never fabricated. Duplicated here (not imported) rather than
  * reused across the node/routers layering split (`server/src/node/` is
  * lower-level infrastructure; `routers/aiChatRunner.ts` is router-layer). */
-const OPTIONAL_ENV_PASSTHROUGH = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS'] as const;
+const OPTIONAL_ENV_PASSTHROUGH = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+] as const;
 
 /** Build the minimal, scrubbed child environment (design D9): HOME when the
  * parent has one (never fabricated), PATH pinned to the resolved binary's
@@ -208,7 +213,12 @@ function runYtDlpProcess(
     let settled = false;
     let child: ChildProcess;
     try {
-      child = spawn(binaryPath, argv, { shell: false, cwd: opts.cwd, env: opts.env, detached: true });
+      child = spawn(binaryPath, argv, {
+        shell: false,
+        cwd: opts.cwd,
+        env: opts.env,
+        detached: true,
+      });
     } catch {
       resolve({ exitCode: null, stdout: '', timedOut: false });
       return;
@@ -385,7 +395,8 @@ export async function fetchYoutubeAudio(opts: YtDlpFetchOptions): Promise<YtDlpF
     // after `Started`.
     throw new YtDlpError('This video has a non-positive duration, which is not supported.');
   }
-  const uploadDate = typeof meta.upload_date === 'string' && meta.upload_date ? meta.upload_date : null;
+  const uploadDate =
+    typeof meta.upload_date === 'string' && meta.upload_date ? meta.upload_date : null;
 
   // ── Step 2: the actual download — pinned format, fixed output template,
   // byte-size cap, and a duration match-filter (belt-and-suspenders

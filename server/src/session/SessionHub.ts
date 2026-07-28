@@ -8,16 +8,15 @@
 // RPC runs in a transaction (multi-statement mutations must be atomic;
 // autocommit per-statement would not be).
 
-import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { systemClock } from '../clock';
+import Database from 'better-sqlite3';
 import type { Clock } from '../clock';
+import { systemClock } from '../clock';
 import { AudioStore } from './audioStore';
 import { DashboardStore } from './dashboardStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
-import { SessionCore } from './sessionCore';
 import type {
   AttachedSocket,
   Row,
@@ -26,16 +25,17 @@ import type {
   SqlValue,
   TimecodeCtx,
 } from './sessionCore';
+import { SessionCore } from './sessionCore';
 import { TopicStore } from './topicStore';
 import { TranscriptStore } from './transcriptStore';
 import { TransportStore } from './transportStore';
 
-export type { SessionProjection, TransportState } from './sessionCore';
 export type { AudioSegmentMeta } from './audioStore';
-export type { TranscriptWord } from './transcriptStore';
-export type { Topic } from './topicStore';
 export type { StoredDashboard } from './dashboardStore';
 export { DashboardBoundsError, DashboardValidationError } from './dashboardStore';
+export type { SessionProjection, TransportState } from './sessionCore';
+export type { Topic } from './topicStore';
+export type { TranscriptWord } from './transcriptStore';
 
 interface HubSocket extends AttachedSocket {
   raw: { send(data: string): void };
@@ -47,7 +47,9 @@ interface HubSocket extends AttachedSocket {
 export function sqliteSessionSql(db: Database.Database): SessionSql {
   return {
     all: <T = Row>(sql: string, ...binds: SqlValue[]) => db.prepare(sql).all(...binds) as T[],
-    run: (sql: string, ...binds: SqlValue[]) => ({ changes: db.prepare(sql).run(...binds).changes }),
+    run: (sql: string, ...binds: SqlValue[]) => ({
+      changes: db.prepare(sql).run(...binds).changes,
+    }),
     exec: (multiStatementSql: string) => {
       db.exec(multiStatementSql);
     },

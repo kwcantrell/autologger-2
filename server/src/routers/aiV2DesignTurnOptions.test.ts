@@ -13,7 +13,12 @@
 
 import { homedir, tmpdir } from 'node:os';
 import { relative } from 'node:path';
-import type { CanUseTool, McpServerConfig, SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  McpServerConfig,
+  SpawnedProcess,
+  SpawnOptions,
+} from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import {

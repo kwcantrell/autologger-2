@@ -1,5 +1,5 @@
-import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
+import { app, env } from '../test/harness';
 import { seededSession } from '../test/helpers';
 
 async function logEvent(session: string, message: string): Promise<Response> {
@@ -18,7 +18,11 @@ describe('events flow', () => {
   it('logs an event then lists it', async () => {
     const session = seededSession().sessionId;
     expect((await logEvent(session, 'Cut to 2')).status).toBe(200);
-    const list = await app.request(`/api/sessions/${session}/events`, { method: 'GET' }, { ...env });
+    const list = await app.request(
+      `/api/sessions/${session}/events`,
+      { method: 'GET' },
+      { ...env },
+    );
     expect(list.status).toBe(200);
     const body = (await list.json()) as { events: unknown[] };
     expect(body.events.length).toBeGreaterThanOrEqual(1);
@@ -56,7 +60,10 @@ describe('audio flow (blob-store round-trip)', () => {
     // Zero-byte blobs can't arrive via upload (empty bodies are 400); they
     // reach the store the way they do in the field — bytes already on disk,
     // registered via sync-from-disk.
-    await env.ports.audio.put(`audio/${session}/0001_${crypto.randomUUID()}.webm`, new Uint8Array(0));
+    await env.ports.audio.put(
+      `audio/${session}/0001_${crypto.randomUUID()}.webm`,
+      new Uint8Array(0),
+    );
     const sync = await app.request(
       `/api/sessions/${session}/audio/segments/sync-from-disk`,
       { method: 'POST' },
@@ -100,7 +107,11 @@ describe('exports flow', () => {
   it('returns CSV and JSONL after an event is logged', async () => {
     const session = seededSession().sessionId;
     await logEvent(session, 'm');
-    const csv = await app.request(`/api/sessions/${session}/export.csv`, { method: 'GET' }, { ...env });
+    const csv = await app.request(
+      `/api/sessions/${session}/export.csv`,
+      { method: 'GET' },
+      { ...env },
+    );
     expect(csv.status).toBe(200);
     expect(await csv.text()).toContain(',');
     const jsonl = await app.request(

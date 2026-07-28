@@ -17,8 +17,8 @@
 // numeric fields; Phase 4 renders `available: false` as the explicit
 // unavailable state.
 
-import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
 import type { Topic } from '../session/topicStore';
+import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
 import type { EventRpc } from '../studio';
 
 // -- shared helpers ------------------------------------------------------------
@@ -120,7 +120,12 @@ export interface UtteranceStatsAggregate {
  * entered transcript, or one generated before paragraph persistence shipped. */
 export function computeUtteranceStats(paragraphs: TranscriptParagraph[]): UtteranceStatsAggregate {
   if (paragraphs.length === 0) {
-    return { available: false, reason: NO_PARAGRAPHS_REASON, utteranceCount: null, questionCount: null };
+    return {
+      available: false,
+      reason: NO_PARAGRAPHS_REASON,
+      utteranceCount: null,
+      questionCount: null,
+    };
   }
   const questionCount = paragraphs.filter((p) => p.text.trim().endsWith('?')).length;
   return {

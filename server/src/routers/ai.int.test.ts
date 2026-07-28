@@ -42,25 +42,33 @@
 // fixture — deterministic (a real OS process spawn cannot complete within a
 // few milliseconds) without needing `hang` mode to survive the whitelist.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { aiChatOpenNetworkRefused } from '../env';
-import type { Config } from '../types';
 import { app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
+  seededSession as seedSessionChain,
   seedStudio,
   seedUser,
-  seededSession as seedSessionChain,
 } from '../test/helpers';
+import type { Config } from '../types';
+import { __resetAiChatIssuedSessionIdsForTests } from './ai';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { getAiMcpListener } from './aiMcpServer';
-import { __resetAiChatIssuedSessionIdsForTests } from './ai';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
 // OBSERVATION note above) — harmless, but not load-bearing through this
@@ -171,7 +179,12 @@ function post(
 ) {
   return app.request(
     `/api/sessions/${sessionId}/ai/chat`,
-    { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body), signal },
+    {
+      method: 'POST',
+      headers,
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+      signal,
+    },
     reqEnv,
   );
 }
@@ -246,7 +259,12 @@ describe('ai/chat — open-network refusal (503)', () => {
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' }),
+      envWith({
+        CLAUDE_CLI_PATH: FIXTURE_CLI,
+        REQUIRE_LOGIN: '0',
+        HOST: '0.0.0.0',
+        IP_ALLOWLIST: '',
+      }),
     );
     expect(res.status).toBe(503);
     const detail = ((await res.json()) as { detail: string }).detail;
@@ -261,13 +279,30 @@ describe('ai/chat — open-network refusal (503)', () => {
   // before the route runs. Exercise the pure predicate directly instead.
   it('predicate: refuses only anonymous + non-loopback + no-allowlist binds', () => {
     const base: Config = {
-      PUBLIC_BASE_URL: '', HOST: '0.0.0.0', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '0', SESSION_COOKIE: '', SESSION_DAYS: '14', NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '', IP_ALLOWLIST: '', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: CLI, AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
-      AI_V2_ENABLED: '', AI_V2_API_KEY: '', AI_V2_MAX_BUDGET_USD: '',
+      PUBLIC_BASE_URL: '',
+      HOST: '0.0.0.0',
+      GOOGLE_CLIENT_ID: '',
+      GOOGLE_CLIENT_SECRET: '',
+      REQUIRE_LOGIN: '0',
+      SESSION_COOKIE: '',
+      SESSION_DAYS: '14',
+      NEW_USER_ALL_TEAMS: '0',
+      COOKIE_SECURE: '',
+      IP_ALLOWLIST: '',
+      TRUST_PROXY: '',
+      API_TOKEN: '',
+      ADMIN_TOKEN: '',
+      DEEPGRAM_API_KEY: '',
+      DEEPGRAM_MODEL: '',
+      CLAUDE_CLI_PATH: CLI,
+      AI_CHAT_TIMEOUT_SEC: '',
+      AI_CHAT_MAX_CONCURRENT: '',
+      AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_TIMEOUT_SEC: '',
+      AI_V2_ENABLED: '',
+      AI_V2_API_KEY: '',
+      AI_V2_MAX_BUDGET_USD: '',
     };
     // anonymous + non-loopback + no allowlist → refused
     expect(aiChatOpenNetworkRefused(base)).toBe(true);
@@ -349,33 +384,45 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
 describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, before single-flight/spawn)', () => {
   it('422 for a claude_session_id never issued to any session — no spawn', async () => {
     const s = seededSession();
-    const res = await post(s, { message: 'hi', claude_session_id: 'never-issued-id' }, fixtureEnv());
+    const res = await post(
+      s,
+      { message: 'hi', claude_session_id: 'never-issued-id' },
+      fixtureEnv(),
+    );
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
   });
 
-  it('422 for a claude_session_id issued to a DIFFERENT session (foreign) — no spawn, ' +
-    "session A's conversation is never resumed under session B", async () => {
-    const sessionA = seededSession();
-    const sessionB = seededSession();
+  it(
+    '422 for a claude_session_id issued to a DIFFERENT session (foreign) — no spawn, ' +
+      "session A's conversation is never resumed under session B",
+    async () => {
+      const sessionA = seededSession();
+      const sessionB = seededSession();
 
-    // Turn one on session A issues (and this relay records) the fixture's
-    // default claude_session_id.
-    const first = await post(sessionA, { message: 'start on A' }, fixtureEnv());
-    expect(first.status).toBe(200);
-    const firstEvents = parseSse(await first.text());
-    const issuedId = (firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string })
-      .claude_session_id;
-    expect(issuedId).toBe('fixture-cli-session-id');
-    expect(neverSpawned(sessionB)).toBe(true); // sanity: B untouched so far
+      // Turn one on session A issues (and this relay records) the fixture's
+      // default claude_session_id.
+      const first = await post(sessionA, { message: 'start on A' }, fixtureEnv());
+      expect(first.status).toBe(200);
+      const firstEvents = parseSse(await first.text());
+      const issuedId = (
+        firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string }
+      ).claude_session_id;
+      expect(issuedId).toBe('fixture-cli-session-id');
+      expect(neverSpawned(sessionB)).toBe(true); // sanity: B untouched so far
 
-    // Session B tries to resume A's id — rejected before any subprocess.
-    // Real proof of "no spawn for B": B's cwd never gets an argv recording.
-    const res = await post(sessionB, { message: 'hijack', claude_session_id: issuedId }, fixtureEnv());
-    expect(res.status).toBe(422);
-    expect(neverSpawned(sessionB)).toBe(true);
-  });
+      // Session B tries to resume A's id — rejected before any subprocess.
+      // Real proof of "no spawn for B": B's cwd never gets an argv recording.
+      const res = await post(
+        sessionB,
+        { message: 'hijack', claude_session_id: issuedId },
+        fixtureEnv(),
+      );
+      expect(res.status).toBe(422);
+      expect(neverSpawned(sessionB)).toBe(true);
+    },
+  );
 
   it('same-session resume: an id issued for THIS session is accepted and passed as --resume', async () => {
     const s = seededSession();
@@ -383,10 +430,15 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
     const first = await post(s, { message: 'start' }, fixtureEnv());
     expect(first.status).toBe(200);
     const firstEvents = parseSse(await first.text());
-    const issuedId = (firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string })
-      .claude_session_id;
+    const issuedId = (
+      firstEvents.find((e) => e.event === 'done')?.data as { claude_session_id: string }
+    ).claude_session_id;
 
-    const second = await post(s, { message: 'continue', claude_session_id: issuedId }, fixtureEnv());
+    const second = await post(
+      s,
+      { message: 'continue', claude_session_id: issuedId },
+      fixtureEnv(),
+    );
     expect(second.status).toBe(200);
     // Drain fully BEFORE inspecting the fixture's recording — streamSSE's
     // callback runs independently of Response construction, so the spawn
@@ -394,7 +446,9 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
     // is actually consumed.
     const secondEvents = parseSse(await second.text());
     // The fixture's success mode echoes back whatever --resume id it was given.
-    expect(secondEvents.find((e) => e.event === 'done')?.data).toEqual({ claude_session_id: issuedId });
+    expect(secondEvents.find((e) => e.event === 'done')?.data).toEqual({
+      claude_session_id: issuedId,
+    });
     // Real proof --resume was passed: the fixture's OWN recording of the argv
     // it actually received (not the non-functional spawnSpy — see SPAWN
     // OBSERVATION note at the top of this file).
@@ -439,96 +493,105 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
 });
 
 describe('ai/chat — guaranteed turn timeout kills the subprocess (task 3.4, spec "Subprocess lifecycle")', () => {
-  it('an impossibly-short AI_CHAT_TIMEOUT_SEC forces termination even though the CLI would otherwise ' +
-    'succeed, ending the stream with EXACTLY ONE error{timeout} event and cleaning up every resource', async () => {
-    const s = seededSession();
-    // A real OS process spawn (fork+exec+Node startup) cannot complete within
-    // 10ms — measured on this machine at ~25-40ms even for the trivial fixture
-    // — so this timeout deterministically wins the race against the (fast)
-    // `success` fixture, without needing `hang` mode (unreachable through the
-    // real HTTP path — see the header note).
-    const res = await post(s, { message: 'hi' }, fixtureEnv({ AI_CHAT_TIMEOUT_SEC: '0.01' }));
-    expect(res.status).toBe(200); // accepted — the guard order already passed; the failure is mid-stream.
-    // Draining fully waits for the route's ENTIRE `finally` (kill, dispose,
-    // cleanup, release) to complete — see the resume test's note above on why
-    // this ordering is safe, not a race.
-    const events = parseSse(await res.text());
-    expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
+  it(
+    'an impossibly-short AI_CHAT_TIMEOUT_SEC forces termination even though the CLI would otherwise ' +
+      'succeed, ending the stream with EXACTLY ONE error{timeout} event and cleaning up every resource',
+    async () => {
+      const s = seededSession();
+      // A real OS process spawn (fork+exec+Node startup) cannot complete within
+      // 10ms — measured on this machine at ~25-40ms even for the trivial fixture
+      // — so this timeout deterministically wins the race against the (fast)
+      // `success` fixture, without needing `hang` mode (unreachable through the
+      // real HTTP path — see the header note).
+      const res = await post(s, { message: 'hi' }, fixtureEnv({ AI_CHAT_TIMEOUT_SEC: '0.01' }));
+      expect(res.status).toBe(200); // accepted — the guard order already passed; the failure is mid-stream.
+      // Draining fully waits for the route's ENTIRE `finally` (kill, dispose,
+      // cleanup, release) to complete — see the resume test's note above on why
+      // this ordering is safe, not a race.
+      const events = parseSse(await res.text());
+      expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
 
-    // No orphan (timing-independent — see anyProcessInCwd's doc comment).
-    expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
-    // Generated MCP config removed.
-    expect(existsSync(fixtureConfigPath(s))).toBe(false);
-    // MCP registration count back to 0 — the process-wide singleton, so this
-    // is real proof `mcpTurn.dispose()` ran (not just "the route returned").
-    const listener = await getAiMcpListener(env.ports.sessions);
-    expect(listener.registrationCount).toBe(0);
-    // The slot is released — a follow-up turn on the SAME session succeeds
-    // normally (proves release-on-timeout, not just release-on-success).
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-    const second = await post(s, { message: 'again' }, fixtureEnv());
-    expect(second.status).toBe(200);
-    const secondEvents = parseSse(await second.text());
-    expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
-  });
+      // No orphan (timing-independent — see anyProcessInCwd's doc comment).
+      expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
+      // Generated MCP config removed.
+      expect(existsSync(fixtureConfigPath(s))).toBe(false);
+      // MCP registration count back to 0 — the process-wide singleton, so this
+      // is real proof `mcpTurn.dispose()` ran (not just "the route returned").
+      const listener = await getAiMcpListener(env.ports.sessions);
+      expect(listener.registrationCount).toBe(0);
+      // The slot is released — a follow-up turn on the SAME session succeeds
+      // normally (proves release-on-timeout, not just release-on-success).
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+      const second = await post(s, { message: 'again' }, fixtureEnv());
+      expect(second.status).toBe(200);
+      const secondEvents = parseSse(await second.text());
+      expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
+    },
+  );
 });
 
 describe('ai/chat — best-effort client disconnect kills the subprocess (task 3.4, spec "Subprocess lifecycle")', () => {
-  it('an already-aborted request signal kills the spawned CLI process group and cleans up every ' +
-    'resource, ending the stream with NO terminal event (nobody is listening)', async () => {
-    const s = seededSession();
-    const controller = new AbortController();
-    controller.abort(); // simulates the client having already disconnected
-    const res = await post(s, { message: 'hi' }, fixtureEnv(), J, controller.signal);
-    // Guard order already accepted the turn (auth/404/503/422/409 all passed)
-    // before the abort race inside the stream callback ever runs.
-    expect(res.status).toBe(200);
-    const events = parseSse(await res.text());
-    // Best-effort disconnect: spec permits (and this design chooses) NO
-    // terminal event at all — the client that would receive it is gone.
-    expect(events).toEqual([]);
+  it(
+    'an already-aborted request signal kills the spawned CLI process group and cleans up every ' +
+      'resource, ending the stream with NO terminal event (nobody is listening)',
+    async () => {
+      const s = seededSession();
+      const controller = new AbortController();
+      controller.abort(); // simulates the client having already disconnected
+      const res = await post(s, { message: 'hi' }, fixtureEnv(), J, controller.signal);
+      // Guard order already accepted the turn (auth/404/503/422/409 all passed)
+      // before the abort race inside the stream callback ever runs.
+      expect(res.status).toBe(200);
+      const events = parseSse(await res.text());
+      // Best-effort disconnect: spec permits (and this design chooses) NO
+      // terminal event at all — the client that would receive it is gone.
+      expect(events).toEqual([]);
 
-    expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
-    expect(existsSync(fixtureConfigPath(s))).toBe(false);
-    const listener = await getAiMcpListener(env.ports.sessions);
-    expect(listener.registrationCount).toBe(0);
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-    const second = await post(s, { message: 'again' }, fixtureEnv());
-    expect(second.status).toBe(200);
-    const secondEvents = parseSse(await second.text());
-    expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
-  });
+      expect(anyProcessInCwd(stableSessionCwd(s))).toBe(false);
+      expect(existsSync(fixtureConfigPath(s))).toBe(false);
+      const listener = await getAiMcpListener(env.ports.sessions);
+      expect(listener.registrationCount).toBe(0);
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+      const second = await post(s, { message: 'again' }, fixtureEnv());
+      expect(second.status).toBe(200);
+      const secondEvents = parseSse(await second.text());
+      expect(secondEvents.some((e) => e.event === 'done')).toBe(true);
+    },
+  );
 });
 
 describe('ai/chat — setup failures never leak the raw exception (task 3.4 concern B)', () => {
-  it('when spawnAiChatTurn itself throws (a real, hermetic failure — not a mock), the client ' +
-    "sees the SCRUBBED internal-error detail, never the raw exception's text or paths", async () => {
-    const s = seededSession();
-    // A REAL, hermetic way to force spawnAiChatTurn's mkdirSync to throw
-    // (EEXIST) — no mocking of shared infra: pre-occupy the exact path
-    // `stableSessionCwd(s)` with a FILE instead of a directory, so
-    // `mkdirSync(cwd, {recursive:true})` cannot create it.
-    const cwd = stableSessionCwd(s);
-    mkdirSync(dirname(cwd), { recursive: true });
-    writeFileSync(cwd, 'not-a-directory — forces spawnAiChatTurn to throw EEXIST');
+  it(
+    'when spawnAiChatTurn itself throws (a real, hermetic failure — not a mock), the client ' +
+      "sees the SCRUBBED internal-error detail, never the raw exception's text or paths",
+    async () => {
+      const s = seededSession();
+      // A REAL, hermetic way to force spawnAiChatTurn's mkdirSync to throw
+      // (EEXIST) — no mocking of shared infra: pre-occupy the exact path
+      // `stableSessionCwd(s)` with a FILE instead of a directory, so
+      // `mkdirSync(cwd, {recursive:true})` cannot create it.
+      const cwd = stableSessionCwd(s);
+      mkdirSync(dirname(cwd), { recursive: true });
+      writeFileSync(cwd, 'not-a-directory — forces spawnAiChatTurn to throw EEXIST');
 
-    const res = await post(s, { message: 'hi' }, fixtureEnv());
-    expect(res.status).toBe(200); // guards already passed; the failure is inside the stream callback.
-    const events = parseSse(await res.text());
-    expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200); // guards already passed; the failure is inside the stream callback.
+      const events = parseSse(await res.text());
+      expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
 
-    // The raw exception (EEXIST, the tmp path, the sessionId-derived cwd) never
-    // reaches the client — only the fixed, scrubbed detail string.
-    const wire = JSON.stringify(events);
-    expect(wire).not.toMatch(/EEXIST|ENOENT|mkdir|not-a-directory/i);
-    expect(wire).not.toContain(cwd);
-    expect(wire).not.toContain(s);
+      // The raw exception (EEXIST, the tmp path, the sessionId-derived cwd) never
+      // reaches the client — only the fixed, scrubbed detail string.
+      const wire = JSON.stringify(events);
+      expect(wire).not.toMatch(/EEXIST|ENOENT|mkdir|not-a-directory/i);
+      expect(wire).not.toContain(cwd);
+      expect(wire).not.toContain(s);
 
-    // Cleanup still ran on this path: the MCP turn WAS registered (before the
-    // throw) and its dispose() still fired in `finally` — registration count
-    // returns to 0 even when spawnAiChatTurn itself fails.
-    const listener = await getAiMcpListener(env.ports.sessions);
-    expect(listener.registrationCount).toBe(0);
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-  });
+      // Cleanup still ran on this path: the MCP turn WAS registered (before the
+      // throw) and its dispose() still fired in `finally` — registration count
+      // returns to 0 even when spawnAiChatTurn itself fails.
+      const listener = await getAiMcpListener(env.ports.sessions);
+      expect(listener.registrationCount).toBe(0);
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    },
+  );
 });

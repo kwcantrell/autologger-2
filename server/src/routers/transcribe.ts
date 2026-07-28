@@ -7,9 +7,9 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
-import { Hono } from 'hono';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Hono } from 'hono';
 import {
   aiChatConfigured,
   aiChatMaxConcurrent,
@@ -20,14 +20,14 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { mergeAudioSegments } from '../node/audioMerge';
-import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
 import type { TranscribeGroupResult } from '../node/deepgram';
+import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
+import type { EnrichmentGroup, SegmentAnchorInfo } from '../node/transcriptRemap';
 import {
   recordingStartAnchors,
   remapTranscriptEnrichment,
   remapTranscriptWords,
 } from '../node/transcriptRemap';
-import type { EnrichmentGroup, SegmentAnchorInfo } from '../node/transcriptRemap';
 import {
   topicCreateSchema,
   topicUpdateSchema,
@@ -35,8 +35,8 @@ import {
   transcriptWordUpdateSchema,
 } from '../schemas';
 import type { AppEnv } from '../types';
-import { aiChatTurns } from './aiChatRegistry';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { aiChatTurns } from './aiChatRegistry';
 import { generateTopicsTurn } from './topicGenerate';
 
 export const transcribeRouter = new Hono<AppEnv>();
@@ -147,7 +147,12 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       try {
         // The provider call itself: per spec, a client disconnect from here
         // on does NOT abandon the run — no abort-check after this point.
-        result = await transcribeGroup({ outPath: group.outPath, family: group.family, apiKey, model });
+        result = await transcribeGroup({
+          outPath: group.outPath,
+          family: group.family,
+          apiKey,
+          model,
+        });
       } catch (err) {
         if (err instanceof DeepgramUpstreamError) {
           throw new ApiError(502, UPSTREAM_FAILURE_DETAIL);
@@ -172,7 +177,12 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       ordinal: s.ordinal,
       recordingOrdinal: s.recording_ordinal,
     }));
-    const remappedWords = remapTranscriptWords(enrichmentGroups, segmentInfo, anchors, timecodeCtx(row).frameRate);
+    const remappedWords = remapTranscriptWords(
+      enrichmentGroups,
+      segmentInfo,
+      anchors,
+      timecodeCtx(row).frameRate,
+    );
 
     if (remappedWords.length === 0) {
       throw new ApiError(400, NO_SPEECH_DETAIL);
@@ -189,7 +199,10 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     // never reaches this call, so pre-existing words and enrichment are left
     // untouched. Words + enrichment go together in the one atomic RPC (no
     // second write path).
-    const words = getSessionHub(c, sessionId).replaceTranscriptWords(remappedWords, remappedEnrichment);
+    const words = getSessionHub(c, sessionId).replaceTranscriptWords(
+      remappedWords,
+      remappedEnrichment,
+    );
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
   } finally {
     generationInFlight = false;
@@ -245,8 +258,7 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
 const TOPIC_GENERATE_OPEN_NETWORK_DETAIL =
   'Topic generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
   'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
-const NO_TRANSCRIPT_DETAIL =
-  'This session has no transcript words to generate topics from.';
+const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
 const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
   'A turn (AI chat or topic generation) is already in progress for this session; wait for it to finish before ' +
   'generating topics again. AI chat and topic generation share one per-session slot by design.';
@@ -283,7 +295,9 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   if (!slot.ok) {
     throw new ApiError(
       409,
-      slot.reason === 'session-busy' ? TOPIC_GENERATE_SESSION_BUSY_DETAIL : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
+      slot.reason === 'session-busy'
+        ? TOPIC_GENERATE_SESSION_BUSY_DETAIL
+        : TOPIC_GENERATE_AT_CAPACITY_DETAIL,
     );
   }
 
@@ -291,7 +305,11 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     // Record pre-run topic ids BEFORE the run (design D3's crash-safe swap):
     // nothing below ever mutates these topics until the atomic
     // delete-on-success.
-    const preRunIds = new Set((getSessionHub(c, sessionId).listTopics()).map((t) => t.id));
+    const preRunIds = new Set(
+      getSessionHub(c, sessionId)
+        .listTopics()
+        .map((t) => t.id),
+    );
 
     const outcome = await generateTopicsTurn({
       registry: c.env.ports.sessions,

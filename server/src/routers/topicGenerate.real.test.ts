@@ -79,37 +79,33 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
     if (dataDir) rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it(
-    'creates real topics from a real transcript',
-    async () => {
-      const hub = registry.get(sessionId);
-      expect(hub.listTranscriptWords().length).toBeGreaterThan(0);
+  it('creates real topics from a real transcript', async () => {
+    const hub = registry.get(sessionId);
+    expect(hub.listTranscriptWords().length).toBeGreaterThan(0);
 
-      const outcome = await generateTopicsTurn({
-        registry,
-        cliPath: cliPath as string,
-        sessionId,
-        maxBudgetUsd: 5,
-        timeoutMs: 300_000,
-      });
+    const outcome = await generateTopicsTurn({
+      registry,
+      cliPath: cliPath as string,
+      sessionId,
+      maxBudgetUsd: 5,
+      timeoutMs: 300_000,
+    });
 
-      const topics = registry.get(sessionId).listTopics();
-      // Surface what actually happened so a 0-topics run is diagnosable.
-      // biome-ignore lint/suspicious/noConsole: operator-facing diagnostic for a gated real test.
-      console.log(
-        `[real topic gen] outcome=${JSON.stringify(outcome)} topics=${topics.length}: ` +
-          topics.map((t) => t.summary).join(' | '),
-      );
+    const topics = registry.get(sessionId).listTopics();
+    // Surface what actually happened so a 0-topics run is diagnosable.
+    // biome-ignore lint/suspicious/noConsole: operator-facing diagnostic for a gated real test.
+    console.log(
+      `[real topic gen] outcome=${JSON.stringify(outcome)} topics=${topics.length}: ` +
+        topics.map((t) => t.summary).join(' | '),
+    );
 
-      expect(outcome.ok).toBe(true);
-      // The core assertion the fake fixtures cannot make: the real model
-      // actually created topics (this fails on the list_topics-withheld
-      // prompt-contradiction bug that produced "created 0 topics").
-      expect(topics.length).toBeGreaterThanOrEqual(2);
-      for (const t of topics) {
-        expect(t.summary.trim().length).toBeGreaterThan(0);
-      }
-    },
-    320_000,
-  );
+    expect(outcome.ok).toBe(true);
+    // The core assertion the fake fixtures cannot make: the real model
+    // actually created topics (this fails on the list_topics-withheld
+    // prompt-contradiction bug that produced "created 0 topics").
+    expect(topics.length).toBeGreaterThanOrEqual(2);
+    for (const t of topics) {
+      expect(t.summary.trim().length).toBeGreaterThan(0);
+    }
+  }, 320_000);
 });

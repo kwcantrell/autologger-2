@@ -1,6 +1,14 @@
-import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { catalogFor, loginCookie, seedSession, seedShow, seedStudio, seedUser, seededSession } from '../test/helpers';
+import { app, env, envWith } from '../test/harness';
+import {
+  catalogFor,
+  loginCookie,
+  seededSession,
+  seedSession,
+  seedShow,
+  seedStudio,
+  seedUser,
+} from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
@@ -240,7 +248,11 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('masked 404 (identical shape) for nonexistent, ui_hidden, and foreign-studio ids', async () => {
-    const nonexistent = await app.request('/api/sessions/does-not-exist', { method: 'GET' }, { ...env });
+    const nonexistent = await app.request(
+      '/api/sessions/does-not-exist',
+      { method: 'GET' },
+      { ...env },
+    );
 
     const hiddenSession = seededSession().sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });

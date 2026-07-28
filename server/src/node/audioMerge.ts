@@ -13,6 +13,8 @@
 // Consumed by scripts/merge-session-audio.ts and (transcript generation) the
 // transcribe router; not part of the HTTP surface itself.
 
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   ALL_FORMATS,
   type AudioCodec,
@@ -29,8 +31,6 @@ import {
   WavOutputFormat,
   WebMOutputFormat,
 } from 'mediabunny';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
 
 export type CodecFamily = 'opus' | 'aac' | 'pcm';
 
@@ -88,7 +88,10 @@ interface ProbedSegment {
  * pushed to `skipped`) for anything unreadable, unparseable, trackless, or
  * outside the three supported families — the caller's mime_type/extension is
  * never trusted. */
-async function probeSegment(path: string, skipped: SkippedSegment[]): Promise<ProbedSegment | null> {
+async function probeSegment(
+  path: string,
+  skipped: SkippedSegment[],
+): Promise<ProbedSegment | null> {
   const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(path) });
   try {
     const track = await input.getPrimaryAudioTrack();
@@ -176,7 +179,11 @@ async function mergeGroup(
           end = Math.max(end, timestamp + packet.duration);
           packets += 1;
         }
-        segments.push({ path: seg.path, offsetSeconds: segmentStart, durationSeconds: end - segmentStart });
+        segments.push({
+          path: seg.path,
+          offsetSeconds: segmentStart,
+          durationSeconds: end - segmentStart,
+        });
         offset = end;
       } finally {
         input.dispose();

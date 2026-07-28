@@ -15,8 +15,19 @@ describe('Catalog facade', () => {
   });
 
   it('carries no flat delegate methods (the compat shim is gone)', () => {
-    expect(Object.keys(catalog).sort()).toEqual(['auth', 'profile', 'sessions', 'shows', 'studios']);
-    for (const legacy of ['getShowRow', 'authGetUserById', 'setSessionArchived', 'profilePayload']) {
+    expect(Object.keys(catalog).sort()).toEqual([
+      'auth',
+      'profile',
+      'sessions',
+      'shows',
+      'studios',
+    ]);
+    for (const legacy of [
+      'getShowRow',
+      'authGetUserById',
+      'setSessionArchived',
+      'profilePayload',
+    ]) {
       expect((catalog as unknown as Record<string, unknown>)[legacy]).toBeUndefined();
     }
   });

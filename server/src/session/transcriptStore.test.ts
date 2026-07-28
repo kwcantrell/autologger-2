@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeRuntime } from '../test/fakeCore';
-import { TranscriptStore, paragraphRow, sentimentRow, wordRow } from './transcriptStore';
+import { paragraphRow, sentimentRow, TranscriptStore, wordRow } from './transcriptStore';
 
 describe('wordRow', () => {
   it('maps a full transcript-word row', () => {

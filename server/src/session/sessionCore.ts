@@ -195,8 +195,8 @@ export class SessionCore {
   eventCounts(): { total: number; logged: number } {
     const total = Number(this.first('SELECT COUNT(*) AS c FROM events')?.c ?? 0);
     const logged = Number(
-      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")
-        ?.c ?? 0,
+      this.first("SELECT COUNT(*) AS c FROM events WHERE lower(trim(category)) != 'internal'")?.c ??
+        0,
     );
     return { total, logged };
   }

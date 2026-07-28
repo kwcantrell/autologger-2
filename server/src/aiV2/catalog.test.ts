@@ -16,8 +16,8 @@ import {
   MAX_INTERACTIONS_PER_DASHBOARD,
   MAX_WIDGETS_PER_DASHBOARD,
   validateDashboardConfig,
-  widgetTypeSchema,
   WIDGET_TYPES,
+  widgetTypeSchema,
 } from './catalog';
 
 function widget(overrides: Partial<Record<string, unknown>> = {}) {
@@ -124,19 +124,22 @@ describe('layout and interaction vocabulary', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts a dashboard with zero widgets (design D5b: no minimum widget count is imposed — ' +
-    "the canvas's \"Start blank\" entry point saves exactly this shape)", () => {
-    const result = validateDashboardConfig({ widgets: [], interactions: [] });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data).toEqual({ widgets: [], interactions: [] });
-    }
-  });
+  it(
+    'accepts a dashboard with zero widgets (design D5b: no minimum widget count is imposed — ' +
+      'the canvas\'s "Start blank" entry point saves exactly this shape)',
+    () => {
+      const result = validateDashboardConfig({ widgets: [], interactions: [] });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ widgets: [], interactions: [] });
+      }
+    },
+  );
 
   it('rejects non-integer or out-of-range grid position/size', () => {
-    expect(validateDashboardConfig({ widgets: [widget({ x: -1 })], interactions: [] }).success).toBe(
-      false,
-    );
+    expect(
+      validateDashboardConfig({ widgets: [widget({ x: -1 })], interactions: [] }).success,
+    ).toBe(false);
     expect(validateDashboardConfig({ widgets: [widget({ w: 0 })], interactions: [] }).success).toBe(
       false,
     );
@@ -236,8 +239,9 @@ describe('dashboard persistence — authoritative bounds (design D5b, task 5.3)'
     const widgets = Array.from({ length: widgetsNeeded }, (_, i) =>
       widget({ id: longId(i), title: hugeTitle, x: i % 100 }),
     );
-    const serializedBytes = new TextEncoder().encode(JSON.stringify({ widgets, interactions: [] }))
-      .length;
+    const serializedBytes = new TextEncoder().encode(
+      JSON.stringify({ widgets, interactions: [] }),
+    ).length;
     expect(serializedBytes).toBeGreaterThan(MAX_CONFIG_SERIALIZED_BYTES);
 
     const result = validateDashboardConfig({ widgets, interactions: [] });

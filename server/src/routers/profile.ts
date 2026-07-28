@@ -22,7 +22,10 @@ function ctx(config: Config): ProfileCtx {
 
 profileRouter.get('/api/studio', async (c) => {
   const catalog = c.get('catalog');
-  const prof = catalog.profile.getEffectiveStudioForUser(c.get('user'), oauthConfigured(c.env.config));
+  const prof = catalog.profile.getEffectiveStudioForUser(
+    c.get('user'),
+    oauthConfigured(c.env.config),
+  );
   if (prof === null) return c.json({ detail: 'No team access.' }, 403);
   return c.json(studioToApiDict(prof));
 });
@@ -36,12 +39,13 @@ profileRouter.put('/api/profile', async (c) => {
   const catalog = c.get('catalog');
   const body = profileUpdateBodySchema.parse(await c.req.json());
   const user = c.get('user');
-  if (user === null && oauthConfigured(c.env.config)) return c.json({ detail: 'Login required.' }, 401);
+  if (user === null && oauthConfigured(c.env.config))
+    return c.json({ detail: 'Login required.' }, 401);
 
   const rawSid = (body.active_studio_id ?? '').trim();
 
   // Logged-in user with no team memberships: only name edits allowed.
-  if (user !== null && (catalog.auth.authListStudioIdsForUser(user.id)).length === 0) {
+  if (user !== null && catalog.auth.authListStudioIdsForUser(user.id).length === 0) {
     if (rawSid || body.settings != null || (body.show_updates && body.show_updates.length)) {
       return c.json({ detail: 'No team access.' }, 403);
     }
@@ -55,7 +59,7 @@ profileRouter.put('/api/profile', async (c) => {
 
   if (!rawSid) return c.json({ detail: 'active_studio_id is required.' }, 400);
   if (!catalog.studios.isKnownStudio(rawSid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(catalog.auth.authUserHasStudio(user.id, rawSid))) {
+  if (user !== null && !catalog.auth.authUserHasStudio(user.id, rawSid)) {
     return c.json({ detail: 'No access to that team.' }, 403);
   }
 

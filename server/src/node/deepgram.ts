@@ -16,8 +16,8 @@
 // through a dedicated undici `Agent` with both timeouts raised above the
 // provider ceiling (design D3) instead of relying on Node's global dispatcher.
 
-import { Agent } from 'undici';
 import { createReadStream } from 'node:fs';
+import { Agent } from 'undici';
 import type { CodecFamily } from './audioMerge';
 
 const DEEPGRAM_LISTEN_URL = 'https://api.deepgram.com/v1/listen';
@@ -141,7 +141,9 @@ type FetchDispatcher = NonNullable<RequestInit['dispatcher']>;
  * `Authorization` header. Non-2xx responses and network/timeout failures
  * both map to `DeepgramUpstreamError` with a generic detail — never the
  * upstream body or the key. */
-export async function transcribeGroup(params: TranscribeGroupParams): Promise<TranscribeGroupResult> {
+export async function transcribeGroup(
+  params: TranscribeGroupParams,
+): Promise<TranscribeGroupResult> {
   const { outPath, family, apiKey, model } = params;
   const url = new URL(DEEPGRAM_LISTEN_URL);
   url.searchParams.set('model', model);

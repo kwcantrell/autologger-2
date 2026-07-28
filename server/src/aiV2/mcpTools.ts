@@ -146,7 +146,7 @@ export function buildAggregateMcpServer(
       'boundaries) and filler-word counts (from raw transcript words). The ' +
       'two sub-objects have INDEPENDENT availability: paragraph counts ' +
       'require a DeepGram-generated transcript; filler counts only require ' +
-      'the transcript to be non-empty. Check each sub-object\'s own ' +
+      "the transcript to be non-empty. Check each sub-object's own " +
       '`available` before reading its numeric fields — never treat a ' +
       'missing value as zero.',
     {},

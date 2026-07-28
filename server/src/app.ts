@@ -2,11 +2,11 @@
 // serving. Ported from src/autologger/web/app.py. The caller supplies
 // upgradeWebSocket (from @hono/node-ws in main.ts; a 426 stub in HTTP tests).
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type Context, Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { ZodError } from 'zod';
 import { authContext } from './middleware/auth';
 import { ipAllowlistMiddleware } from './middleware/ipAllowlist';
@@ -21,8 +21,8 @@ import { companionRouter } from './routers/companion';
 import { eventsRouter } from './routers/events';
 import { exportsRouter } from './routers/exports';
 import { profileRouter } from './routers/profile';
-import { mountSessionWs } from './routers/sessionWs';
 import { sessionsRouter } from './routers/sessions';
+import { mountSessionWs } from './routers/sessionWs';
 import { showsRouter } from './routers/shows';
 import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';

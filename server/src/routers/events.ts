@@ -10,8 +10,8 @@ import {
   enrichEventRpc,
   mergeCategoryUiSnapshotsIntoMetadata,
   normalizeEventButtonNameForRelink,
-  sessionDeckDisplayTitle,
   type StudioProfile,
+  sessionDeckDisplayTitle,
   stripCategoryUiSnapshots,
 } from '../studio';
 import { formatSmpte, fromTotalFrames, isoZ } from '../timecode';

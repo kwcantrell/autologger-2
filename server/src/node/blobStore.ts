@@ -4,7 +4,7 @@
 // to {offset,length}; unsatisfiable ranges throw InvalidRangeError (→ 416).
 
 import { createReadStream } from 'node:fs';
-import { mkdir, open, rename, rm, readdir, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 
@@ -139,7 +139,10 @@ export class BlobStore {
         const full = join(dir, e.name);
         if (e.isDirectory()) await walk(full);
         else {
-          const key = full.slice(this.rootAbs.length + 1).split(sep).join('/');
+          const key = full
+            .slice(this.rootAbs.length + 1)
+            .split(sep)
+            .join('/');
           if (key.startsWith(opts.prefix)) objects.push({ key });
         }
       }

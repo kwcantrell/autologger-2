@@ -6,9 +6,9 @@
 // `internal` off-profile; PUT requires profile membership first). These tests pin
 // that existing behavior so the branch cannot later be removed as dead code.
 
-import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
 import { UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
+import { app, env } from '../test/harness';
 import { seededSession } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
@@ -76,7 +76,9 @@ async function putEvent(
 
 describe('PUT event update — profile-defined internal category (frozen edge)', () => {
   it('strips category UI snapshots when the profile defines id `internal`', async () => {
-    const session = seededSession({ categoriesJson: categoriesJsonWithInternal('internal') }).sessionId;
+    const session = seededSession({
+      categoriesJson: categoriesJsonWithInternal('internal'),
+    }).sessionId;
     const ev = await postEvent(session, 'cam');
     expect(ev.metadata[UI_SNAPSHOT_LABEL_KEY]).toBe('Camera');
     expect(ev.metadata[UI_SNAPSHOT_COLOR_KEY]).toBe('#112233');
@@ -93,7 +95,9 @@ describe('PUT event update — profile-defined internal category (frozen edge)',
   });
 
   it('strips snapshots for any letter case of the profile-defined id', async () => {
-    const session = seededSession({ categoriesJson: categoriesJsonWithInternal('Internal') }).sessionId;
+    const session = seededSession({
+      categoriesJson: categoriesJsonWithInternal('Internal'),
+    }).sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'Internal',

@@ -198,8 +198,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
     const tr = hub.transportSnapshot(ctx);
     action = tr.is_rolling ? 'stop' : 'start';
   }
-  const { state, projection } =
-    action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
+  const { state, projection } = action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
   catalog.sessions.projectSessionLive(sid, projection);
   return c.json({
     ok: true,

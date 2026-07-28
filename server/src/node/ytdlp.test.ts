@@ -108,7 +108,11 @@ afterEach(() => {
 describe('buildYtDlpChildEnv — minimal scrubbed env', () => {
   it('carries HOME (when present) and PATH pinned to the binary dir — never the real PATH', () => {
     const env = buildYtDlpChildEnv(
-      { HOME: '/home/op', PATH: '/usr/bin:/bin', PLANTED_SECRET_TOKEN: 'do-not-leak' } as NodeJS.ProcessEnv,
+      {
+        HOME: '/home/op',
+        PATH: '/usr/bin:/bin',
+        PLANTED_SECRET_TOKEN: 'do-not-leak',
+      } as NodeJS.ProcessEnv,
       '/opt/ytdlp/bin/yt-dlp',
     );
     expect(env).toEqual({ HOME: '/home/op', PATH: '/opt/ytdlp/bin' });
@@ -214,7 +218,13 @@ describe('fetchYoutubeAudio — argv hardening', () => {
     expect(probeArgv).toContain('--skip-download');
     expect(downloadArgv).not.toContain('--skip-download');
     expect(downloadArgv).toEqual(
-      expect.arrayContaining(['-f', AUDIO_FORMAT_SELECTOR, '-o', OUTPUT_TEMPLATE, '--max-filesize']),
+      expect.arrayContaining([
+        '-f',
+        AUDIO_FORMAT_SELECTOR,
+        '-o',
+        OUTPUT_TEMPLATE,
+        '--max-filesize',
+      ]),
     );
   });
 });
@@ -231,7 +241,10 @@ describe('fetchYoutubeAudio — child env exclusion', () => {
       url: 'https://youtu.be/abc123',
       tempDir,
       binaryPath,
-      procEnv: { HOME: '/home/tester', PLANTED_SECRET_TOKEN: 'do-not-leak' } as unknown as NodeJS.ProcessEnv,
+      procEnv: {
+        HOME: '/home/tester',
+        PLANTED_SECRET_TOKEN: 'do-not-leak',
+      } as unknown as NodeJS.ProcessEnv,
     });
 
     const probeCheck = readEnvCheck(tempDir, 'probe');
@@ -261,7 +274,9 @@ describe('fetchYoutubeAudio — bound enforcement', () => {
     ['download-fail', 'Failed to download'],
   ];
 
-  it.each(cases)('mode=%s rejects with YtDlpError (%s) and produces no usable result', async (mode, expectedSubstring) => {
+  it.each(
+    cases,
+  )('mode=%s rejects with YtDlpError (%s) and produces no usable result', async (mode, expectedSubstring) => {
     const tempDir = makeTempDir();
     const binaryPath = makeBinary(tempDir);
     writeStubControl(tempDir, { mode });
@@ -282,7 +297,9 @@ describe('fetchYoutubeAudio — bound enforcement', () => {
   // Task 9.2 / design D10: a zero-length take must never be produced — a
   // non-positive reported duration is rejected at the metadata-probe step,
   // same as live/null/over-4h, and the download spawn never runs.
-  it.each([0, -5])('rejects a non-positive duration (%i) with YtDlpError, no download spawn', async (duration) => {
+  it.each([
+    0, -5,
+  ])('rejects a non-positive duration (%i) with YtDlpError, no download spawn', async (duration) => {
     const tempDir = makeTempDir();
     const binaryPath = makeBinary(tempDir);
     writeStubControl(tempDir, { duration });
@@ -349,22 +366,25 @@ describe('fetchYoutubeAudio — hang timeout', () => {
 // `--max-filesize` flag (Fix wave 1, Phase 3 review Finding 1) ─────────────
 
 describe('fetchYoutubeAudio — byte-size backstop (independent of --max-filesize)', () => {
-  it('rejects a produced file that exceeds maxFilesizeBytes even though yt-dlp exited 0 ' +
-    '(simulates a size-unknown stream the flag could not enforce in advance)', async () => {
-    const tempDir = makeTempDir();
-    const binaryPath = makeBinary(tempDir);
-    writeStubControl(tempDir, { mode: 'oversize-bypass' });
+  it(
+    'rejects a produced file that exceeds maxFilesizeBytes even though yt-dlp exited 0 ' +
+      '(simulates a size-unknown stream the flag could not enforce in advance)',
+    async () => {
+      const tempDir = makeTempDir();
+      const binaryPath = makeBinary(tempDir);
+      writeStubControl(tempDir, { mode: 'oversize-bypass' });
 
-    const promise = fetchYoutubeAudio({
-      url: 'https://youtu.be/abc123',
-      tempDir,
-      binaryPath,
-      maxFilesizeBytes: 100,
-    });
+      const promise = fetchYoutubeAudio({
+        url: 'https://youtu.be/abc123',
+        tempDir,
+        binaryPath,
+        maxFilesizeBytes: 100,
+      });
 
-    await expect(promise).rejects.toBeInstanceOf(YtDlpError);
-    await expect(promise).rejects.toThrow(/exceeds the 100-byte import limit/);
-  });
+      await expect(promise).rejects.toBeInstanceOf(YtDlpError);
+      await expect(promise).rejects.toThrow(/exceeds the 100-byte import limit/);
+    },
+  );
 });
 
 // ── spawn() call contract: real node:child_process.spawn, wrapped only to

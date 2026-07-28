@@ -41,7 +41,9 @@ const FORBIDDEN_LOG_CHARS =
   /[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
 function sanitizeForLog(value: unknown): string {
-  return String(value ?? '').replace(FORBIDDEN_LOG_CHARS, '').slice(0, LOG_SANITIZE_MAX_LEN);
+  return String(value ?? '')
+    .replace(FORBIDDEN_LOG_CHARS, '')
+    .slice(0, LOG_SANITIZE_MAX_LEN);
 }
 
 authRouter.get('/auth/google/start', async (c) => {
@@ -197,8 +199,8 @@ authRouter.get('/auth/google/callback', async (c) => {
       });
       catalog.auth.authSeedPrefsFromGlobals(
         newUid,
-        (catalog.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
-        (catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
+        catalog.studios.getSetting(SETTING_ACTIVE_STUDIO) || DEFAULT_STUDIO_ID,
+        catalog.studios.getSetting(SETTING_ACTIVE_SHOW) || '',
       );
       // Materialize pending invites ONLY when the id_token asserts a
       // verified email (team-management delta, "Email invites") -- the

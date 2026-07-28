@@ -56,15 +56,12 @@ describe('migrator', () => {
     expect(role?.notnull).toBe(1);
     expect(String(role?.dflt_value).replace(/'/g, '')).toBe('member');
     expect(() => db.prepare('SELECT * FROM team_invites LIMIT 1').all()).not.toThrow();
-    const invCols = (db.prepare('PRAGMA table_info(team_invites)').all() as Array<{
-      name: string;
-    }>).map((c) => c.name);
-    expect(invCols).toEqual([
-      'studio_id',
-      'email_norm',
-      'invited_by_user_id',
-      'invited_at_utc',
-    ]);
+    const invCols = (
+      db.prepare('PRAGMA table_info(team_invites)').all() as Array<{
+        name: string;
+      }>
+    ).map((c) => c.name);
+    expect(invCols).toEqual(['studio_id', 'email_norm', 'invited_by_user_id', 'invited_at_utc']);
   });
 
   it('backfills admin for pre-existing non-built-in memberships, leaves built-ins as member', () => {
@@ -84,12 +81,14 @@ describe('migrator', () => {
       INSERT INTO users (id, google_sub, email, given_name, family_name, created_at_utc)
       VALUES ('u1', 'sub1', 'u1@example.com', 'U', 'One', '${now}');
     `);
-    db.prepare(
-      'INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
-    ).run('u1', 'test-studios'); // built-in
-    db.prepare(
-      'INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
-    ).run('u1', 'acme-crew'); // non-built-in
+    db.prepare('INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)').run(
+      'u1',
+      'test-studios',
+    ); // built-in
+    db.prepare('INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)').run(
+      'u1',
+      'acme-crew',
+    ); // non-built-in
 
     const applied = applyMigrations(db, MIGRATIONS_DIR);
     expect(applied).toEqual(['0004_team_roles_and_invites.sql']);
@@ -103,9 +102,10 @@ describe('migrator', () => {
     ]);
 
     // Post-migration inserts default to member.
-    db.prepare(
-      'INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
-    ).run('u1', 'another-crew');
+    db.prepare('INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)').run(
+      'u1',
+      'another-crew',
+    );
     const fresh = db
       .prepare(
         "SELECT role FROM user_studio_memberships WHERE user_id = 'u1' AND studio_id = 'another-crew'",

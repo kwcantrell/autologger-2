@@ -40,7 +40,13 @@ describe('SessionHub', () => {
   it('state survives close + reopen (persisted on disk)', () => {
     const p = join(dir, 's1.db');
     const hub = new SessionHub(p);
-    hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+    hub.addEvent({
+      category: 'cam',
+      message: 'x',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+    });
     hub.close();
     const hub2 = new SessionHub(p);
     expect(hub2.ensure().event_count).toBe(1);
@@ -153,7 +159,11 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
     expect(parsed.filter((m) => m.type === 'transport.changed')).toHaveLength(1);
     // Exact recorded-take shape stopTake emits — stopTakeWithDuration previously
     // broadcast nothing at all.
-    expect(parsed).toContainEqual({ type: 'transport.changed', is_rolling: false, current_take: 0 });
+    expect(parsed).toContainEqual({
+      type: 'transport.changed',
+      is_rolling: false,
+      current_take: 0,
+    });
     hub.close();
   });
 
@@ -178,9 +188,9 @@ describe('SessionHub.anchorImportedTake (composite anchor RPC)', () => {
       return original(...args);
     });
 
-    expect(() =>
-      hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX }),
-    ).toThrow('simulated disk-full');
+    expect(() => hub.anchorImportedTake({ recordingOrdinal: 1, durationS: 5, ctx: CTX })).toThrow(
+      'simulated disk-full',
+    );
     spy.mockRestore();
 
     // DB-persistence check: the Started event and the transport advance, both
@@ -221,7 +231,13 @@ describe('SessionHub broadcast frame pins (success-path byte-identity gate)', ()
 
   it('events: addEvent emits exactly one event.changed carrying the bumped revision', () => {
     const { hub, frames } = capturingHub();
-    hub.addEvent({ category: 'cam', message: 'hi', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+    hub.addEvent({
+      category: 'cam',
+      message: 'hi',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+    });
     expect(frames).toEqual([{ type: 'event.changed', revision: 1 }]);
     hub.close();
   });
@@ -298,7 +314,13 @@ describe('SessionHub post-commit broadcast queue (D1)', () => {
     });
 
     expect(() =>
-      hub.addEvent({ category: 'cam', message: 'doomed', metadataJson: '{}', markedAtUtc: null, ctx: CTX }),
+      hub.addEvent({
+        category: 'cam',
+        message: 'doomed',
+        metadataJson: '{}',
+        markedAtUtc: null,
+        ctx: CTX,
+      }),
     ).toThrow('simulated commit-step failure');
     spy.mockRestore();
 
@@ -318,7 +340,13 @@ describe('SessionHub post-commit broadcast queue (D1)', () => {
     const h = hub as unknown as { inTxn<T>(fn: () => T): T };
     h.inTxn(() => {
       // Public delegate → nested inTxn → savepoint; its broadcast is enqueued.
-      hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+      hub.addEvent({
+        category: 'cam',
+        message: 'x',
+        metadataJson: '{}',
+        markedAtUtc: null,
+        ctx: CTX,
+      });
       // Inner savepoint committed, but the outermost transaction is still
       // open: nothing may reach a socket yet.
       expect(frames).toEqual([]);
@@ -335,7 +363,13 @@ describe('SessionHub post-commit broadcast queue (D1)', () => {
     const h = hub as unknown as { inTxn<T>(fn: () => T): T };
     expect(() =>
       h.inTxn(() => {
-        hub.addEvent({ category: 'cam', message: 'x', metadataJson: '{}', markedAtUtc: null, ctx: CTX });
+        hub.addEvent({
+          category: 'cam',
+          message: 'x',
+          metadataJson: '{}',
+          markedAtUtc: null,
+          ctx: CTX,
+        });
         throw new Error('outer failure');
       }),
     ).toThrow('outer failure');
@@ -587,7 +621,10 @@ describe('SessionHub dashboard persistence', () => {
     expect(() =>
       hub.saveDashboard({
         id: 'primary',
-        config: { widgets: [{ ...validConfig().widgets[0], type: 'custom_widget' }], interactions: [] },
+        config: {
+          widgets: [{ ...validConfig().widgets[0], type: 'custom_widget' }],
+          interactions: [],
+        },
         createdBy: 'user-1',
         createdByTurnId: null,
       }),

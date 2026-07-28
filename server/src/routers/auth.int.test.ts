@@ -3,7 +3,6 @@ import { putOauthState } from '../auth/identity';
 import { AuthStore } from '../db/authStore';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
-import type { Bindings } from '../types';
 import {
   makeKeypair,
   mintIdToken,
@@ -11,6 +10,7 @@ import {
   mockGoogleToken,
   resetMockAgent,
 } from '../test/oauth';
+import type { Bindings } from '../types';
 
 const CLIENT = 'test-client';
 const OAUTH_ENV = envWith({
@@ -469,43 +469,40 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     expect(after).toEqual(before); // no writes -- profile untouched
   });
 
-  it(
-    'atomicity: a throw mid-materialization rolls back user creation (no user row persists)',
-    async () => {
-      const teamId = seedStudio();
-      catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
-      const spy = vi
-        .spyOn(AuthStore.prototype, 'authConsumeInvitesForEmail')
-        .mockImplementationOnce(() => {
-          throw new Error('simulated mid-transaction failure');
-        });
-      try {
-        // The app's onError handler (app.ts) converts any uncaught throw into
-        // a 500 response rather than a rejected promise (matching the
-        // existing "post-verification write throws" coverage above) -- the
-        // throw still propagates far enough to unwind CatalogDb.tx's
-        // better-sqlite3 transaction wrapper, which is what triggers the
-        // rollback this test is really checking.
-        const res = await runCallback({
-          sub: 'sub-atomic-fail',
-          email: 'atomic@example.com',
-          emailVerified: true,
-          state: 'state-atomic-fail',
-        });
-        expect(res.status).toBe(500);
-      } finally {
-        spy.mockRestore();
-      }
-      const user = catalogFor().auth.authGetUserByGoogleSub('sub-atomic-fail');
-      expect(user).toBeNull(); // creation rolled back with the failed materialization
-      // Structural note: this proves the tx boundary in practice for this one
-      // injection point. The router-level shape (create + seed-prefs +
-      // materialize all run inside one `c.env.ports.catalog.tx(...)` call in
-      // auth.ts, with no nested tx() in authConsumeInvitesForEmail /
-      // authAddMembershipWithRole) is the general guarantee; this test
-      // exercises it via the one realistic throw site the real store exposes.
-    },
-  );
+  it('atomicity: a throw mid-materialization rolls back user creation (no user row persists)', async () => {
+    const teamId = seedStudio();
+    catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
+    const spy = vi
+      .spyOn(AuthStore.prototype, 'authConsumeInvitesForEmail')
+      .mockImplementationOnce(() => {
+        throw new Error('simulated mid-transaction failure');
+      });
+    try {
+      // The app's onError handler (app.ts) converts any uncaught throw into
+      // a 500 response rather than a rejected promise (matching the
+      // existing "post-verification write throws" coverage above) -- the
+      // throw still propagates far enough to unwind CatalogDb.tx's
+      // better-sqlite3 transaction wrapper, which is what triggers the
+      // rollback this test is really checking.
+      const res = await runCallback({
+        sub: 'sub-atomic-fail',
+        email: 'atomic@example.com',
+        emailVerified: true,
+        state: 'state-atomic-fail',
+      });
+      expect(res.status).toBe(500);
+    } finally {
+      spy.mockRestore();
+    }
+    const user = catalogFor().auth.authGetUserByGoogleSub('sub-atomic-fail');
+    expect(user).toBeNull(); // creation rolled back with the failed materialization
+    // Structural note: this proves the tx boundary in practice for this one
+    // injection point. The router-level shape (create + seed-prefs +
+    // materialize all run inside one `c.env.ports.catalog.tx(...)` call in
+    // auth.ts, with no nested tx() in authConsumeInvitesForEmail /
+    // authAddMembershipWithRole) is the general guarantee; this test
+    // exercises it via the one realistic throw site the real store exposes.
+  });
 });
 
 describe('logout', () => {

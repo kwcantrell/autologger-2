@@ -49,7 +49,7 @@ export function requireSession(
   if (row === null) throw new ApiError(404, 'Session not found');
   if (user !== null) {
     const studioId = catalog.sessions.getSessionStudioId(sessionId);
-    if (!studioId || !(catalog.auth.authUserHasStudio(user.id, studioId))) {
+    if (!studioId || !catalog.auth.authUserHasStudio(user.id, studioId)) {
       throw new ApiError(404, 'Session not found');
     }
   }

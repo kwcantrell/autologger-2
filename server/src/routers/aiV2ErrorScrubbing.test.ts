@@ -49,13 +49,22 @@ describe('scrubDesignTurnEvent — the allow-list enforcement (task 2.8)', () =>
   });
 
   it('replaces a non-string detail (e.g. an agent errors array assigned directly) with internal-error', () => {
-    const event = { event: 'error', data: { detail: ['error_during_execution', SECRET] } } as unknown as DesignTurnSseEvent;
-    expect(scrubDesignTurnEvent(event)).toEqual({ event: 'error', data: { detail: 'internal-error' } });
+    const event = {
+      event: 'error',
+      data: { detail: ['error_during_execution', SECRET] },
+    } as unknown as DesignTurnSseEvent;
+    expect(scrubDesignTurnEvent(event)).toEqual({
+      event: 'error',
+      data: { detail: 'internal-error' },
+    });
   });
 
   it('replaces a missing detail with internal-error', () => {
     const event: DesignTurnSseEvent = { event: 'error', data: {} };
-    expect(scrubDesignTurnEvent(event)).toEqual({ event: 'error', data: { detail: 'internal-error' } });
+    expect(scrubDesignTurnEvent(event)).toEqual({
+      event: 'error',
+      data: { detail: 'internal-error' },
+    });
   });
 
   it('drops accidental extra fields riding alongside an otherwise-valid detail (rebuilt wholesale)', () => {

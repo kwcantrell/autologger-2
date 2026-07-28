@@ -3,8 +3,8 @@
 // startup — no background sweep (spec: scope #3).
 
 import type { Database } from 'better-sqlite3';
-import { systemClock } from '../clock';
 import type { Clock } from '../clock';
+import { systemClock } from '../clock';
 
 export class KvStore {
   constructor(
@@ -39,8 +39,8 @@ export class KvStore {
   }
 
   purgeExpired(): void {
-    this.db.prepare('DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?').run(
-      this.clock.now(),
-    );
+    this.db
+      .prepare('DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?')
+      .run(this.clock.now());
   }
 }

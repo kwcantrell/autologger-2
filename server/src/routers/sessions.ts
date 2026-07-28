@@ -9,16 +9,16 @@
 // addAudioSegment → ports.audio.put → rollback-on-failure path the recorder
 // (`audio.ts`) uses — see the handler body below for the full guard order.
 
-import { Hono } from 'hono';
-import type { Context } from 'hono';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Context } from 'hono';
+import { Hono } from 'hono';
 import type { Row } from '../db/catalog';
 import { normalizeUploadDate } from '../db/sessionIndexStore';
-import { oauthConfigured, ytDlpConfigured, youtubeImportOpenNetworkRefused } from '../env';
-import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
+import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
 import { youtubeImportGuard } from '../node/youtubeImportGuard';
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
+import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
 import {
   newSessionBodySchema,
   sessionUpdateBodySchema,
@@ -107,7 +107,7 @@ sessionsRouter.get('/api/sessions', async (c) => {
   const validShowIds = new Set(shows.map((r) => String(r.id)));
   let rawActiveShow = '';
   if (user === null) {
-    rawActiveShow = String((catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) ?? '').trim();
+    rawActiveShow = String(catalog.studios.getSetting(SETTING_ACTIVE_SHOW) ?? '').trim();
   } else {
     const prow = catalog.auth.authGetPrefs(user.id);
     rawActiveShow = prow ? String(prow.active_show_id ?? '').trim() : '';
@@ -212,7 +212,7 @@ sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
 sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
   const sessionId = c.req.param('sessionId');
   requireSession(c, sessionId);
-  if (!(c.get('catalog').sessions.setSessionArchived(sessionId, true))) {
+  if (!c.get('catalog').sessions.setSessionArchived(sessionId, true)) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, archived: true });
@@ -221,7 +221,7 @@ sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
 sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
   const sessionId = c.req.param('sessionId');
   requireSession(c, sessionId);
-  if (!(c.get('catalog').sessions.setSessionArchived(sessionId, false))) {
+  if (!c.get('catalog').sessions.setSessionArchived(sessionId, false)) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, archived: false });
@@ -230,7 +230,7 @@ sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
 sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
   requireSession(c, sessionId, { includeHidden: true });
-  if (!(c.get('catalog').sessions.setSessionUiHidden(sessionId, true))) {
+  if (!c.get('catalog').sessions.setSessionUiHidden(sessionId, true)) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, hidden: true });
@@ -338,7 +338,9 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
-    tempDir = await mkdtemp(join(c.env.ports.audio.scratchRoot(), `${YOUTUBE_IMPORT_TMP_PREFIX}${sessionId}-`));
+    tempDir = await mkdtemp(
+      join(c.env.ports.audio.scratchRoot(), `${YOUTUBE_IMPORT_TMP_PREFIX}${sessionId}-`),
+    );
 
     // Long-running download — no hub reference is held across this await
     // (design D1: the idle-hub sweeper may close the session DB during a
@@ -420,10 +422,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // other thrown error (e.g. a disk-full ENOSPC from ports.audio.put, or a
     // readFile failure) falls back to a generic detail rather than leaking
     // an internals-shaped message.
-    const detail =
-      err instanceof YtDlpError
-        ? err.message
-        : 'Failed to import audio from YouTube.';
+    const detail = err instanceof YtDlpError ? err.message : 'Failed to import audio from YouTube.';
     throw new ApiError(502, detail);
   } finally {
     if (tempDir) {

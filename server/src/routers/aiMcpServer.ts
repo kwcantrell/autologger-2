@@ -32,12 +32,12 @@
 // read hub rows at call time; `create_topic` validates with `topicCreateSchema`
 // and writes through the transactional `SessionHub.insertTopic` path.
 
-import http from 'node:http';
 import { randomBytes } from 'node:crypto';
+import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
 import { topicCreateSchema } from '../schemas';
 import type { SessionHubRegistry } from '../session/SessionHub';
 
@@ -52,11 +52,7 @@ const MCP_SERVER_NAME = 'autologger';
 
 /** The three tool short names exposed to the model (spec: Session-scoped MCP
  * toolset). Wire names are `mcp__${MCP_SERVER_NAME}__${name}`. */
-export const AI_MCP_TOOL_NAMES = [
-  'get_transcript_words',
-  'list_topics',
-  'create_topic',
-] as const;
+export const AI_MCP_TOOL_NAMES = ['get_transcript_words', 'list_topics', 'create_topic'] as const;
 
 /** One of the three short tool names above — the type callers use to
  * restrict `--allowedTools` for a turn (topic-generation design D7/D3). */

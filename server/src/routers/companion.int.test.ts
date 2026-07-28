@@ -1,5 +1,5 @@
-import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
+import { app, env } from '../test/harness';
 import { seededSession, setCompanionPresence } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };

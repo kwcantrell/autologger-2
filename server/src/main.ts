@@ -1,11 +1,11 @@
 // src/main.ts — Node entry: env config → bindings → app → listen.
 
-import { serve } from '@hono/node-server';
-import { createNodeWebSocket } from '@hono/node-ws';
-import { Hono } from 'hono';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { serve } from '@hono/node-server';
+import { createNodeWebSocket } from '@hono/node-ws';
+import { Hono } from 'hono';
 import { wireApp } from './app';
 import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
@@ -26,7 +26,11 @@ if (!existsSync(webDist)) {
 // API (REQUIRE_LOGIN=0) on a non-loopback bind with no allowlist, say so loudly.
 // Same predicate the per-feature open-network refusals read (env.ts).
 const loopback = loopbackHostname(bindings.config);
-if (!loopback && !requireLoginEnabled(bindings.config) && !(bindings.config.IP_ALLOWLIST || '').trim()) {
+if (
+  !loopback &&
+  !requireLoginEnabled(bindings.config) &&
+  !(bindings.config.IP_ALLOWLIST || '').trim()
+) {
   console.warn(
     '\n' +
       '!!! WARNING: AutoLogger is binding to a NON-LOOPBACK interface with\n' +
@@ -42,9 +46,8 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 wireApp(app, upgradeWebSocket, { bindings, publicDir: webDist });
 bindings.ports.sessions.startSweeper();
 
-const server = serve(
-  { fetch: app.fetch, port, hostname },
-  (info) => console.log(`AutoLogger (Node) listening on http://${hostname}:${info.port}`),
+const server = serve({ fetch: app.fetch, port, hostname }, (info) =>
+  console.log(`AutoLogger (Node) listening on http://${hostname}:${info.port}`),
 );
 injectWebSocket(server);
 

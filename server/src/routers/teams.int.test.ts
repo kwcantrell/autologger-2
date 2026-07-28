@@ -5,9 +5,9 @@
 // last-admin protection" / "Email invites" requirements.
 
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_STUDIO_ORDER } from '../studio';
 import { app, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
-import { BUILTIN_STUDIO_ORDER } from '../studio';
 
 /** catalogFor() constructs a fresh Catalog whose in-memory studio registry
  * starts empty until `.init()` runs (normally done per-request by
@@ -87,7 +87,9 @@ describe('auth: masked 404 vs nonexistent', () => {
     const { team } = await seedTeamWithAdmin();
     const outsiderCookie = (await addToTeam(seedStudio(), 'admin')).cookie;
     const resReal = await req('GET', `/api/teams/${team}`, { cookie: outsiderCookie });
-    const resFake = await req('GET', '/api/teams/does-not-exist-at-all', { cookie: outsiderCookie });
+    const resFake = await req('GET', '/api/teams/does-not-exist-at-all', {
+      cookie: outsiderCookie,
+    });
     expect(resReal.status).toBe(404);
     expect(resFake.status).toBe(404);
     expect(await resReal.json()).toEqual(await resFake.json());
@@ -226,7 +228,10 @@ describe('POST /api/teams — self-serve creation', () => {
 describe('PATCH /api/teams/:id — rename', () => {
   it('renames the display name only', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const res = await req('PATCH', `/api/teams/${team}`, { cookie, body: { display_name: 'New Name' } });
+    const res = await req('PATCH', `/api/teams/${team}`, {
+      cookie,
+      body: { display_name: 'New Name' },
+    });
     expect(res.status).toBe(200);
     expect(initedCatalog().studios.studioNamesDict()[team]).toBe('New Name');
   });
@@ -255,7 +260,10 @@ describe('DELETE /api/teams/:id — delete', () => {
   it('cascades memberships, invites, definition, and settings via the shared store method', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
     await addToTeam(team, 'member');
-    await req('POST', `/api/teams/${team}/invites`, { cookie, body: { email: 'pending@example.com' } });
+    await req('POST', `/api/teams/${team}/invites`, {
+      cookie,
+      body: { email: 'pending@example.com' },
+    });
     expect(catalogFor().auth.authCountPendingInvites(team)).toBe(1);
 
     const res = await req('DELETE', `/api/teams/${team}`, { cookie });
@@ -283,7 +291,10 @@ describe('POST /api/teams/:id/invites — email invites', () => {
     const { team, cookie } = await seedTeamWithAdmin();
     const u1 = seedUser({ email: 'dup@example.com' });
     const u2 = seedUser({ email: 'dup@example.com' });
-    const res = await req('POST', `/api/teams/${team}/invites`, { cookie, body: { email: 'dup@example.com' } });
+    const res = await req('POST', `/api/teams/${team}/invites`, {
+      cookie,
+      body: { email: 'dup@example.com' },
+    });
     expect(res.status).toBe(200);
     expect(catalogFor().auth.authGetMembershipRole(u1, team)).toBe('member');
     expect(catalogFor().auth.authGetMembershipRole(u2, team)).toBe('member');
@@ -317,7 +328,10 @@ describe('POST /api/teams/:id/invites — email invites', () => {
 
   it('rejects an implausible email shape', async () => {
     const { team, cookie } = await seedTeamWithAdmin();
-    const res = await req('POST', `/api/teams/${team}/invites`, { cookie, body: { email: 'not-an-email' } });
+    const res = await req('POST', `/api/teams/${team}/invites`, {
+      cookie,
+      body: { email: 'not-an-email' },
+    });
     expect(res.status).toBe(400);
   });
 
@@ -521,7 +535,7 @@ describe('GET /api/teams/:id — member vs admin visibility', () => {
     expect(body.enabled_admin_count).toBe(2);
   });
 
-  it('enabled_admin_count is 0 when the team\'s only admin is disabled, while members still shows them as admin', async () => {
+  it("enabled_admin_count is 0 when the team's only admin is disabled, while members still shows them as admin", async () => {
     const { team, adminId } = await seedTeamWithAdmin();
     catalogFor().auth.authSetUserDisabled(adminId, true);
     // The disabled admin can no longer authenticate, so read via a second

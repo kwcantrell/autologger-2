@@ -7,7 +7,10 @@
 import { vi } from 'vitest';
 import type { Clock } from '../clock';
 
-export function makeFakeClock(startMs = 1_750_000_000_000): { clock: Clock; tick(ms: number): void } {
+export function makeFakeClock(startMs = 1_750_000_000_000): {
+  clock: Clock;
+  tick(ms: number): void;
+} {
   let now = startMs;
   return {
     clock: { now: () => now },

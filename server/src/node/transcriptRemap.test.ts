@@ -7,13 +7,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { extractEnrichment, type DeepgramSentimentSegment, type DeepgramWord } from './deepgram';
+import { type DeepgramSentimentSegment, type DeepgramWord, extractEnrichment } from './deepgram';
 import {
+  type EnrichmentGroup,
+  type GroupWords,
   recordingStartAnchors,
   remapTranscriptEnrichment,
   remapTranscriptWords,
-  type EnrichmentGroup,
-  type GroupWords,
   type SegmentAnchorInfo,
 } from './transcriptRemap';
 
@@ -21,7 +21,10 @@ import {
 // 89 words / 3 paragraphs / 3 sentiment segments (word spans 0-48, 49-61,
 // 62-88) — same fixture `extractEnrichment`'s own tests replay.
 const enrichmentFixture = JSON.parse(
-  readFileSync(join(__dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'), 'utf8'),
+  readFileSync(
+    join(__dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
+    'utf8',
+  ),
 );
 
 function word(w: string, start: number, end: number, speaker = 0): DeepgramWord {
@@ -53,9 +56,24 @@ describe('recordingStartAnchors', () => {
   it('ignores non-internal categories, non-matching messages, and frame-less events', () => {
     const anchors = recordingStartAnchors([
       { category: 'cam', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
-      { category: 'internal', message: 'Recording 1 Stopped', timecode_total_frames: 0, frame_rate: 24 },
-      { category: 'internal', message: 'Recording 3 Started', timecode_total_frames: null, frame_rate: 24 },
-      { category: 'internal', message: 'Recording 4 Started', timecode_total_frames: 10, frame_rate: 0 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Stopped',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
+      {
+        category: 'internal',
+        message: 'Recording 3 Started',
+        timecode_total_frames: null,
+        frame_rate: 24,
+      },
+      {
+        category: 'internal',
+        message: 'Recording 4 Started',
+        timecode_total_frames: 10,
+        frame_rate: 0,
+      },
     ]);
     expect(anchors).toEqual([]);
   });
@@ -81,8 +99,18 @@ describe('remapTranscriptWords', () => {
       { path: 'seg2', ordinal: 2, recordingOrdinal: 2 },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
-      { category: 'internal', message: 'Recording 2 Started', timecode_total_frames: 2400, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
+      {
+        category: 'internal',
+        message: 'Recording 2 Started',
+        timecode_total_frames: 2400,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptWords(groups, segmentInfo, anchors, 24);
@@ -94,7 +122,7 @@ describe('remapTranscriptWords', () => {
     expect(out[1]).toMatchObject({ word: 'b', start_sec: 101, session_time: '00:01:41:00' });
   });
 
-  it('keeps an anchorless segment\'s words with empty session_time and zeroed seconds', () => {
+  it("keeps an anchorless segment's words with empty session_time and zeroed seconds", () => {
     const groups: GroupWords[] = [
       {
         segments: [{ path: 'segX', offsetSeconds: 0, durationSeconds: 3 }],
@@ -105,9 +133,7 @@ describe('remapTranscriptWords', () => {
 
     const out = remapTranscriptWords(groups, segmentInfo, [], 24);
 
-    expect(out).toEqual([
-      { session_time: '', speaker: '1', word: 'hi', start_sec: 0, end_sec: 0 },
-    ]);
+    expect(out).toEqual([{ session_time: '', speaker: '1', word: 'hi', start_sec: 0, end_sec: 0 }]);
   });
 
   it('pairs an unmatched segment with an unmatched anchor by ordinal/time order (step 2)', () => {
@@ -122,7 +148,12 @@ describe('remapTranscriptWords', () => {
     ];
     const segmentInfo: SegmentAnchorInfo[] = [{ path: 'seg1', ordinal: 1, recordingOrdinal: 9 }];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 7 Started', timecode_total_frames: 240, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 7 Started',
+        timecode_total_frames: 240,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptWords(groups, segmentInfo, anchors, 24);
@@ -147,7 +178,12 @@ describe('remapTranscriptWords', () => {
       { path: 'anchorless-2', ordinal: 3, recordingOrdinal: null },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptWords(groups, segmentInfo, anchors, 24);
@@ -196,29 +232,60 @@ describe('remapTranscriptEnrichment', () => {
       end: number;
       speaker: number;
     }>;
-    return raw.map((w) => ({ word: w.punctuated_word ?? w.word, start: w.start, end: w.end, speaker: w.speaker }));
+    return raw.map((w) => ({
+      word: w.punctuated_word ?? w.word,
+      start: w.start,
+      end: w.end,
+      speaker: w.speaker,
+    }));
   }
 
   it("sentiment segment inherits its words' timeline position, not group-file seconds", () => {
     const group = realFixtureGroup();
-    const segmentInfo: SegmentAnchorInfo[] = [{ path: 'real-seg', ordinal: 1, recordingOrdinal: 1 }];
+    const segmentInfo: SegmentAnchorInfo[] = [
+      { path: 'real-seg', ordinal: 1, recordingOrdinal: 1 },
+    ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 24000, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 24000,
+        frame_rate: 24,
+      },
     ]); // anchor at t=1000
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
 
     // Leading token check: text 'Okay...' vs words[0].word 'Okay' — passes.
-    expect(out.sentiment[0]).toMatchObject({ start_sec: 1000 + 1.28, end_sec: 1000 + 25.305, sentiment: 'neutral' });
-    expect(out.sentiment[1]).toMatchObject({ start_sec: 1000 + 27.385, end_sec: 1000 + 32.170002, sentiment: 'negative' });
-    expect(out.sentiment[2]).toMatchObject({ start_sec: 1000 + 32.81, end_sec: 1000 + 46.33, sentiment: 'neutral' });
+    expect(out.sentiment[0]).toMatchObject({
+      start_sec: 1000 + 1.28,
+      end_sec: 1000 + 25.305,
+      sentiment: 'neutral',
+    });
+    expect(out.sentiment[1]).toMatchObject({
+      start_sec: 1000 + 27.385,
+      end_sec: 1000 + 32.170002,
+      sentiment: 'negative',
+    });
+    expect(out.sentiment[2]).toMatchObject({
+      start_sec: 1000 + 32.81,
+      end_sec: 1000 + 46.33,
+      sentiment: 'neutral',
+    });
   });
 
   it('paragraph seconds remap through the same anchor chain as words, as a single-anchor interval', () => {
     const group = realFixtureGroup();
-    const segmentInfo: SegmentAnchorInfo[] = [{ path: 'real-seg', ordinal: 1, recordingOrdinal: 1 }];
+    const segmentInfo: SegmentAnchorInfo[] = [
+      { path: 'real-seg', ordinal: 1, recordingOrdinal: 1 },
+    ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 24000, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 24000,
+        frame_rate: 24,
+      },
     ]); // anchor at t=1000
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
@@ -245,8 +312,18 @@ describe('remapTranscriptEnrichment', () => {
       { path: 'segB', ordinal: 2, recordingOrdinal: 2 },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 2400, frame_rate: 24 }, // t=100
-      { category: 'internal', message: 'Recording 2 Started', timecode_total_frames: 240000, frame_rate: 24 }, // t=10000
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 2400,
+        frame_rate: 24,
+      }, // t=100
+      {
+        category: 'internal',
+        message: 'Recording 2 Started',
+        timecode_total_frames: 240000,
+        frame_rate: 24,
+      }, // t=10000
     ]);
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
@@ -254,7 +331,9 @@ describe('remapTranscriptEnrichment', () => {
     // Both start (4) and end (7) resolve against segA's anchor (t=100),
     // NOT segB's (t=10000) even though 7 falls in segB's raw [5,10) range:
     // 100 + 4 = 104, 100 + 7 = 107. A segB-anchored end would be ~10002.
-    expect(out.paragraphs).toEqual([{ start_sec: 104, end_sec: 107, speaker: '0', text: 'straddles the seam' }]);
+    expect(out.paragraphs).toEqual([
+      { start_sec: 104, end_sec: 107, speaker: '0', text: 'straddles the seam' },
+    ]);
   });
 
   it('anchorless-group enrichment is retained with NULL start/end, not dropped', () => {
@@ -262,13 +341,17 @@ describe('remapTranscriptEnrichment', () => {
       segments: [{ path: 'segX', offsetSeconds: 0, durationSeconds: 5 }],
       words: [word('hi', 0, 0.5)],
       paragraphs: [{ speaker: 0, start: 0, end: 1, text: 'para' }],
-      sentiments: [{ text: 'hi', start_word: 0, end_word: 0, sentiment: 'neutral', sentiment_score: 0 }],
+      sentiments: [
+        { text: 'hi', start_word: 0, end_word: 0, sentiment: 'neutral', sentiment_score: 0 },
+      ],
     };
     const segmentInfo: SegmentAnchorInfo[] = [{ path: 'segX', ordinal: 1, recordingOrdinal: null }];
 
     const out = remapTranscriptEnrichment([group], segmentInfo, []);
 
-    expect(out.paragraphs).toEqual([{ start_sec: null, end_sec: null, speaker: '0', text: 'para' }]);
+    expect(out.paragraphs).toEqual([
+      { start_sec: null, end_sec: null, speaker: '0', text: 'para' },
+    ]);
     expect(out.sentiment).toEqual([
       { start_sec: null, end_sec: null, sentiment: 'neutral', sentiment_score: 0, text: 'hi' },
     ]);
@@ -277,7 +360,13 @@ describe('remapTranscriptEnrichment', () => {
   it('clamps out-of-range, negative, and non-integer sentiment indices to the group word bounds', () => {
     const group: EnrichmentGroup = {
       segments: [{ path: 'seg1', offsetSeconds: 0, durationSeconds: 5 }],
-      words: [word('a', 0, 0.5), word('b', 0.5, 1), word('c', 1, 1.5), word('d', 1.5, 2), word('e', 2, 2.5)],
+      words: [
+        word('a', 0, 0.5),
+        word('b', 0.5, 1),
+        word('c', 1, 1.5),
+        word('d', 1.5, 2),
+        word('e', 2, 2.5),
+      ],
       paragraphs: [],
       sentiments: [
         sentSeg('a', -5, 999, 'x1'), // negative + out-of-range -> clamp to [0, 4]
@@ -286,7 +375,12 @@ describe('remapTranscriptEnrichment', () => {
     };
     const segmentInfo: SegmentAnchorInfo[] = [{ path: 'seg1', ordinal: 1, recordingOrdinal: 1 }];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
@@ -305,7 +399,12 @@ describe('remapTranscriptEnrichment', () => {
     };
     const segmentInfo: SegmentAnchorInfo[] = [{ path: 'seg1', ordinal: 1, recordingOrdinal: 1 }];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
@@ -332,8 +431,18 @@ describe('remapTranscriptEnrichment', () => {
       { path: 'segReal', ordinal: 2, recordingOrdinal: 2 },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
-      { category: 'internal', message: 'Recording 2 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
+      {
+        category: 'internal',
+        message: 'Recording 2 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptEnrichment([zeroWordGroup, realGroup], segmentInfo, anchors);
@@ -351,14 +460,25 @@ describe('remapTranscriptEnrichment', () => {
     };
     const segmentInfo: SegmentAnchorInfo[] = [{ path: 'seg1', ordinal: 1, recordingOrdinal: 1 }];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptEnrichment([group], segmentInfo, anchors);
 
     // Not dropped — degraded to NULL start/end, text/sentiment/score kept.
     expect(out.sentiment).toEqual([
-      { start_sec: null, end_sec: null, sentiment: 'mismatched', sentiment_score: 0, text: 'Goodbye everyone' },
+      {
+        start_sec: null,
+        end_sec: null,
+        sentiment: 'mismatched',
+        sentiment_score: 0,
+        text: 'Goodbye everyone',
+      },
     ]);
   });
 
@@ -385,14 +505,23 @@ describe('remapTranscriptEnrichment', () => {
       { path: 'anchorless-2', ordinal: 3, recordingOrdinal: null },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 },
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      },
     ]);
 
     const out = remapTranscriptEnrichment(groups, segmentInfo, anchors);
 
     // Anchored first, then anchorless ordered by segment ordinal (2 before
     // 3), matching remapTranscriptWords' documented order.
-    expect(out.paragraphs.map((p) => p.text)).toEqual(['p-anchored', 'p-anchorless-1', 'p-anchorless-2']);
+    expect(out.paragraphs.map((p) => p.text)).toEqual([
+      'p-anchored',
+      'p-anchorless-1',
+      'p-anchorless-2',
+    ]);
   });
 
   it('a synthetic 2-group composition (real fixture duplicated onto a second, later-anchored group) merges and orders deterministically', () => {
@@ -406,8 +535,18 @@ describe('remapTranscriptEnrichment', () => {
       { path: 'dup-seg', ordinal: 2, recordingOrdinal: 2 },
     ];
     const anchors = recordingStartAnchors([
-      { category: 'internal', message: 'Recording 1 Started', timecode_total_frames: 0, frame_rate: 24 }, // t=0
-      { category: 'internal', message: 'Recording 2 Started', timecode_total_frames: 24000, frame_rate: 24 }, // t=1000
+      {
+        category: 'internal',
+        message: 'Recording 1 Started',
+        timecode_total_frames: 0,
+        frame_rate: 24,
+      }, // t=0
+      {
+        category: 'internal',
+        message: 'Recording 2 Started',
+        timecode_total_frames: 24000,
+        frame_rate: 24,
+      }, // t=1000
     ]);
 
     const out = remapTranscriptEnrichment([groupA, groupB], segmentInfo, anchors);

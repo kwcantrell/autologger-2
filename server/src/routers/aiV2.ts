@@ -71,8 +71,13 @@ import {
 import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '../schemas';
 import { DashboardBoundsError, DashboardValidationError } from '../session/SessionHub';
 import type { AppEnv } from '../types';
+import { ApiError, getSessionHub, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
-import { aiV2PendingQuestions, buildPendingQuestionOnQuestion, generatePendingQuestionId } from './aiV2PendingQuestions';
+import {
+  aiV2PendingQuestions,
+  buildPendingQuestionOnQuestion,
+  generatePendingQuestionId,
+} from './aiV2PendingQuestions';
 import {
   attemptDesignTurnSpawn,
   buildDesignTurnCanUseTool,
@@ -82,7 +87,6 @@ import {
   prepareDesignTurnCredentials,
   runDesignTurn,
 } from './aiV2SdkSpawn';
-import { ApiError, getSessionHub, requireSession } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
@@ -239,7 +243,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // semantics; the hold-and-release lifecycle is real here).
   const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
   if (!slot.ok) {
-    throw new ApiError(409, slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL);
+    throw new ApiError(
+      409,
+      slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
+    );
   }
 
   // Every guard passed. Build the locked-down design turn (task 2.3's
@@ -301,7 +308,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
               // actually populated (previously always null for the
               // proposal-persist path, since nothing upstream ever
               // supplied it).
-              await stream.writeSSE({ event: 'dashboard', data: JSON.stringify({ config, turnId }) });
+              await stream.writeSSE({
+                event: 'dashboard',
+                data: JSON.stringify({ config, turnId }),
+              });
             } catch {
               // The client stream is gone. The agent already received an
               // "accepted" tool result (the proposal WAS validated), but

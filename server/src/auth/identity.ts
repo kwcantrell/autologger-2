@@ -33,11 +33,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
 // -- OAuth CSRF state (replaces oauth_csrf_tokens + 30-min expiry) -------------
 
-export async function putOauthState(
-  kv: KvStore,
-  state: string,
-  ttlSeconds = 1800,
-): Promise<void> {
+export async function putOauthState(kv: KvStore, state: string, ttlSeconds = 1800): Promise<void> {
   await kv.put(`${CSRF_PREFIX}${state}`, '1', { expirationTtl: ttlSeconds });
 }
 

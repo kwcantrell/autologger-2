@@ -22,23 +22,27 @@
 // re-run here to keep this suite hermetic and fast.
 
 import { fileURLToPath } from 'node:url';
-import type { McpSdkServerConfigWithInstance, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpSdkServerConfigWithInstance,
+  Query,
+  SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Config } from '../types';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
+  seededSession,
   seedSession,
   seedShow,
   seedStudio,
   seedUser,
-  seededSession,
 } from '../test/helpers';
+import type { Config } from '../types';
 import { aiChatTurns } from './aiChatRegistry';
 import { aiV2PendingQuestions } from './aiV2PendingQuestions';
 import * as aiV2SdkSpawnModule from './aiV2SdkSpawn';
@@ -96,7 +100,12 @@ function loopbackEnv(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function post(sessionId: string, body: unknown, reqEnv = loopbackEnv(), headers: Record<string, string> = J) {
+function post(
+  sessionId: string,
+  body: unknown,
+  reqEnv = loopbackEnv(),
+  headers: Record<string, string> = J,
+) {
   return app.request(
     `/api/sessions/${sessionId}/ai/v2/design`,
     { method: 'POST', headers, body: typeof body === 'string' ? body : JSON.stringify(body) },
@@ -179,7 +188,12 @@ describe('ai/v2/design — configuration gate (503)', () => {
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0', CLAUDE_CLI_PATH: '/fake/claude' }),
+      envWith({
+        AI_V2_ENABLED: '',
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        CLAUDE_CLI_PATH: '/fake/claude',
+      }),
     );
     expect(res.status).toBe(503);
     expect(((await res.json()) as { detail: string }).detail).toMatch(/AI v2 is not configured/i);
@@ -192,7 +206,9 @@ describe('ai/v2/design — configuration gate (503)', () => {
     // AI chat's OWN gate (CLAUDE_CLI_PATH unset) decides its 503 — a
     // different detail string than AI v2's, proving no shared config state.
     expect(chatRes.status).toBe(503);
-    expect(((await chatRes.json()) as { detail: string }).detail).toMatch(/AI chat is not configured/i);
+    expect(((await chatRes.json()) as { detail: string }).detail).toMatch(
+      /AI chat is not configured/i,
+    );
   });
 });
 
@@ -202,7 +218,13 @@ describe('ai/v2/design — open-network refusal (503)', () => {
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '', AI_V2_API_KEY: 'k' }),
+      envWith({
+        AI_V2_ENABLED: '1',
+        REQUIRE_LOGIN: '0',
+        HOST: '0.0.0.0',
+        IP_ALLOWLIST: '',
+        AI_V2_API_KEY: 'k',
+      }),
     );
     expect(res.status).toBe(503);
     const detail = ((await res.json()) as { detail: string }).detail;
@@ -213,13 +235,30 @@ describe('ai/v2/design — open-network refusal (503)', () => {
 
   it('predicate: aiV2OpenNetworkRefused refuses only anonymous + non-loopback + no-allowlist binds', () => {
     const base: Config = {
-      PUBLIC_BASE_URL: '', HOST: '0.0.0.0', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '0', SESSION_COOKIE: '', SESSION_DAYS: '14', NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '', IP_ALLOWLIST: '', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: '', AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
-      AI_V2_ENABLED: '1', AI_V2_API_KEY: 'k', AI_V2_MAX_BUDGET_USD: '',
+      PUBLIC_BASE_URL: '',
+      HOST: '0.0.0.0',
+      GOOGLE_CLIENT_ID: '',
+      GOOGLE_CLIENT_SECRET: '',
+      REQUIRE_LOGIN: '0',
+      SESSION_COOKIE: '',
+      SESSION_DAYS: '14',
+      NEW_USER_ALL_TEAMS: '0',
+      COOKIE_SECURE: '',
+      IP_ALLOWLIST: '',
+      TRUST_PROXY: '',
+      API_TOKEN: '',
+      ADMIN_TOKEN: '',
+      DEEPGRAM_API_KEY: '',
+      DEEPGRAM_MODEL: '',
+      CLAUDE_CLI_PATH: '',
+      AI_CHAT_TIMEOUT_SEC: '',
+      AI_CHAT_MAX_CONCURRENT: '',
+      AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_TIMEOUT_SEC: '',
+      AI_V2_ENABLED: '1',
+      AI_V2_API_KEY: 'k',
+      AI_V2_MAX_BUDGET_USD: '',
     };
     expect(aiV2OpenNetworkRefused(base)).toBe(true);
     expect(aiV2OpenNetworkRefused({ ...base, HOST: '' })).toBe(true); // unset ⇒ 0.0.0.0
@@ -254,7 +293,12 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '1', HOST: '0.0.0.0', AI_V2_API_KEY: 'workspace-key' }),
+      envWith({
+        AI_V2_ENABLED: '1',
+        REQUIRE_LOGIN: '1',
+        HOST: '0.0.0.0',
+        AI_V2_API_KEY: 'workspace-key',
+      }),
       { ...J, Cookie: await loginCookie(seedUser({ studios: [studioId] })) },
     );
     // Every 503 gate lifted; falls through to the real streaming turn (200
@@ -268,13 +312,30 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
 
   it('predicate: aiV2CredentialsRefused is independent of REQUIRE_LOGIN/IP_ALLOWLIST', () => {
     const base: Config = {
-      PUBLIC_BASE_URL: '', HOST: '0.0.0.0', GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '1', SESSION_COOKIE: '', SESSION_DAYS: '14', NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '', IP_ALLOWLIST: '10.0.0.0/8', TRUST_PROXY: '', API_TOKEN: '', ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '', DEEPGRAM_MODEL: '', CLAUDE_CLI_PATH: '', AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '', AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '', TOPIC_GENERATE_TIMEOUT_SEC: '',
-      AI_V2_ENABLED: '1', AI_V2_API_KEY: '', AI_V2_MAX_BUDGET_USD: '',
+      PUBLIC_BASE_URL: '',
+      HOST: '0.0.0.0',
+      GOOGLE_CLIENT_ID: '',
+      GOOGLE_CLIENT_SECRET: '',
+      REQUIRE_LOGIN: '1',
+      SESSION_COOKIE: '',
+      SESSION_DAYS: '14',
+      NEW_USER_ALL_TEAMS: '0',
+      COOKIE_SECURE: '',
+      IP_ALLOWLIST: '10.0.0.0/8',
+      TRUST_PROXY: '',
+      API_TOKEN: '',
+      ADMIN_TOKEN: '',
+      DEEPGRAM_API_KEY: '',
+      DEEPGRAM_MODEL: '',
+      CLAUDE_CLI_PATH: '',
+      AI_CHAT_TIMEOUT_SEC: '',
+      AI_CHAT_MAX_CONCURRENT: '',
+      AI_CHAT_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_MAX_BUDGET_USD: '',
+      TOPIC_GENERATE_TIMEOUT_SEC: '',
+      AI_V2_ENABLED: '1',
+      AI_V2_API_KEY: '',
+      AI_V2_MAX_BUDGET_USD: '',
     };
     // Non-loopback, no key, REQUIRE_LOGIN=1, allowlist set — every knob that
     // lifts aiV2OpenNetworkRefused is present, yet credentials still refuse.
@@ -367,70 +428,78 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
     }
   });
 
-  it('a slot held by a REAL AI CHAT turn (live subprocess, not a direct registry poke) 409s an AI v2 ' +
-    'request for the SAME session — genuine cross-route sharing — and frees once the chat turn completes', async () => {
-    const s = seededSession().sessionId;
-    // `FAKE_CLAUDE_MODE=hang` can't reach this path: `spawnAiChatTurn`'s own
-    // minimal env whitelist (design D4) strips it along with everything else
-    // non-essential (see ai.int.test.ts's header note) — the whitelist itself
-    // is under test, and defeating it here would be a false positive. Instead
-    // this relies on the SAME deterministic timing ai.int.test.ts's own
-    // guaranteed-timeout test rests on: a real OS process spawn+drain
-    // (fork+exec+Node startup, measured ~25-40ms) cannot complete within the
-    // near-zero latency of the second in-process HTTP call fired right after
-    // the first's Response resolves. And `aiChatTurns.tryAcquire` runs
-    // SYNCHRONOUSLY in ai.ts's handler BEFORE `streamSSE` is even invoked, so
-    // by the time `await chatRes` resolves (streamSSE returns its Response
-    // promptly, independent of how long the callback body takes — proven by
-    // this same file's "a configured key lifts the refusal" test reaching 200
-    // before its mocked turn is drained), the slot is unconditionally already
-    // held — not a race on THAT half.
-    const chatRes = await app.request(
-      `/api/sessions/${s}/ai/chat`,
-      { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
-    );
-    expect(chatRes.status).toBe(200);
-    try {
-      const res = await post(s, { message: 'hi' }, loopbackEnv());
-      expect(res.status).toBe(409);
-      expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
-      expect(spawnSpy).not.toHaveBeenCalled();
-    } finally {
-      // Drain fully so the chat turn's own `finally` (slot release) runs
-      // before the suite's afterEach reset — real cleanup, not a leaked slot.
-      await chatRes.text();
-    }
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-  });
-
-  it('a slot held by a design (v2) turn 409s an AI CHAT request for the SAME session — the reverse ' +
-    'direction — and frees once the design turn times out', async () => {
-    const s = seededSession().sessionId;
-    // The design-turn side CAN be held open deterministically (unlike the AI
-    // chat side above): `hangingDesignQuery` never yields, so only the
-    // runner's own timeout backstop ends it — no timing race required.
-    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
-    const v2Res = await post(s, { message: 'hi' }, loopbackEnv({ AI_CHAT_TIMEOUT_SEC: '0.2' }));
-    // Resolves promptly (streamSSE returns its Response before the callback
-    // body — which is racing the never-yielding query against the 0.2s
-    // timeout — has settled).
-    expect(v2Res.status).toBe(200);
-    try {
+  it(
+    'a slot held by a REAL AI CHAT turn (live subprocess, not a direct registry poke) 409s an AI v2 ' +
+      'request for the SAME session — genuine cross-route sharing — and frees once the chat turn completes',
+    async () => {
+      const s = seededSession().sessionId;
+      // `FAKE_CLAUDE_MODE=hang` can't reach this path: `spawnAiChatTurn`'s own
+      // minimal env whitelist (design D4) strips it along with everything else
+      // non-essential (see ai.int.test.ts's header note) — the whitelist itself
+      // is under test, and defeating it here would be a false positive. Instead
+      // this relies on the SAME deterministic timing ai.int.test.ts's own
+      // guaranteed-timeout test rests on: a real OS process spawn+drain
+      // (fork+exec+Node startup, measured ~25-40ms) cannot complete within the
+      // near-zero latency of the second in-process HTTP call fired right after
+      // the first's Response resolves. And `aiChatTurns.tryAcquire` runs
+      // SYNCHRONOUSLY in ai.ts's handler BEFORE `streamSSE` is even invoked, so
+      // by the time `await chatRes` resolves (streamSSE returns its Response
+      // promptly, independent of how long the callback body takes — proven by
+      // this same file's "a configured key lifts the refusal" test reaching 200
+      // before its mocked turn is drained), the slot is unconditionally already
+      // held — not a race on THAT half.
       const chatRes = await app.request(
         `/api/sessions/${s}/ai/chat`,
         { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
         envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
       );
-      expect(chatRes.status).toBe(409);
-      expect(((await chatRes.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
-    } finally {
-      // Drain until the 0.2s timeout fires and the design turn's `finally`
-      // releases the slot.
-      await v2Res.text();
-    }
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-  });
+      expect(chatRes.status).toBe(200);
+      try {
+        const res = await post(s, { message: 'hi' }, loopbackEnv());
+        expect(res.status).toBe(409);
+        expect(((await res.json()) as { detail: string }).detail).toMatch(/in progress|already/i);
+        expect(spawnSpy).not.toHaveBeenCalled();
+      } finally {
+        // Drain fully so the chat turn's own `finally` (slot release) runs
+        // before the suite's afterEach reset — real cleanup, not a leaked slot.
+        await chatRes.text();
+      }
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    },
+  );
+
+  it(
+    'a slot held by a design (v2) turn 409s an AI CHAT request for the SAME session — the reverse ' +
+      'direction — and frees once the design turn times out',
+    async () => {
+      const s = seededSession().sessionId;
+      // The design-turn side CAN be held open deterministically (unlike the AI
+      // chat side above): `hangingDesignQuery` never yields, so only the
+      // runner's own timeout backstop ends it — no timing race required.
+      spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+      const v2Res = await post(s, { message: 'hi' }, loopbackEnv({ AI_CHAT_TIMEOUT_SEC: '0.2' }));
+      // Resolves promptly (streamSSE returns its Response before the callback
+      // body — which is racing the never-yielding query against the 0.2s
+      // timeout — has settled).
+      expect(v2Res.status).toBe(200);
+      try {
+        const chatRes = await app.request(
+          `/api/sessions/${s}/ai/chat`,
+          { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+        );
+        expect(chatRes.status).toBe(409);
+        expect(((await chatRes.json()) as { detail: string }).detail).toMatch(
+          /in progress|already/i,
+        );
+      } finally {
+        // Drain until the 0.2s timeout fires and the design turn's `finally`
+        // releases the slot.
+        await v2Res.text();
+      }
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    },
+  );
 
   it('the slot is released, not leaked, once a turn finishes — a follow-up on the same session is not 409', async () => {
     const s = seededSession().sessionId;
@@ -490,7 +559,10 @@ describe('ai/v2/design — principal-less (device-token) refusal (404, design D7
   it('a valid in-studio real user still passes (not refused by the new guard)', async () => {
     const { sessionId: s, studioId } = seededSession();
     const user = seedUser({ studios: [studioId] });
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), {
+      ...J,
+      Cookie: await loginCookie(user),
+    });
     expect(res.status).toBe(200);
     await res.text();
     expect(spawnSpy).toHaveBeenCalledTimes(1);
@@ -569,16 +641,23 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
     expect(res.status).toBe(422);
   });
 
-  it('422 when an option answer names a widget type outside the closed catalog ' +
-    '(spec "Previews reflect the rendered result": "An option naming no catalog type is rejected")', async () => {
-    const s = seededSession().sessionId;
-    const res = await postAnswer(
-      s,
-      { turnId: 't', requestId: 'r', answers: [{ kind: 'option', widgetType: 'not_a_real_widget' }] },
-      loopbackEnv(),
-    );
-    expect(res.status).toBe(422);
-  });
+  it(
+    '422 when an option answer names a widget type outside the closed catalog ' +
+      '(spec "Previews reflect the rendered result": "An option naming no catalog type is rejected")',
+    async () => {
+      const s = seededSession().sessionId;
+      const res = await postAnswer(
+        s,
+        {
+          turnId: 't',
+          requestId: 'r',
+          answers: [{ kind: 'option', widgetType: 'not_a_real_widget' }],
+        },
+        loopbackEnv(),
+      );
+      expect(res.status).toBe(422);
+    },
+  );
 
   it('400 on malformed JSON', async () => {
     const s = seededSession().sessionId;
@@ -591,7 +670,11 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
     const user = seedUser({ studios: [studioId] });
     const res = await postAnswer(
       s,
-      { turnId: 'no-such-turn', requestId: 'no-such-request', answers: [{ kind: 'text', text: 'x' }] },
+      {
+        turnId: 'no-such-turn',
+        requestId: 'no-such-request',
+        answers: [{ kind: 'text', text: 'x' }],
+      },
       loopbackEnv(),
       { ...J, Cookie: await loginCookie(user) },
     );
@@ -605,9 +688,13 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('(c) a device token (API_TOKEN, user===null) cannot answer even a genuinely pending, correctly-addressed question', async () => {
     const { sessionId: s } = seededSession();
     const initiator = seedUser({}); // the real principal that "started" the turn
-    aiV2PendingQuestions.register({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }, initiator, {
-      questions: [],
-    });
+    aiV2PendingQuestions.register(
+      { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
+      initiator,
+      {
+        questions: [],
+      },
+    );
 
     const res = await postAnswer(
       s,
@@ -625,36 +712,45 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     expect(res.status).toBe(404);
     // Refused structurally, before/regardless of the registry lookup — the
     // question is still pending, provably not consumed by this attempt.
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(true);
+    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+      true,
+    );
     // /answer never spawns regardless, but the shared guard is proven not to
     // open any path that could (task 3.1/3.2's SPAWN BOUNDARY still holds).
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it('(c\') a device token is refused with 404 BEFORE the config gate on /answer too — masks configuration ' +
-    'state (Phase-3 fix wave, matching the /design route)', async () => {
-    const s = seededSession().sessionId;
-    const res = await postAnswer(
-      s,
-      { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
-      envWith({
-        AI_V2_ENABLED: '', // unconfigured — would otherwise 503
-        HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
-        API_TOKEN: 'device-secret',
-      }),
-      { ...J, Authorization: 'Bearer device-secret' },
-    );
-    expect(res.status).toBe(404);
-    expect(spawnSpy).not.toHaveBeenCalled();
-  });
+  it(
+    "(c') a device token is refused with 404 BEFORE the config gate on /answer too — masks configuration " +
+      'state (Phase-3 fix wave, matching the /design route)',
+    async () => {
+      const s = seededSession().sessionId;
+      const res = await postAnswer(
+        s,
+        { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
+        envWith({
+          AI_V2_ENABLED: '', // unconfigured — would otherwise 503
+          HOST: '127.0.0.1',
+          REQUIRE_LOGIN: '0',
+          API_TOKEN: 'device-secret',
+        }),
+        { ...J, Authorization: 'Bearer device-secret' },
+      );
+      expect(res.status).toBe(404);
+      expect(spawnSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
     const { sessionId: s, studioId } = seededSession();
     const initiator = seedUser({ studios: [studioId] });
-    aiV2PendingQuestions.register({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }, initiator, {
-      questions: [],
-    });
+    aiV2PendingQuestions.register(
+      { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
+      initiator,
+      {
+        questions: [],
+      },
+    );
 
     const res = await postAnswer(
       s,
@@ -664,16 +760,22 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     );
 
     expect(res.status).toBe(404);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(true);
+    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+      true,
+    );
   });
 
   it("(a) a DIFFERENT authenticated user with studio access to the SAME session cannot answer another user's pending question", async () => {
     const { sessionId: s, studioId } = seededSession();
     const initiator = seedUser({ studios: [studioId] });
     const coMember = seedUser({ studios: [studioId] });
-    aiV2PendingQuestions.register({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }, initiator, {
-      questions: [],
-    });
+    aiV2PendingQuestions.register(
+      { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
+      initiator,
+      {
+        questions: [],
+      },
+    );
 
     const res = await postAnswer(
       s,
@@ -683,7 +785,9 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     );
 
     expect(res.status).toBe(404);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(true);
+    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+      true,
+    );
   });
 
   it('the initiating principal CAN answer their own pending question — 200, and the pending entry is resolved and removed', async () => {
@@ -704,7 +808,9 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(false);
+    expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
+      false,
+    );
     await expect(promise).resolves.toMatchObject({
       behavior: 'allow',
       updatedInput: { answers: { 'Which widget?': 'my answer' } },
@@ -714,9 +820,13 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
   it('(d) a late answer (turn already ended / abandoned) has no effect — 404, even from the correct principal', async () => {
     const { sessionId: s, studioId } = seededSession();
     const initiator = seedUser({ studios: [studioId] });
-    aiV2PendingQuestions.register({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' }, initiator, {
-      questions: [],
-    });
+    aiV2PendingQuestions.register(
+      { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
+      initiator,
+      {
+        questions: [],
+      },
+    );
     aiV2PendingQuestions.abandonTurn(s, 'turn-1'); // simulates a timeout/disconnect ending the turn
 
     const res = await postAnswer(
@@ -731,101 +841,125 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 });
 
 describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through the actual route wiring (task 3.2)', () => {
-  it("(e) AskUserQuestion blocks via canUseTool, relays a preview-stripped question on THIS turn's own SSE " +
-    'stream, and the matching POST …/answer un-blocks it — no live SDK turn, no Anthropic spend', async () => {
-    const { sessionId: s, studioId } = seededSession();
-    const user = seedUser({ studios: [studioId] });
+  it(
+    "(e) AskUserQuestion blocks via canUseTool, relays a preview-stripped question on THIS turn's own SSE " +
+      'stream, and the matching POST …/answer un-blocks it — no live SDK turn, no Anthropic spend',
+    async () => {
+      const { sessionId: s, studioId } = seededSession();
+      const user = seedUser({ studios: [studioId] });
 
-    // Exercises the REAL canUseTool/onQuestion/registry/SSE-emission wiring
-    // the route builds — no live Agent SDK turn is involved: the fake
-    // `Query` calls `options.canUseTool` itself, exactly as the SDK would
-    // once it advertises AskUserQuestion and the model calls it, and gates
-    // its own next yield on that call's resolution (mirroring how a real
-    // turn cannot proceed past a blocking tool_use).
-    spawnSpy.mockImplementationOnce((_prompt, options) => {
-      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
-        await options.canUseTool?.(
-          'AskUserQuestion',
-          {
-            questions: [
-              {
-                question: 'Which widget?',
-                header: 'Widget',
-                multiSelect: false,
-                options: [{ label: 'Duration', description: 'd', preview: 'SECRET-PREVIEW-CONTENT' }],
-              },
-            ],
-          },
-          { signal: new AbortController().signal, toolUseID: 'tool-1', requestId: 'sdk-req-1' } as never,
-        );
-        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+      // Exercises the REAL canUseTool/onQuestion/registry/SSE-emission wiring
+      // the route builds — no live Agent SDK turn is involved: the fake
+      // `Query` calls `options.canUseTool` itself, exactly as the SDK would
+      // once it advertises AskUserQuestion and the model calls it, and gates
+      // its own next yield on that call's resolution (mirroring how a real
+      // turn cannot proceed past a blocking tool_use).
+      spawnSpy.mockImplementationOnce((_prompt, options) => {
+        async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+          await options.canUseTool?.(
+            'AskUserQuestion',
+            {
+              questions: [
+                {
+                  question: 'Which widget?',
+                  header: 'Widget',
+                  multiSelect: false,
+                  options: [
+                    { label: 'Duration', description: 'd', preview: 'SECRET-PREVIEW-CONTENT' },
+                  ],
+                },
+              ],
+            },
+            {
+              signal: new AbortController().signal,
+              toolUseID: 'tool-1',
+              requestId: 'sdk-req-1',
+            } as never,
+          );
+          yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+        }
+        return gatedQuery() as unknown as Query;
+      });
+
+      const res = await post(s, { message: 'hi' }, loopbackEnv(), {
+        ...J,
+        Cookie: await loginCookie(user),
+      });
+      expect(res.status).toBe(200);
+
+      // Read incrementally (the stream is still open, gated on the answer) —
+      // draining with res.text() here would hang until the answer arrives,
+      // which this test hasn't sent yet.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+      const deadline = Date.now() + 5000;
+      while (!buffered.includes('event: question')) {
+        if (Date.now() > deadline) throw new Error('stream never contained a question event');
+        const { value, done } = await reader.read();
+        if (done) throw new Error('stream ended before a question event arrived');
+        buffered += decoder.decode(value, { stream: true });
       }
-      return gatedQuery() as unknown as Query;
-    });
+      const questionBlock = buffered
+        .split('\n\n')
+        .find((block) => block.includes('event: question'));
+      if (questionBlock === undefined) throw new Error('no complete "question" SSE block found');
+      const dataLine = questionBlock.split('\n').find((l) => l.startsWith('data: '));
+      if (dataLine === undefined) throw new Error('question SSE block had no data line');
+      const payload = JSON.parse(dataLine.slice('data: '.length)) as {
+        requestId: string;
+        turnId: string;
+        questions: Array<{
+          question: string;
+          header: string;
+          multiSelect: boolean;
+          options: unknown[];
+        }>;
+      };
+      const { requestId, turnId, questions } = payload;
+      expect(requestId).toMatch(/^[0-9a-f]{32}$/);
+      expect(JSON.stringify(questions)).not.toMatch(/SECRET-PREVIEW-CONTENT/);
+      // Phase-3 fix wave (Fix 2): `payload.questions` is the flattened array
+      // itself — ONE level below the payload, not `payload.questions.questions`
+      // — since this is a NEW, non-frozen SSE event (safe to change now, before
+      // Phase 4's web QuestionView consumes it).
+      expect(Array.isArray(questions)).toBe(true);
+      expect(questions).toEqual([
+        {
+          question: 'Which widget?',
+          header: 'Widget',
+          multiSelect: false,
+          options: [{ label: 'Duration', description: 'd' }],
+        },
+      ]);
+      expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(true);
 
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
-    expect(res.status).toBe(200);
+      const answerRes = await postAnswer(
+        s,
+        { turnId, requestId, answers: [{ kind: 'text', text: 'session_duration please' }] },
+        loopbackEnv(),
+        { ...J, Cookie: await loginCookie(user) },
+      );
+      expect(answerRes.status).toBe(200);
+      expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(false);
 
-    // Read incrementally (the stream is still open, gated on the answer) —
-    // draining with res.text() here would hang until the answer arrives,
-    // which this test hasn't sent yet.
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffered = '';
-    const deadline = Date.now() + 5000;
-    while (!buffered.includes('event: question')) {
-      if (Date.now() > deadline) throw new Error('stream never contained a question event');
-      const { value, done } = await reader.read();
-      if (done) throw new Error('stream ended before a question event arrived');
-      buffered += decoder.decode(value, { stream: true });
-    }
-    const questionBlock = buffered.split('\n\n').find((block) => block.includes('event: question'));
-    if (questionBlock === undefined) throw new Error('no complete "question" SSE block found');
-    const dataLine = questionBlock.split('\n').find((l) => l.startsWith('data: '));
-    if (dataLine === undefined) throw new Error('question SSE block had no data line');
-    const payload = JSON.parse(dataLine.slice('data: '.length)) as {
-      requestId: string;
-      turnId: string;
-      questions: Array<{ question: string; header: string; multiSelect: boolean; options: unknown[] }>;
-    };
-    const { requestId, turnId, questions } = payload;
-    expect(requestId).toMatch(/^[0-9a-f]{32}$/);
-    expect(JSON.stringify(questions)).not.toMatch(/SECRET-PREVIEW-CONTENT/);
-    // Phase-3 fix wave (Fix 2): `payload.questions` is the flattened array
-    // itself — ONE level below the payload, not `payload.questions.questions`
-    // — since this is a NEW, non-frozen SSE event (safe to change now, before
-    // Phase 4's web QuestionView consumes it).
-    expect(Array.isArray(questions)).toBe(true);
-    expect(questions).toEqual([
-      { question: 'Which widget?', header: 'Widget', multiSelect: false, options: [{ label: 'Duration', description: 'd' }] },
-    ]);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(true);
-
-    const answerRes = await postAnswer(
-      s,
-      { turnId, requestId, answers: [{ kind: 'text', text: 'session_duration please' }] },
-      loopbackEnv(),
-      { ...J, Cookie: await loginCookie(user) },
-    );
-    expect(answerRes.status).toBe(200);
-    expect(aiV2PendingQuestions.has({ sessionId: s, turnId, requestId })).toBe(false);
-
-    // Drain the original stream to completion now that the question is
-    // answered and the gated turn can proceed to its result.
-    let restText = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      restText += decoder.decode(value, { stream: true });
-    }
-    // The full stream is complete now (both blocks safely delimited), so
-    // this reuses the shared `parseSse` structured parser rather than a raw
-    // substring match — and doubles as the "canUseTool's promise actually
-    // unblocked the gated generator" proof: `resultSuccess` only yields
-    // after `options.canUseTool(...)` resolves.
-    const events = parseSse(buffered + restText);
-    expect(events.some((e) => e.event === 'done')).toBe(true);
-  });
+      // Drain the original stream to completion now that the question is
+      // answered and the gated turn can proceed to its result.
+      let restText = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        restText += decoder.decode(value, { stream: true });
+      }
+      // The full stream is complete now (both blocks safely delimited), so
+      // this reuses the shared `parseSse` structured parser rather than a raw
+      // substring match — and doubles as the "canUseTool's promise actually
+      // unblocked the gated generator" proof: `resultSuccess` only yields
+      // after `options.canUseTool(...)` resolves.
+      const events = parseSse(buffered + restText);
+      expect(events.some((e) => e.event === 'done')).toBe(true);
+    },
+  );
 });
 
 // ── Task 5.1/5.2/5.3 — dashboard persistence (spec "Dashboard persistence", ──
@@ -838,7 +972,11 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
 // non-loopback/no-allowlist env for the "still works" cases specifically to
 // prove that.
 
-function getDashboard(sessionId: string, reqEnv = loopbackEnv(), headers: Record<string, string> = J) {
+function getDashboard(
+  sessionId: string,
+  reqEnv = loopbackEnv(),
+  headers: Record<string, string> = J,
+) {
   return app.request(`/api/sessions/${sessionId}/ai/v2/dashboard`, { headers }, reqEnv);
 }
 
@@ -861,7 +999,11 @@ function deleteDashboard(
   reqEnv = loopbackEnv(),
   headers: Record<string, string> = J,
 ) {
-  return app.request(`/api/sessions/${sessionId}/ai/v2/dashboard`, { method: 'DELETE', headers }, reqEnv);
+  return app.request(
+    `/api/sessions/${sessionId}/ai/v2/dashboard`,
+    { method: 'DELETE', headers },
+    reqEnv,
+  );
 }
 
 const VALID_DASHBOARD = {
@@ -890,7 +1032,10 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
 
   it('GET returns 503 when AI v2 is unconfigured ("every AI v2 route")', async () => {
     const s = seededSession().sessionId;
-    const res = await getDashboard(s, envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }));
+    const res = await getDashboard(
+      s,
+      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+    );
     expect(res.status).toBe(503);
   });
 
@@ -898,7 +1043,12 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     const s = seededSession().sessionId;
     const res = await getDashboard(
       s,
-      envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: '0', API_TOKEN: 'device-secret' }),
+      envWith({
+        AI_V2_ENABLED: '1',
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        API_TOKEN: 'device-secret',
+      }),
       { ...J, Authorization: 'Bearer device-secret' },
     );
     expect(res.status).toBe(404);
@@ -909,7 +1059,13 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     const s = seededSession().sessionId;
     const res = await getDashboard(
       s,
-      envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', REQUIRE_LOGIN: '0', IP_ALLOWLIST: '', AI_V2_API_KEY: '' }),
+      envWith({
+        AI_V2_ENABLED: '1',
+        HOST: '0.0.0.0',
+        REQUIRE_LOGIN: '0',
+        IP_ALLOWLIST: '',
+        AI_V2_API_KEY: '',
+      }),
     );
     expect(res.status).toBe(200);
   });
@@ -997,18 +1153,21 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(stored?.createdByTurnId).toBe('turn-abc');
   });
 
-  it('an EMPTY config ({ widgets: [], interactions: [] }) is accepted (fix wave: the "Start blank" empty ' +
-    'state was previously rejected 422 by this real route — design D5b imposes no minimum widget count) ' +
-    'and round-trips through GET', async () => {
-    const s = seededSession().sessionId;
-    const empty = { widgets: [], interactions: [] };
-    const putRes = await putDashboard(s, empty, loopbackEnv());
-    expect(putRes.status).toBe(200);
-    expect(await putRes.json()).toEqual({ config: empty });
+  it(
+    'an EMPTY config ({ widgets: [], interactions: [] }) is accepted (fix wave: the "Start blank" empty ' +
+      'state was previously rejected 422 by this real route — design D5b imposes no minimum widget count) ' +
+      'and round-trips through GET',
+    async () => {
+      const s = seededSession().sessionId;
+      const empty = { widgets: [], interactions: [] };
+      const putRes = await putDashboard(s, empty, loopbackEnv());
+      expect(putRes.status).toBe(200);
+      expect(await putRes.json()).toEqual({ config: empty });
 
-    const getRes = await getDashboard(s);
-    expect(await getRes.json()).toEqual({ config: empty });
-  });
+      const getRes = await getDashboard(s);
+      expect(await getRes.json()).toEqual({ config: empty });
+    },
+  );
 
   it('rejects (422) a config naming an unknown widget type — nothing is stored', async () => {
     const s = seededSession().sessionId;
@@ -1088,7 +1247,11 @@ describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameteri
     const designRes = await post(s, { message: 'hi' }, refusedEnv());
     expect(designRes.status).toBe(503);
     expect(spawnSpy).not.toHaveBeenCalled();
-    const answerRes = await postAnswer(s, { turnId: 't', requestId: 'r', answers: [] }, refusedEnv());
+    const answerRes = await postAnswer(
+      s,
+      { turnId: 't', requestId: 'r', answers: [] },
+      refusedEnv(),
+    );
     expect(answerRes.status).toBe(503);
 
     // The dashboard-CRUD routes never spend the operator's credentials, so
@@ -1111,7 +1274,9 @@ describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameteri
 
     const designRes = await post(s, { message: 'hi' }, credsEnv(), headers);
     expect(designRes.status).toBe(503);
-    expect(((await designRes.json()) as { detail: string }).detail).toMatch(/AI_V2_API_KEY|loopback/i);
+    expect(((await designRes.json()) as { detail: string }).detail).toMatch(
+      /AI_V2_API_KEY|loopback/i,
+    );
 
     const getRes = await getDashboard(s, credsEnv(), headers);
     expect(getRes.status).toBe(200);
@@ -1154,22 +1319,24 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
     const { sessionId: s, studioId } = seededSession();
     const user = seedUser({ studios: [studioId] });
     const proposedConfig = {
-      widgets: [
-        { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
-      ],
+      widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
       interactions: [],
     };
 
     spawnSpy.mockImplementationOnce((_prompt, options) => {
       async function* gatedQuery(): AsyncGenerator<SDKMessage> {
         const result = await callProposeDashboard(options.mcpServers, proposedConfig);
-        if (result.isError) throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
+        if (result.isError)
+          throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
         yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
       }
       return gatedQuery() as unknown as Query;
     });
 
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), {
+      ...J,
+      Cookie: await loginCookie(user),
+    });
     expect(res.status).toBe(200);
     const text = await res.text();
     const events = parseSse(text);
@@ -1198,47 +1365,53 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
     expect(events.filter((e) => e.event === 'done')).toHaveLength(1);
   });
 
-  it('the dashboard event turnId, when persisted via PUT ?turnId=, records createdByTurnId on the real write path ' +
-    '(fix wave: closes the D5b "originating turn" gap for the proposal-persist flow)', async () => {
-    const { sessionId: s, studioId } = seededSession();
-    const user = seedUser({ studios: [studioId] });
-    const proposedConfig = {
-      widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
-      interactions: [],
-    };
+  it(
+    'the dashboard event turnId, when persisted via PUT ?turnId=, records createdByTurnId on the real write path ' +
+      '(fix wave: closes the D5b "originating turn" gap for the proposal-persist flow)',
+    async () => {
+      const { sessionId: s, studioId } = seededSession();
+      const user = seedUser({ studios: [studioId] });
+      const proposedConfig = {
+        widgets: [
+          { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
+        ],
+        interactions: [],
+      };
 
-    spawnSpy.mockImplementationOnce((_prompt, options) => {
-      async function* gatedQuery(): AsyncGenerator<SDKMessage> {
-        const result = await callProposeDashboard(options.mcpServers, proposedConfig);
-        if (result.isError) throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
-        yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
-      }
-      return gatedQuery() as unknown as Query;
-    });
+      spawnSpy.mockImplementationOnce((_prompt, options) => {
+        async function* gatedQuery(): AsyncGenerator<SDKMessage> {
+          const result = await callProposeDashboard(options.mcpServers, proposedConfig);
+          if (result.isError)
+            throw new Error(`propose_dashboard unexpectedly rejected: ${result.text}`);
+          yield { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+        }
+        return gatedQuery() as unknown as Query;
+      });
 
-    const headers = { ...J, Cookie: await loginCookie(user) };
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), headers);
-    const events = parseSse(await res.text());
-    const dashboardPayload = events.find((e) => e.event === 'dashboard')?.data as {
-      config: unknown;
-      turnId: string;
-    };
-    expect(dashboardPayload.turnId).toBeTruthy();
+      const headers = { ...J, Cookie: await loginCookie(user) };
+      const res = await post(s, { message: 'hi' }, loopbackEnv(), headers);
+      const events = parseSse(await res.text());
+      const dashboardPayload = events.find((e) => e.event === 'dashboard')?.data as {
+        config: unknown;
+        turnId: string;
+      };
+      expect(dashboardPayload.turnId).toBeTruthy();
 
-    // The client "keeps" the proposal: PUT the SAME config, threading the
-    // turnId the SSE event carried, exactly as AiV2Panel's keep-flow now
-    // does end to end.
-    const putRes = await putDashboard(
-      s,
-      proposedConfig,
-      loopbackEnv(),
-      headers,
-      `?turnId=${encodeURIComponent(dashboardPayload.turnId)}`,
-    );
-    expect(putRes.status).toBe(200);
-    const stored = env.ports.sessions.get(s).getDashboard('primary');
-    expect(stored?.createdByTurnId).toBe(dashboardPayload.turnId);
-  });
+      // The client "keeps" the proposal: PUT the SAME config, threading the
+      // turnId the SSE event carried, exactly as AiV2Panel's keep-flow now
+      // does end to end.
+      const putRes = await putDashboard(
+        s,
+        proposedConfig,
+        loopbackEnv(),
+        headers,
+        `?turnId=${encodeURIComponent(dashboardPayload.turnId)}`,
+      );
+      expect(putRes.status).toBe(200);
+      const stored = env.ports.sessions.get(s).getDashboard('primary');
+      expect(stored?.createdByTurnId).toBe(dashboardPayload.turnId);
+    },
+  );
 
   it('an invalid (markup-bearing) proposal is rejected at the tool boundary — no `dashboard` event, nothing persisted', async () => {
     const { sessionId: s, studioId } = seededSession();
@@ -1267,7 +1440,10 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
       return gatedQuery() as unknown as Query;
     });
 
-    const res = await post(s, { message: 'hi' }, loopbackEnv(), { ...J, Cookie: await loginCookie(user) });
+    const res = await post(s, { message: 'hi' }, loopbackEnv(), {
+      ...J,
+      Cookie: await loginCookie(user),
+    });
     expect(res.status).toBe(200);
     const events = parseSse(await res.text());
     expect(events.filter((e) => e.event === 'dashboard')).toHaveLength(0);
@@ -1275,7 +1451,11 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
     // Nothing was persisted either — the propose tool never calls the
     // dashboard store itself (design D10: it only streams; persistence is a
     // separate, explicit client choice through the existing PUT route).
-    expect(await (await getDashboard(s, loopbackEnv(), { ...J, Cookie: await loginCookie(user) })).json()).toEqual({
+    expect(
+      await (
+        await getDashboard(s, loopbackEnv(), { ...J, Cookie: await loginCookie(user) })
+      ).json(),
+    ).toEqual({
       config: null,
     });
   });

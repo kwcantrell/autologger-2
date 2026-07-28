@@ -13,10 +13,10 @@
 //                             frag_keyframe+empty_moov+default_base_moof)
 //   seg-corrupt.bin         — 256 random bytes, no valid container at all
 
-import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mergeAudioSegments } from './audioMerge';
 

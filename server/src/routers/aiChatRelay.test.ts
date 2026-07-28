@@ -48,7 +48,9 @@ function spawnFixture(mode: string, argv: string[] = []): ChildProcess {
   return child;
 }
 
-async function collect(child: ChildProcess): Promise<{ events: AiChatSseEvent[]; outcome: Awaited<ReturnType<typeof relayAiChatTurn>> }> {
+async function collect(
+  child: ChildProcess,
+): Promise<{ events: AiChatSseEvent[]; outcome: Awaited<ReturnType<typeof relayAiChatTurn>> }> {
   const events: AiChatSseEvent[] = [];
   const outcome = await relayAiChatTurn(child, (e) => {
     events.push(e);
@@ -80,7 +82,9 @@ describe('relayAiChatTurn — end-to-end against the real fake-claude fixture', 
   });
 
   it('honors --resume: the done event echoes the resumed id, not the fixture default', async () => {
-    const { events, outcome } = await collect(spawnFixture('success', ['--resume', 'prior-turn-id']));
+    const { events, outcome } = await collect(
+      spawnFixture('success', ['--resume', 'prior-turn-id']),
+    );
     expect(outcome).toEqual({ ok: true, claudeSessionId: 'prior-turn-id' });
     expect(events.at(-1)).toEqual({ event: 'done', data: { claude_session_id: 'prior-turn-id' } });
   });
@@ -91,26 +95,32 @@ describe('relayAiChatTurn — end-to-end against the real fake-claude fixture', 
     expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
   });
 
-  it('garbage: unparseable stdout lines never crash the relay; one scrubbed error, ' +
-    'raw garbage text never relayed', async () => {
-    const { events, outcome } = await collect(spawnFixture('garbage'));
-    expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
-    expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
-    const serialized = JSON.stringify(events);
-    expect(serialized).not.toContain('not json at all');
-    expect(serialized).not.toContain('{{ this is not valid JSON');
-  });
+  it(
+    'garbage: unparseable stdout lines never crash the relay; one scrubbed error, ' +
+      'raw garbage text never relayed',
+    async () => {
+      const { events, outcome } = await collect(spawnFixture('garbage'));
+      expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
+      expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
+      const serialized = JSON.stringify(events);
+      expect(serialized).not.toContain('not json at all');
+      expect(serialized).not.toContain('{{ this is not valid JSON');
+    },
+  );
 
-  it('not-logged-in: maps to the not-logged-in scrubbed detail, NEVER the raw stderr ' +
-    'text or the device-login URL', async () => {
-    const { events, outcome } = await collect(spawnFixture('not-logged-in'));
-    expect(events).toEqual([{ event: 'error', data: { detail: 'not-logged-in' } }]);
-    expect(outcome).toEqual({ ok: false, detail: 'not-logged-in' });
-    const serialized = JSON.stringify(events);
-    expect(serialized).not.toContain('claude.ai/login');
-    expect(serialized).not.toContain('FIXTURE-DEVICE-CODE');
-    expect(serialized).not.toContain('Invalid API key');
-  });
+  it(
+    'not-logged-in: maps to the not-logged-in scrubbed detail, NEVER the raw stderr ' +
+      'text or the device-login URL',
+    async () => {
+      const { events, outcome } = await collect(spawnFixture('not-logged-in'));
+      expect(events).toEqual([{ event: 'error', data: { detail: 'not-logged-in' } }]);
+      expect(outcome).toEqual({ ok: false, detail: 'not-logged-in' });
+      const serialized = JSON.stringify(events);
+      expect(serialized).not.toContain('claude.ai/login');
+      expect(serialized).not.toContain('FIXTURE-DEVICE-CODE');
+      expect(serialized).not.toContain('Invalid API key');
+    },
+  );
 
   it('every completed-stream scenario ends with exactly one terminal event (done XOR error)', async () => {
     for (const mode of ['success', 'exit-nonzero', 'garbage', 'not-logged-in']) {
@@ -163,7 +173,11 @@ const resultLine = (overrides: Record<string, unknown> = {}) => ({
 describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
   it('ignores unrecognized top-level types (forward-compat with future CLI versions)', async () => {
     const { events, outcome } = await collect(
-      fakeChild([initLine(), { type: 'a_brand_new_event_type_from_the_future', payload: 'whatever' }, resultLine()]),
+      fakeChild([
+        initLine(),
+        { type: 'a_brand_new_event_type_from_the_future', payload: 'whatever' },
+        resultLine(),
+      ]),
     );
     expect(events).toEqual([{ event: 'done', data: { claude_session_id: 's1' } }]);
     expect(outcome).toEqual({ ok: true, claudeSessionId: 's1' });
@@ -175,7 +189,10 @@ describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
         initLine(),
         {
           type: 'assistant',
-          message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret reasoning', signature: 'sig' }] },
+          message: {
+            role: 'assistant',
+            content: [{ type: 'thinking', thinking: 'secret reasoning', signature: 'sig' }],
+          },
         },
         resultLine(),
       ]),
@@ -185,14 +202,18 @@ describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
   });
 
   it('a result with is_error:true maps to a scrubbed error, never a done event', async () => {
-    const { events, outcome } = await collect(fakeChild([initLine(), resultLine({ is_error: true, result: 'internal CLI failure text' })]));
+    const { events, outcome } = await collect(
+      fakeChild([initLine(), resultLine({ is_error: true, result: 'internal CLI failure text' })]),
+    );
     expect(events).toEqual([{ event: 'error', data: { detail: 'upstream-failed' } }]);
     expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
     expect(JSON.stringify(events)).not.toContain('internal CLI failure text');
   });
 
   it('multiple terminal-triggering lines still produce exactly one terminal event', async () => {
-    const { events } = await collect(fakeChild([initLine(), resultLine(), resultLine({ session_id: 's1-again' })]));
+    const { events } = await collect(
+      fakeChild([initLine(), resultLine(), resultLine({ session_id: 's1-again' })]),
+    );
     const terminals = events.filter((e) => e.event === 'done' || e.event === 'error');
     expect(terminals).toHaveLength(1);
     expect(terminals[0]).toEqual({ event: 'done', data: { claude_session_id: 's1' } });
@@ -204,7 +225,10 @@ describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
         initLine(),
         {
           type: 'assistant',
-          message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'some_other_tool', input: {} }] },
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 't1', name: 'some_other_tool', input: {} }],
+          },
         },
         resultLine(),
       ]),
@@ -213,7 +237,12 @@ describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
   });
 
   it('a spawn error (e.g. ENOENT) maps to internal-error, never the raw error message', async () => {
-    const { events, outcome } = await collect(fakeChild([], { spawnError: new Error('spawn /nonexistent ENOENT'), exitCode: null as unknown as number }));
+    const { events, outcome } = await collect(
+      fakeChild([], {
+        spawnError: new Error('spawn /nonexistent ENOENT'),
+        exitCode: null as unknown as number,
+      }),
+    );
     expect(events).toEqual([{ event: 'error', data: { detail: 'internal-error' } }]);
     expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
     expect(JSON.stringify(events)).not.toContain('ENOENT');
@@ -231,7 +260,11 @@ describe('relayAiChatTurn — JSONL edge cases (fake in-memory child)', () => {
         initLine(),
         {
           type: 'stream_event',
-          event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'should never appear' } },
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: 'should never appear' },
+          },
         },
         resultLine(),
       ]),

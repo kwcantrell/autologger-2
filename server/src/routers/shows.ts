@@ -28,10 +28,10 @@ showsRouter.get('/api/shows', async (c) => {
     sid = eff.id;
   }
   if (!catalog.studios.isKnownStudio(sid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(catalog.auth.authUserHasStudio(user.id, sid))) {
+  if (user !== null && !catalog.auth.authUserHasStudio(user.id, sid)) {
     return c.json({ detail: 'Unknown studio id.' }, 404);
   }
-  const out = (catalog.shows.listShowsForStudio(sid)).map(showApiDict);
+  const out = catalog.shows.listShowsForStudio(sid).map(showApiDict);
   return c.json({ shows: out });
 });
 
@@ -39,10 +39,12 @@ showsRouter.post('/api/shows', async (c) => {
   const catalog = c.get('catalog');
   const body = showCreateBodySchema.parse(await c.req.json());
   const user = c.get('user');
-  if (user === null && oauthConfigured(c.env.config)) return c.json({ detail: 'Login required.' }, 401);
+  if (user === null && oauthConfigured(c.env.config))
+    return c.json({ detail: 'Login required.' }, 401);
 
-  if (!catalog.studios.isKnownStudio(body.studio_id)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(catalog.auth.authUserHasStudio(user.id, body.studio_id))) {
+  if (!catalog.studios.isKnownStudio(body.studio_id))
+    return c.json({ detail: 'Unknown studio id.' }, 400);
+  if (user !== null && !catalog.auth.authUserHasStudio(user.id, body.studio_id)) {
     return c.json({ detail: 'Unknown studio id.' }, 404);
   }
 

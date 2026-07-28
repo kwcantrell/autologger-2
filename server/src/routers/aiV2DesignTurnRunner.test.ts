@@ -17,8 +17,8 @@ import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import {
   buildDesignTurnCanUseTool,
   createDesignTurnSpawner,
-  designTurnGroupAlive,
   type DesignTurnSseEvent,
+  designTurnGroupAlive,
   killDesignTurnProcessGroup,
   runDesignTurn,
 } from './aiV2SdkSpawn';
@@ -44,7 +44,11 @@ function neverYieldingQuery(): AsyncIterable<SDKMessage> {
 function assistant(...blocks: Array<Record<string, unknown>>): SDKMessage {
   return { type: 'assistant', message: { content: blocks } } as unknown as SDKMessage;
 }
-const resultSuccess = { type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage;
+const resultSuccess = {
+  type: 'result',
+  subtype: 'success',
+  is_error: false,
+} as unknown as SDKMessage;
 const resultError = { type: 'result', subtype: 'error', is_error: true } as unknown as SDKMessage;
 
 function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
@@ -76,7 +80,8 @@ function spawnDetachedReady(script: string): { child: ChildProcess; ready: Promi
 }
 // Registers a no-op SIGTERM handler, THEN announces readiness — so a SIGTERM
 // arriving after `ready` is genuinely ignored, forcing the SIGKILL rung.
-const IGNORE_SIGTERM = "process.on('SIGTERM',()=>{}); console.log('ready'); setInterval(()=>{},1e9);";
+const IGNORE_SIGTERM =
+  "process.on('SIGTERM',()=>{}); console.log('ready'); setInterval(()=>{},1e9);";
 const OBEY_SIGTERM = "console.log('ready'); setInterval(()=>{},1e9);";
 
 afterEach(() => {
@@ -120,7 +125,10 @@ describe('runDesignTurn — SSE relay (task 2.5)', () => {
     });
 
     expect(outcome).toEqual({ ok: true });
-    expect(events.filter((e) => e.event === 'delta').map((e) => e.data.text)).toEqual(['Hello', 'world']);
+    expect(events.filter((e) => e.event === 'delta').map((e) => e.data.text)).toEqual([
+      'Hello',
+      'world',
+    ]);
     expect(events.filter((e) => e.event === 'done')).toHaveLength(1);
     expect(events.filter((e) => e.event === 'error')).toHaveLength(0);
     // No reasoning or tool metadata leaked to the client.
@@ -347,7 +355,9 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
     await ready;
     const pgid = child.pid;
     if (pgid == null) throw new Error('child has no pid');
-    const exitSignal = new Promise<NodeJS.Signals | null>((res) => child.once('exit', (_c, s) => res(s)));
+    const exitSignal = new Promise<NodeJS.Signals | null>((res) =>
+      child.once('exit', (_c, s) => res(s)),
+    );
 
     expect(designTurnGroupAlive(pgid)).toBe(true);
     await killDesignTurnProcessGroup(pgid, 150);
@@ -362,7 +372,9 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
     await ready;
     const pgid = child.pid;
     if (pgid == null) throw new Error('child has no pid');
-    const exitSignal = new Promise<NodeJS.Signals | null>((res) => child.once('exit', (_c, s) => res(s)));
+    const exitSignal = new Promise<NodeJS.Signals | null>((res) =>
+      child.once('exit', (_c, s) => res(s)),
+    );
 
     await killDesignTurnProcessGroup(pgid, 3000);
     const signal = await withTimeout(exitSignal, 5000, 'child never exited');
@@ -389,7 +401,9 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
     });
     const pgid = spawner.getPgid();
     if (pgid == null) throw new Error('spawner captured no pgid');
-    const exitSignal = new Promise<NodeJS.Signals | null>((res) => child.once('exit', (_c, s) => res(s)));
+    const exitSignal = new Promise<NodeJS.Signals | null>((res) =>
+      child.once('exit', (_c, s) => res(s)),
+    );
 
     expect(designTurnGroupAlive(pgid)).toBe(true);
     await spawner.terminate(150);
@@ -412,38 +426,48 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
 // Hermetic: injected fake iterators throughout, no subprocess, no SDK.
 
 describe('runDesignTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate)', () => {
-  function pinCollector(): { events: DesignTurnSseEvent[]; emit: (event: DesignTurnSseEvent) => void } {
+  function pinCollector(): {
+    events: DesignTurnSseEvent[];
+    emit: (event: DesignTurnSseEvent) => void;
+  } {
     const events: DesignTurnSseEvent[] = [];
     return { events, emit: (event) => void events.push(event) };
   }
 
-  it('success: the full frame sequence is exactly delta → delta → done{}, payloads pinned ' +
-    'verbatim — thinking/tool_use blocks contribute NO frames', async () => {
-    const { events, emit } = pinCollector();
-    const outcome = await runDesignTurn({
-      query: fromMessages([
-        assistant(
-          { type: 'thinking', thinking: 'model reasoning' },
-          { type: 'text', text: 'Hello' },
-          { type: 'tool_use', name: `mcp__${AGGREGATE_MCP_SERVER_NAME}__speaker_stats`, input: {} },
-          { type: 'text', text: 'world' },
-        ),
-        resultSuccess,
-      ]),
-      emit,
-      timeoutMs: 60_000,
-      abortController: new AbortController(),
-      terminate: NOOP_TERMINATE,
-      release: NOOP_RELEASE,
-    });
+  it(
+    'success: the full frame sequence is exactly delta → delta → done{}, payloads pinned ' +
+      'verbatim — thinking/tool_use blocks contribute NO frames',
+    async () => {
+      const { events, emit } = pinCollector();
+      const outcome = await runDesignTurn({
+        query: fromMessages([
+          assistant(
+            { type: 'thinking', thinking: 'model reasoning' },
+            { type: 'text', text: 'Hello' },
+            {
+              type: 'tool_use',
+              name: `mcp__${AGGREGATE_MCP_SERVER_NAME}__speaker_stats`,
+              input: {},
+            },
+            { type: 'text', text: 'world' },
+          ),
+          resultSuccess,
+        ]),
+        emit,
+        timeoutMs: 60_000,
+        abortController: new AbortController(),
+        terminate: NOOP_TERMINATE,
+        release: NOOP_RELEASE,
+      });
 
-    expect(events).toEqual([
-      { event: 'delta', data: { text: 'Hello' } },
-      { event: 'delta', data: { text: 'world' } },
-      { event: 'done', data: {} },
-    ]);
-    expect(outcome).toEqual({ ok: true });
-  });
+      expect(events).toEqual([
+        { event: 'delta', data: { text: 'Hello' } },
+        { event: 'delta', data: { text: 'world' } },
+        { event: 'done', data: {} },
+      ]);
+      expect(outcome).toEqual({ ok: true });
+    },
+  );
 
   it('timeout: the full frame sequence is exactly one error{timeout} frame', async () => {
     const { events, emit } = pinCollector();
@@ -481,68 +505,77 @@ describe('runDesignTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
     expect(outcome).toEqual({ ok: false, detail: 'aborted' });
   });
 
-  it('error (CLI-signaled result error): the full frame sequence is exactly ' +
-    'delta → error{upstream-failed}', async () => {
-    const { events, emit } = pinCollector();
-    const outcome = await runDesignTurn({
-      query: fromMessages([assistant({ type: 'text', text: 'partial' }), resultError]),
-      emit,
-      timeoutMs: 60_000,
-      abortController: new AbortController(),
-      terminate: NOOP_TERMINATE,
-      release: NOOP_RELEASE,
-    });
+  it(
+    'error (CLI-signaled result error): the full frame sequence is exactly ' +
+      'delta → error{upstream-failed}',
+    async () => {
+      const { events, emit } = pinCollector();
+      const outcome = await runDesignTurn({
+        query: fromMessages([assistant({ type: 'text', text: 'partial' }), resultError]),
+        emit,
+        timeoutMs: 60_000,
+        abortController: new AbortController(),
+        terminate: NOOP_TERMINATE,
+        release: NOOP_RELEASE,
+      });
 
-    expect(events).toEqual([
-      { event: 'delta', data: { text: 'partial' } },
-      { event: 'error', data: { detail: 'upstream-failed' } },
-    ]);
-    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
-  });
+      expect(events).toEqual([
+        { event: 'delta', data: { text: 'partial' } },
+        { event: 'error', data: { detail: 'upstream-failed' } },
+      ]);
+      expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
+    },
+  );
 
-  it('error (iterator throw): the full frame sequence is exactly delta → scrubbed ' +
-    'error{internal-error} — the raw thrown message reaches no frame (the guard/scrub ' +
-    'composition D3 preserves as structural)', async () => {
-    async function* throwingQuery(): AsyncGenerator<SDKMessage> {
-      yield assistant({ type: 'text', text: 'partial' });
-      throw new Error('RAW /etc/secret path-bearing SDK failure text');
-    }
-    const { events, emit } = pinCollector();
-    const outcome = await runDesignTurn({
-      query: throwingQuery(),
-      emit,
-      timeoutMs: 60_000,
-      abortController: new AbortController(),
-      terminate: NOOP_TERMINATE,
-      release: NOOP_RELEASE,
-    });
+  it(
+    'error (iterator throw): the full frame sequence is exactly delta → scrubbed ' +
+      'error{internal-error} — the raw thrown message reaches no frame (the guard/scrub ' +
+      'composition D3 preserves as structural)',
+    async () => {
+      async function* throwingQuery(): AsyncGenerator<SDKMessage> {
+        yield assistant({ type: 'text', text: 'partial' });
+        throw new Error('RAW /etc/secret path-bearing SDK failure text');
+      }
+      const { events, emit } = pinCollector();
+      const outcome = await runDesignTurn({
+        query: throwingQuery(),
+        emit,
+        timeoutMs: 60_000,
+        abortController: new AbortController(),
+        terminate: NOOP_TERMINATE,
+        release: NOOP_RELEASE,
+      });
 
-    expect(events).toEqual([
-      { event: 'delta', data: { text: 'partial' } },
-      { event: 'error', data: { detail: 'internal-error' } },
-    ]);
-    expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
-    expect(JSON.stringify(events)).not.toContain('RAW /etc/secret');
-  });
+      expect(events).toEqual([
+        { event: 'delta', data: { text: 'partial' } },
+        { event: 'error', data: { detail: 'internal-error' } },
+      ]);
+      expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
+      expect(JSON.stringify(events)).not.toContain('RAW /etc/secret');
+    },
+  );
 
-  it('error (stream ends with no result): the full frame sequence is exactly ' +
-    'delta → error{internal-error}', async () => {
-    const { events, emit } = pinCollector();
-    const outcome = await runDesignTurn({
-      query: fromMessages([assistant({ type: 'text', text: 'orphaned' })]),
-      emit,
-      timeoutMs: 60_000,
-      abortController: new AbortController(),
-      terminate: NOOP_TERMINATE,
-      release: NOOP_RELEASE,
-    });
+  it(
+    'error (stream ends with no result): the full frame sequence is exactly ' +
+      'delta → error{internal-error}',
+    async () => {
+      const { events, emit } = pinCollector();
+      const outcome = await runDesignTurn({
+        query: fromMessages([assistant({ type: 'text', text: 'orphaned' })]),
+        emit,
+        timeoutMs: 60_000,
+        abortController: new AbortController(),
+        terminate: NOOP_TERMINATE,
+        release: NOOP_RELEASE,
+      });
 
-    expect(events).toEqual([
-      { event: 'delta', data: { text: 'orphaned' } },
-      { event: 'error', data: { detail: 'internal-error' } },
-    ]);
-    expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
-  });
+      expect(events).toEqual([
+        { event: 'delta', data: { text: 'orphaned' } },
+        { event: 'error', data: { detail: 'internal-error' } },
+      ]);
+      expect(outcome).toEqual({ ok: false, detail: 'internal-error' });
+    },
+  );
 });
 
 // ── canUseTool (design D7; the callback the 'plan' permission mode routes to) ─

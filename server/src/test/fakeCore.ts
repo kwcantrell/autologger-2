@@ -7,9 +7,9 @@
 // core's behavior.
 
 import Database from 'better-sqlite3';
-import { SessionCore } from '../session/sessionCore';
-import type { AttachedSocket, SessionRuntime } from '../session/sessionCore';
 import { sqliteSessionSql } from '../session/SessionHub';
+import type { AttachedSocket, SessionRuntime } from '../session/sessionCore';
+import { SessionCore } from '../session/sessionCore';
 
 export interface FakeRuntime {
   core: SessionCore;

@@ -20,6 +20,11 @@
     }
   },
   "files": {
-    "includes": ["e2e/**/*.ts", "playwright.config.ts", "companion/src/**/*.ts"]
+    "includes": [
+      "e2e/**/*.ts",
+      "playwright.config.ts",
+      "companion/src/**/*.ts",
+      "server/src/**/*.ts"
+    ]
   }
 }

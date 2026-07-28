@@ -1,10 +1,10 @@
 // Unit tests for the DeepGram pre-recorded transcription client. `fetch` is
 // mocked (vi.stubGlobal) — no real network/provider calls.
 
-import { Agent } from 'undici';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Agent } from 'undici';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   contentTypeForFamily,
@@ -91,7 +91,12 @@ describe('transcribeGroup', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await transcribeGroup({ outPath: filePath, family: 'opus', apiKey: 'secret-key-123', model: 'nova-3' });
+    await transcribeGroup({
+      outPath: filePath,
+      family: 'opus',
+      apiKey: 'secret-key-123',
+      model: 'nova-3',
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [
@@ -130,7 +135,13 @@ describe('transcribeGroup', () => {
                   alternatives: [
                     {
                       words: [
-                        { word: 'hello', punctuated_word: 'Hello,', start: 0.08, end: 0.32, speaker: 1 },
+                        {
+                          word: 'hello',
+                          punctuated_word: 'Hello,',
+                          start: 0.08,
+                          end: 0.32,
+                          speaker: 1,
+                        },
                         { word: 'world', start: 0.4, end: 0.6, speaker: 1 },
                       ],
                     },
@@ -169,7 +180,12 @@ describe('transcribeGroup', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
-      transcribeGroup({ outPath: filePath, family: 'opus', apiKey: 'secret-key-123', model: 'nova-3' }),
+      transcribeGroup({
+        outPath: filePath,
+        family: 'opus',
+        apiKey: 'secret-key-123',
+        model: 'nova-3',
+      }),
     ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(DeepgramUpstreamError);
       const message = (err as Error).message;
@@ -192,7 +208,9 @@ describe('transcribeGroup', () => {
   });
 
   it('maps a response with no transcript words to a DeepgramUpstreamError', async () => {
-    const fetchMock = mockFetch(() => new Response(JSON.stringify({ results: {} }), { status: 200 }));
+    const fetchMock = mockFetch(
+      () => new Response(JSON.stringify({ results: {} }), { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(
@@ -238,7 +256,7 @@ describe('extractEnrichment', () => {
         text:
           "Okay Houston, we've had a problem here. This is Houston, say again please. " +
           "Houston, we've had a problem. We've had a main beam on the vault. Roger main " +
-          'beam on the vault. Okay, stand by thirteen, we\'re looking at it. Okay, right ' +
+          "beam on the vault. Okay, stand by thirteen, we're looking at it. Okay, right " +
           'now Houston, the voltage is looking good.',
         start_word: 0,
         end_word: 48,
@@ -352,7 +370,9 @@ describe('extractEnrichment', () => {
         ],
       },
     };
-    expect(extractEnrichment(body).paragraphs).toEqual([{ speaker: 0, start: 1, end: 2, text: 'x' }]);
+    expect(extractEnrichment(body).paragraphs).toEqual([
+      { speaker: 0, start: 1, end: 2, text: 'x' },
+    ]);
   });
 
   it('returns empty sentiments when results.sentiments is absent', () => {
@@ -370,10 +390,22 @@ describe('extractEnrichment', () => {
       results: {
         sentiments: {
           segments: [
-            { text: 'a', start_word: 0, end_word: 5, sentiment: 'neutral', sentiment_score: 'oops' },
+            {
+              text: 'a',
+              start_word: 0,
+              end_word: 5,
+              sentiment: 'neutral',
+              sentiment_score: 'oops',
+            },
             { text: 'b', end_word: 5, sentiment: 'neutral', sentiment_score: 0.1 }, // missing start_word
             { text: 'c', start_word: 1, end_word: 'x', sentiment: 'neutral', sentiment_score: 0.1 },
-            { text: 'kept', start_word: 2, end_word: 3, sentiment: 'positive', sentiment_score: 0.5 },
+            {
+              text: 'kept',
+              start_word: 2,
+              end_word: 3,
+              sentiment: 'positive',
+              sentiment_score: 0.5,
+            },
           ],
         },
       },

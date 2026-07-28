@@ -20,8 +20,8 @@
 // state, which would be wrong after a restart.
 
 import { formatSmpte, fromTotalFrames } from '../timecode';
-import type { DeepgramParagraph, DeepgramSentimentSegment, DeepgramWord } from './deepgram';
 import type { SegmentOffset } from './audioMerge';
+import type { DeepgramParagraph, DeepgramSentimentSegment, DeepgramWord } from './deepgram';
 
 /** The subset of EventRpc fields anchor parsing needs — kept structural so
  * this module doesn't couple to the router-facing `EventRpc` type. */
@@ -54,7 +54,10 @@ export function recordingStartAnchors(events: AnchorCandidateEvent[]): Recording
     const frameRate = Number(e.frame_rate);
     const totalFrames = e.timecode_total_frames;
     if (!(frameRate > 0) || totalFrames === null || totalFrames === undefined) continue;
-    anchors.push({ recordingOrdinal: Number(m[1]), anchorSeconds: Number(totalFrames) / frameRate });
+    anchors.push({
+      recordingOrdinal: Number(m[1]),
+      anchorSeconds: Number(totalFrames) / frameRate,
+    });
   }
   return anchors;
 }
@@ -315,11 +318,15 @@ export function remapTranscriptEnrichment(
 
 /** Anchored-by-`start_sec`-then-anchorless-by-group/segment-order, the same
  * two-bucket order `remapTranscriptWords` uses. */
-function twoBucketOrder<T extends { ordinal: number; order: number; startSec: number | null }>(items: T[]): T[] {
+function twoBucketOrder<T extends { ordinal: number; order: number; startSec: number | null }>(
+  items: T[],
+): T[] {
   const anchored = items
     .filter((p) => p.startSec !== null)
     .sort((a, b) => (a.startSec as number) - (b.startSec as number) || a.order - b.order);
-  const anchorless = items.filter((p) => p.startSec === null).sort((a, b) => a.ordinal - b.ordinal || a.order - b.order);
+  const anchorless = items
+    .filter((p) => p.startSec === null)
+    .sort((a, b) => a.ordinal - b.ordinal || a.order - b.order);
   return [...anchored, ...anchorless];
 }
 
@@ -425,7 +432,8 @@ function resolveAnchors(
   const sortedSegments = [...segmentInfo].sort((a, b) => a.ordinal - b.ordinal);
   const unmatchedSegments: SegmentAnchorInfo[] = [];
   for (const seg of sortedSegments) {
-    const candidates = seg.recordingOrdinal !== null ? (indicesByOrdinal.get(seg.recordingOrdinal) ?? []) : [];
+    const candidates =
+      seg.recordingOrdinal !== null ? (indicesByOrdinal.get(seg.recordingOrdinal) ?? []) : [];
     const idx = candidates.find((i) => !anchorUsed[i]);
     if (idx !== undefined) {
       anchorUsed[idx] = true;
@@ -439,7 +447,11 @@ function resolveAnchors(
   const remainingAnchorIdx = anchors
     .map((_, i) => i)
     .filter((i) => !anchorUsed[i])
-    .sort((i, j) => anchors[i].anchorSeconds - anchors[j].anchorSeconds || anchors[i].recordingOrdinal - anchors[j].recordingOrdinal);
+    .sort(
+      (i, j) =>
+        anchors[i].anchorSeconds - anchors[j].anchorSeconds ||
+        anchors[i].recordingOrdinal - anchors[j].recordingOrdinal,
+    );
   const pairCount = Math.min(unmatchedSegments.length, remainingAnchorIdx.length);
   for (let k = 0; k < pairCount; k += 1) {
     result.set(unmatchedSegments[k].path, anchors[remainingAnchorIdx[k]].anchorSeconds);

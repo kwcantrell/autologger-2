@@ -23,13 +23,27 @@ describe('showApiDict', () => {
       categories: [{ label: 'Cue', type: 'BUTTON', color: '#ff0000' }],
       // normalizeEventPaletteNine pads to 9 slots from a default fill sequence
       event_palette: [
-        '#111111', '#222222', '#64748b', '#e53935', '#fb8c00', '#fdd835', '#43a047',
-        '#00acc1', '#1e88e5',
+        '#111111',
+        '#222222',
+        '#64748b',
+        '#e53935',
+        '#fb8c00',
+        '#fdd835',
+        '#43a047',
+        '#00acc1',
+        '#1e88e5',
       ],
       event_palette_preset: 'custom',
       event_palette_custom: [
-        '#333333', '#64748b', '#e53935', '#fb8c00', '#fdd835', '#43a047', '#00acc1',
-        '#1e88e5', '#8e24aa',
+        '#333333',
+        '#64748b',
+        '#e53935',
+        '#fb8c00',
+        '#fdd835',
+        '#43a047',
+        '#00acc1',
+        '#1e88e5',
+        '#8e24aa',
       ],
     });
   });
@@ -51,8 +65,15 @@ describe('showApiDict', () => {
     expect(out.categories).toEqual([]);
     // empty palette → full default fill sequence
     const defaultFill = [
-      '#64748b', '#e53935', '#fb8c00', '#fdd835', '#43a047', '#00acc1', '#1e88e5',
-      '#8e24aa', '#ec407a',
+      '#64748b',
+      '#e53935',
+      '#fb8c00',
+      '#fdd835',
+      '#43a047',
+      '#00acc1',
+      '#1e88e5',
+      '#8e24aa',
+      '#ec407a',
     ];
     expect(out.event_palette).toEqual(defaultFill);
     // empty custom falls back to a copy of the (filled) palette

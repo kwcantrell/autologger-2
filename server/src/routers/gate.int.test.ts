@@ -1,6 +1,13 @@
-import { app, env, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
-import { adminHeader, loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { app, env, envWith } from '../test/harness';
+import {
+  adminHeader,
+  loginCookie,
+  seedSession,
+  seedShow,
+  seedStudio,
+  seedUser,
+} from '../test/helpers';
 
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 
@@ -17,7 +24,11 @@ describe('auth gate', () => {
 
   it('admin routes 503 when ADMIN_TOKEN unconfigured, 401 on a wrong token', async () => {
     // .dev.vars provides an ADMIN_TOKEN in this env, so force-clear it for the 503 path.
-    const noToken = await app.request('/api/admin/users', { method: 'GET' }, envWith({ ADMIN_TOKEN: '' }));
+    const noToken = await app.request(
+      '/api/admin/users',
+      { method: 'GET' },
+      envWith({ ADMIN_TOKEN: '' }),
+    );
     expect(noToken.status).toBe(503);
     const bad = await app.request(
       '/api/admin/users',

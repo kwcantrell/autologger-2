@@ -1,10 +1,10 @@
 // Per-test Node bindings over a temp DATA_DIR — the isolatedStorage equivalent.
 // `env` is a Proxy so existing `{...env, ...overrides}` spreads keep working.
 
-import { Hono } from 'hono';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { wireApp } from '../app';
 import { createBindings } from '../node/config';
@@ -78,7 +78,7 @@ export function envWith(overrides: Record<string, unknown>): Bindings {
   });
 }
 
-const upgradeStub = ((() => async (c: { text(b: string, s: number): Response }) =>
-  c.text('WebSocket unavailable in HTTP tests', 426)) as unknown) as UpgradeWebSocket;
+const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
+  c.text('WebSocket unavailable in HTTP tests', 426)) as unknown as UpgradeWebSocket;
 
 export const app = wireApp(new Hono<AppEnv>(), upgradeStub);

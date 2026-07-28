@@ -3,8 +3,8 @@
 
 import type { CatalogDb } from '../node/catalogStore';
 import { normalizeEventPaletteNine, validateEventPalettePreset } from '../studio';
-import { nowIso } from './shared';
 import type { Row } from './shared';
+import { nowIso } from './shared';
 
 function categoriesListFromShowRow(r: Row): unknown[] {
   try {

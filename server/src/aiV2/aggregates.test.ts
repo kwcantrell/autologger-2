@@ -7,6 +7,9 @@
 // the implementation is added to turn it GREEN.
 
 import { describe, expect, it } from 'vitest';
+import type { Topic } from '../session/topicStore';
+import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
+import type { EventRpc } from '../studio';
 import {
   computeEventCounts,
   computeEventDensity,
@@ -17,9 +20,6 @@ import {
   computeUtteranceStats,
   FILLER_WORDS,
 } from './aggregates';
-import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
-import type { Topic } from '../session/topicStore';
-import type { EventRpc } from '../studio';
 
 // -- fixture builders ---------------------------------------------------------
 
@@ -91,7 +91,13 @@ const PARAGRAPHS: TranscriptParagraph[] = [
   paragraph('0', 'What did you think of the show?', 100, 130, 2),
 ];
 
-function topic(sessionTime: string, durationSec: number, level: number, summary: string, ordinal: number): Topic {
+function topic(
+  sessionTime: string,
+  durationSec: number,
+  level: number,
+  summary: string,
+  ordinal: number,
+): Topic {
   return {
     id: `t${ordinal}`,
     session_time: sessionTime,
@@ -121,11 +127,7 @@ function event(category: string, ordinal: number): EventRpc {
   };
 }
 
-const EVENTS: EventRpc[] = [
-  event('cat-a', 0),
-  event('cat-a', 1),
-  event('cat-b', 2),
-];
+const EVENTS: EventRpc[] = [event('cat-a', 0), event('cat-a', 1), event('cat-b', 2)];
 
 // -- session duration ---------------------------------------------------------
 

@@ -56,7 +56,8 @@ const OPEN_NETWORK_DETAIL =
   'YouTube import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
   'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing third-party audio.';
 const BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
-const BAD_URL_DETAIL = 'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
+const BAD_URL_DETAIL =
+  'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
 const SESSION_BUSY_DETAIL = 'An import is already in progress for this session.';
 const AT_CAPACITY_DETAIL =
   'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
@@ -81,7 +82,10 @@ function scratchDir(): string {
  * spawn time, IS the route's per-request temp dir) before exec'ing the
  * fixture via an absolute `node` path — no PATH lookup anywhere in the
  * chain (mirrors `ytdlp.test.ts`'s `makeBinary`). Uses only shell builtins. */
-function makeYtDlpBinary(dir: string, opts: { markerPath: string; control?: Record<string, unknown> }): string {
+function makeYtDlpBinary(
+  dir: string,
+  opts: { markerPath: string; control?: Record<string, unknown> },
+): string {
   const binPath = join(dir, 'yt-dlp');
   const controlJson = JSON.stringify(opts.control ?? {});
   const script =
@@ -96,7 +100,10 @@ function makeYtDlpBinary(dir: string, opts: { markerPath: string; control?: Reco
 
 /** A fresh binary + a marker path that does not yet exist — `existsSync` on
  * it afterward is the real "was the subprocess ever launched" proof. */
-function freshBinary(control?: Record<string, unknown>): { binaryPath: string; markerPath: string } {
+function freshBinary(control?: Record<string, unknown>): {
+  binaryPath: string;
+  markerPath: string;
+} {
   const dir = scratchDir();
   const markerPath = join(dir, 'invoked.marker');
   const binaryPath = makeYtDlpBinary(dir, { markerPath, control });
@@ -128,7 +135,11 @@ async function postImport(sessionId: string, body: unknown, bindings: Bindings):
 }
 
 async function listSegmentsRaw(sessionId: string, bindings: Bindings): Promise<string> {
-  const res = await app.request(`/api/sessions/${sessionId}/audio/segments`, { method: 'GET' }, bindings);
+  const res = await app.request(
+    `/api/sessions/${sessionId}/audio/segments`,
+    { method: 'GET' },
+    bindings,
+  );
   expect(res.status).toBe(200);
   return res.text();
 }
@@ -193,7 +204,12 @@ describe('open-network refusal — 503, no spawn even though yt-dlp IS configure
     const res = await postImport(
       session,
       VALID_BODY,
-      envWith({ YTDLP_RESOLVED_PATH: binaryPath, REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' }),
+      envWith({
+        YTDLP_RESOLVED_PATH: binaryPath,
+        REQUIRE_LOGIN: '0',
+        HOST: '0.0.0.0',
+        IP_ALLOWLIST: '',
+      }),
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ detail: OPEN_NETWORK_DETAIL });
@@ -220,7 +236,11 @@ describe('body/URL validation — 400, no spawn', () => {
   ])('non-allowlisted/look-alike host %s → 400 {detail}, no spawn', async (url) => {
     const session = seededSession().sessionId;
     const { binaryPath, markerPath } = freshBinary();
-    const res = await postImport(session, { url, use_publish_date: false }, configuredEnv(binaryPath));
+    const res = await postImport(
+      session,
+      { url, use_publish_date: false },
+      configuredEnv(binaryPath),
+    );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ detail: BAD_URL_DETAIL });
     expect(neverSpawned(markerPath)).toBe(true);
@@ -239,7 +259,11 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
     const before = await listSegments(session, testEnv);
     expect(before.segments).toEqual([]);
 
-    const res = await postImport(session, { url: 'https://youtu.be/abc123', use_publish_date: true }, testEnv);
+    const res = await postImport(
+      session,
+      { url: 'https://youtu.be/abc123', use_publish_date: true },
+      testEnv,
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(existsSync(markerPath)).toBe(true); // sanity: the binary WAS invoked here, contrasting every no-spawn test above
@@ -254,12 +278,18 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
     // success mode always writes the literal string 'fake-audio-bytes'.
     const blobRes = await app.request(seg.url, { method: 'GET' }, testEnv);
     expect(blobRes.status).toBe(200);
-    expect(new Uint8Array(await blobRes.arrayBuffer())).toEqual(new TextEncoder().encode('fake-audio-bytes'));
+    expect(new Uint8Array(await blobRes.arrayBuffer())).toEqual(
+      new TextEncoder().encode('fake-audio-bytes'),
+    );
 
     // Seekable: a byte-range request against the SAME segment returns 206
     // with the exact sliced bytes — round-trips through the real blob
     // store's range path, not just a full-body fetch.
-    const rangeRes = await app.request(seg.url, { method: 'GET', headers: { range: 'bytes=5-' } }, testEnv);
+    const rangeRes = await app.request(
+      seg.url,
+      { method: 'GET', headers: { range: 'bytes=5-' } },
+      testEnv,
+    );
     expect(rangeRes.status).toBe(206);
     expect(new TextDecoder().decode(await rangeRes.arrayBuffer())).toBe('audio-bytes');
 
@@ -269,7 +299,9 @@ describe('configured success (matrix: youtu.be accepted + success + episode_date
     // web-side task 4.2 test; this asserts the server stores/serves the
     // un-shifted value it's contracted to).
     const detailRes = await app.request(`/api/sessions/${session}`, { method: 'GET' }, testEnv);
-    expect(((await detailRes.json()) as { episode_date: string | null }).episode_date).toBe('2024-01-15');
+    expect(((await detailRes.json()) as { episode_date: string | null }).episode_date).toBe(
+      '2024-01-15',
+    );
   });
 
   it('use_publish_date:false leaves episode_date untouched (spec: opt-out is a no-op)', async () => {
@@ -314,7 +346,11 @@ describe('anchored import (task 9.1 → 9.4: timeline-anchored take, design D10-
     expect(seg.started_at_utc).not.toBeNull();
     expect(seg.ended_at_utc).not.toBeNull();
 
-    const eventsRes = await app.request(`/api/sessions/${session}/events`, { method: 'GET' }, testEnv);
+    const eventsRes = await app.request(
+      `/api/sessions/${session}/events`,
+      { method: 'GET' },
+      testEnv,
+    );
     expect(eventsRes.status).toBe(200);
     const eventsBody = (await eventsRes.json()) as {
       total: number;
@@ -345,7 +381,12 @@ describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on
     const res = await postImport(
       session,
       { url: 'https://youtu.be/abc123', use_publish_date: false },
-      envWith({ YTDLP_RESOLVED_PATH: resolved, HOST: '127.0.0.1', REQUIRE_LOGIN: '0', IP_ALLOWLIST: '' }),
+      envWith({
+        YTDLP_RESOLVED_PATH: resolved,
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        IP_ALLOWLIST: '',
+      }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -399,7 +440,9 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
     ['live', /live stream/],
   ];
 
-  it.each(cases)('mode=%s → 502 {detail}, audio-segment listing byte-for-byte unchanged', async (mode, expectedDetail) => {
+  it.each(
+    cases,
+  )('mode=%s → 502 {detail}, audio-segment listing byte-for-byte unchanged', async (mode, expectedDetail) => {
     const session = seededSession().sessionId;
     const { binaryPath } = freshBinary({ mode });
     const testEnv = configuredEnv(binaryPath);
@@ -424,11 +467,15 @@ describe('atomic rollback on blob-write failure (task 6.2, design D7)', () => {
 
     const before = await listSegmentsRaw(session, testEnv);
 
-    const putSpy = vi.spyOn(env.ports.audio, 'put').mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
+    const putSpy = vi
+      .spyOn(env.ports.audio, 'put')
+      .mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
     try {
       const res = await postImport(session, VALID_BODY, testEnv);
       expect(res.status).toBe(502);
-      expect(((await res.json()) as { detail: string }).detail).toBe('Failed to import audio from YouTube.');
+      expect(((await res.json()) as { detail: string }).detail).toBe(
+        'Failed to import audio from YouTube.',
+      );
     } finally {
       putSpy.mockRestore();
     }
@@ -446,11 +493,19 @@ describe('sibling stubs stay frozen even with yt-dlp configured', () => {
     const { binaryPath } = freshBinary();
     const testEnv = configuredEnv(binaryPath);
 
-    const topics = await app.request(`/api/sessions/${session}/topics/generate`, { method: 'POST' }, testEnv);
+    const topics = await app.request(
+      `/api/sessions/${session}/topics/generate`,
+      { method: 'POST' },
+      testEnv,
+    );
     expect(topics.status).toBe(503);
     expect(await topics.json()).toEqual({ detail: TRANSCRIPTION_UNAVAILABLE_DETAIL });
 
-    const csv = await app.request(`/api/sessions/${session}/transcribe.csv`, { method: 'GET' }, testEnv);
+    const csv = await app.request(
+      `/api/sessions/${session}/transcribe.csv`,
+      { method: 'GET' },
+      testEnv,
+    );
     expect(csv.status).toBe(503);
     expect(await csv.json()).toEqual({ detail: TRANSCRIPTION_UNAVAILABLE_DETAIL });
   });
@@ -584,12 +639,16 @@ describe('task 9.5 — anchored success: exact timecodes, transport advance, WS 
     // of the rollback it belongs to.
     expect(types.filter((t) => t === 'event.changed').length).toBe(1);
     expect(types.filter((t) => t === 'transport.changed').length).toBe(1);
-    expect(wsMessages).toContainEqual({ type: 'transport.changed', is_rolling: false, current_take: 0 });
+    expect(wsMessages).toContainEqual({
+      type: 'transport.changed',
+      is_rolling: false,
+      current_take: 0,
+    });
   });
 });
 
 describe('task 9.5 — non-overlap: a second import is anchored after the first, not at position 0', () => {
-  it('second import gets recording_ordinal=2, Started at the first take\'s end position', async () => {
+  it("second import gets recording_ordinal=2, Started at the first take's end position", async () => {
     const session = seededSession().sessionId;
     const testEnv = configuredEnv(freshBinary().binaryPath);
 
@@ -601,7 +660,9 @@ describe('task 9.5 — non-overlap: a second import is anchored after the first,
 
     const segs = await listSegments(session, testEnv);
     expect(segs.segments).toHaveLength(2);
-    const seg2 = segs.segments.find((s) => (s as { recording_ordinal: number | null }).recording_ordinal === 2);
+    const seg2 = segs.segments.find(
+      (s) => (s as { recording_ordinal: number | null }).recording_ordinal === 2,
+    );
     expect(seg2).toBeDefined();
 
     const { events, total } = await listEvents(session, testEnv);
@@ -664,10 +725,18 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
     // Start a real roll through the frozen transport/start route (not a
     // fake-status stub) so `is_rolling`/`current_take` are the genuine
     // live-projection values the import handler re-reads.
-    const startRes = await app.request(`/api/sessions/${session}/transport/start`, { method: 'POST' }, testEnv);
+    const startRes = await app.request(
+      `/api/sessions/${session}/transport/start`,
+      { method: 'POST' },
+      testEnv,
+    );
     expect(startRes.status).toBe(200);
 
-    const statusBefore = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const statusBefore = await app.request(
+      `/api/sessions/${session}/status`,
+      { method: 'GET' },
+      testEnv,
+    );
     const beforeBody = (await statusBefore.json()) as { is_rolling: boolean; current_take: number };
     expect(beforeBody.is_rolling).toBe(true);
     expect(beforeBody.current_take).toBe(1);
@@ -679,7 +748,11 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
     // subprocess launched to clobber the live take.
     expect(neverSpawned(markerPath)).toBe(true);
 
-    const statusAfter = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const statusAfter = await app.request(
+      `/api/sessions/${session}/status`,
+      { method: 'GET' },
+      testEnv,
+    );
     const afterBody = (await statusAfter.json()) as { is_rolling: boolean; current_take: number };
     expect(afterBody.is_rolling).toBe(true); // roll NOT clobbered
     expect(afterBody.current_take).toBe(1); // NOT bumped by a synthesized take
@@ -727,7 +800,11 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
 
     // Start a REAL live roll — genuine transport state for the whole request,
     // except the early guard's faked first read above.
-    const startRes = await app.request(`/api/sessions/${session}/transport/start`, { method: 'POST' }, testEnv);
+    const startRes = await app.request(
+      `/api/sessions/${session}/transport/start`,
+      { method: 'POST' },
+      testEnv,
+    );
     expect(startRes.status).toBe(200);
 
     const res = await postImport(session, VALID_BODY, testEnv);
@@ -748,7 +825,11 @@ describe('task 9.5 — refused while rolling (409): live roll untouched, no Reco
 
     // The live roll is STILL rolling — not clobbered by
     // stopTakeWithDuration inside the (never-reached) composite anchor RPC.
-    const statusAfter = await app.request(`/api/sessions/${session}/status`, { method: 'GET' }, testEnv);
+    const statusAfter = await app.request(
+      `/api/sessions/${session}/status`,
+      { method: 'GET' },
+      testEnv,
+    );
     const afterBody = (await statusAfter.json()) as { is_rolling: boolean; current_take: number };
     expect(afterBody.is_rolling).toBe(true);
     expect(afterBody.current_take).toBe(1);
@@ -808,7 +889,7 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
 });
 
 describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouched', () => {
-  it('a session already holding an anchorless imported segment is byte-for-byte unchanged after the change\'s read/startup paths run', async () => {
+  it("a session already holding an anchorless imported segment is byte-for-byte unchanged after the change's read/startup paths run", async () => {
     const session = seededSession().sessionId;
     const hub = env.ports.sessions.get(session);
 
@@ -848,7 +929,11 @@ describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouch
     // The row itself is still exactly anchorless — nothing migrated it.
     const after = await listSegments(session, env);
     const reread = after.segments.find((s) => (s as { id: string }).id === seg.id) as
-      | { recording_ordinal: number | null; started_at_utc: string | null; ended_at_utc: string | null }
+      | {
+          recording_ordinal: number | null;
+          started_at_utc: string | null;
+          ended_at_utc: string | null;
+        }
       | undefined;
     expect(reread).toBeDefined();
     expect(reread?.recording_ordinal).toBeNull();

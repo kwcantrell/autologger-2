@@ -3,6 +3,7 @@
 // out of catalog.ts (Catalog) — this module owns the order/names registry state.
 
 import type { CatalogDb } from '../node/catalogStore';
+import type { SettingsBlob, StudioProfile } from '../studio';
 import {
   BUILTIN_STUDIO_NAMES,
   BUILTIN_STUDIO_ORDER,
@@ -14,9 +15,8 @@ import {
   ValidationError,
   validateSettingsBlob,
 } from '../studio';
-import type { SettingsBlob, StudioProfile } from '../studio';
-import { nowIso } from './shared';
 import type { Row } from './shared';
+import { nowIso } from './shared';
 
 export class StudioRegistry {
   private order: string[] = [];
@@ -123,9 +123,7 @@ export class StudioRegistry {
     return this.loadStudioProfile(DEFAULT_STUDIO_ID);
   }
 
-  allStudioSettingsForAllowedStudios(
-    allowedIds: Set<string> | null,
-  ): Record<string, SettingsBlob> {
+  allStudioSettingsForAllowedStudios(allowedIds: Set<string> | null): Record<string, SettingsBlob> {
     const out: Record<string, SettingsBlob> = {};
     for (const sid of this.order) {
       if (allowedIds !== null && !allowedIds.has(sid)) continue;

@@ -99,7 +99,10 @@ describe('AiV2PendingQuestionRegistry — keyed by (sessionId, turnId, requestId
     // The promise must still be unresolved — race it against an
     // already-resolved sentinel; if `promise` had (wrongly) resolved, this
     // race would be non-deterministic instead of always picking the sentinel.
-    const raced = await Promise.race([promise.then(() => 'wrongly-resolved'), Promise.resolve('still-pending')]);
+    const raced = await Promise.race([
+      promise.then(() => 'wrongly-resolved'),
+      Promise.resolve('still-pending'),
+    ]);
     expect(raced).toBe('still-pending');
   });
 
@@ -121,7 +124,9 @@ describe('AiV2PendingQuestionRegistry — keyed by (sessionId, turnId, requestId
     const key = { sessionId: 's1', turnId: 't1', requestId: 'r1' };
     registry.register(key, 'user-a', { questions: [{ question: 'Q1?' }, { question: 'Q2?' }] });
 
-    const outcome = registry.resolveAnswer(key, 'user-a', [{ kind: 'text', text: 'only one answer' }]);
+    const outcome = registry.resolveAnswer(key, 'user-a', [
+      { kind: 'text', text: 'only one answer' },
+    ]);
 
     expect(outcome).toBe('not-found');
     expect(registry.has(key)).toBe(true);
@@ -162,7 +167,9 @@ describe('buildAnswerPermissionResult — option vs free-text answer shapes (spe
   };
 
   it('maps a catalog-option answer to the widget-type id itself, keyed by question text', () => {
-    const result = buildAnswerPermissionResult(input, [{ kind: 'option', widgetType: 'session_duration' }]);
+    const result = buildAnswerPermissionResult(input, [
+      { kind: 'option', widgetType: 'session_duration' },
+    ]);
 
     expect(result).toMatchObject({
       behavior: 'allow',
@@ -177,37 +184,43 @@ describe('buildAnswerPermissionResult — option vs free-text answer shapes (spe
 
     expect(result).toMatchObject({
       behavior: 'allow',
-      updatedInput: { answers: { 'Which widget?': 'something custom' }, response: 'something custom' },
+      updatedInput: {
+        answers: { 'Which widget?': 'something custom' },
+        response: 'something custom',
+      },
     });
   });
 });
 
 describe('stripPreviewForRelay — agent-supplied preview content is discarded before relay (spec "Subprocess security lockdown")', () => {
-  it('drops the preview field from every option, keeping label/description, and returns the FLATTENED array directly ' +
-    '(Phase-3 fix wave, Fix 2 — not wrapped in another { questions } object)', () => {
-    const input = {
-      questions: [
-        {
-          question: 'Pick one',
-          header: 'Pick',
-          multiSelect: false,
-          options: [
-            { label: 'A', description: 'desc a', preview: '<b>evil-markup</b>' },
-            { label: 'B', description: 'desc b', preview: 'also-evil' },
-          ],
-        },
-      ],
-    };
+  it(
+    'drops the preview field from every option, keeping label/description, and returns the FLATTENED array directly ' +
+      '(Phase-3 fix wave, Fix 2 — not wrapped in another { questions } object)',
+    () => {
+      const input = {
+        questions: [
+          {
+            question: 'Pick one',
+            header: 'Pick',
+            multiSelect: false,
+            options: [
+              { label: 'A', description: 'desc a', preview: '<b>evil-markup</b>' },
+              { label: 'B', description: 'desc b', preview: 'also-evil' },
+            ],
+          },
+        ],
+      };
 
-    const relayed = stripPreviewForRelay(input);
+      const relayed = stripPreviewForRelay(input);
 
-    expect(Array.isArray(relayed)).toBe(true);
-    expect(JSON.stringify(relayed)).not.toMatch(/evil/);
-    expect(relayed[0].options).toEqual([
-      { label: 'A', description: 'desc a' },
-      { label: 'B', description: 'desc b' },
-    ]);
-  });
+      expect(Array.isArray(relayed)).toBe(true);
+      expect(JSON.stringify(relayed)).not.toMatch(/evil/);
+      expect(relayed[0].options).toEqual([
+        { label: 'A', description: 'desc a' },
+        { label: 'B', description: 'desc b' },
+      ]);
+    },
+  );
 
   it('is defensive against a malformed input shape — never throws, returning an empty array (not { questions: [] })', () => {
     expect(() => stripPreviewForRelay({})).not.toThrow();
@@ -250,7 +263,9 @@ describe('buildPendingQuestionOnQuestion — the onQuestion seam (registers, rel
     expect(Array.isArray(payload.questions)).toBe(true);
     expect(payload.questions).toHaveLength(1);
     expect((payload.questions as Array<{ question: string }>)[0].question).toBe('Q?');
-    expect(registry.has({ sessionId: 's1', turnId: 't1', requestId: payload.requestId })).toBe(true);
+    expect(registry.has({ sessionId: 's1', turnId: 't1', requestId: payload.requestId })).toBe(
+      true,
+    );
 
     const outcome = registry.resolveAnswer(
       { sessionId: 's1', turnId: 't1', requestId: payload.requestId },

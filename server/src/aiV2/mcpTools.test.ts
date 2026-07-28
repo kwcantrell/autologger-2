@@ -12,12 +12,16 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
 import type { DashboardConfig } from './catalog';
-import { AGGREGATE_TOOL_NAMES, type BuildAggregateMcpServerDeps, buildAggregateMcpServer } from './mcpTools';
+import {
+  AGGREGATE_TOOL_NAMES,
+  type BuildAggregateMcpServerDeps,
+  buildAggregateMcpServer,
+} from './mcpTools';
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -163,9 +167,11 @@ describe('buildAggregateMcpServer — degraded data is never zeros-as-data', () 
     // Manual insert path never writes start_sec/end_sec — schema default 0.0
     // for every word (design D2a). speaker_stats must surface this as
     // `available: false`, never as a measured 0-second talk time.
-    registry.get('manualSess').replaceTranscriptWords([
-      { session_time: '00:00:00', speaker: 'S1', word: 'hi', start_sec: 0, end_sec: 0 },
-    ]);
+    registry
+      .get('manualSess')
+      .replaceTranscriptWords([
+        { session_time: '00:00:00', speaker: 'S1', word: 'hi', start_sec: 0, end_sec: 0 },
+      ]);
     const { client, close } = await connectToTurn('manualSess');
     try {
       const result = await callJson(client, 'speaker_stats');
@@ -179,9 +185,11 @@ describe('buildAggregateMcpServer — degraded data is never zeros-as-data', () 
   });
 
   it('utterance_stats/event_stats degrade independently without paragraphs/timings', async () => {
-    registry.get('sessNoParagraphs').replaceTranscriptWords([
-      { session_time: '00:00:00', speaker: 'S1', word: 'um', start_sec: 0, end_sec: 0 },
-    ]);
+    registry
+      .get('sessNoParagraphs')
+      .replaceTranscriptWords([
+        { session_time: '00:00:00', speaker: 'S1', word: 'um', start_sec: 0, end_sec: 0 },
+      ]);
     const { client, close } = await connectToTurn('sessNoParagraphs');
     try {
       const utterance = await callJson(client, 'utterance_stats');

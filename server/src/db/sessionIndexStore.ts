@@ -3,8 +3,8 @@
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
 import type { CatalogDb } from '../node/catalogStore';
-import { blobToProfile, ValidationError } from '../studio';
 import type { SettingsBlob, StudioProfile } from '../studio';
+import { blobToProfile, ValidationError } from '../studio';
 import type { Row } from './shared';
 import type { ShowsStore } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
@@ -163,11 +163,7 @@ export class SessionIndexStore {
   setSessionEpisodeDate(sessionId: string, iso: string | null | undefined): boolean {
     const value = (iso ?? '').trim();
     if (!value) return false;
-    const res = this.db.run(
-      'UPDATE sessions SET episode_date = ? WHERE id = ?',
-      value,
-      sessionId,
-    );
+    const res = this.db.run('UPDATE sessions SET episode_date = ? WHERE id = ?', value, sessionId);
     return res.changes > 0;
   }
 

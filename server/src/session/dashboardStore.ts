@@ -28,9 +28,9 @@
 // this store) rather than trivially satisfied by always upserting the same
 // row — a future multi-dashboard feature can reuse this store unchanged.
 
-import { isoZ } from '../timecode';
-import { MAX_DASHBOARDS_PER_SESSION, validateDashboardConfig } from '../aiV2/catalog';
 import type { DashboardConfig } from '../aiV2/catalog';
+import { MAX_DASHBOARDS_PER_SESSION, validateDashboardConfig } from '../aiV2/catalog';
+import { isoZ } from '../timecode';
 import type { Row, SessionCore } from './sessionCore';
 
 export interface StoredDashboard {
@@ -110,9 +110,7 @@ export class DashboardStore {
 
     const existing = this.core.first('SELECT 1 FROM session_dashboards WHERE id = ?', input.id);
     if (existing === null) {
-      const count = Number(
-        this.core.first('SELECT COUNT(*) AS n FROM session_dashboards')?.n ?? 0,
-      );
+      const count = Number(this.core.first('SELECT COUNT(*) AS n FROM session_dashboards')?.n ?? 0);
       if (count >= MAX_DASHBOARDS_PER_SESSION) {
         throw new DashboardBoundsError(
           `This session already has the maximum of ${MAX_DASHBOARDS_PER_SESSION} saved dashboards.`,

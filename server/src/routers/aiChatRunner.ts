@@ -80,7 +80,12 @@ export const AI_CHAT_SYSTEM_PROMPT_BRIEF =
 /** Env vars whitelisted onto the child, beyond the always-included HOME/PATH
  * (design D4: "proxy/TLS vars added where the deployment needs them"). Only
  * forwarded when actually present in the parent's env — never fabricated. */
-const OPTIONAL_ENV_PASSTHROUGH = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS'] as const;
+const OPTIONAL_ENV_PASSTHROUGH = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+] as const;
 
 /** The wire-name allowlist for `--allowedTools`, derived from the single
  * source of truth (`aiMcpServer.ts`) rather than re-listed here. */

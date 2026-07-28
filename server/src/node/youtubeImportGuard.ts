@@ -54,7 +54,10 @@ class YoutubeImportGuard {
    * in-flight OR the global ceiling is already reached; otherwise marks
    * both the session and the global count in-flight and returns a lease
    * whose `release()` clears both. */
-  tryAcquire(sessionId: string, maxConcurrent: number = YOUTUBE_IMPORT_MAX_CONCURRENT): YoutubeImportLease | null {
+  tryAcquire(
+    sessionId: string,
+    maxConcurrent: number = YOUTUBE_IMPORT_MAX_CONCURRENT,
+  ): YoutubeImportLease | null {
     if (this.inflightSessions.has(sessionId)) return null;
     if (this.globalCount >= maxConcurrent) return null;
     this.inflightSessions.add(sessionId);

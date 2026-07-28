@@ -4,10 +4,10 @@
 // Uses a fixture dist in a temp dir — `npm test` stays independent of a real
 // Vite build (the e2e tier covers that).
 
-import { Hono } from 'hono';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { afterAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
@@ -15,8 +15,8 @@ import { env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 import type { AppEnv } from '../types';
 
-const upgradeStub = ((() => async (c: { text(b: string, s: number): Response }) =>
-  c.text('WebSocket unavailable in HTTP tests', 426)) as unknown) as UpgradeWebSocket;
+const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
+  c.text('WebSocket unavailable in HTTP tests', 426)) as unknown as UpgradeWebSocket;
 
 const dist = mkdtempSync(join(tmpdir(), 'autologger-dist-'));
 mkdirSync(join(dist, 'src/pages/index'), { recursive: true });

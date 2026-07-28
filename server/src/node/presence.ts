@@ -11,8 +11,8 @@ export interface PresenceMeta {
   updated: number;
 }
 
-import { systemClock } from '../clock';
 import type { Clock } from '../clock';
+import { systemClock } from '../clock';
 
 export class PresenceRegistry {
   private map = new Map<string, PresenceMeta>();

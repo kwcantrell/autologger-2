@@ -31,9 +31,9 @@ import {
 } from '../env';
 import { chatRequestSchema } from '../schemas';
 import type { AppEnv } from '../types';
+import { ApiError, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { driveAiTurn } from './aiTurn';
-import { ApiError, requireSession } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
 
@@ -116,7 +116,10 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // stream ends.
   const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
   if (!slot.ok) {
-    throw new ApiError(409, slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL);
+    throw new ApiError(
+      409,
+      slot.reason === 'session-busy' ? SESSION_BUSY_DETAIL : AT_CAPACITY_DETAIL,
+    );
   }
 
   // Every guard passed: `driveAiTurn` (topic-generation design D7 — the

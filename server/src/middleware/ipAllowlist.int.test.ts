@@ -19,7 +19,9 @@ describe('ip allowlist on Node', () => {
   it('allows a socket address inside the CIDR and blocks one outside', async () => {
     const allow = { IP_ALLOWLIST: '203.0.113.0/24' };
     expect((await app.request('/api/profile', {}, envFrom('203.0.113.7', allow))).status).toBe(200);
-    expect((await app.request('/api/profile', {}, envFrom('198.51.100.1', allow))).status).toBe(403);
+    expect((await app.request('/api/profile', {}, envFrom('198.51.100.1', allow))).status).toBe(
+      403,
+    );
   });
 
   it('matches the v6-mapped loopback the Node socket reports', async () => {
@@ -46,19 +48,19 @@ describe('ip allowlist on Node', () => {
   });
 
   it('blocks when no address is derivable (no socket, no trusted header)', async () => {
-    const res = await app.request(
-      '/api/profile',
-      {},
-      {
-        ...env,
-        config: { ...env.config, IP_ALLOWLIST: '203.0.113.0/24' },
-      } as unknown as Bindings,
-    );
+    const res = await app.request('/api/profile', {}, {
+      ...env,
+      config: { ...env.config, IP_ALLOWLIST: '203.0.113.0/24' },
+    } as unknown as Bindings);
     expect(res.status).toBe(403);
   });
 
   it('bad allowlist config → 500 via onError', async () => {
-    const res = await app.request('/api/profile', {}, envFrom('1.2.3.4', { IP_ALLOWLIST: 'garbage!!' }));
+    const res = await app.request(
+      '/api/profile',
+      {},
+      envFrom('1.2.3.4', { IP_ALLOWLIST: 'garbage!!' }),
+    );
     expect(res.status).toBe(500);
   });
 });

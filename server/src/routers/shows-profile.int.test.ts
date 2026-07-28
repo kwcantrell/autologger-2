@@ -1,5 +1,5 @@
-import { app, env } from '../test/harness';
 import { describe, expect, it } from 'vitest';
+import { app, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {

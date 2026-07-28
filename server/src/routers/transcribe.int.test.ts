@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, env, envWith } from '../test/harness';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { app, env, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
@@ -235,107 +235,128 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     }
   });
 
-  it('configured + transcript + success: 200 {topics} — the OLD topics are gone, the fresh ' +
-    'set (real create_topic calls) replaces them, and the shape matches GET …/topics', async () => {
-    const s = newSession();
-    seedTranscript(s);
-    const oldA = seedTopic(s, 'Old topic A');
-    const oldB = seedTopic(s, 'Old topic B');
-    expect(currentTopics(s).map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
+  it(
+    'configured + transcript + success: 200 {topics} — the OLD topics are gone, the fresh ' +
+      'set (real create_topic calls) replaces them, and the shape matches GET …/topics',
+    async () => {
+      const s = newSession();
+      seedTranscript(s);
+      const oldA = seedTopic(s, 'Old topic A');
+      const oldB = seedTopic(s, 'Old topic B');
+      expect(
+        currentTopics(s)
+          .map((t) => t.id)
+          .sort(),
+      ).toEqual([oldA.id, oldB.id].sort());
 
-    const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { topics: Array<Record<string, unknown>> };
+      const res = await generateReq(s, claudeConfiguredEnv(REAL_SUCCESS_FIXTURE));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { topics: Array<Record<string, unknown>> };
 
-    // The OLD topics are gone — proves the success branch deleted preRunIds.
-    const bodyIds = body.topics.map((t) => t.id);
-    expect(bodyIds).not.toContain(oldA.id);
-    expect(bodyIds).not.toContain(oldB.id);
+      // The OLD topics are gone — proves the success branch deleted preRunIds.
+      const bodyIds = body.topics.map((t) => t.id);
+      expect(bodyIds).not.toContain(oldA.id);
+      expect(bodyIds).not.toContain(oldB.id);
 
-    // The fresh set is exactly what the fixture's real create_topic calls
-    // created (2 topics — see fake-claude-topics-success.mjs).
-    expect(body.topics).toHaveLength(2);
-    expect(body.topics.map((t) => t.summary).sort()).toEqual(
-      ['Fresh fixture topic 0', 'Fresh fixture topic 1'].sort(),
-    );
-
-    // Shape matches GET …/topics entries exactly (same field set).
-    const getRes = await app.request(`/api/sessions/${s}/topics`, { method: 'GET' }, { ...env });
-    const getBody = (await getRes.json()) as { topics: Array<Record<string, unknown>> };
-    expect(getBody.topics).toEqual(body.topics);
-    for (const t of body.topics) {
-      expect(Object.keys(t).sort()).toEqual(
-        ['id', 'session_time', 'duration_sec', 'topic_level', 'summary', 'ordinal', 'created_at_utc'].sort(),
+      // The fresh set is exactly what the fixture's real create_topic calls
+      // created (2 topics — see fake-claude-topics-success.mjs).
+      expect(body.topics).toHaveLength(2);
+      expect(body.topics.map((t) => t.summary).sort()).toEqual(
+        ['Fresh fixture topic 0', 'Fresh fixture topic 1'].sort(),
       );
-    }
 
-    // Hub state matches the response exactly — no orphans, no stragglers.
-    expect(currentTopics(s)).toEqual(body.topics);
+      // Shape matches GET …/topics entries exactly (same field set).
+      const getRes = await app.request(`/api/sessions/${s}/topics`, { method: 'GET' }, { ...env });
+      const getBody = (await getRes.json()) as { topics: Array<Record<string, unknown>> };
+      expect(getBody.topics).toEqual(body.topics);
+      for (const t of body.topics) {
+        expect(Object.keys(t).sort()).toEqual(
+          [
+            'id',
+            'session_time',
+            'duration_sec',
+            'topic_level',
+            'summary',
+            'ordinal',
+            'created_at_utc',
+          ].sort(),
+        );
+      }
 
-    // The spawned argv withholds list_topics (D3's crash-safe-swap mechanism).
-    const argv = recordedArgv(s);
-    const i = argv.indexOf('--allowedTools');
-    expect(i).toBeGreaterThanOrEqual(0);
-    const allowed = argv[i + 1].split(',');
-    expect(allowed).toContain('mcp__autologger__get_transcript_words');
-    expect(allowed).toContain('mcp__autologger__create_topic');
-    expect(allowed).not.toContain('mcp__autologger__list_topics');
+      // Hub state matches the response exactly — no orphans, no stragglers.
+      expect(currentTopics(s)).toEqual(body.topics);
 
-    // The slot is released once the turn completes.
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-  });
+      // The spawned argv withholds list_topics (D3's crash-safe-swap mechanism).
+      const argv = recordedArgv(s);
+      const i = argv.indexOf('--allowedTools');
+      expect(i).toBeGreaterThanOrEqual(0);
+      const allowed = argv[i + 1].split(',');
+      expect(allowed).toContain('mcp__autologger__get_transcript_words');
+      expect(allowed).toContain('mcp__autologger__create_topic');
+      expect(allowed).not.toContain('mcp__autologger__list_topics');
 
-  it('configured + transcript + CLI failure (partial-new state): 502 with a FIXED detail, and the ' +
-    'prior topics are BYTE-FOR-BYTE unchanged — deleteTopics(newIds) removes only the topics THIS ' +
-    'run created, proven against real create_topic calls made before the failure', async () => {
-    const s = newSession();
-    seedTranscript(s);
-    const oldA = seedTopic(s, 'Old topic A');
-    const oldB = seedTopic(s, 'Old topic B');
-    const preRunSnapshot = currentTopics(s);
-    expect(preRunSnapshot).toHaveLength(2);
+      // The slot is released once the turn completes.
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    },
+  );
 
-    const res = await generateReq(s, claudeConfiguredEnv(REAL_PARTIAL_FAIL_FIXTURE));
-    expect(res.status).toBe(502);
-    const body = (await res.json()) as { detail: string };
-    // Fixed, handler-owned detail — never the CLI's raw outcome token.
-    expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
-    expect(body.detail).not.toMatch(/upstream-failed|CLI|claude/i);
+  it(
+    'configured + transcript + CLI failure (partial-new state): 502 with a FIXED detail, and the ' +
+      'prior topics are BYTE-FOR-BYTE unchanged — deleteTopics(newIds) removes only the topics THIS ' +
+      'run created, proven against real create_topic calls made before the failure',
+    async () => {
+      const s = newSession();
+      seedTranscript(s);
+      const oldA = seedTopic(s, 'Old topic A');
+      const oldB = seedTopic(s, 'Old topic B');
+      const preRunSnapshot = currentTopics(s);
+      expect(preRunSnapshot).toHaveLength(2);
 
-    // The prior topics are EXACTLY what they were before the request — same
-    // ids, ordinals, summaries, created_at_utc — never modified.
-    const after = currentTopics(s);
-    expect(after).toEqual(preRunSnapshot);
-    expect(after.map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
+      const res = await generateReq(s, claudeConfiguredEnv(REAL_PARTIAL_FAIL_FIXTURE));
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { detail: string };
+      // Fixed, handler-owned detail — never the CLI's raw outcome token.
+      expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
+      expect(body.detail).not.toMatch(/upstream-failed|CLI|claude/i);
 
-    // The topics THIS run created for real (fake-claude-topics-partial-fail.mjs
-    // creates 2 via genuine create_topic calls before exiting non-zero) are
-    // GONE — deleteTopics(newIds) removed exactly the run's new topics, not
-    // the prior ones.
-    expect(after.map((t) => t.summary)).not.toContain('Partial fixture topic 0');
-    expect(after.map((t) => t.summary)).not.toContain('Partial fixture topic 1');
-    expect(after).toHaveLength(2); // no orphans left behind.
+      // The prior topics are EXACTLY what they were before the request — same
+      // ids, ordinals, summaries, created_at_utc — never modified.
+      const after = currentTopics(s);
+      expect(after).toEqual(preRunSnapshot);
+      expect(after.map((t) => t.id).sort()).toEqual([oldA.id, oldB.id].sort());
 
-    expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
-  });
+      // The topics THIS run created for real (fake-claude-topics-partial-fail.mjs
+      // creates 2 via genuine create_topic calls before exiting non-zero) are
+      // GONE — deleteTopics(newIds) removed exactly the run's new topics, not
+      // the prior ones.
+      expect(after.map((t) => t.summary)).not.toContain('Partial fixture topic 0');
+      expect(after.map((t) => t.summary)).not.toContain('Partial fixture topic 1');
+      expect(after).toHaveLength(2); // no orphans left behind.
 
-  it('configured + transcript + zero-topics-created (CLI reports success but creates nothing): ' +
-    '502, prior topics intact — the simulated fake-claude.mjs success stream never makes a real ' +
-    'MCP call, so newIds.length === 0 even though outcome.ok is true', async () => {
-    const s = newSession();
-    seedTranscript(s);
-    const old = seedTopic(s, 'Only old topic');
-    const preRunSnapshot = currentTopics(s);
+      expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
+    },
+  );
 
-    const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
-    expect(res.status).toBe(502);
-    const body = (await res.json()) as { detail: string };
-    expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
+  it(
+    'configured + transcript + zero-topics-created (CLI reports success but creates nothing): ' +
+      '502, prior topics intact — the simulated fake-claude.mjs success stream never makes a real ' +
+      'MCP call, so newIds.length === 0 even though outcome.ok is true',
+    async () => {
+      const s = newSession();
+      seedTranscript(s);
+      const old = seedTopic(s, 'Only old topic');
+      const preRunSnapshot = currentTopics(s);
 
-    const after = currentTopics(s);
-    expect(after).toEqual(preRunSnapshot);
-    expect(after.map((t) => t.id)).toEqual([old.id]);
-  });
+      const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { detail: string };
+      expect(body.detail).toBe(TOPIC_GENERATE_FAILURE_DETAIL);
+
+      const after = currentTopics(s);
+      expect(after).toEqual(preRunSnapshot);
+      expect(after.map((t) => t.id)).toEqual([old.id]);
+    },
+  );
 
   it('transcribe.csv stays frozen 503 even on a fully configured deployment', async () => {
     const s = newSession();
@@ -427,7 +448,11 @@ describe('topics CRUD', () => {
 
   it('404 deleting an unknown topic', async () => {
     const s = seededSession().sessionId;
-    const res = await app.request(`/api/sessions/${s}/topics/nope`, { method: 'DELETE' }, { ...env });
+    const res = await app.request(
+      `/api/sessions/${s}/topics/nope`,
+      { method: 'DELETE' },
+      { ...env },
+    );
     expect(res.status).toBe(404);
   });
 });
@@ -467,7 +492,11 @@ async function logRecordingStarted(sessionId: string, ordinal: number): Promise<
     {
       method: 'POST',
       headers: J,
-      body: JSON.stringify({ category: 'internal', message: `Recording ${ordinal} Started`, metadata: {} }),
+      body: JSON.stringify({
+        category: 'internal',
+        message: `Recording ${ordinal} Started`,
+        metadata: {},
+      }),
     },
     { ...env },
   );
@@ -484,11 +513,19 @@ async function addManualWord(sessionId: string, word: string): Promise<void> {
 }
 
 async function listWords(sessionId: string): Promise<Array<{ word: string }>> {
-  const res = await app.request(`/api/sessions/${sessionId}/transcript-words`, { method: 'GET' }, { ...env });
+  const res = await app.request(
+    `/api/sessions/${sessionId}/transcript-words`,
+    { method: 'GET' },
+    { ...env },
+  );
   return ((await res.json()) as { words: Array<{ word: string }> }).words;
 }
 
-function generate(sessionId: string, init: RequestInit = {}, envOverride = deepgramConfiguredEnv()) {
+function generate(
+  sessionId: string,
+  init: RequestInit = {},
+  envOverride = deepgramConfiguredEnv(),
+) {
   return app.request(
     `/api/sessions/${sessionId}/transcript-words/generate`,
     { method: 'POST', ...init },
@@ -508,16 +545,17 @@ describe('transcript generation', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify(
-            deepgramResponse([
-              { word: 'hello', punctuated_word: 'Hello,', start: 0.5, end: 0.9, speaker: 0 },
-              { word: 'world', start: 1.0, end: 1.4, speaker: 1 },
-            ]),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify(
+              deepgramResponse([
+                { word: 'hello', punctuated_word: 'Hello,', start: 0.5, end: 0.9, speaker: 0 },
+                { word: 'world', start: 1.0, end: 1.4, speaker: 1 },
+              ]),
+            ),
+            { status: 200 },
           ),
-          { status: 200 },
-        ),
       ),
     );
 
@@ -594,7 +632,9 @@ describe('transcript generation', () => {
     const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
 
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(deepgramResponse([])), { status: 200 }));
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(deepgramResponse([])), { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const controller = new AbortController();
@@ -644,7 +684,10 @@ describe('transcript generation', () => {
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'existing');
 
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('server error', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('server error', { status: 500 })),
+    );
 
     const res = await generate(s);
     expect(res.status).toBe(502);
@@ -746,13 +789,27 @@ describe('transcript generation', () => {
     const genRes = await generate(s);
     expect(genRes.status).toBe(200);
 
-    const res = await app.request(`/api/sessions/${s}/transcript-words`, { method: 'GET' }, { ...env });
+    const res = await app.request(
+      `/api/sessions/${s}/transcript-words`,
+      { method: 'GET' },
+      { ...env },
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { words: Array<Record<string, unknown>> };
     expect(body.words.length).toBeGreaterThan(0);
     for (const w of body.words) {
       expect(Object.keys(w).sort()).toEqual(
-        ['created_at_utc', 'end_sec', 'id', 'ordinal', 'session_id', 'session_time', 'speaker', 'start_sec', 'word'].sort(),
+        [
+          'created_at_utc',
+          'end_sec',
+          'id',
+          'ordinal',
+          'session_id',
+          'session_time',
+          'speaker',
+          'start_sec',
+          'word',
+        ].sort(),
       );
     }
   });
@@ -774,11 +831,12 @@ describe('transcript generation', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify(deepgramResponse([{ word: 'fresh', start: 0, end: 0.3, speaker: 0 }])),
-          { status: 200 },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify(deepgramResponse([{ word: 'fresh', start: 0, end: 0.3, speaker: 0 }])),
+            { status: 200 },
+          ),
       ),
     );
 

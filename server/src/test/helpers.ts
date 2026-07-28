@@ -1,7 +1,7 @@
-import { env } from './harness';
 import { createLoginSession } from '../auth/identity';
 import { Catalog } from '../db/catalog';
 import { sessionCookieName } from '../env';
+import { env } from './harness';
 
 export function catalogFor(): Catalog {
   return new Catalog(env.ports.catalog);
@@ -16,9 +16,7 @@ export function seedStudio(opts: { id?: string; name?: string } = {}): string {
   return id;
 }
 
-export function seedUser(
-  opts: { email?: string; sub?: string; studios?: string[] } = {},
-): string {
+export function seedUser(opts: { email?: string; sub?: string; studios?: string[] } = {}): string {
   const cat = catalogFor();
   const id = cat.auth.authCreateUserGoogle({
     email: opts.email ?? `${uid('user')}@example.com`,

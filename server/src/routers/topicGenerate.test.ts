@@ -14,8 +14,7 @@
 //      back to the full default set) would fail the negative assertion even
 //      though the positive one would still pass.
 
-import { readFileSync, rmSync } from 'node:fs';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +29,9 @@ import {
 } from './topicGenerate';
 
 const SUCCESS_FIXTURE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
-const ERROR_FIXTURE = fileURLToPath(new URL('../test/fixtures/fake-claude-error.mjs', import.meta.url));
+const ERROR_FIXTURE = fileURLToPath(
+  new URL('../test/fixtures/fake-claude-error.mjs', import.meta.url),
+);
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -50,7 +51,7 @@ afterEach(async () => {
 });
 
 describe('generateTopicsTurn', () => {
-  it('succeeds on the real fixture\'s terminal result line', async () => {
+  it("succeeds on the real fixture's terminal result line", async () => {
     const outcome = await generateTopicsTurn({
       registry,
       cliPath: SUCCESS_FIXTURE,
@@ -88,67 +89,76 @@ describe('generateTopicsTurn', () => {
     expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
   });
 
-  it('fails ({ok:false, detail:"timeout"}) when the run does not finish within timeoutMs, ' +
-    'and kills the child (guaranteed-timeout, same mechanism ai/chat uses)', async () => {
-    // An impossibly-short timeout against the (fast but non-instant) success
-    // fixture guarantees a timeout deterministically — a real OS process
-    // spawn + Node startup cannot complete inside 1ms — mirroring
-    // ai.int.test.ts's own guaranteed-timeout technique.
-    const outcome = await generateTopicsTurn({
-      registry,
-      cliPath: SUCCESS_FIXTURE,
-      sessionId,
-      maxBudgetUsd: 2.0,
-      timeoutMs: 1,
-    });
-    expect(outcome).toEqual({ ok: false, detail: 'timeout' });
-  });
+  it(
+    'fails ({ok:false, detail:"timeout"}) when the run does not finish within timeoutMs, ' +
+      'and kills the child (guaranteed-timeout, same mechanism ai/chat uses)',
+    async () => {
+      // An impossibly-short timeout against the (fast but non-instant) success
+      // fixture guarantees a timeout deterministically — a real OS process
+      // spawn + Node startup cannot complete inside 1ms — mirroring
+      // ai.int.test.ts's own guaranteed-timeout technique.
+      const outcome = await generateTopicsTurn({
+        registry,
+        cliPath: SUCCESS_FIXTURE,
+        sessionId,
+        maxBudgetUsd: 2.0,
+        timeoutMs: 1,
+      });
+      expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+    },
+  );
 
-  it('the spawned argv withholds list_topics — allowedTools is exactly ' +
-    'get_transcript_words + create_topic (the D3 crash-safe-swap mechanism)', async () => {
-    await generateTopicsTurn({
-      registry,
-      cliPath: SUCCESS_FIXTURE,
-      sessionId,
-      maxBudgetUsd: 2.0,
-      timeoutMs: 10_000,
-    });
-    const argv = JSON.parse(
-      readFileSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'), 'utf8'),
-    ) as string[];
-    const i = argv.indexOf('--allowedTools');
-    expect(i).toBeGreaterThanOrEqual(0);
-    const allowed = argv[i + 1].split(',');
-    expect(allowed).toContain('mcp__autologger__get_transcript_words');
-    expect(allowed).toContain('mcp__autologger__create_topic');
-    // The negative assertion is the load-bearing one: a regression that
-    // dropped the `allowedTools` restriction (falling back to driveAiTurn's
-    // full default set) would still pass the two `toContain`s above but
-    // would fail here.
-    expect(allowed).not.toContain('mcp__autologger__list_topics');
-    expect(allowed.join(',')).not.toMatch(/\blist_topics\b/);
-  });
+  it(
+    'the spawned argv withholds list_topics — allowedTools is exactly ' +
+      'get_transcript_words + create_topic (the D3 crash-safe-swap mechanism)',
+    async () => {
+      await generateTopicsTurn({
+        registry,
+        cliPath: SUCCESS_FIXTURE,
+        sessionId,
+        maxBudgetUsd: 2.0,
+        timeoutMs: 10_000,
+      });
+      const argv = JSON.parse(
+        readFileSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'), 'utf8'),
+      ) as string[];
+      const i = argv.indexOf('--allowedTools');
+      expect(i).toBeGreaterThanOrEqual(0);
+      const allowed = argv[i + 1].split(',');
+      expect(allowed).toContain('mcp__autologger__get_transcript_words');
+      expect(allowed).toContain('mcp__autologger__create_topic');
+      // The negative assertion is the load-bearing one: a regression that
+      // dropped the `allowedTools` restriction (falling back to driveAiTurn's
+      // full default set) would still pass the two `toContain`s above but
+      // would fail here.
+      expect(allowed).not.toContain('mcp__autologger__list_topics');
+      expect(allowed.join(',')).not.toMatch(/\blist_topics\b/);
+    },
+  );
 
-  it('the spawned argv uses the DEDICATED generate system prompt, not the ' +
-    'chat brief (the reused brief tells the model to list_topics — a withheld ' +
-    'tool — which made the real model create too few/zero topics)', async () => {
-    await generateTopicsTurn({
-      registry,
-      cliPath: SUCCESS_FIXTURE,
-      sessionId,
-      maxBudgetUsd: 2.0,
-      timeoutMs: 10_000,
-    });
-    const argv = JSON.parse(
-      readFileSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'), 'utf8'),
-    ) as string[];
-    const i = argv.indexOf('--append-system-prompt');
-    expect(i).toBeGreaterThanOrEqual(0);
-    const systemPrompt = argv[i + 1];
-    expect(systemPrompt).toBe(TOPIC_GENERATE_SYSTEM_PROMPT);
-    // Load-bearing negatives: the dedicated prompt must NOT reference the
-    // withheld list_topics tool, and must NOT be the reused chat brief.
-    expect(systemPrompt).not.toMatch(/list_topics/);
-    expect(systemPrompt).not.toBe(AI_CHAT_SYSTEM_PROMPT_BRIEF);
-  });
+  it(
+    'the spawned argv uses the DEDICATED generate system prompt, not the ' +
+      'chat brief (the reused brief tells the model to list_topics — a withheld ' +
+      'tool — which made the real model create too few/zero topics)',
+    async () => {
+      await generateTopicsTurn({
+        registry,
+        cliPath: SUCCESS_FIXTURE,
+        sessionId,
+        maxBudgetUsd: 2.0,
+        timeoutMs: 10_000,
+      });
+      const argv = JSON.parse(
+        readFileSync(join(stableSessionCwd(sessionId), '.fixture-argv.json'), 'utf8'),
+      ) as string[];
+      const i = argv.indexOf('--append-system-prompt');
+      expect(i).toBeGreaterThanOrEqual(0);
+      const systemPrompt = argv[i + 1];
+      expect(systemPrompt).toBe(TOPIC_GENERATE_SYSTEM_PROMPT);
+      // Load-bearing negatives: the dedicated prompt must NOT reference the
+      // withheld list_topics tool, and must NOT be the reused chat brief.
+      expect(systemPrompt).not.toMatch(/list_topics/);
+      expect(systemPrompt).not.toBe(AI_CHAT_SYSTEM_PROMPT_BRIEF);
+    },
+  );
 });

@@ -2,7 +2,6 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Config } from './types';
 import {
   adminMeta,
   adminTokenConfigured,
@@ -23,6 +22,7 @@ import {
   youtubeImportOpenNetworkRefused,
   ytDlpConfigured,
 } from './env';
+import type { Config } from './types';
 
 const E = (o: Record<string, string | null | undefined>): Config => o as unknown as Config;
 
@@ -80,9 +80,7 @@ describe('env flag parsing', () => {
   });
 
   it('cookieSecureForRequest honors explicit flag, else derives from scheme', () => {
-    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'yes' }), new Request('http://x'))).toBe(
-      true,
-    );
+    expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'yes' }), new Request('http://x'))).toBe(true);
     expect(cookieSecureForRequest(E({ COOKIE_SECURE: 'no' }), new Request('https://x'))).toBe(
       false,
     );

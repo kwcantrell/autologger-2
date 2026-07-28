@@ -1,5 +1,5 @@
-import { app, envWith } from '../test/harness';
 import { describe, expect, it } from 'vitest';
+import { app, envWith } from '../test/harness';
 import { adminHeader, catalogFor, seedUser } from '../test/helpers';
 
 const TOKEN = 'sweep-admin-token';

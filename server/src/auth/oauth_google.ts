@@ -4,8 +4,8 @@
 // singleton) and its TTL reads the injected Clock.
 
 import { createLocalJWKSet, errors, type JSONWebKeySet, type JWTPayload, jwtVerify } from 'jose';
-import { systemClock } from '../clock';
 import type { Clock } from '../clock';
+import { systemClock } from '../clock';
 
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const JWKS_TTL_MS = 10 * 60_000;

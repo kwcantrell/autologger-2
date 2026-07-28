@@ -3,9 +3,9 @@
 // _migrations, each applied in a transaction. Applies the full ordered set on a
 // fresh database (no prior data is carried over).
 
-import Database from 'better-sqlite3';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 
 export function openCatalogDb(path: string): Database.Database {
   const db = new Database(path);

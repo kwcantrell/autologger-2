@@ -198,7 +198,10 @@ export const dashboardConfigSchema = z
     // legitimate in-progress state, not a rejected write. Only the upper
     // bound (MAX_WIDGETS_PER_DASHBOARD) is authoritative here.
     widgets: z.array(widgetLayoutSchema).max(MAX_WIDGETS_PER_DASHBOARD),
-    interactions: z.array(dashboardInteractionSchema).max(MAX_INTERACTIONS_PER_DASHBOARD).default([]),
+    interactions: z
+      .array(dashboardInteractionSchema)
+      .max(MAX_INTERACTIONS_PER_DASHBOARD)
+      .default([]),
   })
   .superRefine((cfg, ctx) => {
     const seen = new Set<string>();

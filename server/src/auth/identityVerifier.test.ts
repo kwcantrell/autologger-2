@@ -2,12 +2,12 @@
 // is instance state with its TTL on the injected Clock, and a fake verifier
 // satisfies the port with no network at all.
 
-import { afterEach, describe, expect, it } from 'vitest';
 import type { JWTPayload } from 'jose';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Clock } from '../clock';
 import { makeKeypair, mintIdToken, mockGoogleJwks, resetMockAgent } from '../test/oauth';
-import { GoogleIdentityVerifier } from './oauth_google';
 import type { IdentityVerifier } from './oauth_google';
+import { GoogleIdentityVerifier } from './oauth_google';
 
 const CLIENT = 'test-client';
 

@@ -2,6 +2,7 @@
 // with the Python server) from the studio registry, auth store, and shows store. Moved verbatim out of
 // catalog.ts (Catalog), with cross-store calls rewritten to the injected stores.
 
+import type { StudioProfile } from '../studio';
 import {
   DEFAULT_STUDIO_ID,
   emptyActiveStudioApiDict,
@@ -9,11 +10,10 @@ import {
   SETTING_ACTIVE_SHOW,
   studioToApiDict,
 } from '../studio';
-import type { StudioProfile } from '../studio';
 import type { AuthStore } from './authStore';
 import type { AuthUser, ProfileCtx, Row } from './shared';
-import { showApiDict } from './showsStore';
 import type { ShowsStore } from './showsStore';
+import { showApiDict } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
 
 export class ProfileAssembler {

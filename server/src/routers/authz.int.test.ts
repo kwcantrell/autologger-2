@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, envWith } from '../test/harness';
-import { loginCookie, seedStudio, seedUser, seededSession } from '../test/helpers';
+import { loginCookie, seededSession, seedStudio, seedUser } from '../test/helpers';
 
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });

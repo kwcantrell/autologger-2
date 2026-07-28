@@ -6,10 +6,10 @@
 // bindings — including on the upgrade path, which bypasses any serve({fetch})
 // wrapper.
 
-import { serve, type ServerType } from '@hono/node-server';
+import type { AddressInfo } from 'node:net';
+import { type ServerType, serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
-import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import { env } from '../test/harness';
@@ -26,9 +26,8 @@ beforeAll(async () => {
   // at request time, so both HTTP and WS-upgrade paths see the current bindings.
   wireApp(app, upgradeWebSocket, { bindings: env });
   port = await new Promise<number>((resolve) => {
-    server = serve(
-      { fetch: app.fetch, port: 0, hostname: '127.0.0.1' },
-      (info: AddressInfo) => resolve(info.port),
+    server = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' }, (info: AddressInfo) =>
+      resolve(info.port),
     );
     // Match src/main.ts: inject synchronously right after serve() returns the
     // server handle, not deferred inside the listening callback.

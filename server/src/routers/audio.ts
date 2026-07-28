@@ -4,10 +4,10 @@
 // metadata; download streams back with HTTP range support (audio scrubbing).
 
 import { Hono } from 'hono';
-import type { AudioSegmentMeta } from '../session/SessionHub';
-import { InvalidRangeError } from '../node/blobStore';
 import type { BlobRange } from '../node/blobStore';
+import { InvalidRangeError } from '../node/blobStore';
 import { audioSegmentWaveformBodySchema } from '../schemas';
+import type { AudioSegmentMeta } from '../session/SessionHub';
 import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 

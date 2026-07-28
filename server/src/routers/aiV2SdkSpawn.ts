@@ -38,7 +38,6 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CanUseTool,
   McpServerConfig,
@@ -46,9 +45,10 @@ import type {
   PermissionResult,
   Query,
   SDKMessage,
-  SpawnOptions,
   SpawnedProcess,
+  SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import { runOuterAiTurn } from './aiTurnOrchestrator';
 import { killProcessGroup } from './processGroupKill';
@@ -133,7 +133,7 @@ export const DESIGN_TURN_ALLOWED_ENV_KEYS: readonly string[] = [
  * agent inherits none of it. */
 export const DESIGN_TURN_SYSTEM_PROMPT =
   "You are AutoLogger's dashboard design assistant for exactly one recording session. " +
-  'Read that session\'s aggregate statistics through the provided tools (speaker_stats, ' +
+  "Read that session's aggregate statistics through the provided tools (speaker_stats, " +
   'utterance_stats, topic_timeline, event_stats, transcript_excerpt), then propose a ' +
   'starting dashboard the user can edit directly. Compose it only from the fixed widget ' +
   'catalog you are given. When a tool reports its data as unavailable, say so plainly — ' +

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './_helpers';
-import { MAX_AUDIO_BYTES, enforceAudioByteLimit } from './audio';
+import { enforceAudioByteLimit, MAX_AUDIO_BYTES } from './audio';
 
 describe('enforceAudioByteLimit', () => {
   it('does nothing for null (unknown length)', () => {
