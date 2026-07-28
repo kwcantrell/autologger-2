@@ -1,7 +1,5 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './SessionHub';
-import { SessionCore, type SessionRuntime } from './sessionCore';
+import { fakeRuntime } from '../test/fakeCore';
 import { TopicStore, topicRow } from './topicStore';
 
 describe('topicRow', () => {
@@ -45,15 +43,7 @@ describe('topicRow', () => {
 // unmodified across the extraction.
 describe('TopicStore over a real core (D12 pins)', () => {
   function store(): TopicStore {
-    const runtime: SessionRuntime = {
-      sql: sqliteSessionSql(new Database(':memory:')),
-      clock: { now: () => 1_000_000 },
-      sockets: () => [],
-      setAlarm: () => {},
-    };
-    const core = new SessionCore(runtime);
-    core.initSchema();
-    return new TopicStore(core);
+    return new TopicStore(fakeRuntime().core);
   }
   const data = (summary: string) => ({
     session_time: '00:00:01',

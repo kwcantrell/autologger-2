@@ -1,9 +1,7 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
+import { fakeRuntime } from '../test/fakeCore';
 import { formatSmpte, fromTotalFrames } from '../timecode';
-import { sqliteSessionSql } from './SessionHub';
 import { EventStore, eventRowToRpc } from './eventStore';
-import { SessionCore, type SessionRuntime } from './sessionCore';
 
 describe('eventRowToRpc', () => {
   it('maps a row with a timecode', () => {
@@ -58,14 +56,7 @@ describe('eventRowToRpc', () => {
 // categories must still count as logged.
 describe('listEvents counts over a real core (D10 pin)', () => {
   it('total counts every event; loggedTotal excludes internal (any casing/whitespace)', () => {
-    const runtime: SessionRuntime = {
-      sql: sqliteSessionSql(new Database(':memory:')),
-      clock: { now: () => 1_000_000 },
-      sockets: () => [],
-      setAlarm: () => {},
-    };
-    const core = new SessionCore(runtime);
-    core.initSchema();
+    const { core } = fakeRuntime();
     const categories = [
       'mark', // logged
       'note', // logged

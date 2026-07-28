@@ -1,7 +1,5 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './SessionHub';
-import { SessionCore, type SessionRuntime } from './sessionCore';
+import { fakeRuntime } from '../test/fakeCore';
 import { TranscriptStore, paragraphRow, sentimentRow, wordRow } from './transcriptStore';
 
 describe('wordRow', () => {
@@ -114,15 +112,7 @@ describe('sentimentRow', () => {
 // unmodified across the extraction.
 describe('TranscriptStore over a real core (D12 pins)', () => {
   function store(): TranscriptStore {
-    const runtime: SessionRuntime = {
-      sql: sqliteSessionSql(new Database(':memory:')),
-      clock: { now: () => 1_000_000 },
-      sockets: () => [],
-      setAlarm: () => {},
-    };
-    const core = new SessionCore(runtime);
-    core.initSchema();
-    return new TranscriptStore(core);
+    return new TranscriptStore(fakeRuntime().core);
   }
   const data = (word: string) => ({ session_time: '00:00:01', speaker: 'A', word });
 

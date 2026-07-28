@@ -1,8 +1,6 @@
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './SessionHub';
+import { fakeRuntime } from '../test/fakeCore';
 import { AudioStore, audioRowToMeta } from './audioStore';
-import { SessionCore, type SessionRuntime } from './sessionCore';
 
 describe('audioRowToMeta', () => {
   it('maps a full segment row incl. parsed waveform peaks', () => {
@@ -61,15 +59,7 @@ describe('audioRowToMeta', () => {
 // one bidirectional table. These must pass unmodified across the rewrite.
 describe('AudioStore mime↔ext over a real core (D12 pins)', () => {
   function store(): AudioStore {
-    const runtime: SessionRuntime = {
-      sql: sqliteSessionSql(new Database(':memory:')),
-      clock: { now: () => 1_000_000 },
-      sockets: () => [],
-      setAlarm: () => {},
-    };
-    const core = new SessionCore(runtime);
-    core.initSchema();
-    return new AudioStore(core);
+    return new AudioStore(fakeRuntime().core);
   }
   const add = (audio: AudioStore, mimeType: string) =>
     audio.addAudioSegment({

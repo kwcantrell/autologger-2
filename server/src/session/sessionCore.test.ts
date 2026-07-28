@@ -1,37 +1,13 @@
 // SessionCore against a fake SessionRuntime — proves the seam is substitutable:
 // in-memory SQL (no database file), fake sockets, captured alarms. Domain
-// stores run unmodified on the fake substrate.
+// stores run unmodified on the fake substrate. The typed fake runtime this
+// file established now lives in ../test/fakeCore (code-health-tail task 5.2)
+// so the store unit tests share it.
 
-import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { sqliteSessionSql } from './SessionHub';
-import { SessionCore } from './sessionCore';
-import type { AttachedSocket, SessionRuntime } from './sessionCore';
+import { fakeRuntime } from '../test/fakeCore';
 import { EventStore } from './eventStore';
 import { TopicStore } from './topicStore';
-
-function fakeRuntime(): {
-  core: SessionCore;
-  sent: string[];
-  alarms: number[];
-  sockets: Set<AttachedSocket>;
-  time: { now: number };
-} {
-  const sent: string[] = [];
-  const alarms: number[] = [];
-  const time = { now: 1_000_000 };
-  const sockets = new Set<AttachedSocket>();
-  sockets.add({ send: (d) => sent.push(d), role: 'browser' });
-  const runtime: SessionRuntime = {
-    sql: sqliteSessionSql(new Database(':memory:')),
-    clock: { now: () => time.now },
-    sockets: () => sockets,
-    setAlarm: (atMs) => alarms.push(atMs),
-  };
-  const core = new SessionCore(runtime);
-  core.initSchema();
-  return { core, sent, alarms, sockets, time };
-}
 
 describe('SessionCore on a fake runtime', () => {
   it('initSchema is idempotent and seeds the revision counter', () => {

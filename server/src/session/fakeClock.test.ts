@@ -1,29 +1,18 @@
-// Fake-clock determinism (de-cloudflare-strong-core tasks 5.3/5.4): the alarm
-// scheduler and every staleness/TTL read share one injected time base, so
+// Fake-clock determinism (de-cloudflare-strong-core task 5.3): the alarm
+// scheduler and every staleness read share one injected time base, so lease
 // expiry is provable with zero real elapsed time. tick() advances the fake
 // Clock and vitest's timer queue in lockstep — the shared-time-base guarantee
-// under test.
+// under test. The KV-TTL and presence-freshness suites that used to live here
+// moved beside the modules they test (node/kvStore.test.ts,
+// node/presence.test.ts — code-health-tail task 5.2); the shared helper is
+// ../test/fakeClock.
 
-import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Clock } from '../clock';
-import { KvStore } from '../node/kvStore';
-import { PresenceRegistry, PRESENCE_FRESH_MS } from '../node/presence';
+import { makeFakeClock } from '../test/fakeClock';
 import { SessionHub } from './SessionHub';
-
-function makeFakeClock(startMs = 1_750_000_000_000): { clock: Clock; tick(ms: number): void } {
-  let now = startMs;
-  return {
-    clock: { now: () => now },
-    tick(ms: number) {
-      now += ms;
-      vi.advanceTimersByTime(ms); // keep the setTimeout queue on the same base
-    },
-  };
-}
 
 describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
   let dir: string;
@@ -70,60 +59,5 @@ describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
     expect(hub.leaseStatus().holder_client_id).toBeNull();
 
     hub.close();
-  });
-});
-
-describe('KV TTL with a fake clock (task 5.4)', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  function kv(): { store: KvStore; tick(ms: number): void } {
-    const { clock, tick } = makeFakeClock();
-    const raw = new Database(':memory:');
-    raw.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
-    return { store: new KvStore(raw, clock), tick };
-  }
-
-  it('an entry expires once the fake clock passes its TTL', () => {
-    const { store, tick } = kv();
-    store.put('csrf:x', '1', { expirationTtl: 600 }); // 10 minutes
-    expect(store.get('csrf:x')).toBe('1');
-    tick(599_000);
-    expect(store.get('csrf:x')).toBe('1');
-    tick(2_000);
-    expect(store.get('csrf:x')).toBeNull();
-  });
-
-  it('purgeExpired removes only entries past their TTL', () => {
-    const { store, tick } = kv();
-    store.put('short', 'a', { expirationTtl: 10 });
-    store.put('long', 'b', { expirationTtl: 1000 });
-    store.put('forever', 'c');
-    tick(11_000);
-    store.purgeExpired();
-    expect(store.get('short')).toBeNull();
-    expect(store.get('long')).toBe('b');
-    expect(store.get('forever')).toBe('c');
-  });
-});
-
-describe('presence freshness with a fake clock (task 5.4)', () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it('an entry goes stale once the fake clock passes the freshness window', () => {
-    const { clock, tick } = makeFakeClock();
-    const reg = new PresenceRegistry(clock);
-    reg.upsert('tab-1', {
-      session_id: 's1',
-      visible: true,
-      is_playing: false,
-      updated: clock.now(),
-    });
-    expect(reg.list()).toHaveLength(1);
-    tick(PRESENCE_FRESH_MS);
-    expect(reg.list()).toHaveLength(1); // exactly at the window edge is still fresh
-    tick(1);
-    expect(reg.list()).toHaveLength(0); // pruned as stale
   });
 });
