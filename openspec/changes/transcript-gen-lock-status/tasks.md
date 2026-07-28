@@ -12,10 +12,10 @@
 
 ## Phase 2 — Transcript tab visibility
 
-- [ ] 2.1 Add `useTranscriptGenerationStatus` (poll ~2s busy / ~10s idle) and a banner in
+- [x] 2.1 Add `useTranscriptGenerationStatus` (poll ~2s busy / ~10s idle) and a banner in
       `TranscribeFeed`: title + live elapsed from `started_at`; link to `/sessions/<id>`
       when holder ≠ current session; treat same-session busy like generate pending
-- [ ] 2.2 Web test(s): banner copy + cross-session link when status is busy
+- [x] 2.2 Web test(s): banner copy + cross-session link when status is busy
 
 ## Phase 3 — Final gates
 

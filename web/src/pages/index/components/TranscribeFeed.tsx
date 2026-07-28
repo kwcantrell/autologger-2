@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useMemo, useReducer, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
+import { useTranscriptGenerationStatus } from '../../../api/hooks/useTranscriptGenerationStatus';
 import {
   useGenerateTranscript,
   useInsertTranscriptWord,
@@ -13,6 +14,7 @@ import { clickSortReducer } from '../utils/sortReducer';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
+import { TranscriptGenerationLockBanner } from './TranscriptGenerationLockBanner';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TranscribeRow } from './TranscribeRow';
 
@@ -49,6 +51,7 @@ interface Props {
 
 export function TranscribeFeed({ sessionId }: Props) {
   const { data: words, isLoading } = useTranscriptWords(sessionId);
+  const { data: generationStatus } = useTranscriptGenerationStatus();
   const generate = useGenerateTranscript(sessionId);
   const insert = useInsertTranscriptWord(sessionId);
   const update = useUpdateTranscriptWord(sessionId);
@@ -122,22 +125,29 @@ export function TranscribeFeed({ sessionId }: Props) {
   // Shared aria-disabled latch toolbar — the a11y rationale (focusable
   // aria-disabled button + always-visible reason span) lives on GenerateToolbar.
   const genReasonId = 'v5-transcribe-gen-reason';
+  const sameSessionGenerationBusy =
+    generationStatus?.in_flight === true && generationStatus.session_id === sessionId;
   const toolbar = (
-    <GenerateToolbar
-      genError={genError}
-      genUnavailable={genUnavailable}
-      onGenerate={handleGenerate}
-      generatePending={generate.isPending}
-      reasonId={genReasonId}
+    <>
+      <GenerateToolbar
+        genError={genError}
+        genUnavailable={genUnavailable}
+        onGenerate={handleGenerate}
+        generatePending={generate.isPending || sameSessionGenerationBusy}
+        reasonId={genReasonId}
       reason={
         <>
           Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
           Reload after configuring.
         </>
       }
-      onInsert={handleInsert}
-      insertPending={insert.isPending}
-    />
+        onInsert={handleInsert}
+        insertPending={insert.isPending}
+      />
+      {generationStatus?.in_flight === true && (
+        <TranscriptGenerationLockBanner status={generationStatus} currentSessionId={sessionId} />
+      )}
+    </>
   );
 
   return (
@@ -166,7 +176,7 @@ export function TranscribeFeed({ sessionId }: Props) {
         isLoading={isLoading}
         isEmpty={!words || words.length === 0}
         emptyMessage={
-          generate.isPending ? (
+          generate.isPending || sameSessionGenerationBusy ? (
             <>Generating transcript&hellip; this may take a couple minutes.</>
           ) : genUnavailable ? (
             <>

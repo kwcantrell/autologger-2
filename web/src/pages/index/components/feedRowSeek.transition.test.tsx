@@ -209,6 +209,7 @@ let currentStatus: SessionStatus;
 
 function mockApi() {
   mockedApiFetch.mockImplementation(async (path: string) => {
+    if (path === 'transcript-generation/status') return { in_flight: false };
     if (path.includes('/status')) return currentStatus;
     if (path.includes('/show-categories')) {
       return { categories: [categoryFixture()], show_name: '', show_code: '' };
