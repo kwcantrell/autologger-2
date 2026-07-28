@@ -50,6 +50,7 @@ import type {
   SpawnedProcess,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
+import { runOuterAiTurn } from './aiTurnOrchestrator';
 import { killProcessGroup } from './processGroupKill';
 
 /**
@@ -398,6 +399,13 @@ export interface RunDesignTurnOptions {
    * resolve. Optional so callers that don't wire the Phase-3 registry
    * (e.g. 2.5/2.6's own tests) are unaffected. */
   abandonPendingQuestions?: () => void;
+  /** Turn workspace (cwd + config-dir) removal — code-health-consolidation
+   * design D3: rides in the shared orchestrator's `onFinally` alongside
+   * `abandonPendingQuestions` + `release`, so it too runs on EVERY exit path
+   * the orchestrator controls. Optional (idempotent at the source —
+   * `createDesignTurnWorkspace`); the router keeps its own defense-in-depth
+   * call for setup failures before this function ever runs. */
+  cleanupWorkspace?: () => void;
   /** Best-effort client-disconnect signal (the SSE request's abort signal). */
   abortSignal?: AbortSignal;
   killGraceMs?: number;
@@ -448,32 +456,20 @@ export function scrubDesignTurnEvent(event: DesignTurnSseEvent): DesignTurnSseEv
   return { event: 'error', data: { detail } };
 }
 
-/**
- * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
- * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
- * and a best-effort client-disconnect signal, terminate the child group on
- * every path, and release the concurrency slot in a `finally`. Guarantees
- * exactly one terminal event; a client disconnect emits none.
- */
-export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignTurnOutcome> {
-  let terminalSent = false;
-  const guardedEmit = async (event: DesignTurnSseEvent): Promise<void> => {
-    if (terminalSent) return;
-    // Task 2.8: every event — not just the ones the code below happens to
-    // construct carefully — passes through the scrubber before it can reach
-    // the client. A no-op for `delta`/`done` and for an already-valid `error`.
-    const safeEvent = scrubDesignTurnEvent(event);
-    if (safeEvent.event === 'done' || safeEvent.event === 'error') terminalSent = true;
+/** The per-path relay (design D3: the relay/message-translation is NOT
+ * symmetric across the two AI paths and stays per-path — this one translates
+ * an `AsyncIterable<SDKMessage>` inline; chat's reads a `ChildProcess`'s
+ * stdout JSONL in `aiChatRelay.ts`). Emits only through the shared guarded
+ * emitter; never rejects — the iterator throwing (our own abort/timeout
+ * per spike 0.5, or a genuine SDK error) resolves to a scrubbed
+ * `internal-error` outcome instead. */
+function relayDesignTurnMessages(
+  query: AsyncIterable<SDKMessage>,
+  guardedEmit: (event: DesignTurnSseEvent) => Promise<void>,
+): Promise<DesignTurnOutcome> {
+  return (async (): Promise<DesignTurnOutcome> => {
     try {
-      await opts.emit(safeEvent);
-    } catch {
-      // The client stream is gone; cleanup below still runs.
-    }
-  };
-
-  const relayPromise: Promise<DesignTurnOutcome> = (async () => {
-    try {
-      for await (const message of opts.query) {
+      for await (const message of query) {
         if (message.type === 'assistant') {
           const content = (message.message as { content?: unknown } | undefined)?.content;
           if (Array.isArray(content)) {
@@ -505,65 +501,54 @@ export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignT
       return { ok: false, detail: 'internal-error' };
     }
   })();
+}
 
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<'timeout'>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve('timeout'), opts.timeoutMs);
-  });
-  const abortPromise = new Promise<'abort'>((resolve) => {
-    const signal = opts.abortSignal;
-    if (!signal) return; // never resolves — Promise.race simply never picks it
-    if (signal.aborted) {
-      resolve('abort');
-      return;
-    }
-    signal.addEventListener('abort', () => resolve('abort'), { once: true });
-  });
-
-  let terminated = false;
-  const terminateOnce = async (): Promise<void> => {
-    if (terminated) return;
-    terminated = true;
-    await opts.terminate(opts.killGraceMs);
-  };
-
-  try {
-    const winner = await Promise.race([
-      relayPromise.then((outcome) => ({ kind: 'relay' as const, outcome })),
-      timeoutPromise.then(() => ({ kind: 'timeout' as const })),
-      abortPromise.then(() => ({ kind: 'abort' as const })),
-    ]);
-    clearTimeout(timeoutHandle);
-    // On the timeout/abort paths the relay may never settle (a never-yielding
-    // iterator that ignores abort) — suppress any late rejection and DO NOT
-    // await it, so those paths still end and release the slot.
-    relayPromise.catch(() => {});
-
-    if (winner.kind === 'timeout') {
-      await guardedEmit({ event: 'error', data: { detail: 'timeout' } });
+/**
+ * Orchestrate one design turn's lifecycle: relay the SDK message stream as SSE
+ * `delta`/`done`/`error` events, race the relay against the guaranteed timeout
+ * and a best-effort client-disconnect signal, terminate the child group on
+ * every path, and run the cleanup closures in a `finally`. Guarantees exactly
+ * one terminal event; a client disconnect emits none.
+ *
+ * Since code-health-consolidation (design D3, task 4.2) this is a thin
+ * adapter over the shared OUTER orchestrator (`runOuterAiTurn`), which owns
+ * the race/terminal-once/emit-guard/kill/finally scaffolding for both AI
+ * paths. This path's hook choices:
+ * - `runRelay`: `relayDesignTurnMessages` over the SDK iterator, with the
+ *   `'detach'` drain policy — the relay is NEVER awaited after the race: an
+ *   aborted SDK iterator may never yield/settle, and the turn must still end
+ *   and release its slot.
+ * - `terminate`: owns this path's `abortController.abort()` (killing the
+ *   pgid alone does not stop the SDK's iterator) plus the spawner's shared
+ *   group-liveness kill ladder (design D2); the grace override is baked into
+ *   the closure.
+ * - `scrub`: `scrubDesignTurnEvent` (task 2.8) — the four-literal allow-list
+ *   rebuild, applied by the shared guard to EVERY event (the structural
+ *   confidentiality chokepoint).
+ * - `onFinally`: `abandonPendingQuestions` (task 3.3 — the every-exit-path
+ *   abandon guarantee is load-bearing) + slot `release` + workspace cleanup,
+ *   in that order, on EVERY exit path.
+ */
+export async function runDesignTurn(opts: RunDesignTurnOptions): Promise<DesignTurnOutcome> {
+  return runOuterAiTurn<DesignTurnSseEvent, DesignTurnOutcome>({
+    runRelay: (guardedEmit) => ({
+      relay: relayDesignTurnMessages(opts.query, guardedEmit),
+      drain: 'detach',
+    }),
+    terminate: async () => {
       opts.abortController.abort();
-    } else if (winner.kind === 'abort') {
-      // Best-effort client disconnect: emit NO terminal event (nobody is
-      // listening) but claim the terminal slot so a late relay emit is a no-op.
-      terminalSent = true;
-      opts.abortController.abort();
-    }
-
-    await terminateOnce();
-
-    if (winner.kind === 'relay') return winner.outcome;
-    if (winner.kind === 'timeout') return { ok: false, detail: 'timeout' };
-    return { ok: false, detail: 'aborted' };
-  } finally {
-    clearTimeout(timeoutHandle);
-    // No orphan on ANY exit path — including an unexpected throw above.
-    await terminateOnce();
-    // Task 3.3: the pending-question backstop — same "every exit path"
-    // guarantee as terminate/release above, so an unanswered question never
-    // survives the turn it belongs to (see the field's own docstring).
-    opts.abandonPendingQuestions?.();
-    opts.release();
-  }
+      await opts.terminate(opts.killGraceMs);
+    },
+    scrub: scrubDesignTurnEvent,
+    timeoutMs: opts.timeoutMs,
+    emit: opts.emit,
+    abortSignal: opts.abortSignal,
+    onFinally: () => {
+      opts.abandonPendingQuestions?.();
+      opts.release();
+      opts.cleanupWorkspace?.();
+    },
+  });
 }
 
 // ── Turn workspace + credentials (runtime file I/O, kept out of the pure

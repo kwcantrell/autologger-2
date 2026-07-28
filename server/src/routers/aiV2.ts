@@ -312,6 +312,11 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         terminate: spawner.terminate,
         release: slot.release,
         abandonPendingQuestions: () => aiV2PendingQuestions.abandonTurn(sessionId, turnId),
+        // code-health-consolidation D3: the workspace (cwd + config-dir)
+        // cleanup rides in the orchestrator's every-exit-path `onFinally`;
+        // the idempotent call in the `finally` below stays as
+        // defense-in-depth for setup failures before runDesignTurn ran.
+        cleanupWorkspace: workspace.cleanup,
       });
     } catch {
       // Any unexpected failure BEFORE runDesignTurn took over (e.g. building
