@@ -60,7 +60,8 @@ const captured = {
     }
   ],
   "show_name": "All The Smoke",
-  "show_code": "ATS"
+  "show_code": "ATS",
+  "auto_instructions_present": false
 } as const;
 
 export const showCategories = captured as Mutable<typeof captured>;

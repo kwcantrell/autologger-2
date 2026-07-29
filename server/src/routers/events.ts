@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { showCategoriesApiShape } from '../db/catalog';
 import { audioRecordingLeaseBodySchema, eventUpdateBodySchema, logBodySchema } from '../schemas';
 import {
+  categoryIsInstructionBearing,
   enrichEventRpc,
   mergeCategoryUiSnapshotsIntoMetadata,
   normalizeEventButtonNameForRelink,
@@ -54,6 +55,13 @@ eventsRouter.get('/api/sessions/:sessionId/show-categories', async (c) => {
     categories: showCategoriesApiShape(raw.categories),
     show_name: raw.showName,
     show_code: raw.showCode,
+    // Additive top-level boolean (auto-generate-event-logs delta): true iff any
+    // of the show's categories is instruction-bearing per the single definition
+    // in `categoryIsInstructionBearing`. Computed here in the router — the
+    // shared `showCategoriesApiShape` projection (also serving Companion) is
+    // deliberately NOT extended, and the `categories` entries carry no
+    // instruction fields.
+    auto_instructions_present: raw.categories.some(categoryIsInstructionBearing),
   });
 });
 

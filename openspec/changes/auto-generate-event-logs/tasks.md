@@ -6,12 +6,12 @@
 
 ## 1. Instruction fields (normalization + wire + settings UI)
 
-- [ ] 1.1 TDD: `auto_instruction` carry-through + bounds in `validateCategoriesList` /
+- [x] 1.1 TDD: `auto_instruction` carry-through + bounds in `validateCategoriesList` /
       `normalizeDropdownOptionEntry` (`server/src/studio.ts`): trimmed, ≤ 2000 chars
       beside the existing label checks (`ValidationError` → 400), empty ⇒ omitted,
       dropped on ON_OFF categories (design D1); unit tests for accept / reject /
       absent / ON_OFF-drop / round-trip through the profile update path.
-- [ ] 1.2 TDD: `auto_instructions_present` boolean on `GET …/show-categories`
+- [x] 1.2 TDD: `auto_instructions_present` boolean on `GET …/show-categories`
       (computed in the events router from the show's categories using the
       instruction-bearing definition; shared `showCategoriesApiShape` untouched);
       integration test: boolean true for option-only DROPDOWN, false otherwise;
