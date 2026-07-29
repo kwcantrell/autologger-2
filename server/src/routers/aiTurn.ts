@@ -42,11 +42,12 @@ export interface DriveAiTurnOptions {
   sessionId: string;
   /** The user message, delivered on the child's stdin (never argv). */
   message: string;
-  /** Restrict the `--allowedTools` set for this turn; omit for the full
-   * default allowlist (`ai/chat`'s current behavior — every
-   * `AI_MCP_TOOL_NAMES` entry). `topics/generate` (task 2.3) withholds
-   * `list_topics` here so the model cannot dedup against the topics it is
-   * about to replace (design D3/D5). */
+  /** Restrict the `--allowedTools` set for this turn; omit for the default
+   * CHAT allowlist (the three chat tools — pinned in `aiChatRunner.ts`,
+   * deliberately narrower than `AI_MCP_TOOL_NAMES` now that the registry also
+   * carries `create_event`; auto-generate-event-logs D7). `topics/generate`
+   * (task 2.3) withholds `list_topics` here so the model cannot dedup against
+   * the topics it is about to replace (design D3/D5). */
   allowedTools?: readonly AiMcpToolName[];
   /** Dedicated `--append-system-prompt`; omit for `ai/chat`'s reused brief.
    * `topics/generate` passes a generate-specific prompt (no `list_topics`

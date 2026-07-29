@@ -62,7 +62,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AiChatRelayOutcome, AiChatSseEvent } from './aiChatRelay';
 import { relayAiChatTurn } from './aiChatRelay';
-import { AI_MCP_TOOL_NAMES, type AiMcpToolName } from './aiMcpServer';
+import type { AiMcpToolName } from './aiMcpServer';
 import { runOuterAiTurn } from './aiTurnOrchestrator';
 import { DEFAULT_PROCESS_GROUP_KILL_GRACE_MS, killProcessGroup } from './processGroupKill';
 
@@ -87,9 +87,19 @@ const OPTIONAL_ENV_PASSTHROUGH = [
   'NODE_EXTRA_CA_CERTS',
 ] as const;
 
-/** The wire-name allowlist for `--allowedTools`, derived from the single
- * source of truth (`aiMcpServer.ts`) rather than re-listed here. */
-const ALLOWED_TOOLS = AI_MCP_TOOL_NAMES.map((name) => `mcp__autologger__${name}`).join(',');
+/** The DEFAULT wire-name allowlist for `--allowedTools` when a caller omits
+ * one: pinned to the three CHAT tools, deliberately NOT derived from the full
+ * `AI_MCP_TOOL_NAMES` registry (auto-generate-event-logs D7): the registry now
+ * also carries `create_event`, and growing it must never silently widen a
+ * chat turn's argv. Task 3.4 additionally passes chat's allowlist explicitly
+ * from `ai.ts`; this pinned fallback keeps the omit-path byte-identical to
+ * the pre-registry-growth behavior meanwhile. */
+const AI_CHAT_DEFAULT_TOOLS: readonly AiMcpToolName[] = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+];
+const ALLOWED_TOOLS = AI_CHAT_DEFAULT_TOOLS.map((name) => `mcp__autologger__${name}`).join(',');
 
 export interface BuildAiChatArgvInput {
   /** Path to the generated `--mcp-config` file (written 0600 by the caller). */

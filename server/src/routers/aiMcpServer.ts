@@ -30,7 +30,10 @@
 // (task 2.1) AND the session-scoped MCP toolset (task 2.2) — the tool bodies
 // in `TOOL_BUILDERS`: `get_transcript_words` and `list_topics`
 // read hub rows at call time; `create_topic` validates with `topicCreateSchema`
-// and writes through the transactional `SessionHub.insertTopic` path.
+// and writes through the transactional `SessionHub.insertTopic` path;
+// `create_event` (auto-generate-event-logs task 3.2, design D4) writes a
+// transcript-anchored event through the transactional `SessionHub.addEvent`
+// explicit-anchor path, gated by the generation run snapshot.
 // Registration is PER TURN (auto-generate-event-logs D6): each turn's
 // registration carries its tool set (+ generation run snapshot), and
 // `buildSessionMcpServer` registers only that set — a context-less turn gets
@@ -43,8 +46,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { topicCreateSchema } from '../schemas';
+import { timecodeWallAnchors, wallTimeUtcForTimecode } from '../session/eventAnchors';
 import type { SessionHubRegistry } from '../session/SessionHub';
-import type { CategoryKind } from '../studio';
+import {
+  type CategoryDef,
+  type CategoryKind,
+  mergeCategoryUiSnapshotsIntoMetadata,
+} from '../studio';
+import { parseTimecodeString, toTotalFrames } from '../timecode';
 
 const LOOPBACK = '127.0.0.1';
 const MCP_PATH = '/mcp';
@@ -55,11 +64,18 @@ const BEARER_PREFIX = 'Bearer ';
 /** MCP server name — tool wire names are `mcp__autologger__<tool>` (spec). */
 const MCP_SERVER_NAME = 'autologger';
 
-/** The three tool short names exposed to the model (spec: Session-scoped MCP
- * toolset). Wire names are `mcp__${MCP_SERVER_NAME}__${name}`. */
-export const AI_MCP_TOOL_NAMES = ['get_transcript_words', 'list_topics', 'create_topic'] as const;
+/** The registry of tool short names exposed to the model (spec: Session-scoped
+ * MCP toolset + auto-generate-event-logs `create_event`). Wire names are
+ * `mcp__${MCP_SERVER_NAME}__${name}`. Growing this list NEVER widens a chat
+ * turn — see `DEFAULT_TURN_TOOLS`. */
+export const AI_MCP_TOOL_NAMES = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+  'create_event',
+] as const;
 
-/** One of the three short tool names above — the type callers use to
+/** One of the short tool names above — the type callers use to
  * restrict `--allowedTools` for a turn (topic-generation design D7/D3). */
 export type AiMcpToolName = (typeof AI_MCP_TOOL_NAMES)[number];
 
@@ -134,6 +150,12 @@ export interface AiMcpTurn {
   /** Per-turn bearer token (≥128-bit), sent as `Authorization: Bearer <token>`
    * and validated at the HTTP layer before dispatch. */
   readonly token: string;
+  /** Events created by this turn's `create_event` calls so far
+   * (auto-generate-event-logs task 3.2): ONE mutable counter per turn
+   * registration — never global — incremented only on successful insert. The
+   * generate route (task 4.3) reads it after the run to report
+   * `{created, cap_hit}`. Always 0 on chat turns. */
+  createdEvents(): number;
   /** Drop the registration (idempotent). After this, the token gets 401. */
   dispose(): void;
 }
@@ -142,6 +164,9 @@ interface TurnRegistration {
   readonly sessionId: string;
   /** Per-turn context (D6); undefined ⇒ default chat tool set, no snapshot. */
   readonly context: AiMcpTurnContext | undefined;
+  /** The turn's mutable created-events counter (task 3.2). Lives on the
+   * REGISTRATION — per-request MCP servers share it across a turn's calls. */
+  readonly createdEvents: { count: number };
 }
 
 /**
@@ -164,6 +189,49 @@ const createTopicToolShape = {
   topic_level: z.number().optional().describe('Topic depth/level, integer 1–10.'),
   summary: z.string().optional().describe('Concise topic summary (≤ 8000 chars).'),
 };
+
+/**
+ * The `create_event` parameter surface advertised to the model (task 3.2).
+ * Same discipline as `createTopicToolShape`: names/types only, all optional —
+ * the authoritative bounds live in `createEventArgsSchema`, applied inside the
+ * handler so a violation returns an `isError` tool result instead of an
+ * SDK-thrown `McpError` (spec: tool error, no insert, no crash). No session
+ * parameter exists — the session is bound by the turn registration.
+ */
+const createEventToolShape = {
+  category: z
+    .string()
+    .optional()
+    .describe("Category id — must be one of this generation run's allowed category ids."),
+  message: z.string().optional().describe('Event message text (1–8000 chars).'),
+  session_time: z
+    .string()
+    .optional()
+    .describe(
+      'Session timecode: HH:MM:SS, HH:MM:SS:FF, or drop-frame HH:MM:SS;FF — ' +
+        'echo the form the transcript rendering shows.',
+    ),
+};
+
+/** Handler-side bounds for `create_event` (task 3.2): `category` and
+ * `message` MIRROR the manual log path's `logBodySchema` fields (min 1 /
+ * max 200 and min 1 / max 8000, no trimming — the manual path applies none).
+ * The `session_time` GRAMMAR and timecode bounds are owned by
+ * `parseTimecodeString`, not re-derived in zod. */
+const createEventArgsSchema = z.object({
+  category: z.string().min(1).max(200),
+  message: z.string().min(1).max(8000),
+  session_time: z.string().min(1),
+});
+
+/** An `isError` tool result — the never-throw shape every `create_event`
+ * failure path returns to the model (the run continues; nothing is inserted). */
+function toolError(text: string): {
+  content: Array<{ type: 'text'; text: string }>;
+  isError: true;
+} {
+  return { content: [{ type: 'text', text }], isError: true };
+}
 
 /**
  * Build the per-request McpServer bound to one autologger session, registering
@@ -217,12 +285,14 @@ function formatTranscriptForModel(
 }
 
 /** Everything a tool builder may bind into its handlers. `generation` is the
- * run snapshot on generation turns (undefined on chat turns) — carried here
- * for `create_event` (task 3.2) to consume. */
+ * run snapshot on generation turns (undefined on chat turns), and
+ * `createdEvents` the registration's per-run counter — both consumed by
+ * `create_event` (task 3.2). */
 interface ToolBuildContext {
   readonly registry: SessionHubRegistry;
   readonly sessionId: string;
   readonly generation: AiGenerationRunContext | undefined;
+  readonly createdEvents: { count: number };
 }
 
 /**
@@ -298,19 +368,135 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
       },
     );
   },
+
+  create_event: (server, { registry, sessionId, generation, createdEvents }) => {
+    server.tool(
+      'create_event',
+      'Create one log event on this session at a transcript timecode. Only ' +
+        "this run's allowed category ids are accepted; the event is appended " +
+        'at the supplied session_time, never at the current clock.',
+      createEventToolShape,
+      async (args) => {
+        // EVERY failure path below returns an isError tool result — the tool
+        // never throws (spec: "no insert, no crash"; the run continues).
+        try {
+          // Defensive: create_event is only meaningful under a generation run
+          // snapshot (D6). A snapshot-less registration gets a tool error.
+          if (generation === undefined) {
+            return toolError('create_event is only available on generation turns.');
+          }
+          const parsed = createEventArgsSchema.safeParse(args);
+          if (!parsed.success) {
+            return toolError(
+              `Invalid event input: ${parsed.error.issues
+                .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+                .join('; ')}`,
+            );
+          }
+          const { category, message, session_time } = parsed.data;
+          // `internal` denial in ANY casing, BEFORE the allowlist — belt and
+          // braces even if a snapshot ever carried such an id (internal rows
+          // are transport anchors; a model-authored one corrupts remapping).
+          if (category.toLowerCase() === 'internal') {
+            return toolError("Category 'internal' is reserved and can never be written.");
+          }
+          const cat = generation.categories.find((c) => c.id === category);
+          if (cat === undefined) {
+            const allowed = generation.categories
+              .filter((c) => c.id.toLowerCase() !== 'internal')
+              .map((c) => c.id)
+              .join(', ');
+            return toolError(`Unknown category '${category}': must be one of: ${allowed}.`);
+          }
+          // TRUST BOUNDARY (D4): the parser gates EVERY insert. A null parse
+          // (grammar violation, ≥ 24h, frames ≥ rate) is a tool error, and
+          // `wallTimeUtcForTimecode` is never called with an unbounded value —
+          // parser-bounded timecodes (< 24h) stay inside Date's range.
+          const tc = parseTimecodeString(session_time, generation.frameRate);
+          if (tc === null) {
+            return toolError(
+              `Invalid session_time '${session_time}': expected HH:MM:SS, HH:MM:SS:FF, ` +
+                'or drop-frame HH:MM:SS;FF, below 24:00:00 with frames under the session rate.',
+            );
+          }
+          if (createdEvents.count >= generation.cap) {
+            return toolError(
+              `Per-run event cap reached (${generation.cap} events): no further events ` +
+                'can be created by this run.',
+            );
+          }
+          const totalFrames = toTotalFrames(tc);
+          // Metadata composition (spec "bounded and attributable"): attribution
+          // pair + the SAME category label/color UI snapshot keys the manual
+          // route writes, sourced from the RUN SNAPSHOT (never a catalog read).
+          const snapshotDef: CategoryDef = {
+            id: cat.id,
+            label: cat.name,
+            color: cat.color,
+            kind: cat.type,
+            dropdown_options: cat.dropdown_options.map((o) => o.label),
+            on_label: '',
+            off_label: '',
+          };
+          const metadata = mergeCategoryUiSnapshotsIntoMetadata(
+            { auto_generated: true, auto_generate_run_id: generation.runId },
+            snapshotDef,
+          );
+          // Hub resolved AT CALL TIME (D3) — the read + insert below are one
+          // synchronous block, never held across an await. Anchors are rebuilt
+          // FRESH each call: events accrue during the run, and re-reading them
+          // keeps generated events sorting among themselves in timecode order
+          // (each insert becomes an anchor for the next, monotone-clamped).
+          const hub = registry.get(sessionId);
+          const anchors = timecodeWallAnchors(hub.exportEvents());
+          const wallTimeUtc = wallTimeUtcForTimecode(totalFrames, anchors, {
+            frameRate: generation.frameRate,
+            startOffsetFrames: generation.startOffsetFrames,
+            startedAtUtc: generation.startedAtUtc,
+          });
+          // One insert path (D4): the transactional manual-path addEvent with
+          // the explicit anchor — same metadata handling, and its single
+          // event.changed broadcast per insert is deliberately NOT suppressed.
+          const { event } = hub.addEvent({
+            category,
+            message,
+            metadataJson: JSON.stringify(metadata),
+            markedAtUtc: null,
+            ctx: {
+              frameRate: generation.frameRate,
+              startOffsetFrames: generation.startOffsetFrames,
+            },
+            explicitAnchor: { timecodeTotalFrames: totalFrames, wallTimeUtc },
+          });
+          createdEvents.count += 1; // ONLY on successful insert
+          return { content: [{ type: 'text', text: JSON.stringify(event) }] };
+        } catch {
+          // Never throw out of the handler (spec). Kept opaque — raw internal
+          // errors are not surfaced to the model.
+          return toolError('create_event failed: internal error; no event was created.');
+        }
+      },
+    );
+  },
 };
 
 function buildSessionMcpServer(
   registry: SessionHubRegistry,
   sessionId: string,
   context: AiMcpTurnContext | undefined,
+  createdEvents: { count: number },
 ): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
   // Register ONLY the turn's tool set (D6). No context ⇒ the pinned default
   // three chat tools — byte-identical to the pre-context behavior. The Set
   // guards against a duplicate name in a caller-supplied set (McpServer.tool
   // throws on re-registration).
-  const ctx: ToolBuildContext = { registry, sessionId, generation: context?.generation };
+  const ctx: ToolBuildContext = {
+    registry,
+    sessionId,
+    generation: context?.generation,
+    createdEvents,
+  };
   for (const name of new Set(context?.tools ?? DEFAULT_TURN_TOOLS)) {
     TOOL_BUILDERS[name](server, ctx);
   }
@@ -373,12 +559,17 @@ export class AiMcpListener {
   registerTurn(sessionId: string, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');
     const token = randomBytes(TOKEN_BYTES).toString('hex');
-    this.turns.set(token, { sessionId, context });
+    // One created-events counter PER REGISTRATION (task 3.2) — shared by the
+    // turn's per-request MCP servers, readable after the run via the returned
+    // `createdEvents()` (the generate route's `{created, cap_hit}` source).
+    const createdEvents = { count: 0 };
+    this.turns.set(token, { sessionId, context, createdEvents });
     const url = `http://${LOOPBACK}:${this.port}${MCP_PATH}`;
     let disposed = false;
     return {
       url,
       token,
+      createdEvents: (): number => createdEvents.count,
       dispose: (): void => {
         if (disposed) return;
         disposed = true;
@@ -415,7 +606,12 @@ export class AiMcpListener {
     // so concurrent turns never share transport state. The tools are bound to
     // this turn's sessionId — resolved from the registration, not a param.
     try {
-      const server = buildSessionMcpServer(this.registry, reg.sessionId, reg.context);
+      const server = buildSessionMcpServer(
+        this.registry,
+        reg.sessionId,
+        reg.context,
+        reg.createdEvents,
+      );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on('close', () => {
         void transport.close();

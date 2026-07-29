@@ -50,7 +50,7 @@
       registration in `buildSessionMcpServer` (design D6); tests: a chat-turn
       registration's server does not register `create_event` (server-side denial),
       generation turn registers exactly its two tools.
-- [ ] 3.2 TDD: `create_event` tool — message bounds (mirror `logBodySchema`), timecode
+- [x] 3.2 TDD: `create_event` tool — message bounds (mirror `logBodySchema`), timecode
       grammar/bounds via 2.2, snapshot category allowlist + `internal` denial
       (case-insensitive), per-run cap enforcement (tool error naming the cap),
       metadata composition (`auto_generated`, `auto_generate_run_id`, category

@@ -11,7 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
-import { AiMcpListener } from './aiMcpServer';
+import { type AiGenerationRunContext, AiMcpListener, type AiMcpTurnContext } from './aiMcpServer';
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -539,5 +539,441 @@ describe('AiMcpListener — create_topic writes through SessionHub.insertTopic',
     expect(registry.get('sessA').listTopics()).toHaveLength(1);
     // Session B is untouched — the write is hard-bound to the registration.
     expect(registry.get('sessB').listTopics()).toHaveLength(0);
+  });
+});
+
+// ── create_event (auto-generate-event-logs task 3.2, design D4/D6) ──────────
+//
+// Spec anchors: "Events are anchored at transcript timecodes" (grammar/bounds,
+// snapshot allowlist, `internal` denial, tool-error-never-throw) and
+// "Generated events append, bounded and attributable" (per-run cap naming the
+// cap, metadata attribution + UI snapshots, manual-insert side effects).
+//
+// The chat-side complement stays pinned by the 3.1 tests above: 'chat
+// (context-less) turn: create_event is not registered' (server-side denial)
+// and 'accepts a live token and exposes the three tool names' (the
+// DEFAULT_TURN_TOOLS pin).
+
+/** Frames helper at a given fps. */
+const framesAt = (fps: number, h: number, m: number, s: number, f = 0): number =>
+  (h * 3600 + m * 60 + s) * Math.round(fps) + f;
+
+/** A generation turn context over two instruction-bearing categories.
+ * `#FF0000` (uppercase) pins the snapshot-merge hex normalization. */
+function genContext(overrides: Partial<AiGenerationRunContext> = {}): AiMcpTurnContext {
+  return {
+    tools: ['get_transcript_words', 'create_event'],
+    generation: {
+      runId: 'run-1',
+      frameRate: 24,
+      startOffsetFrames: 0,
+      startedAtUtc: '2026-01-01T00:00:00.000Z',
+      cap: 200,
+      categories: [
+        {
+          id: 'cat1',
+          name: 'SLATE',
+          type: 'BUTTON',
+          color: '#FF0000',
+          auto_instruction: 'log slates',
+          dropdown_options: [],
+        },
+        {
+          id: 'cat2',
+          name: 'MIC',
+          type: 'DROPDOWN',
+          color: '#00ff00',
+          dropdown_options: [{ label: 'Lav', needs_context: true, auto_instruction: 'lav swaps' }],
+        },
+      ],
+      ...overrides,
+    },
+  };
+}
+
+/** Drive one create_event MCP call; returns the raw tool result. */
+async function createEventViaMcp(
+  url: string,
+  token: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const { client, close } = await connectMcp(url, token);
+  try {
+    return (await client.callTool({ name: 'create_event', arguments: args })) as ToolResult;
+  } finally {
+    await close();
+  }
+}
+
+function listEventRows(sessionId: string): Array<{
+  event_id: string;
+  category: string;
+  message: string;
+  timecode: string | null;
+  frame_rate: number | null;
+  wall_time_utc: string;
+  metadata_json: string;
+}> {
+  return registry.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
+}
+
+describe('create_event — registration surface (3.2)', () => {
+  it('a generation turn registers exactly its two tools', async () => {
+    const turn = listener.registerTurn('gen-reg', genContext());
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name).sort()).toEqual(['create_event', 'get_transcript_words']);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('create_event exposes no session parameter (cannot address another session)', async () => {
+    const turn = listener.registerTurn('gen-shape', genContext());
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      const createEvent = tools.find((t) => t.name === 'create_event');
+      expect(createEvent).toBeDefined();
+      const props = (createEvent?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+      expect(Object.keys(props).sort()).toEqual(['category', 'message', 'session_time']);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('registered WITHOUT a generation snapshot: tool error, no insert, no crash', async () => {
+    // Defensive arm: a caller that registers create_event but omits the run
+    // snapshot gets a tool error — never a thrown crash, never an insert.
+    const turn = listener.registerTurn('gen-noctx', { tools: ['create_event'] });
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(res.isError).toBe(true);
+    expect(listEventRows('gen-noctx')).toHaveLength(0);
+    turn.dispose();
+  });
+});
+
+describe('create_event — category allowlist + internal denial (3.2)', () => {
+  it('rejects a category id outside the run snapshot: tool error, no insert', async () => {
+    const turn = listener.registerTurn('gen-cat', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'not-in-snapshot',
+      message: 'hi',
+      session_time: '00:00:01:00',
+    });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/category/i);
+    expect(listEventRows('gen-cat')).toHaveLength(0);
+
+    // The turn continues — a valid call after the rejection still works.
+    const ok = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(listEventRows('gen-cat')).toHaveLength(1);
+    turn.dispose();
+  });
+
+  it("rejects 'internal' in ANY casing even when the snapshot itself carries such an id", async () => {
+    // Belt-and-braces: even a (mis-built) snapshot containing an
+    // internal-cased id must not make transport rows writable.
+    const ctx = genContext({
+      categories: [
+        {
+          id: 'INTERNAL',
+          name: 'sneaky',
+          type: 'BUTTON',
+          color: '#123456',
+          auto_instruction: 'x',
+          dropdown_options: [],
+        },
+      ],
+    });
+    const turn = listener.registerTurn('gen-internal', ctx);
+    for (const casing of ['internal', 'INTERNAL', 'Internal', 'iNtErNaL']) {
+      const res = await createEventViaMcp(turn.url, turn.token, {
+        category: casing,
+        message: 'Recording 9 Started',
+        session_time: '00:00:01:00',
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/internal/i);
+    }
+    expect(listEventRows('gen-internal')).toHaveLength(0);
+    turn.dispose();
+  });
+});
+
+describe('create_event — timecode grammar/bounds (3.2, trust boundary)', () => {
+  it.each([
+    ['malformed text', 'not-a-timecode'],
+    ['negative-ish form', '-1:00:00'],
+    ['≥ 24h', '24:00:00'],
+    ['minutes out of range', '00:61:00'],
+    ['seconds out of range', '00:00:61'],
+    ['frames at/over the rate (24fps)', '00:00:00:24'],
+    ['empty', ''],
+  ])('rejects %s (%j): tool error, no insert, no crash', async (_label, sessionTime) => {
+    const turn = listener.registerTurn('gen-tc', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: sessionTime,
+    });
+    expect(res.isError).toBe(true);
+    expect(listEventRows('gen-tc')).toHaveLength(0);
+    turn.dispose();
+  });
+
+  it('accepts the drop-frame `;` grammar at 29.97 and round-trips the timecode', async () => {
+    const turn = listener.registerTurn('gen-df', genContext({ frameRate: 29.97 }));
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:14:03;12',
+    });
+    expect(res.isError).toBeFalsy();
+    const rows = listEventRows('gen-df');
+    expect(rows).toHaveLength(1);
+    // formatSmpte round-trip: 29.97 renders with the `;` separator.
+    expect(rows[0].timecode).toBe('00:14:03;12');
+    expect(rows[0].frame_rate).toBe(29.97);
+    turn.dispose();
+  });
+});
+
+describe('create_event — message bounds mirror logBodySchema (3.2)', () => {
+  it.each([
+    ['empty message', ''],
+    ['over-long message (8001 chars)', 'x'.repeat(8001)],
+  ])('rejects %s: tool error, no insert', async (_label, message) => {
+    const turn = listener.registerTurn('gen-msg', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message,
+      session_time: '00:00:01:00',
+    });
+    expect(res.isError).toBe(true);
+    expect(listEventRows('gen-msg')).toHaveLength(0);
+    turn.dispose();
+  });
+
+  it('accepts a message at exactly the 8000-char bound', async () => {
+    const turn = listener.registerTurn('gen-msg8k', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'y'.repeat(8000),
+      session_time: '00:00:01:00',
+    });
+    expect(res.isError).toBeFalsy();
+    expect(listEventRows('gen-msg8k')).toHaveLength(1);
+    turn.dispose();
+  });
+});
+
+describe('create_event — success path (3.2)', () => {
+  it('creates the event with zero anchors from snapshot session fields, returning the row', async () => {
+    const turn = listener.registerTurn('gen-ok', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '01:00:00:00',
+    });
+    expect(res.isError).toBeFalsy();
+    const created = JSON.parse(res.content[0].text) as Record<string, unknown>;
+    expect(created.event_id).toBeTruthy();
+    expect(created.category).toBe('cat1');
+    expect(created.message).toBe('SLATE');
+    expect(created.timecode).toBe('01:00:00:00');
+    // Zero-anchor arm: wall = snapshot started_at_utc + (tc − offset)/fps —
+    // 1h of timecode at 24fps from 2026-01-01T00:00:00Z.
+    expect(created.wall_time_utc).toBe('2026-01-01T01:00:00.000Z');
+    // And it is the persisted row, via the one insert path.
+    const rows = listEventRows('gen-ok');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].event_id).toBe(created.event_id);
+    turn.dispose();
+  });
+
+  it('composes metadata with EXACTLY the attribution + UI-snapshot keys', async () => {
+    const turn = listener.registerTurn('gen-meta', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:05:00',
+    });
+    expect(res.isError).toBeFalsy();
+    const rows = listEventRows('gen-meta');
+    const meta = JSON.parse(rows[0].metadata_json) as Record<string, unknown>;
+    // Exact composition: attribution pair + the SAME snapshot keys the manual
+    // route writes (label from the snapshot's name, hex color normalized).
+    expect(meta).toEqual({
+      auto_generated: true,
+      auto_generate_run_id: 'run-1',
+      al_category_label_snapshot: 'SLATE',
+      al_category_color_snapshot: '#ff0000',
+    });
+    turn.dispose();
+  });
+
+  it('emits one event.changed broadcast per insert (manual-insert semantics, not suppressed)', async () => {
+    const sent: string[] = [];
+    registry.get('gen-ws').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    const turn = listener.registerTurn('gen-ws', genContext());
+    for (const t of ['00:00:01:00', '00:00:02:00']) {
+      const res = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: t,
+      });
+      expect(res.isError).toBeFalsy();
+    }
+    const frames = sent.map((d) => JSON.parse(d) as { type: string });
+    expect(frames.filter((f) => f.type === 'event.changed')).toHaveLength(2);
+    turn.dispose();
+  });
+});
+
+describe('create_event — per-run cap (3.2)', () => {
+  it('at the cap: tool error NAMING the cap, no insert; counter visible on the turn', async () => {
+    const turn = listener.registerTurn('gen-cap', genContext({ cap: 2 }));
+    for (const t of ['00:00:01:00', '00:00:02:00']) {
+      const res = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'SLATE',
+        session_time: t,
+      });
+      expect(res.isError).toBeFalsy();
+    }
+    const denied = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:03:00',
+    });
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0].text).toContain('2'); // names the cap value
+    expect(denied.content[0].text).toMatch(/cap/i);
+    expect(listEventRows('gen-cap')).toHaveLength(2);
+    expect(turn.createdEvents()).toBe(2);
+    turn.dispose();
+  });
+
+  it('failed calls never consume the cap — the counter increments only on successful insert', async () => {
+    const turn = listener.registerTurn('gen-cap1', genContext({ cap: 1 }));
+    // Two failures first (bad category, bad timecode)…
+    const badCat = await createEventViaMcp(turn.url, turn.token, {
+      category: 'nope',
+      message: 'x',
+      session_time: '00:00:01:00',
+    });
+    expect(badCat.isError).toBe(true);
+    const badTc = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'x',
+      session_time: '99:99:99',
+    });
+    expect(badTc.isError).toBe(true);
+    expect(turn.createdEvents()).toBe(0);
+    // …the single capped slot is still available…
+    const ok = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(ok.isError).toBeFalsy();
+    expect(turn.createdEvents()).toBe(1);
+    // …and now the cap holds.
+    const denied = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:02:00',
+    });
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0].text).toContain('1');
+    expect(listEventRows('gen-cap1')).toHaveLength(1);
+    turn.dispose();
+  });
+});
+
+describe('create_event — bracketing placement over a real store (3.2, spec invariant)', () => {
+  const FPS = 24;
+  const CTX = { frameRate: FPS, startOffsetFrames: 0 };
+
+  /** Seed a paused/multi-take-shaped session: 10 minutes of timecode spread
+   * across 60 minutes of wall clock (the shape that breaks naive
+   * session-start arithmetic). Mirrors the eventAnchors.test.ts fixtures. */
+  function seedAnchors(sessionId: string): void {
+    const hub = registry.get(sessionId);
+    hub.addEvent({
+      category: 'internal',
+      message: 'Recording 1 Started',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+      explicitAnchor: {
+        timecodeTotalFrames: framesAt(FPS, 0, 10, 0),
+        wallTimeUtc: '2026-01-01T10:00:00.000Z',
+      },
+    });
+    hub.addEvent({
+      category: 'cat1',
+      message: 'manual note',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+      explicitAnchor: {
+        timecodeTotalFrames: framesAt(FPS, 0, 20, 0),
+        wallTimeUtc: '2026-01-01T11:00:00.000Z',
+      },
+    });
+  }
+
+  it('a generated event at 00:15:00:00 sorts BETWEEN the bracketing anchor events', async () => {
+    seedAnchors('gen-brk');
+    const turn = listener.registerTurn('gen-brk', genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:15:00:00',
+    });
+    expect(res.isError).toBeFalsy();
+    const rows = listEventRows('gen-brk'); // feed order: wall_time_utc ASC, id ASC
+    expect(rows.map((r) => r.message)).toEqual(['Recording 1 Started', 'SLATE', 'manual note']);
+    // Midpoint of the tc span maps to the midpoint of the wall span.
+    expect(rows[1].wall_time_utc).toBe('2026-01-01T10:30:00.000Z');
+    turn.dispose();
+  });
+
+  it('anchors are rebuilt per call: out-of-order creates still sort among themselves in timecode order', async () => {
+    seedAnchors('gen-brk2');
+    const turn = listener.registerTurn('gen-brk2', genContext());
+    // Create at 00:15 first, THEN back at 00:12 — the second call re-reads the
+    // store (now containing the 00:15 row as an anchor) and must still land
+    // between the 00:10 anchor and the 00:15 generated row.
+    for (const t of ['00:15:00:00', '00:12:00:00']) {
+      const res = await createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: `gen@${t}`,
+        session_time: t,
+      });
+      expect(res.isError).toBeFalsy();
+    }
+    const rows = listEventRows('gen-brk2');
+    expect(rows.map((r) => r.message)).toEqual([
+      'Recording 1 Started',
+      'gen@00:12:00:00',
+      'gen@00:15:00:00',
+      'manual note',
+    ]);
+    turn.dispose();
   });
 });
