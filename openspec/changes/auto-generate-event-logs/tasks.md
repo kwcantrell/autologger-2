@@ -68,7 +68,7 @@
 
 ## 4. Generate route (server)
 
-- [ ] 4.1 Config accessors: `eventGenerateMaxBudgetUsd` (default 5.0),
+- [x] 4.1 Config accessors: `eventGenerateMaxBudgetUsd` (default 5.0),
       `eventGenerateTimeoutSec` (default 600), per-run cap (default 200), aggregate
       instruction bound (design D8) + `.env.example` notes; unit tests for
       defaults/overrides.
