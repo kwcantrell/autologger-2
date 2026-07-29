@@ -106,7 +106,7 @@
 
 ## 6. Docs + final gates
 
-- [ ] 6.1 README: endpoint table row for `events/generate`, feature section (egress +
+- [x] 6.1 README: endpoint table row for `events/generate`, feature section (egress +
       spend disclosure like topics, cap + marker semantics), CLAUDE.md
       project-overview gating sentence; note the reworded shared 409 details.
 - [ ] 6.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`,

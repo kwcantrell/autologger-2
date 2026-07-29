@@ -34,7 +34,12 @@ egress disclosure + open-network refusal). `topics/generate` is likewise configu
 (`503` unless `CLAUDE_CLI_PATH` is set): configured, it reuses the AI chat's CLI/MCP/gate/
 registry machinery to run a single non-conversational turn and returns `200 {topics}` — a
 crash-safe replace-all of the session's topics, never touching the prior set until the fresh
-one exists (see README "AI chat (Claude CLI)"). `transcribe.csv` stays intentionally `503`
+one exists (see README "AI chat (Claude CLI)"). `events/generate` shares that
+`CLAUDE_CLI_PATH` gate (`503` unconfigured): configured, it runs a single orchestrator CLI
+turn over user-authored per-button `auto_instruction`s, appends transcript-derived events,
+and returns `200 {created, cap_hit}` — append-only, capped per run, each row marked
+`auto_generated` (see README "Event
+auto-generation (AUTO GENERATE)"). `transcribe.csv` stays intentionally `503`
 (no external integration wired up). `restart_supported` stays `false` (gate decision E2).
 
 ## Setup & commands
@@ -48,7 +53,7 @@ npm run build && npm run start                 # production: server serves web/d
 npm run typecheck                              # server + web + e2e
 npm test                                       # server vitest (unit + integration)
 npm run e2e                                    # Playwright smoke (hermetic server on :8791)
-npm run lint                                   # biome: web src/ + e2e/
+npm run lint                                   # biome: web src/, e2e/, playwright.config.ts, companion/src, server/src
 ```
 
 - Two vitest tiers (`test.projects` in `server/vitest.config.ts`): **unit** (`*.test.ts`, node, no bindings) and
