@@ -307,6 +307,125 @@ describe('AiMcpListener — get_transcript_words returns COMPACT readable text',
   });
 });
 
+describe('AiMcpListener — per-turn tool registration (auto-generate-event-logs 3.1)', () => {
+  // Spec (ai-topics-chat, "Chat turns cannot write events"): a chat turn's MCP
+  // server does not register `create_event` — denial at the SERVER, independent
+  // of CLI flags. Default (context-less) registration byte-identity to today is
+  // additionally pinned by the pre-existing tests above ('accepts a live token
+  // and exposes the three tool names' and every other context-less test here).
+  it('chat (context-less) turn: create_event is not registered — a call fails at the server', async () => {
+    const turn = listener.registerTurn('sessA');
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).not.toContain('create_event');
+      // Server-side denial: the call errors at the MCP server (tool not found
+      // as a tool error or protocol error), and no event machinery runs.
+      const denied = await client
+        .callTool({ name: 'create_event', arguments: {} })
+        .then((res) => res as ToolResult)
+        .catch((err: Error) => err);
+      if (denied instanceof Error) {
+        expect(denied.message).toMatch(/create_event|not found|unknown/i);
+      } else {
+        expect(denied.isError).toBe(true);
+      }
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('a turn context naming only get_transcript_words registers exactly that one tool', async () => {
+    registry
+      .get('sessG')
+      .replaceTranscriptWords([
+        { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
+      ]);
+    const turn = listener.registerTurn('sessG', { tools: ['get_transcript_words'] });
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(['get_transcript_words']);
+      // The named tool works…
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res.content[0].text).toBe('[00:00:01] speaker S1: solo');
+      // …and an unnamed registry tool is denied at the server.
+      const denied = await client
+        .callTool({ name: 'create_topic', arguments: { summary: 'nope' } })
+        .then((res2) => res2 as ToolResult)
+        .catch((err: Error) => err);
+      if (denied instanceof Error) {
+        expect(denied.message).toMatch(/create_topic|not found|unknown/i);
+      } else {
+        expect(denied.isError).toBe(true);
+      }
+      expect(registry.get('sessG').listTopics()).toHaveLength(0);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('carries a generation run snapshot on the registration without consuming it (3.2 consumes)', async () => {
+    registry
+      .get('sessH')
+      .replaceTranscriptWords([
+        { session_time: '00:00:02', speaker: 'S1', word: 'gen', start_sec: 2, end_sec: 3 },
+      ]);
+    // A generation-shaped registration: tool set + full run snapshot. Until
+    // task 3.2 lands create_event, the generation turn's registrable subset is
+    // get_transcript_words — the snapshot must thread through registration
+    // without altering any registered tool's behavior.
+    const turn = listener.registerTurn('sessH', {
+      tools: ['get_transcript_words'],
+      generation: {
+        runId: 'run-123',
+        frameRate: 29.97,
+        startOffsetFrames: 0,
+        startedAtUtc: '2026-07-29T00:00:00Z',
+        cap: 200,
+        categories: [
+          {
+            id: 'cat1',
+            name: 'SLATE',
+            type: 'BUTTON',
+            color: '#ff0000',
+            auto_instruction: 'log every slate',
+            dropdown_options: [],
+          },
+          {
+            id: 'cat2',
+            name: 'MIC',
+            type: 'DROPDOWN',
+            color: '#00ff00',
+            dropdown_options: [
+              { label: 'Lav', needs_context: true, auto_instruction: 'log lav swaps' },
+              { label: 'Boom', needs_context: false },
+            ],
+          },
+        ],
+      },
+    });
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(['get_transcript_words']);
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res.content[0].text).toBe('[00:00:02] speaker S1: gen');
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+});
+
 describe('AiMcpListener — create_topic writes through SessionHub.insertTopic', () => {
   /** Drive one create_topic MCP call; returns the raw tool result. */
   async function createTopicViaMcp(

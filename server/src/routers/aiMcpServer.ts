@@ -27,10 +27,14 @@
 // public :8787 HTTP/WS contract.
 //
 // Scope: this file owns the listener + registration + bearer/session resolution
-// (task 2.1) AND the session-scoped MCP toolset (task 2.2) — the three tools'
-// bodies in `buildSessionMcpServer`: `get_transcript_words` and `list_topics`
+// (task 2.1) AND the session-scoped MCP toolset (task 2.2) — the tool bodies
+// in `TOOL_BUILDERS`: `get_transcript_words` and `list_topics`
 // read hub rows at call time; `create_topic` validates with `topicCreateSchema`
 // and writes through the transactional `SessionHub.insertTopic` path.
+// Registration is PER TURN (auto-generate-event-logs D6): each turn's
+// registration carries its tool set (+ generation run snapshot), and
+// `buildSessionMcpServer` registers only that set — a context-less turn gets
+// the default three chat tools, so chat turns can never reach `create_event`.
 
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
@@ -40,6 +44,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { topicCreateSchema } from '../schemas';
 import type { SessionHubRegistry } from '../session/SessionHub';
+import type { CategoryKind } from '../studio';
 
 const LOOPBACK = '127.0.0.1';
 const MCP_PATH = '/mcp';
@@ -58,6 +63,68 @@ export const AI_MCP_TOOL_NAMES = ['get_transcript_words', 'list_topics', 'create
  * restrict `--allowedTools` for a turn (topic-generation design D7/D3). */
 export type AiMcpToolName = (typeof AI_MCP_TOOL_NAMES)[number];
 
+/** The DEFAULT tool set for a context-less turn registration — pinned
+ * explicitly to today's three chat tools, deliberately NOT derived from
+ * `AI_MCP_TOOL_NAMES`: when the registry grows (`create_event`,
+ * auto-generate-event-logs D6/D7), a turn that passes no context must keep
+ * registering exactly these three, byte-identical to today. */
+const DEFAULT_TURN_TOOLS: readonly AiMcpToolName[] = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+];
+
+/** One dropdown option in a generation run's category snapshot
+ * (auto-generate-event-logs D6) — label + `needs_context` + optional
+ * per-option instruction, mirroring the normalized `DropdownOptionRecord`. */
+export interface AiGenerationSnapshotOption {
+  readonly label: string;
+  readonly needs_context: boolean;
+  readonly auto_instruction?: string;
+}
+
+/** One instruction-bearing category in a generation run's snapshot
+ * (auto-generate-event-logs D6): the fields `create_event` (task 3.2) needs
+ * for its allowlist check and metadata UI snapshots, frozen at run start. */
+export interface AiGenerationSnapshotCategory {
+  readonly id: string;
+  readonly name: string;
+  readonly type: CategoryKind;
+  readonly color: string;
+  readonly auto_instruction?: string;
+  readonly dropdown_options: readonly AiGenerationSnapshotOption[];
+}
+
+/** A generation run's per-turn snapshot (auto-generate-event-logs spec
+ * "Single orchestrator turn"): captured at run start and CARRIED on the turn
+ * registration so mid-run show/session edits never affect the in-flight run.
+ * The registration only carries it — `create_event` (task 3.2) consumes it. */
+export interface AiGenerationRunContext {
+  /** Per-run id, stamped into each generated event's metadata. */
+  readonly runId: string;
+  /** Session frame rate at run start (timecode parsing/arithmetic). */
+  readonly frameRate: number;
+  /** Session start-offset in frames at run start (zero-anchor fallback). */
+  readonly startOffsetFrames: number;
+  /** Session `started_at_utc` at run start (zero-anchor fallback). */
+  readonly startedAtUtc: string;
+  /** Per-run created-events cap (ceiling; counting is 3.2's concern). */
+  readonly cap: number;
+  /** The instruction-bearing categories — `create_event`'s allowlist. */
+  readonly categories: readonly AiGenerationSnapshotCategory[];
+}
+
+/** Per-turn registration context (auto-generate-event-logs D6): the turn's
+ * tool set, plus the run snapshot on generation turns. Omitted entirely by
+ * chat/topics callers ⇒ the default three chat tools, behavior unchanged. */
+export interface AiMcpTurnContext {
+  /** Tool names the per-request MCP server registers for this turn — and
+   * ONLY these; anything else in the registry is denied at the server. */
+  readonly tools: readonly AiMcpToolName[];
+  /** Present on event-generation turns only. */
+  readonly generation?: AiGenerationRunContext;
+}
+
 /** A registered chat turn's MCP coordinates. The CLI runner (task 3.2) consumes
  * this: `url` + `token` build the generated `--mcp-config`, and `dispose()` is
  * called in the turn's `finally` to drop the registration + retire the token. */
@@ -73,6 +140,8 @@ export interface AiMcpTurn {
 
 interface TurnRegistration {
   readonly sessionId: string;
+  /** Per-turn context (D6); undefined ⇒ default chat tool set, no snapshot. */
+  readonly context: AiMcpTurnContext | undefined;
 }
 
 /**
@@ -97,10 +166,12 @@ const createTopicToolShape = {
 };
 
 /**
- * Build the per-request McpServer bound to one autologger session. All three
- * tools resolve the hub at call time via the registry (never held across an
- * await, so the idle-eviction sweeper can't close it underneath a long turn)
- * and can address ONLY `sessionId` — no tool parameter names a session.
+ * Build the per-request McpServer bound to one autologger session, registering
+ * ONLY the turn's tool set (auto-generate-event-logs D6; no context ⇒ the
+ * default three chat tools). Every tool resolves the hub at call time via the
+ * registry (never held across an await, so the idle-eviction sweeper can't
+ * close it underneath a long turn) and can address ONLY `sessionId` — no tool
+ * parameter names a session.
  *
  * `get_transcript_words` / `list_topics` return the hub row fields verbatim;
  * `get_transcript_words` therefore OMITS the per-word `session_id` the HTTP read
@@ -145,64 +216,104 @@ function formatTranscriptForModel(
   return lines.join('\n');
 }
 
-function buildSessionMcpServer(registry: SessionHubRegistry, sessionId: string): McpServer {
-  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
+/** Everything a tool builder may bind into its handlers. `generation` is the
+ * run snapshot on generation turns (undefined on chat turns) — carried here
+ * for `create_event` (task 3.2) to consume. */
+interface ToolBuildContext {
+  readonly registry: SessionHubRegistry;
+  readonly sessionId: string;
+  readonly generation: AiGenerationRunContext | undefined;
+}
 
-  server.tool(
-    'get_transcript_words',
-    "Returns this session's transcript as readable text (speaker- and " +
-      'timecode-annotated), for reading and summarizing.',
-    {},
-    async () => {
+/**
+ * The tool registry (auto-generate-event-logs D6): one builder per registry
+ * tool name, keyed by `AiMcpToolName`. `buildSessionMcpServer` registers ONLY
+ * the turn's tool set, by looking each name up here — so "chat turns cannot
+ * write events" is enforced at the SERVER, not just by CLI argv.
+ *
+ * EXTENSION POINT (task 3.2): add `create_event` to `AI_MCP_TOOL_NAMES` and a
+ * builder entry here — the `Record<AiMcpToolName, …>` type then forces the
+ * entry, and no registration plumbing changes. Its handlers read
+ * `ctx.generation` (the run snapshot) for the category allowlist, frame rate,
+ * run id, and cap.
+ */
+const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildContext) => void> = {
+  get_transcript_words: (server, { registry, sessionId }) => {
+    server.tool(
+      'get_transcript_words',
+      "Returns this session's transcript as readable text (speaker- and " +
+        'timecode-annotated), for reading and summarizing.',
+      {},
+      async () => {
+        // Hub resolved at call time (D3) — never held across an await.
+        const words = registry.get(sessionId).listTranscriptWords();
+        // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
+        // transcript is thousands of 8-field word rows (~180 chars each); the
+        // raw `JSON.stringify(words)` produced a single ~300KB line that
+        // overflowed the CLI's tool-output token limit, so the model could not
+        // read it at all and generated no usable topics. Grouping words into
+        // speaker/timecode-prefixed lines drops that ~20x while preserving what
+        // the model needs to read and to place topics on the timeline.
+        return { content: [{ type: 'text', text: formatTranscriptForModel(words) }] };
+      },
+    );
+  },
+
+  list_topics: (server, { registry, sessionId }) => {
+    server.tool('list_topics', "Returns this session's topics.", {}, async () => {
       // Hub resolved at call time (D3) — never held across an await.
-      const words = registry.get(sessionId).listTranscriptWords();
-      // Return COMPACT, readable text — NOT the verbose per-word JSON. A real
-      // transcript is thousands of 8-field word rows (~180 chars each); the
-      // raw `JSON.stringify(words)` produced a single ~300KB line that
-      // overflowed the CLI's tool-output token limit, so the model could not
-      // read it at all and generated no usable topics. Grouping words into
-      // speaker/timecode-prefixed lines drops that ~20x while preserving what
-      // the model needs to read and to place topics on the timeline.
-      return { content: [{ type: 'text', text: formatTranscriptForModel(words) }] };
-    },
-  );
+      const topics = registry.get(sessionId).listTopics();
+      return { content: [{ type: 'text', text: JSON.stringify(topics) }] };
+    });
+  },
 
-  server.tool('list_topics', "Returns this session's topics.", {}, async () => {
-    // Hub resolved at call time (D3) — never held across an await.
-    const topics = registry.get(sessionId).listTopics();
-    return { content: [{ type: 'text', text: JSON.stringify(topics) }] };
-  });
+  create_topic: (server, { registry, sessionId }) => {
+    server.tool(
+      'create_topic',
+      'Create one topic on this session. The ordinal is assigned by the server.',
+      createTopicToolShape,
+      async (args) => {
+        // Bounds enforced ONLY by topicCreateSchema (no re-derivation). On
+        // violation return an isError tool result — NOT a thrown crash — and do
+        // not insert (spec: "Out-of-bounds tool input is rejected safely").
+        const parsed = topicCreateSchema.safeParse(args);
+        if (!parsed.success) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Invalid topic input: ${parsed.error.issues
+                  .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+                  .join('; ')}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        // Hub resolved at call time (D3). insertTopic is the transactional,
+        // server-assigned-ordinal manual-insert path; topics have no WS emission,
+        // and this path introduces none.
+        const topic = registry.get(sessionId).insertTopic(parsed.data);
+        return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
+      },
+    );
+  },
+};
 
-  server.tool(
-    'create_topic',
-    'Create one topic on this session. The ordinal is assigned by the server.',
-    createTopicToolShape,
-    async (args) => {
-      // Bounds enforced ONLY by topicCreateSchema (no re-derivation). On
-      // violation return an isError tool result — NOT a thrown crash — and do
-      // not insert (spec: "Out-of-bounds tool input is rejected safely").
-      const parsed = topicCreateSchema.safeParse(args);
-      if (!parsed.success) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Invalid topic input: ${parsed.error.issues
-                .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
-                .join('; ')}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      // Hub resolved at call time (D3). insertTopic is the transactional,
-      // server-assigned-ordinal manual-insert path; topics have no WS emission,
-      // and this path introduces none.
-      const topic = registry.get(sessionId).insertTopic(parsed.data);
-      return { content: [{ type: 'text', text: JSON.stringify(topic) }] };
-    },
-  );
-
+function buildSessionMcpServer(
+  registry: SessionHubRegistry,
+  sessionId: string,
+  context: AiMcpTurnContext | undefined,
+): McpServer {
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
+  // Register ONLY the turn's tool set (D6). No context ⇒ the pinned default
+  // three chat tools — byte-identical to the pre-context behavior. The Set
+  // guards against a duplicate name in a caller-supplied set (McpServer.tool
+  // throws on re-registration).
+  const ctx: ToolBuildContext = { registry, sessionId, generation: context?.generation };
+  for (const name of new Set(context?.tools ?? DEFAULT_TURN_TOOLS)) {
+    TOOL_BUILDERS[name](server, ctx);
+  }
   return server;
 }
 
@@ -250,15 +361,19 @@ export class AiMcpListener {
   }
 
   /**
-   * Register a chat turn: mint a ≥128-bit bearer token bound to `sessionId` and
+   * Register a turn: mint a ≥128-bit bearer token bound to `sessionId` and
    * return the URL + token for the generated `--mcp-config`. The returned
    * `dispose()` (idempotent) drops the registration and retires the token — call
    * it in the turn's `finally`.
+   *
+   * `context` (optional, auto-generate-event-logs D6) carries the turn's tool
+   * set and — on generation turns — the run snapshot. Omitted (all chat/topics
+   * callers today) ⇒ the default three chat tools, behavior unchanged.
    */
-  registerTurn(sessionId: string): AiMcpTurn {
+  registerTurn(sessionId: string, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');
     const token = randomBytes(TOKEN_BYTES).toString('hex');
-    this.turns.set(token, { sessionId });
+    this.turns.set(token, { sessionId, context });
     const url = `http://${LOOPBACK}:${this.port}${MCP_PATH}`;
     let disposed = false;
     return {
@@ -300,7 +415,7 @@ export class AiMcpListener {
     // so concurrent turns never share transport state. The tools are bound to
     // this turn's sessionId — resolved from the registration, not a param.
     try {
-      const server = buildSessionMcpServer(this.registry, reg.sessionId);
+      const server = buildSessionMcpServer(this.registry, reg.sessionId, reg.context);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on('close', () => {
         void transport.close();

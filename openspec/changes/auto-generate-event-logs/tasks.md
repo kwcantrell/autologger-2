@@ -45,7 +45,7 @@
 
 ## 3. MCP registration split + create_event + allowlist pin
 
-- [ ] 3.1 TDD: per-turn context on `AiMcpListener.registerTurn` (turn tool set + run
+- [x] 3.1 TDD: per-turn context on `AiMcpListener.registerTurn` (turn tool set + run
       snapshot: frame rate, offset, categories, run id, cap counter) and per-turn tool
       registration in `buildSessionMcpServer` (design D6); tests: a chat-turn
       registration's server does not register `create_event` (server-side denial),
