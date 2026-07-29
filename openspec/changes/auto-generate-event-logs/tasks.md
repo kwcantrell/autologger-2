@@ -109,7 +109,7 @@
 - [x] 6.1 README: endpoint table row for `events/generate`, feature section (egress +
       spend disclosure like topics, cap + marker semantics), CLAUDE.md
       project-overview gating sentence; note the reworded shared 409 details.
-- [ ] 6.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`,
+- [x] 6.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`,
       `npm run e2e` (chromium + login-gate) AND `npm run e2e:visual` — settings-table
       and feed-toolbar/row-marker visual diffs are expected; re-bless those baselines
       in this branch's diff.
