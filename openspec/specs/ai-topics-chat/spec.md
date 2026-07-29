@@ -156,10 +156,15 @@ leveled-logging framework to rely on — the prohibition is absolute).
 - **THEN** captured server stdout/stderr contains none of the message or reply text
 
 ### Requirement: Session-scoped MCP toolset
-The spawned CLI SHALL be given a generated MCP configuration exposing exactly three
+The spawned CLI SHALL be given a generated MCP configuration exposing session-scoped
 tools, all hard-bound to the `:sessionId` of the originating request via the turn
 registration (the model cannot address any other session — no tool parameter names a
-session):
+session). The registry comprises four tools; **each turn registration SHALL carry the
+turn's tool set, and the per-request MCP server SHALL register only that turn's tools
+— a chat turn's set is exactly the three tools below** (the CLI `--allowedTools`
+allowlist remains as belt-and-braces). `create_event` (defined by
+`auto-event-generation`) is registered only for event-generation turns; a chat turn's
+MCP server never exposes it:
 
 - `get_transcript_words` — returns the session's transcript rendered as **compact,
   model-readable text**, not JSON rows: consecutive words are grouped into per-speaker
@@ -170,6 +175,9 @@ session):
   `session_id`, …), which the model does not need and whose per-word repetition made the
   JSON form a single oversized payload that overflowed the CLI's tool-output limit and
   hid the transcript from the model. The output SHALL be a bounded, non-JSON rendering.
+  On an event-generation turn the same tool renders at generation density with
+  deterministic paging (governed by `auto-event-generation`'s "Generation-density
+  transcript rendering"); chat turns keep this rendering unchanged.
 - `list_topics` — returns the session's topics with the hub row fields.
 - `create_topic` — creates one topic; input SHALL be validated with the same bounds as
   the existing `topicCreateSchema` (`session_time` ≤ 20 chars, `duration_sec` ≥ 0,
@@ -181,7 +189,9 @@ insert is transactional and the ordinal is server-assigned — the identical cod
 manual insert takes; the hub SHALL be resolved at call time (never held across an
 `await`). Topics have no WebSocket emission today (fact-check 2026-07-14) and the MCP
 tools MUST NOT introduce one, alter any WS emission semantics, or add or alter any public
-HTTP surface.
+HTTP surface. (`create_event`'s writes produce the existing `event.changed` emission a
+manual event insert already produces — governed by `auto-event-generation`; that is not
+an alteration of emission semantics.)
 
 #### Scenario: AI-created topic matches a manual insert
 - **WHEN** the model calls `create_topic` with a valid payload during a chat turn
@@ -205,6 +215,12 @@ HTTP surface.
   (not a JSON array of hub rows), so a multi-thousand-word transcript stays within the
   CLI's tool-output limit and is visible to the model
 
+#### Scenario: Chat turns cannot write events
+- **WHEN** a chat turn runs
+- **THEN** the turn's MCP server does not register `create_event` (a call to it fails
+  at the server, independent of CLI flags), and the spawned CLI's allowlist names
+  exactly `get_transcript_words`, `list_topics`, `create_topic`
+
 ### Requirement: Subprocess security lockdown
 The spawned CLI MUST be restricted to the autologger MCP tools and nothing else. The
 spawn SHALL:
@@ -216,9 +232,10 @@ spawn SHALL:
   still function under this setting;
 - use strict MCP configuration so only the generated config loads
   (`--strict-mcp-config`), ignoring operator/project MCP servers;
-- deny built-in tools and allow only the three `mcp__autologger__*` tools (positive
-  denial of the built-in set, plus an explicit allowlist — not a name-keyed denylist that
-  drifts as the CLI's tool inventory grows);
+- deny built-in tools and allow only the turn's explicit `mcp__autologger__*` allowlist
+  (positive denial of the built-in set, plus an explicit per-turn allowlist — not a
+  name-keyed denylist that drifts as the CLI's tool inventory grows); a chat turn's
+  allowlist is the three chat tools;
 - run with `shell: false` and an argument array; deliver the user message via stdin;
 - use a working directory outside the repo and `DATA_DIR`; and
 - inherit a minimal environment (at least `HOME` for credentials and `PATH`; proxy/TLS
