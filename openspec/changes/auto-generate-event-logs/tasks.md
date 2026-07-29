@@ -28,16 +28,16 @@
 
 ## 2. Anchor interpolation + event insertion (server core)
 
-- [ ] 2.1 TDD: timecode→wall interpolation helper — piecewise-linear over existing
+- [x] 2.1 TDD: timecode→wall interpolation helper — piecewise-linear over existing
       event `(timecode_total_frames, wall_time_utc)` anchor pairs (incl. `Recording N
       Started` internal rows), clamped monotone; one-anchor offset and
       zero-anchor `started_at_utc` + offset fallbacks (design D4); property tests on a
       **multi-take/paused fixture**: generated timecode T sorts between bracketing
       manual events; generated events sort among themselves in timecode order.
-- [ ] 2.2 TDD: timecode-string parser accepting `HH:MM:SS`, `HH:MM:SS:FF`,
+- [x] 2.2 TDD: timecode-string parser accepting `HH:MM:SS`, `HH:MM:SS:FF`,
       `HH:MM:SS;FF` via the existing timecode helpers; bounds (non-negative, < 24h at
       session fps); 29.97 drop-frame round-trip test against `formatSmpte` output.
-- [ ] 2.3 TDD: `EventStore.addEvent` optional explicit-anchor parameter
+- [x] 2.3 TDD: `EventStore.addEvent` optional explicit-anchor parameter
       (`{timecodeTotalFrames, wallTimeUtc}` bypassing `timecodeForMark`; same
       transaction, broadcast, metadata handling); integration tests beside
       `eventStore.test.ts` asserting manual-path behavior is byte-identical when the
