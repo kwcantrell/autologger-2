@@ -315,7 +315,12 @@ export function validateCategoriesList(catsRaw: unknown): CategoryRecord[] {
 export function categoryIsInstructionBearing(cat: unknown): boolean {
   if (!cat || typeof cat !== 'object' || Array.isArray(cat)) return false;
   const rec = cat as Record<string, unknown>;
-  if (String(rec.type ?? '').toUpperCase().trim() === 'ON_OFF') return false;
+  if (
+    String(rec.type ?? '')
+      .toUpperCase()
+      .trim() === 'ON_OFF'
+  )
+    return false;
   if (typeof rec.auto_instruction === 'string' && rec.auto_instruction.trim()) return true;
   const opts = Array.isArray(rec.dropdown_options) ? rec.dropdown_options : [];
   return opts.some((o) => {

@@ -9,8 +9,8 @@ import {
   paletteFromCategories,
   studioConfigKey,
   suggestedShowCode,
-  validateCategoriesList,
   ValidationError,
+  validateCategoriesList,
   validateEventPalette,
   validateEventPalettePreset,
 } from './studio';
@@ -210,12 +210,8 @@ describe('categoryIsInstructionBearing', () => {
   it('never true for ON_OFF, even with a stale instruction on raw parsed JSON', () => {
     // Raw (un-normalized) stored JSON could carry the field; the definition
     // still excludes ON_OFF in any casing.
-    expect(
-      categoryIsInstructionBearing({ type: 'ON_OFF', auto_instruction: 'stale' }),
-    ).toBe(false);
-    expect(
-      categoryIsInstructionBearing({ type: 'on_off', auto_instruction: 'stale' }),
-    ).toBe(false);
+    expect(categoryIsInstructionBearing({ type: 'ON_OFF', auto_instruction: 'stale' })).toBe(false);
+    expect(categoryIsInstructionBearing({ type: 'on_off', auto_instruction: 'stale' })).toBe(false);
   });
 
   it('false on whitespace-only instructions and non-object inputs', () => {
