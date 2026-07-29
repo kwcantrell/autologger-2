@@ -23,8 +23,7 @@
 // `topics/generate` — design D2).
 
 import type { SessionHubRegistry } from '../session/SessionHub';
-import type { AiChatTurnOutcome } from './aiChatRunner';
-import { driveAiTurn } from './aiTurn';
+import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
 
 /** D5's fixed one-shot user message. A plain user message, not a system
  * prompt. */
@@ -65,10 +64,12 @@ export interface GenerateTopicsTurnOptions {
 /**
  * Run the one-shot topic-generation CLI turn to completion and return its
  * outcome. Never throws (matches `driveAiTurn`'s own never-throws contract).
+ * The outcome's `createdEvents` (auto-generate-event-logs task 4.3 widening)
+ * is always 0 here — this turn's registration never exposes `create_event`.
  */
 export async function generateTopicsTurn(
   opts: GenerateTopicsTurnOptions,
-): Promise<AiChatTurnOutcome> {
+): Promise<DriveAiTurnResult> {
   return driveAiTurn({
     registry: opts.registry,
     cliPath: opts.cliPath,
@@ -76,6 +77,12 @@ export async function generateTopicsTurn(
     message: TOPIC_GENERATE_MESSAGE,
     systemPrompt: TOPIC_GENERATE_SYSTEM_PROMPT,
     allowedTools: TOPIC_GENERATE_ALLOWED_TOOLS,
+    // Explicit server-side registration mirroring the argv allowlist
+    // (auto-generate-event-logs D7, task 3.4): the one-shot's MCP server now
+    // also declines to REGISTER `list_topics`, so the withheld tool is denied
+    // at the server — not only by CLI flags — and the registration no longer
+    // rides the context-less default.
+    mcpContext: { tools: TOPIC_GENERATE_ALLOWED_TOOLS },
     maxBudgetUsd: opts.maxBudgetUsd,
     timeoutMs: opts.timeoutMs,
     emit: () => {},

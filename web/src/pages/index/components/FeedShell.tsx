@@ -53,6 +53,14 @@ interface Props {
   feedAriaLabel?: string;
   toolbar: ReactNode;
   toolbarAriaLabel?: string;
+  /** Extra class(es) appended to the toolbar div alongside `FEED_TOOLBAR`
+   * (which is shared and unchanged). The Event feed passes `max-w-full`
+   * (auto-generate-event-logs fix wave): its toolbar gained the AUTO GENERATE
+   * button, and `FEED_TOOLBAR`'s `flex-[0_0_auto]` sizes the row to
+   * max-content — without a max-width clamp its internal `flex-wrap` never
+   * engages, so on narrow viewports the row overflowed and pushed FILTER
+   * off-viewport. Clamping lets the row wrap instead. */
+  toolbarClassName?: string;
   /** Extra modifier class appended to `.v4-log-sheet` (e.g. `"v5-transcribe-feed"`). */
   modifier?: string;
   /** When set, wraps the sheet in a `div.v4-log-bottom` with this id. */
@@ -69,6 +77,7 @@ export function FeedShell({
   feedAriaLabel,
   toolbar,
   toolbarAriaLabel,
+  toolbarClassName,
   modifier,
   logBottomId,
   sheetId,
@@ -96,7 +105,7 @@ export function FeedShell({
           </header>
         </div>
         <div
-          className={clsx('v5-event-feed-toolbar', FEED_TOOLBAR)}
+          className={clsx('v5-event-feed-toolbar', FEED_TOOLBAR, toolbarClassName)}
           role="toolbar"
           aria-label={toolbarAriaLabel}
         >

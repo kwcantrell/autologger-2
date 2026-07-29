@@ -1314,6 +1314,19 @@ const EXEMPTIONS: readonly Exemption[] = [
     reason: 'audit §5 row 37 CONFORMS — DELETE transcript word, identical 204 + empty-body shape.',
   },
 
+  // --- `apiFetch<EventsGenerateResponse>` — auto-generate-event-logs task 5.1.
+  {
+    key: 'api/hooks/useEvents.ts :: apiFetch<EventsGenerateResponse>(`sessions/<var>/events/generate`) [POST]',
+    reason:
+      'auto-generate-event-logs task 5.1 — success body read end-to-end: the route has exactly one 2xx ' +
+      'emission, the inline two-key literal `c.json({ created: outcome.createdEvents, cap_hit: ' +
+      'outcome.createdEvents >= cap })` (server/src/routers/events.ts), matching `EventsGenerateResponse` ' +
+      'key-for-key; every other path throws `ApiError` (guard ladder 404/503/400/409, opaque 502) and ' +
+      'acquires no shape. Not fixture-covered: a capture would require a scripted fake-CLI AI turn inside ' +
+      'the capture harness (CLAUDE_CLI_PATH spawn + loopback MCP, the ai.int.test.ts machinery) to produce ' +
+      'a 200 at all — a capture is the right answer if this shape ever grows beyond the two-key literal.',
+  },
+
   // --- Untyped `apiFetch(…)` — population (c), audit §3. Six sites, all
   // discarding the response, so the inferred `unknown` never reaches a
   // consumer. Verdict row 40 (CONFORMS vacuously — no type is asserted).

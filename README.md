@@ -89,8 +89,9 @@ refactor of this one.
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
-- **Transcript generation, YouTube audio import, and topic generation are
-  configuration-gated; `transcribe.csv` stays unavailable.** `POST …/transcript-words/generate`
+- **Transcript generation, YouTube audio import, topic generation, and event
+  auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
+  `POST …/transcript-words/generate`
   returns a clean `503 {detail}` (the frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in
   which case it combines the session's recorded audio and returns `200 {words}` from
   DeepGram's speech-to-text API — see "Transcript generation (DeepGram)" below.
@@ -100,7 +101,11 @@ refactor of this one.
   `POST …/topics/generate` returns the same frozen `503 {detail}` unless `CLAUDE_CLI_PATH`
   is set (the AI chat's gate), in which case it runs a single, non-conversational `claude`
   CLI turn against the session's transcript and returns `200 {topics}` — a crash-safe
-  replace-all of the session's topics — see "AI chat (Claude CLI)" below. `transcribe.csv`
+  replace-all of the session's topics — see "AI chat (Claude CLI)" below.
+  `POST …/events/generate` shares that `CLAUDE_CLI_PATH` gate: configured, it runs a single
+  orchestrator CLI turn that appends transcript-derived log events per user-authored
+  per-button instructions and returns `200 {created, cap_hit}` — see "Event auto-generation
+  (AUTO GENERATE)" below. `transcribe.csv`
   remains unconditional `503 {detail}` (no external integration wired up). Manual
   transcript-word/topic CRUD still works.
 
@@ -260,6 +265,74 @@ clears it. The `claude` CLI keeps its own per-session files outside `DATA_DIR`, 
 operator's `~/.claude`; those accumulate across turns independent of this server-side
 ephemerality, the same as any local `claude` usage.
 
+### Event auto-generation (AUTO GENERATE)
+
+`POST /api/sessions/:sessionId/events/generate` turns user-authored per-button
+instructions into appended log events. Event buttons of type BUTTON, DROPDOWN, and TEXT
+carry an optional `auto_instruction` field in Settings (DROPDOWN options additionally carry
+their own, alongside the whole-button instruction; ON_OFF buttons are excluded — their
+on/off phase lives in client-held toggle state a generated insert would corrupt). The
+instructions persist on the show's categories and round-trip through profile reads;
+`GET …/show-categories` gains one additive top-level boolean, `auto_instructions_present`
+(its `categories` projection is otherwise unchanged, and Companion's `categories` response
+is untouched). These additive shapes — the boolean plus the `auto_instruction` fields on
+`profile.shows[].categories[*]` and their `dropdown_options[*]` — are authorized by the
+`auto-event-generation` delta.
+
+The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
+`CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`), the same
+open-network refusal, and the same per-session single-flight / process-wide ceiling
+(`AI_CHAT_MAX_CONCURRENT`). The server snapshots the session's frame rate, transcript, and
+instruction-bearing categories at run start (mid-run edits affect the next run, not this
+one), then drives a **single orchestrator CLI turn** through the same locked-down one-shot
+machinery as `topics/generate` — no built-in tools, strict per-turn MCP config, loopback +
+bearer, and **no abort signal**, so a run always completes server-side regardless of the
+initiating client's connection. The prompt enumerates every instruction-bearing button and
+option (instruction text rendered as clearly-delimited untrusted data that cannot alter the
+tool contract) and embeds those categories' complete existing events as the dedup basis —
+the model is directed to log only moments not already logged. The turn's tool allowlist is
+exactly two tools: `get_transcript_words` in a generation-density rendering (periodic
+timecode anchors, deterministic sequential paging with a continuation marker, never silent
+truncation; the chat rendering is unchanged) and a new `create_event` tool that validates
+the category against the run snapshot (`internal` denied in any casing), the message
+against the manual log path's bounds, and the timecode grammar (`HH:MM:SS`, `HH:MM:SS:FF`,
+drop-frame `HH:MM:SS;FF`), then inserts through the same transactional hub path as a manual
+log — same `event.changed` broadcast per insert, same category UI snapshots in metadata,
+same catalog live projection, so `GET /api/sessions` stays truthful.
+
+**Append-only, bounded, attributable.** A run never modifies or deletes an existing event.
+Each run enforces a per-run created-events cap (`EVENT_GENERATE_MAX_CREATED_EVENTS`,
+default `200`): at the cap, further `create_event` calls return a tool error and the
+response reports `cap_hit: true`. Each generated row carries `auto_generated: true` plus a
+per-run `auto_generate_run_id` in `metadata_json` and renders with a compact "auto" marker
+in the feed. Timecodes are transcript-derived, never the run-time clock: the stored
+`wall_time_utc` is interpolated (piecewise-linear, clamped monotone) over the session's
+existing timecode↔wall anchor pairs, so a generated event at timecode T sorts between the
+manual events that bracket T even across recording pauses.
+
+**Statuses.** `503 {detail}` unconfigured or open-network (nothing spawned); `400 {detail}`
+pre-spawn when the session has no transcript words, no words with session-time anchors, no
+instruction-bearing button, or the instructions exceed the aggregate pre-spawn bound
+(`EVENT_GENERATE_MAX_INSTRUCTION_BYTES`, default `24576` total instruction bytes /
+`EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES`, default `50` instruction-bearing entries);
+`409 {detail}` when the shared AI slot or process-wide ceiling is held; `200 {created,
+cap_hit}` on success; `502 {detail}` for a CLI-turn failure after spawn — a fixed opaque
+detail carrying no raw subprocess output, with events inserted before the failure remaining
+persisted (and reported nowhere in the error body). **The shared AI-slot `409` busy details
+are reworded** (authorized by the same delta) to name event generation among the possible
+holders — the `ai/chat`, AI v2, and `topics/generate` busy/at-capacity strings now all read
+"AI chat, AI v2, topic generation, or event generation".
+
+**Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
+API call over the operator's own `claude login` credentials — the transcript and the
+configured instructions are sent to Anthropic. Its workload is strictly larger than topic
+generation's (full transcript at generation density, a sweep per instruction, a
+`create_event` round trip per hit), so it gets its own higher-by-default ceilings:
+`EVENT_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling, passed as
+`--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
+timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
+with the other paid AI features by the shared slot and `AI_CHAT_MAX_CONCURRENT`.
+
 ### AI v2 dashboards
 
 `POST /api/sessions/:sessionId/ai/v2/design` (+ `.../ai/v2/answer` for its question round trip,
@@ -321,9 +394,10 @@ As with the AI chat, no agent-authored markup is ever rendered anywhere in this 
 dashboard is validated against the same whole-config schema a user's own PUT is held to before it
 is ever shown.
 
-`restart_supported` is unaffected by this feature (still `false`); `…/topics/generate`'s
-`CLAUDE_CLI_PATH` gate (see "AI chat (Claude CLI)" above) and `transcribe.csv`'s unconditional
-`503` are both unaffected by `AI_V2_ENABLED`; `…/youtube-import` is likewise unaffected by
+`restart_supported` is unaffected by this feature (still `false`); the `CLAUDE_CLI_PATH` gate
+on `…/topics/generate` and `…/events/generate` (see "AI chat (Claude CLI)" and "Event
+auto-generation" above) and `transcribe.csv`'s unconditional
+`503` are all unaffected by `AI_V2_ENABLED`; `…/youtube-import` is likewise unaffected by
 `AI_V2_ENABLED` — it has its own `yt-dlp` configuration gate (see "YouTube audio import"
 above).
 
@@ -416,6 +490,7 @@ was ported from: historical provenance, not a live parity claim.
 | `GET\|POST /api/sessions/{id}/events` · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
+| `POST …/events/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound · **200** `{created, cap_hit}` configured success (append-only) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs) |
 | `GET\|POST …/audio/segments` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
@@ -495,7 +570,7 @@ authoritative, fully-commented list (including the config-gate keys below); copy
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
 present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
 transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import, and
-`CLAUDE_CLI_PATH` for AI chat / topics / v2 dashboards.
+`CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
 proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, `REQUIRE_LOGIN=1`, and an

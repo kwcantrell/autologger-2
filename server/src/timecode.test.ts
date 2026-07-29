@@ -3,6 +3,7 @@ import {
   formatRuntimeHms,
   formatSmpte,
   fromTotalFrames,
+  parseTimecodeString,
   parseUtcMs,
   timecodeForMark,
   toTotalFrames,
@@ -88,6 +89,100 @@ describe('transportTimecode / timecodeForMark', () => {
       before,
     );
     expect(toTotalFrames(tc)).toBe(12);
+  });
+});
+
+describe('parseTimecodeString', () => {
+  it('accepts HH:MM:SS (frames default to 0)', () => {
+    expect(parseTimecodeString('01:02:03', 30)).toEqual({
+      hours: 1,
+      minutes: 2,
+      seconds: 3,
+      frames: 0,
+      frame_rate: 30,
+    });
+  });
+
+  it('accepts HH:MM:SS:FF and matches toTotalFrames arithmetic', () => {
+    const tc = parseTimecodeString('00:14:03:12', 30);
+    expect(tc).toEqual({ hours: 0, minutes: 14, seconds: 3, frames: 12, frame_rate: 30 });
+    expect(toTotalFrames(tc as NonNullable<typeof tc>)).toBe((14 * 60 + 3) * 30 + 12);
+  });
+
+  it('accepts drop-frame HH:MM:SS;FF at 29.97', () => {
+    expect(parseTimecodeString('00:14:03;12', 29.97)).toEqual({
+      hours: 0,
+      minutes: 14,
+      seconds: 3,
+      frames: 12,
+      frame_rate: 29.97,
+    });
+  });
+
+  it('accepts either separator at any rate and tolerates surrounding whitespace', () => {
+    // The grammar lists all three forms unconditionally — the model echoes
+    // what it reads, so `;` parses at non-29.97 rates too (and vice versa).
+    expect(parseTimecodeString('00:00:01;05', 25)).toMatchObject({ seconds: 1, frames: 5 });
+    expect(parseTimecodeString('00:00:01:05', 29.97)).toMatchObject({ seconds: 1, frames: 5 });
+    expect(parseTimecodeString(' 00:00:01:05 ', 30)).toMatchObject({ seconds: 1, frames: 5 });
+  });
+
+  it('rejects malformed strings', () => {
+    for (const bad of [
+      '',
+      'garbage',
+      '1:02:03', // one-digit field
+      '01:02', // too few fields
+      '01:02:03:04:05', // too many fields
+      '01:02:03:', // dangling separator
+      '-1:02:03', // negative
+      '01:02:03;4', // one-digit frames
+      '01:02:03.04', // wrong separator
+      '01 02 03', // wrong delimiters
+    ]) {
+      expect(parseTimecodeString(bad, 30)).toBeNull();
+    }
+  });
+
+  it('rejects out-of-bounds fields: >= 24h, minutes/seconds > 59, frames >= round(fps)', () => {
+    expect(parseTimecodeString('24:00:00', 30)).toBeNull();
+    expect(parseTimecodeString('00:60:00', 30)).toBeNull();
+    expect(parseTimecodeString('00:00:60', 30)).toBeNull();
+    expect(parseTimecodeString('00:00:00:30', 30)).toBeNull(); // FF must be < 30
+    expect(parseTimecodeString('00:00:00;30', 29.97)).toBeNull(); // round(29.97) = 30
+    expect(parseTimecodeString('00:00:00:24', 24)).toBeNull();
+    expect(parseTimecodeString('23:59:59:29', 30)).not.toBeNull(); // max valid
+  });
+
+  it('rejects non-positive frame rates', () => {
+    expect(parseTimecodeString('00:00:01', 0)).toBeNull();
+    expect(parseTimecodeString('00:00:01', -30)).toBeNull();
+  });
+
+  it('rejects non-finite frame rates (NaN previously slipped through the <= 0 check)', () => {
+    expect(parseTimecodeString('00:00:01:00', Number.NaN)).toBeNull();
+    expect(parseTimecodeString('00:00:01:00', Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('round-trips 29.97 drop-frame output of formatSmpte', () => {
+    const fps = 29.97;
+    const fpsI = 30; // repo convention: NDF math at round(fps)
+    for (const total of [0, 1, 29, 30, fpsI * 60 - 1, fpsI * 3600 + 7, fpsI * 86400 - 1]) {
+      const rendered = formatSmpte(fromTotalFrames(total, fps));
+      expect(rendered).toContain(';');
+      const parsed = parseTimecodeString(rendered, fps);
+      expect(parsed).not.toBeNull();
+      expect(toTotalFrames(parsed as NonNullable<typeof parsed>)).toBe(total);
+    }
+  });
+
+  it('round-trips formatSmpte output across integer rates', () => {
+    for (const fps of [24, 25, 30, 60]) {
+      for (const total of [0, fps - 1, fps * 61 + 3, fps * 3600 * 23 + 5]) {
+        const parsed = parseTimecodeString(formatSmpte(fromTotalFrames(total, fps)), fps);
+        expect(toTotalFrames(parsed as NonNullable<typeof parsed>)).toBe(total);
+      }
+    }
   });
 });
 

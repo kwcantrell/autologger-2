@@ -27,7 +27,15 @@ import {
   spawnAiChatTurn,
   stableSessionCwd,
 } from './aiChatRunner';
-import { AI_MCP_TOOL_NAMES } from './aiMcpServer';
+
+// Chat's DEFAULT allowlist is pinned to the three chat tools — deliberately
+// NOT `AI_MCP_TOOL_NAMES` (auto-generate-event-logs D7): the registry now also
+// carries `create_event`, and growing it must never widen a chat turn's argv.
+const CHAT_WIRE_TOOLS = [
+  'mcp__autologger__get_transcript_words',
+  'mcp__autologger__list_topics',
+  'mcp__autologger__create_topic',
+] as const;
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -104,7 +112,7 @@ describe('buildAiChatArgv — pure argv builder (pinned order + content)', () =>
       '--mcp-config',
       '/tmp/fixture/mcp-config.json',
       '--allowedTools',
-      AI_MCP_TOOL_NAMES.map((n) => `mcp__autologger__${n}`).join(','),
+      CHAT_WIRE_TOOLS.join(','),
       '--append-system-prompt',
       AI_CHAT_SYSTEM_PROMPT_BRIEF,
       '--max-budget-usd',
@@ -285,9 +293,7 @@ describe('spawnAiChatTurn — characterization: real spawn against the fake-clau
       const toolsIdx = argv.indexOf('--tools');
       expect(argv[toolsIdx + 1]).toBe('');
       const allowedIdx = argv.indexOf('--allowedTools');
-      expect(argv[allowedIdx + 1].split(',').sort()).toEqual(
-        [...AI_MCP_TOOL_NAMES].map((n) => `mcp__autologger__${n}`).sort(),
-      );
+      expect(argv[allowedIdx + 1].split(',').sort()).toEqual([...CHAT_WIRE_TOOLS].sort());
       // No built-in tool name (Bash, Read, Write, WebFetch, …) is ever named —
       // positive allowlist only, never a denylist that could omit one.
       expect(argv[allowedIdx + 1]).not.toMatch(/\bBash\b|\bRead\b|\bWrite\b|\bWebFetch\b/);

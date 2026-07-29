@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fakeRuntime } from '../test/fakeCore';
-import { formatSmpte, fromTotalFrames } from '../timecode';
+import { formatSmpte, fromTotalFrames, isoZ } from '../timecode';
 import { EventStore, eventRowToRpc } from './eventStore';
 
 describe('eventRowToRpc', () => {
@@ -83,5 +83,206 @@ describe('listEvents counts over a real core (D10 pin)', () => {
     expect(out.total).toBe(9);
     expect(out.loggedTotal).toBe(5);
     expect(out.events).toHaveLength(9);
+  });
+});
+
+// auto-generate-event-logs task 2.3 (design D4) — ONE insert path: addEvent
+// gains an optional explicit-anchor parameter; when absent, behavior is
+// byte-identical to today (pinned below over a real rolling transport), and
+// when present the timecodeForMark derivation is bypassed entirely.
+describe('addEvent over a real core', () => {
+  /** Rolling transport at a known instant: roll started 5s before the fake
+   * clock's default now (1_000_000ms), 50 frames already banked. */
+  function rollingFixture() {
+    const rt = fakeRuntime();
+    rt.core.db.run(
+      'UPDATE session_transport SET is_rolling = ?, current_take = ?, roll_started_at_utc = ?, elapsed_frames = ? WHERE id = 1',
+      1,
+      1,
+      isoZ(new Date(995_000)),
+      50,
+    );
+    return rt;
+  }
+  const ctx = { frameRate: 24, startOffsetFrames: 100 };
+
+  describe('manual path (parameter absent) — byte-identical pin', () => {
+    it('derives via timecodeForMark from the rolling transport at now(), broadcasts one event.changed', () => {
+      const { core, broadcasts } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'hi',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx,
+      });
+      // 100 offset + 50 elapsed + trunc(5s * 24fps) = 270
+      expect(out.event).toEqual({
+        event_id: out.event.event_id,
+        wall_time_utc: '1970-01-01T00:16:40.000Z',
+        timecode: formatSmpte(fromTotalFrames(270, 24)),
+        frame_rate: 24,
+        timecode_total_frames: 270,
+        category: 'note',
+        message: 'hi',
+        metadata_json: '{}',
+      });
+      expect(out.projection.event_count).toBe(1);
+      expect(out.projection.max_timecode_total_frames).toBe(270);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      // Pin the INSERT columns on the raw row, not just the RPC mapping.
+      const r = core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
+      expect(r).toEqual({
+        id: out.event.event_id,
+        wall_time_utc: '1970-01-01T00:16:40.000Z',
+        frame_rate: 24,
+        timecode_total_frames: 270,
+        category: 'note',
+        message: 'hi',
+        metadata_json: '{}',
+      });
+    });
+
+    it('honors markedAtUtc as the mark instant for both wall time and timecode', () => {
+      const { core, broadcasts } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'marked',
+        metadataJson: '{"a":1}',
+        markedAtUtc: '1970-01-01T00:16:37.000Z', // 2s after roll start
+        ctx,
+      });
+      // 100 offset + 50 elapsed + trunc(2s * 24fps) = 198
+      expect(out.event.wall_time_utc).toBe('1970-01-01T00:16:37.000Z');
+      expect(out.event.timecode_total_frames).toBe(198);
+      expect(out.event.metadata_json).toBe('{"a":1}');
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+    });
+  });
+
+  describe('explicit anchor (design D4)', () => {
+    it('stores the given frames + wall time verbatim, bypassing the transport derivation', () => {
+      const { core, broadcasts } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'generated',
+        metadataJson: '{"auto_generated":true}',
+        markedAtUtc: null,
+        ctx,
+        explicitAnchor: {
+          timecodeTotalFrames: 12345,
+          wallTimeUtc: '2026-06-25T00:01:00.000Z',
+        },
+      });
+      expect(out.event).toEqual({
+        event_id: out.event.event_id,
+        wall_time_utc: '2026-06-25T00:01:00.000Z',
+        timecode: formatSmpte(fromTotalFrames(12345, 24)),
+        frame_rate: 24,
+        timecode_total_frames: 12345,
+        category: 'note',
+        message: 'generated',
+        metadata_json: '{"auto_generated":true}',
+      });
+      expect(out.projection.event_count).toBe(1);
+      expect(out.projection.max_timecode_total_frames).toBe(12345);
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      const r = core.first('SELECT * FROM events WHERE id = ?', out.event.event_id);
+      expect(r).toEqual({
+        id: out.event.event_id,
+        wall_time_utc: '2026-06-25T00:01:00.000Z',
+        frame_rate: 24,
+        timecode_total_frames: 12345,
+        category: 'note',
+        message: 'generated',
+        metadata_json: '{"auto_generated":true}',
+      });
+    });
+
+    it('stores frame_rate rounded from ctx exactly as the manual path does (29.97)', () => {
+      const { core } = fakeRuntime();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'df',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx: { frameRate: 29.97, startOffsetFrames: 0 },
+        explicitAnchor: { timecodeTotalFrames: 60, wallTimeUtc: '2026-06-25T00:00:02.000Z' },
+      });
+      expect(out.event.frame_rate).toBe(29.97);
+      expect(out.event.timecode).toBe(formatSmpte(fromTotalFrames(60, 29.97)));
+      expect(out.event.metadata_json).toBe('{}');
+    });
+
+    it('rounds a >3-decimal ctx rate exactly like the manual path (23.976023976 → 23.976)', () => {
+      // 29.97 is already 3-decimal, so it cannot detect a rounding divergence
+      // between the explicit-anchor path and fromTotalFrames' millidecimal
+      // rounding (Phase-2 review finding 3) — this rate can.
+      const rate = 23.976023976;
+      const { core } = fakeRuntime();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'ntsc-film',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx: { frameRate: rate, startOffsetFrames: 0 },
+        explicitAnchor: { timecodeTotalFrames: 24, wallTimeUtc: '2026-06-25T00:00:01.000Z' },
+      });
+      expect(out.event.frame_rate).toBe(23.976);
+      expect(out.event.frame_rate).toBe(fromTotalFrames(24, rate).frame_rate);
+      const r = core.first('SELECT frame_rate FROM events WHERE id = ?', out.event.event_id);
+      expect(r).toEqual({ frame_rate: 23.976 });
+    });
+
+    it('still honors suppressBroadcast (same broadcast handling as the manual path)', () => {
+      const { core, broadcasts } = fakeRuntime();
+      new EventStore(core).addEvent({
+        category: 'note',
+        message: 'quiet',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx,
+        explicitAnchor: { timecodeTotalFrames: 1, wallTimeUtc: '2026-06-25T00:00:00.000Z' },
+        suppressBroadcast: true,
+      });
+      expect(broadcasts).toEqual([]);
+      expect(core.revision()).toBe(1); // revision still bumps
+    });
+
+    it('interleaves per wall_time_utc ASC among manual events in listEvents', () => {
+      const { core } = fakeRuntime();
+      const store = new EventStore(core);
+      store.addEvent({
+        category: 'note',
+        message: 'first-manual',
+        metadataJson: '',
+        markedAtUtc: '2026-06-25T00:00:00.000Z',
+        ctx,
+      });
+      store.addEvent({
+        category: 'note',
+        message: 'second-manual',
+        metadataJson: '',
+        markedAtUtc: '2026-06-25T00:02:00.000Z',
+        ctx,
+      });
+      store.addEvent({
+        category: 'note',
+        message: 'generated-between',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx,
+        explicitAnchor: {
+          timecodeTotalFrames: 24 * 60,
+          wallTimeUtc: '2026-06-25T00:01:00.000Z',
+        },
+      });
+      const out = store.listEvents({ limit: 10, offset: 0 });
+      expect(out.events.map((e) => e.message)).toEqual([
+        'first-manual',
+        'generated-between',
+        'second-manual',
+      ]);
+    });
   });
 });

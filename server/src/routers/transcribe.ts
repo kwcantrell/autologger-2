@@ -259,12 +259,15 @@ const TOPIC_GENERATE_OPEN_NETWORK_DETAIL =
   'Topic generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
   'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
+// Names EVERY possible slot holder (the registry is shared with AI chat,
+// AI v2, and event generation; wording change authorized by the
+// auto-event-generation delta).
 const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
-  'A turn (AI chat or topic generation) is already in progress for this session; wait for it to finish before ' +
-  'generating topics again. AI chat and topic generation share one per-session slot by design.';
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before generating topics again. These features share one per-session AI slot by design.';
 const TOPIC_GENERATE_AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and topic ' +
-  'generation); try again shortly.';
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
+  'topic generation, and event generation); try again shortly.';
 // Fixed, handler-owned — never the CLI's raw output or its internal outcome
 // token (design D3/spec "Failure mapping").
 const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';

@@ -18,10 +18,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
-import { __resetAiMcpListenerForTests } from './aiMcpServer';
+import { __resetAiMcpListenerForTests, AiMcpListener } from './aiMcpServer';
 import {
   generateTopicsTurn,
   TOPIC_GENERATE_MESSAGE,
@@ -59,7 +59,13 @@ describe('generateTopicsTurn', () => {
       maxBudgetUsd: 2.0,
       timeoutMs: 10_000,
     });
-    expect(outcome).toEqual({ ok: true, claudeSessionId: 'fixture-cli-session-id' });
+    // `createdEvents: 0` — driveAiTurn's task-4.3 return widening; always 0 on
+    // topic turns (their registration never exposes create_event).
+    expect(outcome).toEqual({
+      ok: true,
+      claudeSessionId: 'fixture-cli-session-id',
+      createdEvents: 0,
+    });
   });
 
   it('the one-shot message reaches the CLI on stdin verbatim (never argv)', async () => {
@@ -86,7 +92,7 @@ describe('generateTopicsTurn', () => {
       maxBudgetUsd: 2.0,
       timeoutMs: 10_000,
     });
-    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
+    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed', createdEvents: 0 });
   });
 
   it(
@@ -104,7 +110,7 @@ describe('generateTopicsTurn', () => {
         maxBudgetUsd: 2.0,
         timeoutMs: 1,
       });
-      expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+      expect(outcome).toEqual({ ok: false, detail: 'timeout', createdEvents: 0 });
     },
   );
 
@@ -133,6 +139,33 @@ describe('generateTopicsTurn', () => {
       // would fail here.
       expect(allowed).not.toContain('mcp__autologger__list_topics');
       expect(allowed.join(',')).not.toMatch(/\blist_topics\b/);
+      // Byte-pinned, order-stable (auto-generate-event-logs task 3.4): chat's
+      // allowlist going explicit in ai.ts must leave this argv unchanged.
+      expect(argv[i + 1]).toBe(
+        'mcp__autologger__get_transcript_words,mcp__autologger__create_topic',
+      );
+    },
+  );
+
+  it(
+    "registerTurn receives the generate turn's explicit context — the server-side " +
+      'registration mirrors the argv withholding (auto-generate-event-logs D7, task 3.4)',
+    async () => {
+      const spy = vi.spyOn(AiMcpListener.prototype, 'registerTurn');
+      try {
+        await generateTopicsTurn({
+          registry,
+          cliPath: SUCCESS_FIXTURE,
+          sessionId,
+          maxBudgetUsd: 2.0,
+          timeoutMs: 10_000,
+        });
+        const call = spy.mock.calls.find(([id]) => id === sessionId);
+        expect(call).toBeDefined();
+        expect(call?.[1]).toEqual({ tools: ['get_transcript_words', 'create_topic'] });
+      } finally {
+        spy.mockRestore();
+      }
     },
   );
 

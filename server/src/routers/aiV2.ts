@@ -98,12 +98,15 @@ const OPEN_NETWORK_DETAIL =
 const CREDENTIALS_REFUSED_DETAIL =
   'AI v2 has no AI_V2_API_KEY configured and the server is bound to a non-loopback address; the interactive ' +
   '`claude login` fallback is loopback-only. Configure AI_V2_API_KEY or bind to loopback (HOST=127.0.0.1).';
+// Names EVERY possible slot holder — the registry is shared with AI chat and
+// the topic/event generate endpoints (wording change authorized by the
+// auto-event-generation delta).
 const SESSION_BUSY_DETAIL =
-  'A turn (AI chat or AI v2) is already in progress for this session; wait for it to finish before starting ' +
-  'another. AI chat and AI v2 share one per-session slot by design.';
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before starting another. These features share one per-session AI slot by design.';
 const AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and AI v2); ' +
-  'try again shortly.';
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
+  'topic generation, and event generation); try again shortly.';
 // Task 3.2 (spec "Design question round trip", design D7). Deliberately the
 // SAME detail for "no such pending question" and "wrong answering
 // principal" — the route never reveals which reason applied, matching the

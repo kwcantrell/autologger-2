@@ -96,9 +96,14 @@ function showToShowDraft(show: Show): ShowDraft {
       name: c.name ?? c.label ?? '',
       type: c.type,
       color: c.color,
+      // Options pass through verbatim, per-option `auto_instruction` included
+      // (auto-generate-event-logs).
       dropdown_options: c.dropdown_options ?? [],
       on_label: c.on_label ?? '',
       off_label: c.off_label ?? '',
+      // Draft-local `''` = absent; the save mapping emits the wire key only when
+      // non-empty, so hydrate→save round-trips stay snapshot-clean.
+      auto_instruction: c.auto_instruction ?? '',
     })),
     event_palette: palette,
     event_palette_preset: show.event_palette_preset ?? 'custom',
@@ -305,9 +310,30 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             name: c.name,
             color: c.color,
             type: c.type,
-            dropdown_options: c.dropdown_options,
+            // Per-option belt (auto-generate-event-logs audit M6): the same
+            // trim/omit gate as the category level below, applied here as a
+            // second enforcing site alongside EventOptionsModal's confirm
+            // mapping — a draft option that never went through that modal
+            // (hydrated then saved untouched, or padded by a future editor)
+            // must still post the wire rule: key only when trim-non-empty,
+            // emitted TRIMMED, matching server normalization.
+            dropdown_options: c.dropdown_options.map(
+              ({ label, needs_context, auto_instruction }) => ({
+                label,
+                needs_context,
+                ...(auto_instruction?.trim() ? { auto_instruction: auto_instruction.trim() } : {}),
+              }),
+            ),
             on_label: c.on_label,
             off_label: c.off_label,
+            // Wire key `auto_instruction` (auto-generate-event-logs): this mapping
+            // rebuilds categories from a fixed field set, so the key must be carried
+            // explicitly or a save would silently strip saved instructions. Gated on
+            // trim() and emitted trimmed, matching server normalization (which trims,
+            // drops empties, and drops it on ON_OFF) — a truthy whitespace-only draft
+            // would otherwise post a key the server drops, leaving a phantom local
+            // value after the post-save rebaseline.
+            ...(c.auto_instruction.trim() ? { auto_instruction: c.auto_instruction.trim() } : {}),
           })),
           event_palette: normalizePalette9(draft.event_palette),
           event_palette_preset: draft.event_palette_preset,
