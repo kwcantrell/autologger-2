@@ -23,7 +23,7 @@
 // `topics/generate` — design D2).
 
 import type { SessionHubRegistry } from '../session/SessionHub';
-import { driveAiTurn, type DriveAiTurnResult } from './aiTurn';
+import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
 
 /** D5's fixed one-shot user message. A plain user message, not a system
  * prompt. */
