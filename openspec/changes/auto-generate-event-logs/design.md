@@ -219,7 +219,10 @@ conformance invariant: fixtures are outputs, re-captured, never hand-edited).
   model-behavior bugs — topic-generation lesson) including a re-run dedup exercise.
 - [Interpolated wall times are approximations between sparse anchors] → the normative
   invariant is bracketing order, not exact reconstruction; anchors densify as manual
-  events exist; accepted residual for anchor-poor sessions.
+  events exist; accepted residual for anchor-poor sessions. Declared asymmetry: the
+  timecode↔wall anchors are rebuilt live on every `create_event` call (required so a
+  run's own inserts anchor its later ones — intra-run ordering), while the dedup
+  basis (the embedded-events snapshot) stays frozen at run start.
 - [Transcript + instructions are attacker-influenced and steer a write tool] →
   lockdown unchanged; untrusted-data framing; category allowlist + `internal` denial;
   message/timecode bounds; per-run cap; run-id attribution + feed marker make cleanup

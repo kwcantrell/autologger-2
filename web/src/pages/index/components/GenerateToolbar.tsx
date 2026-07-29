@@ -46,9 +46,14 @@ interface Props {
  * native-disabled control can't receive focus and has no accessible
  * description. Here the latched control stays a real, focusable button (no
  * `disabled` attribute) using `aria-disabled` instead, with the reason exposed
- * two ways: `aria-describedby` pointing at an always-visible reason span (not
- * sr-only — sighted keyboard users get it too), and the click handler no-ops
- * while latched. Visual "disabled" styling is reproduced via the
+ * two ways: `aria-describedby` pointing at the reason span, and the click
+ * handler no-oping while latched. The reason span has two presentations
+ * (`reasonVisuallyHidden`): visible toolbar text by default (503 latches —
+ * sighted keyboard users get it too), or `sr-only` when the caller opts in for
+ * a resting-state gate whose always-visible text would overflow the toolbar
+ * row (the Event feed's no-instructions gate — see the prop doc). Either way
+ * it stays AT-reachable via `aria-describedby`. Visual "disabled" styling is
+ * reproduced via the
  * `aria-disabled:` variant since `disabled:` utilities key off the native
  * attribute.
  */

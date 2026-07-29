@@ -104,8 +104,12 @@ function usableTotalFrames(raw: number | null): number | null {
 
 /** Extract the usable anchor pairs from event rows: both fields present and
  * the wall time parseable. Returns them normalized (sorted, duplicate
- * timecodes merged into intervals, clamped monotone) — build once per run and
- * reuse across `wallMsForTimecode` calls. */
+ * timecodes merged into intervals, clamped monotone). Contract: the production
+ * caller (`create_event` in aiMcpServer.ts) deliberately rebuilds this FRESH
+ * on every call — each generated insert becomes an anchor for the next, which
+ * is what keeps a run's events sorting among themselves in timecode order.
+ * That is a declared asymmetry with the run's dedup basis, which is frozen at
+ * run start: anchors are live mid-run, the embedded-events snapshot is not. */
 export function timecodeWallAnchors(events: WallAnchorCandidateEvent[]): TimecodeWallAnchor[] {
   const raw: TimecodeWallAnchor[] = [];
   for (const e of events) {

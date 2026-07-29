@@ -69,8 +69,10 @@ exists:
    entry count);
 7. `409 {detail}` when the per-session AI slot or the process-wide ceiling is held
    (same registry as AI chat/AI v2/topics). The shared-slot busy details SHALL name
-   event generation among the possible holders — the wording change to the existing
-   `ai/chat`/AI-v2 busy detail strings is authorized by this delta.
+   event generation among the possible holders — the wording changes to the existing
+   shared-slot `409` detail strings at all three sibling endpoints — the session-busy
+   AND at-capacity variants of `ai/chat`, the AI v2 design turn, and
+   `topics/generate` — are authorized by this delta.
 
 The route takes no generation parameters from the client; instructions and the
 category snapshot are read server-side at run start. On success it SHALL respond

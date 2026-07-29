@@ -112,7 +112,13 @@ at user-authored per-button instructions turns hours of scrub-and-log into one c
   stored run id deliberately leaves room for one later).
 - No per-event progress stream: run progress is feed-native (gate decision 2026-07-28
   reversing the earlier SSE draft); the route is synchronous.
-- No changes to `topics/generate`, AI chat, or AI v2 dashboards behavior.
+- No functional/flow changes to `topics/generate`, AI chat, or AI v2 dashboards
+  beyond two delta-authorized touches: the shared AI-slot `409` detail strings at
+  all three endpoints are reworded to name event generation among the possible
+  holders (session-busy and at-capacity variants), and `topics/generate`'s MCP
+  registration is narrowed server-side so the withheld `list_topics` is denied at
+  the server, not only by CLI flags (behavior-identical: the turn's argv allowlist
+  stays byte-pinned).
 - No widening of the CLI lockdown (no built-in tools, no host filesystem/shell, no
   network beyond the loopback MCP + Anthropic API).
 - No per-instruction cost controls beyond the run-level budget/timeout/cap bounds.
