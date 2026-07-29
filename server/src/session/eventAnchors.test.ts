@@ -208,7 +208,8 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
   const CTX = { frameRate: FPS, startOffsetFrames: 0 };
   const REAL_SESSION = { ...CTX, startedAtUtc: '2026-01-01T10:00:00.000Z' };
 
-  function multiTakeFixture() {
+  function multiTakeFixture(opts: { includeTake2Note?: boolean } = {}) {
+    const { includeTake2Note = true } = opts;
     const rt = fakeRuntime();
     const transport = new TransportStore(rt.core);
     const events = new EventStore(rt.core);
@@ -231,23 +232,36 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
     at('2026-01-01T10:20:00.000Z');
     log('internal', 'Recording 2 Started');
     transport.startTake(CTX);
-    at('2026-01-01T10:20:10.000Z');
-    log('note', 'note-take2');
+    if (includeTake2Note) {
+      at('2026-01-01T10:20:10.000Z');
+      log('note', 'note-take2');
+    }
     return { rt, transport, events };
   }
 
-  function fixtureRowsAndAnchors() {
-    const { events } = multiTakeFixture();
+  function fixtureRowsAndAnchors(opts: { includeTake2Note?: boolean } = {}) {
+    const { includeTake2Note = true } = opts;
+    const { events } = multiTakeFixture({ includeTake2Note });
     const rows = events.listEvents({ limit: 100, offset: 0 }).events;
     // Sanity: the REAL stores produced the frozen-timecode shape claimed above.
-    expect(rows.map((r) => [r.message, r.timecode_total_frames])).toEqual([
-      ['Recording 1 Started', 0],
-      ['Recording 1 Stopped', 600],
-      ['note-1005', 600],
-      ['note-1015', 600],
-      ['Recording 2 Started', 600],
-      ['note-take2', 900],
-    ]);
+    expect(rows.map((r) => [r.message, r.timecode_total_frames])).toEqual(
+      includeTake2Note
+        ? [
+            ['Recording 1 Started', 0],
+            ['Recording 1 Stopped', 600],
+            ['note-1005', 600],
+            ['note-1015', 600],
+            ['Recording 2 Started', 600],
+            ['note-take2', 900],
+          ]
+        : [
+            ['Recording 1 Started', 0],
+            ['Recording 1 Stopped', 600],
+            ['note-1005', 600],
+            ['note-1015', 600],
+            ['Recording 2 Started', 600],
+          ],
+    );
     return { events, rows, anchors: timecodeWallAnchors(rows) };
   }
 
@@ -266,6 +280,21 @@ describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix w
         expect(w, `tc ${tc} must land after every tc-600 row`).toBeGreaterThan(anchorWall);
       }
       expect(w, `tc ${tc} must land before the tc-900 row`).toBeLessThan(wall900);
+    }
+  });
+
+  it('with the take-2 note omitted, tc 630 (past the now-LAST tc-600 anchor) lands after every tc-600 row', () => {
+    // Drops note-take2 so the frozen tc-600 group is the LAST anchor, forcing
+    // the `timecodeTotalFrames >= last.timecodeTotalFrames` end-clamp arm
+    // (extrapolation from `last.wallHiMs`) instead of the mid-segment
+    // interpolation the other cases in this block exercise.
+    const { rows, anchors } = fixtureRowsAndAnchors({ includeTake2Note: false });
+    const tc600Walls = rows
+      .filter((r) => r.timecode_total_frames === 600)
+      .map((r) => Date.parse(r.wall_time_utc));
+    const w = wallMsForTimecode(630, anchors, REAL_SESSION);
+    for (const anchorWall of tc600Walls) {
+      expect(w, 'tc 630 must land after every tc-600 row').toBeGreaterThan(anchorWall);
     }
   });
 
