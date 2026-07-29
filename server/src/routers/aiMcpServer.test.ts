@@ -1173,3 +1173,102 @@ describe('get_transcript_words — generation-density paged rendering (3.3)', ()
     }
   });
 });
+
+// ── auto-generate-event-logs task 4.3 (Phase-3 review carry, BINDING): the
+// run-start WORD SNAPSHOT. A generation registration may carry
+// `generation.words` — the transcript rows frozen by the route at run start.
+// When present, the paged generation rendering reads the SNAPSHOT, never the
+// live hub, so a concurrent transcript regeneration (replaceTranscriptWords)
+// cannot reshuffle the paged rendering (content OR page boundaries) mid-run.
+// Absent ⇒ the live hub read — every 3.3 test above registers snapshot-less
+// and must stay green unchanged.
+
+describe('get_transcript_words — run-start word snapshot (4.3, phase-3 carry)', () => {
+  it(
+    'replaceTranscriptWords mid-run changes neither page content nor page boundaries ' +
+      'for a turn registered with a word snapshot',
+    async () => {
+      // Two pages at the real constants (mirrors the 3.3 paging fixture).
+      const count = GENERATION_PAGE_SIZE_WORDS + GENERATION_LINE_MAX_WORDS + 2;
+      const snapshot = Array.from({ length: count }, (_, i) => ({
+        word: `orig${i}`,
+        session_time: i % 10 === 0 ? '00:10:00' : '',
+        speaker: '1',
+      }));
+      const turn = listener.registerTurn('gen-snap', genContext({ words: snapshot }));
+      const { client, close } = await connectMcp(turn.url, turn.token);
+      try {
+        const before0 = (await client.callTool({
+          name: 'get_transcript_words',
+          arguments: { page: 0 },
+        })) as ToolResult;
+        expect(before0.isError).toBeFalsy();
+        expect(before0.content[0].text).toMatch(
+          /--- transcript continues: call get_transcript_words with page=1 of 2 ---$/,
+        );
+        const before1 = (await client.callTool({
+          name: 'get_transcript_words',
+          arguments: { page: 1 },
+        })) as ToolResult;
+
+        // Mid-run transcript regeneration: an entirely different (single-word,
+        // single-page) transcript lands in the hub.
+        registry
+          .get('gen-snap')
+          .replaceTranscriptWords([
+            { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
+          ]);
+
+        // The registered turn's rendering is BYTE-IDENTICAL: same content,
+        // same 2-page boundary — the run cannot see the mid-run replace.
+        const after0 = (await client.callTool({
+          name: 'get_transcript_words',
+          arguments: { page: 0 },
+        })) as ToolResult;
+        expect(after0.content[0].text).toBe(before0.content[0].text);
+        const after1 = (await client.callTool({
+          name: 'get_transcript_words',
+          arguments: { page: 1 },
+        })) as ToolResult;
+        expect(after1.content[0].text).toBe(before1.content[0].text);
+        expect(after0.content[0].text).not.toContain('replaced');
+        expect(after0.content[0].text).toContain('orig0');
+      } finally {
+        await close();
+        turn.dispose();
+      }
+    },
+  );
+
+  it('a snapshot-less generation registration still reads the live hub (3.3 fallback intact)', async () => {
+    registry
+      .get('gen-snap-live')
+      .replaceTranscriptWords([
+        { session_time: '00:00:01', speaker: 'S1', word: 'live-word', start_sec: 1, end_sec: 2 },
+      ]);
+    const turn = listener.registerTurn('gen-snap-live', genContext());
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res.content[0].text).toContain('live-word');
+      // Live means live: a replace IS visible to a snapshot-less turn.
+      registry
+        .get('gen-snap-live')
+        .replaceTranscriptWords([
+          { session_time: '00:00:02', speaker: 'S1', word: 'swapped', start_sec: 2, end_sec: 3 },
+        ]);
+      const res2 = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res2.content[0].text).toContain('swapped');
+      expect(res2.content[0].text).not.toContain('live-word');
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+});

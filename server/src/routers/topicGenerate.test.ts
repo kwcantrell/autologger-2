@@ -59,7 +59,13 @@ describe('generateTopicsTurn', () => {
       maxBudgetUsd: 2.0,
       timeoutMs: 10_000,
     });
-    expect(outcome).toEqual({ ok: true, claudeSessionId: 'fixture-cli-session-id' });
+    // `createdEvents: 0` — driveAiTurn's task-4.3 return widening; always 0 on
+    // topic turns (their registration never exposes create_event).
+    expect(outcome).toEqual({
+      ok: true,
+      claudeSessionId: 'fixture-cli-session-id',
+      createdEvents: 0,
+    });
   });
 
   it('the one-shot message reaches the CLI on stdin verbatim (never argv)', async () => {
@@ -86,7 +92,7 @@ describe('generateTopicsTurn', () => {
       maxBudgetUsd: 2.0,
       timeoutMs: 10_000,
     });
-    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
+    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed', createdEvents: 0 });
   });
 
   it(
@@ -104,7 +110,7 @@ describe('generateTopicsTurn', () => {
         maxBudgetUsd: 2.0,
         timeoutMs: 1,
       });
-      expect(outcome).toEqual({ ok: false, detail: 'timeout' });
+      expect(outcome).toEqual({ ok: false, detail: 'timeout', createdEvents: 0 });
     },
   );
 

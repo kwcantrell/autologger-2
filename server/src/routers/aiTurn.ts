@@ -84,6 +84,19 @@ export interface DriveAiTurnOptions {
   abortSignal?: AbortSignal;
 }
 
+/** `driveAiTurn`'s outcome (auto-generate-event-logs task 4.3): the turn
+ * outcome PLUS the turn's `createdEvents` count, read from the MCP turn
+ * registration before it is disposed. This return-widening is the deliberate
+ * smallest seam for the generate route's `{created, cap_hit}` response —
+ * chosen over surfacing the whole `AiMcpTurn` handle, whose other fields
+ * (url/token/dispose) are lifecycle state this helper alone must own. The
+ * union is distributed so `outcome.ok` narrowing keeps working at callers.
+ * Always 0 on chat/topic turns (their registrations never expose
+ * `create_event`). */
+export type DriveAiTurnResult =
+  | (Extract<AiChatTurnOutcome, { ok: true }> & { createdEvents: number })
+  | (Extract<AiChatTurnOutcome, { ok: false }> & { createdEvents: number });
+
 /**
  * Drive one AI turn's full lifecycle: MCP listener + registration → spawn →
  * run-to-outcome → the full no-orphan cleanup. Never throws — any setup or
@@ -91,35 +104,41 @@ export interface DriveAiTurnOptions {
  * returned as `{ ok: false, detail: 'internal-error' }`, matching `ai/chat`'s
  * pre-extraction catch-clause exactly.
  */
-export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<AiChatTurnOutcome> {
+export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<DriveAiTurnResult> {
   let mcpTurn: AiMcpTurn | null = null;
   let spawned: AiChatSpawnResult | null = null;
   try {
     const listener = await getAiMcpListener(opts.registry);
-    mcpTurn = listener.registerTurn(opts.sessionId, opts.mcpContext);
+    const turn = listener.registerTurn(opts.sessionId, opts.mcpContext);
+    mcpTurn = turn;
     spawned = spawnAiChatTurn({
       cliPath: opts.cliPath,
       sessionId: opts.sessionId,
       message: opts.message,
-      mcpTurn: { url: mcpTurn.url, token: mcpTurn.token },
+      mcpTurn: { url: turn.url, token: turn.token },
       maxBudgetUsd: opts.maxBudgetUsd,
       resumeSessionId: opts.resumeSessionId,
       allowedTools: opts.allowedTools,
       systemPrompt: opts.systemPrompt,
     });
-    return await runAiChatTurn({
+    const outcome = await runAiChatTurn({
       child: spawned.child,
       emit: opts.emit,
       timeoutMs: opts.timeoutMs,
       abortSignal: opts.abortSignal,
     });
+    // Read the counter BEFORE the finally's dispose runs (it would read
+    // correctly after dispose too — the counter lives on a closure the
+    // registration drop doesn't clear — but reading here keeps the contract
+    // independent of that detail).
+    return { ...outcome, createdEvents: turn.createdEvents() };
   } catch {
     // Any unexpected failure setting up or running the turn (e.g. the MCP
     // listener failing to start, or spawnAiChatTurn's cwd/config write
     // throwing) still owes the caller exactly one terminal event — never the
     // raw exception message (a secrecy leak the spec forbids).
     await opts.emit({ event: 'error', data: { detail: 'internal-error' } });
-    return { ok: false, detail: 'internal-error' };
+    return { ok: false, detail: 'internal-error', createdEvents: mcpTurn?.createdEvents() ?? 0 };
   } finally {
     // Defensive-in-depth: runAiChatTurn already kills the process group on
     // every path it controls, and this call is idempotent (a fast no-op once

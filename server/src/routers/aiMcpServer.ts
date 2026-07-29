@@ -112,6 +112,15 @@ export interface AiGenerationSnapshotCategory {
   readonly dropdown_options: readonly AiGenerationSnapshotOption[];
 }
 
+/** One transcript-word row in a generation run's word snapshot
+ * (auto-generate-event-logs task 4.3, Phase-3 review carry): exactly the
+ * fields the generation-density rendering reads. */
+export interface AiGenerationSnapshotWord {
+  readonly word: string;
+  readonly session_time: string;
+  readonly speaker: string;
+}
+
 /** A generation run's per-turn snapshot (auto-generate-event-logs spec
  * "Single orchestrator turn"): captured at run start and CARRIED on the turn
  * registration so mid-run show/session edits never affect the in-flight run.
@@ -129,6 +138,12 @@ export interface AiGenerationRunContext {
   readonly cap: number;
   /** The instruction-bearing categories — `create_event`'s allowlist. */
   readonly categories: readonly AiGenerationSnapshotCategory[];
+  /** Transcript words frozen at run start (task 4.3, Phase-3 review carry —
+   * BINDING): when present, the generation-density `get_transcript_words`
+   * rendering reads THIS snapshot instead of the live hub, so a concurrent
+   * transcript regeneration cannot reshuffle the paged rendering (content or
+   * page boundaries) mid-run. Absent ⇒ live hub read (3.3's behavior). */
+  readonly words?: readonly AiGenerationSnapshotWord[];
 }
 
 /** Per-turn registration context (auto-generate-event-logs D6): the turn's
@@ -473,8 +488,12 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
           'transcript.',
         generationTranscriptToolShape,
         async (args) => {
-          // Hub resolved at call time (D3) — never held across an await.
-          const words = registry.get(sessionId).listTranscriptWords();
+          // Run-start word snapshot when the registration carries one (task
+          // 4.3, Phase-3 carry) — a mid-run replaceTranscriptWords can then
+          // never change this turn's page content/boundaries. Snapshot-less
+          // registrations keep 3.3's live hub read, resolved at call time
+          // (D3) — never held across an await.
+          const words = generation.words ?? registry.get(sessionId).listTranscriptWords();
           const res = renderGenerationTranscriptPage(words, args.page ?? 0);
           if (!res.ok) return toolError(res.error);
           return { content: [{ type: 'text', text: res.text }] };
