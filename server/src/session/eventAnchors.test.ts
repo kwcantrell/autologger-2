@@ -1,9 +1,14 @@
 // Tests for the timecode→wall-time anchor interpolation helper
-// (auto-generate-event-logs task 2.1 / design D4). The multi-take/paused
-// fixture models a session recorded across a wall-clock pause: 30 minutes of
-// timecode spanning 2.5 hours of wall time.
+// (auto-generate-event-logs task 2.1 / design D4). The REQUIRED property
+// fixture is the real-store multi-take one below (real TransportStore +
+// EventStore over a real in-memory core — a stopped transport freezes the
+// timecode, so several rows share one timecode with spread walls). The
+// synthetic distinct-timecode "paused" fixture (30 minutes of timecode
+// spanning 2.5 hours of wall time) is kept as a secondary case only — it
+// cannot produce the duplicate-timecode shape (Phase-2 review finding 2).
 
 import { describe, expect, it } from 'vitest';
+import { fakeRuntime } from '../test/fakeCore';
 import { isoZ } from '../timecode';
 import {
   timecodeWallAnchors,
@@ -11,6 +16,8 @@ import {
   wallMsForTimecode,
   wallTimeUtcForTimecode,
 } from './eventAnchors';
+import { EventStore } from './eventStore';
+import { TransportStore } from './transportStore';
 
 const FPS = 30;
 const MIN = 60 * FPS; // frames per minute at 30fps
@@ -20,9 +27,10 @@ const SESSION = { frameRate: FPS, startOffsetFrames: 0, startedAtUtc: '2026-01-0
 
 const ms = (iso: string): number => Date.parse(iso);
 
-/** Multi-take/paused fixture: tc 00:00 at wall 10:00, tc 00:30:00 at wall
- * 12:30 (a 2h wall pause collapsed on the timecode axis), tc 00:40:00 at
- * wall 12:40 (second take rolling normally). */
+/** Secondary synthetic fixture (distinct timecodes; every anchor interval is
+ * degenerate lo === hi): tc 00:00 at wall 10:00, tc 00:30:00 at wall 12:30
+ * (a 2h wall pause collapsed on the timecode axis), tc 00:40:00 at wall
+ * 12:40 (second take rolling normally). */
 const M1 = { tc: 0, wall: '2026-01-01T10:00:00.000Z' };
 const M2 = { tc: 30 * MIN, wall: '2026-01-01T12:30:00.000Z' };
 const M3 = { tc: 40 * MIN, wall: '2026-01-01T12:40:00.000Z' };
@@ -39,8 +47,8 @@ describe('timecodeWallAnchors', () => {
       { timecode_total_frames: M1.tc, wall_time_utc: M1.wall },
     ];
     expect(timecodeWallAnchors(rows)).toEqual([
-      { timecodeTotalFrames: M1.tc, wallMs: ms(M1.wall) },
-      { timecodeTotalFrames: M2.tc, wallMs: ms(M2.wall) },
+      { timecodeTotalFrames: M1.tc, wallLoMs: ms(M1.wall), wallHiMs: ms(M1.wall) },
+      { timecodeTotalFrames: M2.tc, wallLoMs: ms(M2.wall), wallHiMs: ms(M2.wall) },
     ]);
   });
 
@@ -51,19 +59,42 @@ describe('timecodeWallAnchors', () => {
       { timecode_total_frames: M2.tc, wall_time_utc: M2.wall },
     ];
     expect(timecodeWallAnchors(rows)).toEqual([
-      { timecodeTotalFrames: M2.tc, wallMs: ms(M2.wall) },
+      { timecodeTotalFrames: M2.tc, wallLoMs: ms(M2.wall), wallHiMs: ms(M2.wall) },
     ]);
   });
 
-  it('dedupes equal timecodes (keeps the earliest wall) and clamps walls monotone', () => {
+  it("skips string-ish rows whose raw timecode is '' or non-numeric (no bogus tc-0 anchor)", () => {
+    // SQLite rows are loosely typed at this seam; Number('') is 0, which the
+    // old filter accepted as a fabricated tc-0 anchor (Phase-2 finding 6).
+    const stringish = (v: unknown): number => v as number;
+    const rows: WallAnchorCandidateEvent[] = [
+      { timecode_total_frames: stringish(''), wall_time_utc: M1.wall },
+      { timecode_total_frames: stringish('  '), wall_time_utc: M1.wall },
+      { timecode_total_frames: stringish('12x'), wall_time_utc: M1.wall },
+      { timecode_total_frames: stringish('600'), wall_time_utc: M2.wall }, // numeric string — usable
+    ];
+    expect(timecodeWallAnchors(rows)).toEqual([
+      { timecodeTotalFrames: 600, wallLoMs: ms(M2.wall), wallHiMs: ms(M2.wall) },
+    ]);
+  });
+
+  it('merges equal timecodes into a wall interval and clamps intervals monotone', () => {
     const rows = anchorRows([
       { tc: 0, wall: '2026-01-01T12:00:00.000Z' },
-      { tc: 0, wall: '2026-01-01T12:05:00.000Z' }, // duplicate tc — dropped
+      { tc: 0, wall: '2026-01-01T12:05:00.000Z' }, // duplicate tc — widens the interval
       { tc: 30 * MIN, wall: '2026-01-01T11:00:00.000Z' }, // earlier wall — clamped up
     ]);
     expect(timecodeWallAnchors(rows)).toEqual([
-      { timecodeTotalFrames: 0, wallMs: ms('2026-01-01T12:00:00.000Z') },
-      { timecodeTotalFrames: 30 * MIN, wallMs: ms('2026-01-01T12:00:00.000Z') },
+      {
+        timecodeTotalFrames: 0,
+        wallLoMs: ms('2026-01-01T12:00:00.000Z'),
+        wallHiMs: ms('2026-01-01T12:05:00.000Z'),
+      },
+      {
+        timecodeTotalFrames: 30 * MIN,
+        wallLoMs: ms('2026-01-01T12:05:00.000Z'),
+        wallHiMs: ms('2026-01-01T12:05:00.000Z'),
+      },
     ]);
   });
 });
@@ -141,6 +172,145 @@ describe('wallMsForTimecode — fallbacks', () => {
     const a = wallMsForTimecode(5 * SEC, [], session);
     const b = wallMsForTimecode(10 * SEC, [], session);
     expect(a).toBeLessThan(b);
+  });
+
+  it('non-finite timecode is guarded: clamped nearest-anchor wall, never NaN/±∞ (finding 5)', () => {
+    // Precondition is a finite, parser-gated timecode; the guard keeps the
+    // function total instead of silently misplacing or throwing in isoZ.
+    expect(wallMsForTimecode(Number.POSITIVE_INFINITY, FIXTURE_ANCHORS, SESSION)).toBe(ms(M3.wall));
+    expect(wallMsForTimecode(Number.NEGATIVE_INFINITY, FIXTURE_ANCHORS, SESSION)).toBe(ms(M1.wall));
+    expect(wallMsForTimecode(Number.NaN, FIXTURE_ANCHORS, SESSION)).toBe(ms(M1.wall));
+    // Zero anchors: the session-start base (or epoch), still finite.
+    expect(wallMsForTimecode(Number.NaN, [], SESSION)).toBe(ms(SESSION.startedAtUtc));
+    expect(wallMsForTimecode(Number.POSITIVE_INFINITY, [], { ...SESSION, startedAtUtc: '' })).toBe(
+      0,
+    );
+    // And the isoZ wrapper therefore cannot throw on the guarded inputs.
+    expect(wallTimeUtcForTimecode(Number.NaN, FIXTURE_ANCHORS, SESSION)).toBe(M1.wall);
+  });
+});
+
+describe('bracketing over a REAL multi-take store (spec invariant; Phase-2 fix wave Critical 1)', () => {
+  /** Real TransportStore + EventStore over a real in-memory core. A stopped
+   * transport FREEZES the timecode, so the take-1 stop row, two operator
+   * notes, and the next take's `Recording 2 Started` all carry tc 600 with
+   * walls spread across 20 minutes of dead air — several rows sharing one
+   * timecode, the shape a synthetic distinct-timecode fixture never produces.
+   *
+   * Timeline @30fps (startOffsetFrames 0):
+   * - 10:00:00 startTake (take 1) + `Recording 1 Started`  → tc 0
+   * - 10:00:20 stopTake (banks 600 frames) + `Recording 1 Stopped` → tc 600
+   * - 10:05:00 operator note                                → tc 600
+   * - 10:15:00 operator note                                → tc 600
+   * - 10:20:00 `Recording 2 Started` + startTake (take 2)   → tc 600
+   * - 10:20:10 take-2 operator note                         → tc 900
+   */
+  const CTX = { frameRate: FPS, startOffsetFrames: 0 };
+  const REAL_SESSION = { ...CTX, startedAtUtc: '2026-01-01T10:00:00.000Z' };
+
+  function multiTakeFixture() {
+    const rt = fakeRuntime();
+    const transport = new TransportStore(rt.core);
+    const events = new EventStore(rt.core);
+    const at = (iso: string): void => {
+      rt.time.now = Date.parse(iso);
+    };
+    const log = (category: string, message: string): void => {
+      events.addEvent({ category, message, metadataJson: '', markedAtUtc: null, ctx: CTX });
+    };
+    at('2026-01-01T10:00:00.000Z');
+    transport.startTake(CTX);
+    log('internal', 'Recording 1 Started');
+    at('2026-01-01T10:00:20.000Z');
+    transport.stopTake(CTX);
+    log('internal', 'Recording 1 Stopped');
+    at('2026-01-01T10:05:00.000Z');
+    log('note', 'note-1005');
+    at('2026-01-01T10:15:00.000Z');
+    log('note', 'note-1015');
+    at('2026-01-01T10:20:00.000Z');
+    log('internal', 'Recording 2 Started');
+    transport.startTake(CTX);
+    at('2026-01-01T10:20:10.000Z');
+    log('note', 'note-take2');
+    return { rt, transport, events };
+  }
+
+  function fixtureRowsAndAnchors() {
+    const { events } = multiTakeFixture();
+    const rows = events.listEvents({ limit: 100, offset: 0 }).events;
+    // Sanity: the REAL stores produced the frozen-timecode shape claimed above.
+    expect(rows.map((r) => [r.message, r.timecode_total_frames])).toEqual([
+      ['Recording 1 Started', 0],
+      ['Recording 1 Stopped', 600],
+      ['note-1005', 600],
+      ['note-1015', 600],
+      ['Recording 2 Started', 600],
+      ['note-take2', 900],
+    ]);
+    return { events, rows, anchors: timecodeWallAnchors(rows) };
+  }
+
+  it('take-2 timecodes (630/750/890) map after EVERY tc-600 row and before the tc-900 row', () => {
+    const { rows, anchors } = fixtureRowsAndAnchors();
+    const tc600Walls = rows
+      .filter((r) => r.timecode_total_frames === 600)
+      .map((r) => Date.parse(r.wall_time_utc));
+    const wall900 = Date.parse(
+      (rows.find((r) => r.timecode_total_frames === 900) as { wall_time_utc: string })
+        .wall_time_utc,
+    );
+    for (const tc of [630, 750, 890]) {
+      const w = wallMsForTimecode(tc, anchors, REAL_SESSION);
+      for (const anchorWall of tc600Walls) {
+        expect(w, `tc ${tc} must land after every tc-600 row`).toBeGreaterThan(anchorWall);
+      }
+      expect(w, `tc ${tc} must land before the tc-900 row`).toBeLessThan(wall900);
+    }
+  });
+
+  it('a generated tc-300 event lands inside take 1 (10:00:00–10:00:20)', () => {
+    const { anchors } = fixtureRowsAndAnchors();
+    const w = wallMsForTimecode(300, anchors, REAL_SESSION);
+    expect(w).toBeGreaterThan(ms('2026-01-01T10:00:00.000Z'));
+    expect(w).toBeLessThan(ms('2026-01-01T10:00:20.000Z'));
+  });
+
+  it('inserted via explicitAnchor, generated rows take their bracketed feed positions', () => {
+    const { events, rows, anchors } = fixtureRowsAndAnchors();
+    const gen: Array<[number, string]> = [
+      [300, 'gen-300'],
+      [630, 'gen-630'],
+      [750, 'gen-750'],
+      [890, 'gen-890'],
+    ];
+    for (const [tc, message] of gen) {
+      events.addEvent({
+        category: 'note',
+        message,
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx: CTX,
+        explicitAnchor: {
+          timecodeTotalFrames: tc,
+          wallTimeUtc: wallTimeUtcForTimecode(tc, anchors, REAL_SESSION),
+        },
+      });
+    }
+    expect(rows).toHaveLength(6); // pre-insert snapshot unaffected
+    const order = events.listEvents({ limit: 100, offset: 0 }).events.map((e) => e.message);
+    expect(order).toEqual([
+      'Recording 1 Started',
+      'gen-300',
+      'Recording 1 Stopped',
+      'note-1005',
+      'note-1015',
+      'Recording 2 Started',
+      'gen-630',
+      'gen-750',
+      'gen-890',
+      'note-take2',
+    ]);
   });
 });
 

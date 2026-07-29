@@ -159,6 +159,11 @@ describe('parseTimecodeString', () => {
     expect(parseTimecodeString('00:00:01', -30)).toBeNull();
   });
 
+  it('rejects non-finite frame rates (NaN previously slipped through the <= 0 check)', () => {
+    expect(parseTimecodeString('00:00:01:00', Number.NaN)).toBeNull();
+    expect(parseTimecodeString('00:00:01:00', Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
   it('round-trips 29.97 drop-frame output of formatSmpte', () => {
     const fps = 29.97;
     const fpsI = 30; // repo convention: NDF math at round(fps)

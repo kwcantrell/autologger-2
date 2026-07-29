@@ -214,6 +214,26 @@ describe('addEvent over a real core', () => {
       expect(out.event.metadata_json).toBe('{}');
     });
 
+    it('rounds a >3-decimal ctx rate exactly like the manual path (23.976023976 → 23.976)', () => {
+      // 29.97 is already 3-decimal, so it cannot detect a rounding divergence
+      // between the explicit-anchor path and fromTotalFrames' millidecimal
+      // rounding (Phase-2 review finding 3) — this rate can.
+      const rate = 23.976023976;
+      const { core } = fakeRuntime();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'ntsc-film',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx: { frameRate: rate, startOffsetFrames: 0 },
+        explicitAnchor: { timecodeTotalFrames: 24, wallTimeUtc: '2026-06-25T00:00:01.000Z' },
+      });
+      expect(out.event.frame_rate).toBe(23.976);
+      expect(out.event.frame_rate).toBe(fromTotalFrames(24, rate).frame_rate);
+      const r = core.first('SELECT frame_rate FROM events WHERE id = ?', out.event.event_id);
+      expect(r).toEqual({ frame_rate: 23.976 });
+    });
+
     it('still honors suppressBroadcast (same broadcast handling as the manual path)', () => {
       const { core, broadcasts } = fakeRuntime();
       new EventStore(core).addEvent({
