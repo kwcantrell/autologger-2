@@ -84,7 +84,7 @@
       opaque-502 failure mapping, post-run catalog `projectSessionLive` mirror;
       integration tests with a fake CLI (the `ai.int.test.ts` pattern) incl.
       partial-persist-on-failure and sessions-list freshness.
-- [ ] 4.4 Gated real-CLI test (`topicGenerate.real.test.ts` pattern): SLATE-style
+- [x] 4.4 Gated real-CLI test (`topicGenerate.real.test.ts` pattern): SLATE-style
       instruction over a captured anchored-transcript fixture produces ≥ 1 event with
       a bracketing-correct timecode, manual-vocabulary message, and metadata marks;
       re-run over unchanged transcript with embedded prior events produces no
