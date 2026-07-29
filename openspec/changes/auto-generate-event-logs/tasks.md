@@ -72,7 +72,7 @@
       `eventGenerateTimeoutSec` (default 600), per-run cap (default 200), aggregate
       instruction bound (design D8) + `.env.example` notes; unit tests for
       defaults/overrides.
-- [ ] 4.2 Orchestrator prompts (design D3): system prompt constant + message builder —
+- [x] 4.2 Orchestrator prompts (design D3): system prompt constant + message builder —
       instruction-bearing enumeration (single definition), per-category embedded
       existing events (complete, compact, `(auto)` marker), untrusted-data delimiters,
       message conventions per button type; unit tests on serialization incl.
