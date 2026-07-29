@@ -96,9 +96,14 @@ function showToShowDraft(show: Show): ShowDraft {
       name: c.name ?? c.label ?? '',
       type: c.type,
       color: c.color,
+      // Options pass through verbatim, per-option `auto_instruction` included
+      // (auto-generate-event-logs).
       dropdown_options: c.dropdown_options ?? [],
       on_label: c.on_label ?? '',
       off_label: c.off_label ?? '',
+      // Draft-local `''` = absent; the save mapping emits the wire key only when
+      // non-empty, so hydrate→save round-trips stay snapshot-clean.
+      auto_instruction: c.auto_instruction ?? '',
     })),
     event_palette: palette,
     event_palette_preset: show.event_palette_preset ?? 'custom',
@@ -305,9 +310,17 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             name: c.name,
             color: c.color,
             type: c.type,
+            // Draft options already carry the per-option `auto_instruction` wire key —
+            // passed through verbatim (auto-generate-event-logs).
             dropdown_options: c.dropdown_options,
             on_label: c.on_label,
             off_label: c.off_label,
+            // Wire key `auto_instruction` (auto-generate-event-logs): this mapping
+            // rebuilds categories from a fixed field set, so the key must be carried
+            // explicitly or a save would silently strip saved instructions. Emitted
+            // only when non-empty (empty means absent; server normalization also
+            // trims, drops empties, and drops it on ON_OFF).
+            ...(c.auto_instruction ? { auto_instruction: c.auto_instruction } : {}),
           })),
           event_palette: normalizePalette9(draft.event_palette),
           event_palette_preset: draft.event_palette_preset,

@@ -1,25 +1,45 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DropdownOption } from '../../../api/types';
+import type { ShowDropdownOption } from '../../../api/types';
 import { Dialog } from '../../../shared/ui/Dialog';
 
 interface Props {
   type: 'DROPDOWN' | 'ON_OFF';
-  options: DropdownOption[];
+  options: ShowDropdownOption[];
   onLabel: string;
   offLabel: string;
-  onConfirm: (result: { options: DropdownOption[]; onLabel: string; offLabel: string }) => void;
+  /** Whole-button generation instruction draft value (`''` = absent). */
+  autoInstruction: string;
+  onConfirm: (result: {
+    options: ShowDropdownOption[];
+    onLabel: string;
+    offLabel: string;
+    autoInstruction: string;
+  }) => void;
   onClose: () => void;
 }
 
-interface OptRow extends DropdownOption {
+interface OptRow extends ShowDropdownOption {
   uid: string;
 }
 
-function withUids(opts: DropdownOption[]): OptRow[] {
+function withUids(opts: ShowDropdownOption[]): OptRow[] {
   return opts.map((o) => ({ ...o, uid: crypto.randomUUID() }));
 }
 
-export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm, onClose }: Props) {
+// Multi-line instruction entry (auto-generate-event-logs) — same chrome family as the
+// AI-chat composer textarea; `field` supplies the label layout around it.
+const INSTRUCTION_TEXTAREA =
+  'w-full resize-y rounded-v5-sm border border-v5-border bg-[rgba(255,255,255,0.05)] px-2 py-1.5 text-[0.85rem] leading-[1.4] text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none';
+
+export function EventOptionsModal({
+  type,
+  options,
+  onLabel,
+  offLabel,
+  autoInstruction,
+  onConfirm,
+  onClose,
+}: Props) {
   const [localOpts, setLocalOpts] = useState<OptRow[]>(() =>
     withUids(
       options.length >= 2
@@ -32,6 +52,7 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
   );
   const [localOn, setLocalOn] = useState(onLabel);
   const [localOff, setLocalOff] = useState(offLabel);
+  const [localInstruction, setLocalInstruction] = useState(autoInstruction);
   const firstRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -40,12 +61,26 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
 
   function handleConfirm() {
     if (type === 'DROPDOWN') {
-      const opts = localOpts
+      const opts: ShowDropdownOption[] = localOpts
         .filter((o) => o.label.trim())
-        .map(({ label, needs_context }) => ({ label, needs_context }));
-      onConfirm({ options: opts, onLabel: '', offLabel: '' });
+        .map(({ label, needs_context, auto_instruction }) => ({
+          label,
+          needs_context,
+          // Wire rule: empty means absent — emit the `auto_instruction` key only
+          // when non-empty, matching server normalization (empty ⇒ omitted) so an
+          // untouched round-trip stays snapshot-clean.
+          ...(auto_instruction?.trim() ? { auto_instruction } : {}),
+        }));
+      onConfirm({ options: opts, onLabel: '', offLabel: '', autoInstruction: localInstruction });
     } else {
-      onConfirm({ options: [], onLabel: localOn.trim(), offLabel: localOff.trim() });
+      // ON_OFF buttons never carry generation instructions (auto-event-generation
+      // definition) — always confirm the instruction away.
+      onConfirm({
+        options: [],
+        onLabel: localOn.trim(),
+        offLabel: localOff.trim(),
+        autoInstruction: '',
+      });
     }
   }
 
@@ -64,7 +99,22 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
           <p className="modal-hint">
             Each row is one menu choice. Check &ldquo;Needs context&rdquo; to ask for extra text
             after the user picks it (logged as <span className="mono">Option || context</span>).
+            Instruction fields tell AUTO GENERATE when to log this button — leave them blank to opt
+            out.
           </p>
+          {/* Whole-button generation instruction (auto-generate-event-logs): stays
+              editable for DROPDOWN buttons alongside the per-option fields. */}
+          <label className="field">
+            <span>Generation instruction</span>
+            <textarea
+              className={INSTRUCTION_TEXTAREA}
+              rows={3}
+              maxLength={2000}
+              value={localInstruction}
+              placeholder="e.g. Log an event whenever any camera cut is discussed"
+              onChange={(e) => setLocalInstruction(e.target.value)}
+            />
+          </label>
           {/* .v6-event-options-list */}
           <div className="flex flex-col gap-[0.55rem] my-3 max-h-[50vh] overflow-y-auto">
             {localOpts.map((opt, idx) => (
@@ -111,6 +161,23 @@ export function EventOptionsModal({ type, options, onLabel, offLabel, onConfirm,
                 >
                   Remove
                 </button>
+                {/* Per-option generation instruction, full-width under the option row. */}
+                <label className="field col-span-3">
+                  <span>Option instruction</span>
+                  <textarea
+                    className={INSTRUCTION_TEXTAREA}
+                    rows={2}
+                    maxLength={2000}
+                    value={opt.auto_instruction ?? ''}
+                    onChange={(e) =>
+                      setLocalOpts((prev) =>
+                        prev.map((o) =>
+                          o.uid === opt.uid ? { ...o, auto_instruction: e.target.value } : o,
+                        ),
+                      )
+                    }
+                  />
+                </label>
               </div>
             ))}
           </div>

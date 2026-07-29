@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { useState } from 'react';
-import type { DropdownOption, Show } from '../../../api/types';
+import type { DropdownOption, Show, ShowDropdownOption } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
@@ -37,9 +37,30 @@ export interface EventButtonDraft {
   name: string;
   type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
   color: string;
-  dropdown_options: DropdownOption[];
+  /** Options carry their own optional `auto_instruction` (wire key) — the draft
+   * passes them through verbatim (auto-generate-event-logs). */
+  dropdown_options: ShowDropdownOption[];
   on_label: string;
   off_label: string;
+  /** Whole-button generation instruction (auto-generate-event-logs). Draft-local
+   * `''` means absent; the save mapping emits the `auto_instruction` wire key only
+   * when non-empty. ON_OFF drafts always hold `''` (never instruction-bearing). */
+  auto_instruction: string;
+}
+
+/**
+ * Single instruction-bearing definition (auto-event-generation spec): the button's
+ * own instruction is non-empty, or — DROPDOWN only — at least one option's is.
+ * ON_OFF never bears, and option instructions lingering on a non-DROPDOWN draft
+ * (after a type switch away from DROPDOWN) do not count.
+ */
+function isInstructionBearing(btn: EventButtonDraft): boolean {
+  if (btn.type === 'ON_OFF') return false;
+  if (btn.auto_instruction.trim()) return true;
+  return (
+    btn.type === 'DROPDOWN' &&
+    btn.dropdown_options.some((o) => (o.auto_instruction ?? '').trim().length > 0)
+  );
 }
 
 interface Props {
@@ -115,6 +136,20 @@ function onOffSummary(onLabel: string, offLabel: string): string {
   return s.length > 42 ? `${s.slice(0, 40)}…` : s;
 }
 
+// Four-point spark — the generation-instruction affordance/indicator glyph.
+const SparkIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    aria-hidden="true"
+  >
+    <path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2L12 2z" />
+  </svg>
+);
+
 const DragGrip = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -146,6 +181,7 @@ export function EventButtonsTable({
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [openColorFor, setOpenColorFor] = useState<string | null>(null);
+  const [openInstructionFor, setOpenInstructionFor] = useState<string | null>(null);
   const [editingOptsFor, setEditingOptsFor] = useState<string | null>(null);
   const [copyFromId, setCopyFromId] = useState('');
 
@@ -200,6 +236,7 @@ export function EventButtonsTable({
           dropdown_options: [],
           on_label: '',
           off_label: '',
+          auto_instruction: '',
         },
         ...buttons,
       ],
@@ -220,9 +257,11 @@ export function EventButtonsTable({
       name: c.name ?? c.label ?? '',
       type: c.type,
       color: c.color,
+      // Options ride along verbatim, per-option `auto_instruction` included.
       dropdown_options: c.dropdown_options ?? [],
       on_label: c.on_label ?? '',
       off_label: c.off_label ?? '',
+      auto_instruction: c.auto_instruction ?? '',
     }));
     const srcPalette = normalizePalette9(src.event_palette ?? []);
     const srcPreset = src.event_palette_preset ?? 'custom';
@@ -362,6 +401,10 @@ export function EventButtonsTable({
             <th className={TH_BASE} scope="col">
               Options
             </th>
+            {/* th for the generation-instruction editor/indicator column. */}
+            <th className={clsx(TH_BASE, 'w-[2.35rem] !px-[0.15rem] !text-center')} scope="col">
+              Auto
+            </th>
             {/* th.thActions: width 2.5rem, centered. */}
             <th className={clsx(TH_BASE, 'w-10 !text-center')} scope="col">
               <span className="sr-only">Actions</span>
@@ -377,6 +420,7 @@ export function EventButtonsTable({
                   ? onOffSummary(btn.on_label, btn.off_label)
                   : 'N/A';
             const canEditOpts = btn.type === 'DROPDOWN' || btn.type === 'ON_OFF';
+            const bearing = isInstructionBearing(btn);
 
             return (
               <tr
@@ -450,6 +494,9 @@ export function EventButtonsTable({
                         patch.dropdown_options = [];
                         patch.on_label = btn.on_label || 'ON';
                         patch.off_label = btn.off_label || 'OFF';
+                        // ON_OFF buttons never carry generation instructions — a
+                        // type switch drops them from the draft (web-ui-system spec).
+                        patch.auto_instruction = '';
                       }
                       updateButton(btn.id, patch);
                     }}
@@ -512,6 +559,60 @@ export function EventButtonsTable({
                   </button>
                 </td>
 
+                {/* Generation-instruction cell (auto-generate-event-logs): the compact
+                    spark trigger opens a popover editor (multi-line textarea) — same
+                    affordance pattern as the color cell. The lit trigger doubles as the
+                    instruction-bearing indicator (single definition, option-only lights
+                    it). ON_OFF rows are excluded from generation and offer no field. */}
+                <td className={clsx(TD_BASE, TD_CARD, 'w-[2.35rem] !px-[0.15rem] !text-center')}>
+                  {btn.type === 'ON_OFF' ? (
+                    <span className="text-[rgba(229,238,252,0.35)]" aria-hidden="true">
+                      —
+                    </span>
+                  ) : (
+                    <Popover
+                      open={openInstructionFor === btn.id}
+                      onOpenChange={(o) => setOpenInstructionFor(o ? btn.id : null)}
+                      ariaLabel="Generation instruction editor"
+                      className="w-[min(22rem,92vw)] p-3"
+                      align="end"
+                      // Bare-button trigger (the RecentSessionsList popover pattern):
+                      // a Tooltip wrapper here would swallow the Radix trigger props
+                      // (Tooltip doesn't forward unknown props to its child).
+                      trigger={
+                        <button
+                          type="button"
+                          aria-label="Edit generation instruction"
+                          title="Generation instruction"
+                          className={clsx(
+                            'btn btn-icon p-0 min-w-0 w-[1.45rem] h-6 max-h-6 [&>svg]:block [&>svg]:shrink-0',
+                            bearing ? 'text-v5-primary' : 'text-[rgba(229,238,252,0.35)]',
+                          )}
+                        >
+                          <SparkIcon />
+                          {bearing && <span className="sr-only">Has generation instructions</span>}
+                        </button>
+                      }
+                    >
+                      <label className="flex flex-col gap-[0.35rem]">
+                        <span className="text-[0.65rem] font-semibold tracking-[0.08em] uppercase text-[rgba(229,238,252,0.55)]">
+                          Generation instruction
+                        </span>
+                        <textarea
+                          className="w-full resize-y rounded-v5-sm border border-v5-border bg-transparent px-2 py-1.5 text-[0.8rem] leading-[1.4] text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none"
+                          rows={4}
+                          maxLength={2000}
+                          value={btn.auto_instruction}
+                          placeholder="e.g. Log an event each time a new slate is called"
+                          onChange={(e) =>
+                            updateButton(btn.id, { auto_instruction: e.target.value })
+                          }
+                        />
+                      </label>
+                    </Popover>
+                  )}
+                </td>
+
                 {/* Delete (last child): card cell, right rounding + right padding. */}
                 <td className={clsx(TD_BASE, TD_CARD, 'rounded-r-[0.65rem] pr-[0.4rem]')}>
                   {/* .colDelete: only the svg display:block/shrink-0 rule survived. */}
@@ -552,11 +653,13 @@ export function EventButtonsTable({
           options={editingBtn.dropdown_options}
           onLabel={editingBtn.on_label}
           offLabel={editingBtn.off_label}
+          autoInstruction={editingBtn.auto_instruction}
           onConfirm={(result) => {
             updateButton(editingBtn.id, {
               dropdown_options: result.options,
               on_label: result.onLabel,
               off_label: result.offLabel,
+              auto_instruction: result.autoInstruction,
             });
             setEditingOptsFor(null);
           }}
