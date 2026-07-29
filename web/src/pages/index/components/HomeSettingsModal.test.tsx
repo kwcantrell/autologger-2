@@ -418,6 +418,12 @@ describe('HomeSettingsModal category round-trip', () => {
           dropdown_options: [
             { label: 'Cam A', needs_context: false, auto_instruction: 'When cam A goes live' },
             { label: 'Cam B', needs_context: false },
+            // Option-level belt cases (audit M6): a padded instruction must post
+            // TRIMMED; a whitespace-only one must post NO key (the server trims
+            // and drops empties — posting either verbatim leaves a phantom local
+            // value after the post-save rebaseline).
+            { label: 'Cam C', needs_context: false, auto_instruction: '  When cam C cuts in  ' },
+            { label: 'Cam D', needs_context: true, auto_instruction: '   ' },
           ],
           on_label: '',
           off_label: '',
@@ -455,6 +461,10 @@ describe('HomeSettingsModal category round-trip', () => {
       dropdown_options: [
         { label: 'Cam A', needs_context: false, auto_instruction: 'When cam A goes live' },
         { label: 'Cam B', needs_context: false },
+        // Padded posts trimmed; whitespace-only posts no key (option-level belt,
+        // audit M6 — same trim gate as the category level).
+        { label: 'Cam C', needs_context: false, auto_instruction: 'When cam C cuts in' },
+        { label: 'Cam D', needs_context: true },
       ],
       on_label: '',
       off_label: '',
@@ -462,6 +472,7 @@ describe('HomeSettingsModal category round-trip', () => {
     // Option-only category: no button-level key on the wire (empty means absent).
     expect('auto_instruction' in cats[1]).toBe(false);
     expect('auto_instruction' in (cats[1].dropdown_options as object[])[0]).toBe(true);
+    expect('auto_instruction' in (cats[1].dropdown_options as object[])[3]).toBe(false);
   });
 
   it('a whitespace-only instruction draft posts no auto_instruction key (trim gate matches the server)', async () => {

@@ -310,9 +310,20 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             name: c.name,
             color: c.color,
             type: c.type,
-            // Draft options already carry the per-option `auto_instruction` wire key —
-            // passed through verbatim (auto-generate-event-logs).
-            dropdown_options: c.dropdown_options,
+            // Per-option belt (auto-generate-event-logs audit M6): the same
+            // trim/omit gate as the category level below, applied here as a
+            // second enforcing site alongside EventOptionsModal's confirm
+            // mapping — a draft option that never went through that modal
+            // (hydrated then saved untouched, or padded by a future editor)
+            // must still post the wire rule: key only when trim-non-empty,
+            // emitted TRIMMED, matching server normalization.
+            dropdown_options: c.dropdown_options.map(
+              ({ label, needs_context, auto_instruction }) => ({
+                label,
+                needs_context,
+                ...(auto_instruction?.trim() ? { auto_instruction: auto_instruction.trim() } : {}),
+              }),
+            ),
             on_label: c.on_label,
             off_label: c.off_label,
             // Wire key `auto_instruction` (auto-generate-event-logs): this mapping
