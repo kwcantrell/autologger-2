@@ -77,7 +77,7 @@
       existing events (complete, compact, `(auto)` marker), untrusted-data delimiters,
       message conventions per button type; unit tests on serialization incl.
       option-only DROPDOWN and delimiter framing.
-- [ ] 4.3 TDD: `POST /api/sessions/:sessionId/events/generate` — full guard ladder in
+- [x] 4.3 TDD: `POST /api/sessions/:sessionId/events/generate` — full guard ladder in
       order (404-mask, CLI 503, open-network 503, anchored-transcript 400,
       no-instructions 400, aggregate-bound 400, slot 409 with reworded shared busy
       details), `driveAiTurn` with no abortSignal, `200 {created, cap_hit}`,
