@@ -157,6 +157,40 @@ export interface AiMcpTurnContext {
   readonly tools: readonly AiMcpToolName[];
   /** Present on event-generation turns only. */
   readonly generation?: AiGenerationRunContext;
+  /** SEAM (topic-generate-paged-transcript D1) — the turn's paged-transcript
+   * word snapshot, carrying ONLY words: the session's COMPLETE transcript word
+   * list, captured synchronously by the caller (no `await` between the hub read
+   * and `registerTurn`) and projected to the 3-field
+   * `AiGenerationSnapshotWord` shape. Its presence KEYS the paged
+   * generation-density `get_transcript_words` rendering on a turn that has no
+   * event-generation run (the topic one-shot), and the page-coverage
+   * bookkeeping below counts pages of THIS list and no other.
+   *
+   * Chat turns SHALL NOT carry it (spec `ai-topics-chat`, "Chat turns keep the
+   * unpaged rendering"): a chat registration keeps the zero-arg compact
+   * rendering. It carries no event-run fields, and `create_event` registration
+   * stays keyed by `tools`, never by a snapshot's presence. */
+  readonly pagedWords?: readonly AiGenerationSnapshotWord[];
+}
+
+/** How much of a turn's transcript snapshot the model actually fetched
+ * (topic-generate-paged-transcript D6) — mechanical page bookkeeping the
+ * server owns, never model-output inference. `totalPages` is 0 for a
+ * registration with no word snapshot (chat turns, and generation turns reading
+ * the live hub): such a turn makes no coverage claim and can never fail the
+ * gate. `servedPages` counts DISTINCT snapshot pages actually returned to the
+ * model — a repeated page counts once, and an out-of-range page (a tool error)
+ * counts not at all. */
+export interface AiMcpPageCoverage {
+  readonly totalPages: number;
+  readonly servedPages: number;
+}
+
+/** The page-coverage gate (D6): did the run fetch EVERY page of its snapshot?
+ * Served pages are always a subset of `0..totalPages-1`, so equality is full
+ * coverage; a snapshot-less turn (`totalPages` 0) trivially passes. */
+export function allTranscriptPagesServed(coverage: AiMcpPageCoverage): boolean {
+  return coverage.servedPages >= coverage.totalPages;
 }
 
 /** A registered chat turn's MCP coordinates. The CLI runner (task 3.2) consumes
@@ -174,8 +208,30 @@ export interface AiMcpTurn {
    * generate route (task 4.3) reads it after the run to report
    * `{created, cap_hit}`. Always 0 on chat turns. */
   createdEvents(): number;
+  /** How many pages of this turn's transcript snapshot the model has been
+   * served, against the snapshot's total (topic-generate-paged-transcript D6).
+   * Same ONE-counter-per-registration discipline as `createdEvents`; the
+   * `topics/generate` route reads it after the run to decide whether the
+   * crash-safe swap may replace the prior topic set. `{totalPages: 0}` on any
+   * registration without a word snapshot (every chat turn). */
+  pageCoverage(): AiMcpPageCoverage;
   /** Drop the registration (idempotent). After this, the token gets 401. */
   dispose(): void;
+}
+
+/** The turn's mutable paged-transcript state (D1/D6). Lives on the
+ * REGISTRATION — the per-request MCP servers a turn builds share it, which is
+ * what makes both the pagination memo and the served-page set span a turn's
+ * calls instead of resetting on every HTTP request. */
+interface TurnPageState {
+  /** The registration's word snapshot (`generation.words ?? pagedWords`), or
+   * undefined for chat turns and snapshot-less generation turns (live hub). */
+  readonly words: readonly AiGenerationSnapshotWord[] | undefined;
+  /** Lazily memoized pagination of `words` — computed at most once per turn
+   * (the snapshot is immutable), never re-packed per page call. */
+  pages: readonly string[] | null;
+  /** DISTINCT snapshot page indices actually served (D6's coverage counter). */
+  readonly served: Set<number>;
 }
 
 interface TurnRegistration {
@@ -185,6 +241,17 @@ interface TurnRegistration {
   /** The turn's mutable created-events counter (task 3.2). Lives on the
    * REGISTRATION — per-request MCP servers share it across a turn's calls. */
   readonly createdEvents: { count: number };
+  /** The turn's paged-transcript memo + coverage counter (D1/D6). */
+  readonly pageState: TurnPageState;
+}
+
+/** The registration's memoized pagination of its word snapshot — packed on
+ * first need (a tool call, or the end-of-run coverage read on a turn that never
+ * called the tool) and reused thereafter. */
+function snapshotPages(state: TurnPageState): readonly string[] {
+  if (state.words === undefined) return [];
+  state.pages ??= paginateGenerationTranscript(state.words);
+  return state.pages;
 }
 
 /**
@@ -456,33 +523,38 @@ function splitOverCapLines(lines: GenerationLine[], bodyCap: number): Generation
   return out;
 }
 
+/** The rendered result of ONE page request. */
+type GenerationPageResult =
+  | { ok: true; text: string; totalPages: number }
+  | { ok: false; error: string };
+
+function invalidPageError(page: number): string {
+  return `Invalid page ${page}: expected a non-negative integer.`;
+}
+
 /**
- * Render ONE page of the generation-density transcript (task 3.3, design D5;
- * repacked by rendered size in topic-generate-paged-transcript D4).
- * Deterministic: a pure function of the word list, so sequential calls see
- * consistent page boundaries. Pages are packed greedily on LINE boundaries to
- * the `maxPageChars` rendered-size cap — the primary bound, applied to the
- * page AS THE MODEL RECEIVES IT (the packer reserves the trailing continuation
- * marker's width out of the body) — with `pageSizeWords` retained as a
- * secondary bound. A page always takes at least one line, and a line wider
- * than the cap is split hard at it. Every page except the last ends with an
- * explicit continuation marker naming the next page and the total — never
- * silent truncation. An out-of-range, negative, or non-integer page is an
- * error (`ok: false`), never empty text.
+ * Paginate the whole generation-density rendering into EVERY page's final
+ * text, continuation marker included on all pages but the last (task 3.3,
+ * design D5; packed by rendered size in topic-generate-paged-transcript D4).
+ * Deterministic: a pure function of the word list, so repeated calls compute
+ * identical boundaries. Pages are packed greedily on LINE boundaries to the
+ * `maxPageChars` rendered-size cap — the primary bound, applied to the page AS
+ * THE MODEL RECEIVES IT (the packer reserves the trailing marker's width out
+ * of the body) — with `pageSizeWords` retained as a secondary bound. A page
+ * always takes at least one line, a line wider than the cap is split hard at
+ * it, and the result always has at least one page (an empty transcript renders
+ * the placeholder as its single page).
  *
- * `pageSizeWords` / `maxPageChars` are parameterized FOR TESTS ONLY — the tool
- * always calls with the `GENERATION_PAGE_SIZE_WORDS` / `GENERATION_PAGE_MAX_CHARS`
- * defaults.
+ * Whole-transcript pagination is the unit a turn registration MEMOIZES
+ * (topic-generate-paged-transcript D1): a snapshot-backed registration packs
+ * once and then serves page N by index, instead of re-packing the transcript
+ * on every tool call.
  */
-export function renderGenerationTranscriptPage(
+function paginateGenerationTranscript(
   words: ReadonlyArray<{ word: string; session_time: string; speaker: string }>,
-  page: number,
   pageSizeWords: number = GENERATION_PAGE_SIZE_WORDS,
   maxPageChars: number = GENERATION_PAGE_MAX_CHARS,
-): { ok: true; text: string; totalPages: number } | { ok: false; error: string } {
-  if (!Number.isInteger(page) || page < 0) {
-    return { ok: false, error: `Invalid page ${page}: expected a non-negative integer.` };
-  }
+): string[] {
   const bodyCap = Math.max(1, maxPageChars - CONTINUATION_MARKER_RESERVE);
   const lines = splitOverCapLines(generationDensityLines(words), bodyCap);
   const pages: string[][] = [];
@@ -509,6 +581,19 @@ export function renderGenerationTranscriptPage(
   if (cur.length > 0) pages.push(cur);
   // The empty transcript renders the chat path's placeholder as its one page.
   if (pages.length === 0) pages.push(['(this session has no transcript)']);
+  return pages.map((linesOfPage, i) => {
+    const body = linesOfPage.join('\n');
+    return i < pages.length - 1 ? `${body}${continuationMarker(i + 1, pages.length)}` : body;
+  });
+}
+
+/** Select one page out of an already-paginated transcript. An out-of-range,
+ * negative, or non-integer page is an error (`ok: false`), never empty text. */
+function selectGenerationTranscriptPage(
+  pages: readonly string[],
+  page: number,
+): GenerationPageResult {
+  if (!Number.isInteger(page) || page < 0) return { ok: false, error: invalidPageError(page) };
   if (page >= pages.length) {
     return {
       ok: false,
@@ -517,10 +602,35 @@ export function renderGenerationTranscriptPage(
         `0-based (last page is ${pages.length - 1}).`,
     };
   }
-  const body = pages[page].join('\n');
-  const text =
-    page < pages.length - 1 ? `${body}${continuationMarker(page + 1, pages.length)}` : body;
-  return { ok: true, text, totalPages: pages.length };
+  return { ok: true, text: pages[page], totalPages: pages.length };
+}
+
+/**
+ * Render ONE page of the generation-density transcript: paginate, then select
+ * (the pagination semantics live in `paginateGenerationTranscript` above).
+ * Every page except the last ends with an explicit continuation marker naming
+ * the next page and the total — never silent truncation.
+ *
+ * This whole-transcript-per-call form is the LIVE-hub path (a generation
+ * registration carrying no word snapshot); snapshot-backed registrations page
+ * through the memoized pagination instead.
+ *
+ * `pageSizeWords` / `maxPageChars` are parameterized FOR TESTS ONLY — the tool
+ * always calls with the `GENERATION_PAGE_SIZE_WORDS` / `GENERATION_PAGE_MAX_CHARS`
+ * defaults.
+ */
+export function renderGenerationTranscriptPage(
+  words: ReadonlyArray<{ word: string; session_time: string; speaker: string }>,
+  page: number,
+  pageSizeWords: number = GENERATION_PAGE_SIZE_WORDS,
+  maxPageChars: number = GENERATION_PAGE_MAX_CHARS,
+): GenerationPageResult {
+  // Checked BEFORE paginating: a bad page number never pays for the packing.
+  if (!Number.isInteger(page) || page < 0) return { ok: false, error: invalidPageError(page) };
+  return selectGenerationTranscriptPage(
+    paginateGenerationTranscript(words, pageSizeWords, maxPageChars),
+    page,
+  );
 }
 
 /** The generation turn's `get_transcript_words` input surface — chat turns
@@ -546,6 +656,11 @@ interface ToolBuildContext {
   readonly sessionId: string;
   readonly generation: AiGenerationRunContext | undefined;
   readonly createdEvents: { count: number };
+  /** The topic one-shot's paged word snapshot (D1) — the OTHER key for the
+   * paged `get_transcript_words` registration; carries no event-run fields. */
+  readonly pagedWords: readonly AiGenerationSnapshotWord[] | undefined;
+  /** The registration's pagination memo + served-page set (D1/D6). */
+  readonly pageState: TurnPageState;
 }
 
 /**
@@ -561,13 +676,15 @@ interface ToolBuildContext {
  * run id, and cap.
  */
 const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildContext) => void> = {
-  get_transcript_words: (server, { registry, sessionId, generation }) => {
-    // GENERATION turns (task 3.3, design D5): generation-density paged
-    // rendering with a `page` input. Chat turns fall through to the
+  get_transcript_words: (server, { registry, sessionId, generation, pagedWords, pageState }) => {
+    // GENERATION-DENSITY turns: event generation (task 3.3, design D5 — keyed
+    // by the run snapshot) and the topic one-shot (topic-generate-paged-
+    // transcript D1 — keyed by the words-only `pagedWords` snapshot). Both get
+    // the paged rendering with a `page` input. Chat turns fall through to the
     // byte-identical zero-arg chat rendering below — pinned by the
     // pre-existing tests ('get_transcript_words returns COMPACT readable
     // text' in aiMcpServer.test.ts).
-    if (generation !== undefined) {
+    if (generation !== undefined || pagedWords !== undefined) {
       server.tool(
         'get_transcript_words',
         "Returns this session's transcript as readable text at generation " +
@@ -580,13 +697,25 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
           'transcript.',
         generationTranscriptToolShape,
         async (args) => {
-          // Run-start word snapshot when the registration carries one (task
-          // 4.3, Phase-3 carry) — a mid-run replaceTranscriptWords can then
-          // never change this turn's page content/boundaries. Snapshot-less
+          const page = args.page ?? 0;
+          // Word snapshot when the registration carries one — the event run's
+          // (task 4.3, Phase-3 carry) or the topic one-shot's `pagedWords`
+          // (D1), in that precedence. A mid-run replaceTranscriptWords can
+          // then never change this turn's page content or boundaries, and the
+          // pagination is packed ONCE per registration. Snapshot-less
           // registrations keep 3.3's live hub read, resolved at call time
-          // (D3) — never held across an await.
-          const words = generation.words ?? registry.get(sessionId).listTranscriptWords();
-          const res = renderGenerationTranscriptPage(words, args.page ?? 0);
+          // (D3) — never held across an await, and never memoized (live is
+          // live) nor counted as page coverage (no snapshot to cover).
+          if (pageState.words !== undefined) {
+            const res = selectGenerationTranscriptPage(snapshotPages(pageState), page);
+            if (!res.ok) return toolError(res.error);
+            // Coverage (D6) is marked only for a page actually SERVED: a tool
+            // error above returns before this line.
+            pageState.served.add(page);
+            return { content: [{ type: 'text', text: res.text }] };
+          }
+          const words = registry.get(sessionId).listTranscriptWords();
+          const res = renderGenerationTranscriptPage(words, page);
           if (!res.ok) return toolError(res.error);
           return { content: [{ type: 'text', text: res.text }] };
         },
@@ -764,12 +893,7 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
   },
 };
 
-function buildSessionMcpServer(
-  registry: SessionHubRegistry,
-  sessionId: string,
-  context: AiMcpTurnContext | undefined,
-  createdEvents: { count: number },
-): McpServer {
+function buildSessionMcpServer(registry: SessionHubRegistry, reg: TurnRegistration): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
   // Register ONLY the turn's tool set (D6). No context ⇒ the pinned default
   // three chat tools — byte-identical to the pre-context behavior. The Set
@@ -777,11 +901,13 @@ function buildSessionMcpServer(
   // throws on re-registration).
   const ctx: ToolBuildContext = {
     registry,
-    sessionId,
-    generation: context?.generation,
-    createdEvents,
+    sessionId: reg.sessionId,
+    generation: reg.context?.generation,
+    createdEvents: reg.createdEvents,
+    pagedWords: reg.context?.pagedWords,
+    pageState: reg.pageState,
   };
-  for (const name of new Set(context?.tools ?? DEFAULT_TURN_TOOLS)) {
+  for (const name of new Set(reg.context?.tools ?? DEFAULT_TURN_TOOLS)) {
     TOOL_BUILDERS[name](server, ctx);
   }
   return server;
@@ -848,13 +974,28 @@ export class AiMcpListener {
     // turn's per-request MCP servers, readable after the run via the returned
     // `createdEvents()` (the generate route's `{created, cap_hit}` source).
     const createdEvents = { count: 0 };
-    this.turns.set(token, { sessionId, context, createdEvents });
+    // One paged-transcript memo + coverage counter PER REGISTRATION (D1/D6),
+    // on the same terms. The snapshot is the event run's words when present,
+    // else the topic one-shot's `pagedWords`; neither ⇒ no snapshot, no
+    // memoization, no coverage claim.
+    const pageState: TurnPageState = {
+      words: context?.generation?.words ?? context?.pagedWords,
+      pages: null,
+      served: new Set<number>(),
+    };
+    this.turns.set(token, { sessionId, context, createdEvents, pageState });
     const url = `http://${LOOPBACK}:${this.port}${MCP_PATH}`;
     let disposed = false;
     return {
       url,
       token,
       createdEvents: (): number => createdEvents.count,
+      // Forces the pagination if nothing else has (a run that created topics
+      // without ever calling the tool must report 0-of-N, not 0-of-0).
+      pageCoverage: (): AiMcpPageCoverage => ({
+        totalPages: snapshotPages(pageState).length,
+        servedPages: pageState.served.size,
+      }),
       dispose: (): void => {
         if (disposed) return;
         disposed = true;
@@ -891,12 +1032,7 @@ export class AiMcpListener {
     // so concurrent turns never share transport state. The tools are bound to
     // this turn's sessionId — resolved from the registration, not a param.
     try {
-      const server = buildSessionMcpServer(
-        this.registry,
-        reg.sessionId,
-        reg.context,
-        reg.createdEvents,
-      );
+      const server = buildSessionMcpServer(this.registry, reg);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on('close', () => {
         void transport.close();
