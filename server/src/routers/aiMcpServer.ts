@@ -328,6 +328,39 @@ export const GENERATION_LINE_MAX_WORDS = 10;
  * aiMcpGenerationRendering.test.ts. */
 export const GENERATION_PAGE_SIZE_WORDS = 8000;
 
+/** HARD cap on ONE rendered page's size in CHARACTERS, marker line included
+ * (topic-generate-paged-transcript D4) — the primary page bound; the word cap
+ * above is retained only as a secondary bound.
+ *
+ * A word-count cap is not a size bound: each anchored line carries a
+ * fixed-size `[<time>] speaker <S>: ` prefix and a new line starts at every
+ * speaker change, so rendered chars per word are unbounded under diarization
+ * churn (measured: a speaker-flip-every-word page renders ~5x a realistic
+ * one at the same word count). Both generation-density consumers therefore
+ * pack by rendered size.
+ *
+ * 45,000 sits under the Claude CLI's STABLE 50,000-char short-circuit, below
+ * which it accepts an MCP tool result unconditionally (its `len/4` estimator
+ * against the tool-output token cap). Above that threshold the CLI calls the
+ * real token counter and, over the cap, diverts the payload to a file the
+ * tool-locked one-shots cannot read — and that token cap is remotely
+ * configurable, so the char threshold is the only guarantee worth sizing to
+ * (read from CLI 2.1.220; re-check on a CLI bump). */
+export const GENERATION_PAGE_MAX_CHARS = 45_000;
+
+/** The trailing continuation-marker line (its leading newline included) — the
+ * ONLY marker a rendered page may contain (body lines are neutralized). */
+function continuationMarker(nextPage: number, totalPages: number): string {
+  return `\n--- transcript continues: call get_transcript_words with page=${nextPage} of ${totalPages} ---`;
+}
+
+/** Chars the packer holds back from the body so a page STAYS under the cap
+ * once its marker is appended. Page numbers are not known while packing (they
+ * depend on the packing), so the reserve is the marker's width at absurdly
+ * large page numbers — an over-estimate by a few chars on every real page,
+ * which is the safe direction. */
+const CONTINUATION_MARKER_RESERVE = continuationMarker(9_999_999_999, 9_999_999_999).length;
+
 /** One generation-density line + its word count (paging splits on lines). */
 interface GenerationLine {
   readonly text: string;
@@ -378,37 +411,74 @@ function generationDensityLines(
   return lines;
 }
 
+/** Split any line wider than `bodyCap` HARD at the cap (D4) so a single
+ * pathological line can never render an over-cap page — a transcript "word"
+ * is untrusted input with no length or charset restriction, and one 100k-char
+ * word is one line. Chunks after the first carry zero words: the word cap is
+ * secondary and the char cap already bounds these pages. Lines within the cap
+ * pass through untouched, so ordinary transcripts are unaffected. */
+function splitOverCapLines(lines: GenerationLine[], bodyCap: number): GenerationLine[] {
+  if (lines.every((l) => l.text.length <= bodyCap)) return lines;
+  const out: GenerationLine[] = [];
+  for (const line of lines) {
+    if (line.text.length <= bodyCap) {
+      out.push(line);
+      continue;
+    }
+    for (let i = 0; i < line.text.length; i += bodyCap) {
+      out.push({
+        text: line.text.slice(i, i + bodyCap),
+        wordCount: i === 0 ? line.wordCount : 0,
+      });
+    }
+  }
+  return out;
+}
+
 /**
- * Render ONE page of the generation-density transcript (task 3.3, design D5).
+ * Render ONE page of the generation-density transcript (task 3.3, design D5;
+ * repacked by rendered size in topic-generate-paged-transcript D4).
  * Deterministic: a pure function of the word list, so sequential calls see
- * consistent page boundaries. Pages are packed greedily on LINE boundaries up
- * to `pageSizeWords` (a page always takes at least one line, and no line
- * exceeds `GENERATION_LINE_MAX_WORDS` ≤ the page size in practice). Every
- * page except the last ends with an explicit continuation marker naming the
- * next page and the total — never silent truncation. An out-of-range,
- * negative, or non-integer page is an error (`ok: false`), never empty text.
+ * consistent page boundaries. Pages are packed greedily on LINE boundaries to
+ * the `maxPageChars` rendered-size cap — the primary bound, applied to the
+ * page AS THE MODEL RECEIVES IT (the packer reserves the trailing continuation
+ * marker's width out of the body) — with `pageSizeWords` retained as a
+ * secondary bound. A page always takes at least one line, and a line wider
+ * than the cap is split hard at it. Every page except the last ends with an
+ * explicit continuation marker naming the next page and the total — never
+ * silent truncation. An out-of-range, negative, or non-integer page is an
+ * error (`ok: false`), never empty text.
  *
- * `pageSizeWords` is parameterized FOR TESTS ONLY — the tool always calls
- * with the measured `GENERATION_PAGE_SIZE_WORDS` default.
+ * `pageSizeWords` / `maxPageChars` are parameterized FOR TESTS ONLY — the tool
+ * always calls with the `GENERATION_PAGE_SIZE_WORDS` / `GENERATION_PAGE_MAX_CHARS`
+ * defaults.
  */
 export function renderGenerationTranscriptPage(
   words: ReadonlyArray<{ word: string; session_time: string; speaker: string }>,
   page: number,
   pageSizeWords: number = GENERATION_PAGE_SIZE_WORDS,
+  maxPageChars: number = GENERATION_PAGE_MAX_CHARS,
 ): { ok: true; text: string; totalPages: number } | { ok: false; error: string } {
   if (!Number.isInteger(page) || page < 0) {
     return { ok: false, error: `Invalid page ${page}: expected a non-negative integer.` };
   }
-  const lines = generationDensityLines(words);
+  const bodyCap = Math.max(1, maxPageChars - CONTINUATION_MARKER_RESERVE);
+  const lines = splitOverCapLines(generationDensityLines(words), bodyCap);
   const pages: string[][] = [];
   let cur: string[] = [];
+  let curChars = 0;
   let curWords = 0;
   for (const line of lines) {
-    if (cur.length > 0 && curWords + line.wordCount > pageSizeWords) {
+    // Cost of appending this line to the current page: its own chars, plus the
+    // '\n' the join will put in front of it when the page is non-empty.
+    const cost = cur.length === 0 ? line.text.length : line.text.length + 1;
+    if (cur.length > 0 && (curChars + cost > bodyCap || curWords + line.wordCount > pageSizeWords)) {
       pages.push(cur);
       cur = [];
+      curChars = 0;
       curWords = 0;
     }
+    curChars += cur.length === 0 ? line.text.length : line.text.length + 1;
     cur.push(line.text);
     curWords += line.wordCount;
   }
@@ -425,9 +495,7 @@ export function renderGenerationTranscriptPage(
   }
   const body = pages[page].join('\n');
   const text =
-    page < pages.length - 1
-      ? `${body}\n--- transcript continues: call get_transcript_words with page=${page + 1} of ${pages.length} ---`
-      : body;
+    page < pages.length - 1 ? `${body}${continuationMarker(page + 1, pages.length)}` : body;
   return { ok: true, text, totalPages: pages.length };
 }
 
@@ -479,8 +547,8 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
       server.tool(
         'get_transcript_words',
         "Returns this session's transcript as readable text at generation " +
-          'density: speaker- and timecode-anchored lines, delivered in fixed ' +
-          `sequential pages of at most ${GENERATION_PAGE_SIZE_WORDS} words. ` +
+          'density: speaker- and timecode-anchored lines, delivered in ' +
+          'sequential size-capped pages. ' +
           'Long transcripts span multiple pages: start at page=0 (the ' +
           'default); every page except the last ends with a continuation ' +
           'marker naming the next page — keep calling with the named page ' +
