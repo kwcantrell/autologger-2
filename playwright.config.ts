@@ -122,6 +122,12 @@ export default defineConfig({
         // task 5.2): keeps this server's transcript generate endpoint off even if
         // server/.env carries a real key.
         DEEPGRAM_API_KEY: '',
+        // Same rule for the AI CLI (auto-generate-event-logs 6.2 hardening):
+        // without this override, a real CLAUDE_CLI_PATH in server/.env would
+        // reach this server. No spec here touches a generate endpoint (and
+        // REQUIRE_LOGIN=1 would 401 first), but parity with DEEPGRAM_API_KEY
+        // closes the latent gap.
+        CLAUDE_CLI_PATH: '',
       },
     },
   ],
