@@ -13,6 +13,17 @@ interface Props {
   /** Reason-span content while latched — a slot, because Transcribe's reason
    * carries an inline `<code>DEEPGRAM_API_KEY</code>` element. */
   reason: ReactNode;
+  /** Render the reason span visually hidden (`sr-only`) instead of as visible
+   * toolbar text. Used by the Event feed's AT-REST no-instructions gate
+   * (auto-generate-event-logs fix wave): that gate is the default state of
+   * every session, and an always-visible reason at rest overflows the shared
+   * `FEED_TOOLBAR` row (flex-[0_0_auto] sizes it to max-content), clipping
+   * EDIT and pushing TIME DISPLAY/FILTER off-viewport. The spec's
+   * honest-gating requirement accepts `aria-describedby` on a focusable
+   * `aria-disabled` control, which this preserves — the reason stays
+   * keyboard/AT-reachable. The 503 latch (a discovered outage, not a resting
+   * state) keeps the always-visible form; callers must NOT set this then. */
+  reasonVisuallyHidden?: boolean;
   /** Optional inline success-outcome slot (auto-generate-event-logs D9: the
    * Event feed's created-count/cap note). Rendered as a `role="status"` span
    * in the same single inline channel as `genError` — the two are mutually
@@ -48,6 +59,7 @@ export function GenerateToolbar({
   generatePending,
   reasonId,
   reason,
+  reasonVisuallyHidden,
   outcome,
   onInsert,
   insertPending,
@@ -78,7 +90,12 @@ export function GenerateToolbar({
         {generatePending ? 'Generating…' : 'Auto Generate'}
       </button>
       {genUnavailable && (
-        <span id={reasonId} className="ml-2 self-center text-[0.78rem] text-v5-muted">
+        <span
+          id={reasonId}
+          className={
+            reasonVisuallyHidden ? 'sr-only' : 'ml-2 self-center text-[0.78rem] text-v5-muted'
+          }
+        >
           {reason}
         </span>
       )}

@@ -25,7 +25,11 @@ import { EventLogSheet } from './EventLogSheet';
 //     channel); `cap_hit` adds "per-run cap reached" wording.
 //  4. `auto_instructions_present: false` makes the control non-actionable with
 //     a DISTINCT keyboard-reachable reason pointing at Settings (spec "No
-//     instructions configured") — not the 503 latch.
+//     instructions configured") — not the 503 latch. This at-rest reason is
+//     VISUALLY HIDDEN (sr-only, reached via `aria-describedby`; a spec-accepted
+//     form) so the resting toolbar shows no extra visible text — an
+//     always-visible span overflowed the shared FEED_TOOLBAR row (6.2 gate
+//     regression). The 503 latch keeps the always-visible form.
 //  5. Run/outcome state is scoped to the STARTING session across this
 //     mounted-hidden unkeyed panel (spec "Session switch mid-run does not leak
 //     state").
@@ -175,6 +179,9 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
     const reason = document.getElementById(reasonId as string);
     expect(reason?.textContent).toMatch(/no integration configured/);
     expect(reason?.textContent).toMatch(/[Rr]eload/);
+    // The latch reason stays VISIBLE (sighted users see the outage too) —
+    // only the at-rest no-instructions reason is sr-only.
+    expect(reason?.classList.contains('sr-only')).toBe(false);
     expect(calls.count).toBe(1);
 
     // Single channel: the latch replaces any one-off error alert.
@@ -281,6 +288,11 @@ describe('event feed — no-instructions gate (auto_instructions_present: false)
     expect(reason?.textContent).toMatch(/Settings/);
     expect(reason?.textContent).toMatch(/event-buttons table/);
     expect(reason?.textContent).not.toMatch(/no integration configured/);
+    // AT REST the reason is visually hidden (sr-only) — reachable through the
+    // accessible description above, but adding no visible toolbar text: this
+    // gate is every session's default state, and a visible span here overflows
+    // the shared FEED_TOOLBAR row (6.2 gate regression, fix wave).
+    expect(reason?.classList.contains('sr-only')).toBe(true);
 
     // Clicking never calls the paid endpoint.
     fireEvent.click(gated);

@@ -481,10 +481,15 @@ export function EventLogSheet({ sessionId }: Props) {
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
 
   // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
-  // aria-disabled button + always-visible `aria-describedby` reason span —
-  // lives on GenerateToolbar). Two distinct non-actionable reasons share the
-  // one reason span: the 503 latch (integration missing; reload to re-check)
+  // aria-disabled button + `aria-describedby` reason span — lives on
+  // GenerateToolbar). Two distinct non-actionable reasons share the one
+  // reason span: the 503 latch (integration missing; reload to re-check)
   // takes precedence over the live no-instructions gate (point at Settings).
+  // Presentation differs by cause: the latch keeps the always-visible span
+  // (a discovered outage), while the AT-REST no-instructions gate — the
+  // default state of every session — renders it sr-only so the toolbar shows
+  // no extra visible text (an always-visible span overflows the shared
+  // FEED_TOOLBAR row; see GenerateToolbar's `reasonVisuallyHidden` doc).
   const genReasonId = 'v5-event-feed-gen-reason';
   const genLatchedReason = (
     <>
@@ -507,6 +512,7 @@ export function EventLogSheet({ sessionId }: Props) {
         generatePending={generatePending}
         reasonId={genReasonId}
         reason={genUnavailable ? genLatchedReason : genNoInstructionsReason}
+        reasonVisuallyHidden={!genUnavailable}
         outcome={
           genOutcome &&
           `Created ${genOutcome.created} event${genOutcome.created === 1 ? '' : 's'}` +
@@ -572,6 +578,11 @@ export function EventLogSheet({ sessionId }: Props) {
       feedAriaLabel="Event feed"
       toolbar={toolbar}
       toolbarAriaLabel="Event feed tools"
+      // max-w-full clamps the toolbar row so its flex-wrap engages — with the
+      // AUTO GENERATE button added, the unclamped max-content row overflowed
+      // 390px viewports and pushed FILTER off-viewport (see FeedShell's
+      // `toolbarClassName` doc).
+      toolbarClassName="max-w-full"
       logBottomId="v4-log-bottom"
       sheetId="v4-log-sheet"
       after={
