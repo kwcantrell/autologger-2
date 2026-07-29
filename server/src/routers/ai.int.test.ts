@@ -69,6 +69,12 @@ import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { AiMcpListener, getAiMcpListener } from './aiMcpServer';
+// Namespace import (not the named `driveAiTurn` ai.ts itself uses) so the
+// test below can `vi.spyOn` the module's live export — asserting what ai.ts
+// passes IN, distinct from the wire string aiChatRunner.ts eventually
+// produces (which is identical whether ai.ts passes the tools explicitly or
+// omits and falls back to the runner's own default; see that test's comment).
+import * as aiTurnModule from './aiTurn';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
 // OBSERVATION note above) — harmless, but not load-bearing through this
@@ -343,7 +349,9 @@ describe('ai/chat — open-network refusal (503)', () => {
 describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D7, task 3.4)', () => {
   it(
     'the spawned argv --allowedTools names exactly the three chat tools, byte-identical ' +
-      'and order-stable — pinned at the ai.ts call level, not just the runner default',
+      'and order-stable — the WIRE STRING that reaches the CLI (see the next test for the ' +
+      'ai.ts-level pin: this argv is identical whether ai.ts passes the tools explicitly or ' +
+      'omits and falls back to the runner default, so it alone cannot distinguish the two)',
     async () => {
       const s = seededSession();
       const res = await post(s, { message: 'hi' }, fixtureEnv());
@@ -364,6 +372,27 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
       // ...and the literal above stays in lockstep with the exported constant
       // `ai.ts` actually passes, so the two can never drift apart silently.
       expect(argv[i + 1]).toBe(AI_CHAT_ALLOWED_TOOLS.map((n) => `mcp__autologger__${n}`).join(','));
+    },
+  );
+
+  it(
+    "driveAiTurn receives ai.ts's explicit allowedTools option, pinned AT THE ai.ts CALL " +
+      'LEVEL — not just the runner default: deleting the `allowedTools: AI_CHAT_ALLOWED_TOOLS` ' +
+      'pass in ai.ts would leave the argv test above green (the runner omit-path default emits ' +
+      'the identical wire string), so that test alone cannot pin explicitness. This one can, by ' +
+      "asserting the option ai.ts hands to driveAiTurn's spawn-options layer directly.",
+    async () => {
+      const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
+      try {
+        const s = seededSession();
+        const res = await post(s, { message: 'hi' }, fixtureEnv());
+        expect(res.status).toBe(200);
+        await res.text(); // drain the SSE stream so the turn completes
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][0].allowedTools).toEqual(AI_CHAT_ALLOWED_TOOLS);
+      } finally {
+        spy.mockRestore();
+      }
     },
   );
 

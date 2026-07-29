@@ -9,8 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SessionHubRegistry } from '../session/SessionHub';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SessionHub, SessionHubRegistry } from '../session/SessionHub';
 import {
   type AiGenerationRunContext,
   AiMcpListener,
@@ -908,6 +908,48 @@ describe('create_event — per-run cap (3.2)', () => {
     expect(listEventRows('gen-cap1')).toHaveLength(1);
     turn.dispose();
   });
+});
+
+describe('create_event — counter reflects only successful inserts (3.2)', () => {
+  it(
+    'an insert-time failure (hub.addEvent throws) returns isError and leaves the per-run ' +
+      'counter unchanged; a subsequent real success reports a count that excludes the failed attempt',
+    async () => {
+      const turn = listener.registerTurn('gen-fault', genContext({ cap: 5 }));
+      // Force the ONE insert path itself to fail — distinct from the
+      // pre-insert validation failures covered by the "per-run cap" describe
+      // above, which never reach `hub.addEvent` at all and so can't tell
+      // apart an increment placed before vs. after the insert call.
+      const spy = vi.spyOn(SessionHub.prototype, 'addEvent').mockImplementationOnce(() => {
+        throw new Error('simulated insert fault');
+      });
+      try {
+        const faulted = await createEventViaMcp(turn.url, turn.token, {
+          category: 'cat1',
+          message: 'SLATE',
+          session_time: '00:00:01:00',
+        });
+        expect(faulted.isError).toBe(true);
+        expect(turn.createdEvents()).toBe(0);
+        expect(listEventRows('gen-fault')).toHaveLength(0);
+
+        // The mock only fires once — this call hits the real (transactional)
+        // addEvent and must succeed, reporting a count of 1, not 2: the
+        // failed attempt above must not have incremented the counter.
+        const ok = await createEventViaMcp(turn.url, turn.token, {
+          category: 'cat1',
+          message: 'SLATE',
+          session_time: '00:00:02:00',
+        });
+        expect(ok.isError).toBeFalsy();
+        expect(turn.createdEvents()).toBe(1);
+        expect(listEventRows('gen-fault')).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        turn.dispose();
+      }
+    },
+  );
 });
 
 describe('create_event — bracketing placement over a real store (3.2, spec invariant)', () => {
