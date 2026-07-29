@@ -11,7 +11,8 @@
 //
 // Scope deliberately EXCLUDES the AI-turn concurrency SLOT
 // (`aiChatTurns.tryAcquire`/`slot.release()`): callers' 409 responses differ
-// (`ai/chat`'s "AI chat or AI v2" wording vs. a generate-specific message),
+// (each endpoint's detail phrases its own next action, though all now name
+// the full holder set — AI chat, AI v2, topic generation, event generation),
 // so slot acquire/release stays with each router — this mirrors `ai/chat`'s
 // pre-extraction structure exactly (the slot was already acquired outside
 // the `streamSSE` callback and released in its own `finally`).
