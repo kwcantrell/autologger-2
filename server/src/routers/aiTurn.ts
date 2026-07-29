@@ -32,7 +32,12 @@ import {
   runAiChatTurn,
   spawnAiChatTurn,
 } from './aiChatRunner';
-import { type AiMcpToolName, type AiMcpTurn, getAiMcpListener } from './aiMcpServer';
+import {
+  type AiMcpToolName,
+  type AiMcpTurn,
+  type AiMcpTurnContext,
+  getAiMcpListener,
+} from './aiMcpServer';
 
 export interface DriveAiTurnOptions {
   /** The process-wide session registry — resolves the MCP listener singleton. */
@@ -42,13 +47,23 @@ export interface DriveAiTurnOptions {
   sessionId: string;
   /** The user message, delivered on the child's stdin (never argv). */
   message: string;
-  /** Restrict the `--allowedTools` set for this turn; omit for the default
-   * CHAT allowlist (the three chat tools — pinned in `aiChatRunner.ts`,
-   * deliberately narrower than `AI_MCP_TOOL_NAMES` now that the registry also
-   * carries `create_event`; auto-generate-event-logs D7). `topics/generate`
-   * (task 2.3) withholds `list_topics` here so the model cannot dedup against
-   * the topics it is about to replace (design D3/D5). */
+  /** Restrict the `--allowedTools` set for this turn. As of
+   * auto-generate-event-logs task 3.4 EVERY caller passes this explicitly —
+   * `ai/chat` passes `AI_CHAT_ALLOWED_TOOLS` (the three chat tools) and
+   * `topics/generate` withholds `list_topics` so the model cannot dedup
+   * against the topics it is about to replace (topic-generation D3/D5). The
+   * omit path still exists and falls back to the CHAT default pinned in
+   * `aiChatRunner.ts` (deliberately narrower than `AI_MCP_TOOL_NAMES` now
+   * that the registry also carries `create_event`; D7). */
   allowedTools?: readonly AiMcpToolName[];
+  /** Per-turn MCP registration context, passed VERBATIM to
+   * `AiMcpListener#registerTurn` (auto-generate-event-logs D6/D7): the turn's
+   * server-side tool set, plus — on event-generation turns (task 4.3) — the
+   * run snapshot. `ai/chat` and `topics/generate` both pass an explicit
+   * `{tools}` matching their argv allowlist (task 3.4), so the server-side
+   * registration is belt to the argv's braces; omit ⇒ `registerTurn`'s pinned
+   * context-less default (the three chat tools). */
+  mcpContext?: AiMcpTurnContext;
   /** Dedicated `--append-system-prompt`; omit for `ai/chat`'s reused brief.
    * `topics/generate` passes a generate-specific prompt (no `list_topics`
    * dedup instruction, since that tool is withheld). */
@@ -81,7 +96,7 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<AiChatTurnO
   let spawned: AiChatSpawnResult | null = null;
   try {
     const listener = await getAiMcpListener(opts.registry);
-    mcpTurn = listener.registerTurn(opts.sessionId);
+    mcpTurn = listener.registerTurn(opts.sessionId, opts.mcpContext);
     spawned = spawnAiChatTurn({
       cliPath: opts.cliPath,
       sessionId: opts.sessionId,

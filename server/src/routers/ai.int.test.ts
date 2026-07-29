@@ -65,10 +65,10 @@ import {
   seedUser,
 } from '../test/helpers';
 import type { Config } from '../types';
-import { __resetAiChatIssuedSessionIdsForTests } from './ai';
+import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
-import { getAiMcpListener } from './aiMcpServer';
+import { AiMcpListener, getAiMcpListener } from './aiMcpServer';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
 // OBSERVATION note above) — harmless, but not load-bearing through this
@@ -338,6 +338,56 @@ describe('ai/chat — open-network refusal (503)', () => {
     // The slot is released once the turn completes (finally).
     expect(aiChatTurns.isSessionInFlight(s)).toBe(false);
   });
+});
+
+describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D7, task 3.4)', () => {
+  it(
+    'the spawned argv --allowedTools names exactly the three chat tools, byte-identical ' +
+      'and order-stable — pinned at the ai.ts call level, not just the runner default',
+    async () => {
+      const s = seededSession();
+      const res = await post(s, { message: 'hi' }, fixtureEnv());
+      expect(res.status).toBe(200);
+      await res.text(); // drain the SSE stream so the turn completes
+      const argv = recordedArgv(s);
+      const i = argv.indexOf('--allowedTools');
+      expect(i).toBeGreaterThanOrEqual(0);
+      // Byte-pinned literal (D7): the registry now also carries `create_event`,
+      // and growing it must never widen a chat turn's argv. This is the exact
+      // string the pre-3.4 omit-path default produced — explicitness changed
+      // nothing observable. (The runner's own omit-path default stays pinned to
+      // the same three by aiChatRunner.test.ts "the allowedTools value names
+      // exactly the three mcp__autologger__* tools" — 3.2's pin.)
+      expect(argv[i + 1]).toBe(
+        'mcp__autologger__get_transcript_words,mcp__autologger__list_topics,mcp__autologger__create_topic',
+      );
+      // ...and the literal above stays in lockstep with the exported constant
+      // `ai.ts` actually passes, so the two can never drift apart silently.
+      expect(argv[i + 1]).toBe(AI_CHAT_ALLOWED_TOOLS.map((n) => `mcp__autologger__${n}`).join(','));
+    },
+  );
+
+  it(
+    "registerTurn receives chat's explicit turn context ({tools: AI_CHAT_ALLOWED_TOOLS}) — " +
+      'server-side registration no longer relies on the context-less default',
+    async () => {
+      // Prototype spy — unlike the file-top `vi.mock` (see SPAWN OBSERVATION),
+      // this intercepts reliably: method dispatch goes through the prototype at
+      // call time, regardless of when the app-singleton listener was built.
+      const spy = vi.spyOn(AiMcpListener.prototype, 'registerTurn');
+      try {
+        const s = seededSession();
+        const res = await post(s, { message: 'hi' }, fixtureEnv());
+        expect(res.status).toBe(200);
+        await res.text();
+        const call = spy.mock.calls.find(([sessionId]) => sessionId === s);
+        expect(call).toBeDefined();
+        expect(call?.[1]).toEqual({ tools: AI_CHAT_ALLOWED_TOOLS });
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 });
 
 describe('ai/chat — body validation (422 / 400), spawning nothing', () => {

@@ -33,9 +33,26 @@ import { chatRequestSchema } from '../schemas';
 import type { AppEnv } from '../types';
 import { ApiError, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
+import type { AiMcpToolName } from './aiMcpServer';
 import { driveAiTurn } from './aiTurn';
 
 export const aiRouter = new Hono<AppEnv>();
+
+/** Chat's tool surface, pinned EXPLICITLY (auto-generate-event-logs D7, task
+ * 3.4): exactly the three chat tools, deliberately NOT derived from the full
+ * `AI_MCP_TOOL_NAMES` registry — the registry now also carries `create_event`
+ * (generation turns only), and growing it must never silently widen a chat
+ * turn. Passed to `driveAiTurn` below as BOTH the CLI `--allowedTools`
+ * allowlist and the server-side MCP registration context (`mcpContext`), so
+ * chat relies on the omit-path defaults nowhere. The wire string this produces
+ * is byte-identical to the pre-3.4 omit-path default (`AI_CHAT_DEFAULT_TOOLS`
+ * in `aiChatRunner.ts`, which stays as the fallback for callers that omit) —
+ * pinned by ai.int.test.ts "tool surface pinned explicitly". */
+export const AI_CHAT_ALLOWED_TOOLS = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+] as const satisfies readonly AiMcpToolName[];
 
 const NOT_CONFIGURED_DETAIL =
   'AI chat is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
@@ -140,6 +157,12 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
         cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,
         message: body.message,
+        // Explicit tool surface (D7, task 3.4): argv allowlist AND server-side
+        // MCP registration both name exactly the three chat tools — no
+        // reliance on either omit-path default, so a growing registry can
+        // never widen a chat turn.
+        allowedTools: AI_CHAT_ALLOWED_TOOLS,
+        mcpContext: { tools: AI_CHAT_ALLOWED_TOOLS },
         maxBudgetUsd: aiChatMaxBudgetUsd(c.env.config),
         timeoutMs: aiChatTimeoutSec(c.env.config) * 1000,
         resumeSessionId,

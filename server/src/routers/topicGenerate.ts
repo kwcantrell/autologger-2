@@ -76,6 +76,12 @@ export async function generateTopicsTurn(
     message: TOPIC_GENERATE_MESSAGE,
     systemPrompt: TOPIC_GENERATE_SYSTEM_PROMPT,
     allowedTools: TOPIC_GENERATE_ALLOWED_TOOLS,
+    // Explicit server-side registration mirroring the argv allowlist
+    // (auto-generate-event-logs D7, task 3.4): the one-shot's MCP server now
+    // also declines to REGISTER `list_topics`, so the withheld tool is denied
+    // at the server — not only by CLI flags — and the registration no longer
+    // rides the context-less default.
+    mcpContext: { tools: TOPIC_GENERATE_ALLOWED_TOOLS },
     maxBudgetUsd: opts.maxBudgetUsd,
     timeoutMs: opts.timeoutMs,
     emit: () => {},

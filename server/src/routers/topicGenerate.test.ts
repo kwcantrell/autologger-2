@@ -18,10 +18,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
-import { __resetAiMcpListenerForTests } from './aiMcpServer';
+import { __resetAiMcpListenerForTests, AiMcpListener } from './aiMcpServer';
 import {
   generateTopicsTurn,
   TOPIC_GENERATE_MESSAGE,
@@ -133,6 +133,33 @@ describe('generateTopicsTurn', () => {
       // would fail here.
       expect(allowed).not.toContain('mcp__autologger__list_topics');
       expect(allowed.join(',')).not.toMatch(/\blist_topics\b/);
+      // Byte-pinned, order-stable (auto-generate-event-logs task 3.4): chat's
+      // allowlist going explicit in ai.ts must leave this argv unchanged.
+      expect(argv[i + 1]).toBe(
+        'mcp__autologger__get_transcript_words,mcp__autologger__create_topic',
+      );
+    },
+  );
+
+  it(
+    "registerTurn receives the generate turn's explicit context — the server-side " +
+      'registration mirrors the argv withholding (auto-generate-event-logs D7, task 3.4)',
+    async () => {
+      const spy = vi.spyOn(AiMcpListener.prototype, 'registerTurn');
+      try {
+        await generateTopicsTurn({
+          registry,
+          cliPath: SUCCESS_FIXTURE,
+          sessionId,
+          maxBudgetUsd: 2.0,
+          timeoutMs: 10_000,
+        });
+        const call = spy.mock.calls.find(([id]) => id === sessionId);
+        expect(call).toBeDefined();
+        expect(call?.[1]).toEqual({ tools: ['get_transcript_words', 'create_topic'] });
+      } finally {
+        spy.mockRestore();
+      }
     },
   );
 

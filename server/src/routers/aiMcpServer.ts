@@ -36,8 +36,9 @@
 // explicit-anchor path, gated by the generation run snapshot.
 // Registration is PER TURN (auto-generate-event-logs D6): each turn's
 // registration carries its tool set (+ generation run snapshot), and
-// `buildSessionMcpServer` registers only that set — a context-less turn gets
-// the default three chat tools, so chat turns can never reach `create_event`.
+// `buildSessionMcpServer` registers only that set — chat passes its three
+// tools explicitly (D7, task 3.4), a context-less turn still gets the pinned
+// default three, and either way a chat turn can never reach `create_event`.
 
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
@@ -131,8 +132,10 @@ export interface AiGenerationRunContext {
 }
 
 /** Per-turn registration context (auto-generate-event-logs D6): the turn's
- * tool set, plus the run snapshot on generation turns. Omitted entirely by
- * chat/topics callers ⇒ the default three chat tools, behavior unchanged. */
+ * tool set, plus the run snapshot on generation turns. `ai/chat` and
+ * `topics/generate` pass explicit `{tools}` matching their argv allowlists
+ * (D7, task 3.4); a context-less registration still gets the pinned default
+ * three chat tools. */
 export interface AiMcpTurnContext {
   /** Tool names the per-request MCP server registers for this turn — and
    * ONLY these; anything else in the registry is denied at the server. */
@@ -723,8 +726,9 @@ export class AiMcpListener {
    * it in the turn's `finally`.
    *
    * `context` (optional, auto-generate-event-logs D6) carries the turn's tool
-   * set and — on generation turns — the run snapshot. Omitted (all chat/topics
-   * callers today) ⇒ the default three chat tools, behavior unchanged.
+   * set and — on generation turns — the run snapshot. `ai/chat` and
+   * `topics/generate` pass explicit `{tools}` (D7, task 3.4); omitted ⇒ the
+   * pinned default three chat tools.
    */
   registerTurn(sessionId: string, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');

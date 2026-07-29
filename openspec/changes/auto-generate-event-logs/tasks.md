@@ -62,7 +62,7 @@
       byte-identical via existing tests) (design D5). Includes the **measurement
       task**: render a realistic long-session fixture, record its size vs the CLI
       tool-output ceiling in the test, pin N and the page size from it.
-- [ ] 3.4 Pin chat's tool surface: explicit `AI_CHAT_ALLOWED_TOOLS` in `ai.ts`; tests
+- [x] 3.4 Pin chat's tool surface: explicit `AI_CHAT_ALLOWED_TOOLS` in `ai.ts`; tests
       pin chat argv `--allowedTools` to exactly the three chat tools and
       topics/generate's allowlist unchanged (design D7).
 
