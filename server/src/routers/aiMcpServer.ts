@@ -361,6 +361,24 @@ function continuationMarker(nextPage: number, totalPages: number): string {
  * which is the safe direction. */
 const CONTINUATION_MARKER_RESERVE = continuationMarker(9_999_999_999, 9_999_999_999).length;
 
+/** Rewrite any run of 3+ hyphens in rendered body text so it can never
+ * contain the continuation marker's `---` sentinel (D5) — the marker is
+ * trustworthy FRAMING, not data the transcript can reproduce.
+ *
+ * Transcript text is untrusted third-party input: DeepGram output of arbitrary
+ * audio, YouTube imports, and direct transcript-word CRUD that restricts
+ * neither charset nor word shape (a "word" may be thousands of chars,
+ * newlines included). Without this, a spoken or pasted marker line could tell
+ * the model it had reached the end of the transcript pages early. Mirrors
+ * `eventGeneratePrompt.ts`'s `neutralizeDelimiterTokens` for its own `<<<…>>>`
+ * sentinel — same discipline, different sentinel, so the two stay separate.
+ * Content is preserved (the model is meant to read it); only the sentinel is
+ * defanged, and ordinary hyphenation (`well-known`, `pause--then`) is
+ * untouched. */
+function neutralizeMarkerTokens(text: string): string {
+  return text.replace(/-{3,}/g, '--');
+}
+
 /** One generation-density line + its word count (paging splits on lines). */
 interface GenerationLine {
   readonly text: string;
@@ -386,7 +404,10 @@ function generationDensityLines(
     const timePrefix = lineTime ? `[${lineTime}] ` : '';
     const speakerPrefix = curSpeaker ? `speaker ${curSpeaker}: ` : '';
     lines.push({
-      text: `${timePrefix}${speakerPrefix}${buf.join(' ')}`.trim(),
+      // Neutralized over the WHOLE composed line: the word text, the speaker,
+      // and the session_time are all untrusted (the renderer's own literals
+      // carry no hyphens, so this can only ever touch transcript content).
+      text: neutralizeMarkerTokens(`${timePrefix}${speakerPrefix}${buf.join(' ')}`.trim()),
       wordCount: buf.length,
     });
     buf = [];
@@ -472,7 +493,10 @@ export function renderGenerationTranscriptPage(
     // Cost of appending this line to the current page: its own chars, plus the
     // '\n' the join will put in front of it when the page is non-empty.
     const cost = cur.length === 0 ? line.text.length : line.text.length + 1;
-    if (cur.length > 0 && (curChars + cost > bodyCap || curWords + line.wordCount > pageSizeWords)) {
+    if (
+      cur.length > 0 &&
+      (curChars + cost > bodyCap || curWords + line.wordCount > pageSizeWords)
+    ) {
       pages.push(cur);
       cur = [];
       curChars = 0;
