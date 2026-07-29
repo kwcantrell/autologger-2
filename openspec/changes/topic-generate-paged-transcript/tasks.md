@@ -6,7 +6,7 @@
 
 ## 1. Shared pager: size-safe packing + marker neutralization (aiMcpServer.ts)
 
-- [ ] 1.1 Repack `renderGenerationTranscriptPage` by rendered size (D4): hard cap
+- [x] 1.1 Repack `renderGenerationTranscriptPage` by rendered size (D4): hard cap
       45,000 rendered chars per page, packed on line boundaries; keep
       `GENERATION_PAGE_SIZE_WORDS` (8000) as a secondary cap; split a single over-cap
       line hard at the cap. TDD in `aiMcpGenerationRendering.test.ts`: adversarial
@@ -18,7 +18,7 @@
       tool DESCRIPTION so it no longer promises fixed word-sized pages (size-capped
       pages; keep the marker/keep-paging protocol text — the topic-generation prompt
       scenario leans on it). Gate: `npm run typecheck` + `npm test`.
-- [ ] 1.2 Neutralize continuation-marker-shaped content in body lines (D5, mirroring
+- [x] 1.2 Neutralize continuation-marker-shaped content in body lines (D5, mirroring
       `eventGeneratePrompt.ts`'s `neutralizeDelimiterTokens` discipline) so no
       transcript word can render a line matching the marker shape. Tests: a word
       carrying a byte-exact marker line renders neutralized; the tool's own trailing
