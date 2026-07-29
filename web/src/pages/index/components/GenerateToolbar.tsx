@@ -13,8 +13,17 @@ interface Props {
   /** Reason-span content while latched — a slot, because Transcribe's reason
    * carries an inline `<code>DEEPGRAM_API_KEY</code>` element. */
   reason: ReactNode;
-  onInsert: () => void;
-  insertPending: boolean;
+  /** Optional inline success-outcome slot (auto-generate-event-logs D9: the
+   * Event feed's created-count/cap note). Rendered as a `role="status"` span
+   * in the same single inline channel as `genError` — the two are mutually
+   * exclusive per run (an error resets the mutation's data, a fresh run
+   * clears the error), and `genError` wins if both are ever passed. */
+  outcome?: ReactNode;
+  /** Insert is optional: the Event feed has no Insert affordance (manual
+   * logging happens through the event-button pad), while Transcribe/Topics
+   * keep theirs. Omitting `onInsert` omits the button. */
+  onInsert?: () => void;
+  insertPending?: boolean;
 }
 
 /**
@@ -39,6 +48,7 @@ export function GenerateToolbar({
   generatePending,
   reasonId,
   reason,
+  outcome,
   onInsert,
   insertPending,
 }: Props) {
@@ -47,6 +57,11 @@ export function GenerateToolbar({
       {genError && (
         <span role="alert" className="ml-2 self-center text-[0.78rem] text-v5-danger">
           {genError}
+        </span>
+      )}
+      {!genError && outcome != null && (
+        <span role="status" className="ml-2 self-center text-[0.78rem] text-v5-muted">
+          {outcome}
         </span>
       )}
       <button
@@ -67,9 +82,16 @@ export function GenerateToolbar({
           {reason}
         </span>
       )}
-      <button type="button" className={FEED_GLASS_BTN} disabled={insertPending} onClick={onInsert}>
-        Insert
-      </button>
+      {onInsert && (
+        <button
+          type="button"
+          className={FEED_GLASS_BTN}
+          disabled={insertPending}
+          onClick={onInsert}
+        >
+          Insert
+        </button>
+      )}
     </>
   );
 }

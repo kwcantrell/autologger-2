@@ -1,6 +1,11 @@
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { useDeleteEvent, useEvents, useUpdateEvent } from '../../../api/hooks/useEvents';
+import {
+  useDeleteEvent,
+  useEvents,
+  useGenerateEvents,
+  useUpdateEvent,
+} from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
 import type { LogEvent, SessionStatus } from '../../../api/types';
@@ -9,11 +14,13 @@ import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
 import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
+import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventLogRow, type RowEditValues } from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
+import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 
 // --- feed-row-seek, task 6.2 (design D4) ---
@@ -226,6 +233,38 @@ export function EventLogSheet({ sessionId }: Props) {
   // --- Mutations ---
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
+
+  // --- AUTO GENERATE (auto-generate-event-logs design D9) ---
+  // Same machinery as Transcribe/Topics: `useGatedGenerate` owns the 503
+  // latch (per MOUNTED panel — this sheet is mounted-hidden and unkeyed, so
+  // the latch deliberately persists across session switches and clears only
+  // on reload) and the single inline non-503 error channel.
+  const generateEvents = useGenerateEvents(sessionId);
+  const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generateEvents.mutate);
+  // Run/outcome state is KEYED BY THE SESSION THE RUN STARTED FOR (spec
+  // "Session switch mid-run does not leak state" — the AiV2Panel lesson for
+  // this unkeyed panel): `genRunSessionId` records the starting session, and
+  // pending/outcome/error render ONLY while it matches the current
+  // `sessionId`. A mid-run switch leaves the request running (the mutation —
+  // and the server-side run — always complete); the new session's control
+  // reads idle, and returning to the starting session shows its outcome.
+  // Deliberately NOT cleared by the session-change reset effect below.
+  const [genRunSessionId, setGenRunSessionId] = useState<string | null>(null);
+  const genRunIsThisSession = genRunSessionId === sessionId;
+  const generatePending = generateEvents.isPending && genRunIsThisSession;
+  const genOutcome =
+    genRunIsThisSession && !generateEvents.isPending ? generateEvents.data : undefined;
+  const handleAutoGenerate = () => {
+    setGenRunSessionId(sessionId);
+    handleGenerate();
+  };
+  // No-instructions gate (spec "No instructions configured"): a DISTINCT
+  // non-actionable state from the 503 latch — derived live from the
+  // show-categories query, so configuring instructions in Settings re-arms
+  // the control without a reload. Only an explicit `false` gates; while the
+  // query is unresolved the control stays actionable (a click would surface
+  // the server's own pre-spawn detail inline, never invent state).
+  const noInstructions = categoriesData?.auto_instructions_present === false;
 
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
   // its `unavailable`/`jump` handed to every row as a prop/stable callback.
@@ -441,8 +480,39 @@ export function EventLogSheet({ sessionId }: Props) {
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
 
+  // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
+  // aria-disabled button + always-visible `aria-describedby` reason span —
+  // lives on GenerateToolbar). Two distinct non-actionable reasons share the
+  // one reason span: the 503 latch (integration missing; reload to re-check)
+  // takes precedence over the live no-instructions gate (point at Settings).
+  const genReasonId = 'v5-event-feed-gen-reason';
+  const genLatchedReason = (
+    <>
+      Event generation isn&apos;t available on this server (no integration configured). Reload after
+      configuring to enable it — manual logging still works.
+    </>
+  );
+  const genNoInstructionsReason = (
+    <>
+      No event buttons carry auto-generate instructions yet. Add instructions in the Settings
+      event-buttons table first.
+    </>
+  );
   const toolbar = (
     <>
+      <GenerateToolbar
+        genError={genRunIsThisSession ? genError : null}
+        genUnavailable={genUnavailable || noInstructions}
+        onGenerate={handleAutoGenerate}
+        generatePending={generatePending}
+        reasonId={genReasonId}
+        reason={genUnavailable ? genLatchedReason : genNoInstructionsReason}
+        outcome={
+          genOutcome &&
+          `Created ${genOutcome.created} event${genOutcome.created === 1 ? '' : 's'}` +
+            `${genOutcome.cap_hit ? ' — per-run cap reached' : ''}.`
+        }
+      />
       {!batchEditMode && (
         <button
           type="button"
@@ -547,7 +617,23 @@ export function EventLogSheet({ sessionId }: Props) {
         onSort={(k) => dispatchSort({ type: 'CLICK', key: k as SortKey })}
         tableClassName={tableClassName}
         isEmpty={sorted.length === 0 && !isPending}
-        emptyMessage={events.length === 0 ? '— No logged items yet.' : '— No rows visible.'}
+        emptyMessage={
+          events.length === 0 ? (
+            genUnavailable ? (
+              // Honest-capability empty state (delta spec, MODIFIED "Honest
+              // capability gating"): cause + remedy + the manual alternative.
+              <>
+                No logged items yet. Event generation isn&apos;t available on this server — no
+                integration is configured (reload after configuring). You can still log events
+                manually with the event buttons.
+              </>
+            ) : (
+              '— No logged items yet.'
+            )
+          ) : (
+            '— No rows visible.'
+          )
+        }
         colgroup={
           <colgroup>
             <col className="col-jump" />

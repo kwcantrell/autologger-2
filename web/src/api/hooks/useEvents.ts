@@ -1,6 +1,13 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
-import type { EventsResponse, EventUpdateBody, LogBody, LogEvent, OkResponse } from '../types';
+import type {
+  EventsGenerateResponse,
+  EventsResponse,
+  EventUpdateBody,
+  LogBody,
+  LogEvent,
+  OkResponse,
+} from '../types';
 
 /**
  * Query-key factory for the events domain. Pages cache under `page(...)`;
@@ -36,6 +43,28 @@ export function useEvents(
     staleTime: 0,
     placeholderData: keepPreviousData,
     refetchInterval: opts.refetchInterval,
+  });
+}
+
+/**
+ * `POST …/events/generate` — one synchronous AI generation run
+ * (auto-generate-event-logs design D9). Void-variables mutation, matching
+ * `useGenerateTopics`, so it slots straight into `useGatedGenerate`'s
+ * `GenerateMutate` shape. The run's inserted rows reach the feed live via the
+ * existing `event.changed`-driven refetch; the on-success invalidation is
+ * belt-and-braces for the terminal state. `sessionId` is captured by the
+ * `mutationFn` closure at mutate time, so a session switch mid-run cannot
+ * redirect the in-flight request; the run always completes server-side (the
+ * route takes no abort signal).
+ */
+export function useGenerateEvents(sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiFetch<EventsGenerateResponse>(`sessions/${sessionId}/events/generate`, {
+        method: 'POST',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) }),
   });
 }
 

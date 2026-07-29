@@ -92,7 +92,7 @@
 
 ## 5. Feed UI (web)
 
-- [ ] 5.1 AUTO GENERATE control: React Query mutation + `useGatedGenerate` /
+- [x] 5.1 AUTO GENERATE control: React Query mutation + `useGatedGenerate` /
       `GenerateToolbar` reuse — 503 latch, inline single-channel outcomes (created
       count / cap note / pre-spawn details / retryable unlatched 409),
       `auto_instructions_present`-gated non-actionable state, run state scoped to the

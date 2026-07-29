@@ -439,6 +439,18 @@ export interface EventsResponse {
   limit: number;
 }
 
+/**
+ * `POST …/events/generate` success body (auto-generate-event-logs) —
+ * server: `server/src/routers/events.ts`. `created` is the number of events
+ * the run inserted; `cap_hit` is true when the per-run created-events cap
+ * ended writing early (the run finished normally — it was not cut off).
+ * Errors carry the standard `{detail}` body surfaced via `ApiError`.
+ */
+export interface EventsGenerateResponse {
+  created: number;
+  cap_hit: boolean;
+}
+
 export interface ShowCategoriesResponse {
   categories: Category[];
   show_name: string;
