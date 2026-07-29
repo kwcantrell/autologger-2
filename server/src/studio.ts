@@ -309,19 +309,20 @@ export function validateCategoriesList(catsRaw: unknown): CategoryRecord[] {
 }
 
 /** The single "instruction-bearing" definition (auto-event-generation spec):
- *  the category's own auto_instruction is non-empty, OR (DROPDOWN) any
- *  dropdown option's is. ON_OFF categories never participate. Accepts
- *  normalized CategoryRecords or loosely-typed parsed categories JSON. */
+ *  the category's own auto_instruction is non-empty, OR — DROPDOWN only — any
+ *  dropdown option's is. ON_OFF categories never participate, and option
+ *  instructions lingering on a non-DROPDOWN type (stale raw JSON after a type
+ *  switch) do not count. Accepts normalized CategoryRecords or loosely-typed
+ *  parsed categories JSON. */
 export function categoryIsInstructionBearing(cat: unknown): boolean {
   if (!cat || typeof cat !== 'object' || Array.isArray(cat)) return false;
   const rec = cat as Record<string, unknown>;
-  if (
-    String(rec.type ?? '')
-      .toUpperCase()
-      .trim() === 'ON_OFF'
-  )
-    return false;
+  const type = String(rec.type ?? '')
+    .toUpperCase()
+    .trim();
+  if (type === 'ON_OFF') return false;
   if (typeof rec.auto_instruction === 'string' && rec.auto_instruction.trim()) return true;
+  if (type !== 'DROPDOWN') return false;
   const opts = Array.isArray(rec.dropdown_options) ? rec.dropdown_options : [];
   return opts.some((o) => {
     if (!o || typeof o !== 'object') return false;

@@ -582,7 +582,14 @@ export function EventButtonsTable({
                       trigger={
                         <button
                           type="button"
-                          aria-label="Edit generation instruction"
+                          // The aria-label wins the accessible-name computation, so the
+                          // bearing state must live IN the label — a sibling sr-only
+                          // span would never be announced (color alone isn't state).
+                          aria-label={
+                            bearing
+                              ? 'Edit generation instruction (has instructions)'
+                              : 'Edit generation instruction'
+                          }
                           title="Generation instruction"
                           className={clsx(
                             'btn btn-icon p-0 min-w-0 w-[1.45rem] h-6 max-h-6 [&>svg]:block [&>svg]:shrink-0',
@@ -590,7 +597,6 @@ export function EventButtonsTable({
                           )}
                         >
                           <SparkIcon />
-                          {bearing && <span className="sr-only">Has generation instructions</span>}
                         </button>
                       }
                     >

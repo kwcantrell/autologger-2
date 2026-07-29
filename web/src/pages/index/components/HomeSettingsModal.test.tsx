@@ -121,6 +121,19 @@ vi.mock('./EventButtonsTable', () => ({
           >
             clear-instruction-{b.id}
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              onChange(
+                buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '   ' } : x)),
+                palette,
+                palettePreset,
+                paletteCustom,
+              )
+            }
+          >
+            whitespace-instruction-{b.id}
+          </button>
         </li>
       ))}
     </ul>
@@ -449,6 +462,25 @@ describe('HomeSettingsModal category round-trip', () => {
     // Option-only category: no button-level key on the wire (empty means absent).
     expect('auto_instruction' in cats[1]).toBe(false);
     expect('auto_instruction' in (cats[1].dropdown_options as object[])[0]).toBe(true);
+  });
+
+  it('a whitespace-only instruction draft posts no auto_instruction key (trim gate matches the server)', async () => {
+    // Server normalization trims and drops empty instructions: gating the wire key
+    // on truthiness alone would post a key the server drops, leaving a phantom
+    // local value after the post-save rebaseline. The save mapping must gate on
+    // trim() — whitespace-only means absent.
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    fireEvent.click(screen.getByRole('button', { name: 'whitespace-instruction-cat-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; categories?: Array<Record<string, unknown>> }>;
+    };
+    const cats = body.show_updates?.find((u) => u.show_id === 'show-1')?.categories ?? [];
+    expect('auto_instruction' in cats[0]).toBe(false);
   });
 
   it('an instruction edit arms Save via the snapshot comparison, and clearing it round-trips clean', () => {

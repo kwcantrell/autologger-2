@@ -223,6 +223,13 @@ describe('EventButtonsTable instruction editor', () => {
 });
 
 describe('EventButtonsTable instruction-bearing indicator', () => {
+  // The trigger's accessible NAME is the indicator's assistive-tech surface: an
+  // `aria-label` wins the accessible-name computation, so state must live in the
+  // label itself ("… (has instructions)") — a sibling sr-only span would never be
+  // announced and the state would be conveyed by color alone.
+  const BEARING_NAME = 'Edit generation instruction (has instructions)';
+  const PLAIN_NAME = 'Edit generation instruction';
+
   it('lights for an option-only DROPDOWN (single instruction-bearing definition)', () => {
     renderTable([
       makeDraft({
@@ -236,17 +243,19 @@ describe('EventButtonsTable instruction-bearing indicator', () => {
       }),
     ]);
 
-    expect(screen.getByText('Has generation instructions')).not.toBeNull();
+    expect(screen.getByRole('button', { name: BEARING_NAME })).not.toBeNull();
   });
 
   it('lights for a button-level instruction', () => {
     renderTable([makeDraft({ id: 'b1', auto_instruction: 'Log it' })]);
-    expect(screen.getByText('Has generation instructions')).not.toBeNull();
+    expect(screen.getByRole('button', { name: BEARING_NAME })).not.toBeNull();
   });
 
   it('does not light without instructions', () => {
     renderTable([makeDraft({ id: 'b1' }), makeDraft({ id: 'b2', type: 'DROPDOWN' })]);
-    expect(screen.queryByText('Has generation instructions')).toBeNull();
+    expect(screen.queryByRole('button', { name: BEARING_NAME })).toBeNull();
+    // The triggers are still there — just with the plain (non-bearing) name.
+    expect(screen.getAllByRole('button', { name: PLAIN_NAME })).toHaveLength(2);
   });
 
   it('does not light for stale option instructions on a non-DROPDOWN type', () => {
@@ -259,7 +268,8 @@ describe('EventButtonsTable instruction-bearing indicator', () => {
         dropdown_options: [{ label: 'A', needs_context: false, auto_instruction: 'stale' }],
       }),
     ]);
-    expect(screen.queryByText('Has generation instructions')).toBeNull();
+    expect(screen.queryByRole('button', { name: BEARING_NAME })).toBeNull();
+    expect(screen.getByRole('button', { name: PLAIN_NAME })).not.toBeNull();
   });
 
   it('never lights for ON_OFF, even with stale draft values', () => {
@@ -272,6 +282,8 @@ describe('EventButtonsTable instruction-bearing indicator', () => {
         auto_instruction: 'stale',
       }),
     ]);
-    expect(screen.queryByText('Has generation instructions')).toBeNull();
+    expect(screen.queryByRole('button', { name: BEARING_NAME })).toBeNull();
+    // ON_OFF offers no trigger at all.
+    expect(screen.queryByRole('button', { name: PLAIN_NAME })).toBeNull();
   });
 });

@@ -18,7 +18,7 @@
       Companion categories response byte-shape unchanged; re-capture the
       show-categories response-conformance fixture and update hand-written web API
       types (`web/src/api/types.ts`).
-- [ ] 1.3 Web settings UI: `auto_instruction` on `EventButtonDraft` + option drafts;
+- [x] 1.3 Web settings UI: `auto_instruction` on `EventButtonDraft` + option drafts;
       instruction editor per BUTTON/DROPDOWN/TEXT row (none for ON_OFF; type-switch
       to ON_OFF drops instructions); per-option + whole-button fields in
       `EventOptionsModal`; instruction-bearing indicator (single definition —

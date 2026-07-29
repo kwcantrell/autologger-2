@@ -67,9 +67,10 @@ export function EventOptionsModal({
           label,
           needs_context,
           // Wire rule: empty means absent — emit the `auto_instruction` key only
-          // when non-empty, matching server normalization (empty ⇒ omitted) so an
-          // untouched round-trip stays snapshot-clean.
-          ...(auto_instruction?.trim() ? { auto_instruction } : {}),
+          // when trim-non-empty, and emit it TRIMMED, matching server normalization
+          // (trims, empty ⇒ omitted) so an untouched round-trip stays snapshot-clean
+          // and a saved value matches what the post-save rebaseline reads back.
+          ...(auto_instruction?.trim() ? { auto_instruction: auto_instruction.trim() } : {}),
         }));
       onConfirm({ options: opts, onLabel: '', offLabel: '', autoInstruction: localInstruction });
     } else {

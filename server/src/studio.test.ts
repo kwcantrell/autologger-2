@@ -214,6 +214,24 @@ describe('categoryIsInstructionBearing', () => {
     expect(categoryIsInstructionBearing({ type: 'on_off', auto_instruction: 'stale' })).toBe(false);
   });
 
+  it('false for stale option instructions on a non-DROPDOWN type (options count only for DROPDOWN)', () => {
+    // Spec (auto-event-generation): the options branch of the definition applies to
+    // DROPDOWN only. Raw stored JSON could carry stale instruction-bearing options
+    // after a type switch away from DROPDOWN — they must not make the category bear.
+    expect(
+      categoryIsInstructionBearing({
+        type: 'TEXT',
+        dropdown_options: [{ label: 'A', auto_instruction: 'stale' }],
+      }),
+    ).toBe(false);
+    expect(
+      categoryIsInstructionBearing({
+        type: 'BUTTON',
+        dropdown_options: [{ label: 'A', auto_instruction: 'stale' }],
+      }),
+    ).toBe(false);
+  });
+
   it('false on whitespace-only instructions and non-object inputs', () => {
     expect(categoryIsInstructionBearing({ type: 'BUTTON', auto_instruction: '   ' })).toBe(false);
     expect(

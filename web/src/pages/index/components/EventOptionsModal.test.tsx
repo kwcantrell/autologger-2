@@ -48,15 +48,19 @@ describe('EventOptionsModal instruction fields', () => {
     expect(optFields[0].maxLength).toBe(2000);
   });
 
-  it('confirms edited values; a cleared option instruction is omitted, not empty-string', () => {
+  it('confirms edited values; a whitespace-only option instruction is omitted, a padded one emits trimmed', () => {
     const onConfirm = renderModal();
 
     fireEvent.change(screen.getByLabelText('Generation instruction'), {
       target: { value: 'New whole-button instruction' },
     });
     const optFields = screen.getAllByLabelText('Option instruction');
-    fireEvent.change(optFields[0], { target: { value: '' } });
-    fireEvent.change(optFields[1], { target: { value: 'When cam B goes live' } });
+    // Whitespace-only clears just like empty: the server drops it, so the wire
+    // key must be omitted (never a phantom present-but-blank value).
+    fireEvent.change(optFields[0], { target: { value: '   ' } });
+    // Padded values emit trimmed — the server stores trimmed, so an untrimmed
+    // emit would differ from what the post-save rebaseline reads back.
+    fireEvent.change(optFields[1], { target: { value: '  When cam B goes live  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);

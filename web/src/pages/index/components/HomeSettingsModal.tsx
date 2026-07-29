@@ -317,10 +317,12 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             off_label: c.off_label,
             // Wire key `auto_instruction` (auto-generate-event-logs): this mapping
             // rebuilds categories from a fixed field set, so the key must be carried
-            // explicitly or a save would silently strip saved instructions. Emitted
-            // only when non-empty (empty means absent; server normalization also
-            // trims, drops empties, and drops it on ON_OFF).
-            ...(c.auto_instruction ? { auto_instruction: c.auto_instruction } : {}),
+            // explicitly or a save would silently strip saved instructions. Gated on
+            // trim() and emitted trimmed, matching server normalization (which trims,
+            // drops empties, and drops it on ON_OFF) — a truthy whitespace-only draft
+            // would otherwise post a key the server drops, leaving a phantom local
+            // value after the post-save rebaseline.
+            ...(c.auto_instruction.trim() ? { auto_instruction: c.auto_instruction.trim() } : {}),
           })),
           event_palette: normalizePalette9(draft.event_palette),
           event_palette_preset: draft.event_palette_preset,
