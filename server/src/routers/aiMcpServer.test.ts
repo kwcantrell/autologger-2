@@ -11,7 +11,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
-import { type AiGenerationRunContext, AiMcpListener, type AiMcpTurnContext } from './aiMcpServer';
+import {
+  type AiGenerationRunContext,
+  AiMcpListener,
+  type AiMcpTurnContext,
+  GENERATION_LINE_MAX_WORDS,
+  GENERATION_PAGE_SIZE_WORDS,
+} from './aiMcpServer';
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -370,16 +376,16 @@ describe('AiMcpListener — per-turn tool registration (auto-generate-event-logs
     }
   });
 
-  it('carries a generation run snapshot on the registration without consuming it (3.2 consumes)', async () => {
+  it('carries a generation run snapshot on the registration (3.2/3.3 consume it)', async () => {
     registry
       .get('sessH')
       .replaceTranscriptWords([
         { session_time: '00:00:02', speaker: 'S1', word: 'gen', start_sec: 2, end_sec: 3 },
       ]);
-    // A generation-shaped registration: tool set + full run snapshot. Until
-    // task 3.2 lands create_event, the generation turn's registrable subset is
-    // get_transcript_words — the snapshot must thread through registration
-    // without altering any registered tool's behavior.
+    // A generation-shaped registration: tool set + full run snapshot, threaded
+    // through registration to the tool builders. `get_transcript_words` now
+    // renders at generation density under a snapshot (task 3.3) — for this
+    // single-word transcript the rendered page is identical to the chat line.
     const turn = listener.registerTurn('sessH', {
       tools: ['get_transcript_words'],
       generation: {
@@ -975,5 +981,153 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
       'manual note',
     ]);
     turn.dispose();
+  });
+});
+
+// ── get_transcript_words at generation density (task 3.3, design D5) ────────
+//
+// Spec anchor: "Generation-density transcript rendering". The CHAT rendering
+// stays byte-identical and is pinned by the pre-existing tests above
+// ('get_transcript_words returns COMPACT readable text' describe block, all
+// context-less) — this block covers only the generation-turn branch. The
+// density/paging/measurement semantics themselves are pure-function-tested in
+// aiMcpGenerationRendering.test.ts; here we pin the TOOL WIRING: per-context
+// input shape, paged calls over real MCP, and error mapping.
+
+describe('get_transcript_words — generation-density paged rendering (3.3)', () => {
+  it('generation turn advertises the page input + paging guidance; chat keeps the zero-arg shape', async () => {
+    const genTurn = listener.registerTurn('gen-shape-33', genContext());
+    const chatTurn = listener.registerTurn('chat-shape-33');
+    const gen = await connectMcp(genTurn.url, genTurn.token);
+    const chat = await connectMcp(chatTurn.url, chatTurn.token);
+    try {
+      const genTool = (await gen.client.listTools()).tools.find(
+        (t) => t.name === 'get_transcript_words',
+      );
+      expect(genTool).toBeDefined();
+      const genProps = (genTool?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+      expect(Object.keys(genProps)).toEqual(['page']);
+      // The description must tell the model pages exist, how to fetch the
+      // next, and never to treat one page as the whole transcript.
+      expect(genTool?.description).toMatch(/page=0/);
+      expect(genTool?.description).toContain('never treat one page as the whole transcript');
+
+      const chatTool = (await chat.client.listTools()).tools.find(
+        (t) => t.name === 'get_transcript_words',
+      );
+      const chatProps = (chatTool?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+      expect(Object.keys(chatProps)).toEqual([]);
+    } finally {
+      await gen.close();
+      await chat.close();
+      genTurn.dispose();
+      chatTurn.dispose();
+    }
+  });
+
+  it('generation turn renders periodic anchors where the chat turn collapses to one line', async () => {
+    // 2.5·N anchored single-speaker words: the chat rendering is ONE
+    // speaker-segment line; generation density must break it up.
+    const count = Math.floor(2.5 * GENERATION_LINE_MAX_WORDS);
+    const words = Array.from({ length: count }, (_, i) => ({
+      session_time: `00:00:${String(i).padStart(2, '0')}`,
+      speaker: 'S1',
+      word: `w${i}`,
+      start_sec: i,
+      end_sec: i + 1,
+    }));
+    registry.get('gen-density').replaceTranscriptWords(words);
+
+    const genTurn = listener.registerTurn('gen-density', genContext());
+    const chatTurn = listener.registerTurn('gen-density');
+    const gen = await connectMcp(genTurn.url, genTurn.token);
+    const chat = await connectMcp(chatTurn.url, chatTurn.token);
+    try {
+      // Zero-arg call on a generation turn defaults to page 0.
+      const genRes = (await gen.client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      const genLines = genRes.content[0].text.split('\n');
+      expect(genLines).toHaveLength(3);
+      for (const line of genLines) expect(line).toMatch(/^\[00:00:\d\d\] speaker S1: /);
+
+      // Chat turn on the SAME session: the unchanged one-anchor-per-speaker-
+      // turn rendering (byte-identity pinned by the pre-existing tests).
+      const chatRes = (await chat.client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(chatRes.content[0].text.split('\n')).toHaveLength(1);
+    } finally {
+      await gen.close();
+      await chat.close();
+      genTurn.dispose();
+      chatTurn.dispose();
+    }
+  });
+
+  it('pages an over-page-size transcript over real MCP: marker on page 0, page=1 fetches the rest', async () => {
+    // PAGE_SIZE_WORDS + N + 2 words ⇒ exactly 2 pages at the real constants.
+    const count = GENERATION_PAGE_SIZE_WORDS + GENERATION_LINE_MAX_WORDS + 2;
+    const words = Array.from({ length: count }, (_, i) => ({
+      session_time: i % 10 === 0 ? '00:10:00' : '',
+      speaker: '1',
+      word: `w${i}`,
+      start_sec: i,
+      end_sec: i + 1,
+    }));
+    registry.get('gen-paged').replaceTranscriptWords(words);
+    const turn = listener.registerTurn('gen-paged', genContext());
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const page0 = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(page0.isError).toBeFalsy();
+      expect(page0.content[0].text).toMatch(
+        /--- transcript continues: call get_transcript_words with page=1 of 2 ---$/,
+      );
+
+      const page1 = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: { page: 1 },
+      })) as ToolResult;
+      expect(page1.isError).toBeFalsy();
+      expect(page1.content[0].text).not.toContain('transcript continues');
+      expect(page1.content[0].text.length).toBeGreaterThan(0);
+
+      // Deterministic: re-fetching page 0 returns byte-identical text.
+      const again = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: { page: 0 },
+      })) as ToolResult;
+      expect(again.content[0].text).toBe(page0.content[0].text);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('out-of-range page is a TOOL ERROR (isError), never empty text', async () => {
+    registry
+      .get('gen-oor')
+      .replaceTranscriptWords([
+        { session_time: '00:00:01', speaker: 'S1', word: 'solo', start_sec: 1, end_sec: 2 },
+      ]);
+    const turn = listener.registerTurn('gen-oor', genContext());
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: { page: 5 },
+      })) as ToolResult;
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/page/i);
+    } finally {
+      await close();
+      turn.dispose();
+    }
   });
 });

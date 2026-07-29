@@ -56,7 +56,7 @@
       metadata composition (`auto_generated`, `auto_generate_run_id`, category
       label/color UI snapshots from the snapshot), insert via 2.3 + interpolation via
       2.1; tool-error paths never throw.
-- [ ] 3.3 TDD: generation-density paged `get_transcript_words` rendering (anchored
+- [x] 3.3 TDD: generation-density paged `get_transcript_words` rendering (anchored
       line on speaker change AND every ≤ N words; unanchored words un-timestamped;
       deterministic sequential paging with continuation marker; chat rendering
       byte-identical via existing tests) (design D5). Includes the **measurement

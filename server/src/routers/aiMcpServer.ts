@@ -284,6 +284,149 @@ function formatTranscriptForModel(
   return lines.join('\n');
 }
 
+// ── Generation-density paged rendering (auto-generate-event-logs 3.3, D5) ──
+//
+// The chat rendering above collapses a single-speaker session to ONE
+// timestamp (one anchor per speaker turn), which makes per-utterance event
+// placement impossible. For GENERATION turns `get_transcript_words` instead
+// renders a new anchored line at every speaker change AND every ≤ N words,
+// and pages deterministically when the transcript exceeds the page size —
+// never silently truncated. Chat turns keep `formatTranscriptForModel`
+// byte-identical.
+
+/** N — max words per rendered line (spec: "bounded word count", small enough
+ * that an utterance can be placed to within a few seconds: at ~150 wpm,
+ * 10 words ≈ 4 seconds). Measured with the 27k-word fixture in
+ * aiMcpGenerationRendering.test.ts: at N=10 + PAGE_SIZE_WORDS=8000 the
+ * worst-case rendered page is 62,952 bytes. */
+export const GENERATION_LINE_MAX_WORDS = 10;
+
+/** Page size in WORDS for generation-turn transcript paging, split on line
+ * boundaries. Chosen from the task-3.3 measurement: the Claude CLI's default
+ * MCP tool-output ceiling is 25k tokens (≈ 100KB ASCII; the child env
+ * whitelist deliberately prevents operators from raising it). At 8000
+ * words/page the realistic worst-case fixture page renders 62,952 bytes —
+ * comfortably under the ~80KB safety bound pinned in
+ * aiMcpGenerationRendering.test.ts. */
+export const GENERATION_PAGE_SIZE_WORDS = 8000;
+
+/** One generation-density line + its word count (paging splits on lines). */
+interface GenerationLine {
+  readonly text: string;
+  readonly wordCount: number;
+}
+
+/** Build generation-density lines: flush at every speaker change AND when the
+ * current line reaches `GENERATION_LINE_MAX_WORDS`. Each line is prefixed
+ * `[<time>] speaker <S>: ` using the FIRST anchored word's `session_time` in
+ * THAT line; words with empty `session_time` never get an invented timestamp
+ * (a line whose words are all unanchored renders un-prefixed), and a blank
+ * speaker omits the speaker prefix — both matching the chat rendering's
+ * prefix conventions. */
+function generationDensityLines(
+  words: ReadonlyArray<{ word: string; session_time: string; speaker: string }>,
+): GenerationLine[] {
+  const lines: GenerationLine[] = [];
+  let curSpeaker: string | null = null;
+  let lineTime = '';
+  let buf: string[] = [];
+  const flush = (): void => {
+    if (buf.length === 0) return;
+    const timePrefix = lineTime ? `[${lineTime}] ` : '';
+    const speakerPrefix = curSpeaker ? `speaker ${curSpeaker}: ` : '';
+    lines.push({
+      text: `${timePrefix}${speakerPrefix}${buf.join(' ')}`.trim(),
+      wordCount: buf.length,
+    });
+    buf = [];
+    lineTime = '';
+  };
+  for (const w of words) {
+    const speaker = w.speaker ?? '';
+    if (speaker !== curSpeaker) {
+      flush();
+      curSpeaker = speaker;
+    } else if (buf.length >= GENERATION_LINE_MAX_WORDS) {
+      flush();
+    }
+    if (buf.length === 0) {
+      lineTime = w.session_time || '';
+    } else if (!lineTime && w.session_time) {
+      lineTime = w.session_time;
+    }
+    buf.push(w.word);
+  }
+  flush();
+  return lines;
+}
+
+/**
+ * Render ONE page of the generation-density transcript (task 3.3, design D5).
+ * Deterministic: a pure function of the word list, so sequential calls see
+ * consistent page boundaries. Pages are packed greedily on LINE boundaries up
+ * to `pageSizeWords` (a page always takes at least one line, and no line
+ * exceeds `GENERATION_LINE_MAX_WORDS` ≤ the page size in practice). Every
+ * page except the last ends with an explicit continuation marker naming the
+ * next page and the total — never silent truncation. An out-of-range,
+ * negative, or non-integer page is an error (`ok: false`), never empty text.
+ *
+ * `pageSizeWords` is parameterized FOR TESTS ONLY — the tool always calls
+ * with the measured `GENERATION_PAGE_SIZE_WORDS` default.
+ */
+export function renderGenerationTranscriptPage(
+  words: ReadonlyArray<{ word: string; session_time: string; speaker: string }>,
+  page: number,
+  pageSizeWords: number = GENERATION_PAGE_SIZE_WORDS,
+): { ok: true; text: string; totalPages: number } | { ok: false; error: string } {
+  if (!Number.isInteger(page) || page < 0) {
+    return { ok: false, error: `Invalid page ${page}: expected a non-negative integer.` };
+  }
+  const lines = generationDensityLines(words);
+  const pages: string[][] = [];
+  let cur: string[] = [];
+  let curWords = 0;
+  for (const line of lines) {
+    if (cur.length > 0 && curWords + line.wordCount > pageSizeWords) {
+      pages.push(cur);
+      cur = [];
+      curWords = 0;
+    }
+    cur.push(line.text);
+    curWords += line.wordCount;
+  }
+  if (cur.length > 0) pages.push(cur);
+  // The empty transcript renders the chat path's placeholder as its one page.
+  if (pages.length === 0) pages.push(['(this session has no transcript)']);
+  if (page >= pages.length) {
+    return {
+      ok: false,
+      error:
+        `Page ${page} is out of range: this transcript has ${pages.length} page(s), ` +
+        `0-based (last page is ${pages.length - 1}).`,
+    };
+  }
+  const body = pages[page].join('\n');
+  const text =
+    page < pages.length - 1
+      ? `${body}\n--- transcript continues: call get_transcript_words with page=${page + 1} of ${pages.length} ---`
+      : body;
+  return { ok: true, text, totalPages: pages.length };
+}
+
+/** The generation turn's `get_transcript_words` input surface — chat turns
+ * keep the zero-arg shape (the builder registers a different shape per
+ * context). Type-only here; range validation happens in the handler so a bad
+ * page returns an `isError` tool result, not an SDK-thrown `McpError`. */
+const generationTranscriptToolShape = {
+  page: z
+    .number()
+    .optional()
+    .describe(
+      '0-based page number (default 0). Fetch pages sequentially until a page ' +
+        'has no continuation marker.',
+    ),
+};
+
 /** Everything a tool builder may bind into its handlers. `generation` is the
  * run snapshot on generation turns (undefined on chat turns), and
  * `createdEvents` the registration's per-run counter — both consumed by
@@ -308,7 +451,34 @@ interface ToolBuildContext {
  * run id, and cap.
  */
 const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildContext) => void> = {
-  get_transcript_words: (server, { registry, sessionId }) => {
+  get_transcript_words: (server, { registry, sessionId, generation }) => {
+    // GENERATION turns (task 3.3, design D5): generation-density paged
+    // rendering with a `page` input. Chat turns fall through to the
+    // byte-identical zero-arg chat rendering below — pinned by the
+    // pre-existing tests ('get_transcript_words returns COMPACT readable
+    // text' in aiMcpServer.test.ts).
+    if (generation !== undefined) {
+      server.tool(
+        'get_transcript_words',
+        "Returns this session's transcript as readable text at generation " +
+          'density: speaker- and timecode-anchored lines, delivered in fixed ' +
+          `sequential pages of at most ${GENERATION_PAGE_SIZE_WORDS} words. ` +
+          'Long transcripts span multiple pages: start at page=0 (the ' +
+          'default); every page except the last ends with a continuation ' +
+          'marker naming the next page — keep calling with the named page ' +
+          'until the marker is absent, and never treat one page as the whole ' +
+          'transcript.',
+        generationTranscriptToolShape,
+        async (args) => {
+          // Hub resolved at call time (D3) — never held across an await.
+          const words = registry.get(sessionId).listTranscriptWords();
+          const res = renderGenerationTranscriptPage(words, args.page ?? 0);
+          if (!res.ok) return toolError(res.error);
+          return { content: [{ type: 'text', text: res.text }] };
+        },
+      );
+      return;
+    }
     server.tool(
       'get_transcript_words',
       "Returns this session's transcript as readable text (speaker- and " +
