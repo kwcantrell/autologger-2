@@ -25,6 +25,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SessionIndexStore } from '../db/sessionIndexStore';
 import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '../studio';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
@@ -589,6 +590,30 @@ describe('events/generate — configured behavior (real create_event MCP round t
         for (const e of generated) {
           expect(JSON.parse(e.metadata_json).auto_generate_run_id).toBe(generation?.runId);
         }
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it(
+    'finally-block ordering pin: slot release happens BEFORE the post-run catalog ' +
+      'projection, so a throw from the projection does not leave the AI slot stuck in flight',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      const spy = vi
+        .spyOn(SessionIndexStore.prototype, 'projectSessionLive')
+        .mockImplementationOnce(() => {
+          throw new Error('boom — simulated projection failure');
+        });
+      try {
+        const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+        // The projection throw surfaces as the app's generic 500 (app.ts
+        // onError) — the load-bearing assertion is the slot state below, not
+        // this status.
+        expect(res.status).toBe(500);
+        expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
         spy.mockRestore();
       }

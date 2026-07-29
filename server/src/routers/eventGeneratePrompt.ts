@@ -8,8 +8,9 @@
 // Untrusted-data framing (spec "Single orchestrator turn over all
 // instructions"): instruction text is rendered between explicit delimiters,
 // and EVERY piece of user-authored text interpolated into the message
-// (instructions, button names, option labels, existing-event messages)
-// passes through `neutralizeDelimiterTokens`, which rewrites any run of 3+
+// (instructions, button names, option labels, category ids — client-settable
+// via profile updates, existing-event messages) passes through
+// `neutralizeDelimiterTokens`, which rewrites any run of 3+
 // angle brackets — so after neutralization no interpolated text can contain
 // `<<<` or `>>>`, making the delimiter tokens below UNFORGEABLE: the only
 // `<<<INSTRUCTION …>>>` / `<<<END INSTRUCTION>>>` markers in the rendered
@@ -123,14 +124,18 @@ function renderCategory(
   existing: readonly EventGenerateExistingEvent[],
 ): string {
   const name = compactOneLine(cat.name);
-  const lines: string[] = [`## Button "${name}" (id ${cat.id}, type ${cat.type})`];
+  // Category ids are client-settable (profile updates only trim them), so the
+  // id is user-authored text too — neutralize it at every interpolation site,
+  // the same as the name/label, to keep the delimiter framing unforgeable.
+  const catId = compactOneLine(cat.id);
+  const lines: string[] = [`## Button "${name}" (id ${catId}, type ${cat.type})`];
   const buttonInstruction = (cat.auto_instruction ?? '').trim();
   if (cat.type === 'DROPDOWN') {
     if (buttonInstruction) {
       lines.push(
         'Whole-button instruction — shared context for the options below, and a ' +
           'fallback detector: on a hit matching it but no specific option, ' +
-          `create_event with category "${cat.id}", message EXACTLY "${name}".`,
+          `create_event with category "${catId}", message EXACTLY "${name}".`,
         instructionBlock(buttonInstruction),
       );
     }
@@ -142,9 +147,9 @@ function renderCategory(
         `### Option "${label}"${opt.needs_context ? ' (needs_context)' : ''}`,
         instructionBlock(optionInstruction),
         opt.needs_context
-          ? `On a hit: create_event with category "${cat.id}", message ` +
+          ? `On a hit: create_event with category "${catId}", message ` +
               `"${label} || <context>" — author <context> from the transcript moment.`
-          : `On a hit: create_event with category "${cat.id}", message EXACTLY "${label}".`,
+          : `On a hit: create_event with category "${catId}", message EXACTLY "${label}".`,
       );
     }
   } else if (buttonInstruction) {
@@ -152,9 +157,9 @@ function renderCategory(
     lines.push(
       instructionBlock(buttonInstruction),
       cat.type === 'TEXT'
-        ? `On a hit: create_event with category "${cat.id}" and a message YOU author ` +
+        ? `On a hit: create_event with category "${catId}" and a message YOU author ` +
             'per the instruction.'
-        : `On a hit: create_event with category "${cat.id}", message EXACTLY "${name}".`,
+        : `On a hit: create_event with category "${catId}", message EXACTLY "${name}".`,
     );
   }
   lines.push(renderExistingEvents(existing));
