@@ -127,3 +127,50 @@ describe('EventLogRow — jump control', () => {
     expect(screen.getByLabelText('Message')).toBeTruthy();
   });
 });
+
+// --- Generated-row marker (auto-generate-event-logs, task 5.2) ---
+//
+// Rows whose metadata carries `auto_generated: true` render a compact "auto" chip
+// with an accessible name; the marker is presentation-only (editing, deletion, and
+// jump behavior are exercised unchanged by the suites above and by
+// EventLogSheet.test.tsx / EventLogSheet.jumpColumn.test.tsx). The server parses
+// `metadata_json` into the wire `metadata` object (malformed JSON ⇒ `{}`); the
+// component re-checks defensively, so a non-object value renders no marker.
+
+describe('EventLogRow — generated-row marker', () => {
+  it('shows the auto marker with an accessible name on a generated row', () => {
+    renderRow({ event: eventFixture({ metadata: { auto_generated: true } }) });
+    expect(screen.getByRole('img', { name: 'auto-generated' })).toBeTruthy();
+  });
+
+  it('shows no marker on a manual row', () => {
+    renderRow();
+    expect(screen.queryByRole('img', { name: 'auto-generated' })).toBeNull();
+  });
+
+  it('shows no marker when metadata is malformed (not an object at runtime)', () => {
+    renderRow({
+      event: eventFixture({
+        metadata: '{"auto_generated": true' as unknown as Record<string, unknown>,
+      }),
+    });
+    expect(screen.queryByRole('img', { name: 'auto-generated' })).toBeNull();
+  });
+
+  it('shows no marker when auto_generated is present but not exactly true', () => {
+    renderRow({ event: eventFixture({ metadata: { auto_generated: 'yes' } }) });
+    expect(screen.queryByRole('img', { name: 'auto-generated' })).toBeNull();
+  });
+
+  it('keeps the marker visible in edit mode and leaves the editable fields intact', () => {
+    renderRow({
+      event: eventFixture({ metadata: { auto_generated: true } }),
+      inlineEdit: true,
+    });
+    expect(screen.getByRole('img', { name: 'auto-generated' })).toBeTruthy();
+    // Presentation-only: the editable message input (and delete affordance) still
+    // render exactly as for a manual row.
+    expect(screen.getByLabelText('Message')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete row' })).toBeTruthy();
+  });
+});

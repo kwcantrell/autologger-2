@@ -21,12 +21,22 @@ const MIN_HEALTHY_MS = 2_000;
 // After this many consecutive immediate failures, stop spinning: cap the backoff
 // and warn once. The slow status poll (useSessionStatus) keeps the session usable.
 const MAX_IMMEDIATE_FAILURES = 4;
+// Burst coalescing for `event.changed`-driven refetches (auto-generate-event-logs,
+// design D9): the server broadcasts one frame per insert, and a bulk generation run
+// (or any rapid event source) would otherwise trigger one full events refetch per
+// frame on every connected client. The first frame of a burst refetches immediately
+// (a single manual log stays instant); further frames within this window coalesce
+// into one trailing refetch, so a quiet period always ends with a refetch that
+// reflects final state. Server emission semantics are unchanged.
+const EVENTS_COALESCE_MS = 1_000;
 
 /**
  * Subscribes to the per-session Durable Object WebSocket and routes its discrete
  * change frames into React Query invalidations, replacing the deleted poll loops.
  * Reconnects with jittered backoff; re-syncs (status/events/audio) on every open
  * to catch up anything missed during a drop. `{type:'ping'}` keepalive every ~25s.
+ * `event.changed` refetches are burst-coalesced (leading + ~1s trailing debounce,
+ * see EVENTS_COALESCE_MS); all other frame types invalidate per frame.
  */
 export function useSessionSocket(sessionId: string | null, opts: Options = {}): void {
   const qc = useQueryClient();
@@ -39,6 +49,11 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let pingTimer: ReturnType<typeof setInterval> | null = null;
+    // Leading+trailing debounce state for `event.changed` (EVENTS_COALESCE_MS).
+    // Effect-scoped (not per-socket): a window spanning a reconnect still ends in
+    // one trailing refetch, and the on-open resync() re-anchors regardless.
+    let eventsWindowTimer: ReturnType<typeof setTimeout> | null = null;
+    let eventsTrailingPending = false;
     let backoff = BACKOFF_START_MS;
     let immediateFailures = 0;
     let warned = false;
@@ -48,6 +63,34 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
       if (pingTimer) {
         clearInterval(pingTimer);
         pingTimer = null;
+      }
+    };
+
+    const invalidateEvents = () => {
+      qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
+    };
+
+    // Closes a coalescing window: if frames arrived while it was open, issue the
+    // trailing refetch (final state) and open a fresh window so a continuing burst
+    // keeps refetching about once per EVENTS_COALESCE_MS; otherwise go idle.
+    const onEventsWindowEnd = () => {
+      eventsWindowTimer = null;
+      if (!eventsTrailingPending) return;
+      eventsTrailingPending = false;
+      invalidateEvents();
+      eventsWindowTimer = setTimeout(onEventsWindowEnd, EVENTS_COALESCE_MS);
+    };
+
+    // `event.changed` entry point: leading edge fires immediately (single manual
+    // log stays instant), frames inside an open window coalesce into the trailing
+    // refetch. Scoped strictly to the events query — every other frame type keeps
+    // its per-frame invalidation.
+    const onEventChanged = () => {
+      if (eventsWindowTimer === null) {
+        invalidateEvents();
+        eventsWindowTimer = setTimeout(onEventsWindowEnd, EVENTS_COALESCE_MS);
+      } else {
+        eventsTrailingPending = true;
       }
     };
 
@@ -113,7 +156,7 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
         }
         switch (msg.type) {
           case 'event.changed':
-            qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
+            onEventChanged();
             break;
           case 'transport.changed':
             // Re-anchor the clock + take at the transition.
@@ -151,6 +194,7 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     return () => {
       cancelled = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (eventsWindowTimer) clearTimeout(eventsWindowTimer);
       clearPing();
       if (ws) {
         ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;

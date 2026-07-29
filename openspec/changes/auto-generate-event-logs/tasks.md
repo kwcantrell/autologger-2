@@ -98,7 +98,7 @@
       `auto_instructions_present`-gated non-actionable state, run state scoped to the
       starting session across the mounted-hidden panel; component tests mirroring
       `generateLatch.test.tsx` + session-switch scoping test.
-- [ ] 5.2 Generated-row marker (`metadata_json.auto_generated` → compact accessible
+- [x] 5.2 Generated-row marker (`metadata_json.auto_generated` → compact accessible
       indicator on the feed row; editing/deletion/jump unchanged) + burst coalescing
       of `event.changed`-driven event refetches (~1s debounce, trailing refetch);
       component tests (marker accessibility; 60-frame burst → bounded refetches →
