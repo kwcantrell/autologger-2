@@ -324,6 +324,23 @@ describe('events/generate — guard ladder', () => {
     expect(neverSpawned(sessionId)).toBe(true);
   });
 
+  it('6→7 order: an aggregate-bound 400 leaves the slot FREE — the next request is not 409-busy', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    const over = await generateReq(
+      sessionId,
+      configuredEnv(EVENTS_SUCCESS_FIXTURE, { EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '4' }),
+    );
+    expect(over.status).toBe(400);
+    // Order pin with teeth: were tryAcquire moved ABOVE the aggregate-bound
+    // check, the ApiError(400) would throw before the try/finally and leak
+    // the slot — wedging this session's AI surface behind 409s until restart.
+    // Both assertions below turn red under that reorder.
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    const next = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+    expect(next.status).toBe(200);
+  });
+
   it('7. shared AI slot held → 409 naming the full holder set incl. event generation, no spawn', async () => {
     const { sessionId } = newSession();
     seedAnchoredTranscript(sessionId);
@@ -509,18 +526,43 @@ describe('events/generate — configured behavior (real create_event MCP round t
   );
 
   it(
-    'driveAiTurn receives NO abortSignal (a run always completes server-side) and the ' +
-      'run snapshot: instruction-bearing categories only, word snapshot, cap, and the ' +
-      'runId stamped into the persisted rows',
+    'driveAiTurn receives NO abortSignal (a run always completes server-side), the ' +
+      "configured budget/timeout (the 4.1 accessors, not chat's), and the run snapshot: " +
+      'instruction-bearing categories only, word snapshot, cap, catalog started_at_utc, ' +
+      'and the runId stamped into the persisted rows',
     async () => {
       const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
       try {
         const { sessionId } = newSession();
         seedAnchoredTranscript(sessionId);
-        const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+        // Distinctive PAST session start, distinct from any run-clock value —
+        // the snapshot's startedAtUtc must be the catalog row's
+        // started_at_utc, never `new Date()` at run time (design D4: on a
+        // zero-anchor session the run clock would misplace every event).
+        const startedAtUtc = '2019-03-07T04:05:06.789Z';
+        env.ports.catalog.run(
+          'UPDATE sessions SET started_at_utc = ? WHERE id = ?',
+          startedAtUtc,
+          sessionId,
+        );
+        const res = await generateReq(
+          sessionId,
+          // NON-default budget/timeout overrides: the assertions below can
+          // only pass through the task-4.1 accessors reading THIS request's
+          // config — hardcoded chat-scale (or generate-default) values go red.
+          configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+            EVENT_GENERATE_MAX_BUDGET_USD: '3.25',
+            EVENT_GENERATE_TIMEOUT_SEC: '77',
+          }),
+        );
         expect(res.status).toBe(200);
         expect(spy).toHaveBeenCalledTimes(1);
         const opts = spy.mock.calls[0][0];
+
+        // Budget/timeout wiring pinned to the config accessors (D8 knobs):
+        // eventGenerateMaxBudgetUsd and eventGenerateTimeoutSec * 1000.
+        expect(opts.maxBudgetUsd).toBe(3.25);
+        expect(opts.timeoutMs).toBe(77 * 1000);
 
         // NO abortSignal wired — the spec's always-completes property.
         expect(opts.abortSignal).toBeUndefined();
@@ -536,6 +578,9 @@ describe('events/generate — configured behavior (real create_event MCP round t
         expect(generation?.categories[0]?.auto_instruction).toBe(SLATE_INSTRUCTION);
         expect(generation?.cap).toBe(200); // D8 default
         expect(generation?.frameRate).toBe(24);
+        // Snapshot start = the catalog row's started_at_utc (fixture-set to a
+        // distinctive past value above) — never the run-time clock.
+        expect(generation?.startedAtUtc).toBe(startedAtUtc);
         // Run-start word snapshot (Phase-3 carry): the seeded words, frozen.
         expect(generation?.words?.map((w) => w.word)).toEqual(['roll', 'slate', 'marker']);
         // The registration's runId is the one stamped into every created row.

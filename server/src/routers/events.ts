@@ -425,7 +425,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
 
   // 7. Single-flight (per session) + process-wide ceiling — 409, spawning
   // nothing. Same registry as AI chat/AI v2/topics; released in this
-  // handler's own finally.
+  // handler's own finally (release BEFORE the projection — see the finally).
   const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));
   if (!slot.ok) {
     throw new ApiError(
@@ -493,13 +493,19 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     );
     throw new ApiError(502, EVENT_GENERATE_FAILURE_DETAIL);
   } finally {
+    // Slot release FIRST, unconditionally (Phase-4 review): a throw from the
+    // hub re-acquire/ensure() or the catalog UPDATE below must never leak the
+    // per-session slot — a leaked slot wedges every later AI turn for this
+    // session behind a 409 until restart. Releasing before the mirror is safe:
+    // both statements are synchronous (no await), so no other request can
+    // interleave between them.
+    slot.release();
     // Post-run catalog mirror on success AND failure paths (spec "the run
     // SHALL leave the catalog projection current by the time the route
     // responds") — the run's inserts persist either way. The hub is
     // RE-ACQUIRED after the potentially multi-minute turn (idle hubs close
     // their DB handles and reopen lazily).
     catalog.sessions.projectSessionLive(sessionId, getSessionHub(c, sessionId).ensure());
-    slot.release();
   }
 });
 

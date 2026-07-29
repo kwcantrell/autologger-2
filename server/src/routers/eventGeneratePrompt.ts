@@ -89,9 +89,11 @@ function neutralizeDelimiterTokens(text: string): string {
   return text.replace(/<{3,}/g, '<<').replace(/>{3,}/g, '>>');
 }
 
-/** Compact one-line projection of an existing-event message: newlines
- * collapsed (the row rendering is one line per event), delimiter tokens
- * neutralized. */
+/** Compact one-line projection of user-authored text: newlines collapsed,
+ * delimiter tokens neutralized. Used for existing-event messages (one line
+ * per event row) AND for button names / option labels — a multi-line name
+ * interpolated into a `## Button`/`### Option` header line could otherwise
+ * start a forged section header on its own line (Phase-4 review). */
 function compactOneLine(text: string): string {
   return neutralizeDelimiterTokens(text.replace(/\s*\n\s*/g, ' '));
 }
@@ -120,7 +122,7 @@ function renderCategory(
   cat: AiGenerationSnapshotCategory,
   existing: readonly EventGenerateExistingEvent[],
 ): string {
-  const name = neutralizeDelimiterTokens(cat.name);
+  const name = compactOneLine(cat.name);
   const lines: string[] = [`## Button "${name}" (id ${cat.id}, type ${cat.type})`];
   const buttonInstruction = (cat.auto_instruction ?? '').trim();
   if (cat.type === 'DROPDOWN') {
@@ -135,7 +137,7 @@ function renderCategory(
     for (const opt of cat.dropdown_options) {
       const optionInstruction = (opt.auto_instruction ?? '').trim();
       if (!optionInstruction) continue;
-      const label = neutralizeDelimiterTokens(opt.label);
+      const label = compactOneLine(opt.label);
       lines.push(
         `### Option "${label}"${opt.needs_context ? ' (needs_context)' : ''}`,
         instructionBlock(optionInstruction),
