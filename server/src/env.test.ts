@@ -10,6 +10,11 @@ import {
   cookieSecureForRequest,
   deepgramConfigured,
   deepgramModel,
+  eventGenerateMaxBudgetUsd,
+  eventGenerateMaxCreatedEvents,
+  eventGenerateMaxInstructionBytes,
+  eventGenerateMaxInstructionEntries,
+  eventGenerateTimeoutSec,
   newUserAllTeamsEnabled,
   oauthConfigured,
   publicBaseUrl,
@@ -51,6 +56,11 @@ const openNetworkBase = (): Config => ({
   AI_CHAT_MAX_BUDGET_USD: '',
   TOPIC_GENERATE_MAX_BUDGET_USD: '',
   TOPIC_GENERATE_TIMEOUT_SEC: '',
+  EVENT_GENERATE_MAX_BUDGET_USD: '',
+  EVENT_GENERATE_TIMEOUT_SEC: '',
+  EVENT_GENERATE_MAX_CREATED_EVENTS: '',
+  EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
+  EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
   AI_V2_ENABLED: '',
   AI_V2_API_KEY: '',
   AI_V2_MAX_BUDGET_USD: '',
@@ -153,6 +163,79 @@ describe('topic generation config (design D6: dedicated budget/timeout, higher t
     expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '600' }))).toBe(600);
     expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: 'abc' }))).toBe(300);
     expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '0' }))).toBe(300);
+  });
+});
+
+describe('event auto-generation config (design D8: dedicated budget/timeout/cap/bound, higher than topic-generate)', () => {
+  it('eventGenerateMaxBudgetUsd defaults to 5.0 -- higher than topicGenerateMaxBudgetUsd (2.0) -- and is overridable', () => {
+    expect(eventGenerateMaxBudgetUsd(E({}))).toBe(5.0);
+    expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '' }))).toBe(5.0);
+    expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '10' }))).toBe(10);
+    // non-numeric / non-positive falls back to the default, matching topicGenerateMaxBudgetUsd's shape
+    expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: 'abc' }))).toBe(5.0);
+    expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '0' }))).toBe(5.0);
+    expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '-1' }))).toBe(5.0);
+  });
+
+  it('eventGenerateTimeoutSec defaults to 600 -- higher than topicGenerateTimeoutSec (300) -- and is overridable', () => {
+    expect(eventGenerateTimeoutSec(E({}))).toBe(600);
+    expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: '' }))).toBe(600);
+    expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: '900' }))).toBe(900);
+    expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: 'abc' }))).toBe(600);
+    expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: '0' }))).toBe(600);
+  });
+
+  it('eventGenerateMaxCreatedEvents defaults to 200 and is overridable via EVENT_GENERATE_MAX_CREATED_EVENTS', () => {
+    expect(eventGenerateMaxCreatedEvents(E({}))).toBe(200);
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: '' }))).toBe(200);
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: '50' }))).toBe(50);
+    // non-integer / non-positive falls back to the default, matching aiChatMaxConcurrent's shape
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: 'abc' }))).toBe(
+      200,
+    );
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: '0' }))).toBe(200);
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: '-1' }))).toBe(200);
+    expect(eventGenerateMaxCreatedEvents(E({ EVENT_GENERATE_MAX_CREATED_EVENTS: '10.5' }))).toBe(
+      200,
+    );
+  });
+
+  it('eventGenerateMaxInstructionBytes defaults to 24576 and is overridable via EVENT_GENERATE_MAX_INSTRUCTION_BYTES', () => {
+    expect(eventGenerateMaxInstructionBytes(E({}))).toBe(24576);
+    expect(eventGenerateMaxInstructionBytes(E({ EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '' }))).toBe(
+      24576,
+    );
+    expect(
+      eventGenerateMaxInstructionBytes(E({ EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '8192' })),
+    ).toBe(8192);
+    expect(
+      eventGenerateMaxInstructionBytes(E({ EVENT_GENERATE_MAX_INSTRUCTION_BYTES: 'abc' })),
+    ).toBe(24576);
+    expect(eventGenerateMaxInstructionBytes(E({ EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '0' }))).toBe(
+      24576,
+    );
+    expect(
+      eventGenerateMaxInstructionBytes(E({ EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '-1' })),
+    ).toBe(24576);
+  });
+
+  it('eventGenerateMaxInstructionEntries defaults to 50 and is overridable via EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES', () => {
+    expect(eventGenerateMaxInstructionEntries(E({}))).toBe(50);
+    expect(
+      eventGenerateMaxInstructionEntries(E({ EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '' })),
+    ).toBe(50);
+    expect(
+      eventGenerateMaxInstructionEntries(E({ EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '10' })),
+    ).toBe(10);
+    expect(
+      eventGenerateMaxInstructionEntries(E({ EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: 'abc' })),
+    ).toBe(50);
+    expect(
+      eventGenerateMaxInstructionEntries(E({ EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '0' })),
+    ).toBe(50);
+    expect(
+      eventGenerateMaxInstructionEntries(E({ EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '-1' })),
+    ).toBe(50);
   });
 });
 

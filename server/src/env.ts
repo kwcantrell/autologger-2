@@ -173,6 +173,68 @@ export function topicGenerateTimeoutSec(env: Config): number {
   return Number.isFinite(n) && n > 0 ? n : 300;
 }
 
+// ── Event auto-generation (auto-generate-event-logs, design D8) ────────────
+// `events/generate` reuses the AI chat's/topic-generate's CLI/MCP/gate/
+// registry (aiChatConfigured, aiChatOpenNetworkRefused, aiChatTurns,
+// AI_CHAT_MAX_CONCURRENT) as-is, but its own one-shot run is a STRICTLY
+// LARGER workload than topic-generate's: the full transcript at generation
+// density, an instruction sweep per instruction-bearing category/option, and
+// a create_event tool round-trip per hit. Reusing topicGenerateMaxBudgetUsd/
+// topicGenerateTimeoutSec would make the button deterministically fail on
+// large sessions (the same env.ts precedent topic-generate itself was
+// defaulted against) -- so this gets its own dedicated, higher-defaulted
+// knobs rather than sharing topic-generate's.
+
+/** Per-turn CLI cost ceiling in USD for a one-shot event-generate run (design
+ * D8); default 5.0 -- higher than topicGenerateMaxBudgetUsd's 2.0 since a
+ * generate turn does a full-transcript read plus a per-instruction sweep plus
+ * a create_event round-trip per hit. Non-numeric / non-positive falls back to
+ * the default. */
+export function eventGenerateMaxBudgetUsd(env: Config): number {
+  const n = Number((env.EVENT_GENERATE_MAX_BUDGET_USD || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 5.0;
+}
+
+/** Per-turn server-side timeout backstop in seconds for a one-shot
+ * event-generate run (design D8); default 600 -- higher than
+ * topicGenerateTimeoutSec's 300 for the same strictly-larger-workload reason.
+ * Non-numeric / non-positive falls back to the default. */
+export function eventGenerateTimeoutSec(env: Config): number {
+  const n = Number((env.EVENT_GENERATE_TIMEOUT_SEC || '').trim());
+  return Number.isFinite(n) && n > 0 ? n : 600;
+}
+
+/** Per-run cap on events a single generate run may create (design D8);
+ * default 200. Enforced by the `create_event` tool (task 3.2), which reports
+ * `cap_hit` once reached rather than throwing. Non-integer / non-positive
+ * falls back to the default. */
+export function eventGenerateMaxCreatedEvents(env: Config): number {
+  const n = Number((env.EVENT_GENERATE_MAX_CREATED_EVENTS || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : 200;
+}
+
+/** Aggregate pre-spawn instruction-size bound, byte half (design D8, spec
+ * "aggregate-bound 400"): total serialized instruction bytes across all
+ * instruction-bearing categories/options for the target show; default 24576
+ * (24 KiB). Checked BEFORE the CLI is spawned so an oversized instruction set
+ * fails fast (400) rather than mid-run. Non-integer / non-positive falls back
+ * to the default. */
+export function eventGenerateMaxInstructionBytes(env: Config): number {
+  const n = Number((env.EVENT_GENERATE_MAX_INSTRUCTION_BYTES || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : 24576;
+}
+
+/** Aggregate pre-spawn instruction-size bound, entry-count half (design D8):
+ * number of distinct instruction-bearing entries (categories/options) for the
+ * target show; default 50. Checked alongside
+ * eventGenerateMaxInstructionBytes -- either bound tripping fails the request
+ * before spawning the CLI. Non-integer / non-positive falls back to the
+ * default. */
+export function eventGenerateMaxInstructionEntries(env: Config): number {
+  const n = Number((env.EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES || '').trim());
+  return Number.isInteger(n) && n > 0 ? n : 50;
+}
+
 // ── AI v2 dashboards (ai-v2-dashboards, design D9) ──────────────────────────
 
 /** Gate (spec "Configuration-gated AI v2 endpoints"): AI v2 requires an

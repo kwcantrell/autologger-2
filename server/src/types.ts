@@ -55,6 +55,26 @@ export interface Config {
    * the aiChatTurns registry) is shared with the AI chat, unchanged. */
   TOPIC_GENERATE_MAX_BUDGET_USD: string;
   TOPIC_GENERATE_TIMEOUT_SEC: string;
+  /** Event auto-generation (auto-generate-event-logs, design D8). Same shape
+   * as TOPIC_GENERATE_*, but defaulted HIGHER still: a generate run walks the
+   * full transcript at generation density PLUS a per-instruction sweep PLUS a
+   * create_event tool round-trip per hit -- a strictly larger workload than a
+   * one-shot topic generation, so reusing TOPIC_GENERATE_*'s smaller budget
+   * would make the button deterministically fail on large sessions (the same
+   * env.ts lesson TOPIC_GENERATE_* itself was defaulted against). Gating
+   * (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT, the aiChatTurns registry) is
+   * shared, unchanged. */
+  EVENT_GENERATE_MAX_BUDGET_USD: string;
+  EVENT_GENERATE_TIMEOUT_SEC: string;
+  /** Per-run cap on events a single generate run may create (design D8). */
+  EVENT_GENERATE_MAX_CREATED_EVENTS: string;
+  /** Aggregate pre-spawn instruction bound (design D8): TWO limits guard
+   * against spawning a turn whose embedded instructions are too large to be a
+   * sane single run -- total instruction bytes and instruction-bearing entry
+   * count, both checked before the CLI is spawned (400, not a mid-run
+   * failure). */
+  EVENT_GENERATE_MAX_INSTRUCTION_BYTES: string;
+  EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: string;
   /** AI v2 dashboards (ai-v2-dashboards). Off by default: unlike the AI chat's
    * implicit gate (any non-blank CLAUDE_CLI_PATH enables it), AI v2 ALSO
    * requires this EXPLICIT flag (spec "Configuration-gated AI v2 endpoints")
