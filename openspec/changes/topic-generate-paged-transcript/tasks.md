@@ -65,7 +65,7 @@
       the sequential-page protocol, the fetch-until-no-marker rule, and the
       untrusted-data clause (direct string assertions). Gate: `npm run typecheck` +
       `npm test`.
-- [ ] 3.2 Raise defaults (D7): `topicGenerateMaxBudgetUsd` 2.0 → 5.0,
+- [x] 3.2 Raise defaults (D7): `topicGenerateMaxBudgetUsd` 2.0 → 5.0,
       `topicGenerateTimeoutSec` 300 → 600 in `server/src/env.ts`, with a comment
       citing the same file's event-generate rationale (the paged full-transcript read
       is the workload those numbers were derived for); update `server/.env.example`
