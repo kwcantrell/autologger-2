@@ -27,7 +27,7 @@
 
 ## 2. Context field, keying, page tracking (aiMcpServer.ts, aiTurn.ts)
 
-- [ ] 2.1 Widen `AiMcpTurnContext` with `pagedWords?: readonly
+- [x] 2.1 Widen `AiMcpTurnContext` with `pagedWords?: readonly
       AiGenerationSnapshotWord[]` (D1 — flat, 3-field snapshot shape, ONLY words);
       rekey the `get_transcript_words` builder: paged (page-input) registration when
       `generation !== undefined` OR `pagedWords` present; page words sourced
@@ -41,7 +41,7 @@
       registration (no context) byte-identical, existing pins unmodified; the one-shot
       tool pair registers no `create_event`/`list_topics`; pages-served tracking
       visible. Gate: `npm run typecheck` + `npm test`.
-- [ ] 2.2 Surface page coverage through `driveAiTurn` (`aiTurn.ts`) alongside
+- [x] 2.2 Surface page coverage through `driveAiTurn` (`aiTurn.ts`) alongside
       `createdEvents` (D6), and gate the `topics/generate` swap in `transcribe.ts`:
       success requires `outcome.ok && newIds.length >= 1 &&` every page of the
       snapshot served; anything less takes the EXISTING restore + 502 path (status,
