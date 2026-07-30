@@ -184,13 +184,29 @@ the session's topics untouched, byte-for-byte. The endpoint requires an existing
 (`400 {detail}` if the session has no transcript words — a generate never creates a
 transcript itself) and returns `200 {topics}` on success, in the same shape `GET …/topics`
 returns, or `502 {detail}` if the CLI turn fails or produces zero topics (again leaving the
-prior topics untouched). Because a one-shot reads the **entire** transcript in a single turn —
-a bigger workload than an incremental chat message — it is bounded by its own, higher-by-default
-spend/time ceiling rather than the chat's, so large sessions don't deterministically fail:
-`TOPIC_GENERATE_MAX_BUDGET_USD` (default `2.0`, the per-turn CLI cost ceiling) and
-`TOPIC_GENERATE_TIMEOUT_SEC` (default `300`, the server-side timeout backstop) — see
-`server/.env.example`. The AI chat tab remains the conversational path; `transcribe.csv`
-keeps its own, unrelated, unconditional `503`.
+prior topics untouched). The transcript reaches the model **paged**: the one-shot's
+`get_transcript_words` serves the generation-density rendering in deterministic sequential
+pages under a hard per-page size cap, each page but the last ending in an explicit
+continuation marker, computed from a word snapshot taken once at run start — so no single
+tool result can overflow the CLI's tool-output ceiling (the failure that let a run replace a
+good topic set with a "transcript unavailable" placeholder), and a mid-run transcript edit
+cannot shift the run's pages. A run that creates topics without fetching **every** page takes
+the same `502` restore path as a failed run rather than replacing the prior set. Because a
+one-shot reads the **entire** transcript in a single turn —
+delivered as multiple sequential pages at generation density, a much bigger workload than an
+incremental chat message — it is bounded by its own spend/time ceilings rather than the chat's
+(both defaulted well above the chat's), so large sessions don't deterministically fail:
+`TOPIC_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling) and
+`TOPIC_GENERATE_TIMEOUT_SEC` (default `600`, the server-side timeout backstop) — the same
+defaults as the event-generation knobs below, which the repo sizes for that same
+full-transcript-at-generation-density read — see `server/.env.example`. **Supported ceiling:**
+paging bounds each tool result, not the model's context window, so on very long sessions
+(roughly 50k+ words) the accumulated pages exceed that window and the CLI's own
+auto-compaction summarizes the earliest pages — the run still fetches every page and still
+succeeds, but topics for the early part of the session come out coarser. That is graceful
+degradation, not data loss, and it is not enforced by a new error status. The AI chat tab
+remains the conversational path; `transcribe.csv` keeps its own, unrelated, unconditional
+`503`.
 
 Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
 the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte
@@ -325,9 +341,11 @@ holders — the `ai/chat`, AI v2, and `topics/generate` busy/at-capacity strings
 
 **Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
 API call over the operator's own `claude login` credentials — the transcript and the
-configured instructions are sent to Anthropic. Its workload is strictly larger than topic
-generation's (full transcript at generation density, a sweep per instruction, a
-`create_event` round trip per hit), so it gets its own higher-by-default ceilings:
+configured instructions are sent to Anthropic. Its workload is likewise far past what the chat
+ceilings are sized for (full transcript at generation density, a sweep per instruction, a
+`create_event` round trip per hit), so it gets its own ceilings — separately tunable from the
+topic-generation knobs, but defaulted to the same values, since topic generation pages that
+same full transcript at generation density:
 `EVENT_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling, passed as
 `--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together

@@ -56,14 +56,15 @@ export interface Config {
   TOPIC_GENERATE_MAX_BUDGET_USD: string;
   TOPIC_GENERATE_TIMEOUT_SEC: string;
   /** Event auto-generation (auto-generate-event-logs, design D8). Same shape
-   * as TOPIC_GENERATE_*, but defaulted HIGHER still: a generate run walks the
-   * full transcript at generation density PLUS a per-instruction sweep PLUS a
-   * create_event tool round-trip per hit -- a strictly larger workload than a
-   * one-shot topic generation, so reusing TOPIC_GENERATE_*'s smaller budget
-   * would make the button deterministically fail on large sessions (the same
-   * env.ts lesson TOPIC_GENERATE_* itself was defaulted against). Gating
-   * (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT, the aiChatTurns registry) is
-   * shared, unchanged. */
+   * as TOPIC_GENERATE_*, SEPARATELY tunable from it, and defaulted to the SAME
+   * values: a generate run walks the full transcript at generation density
+   * PLUS a per-instruction sweep PLUS a create_event tool round-trip per hit,
+   * and the topic one-shot pages that same full transcript -- so both pairs
+   * are sized for that whole-transcript read rather than for an incremental
+   * chat message (the env.ts lesson TOPIC_GENERATE_* itself was defaulted
+   * against). Separate knobs so an operator can retune one workload without
+   * the other. Gating (CLAUDE_CLI_PATH, AI_CHAT_MAX_CONCURRENT, the
+   * aiChatTurns registry) is shared, unchanged. */
   EVENT_GENERATE_MAX_BUDGET_USD: string;
   EVENT_GENERATE_TIMEOUT_SEC: string;
   /** Per-run cap on events a single generate run may create (design D8). */

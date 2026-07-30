@@ -147,27 +147,37 @@ describe('env flag parsing', () => {
 });
 
 describe('topic generation config (design D6: dedicated budget/timeout, higher than the AI chat)', () => {
-  it('topicGenerateMaxBudgetUsd defaults to 2.0 -- higher than aiChatMaxBudgetUsd (0.5) -- and is overridable', () => {
-    expect(topicGenerateMaxBudgetUsd(E({}))).toBe(2.0);
-    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '' }))).toBe(2.0);
-    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '5' }))).toBe(5);
+  // topic-generate-paged-transcript D7: the one-shot now pages the full transcript at
+  // generation density, so these defaults were raised 2.0 -> 5.0 / 300 -> 600, matching
+  // the event-generate defaults the repo sizes for that same read.
+  it('topicGenerateMaxBudgetUsd defaults to 5.0 -- higher than aiChatMaxBudgetUsd (0.5) -- and is overridable', () => {
+    expect(topicGenerateMaxBudgetUsd(E({}))).toBe(5.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '' }))).toBe(5.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '10' }))).toBe(10);
     // non-numeric / non-positive falls back to the default, matching aiChatMaxBudgetUsd's shape
-    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: 'abc' }))).toBe(2.0);
-    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '0' }))).toBe(2.0);
-    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '-1' }))).toBe(2.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: 'abc' }))).toBe(5.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '0' }))).toBe(5.0);
+    expect(topicGenerateMaxBudgetUsd(E({ TOPIC_GENERATE_MAX_BUDGET_USD: '-1' }))).toBe(5.0);
   });
 
-  it('topicGenerateTimeoutSec defaults to 300 and is overridable via TOPIC_GENERATE_TIMEOUT_SEC', () => {
-    expect(topicGenerateTimeoutSec(E({}))).toBe(300);
-    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '' }))).toBe(300);
-    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '600' }))).toBe(600);
-    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: 'abc' }))).toBe(300);
-    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '0' }))).toBe(300);
+  it('topicGenerateTimeoutSec defaults to 600 and is overridable via TOPIC_GENERATE_TIMEOUT_SEC', () => {
+    expect(topicGenerateTimeoutSec(E({}))).toBe(600);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '' }))).toBe(600);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '900' }))).toBe(900);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: 'abc' }))).toBe(600);
+    expect(topicGenerateTimeoutSec(E({ TOPIC_GENERATE_TIMEOUT_SEC: '0' }))).toBe(600);
+  });
+
+  it('the topic-generate defaults are no lower than the event-generate defaults (D7)', () => {
+    expect(topicGenerateMaxBudgetUsd(E({}))).toBeGreaterThanOrEqual(
+      eventGenerateMaxBudgetUsd(E({})),
+    );
+    expect(topicGenerateTimeoutSec(E({}))).toBeGreaterThanOrEqual(eventGenerateTimeoutSec(E({})));
   });
 });
 
-describe('event auto-generation config (design D8: dedicated budget/timeout/cap/bound, higher than topic-generate)', () => {
-  it('eventGenerateMaxBudgetUsd defaults to 5.0 -- higher than topicGenerateMaxBudgetUsd (2.0) -- and is overridable', () => {
+describe('event auto-generation config (design D8: dedicated budget/timeout/cap/bound, sized for the full paged-transcript read)', () => {
+  it('eventGenerateMaxBudgetUsd defaults to 5.0 -- equal to topicGenerateMaxBudgetUsd -- and is overridable', () => {
     expect(eventGenerateMaxBudgetUsd(E({}))).toBe(5.0);
     expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '' }))).toBe(5.0);
     expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '10' }))).toBe(10);
@@ -177,7 +187,7 @@ describe('event auto-generation config (design D8: dedicated budget/timeout/cap/
     expect(eventGenerateMaxBudgetUsd(E({ EVENT_GENERATE_MAX_BUDGET_USD: '-1' }))).toBe(5.0);
   });
 
-  it('eventGenerateTimeoutSec defaults to 600 -- higher than topicGenerateTimeoutSec (300) -- and is overridable', () => {
+  it('eventGenerateTimeoutSec defaults to 600 -- equal to topicGenerateTimeoutSec -- and is overridable', () => {
     expect(eventGenerateTimeoutSec(E({}))).toBe(600);
     expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: '' }))).toBe(600);
     expect(eventGenerateTimeoutSec(E({ EVENT_GENERATE_TIMEOUT_SEC: '900' }))).toBe(900);

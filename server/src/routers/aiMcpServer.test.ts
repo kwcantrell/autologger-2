@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionHub, SessionHubRegistry } from '../session/SessionHub';
 import {
   type AiGenerationRunContext,
+  type AiGenerationSnapshotWord,
   AiMcpListener,
   type AiMcpTurnContext,
+  allTranscriptPagesServed,
   GENERATION_LINE_MAX_WORDS,
   GENERATION_PAGE_SIZE_WORDS,
 } from './aiMcpServer';
@@ -1110,7 +1112,10 @@ describe('get_transcript_words — generation-density paged rendering (3.3)', ()
   });
 
   it('pages an over-page-size transcript over real MCP: marker on page 0, page=1 fetches the rest', async () => {
-    // PAGE_SIZE_WORDS + N + 2 words ⇒ exactly 2 pages at the real constants.
+    // Two pages at the real constants. (The CHAR cap is what binds here since
+    // topic-generate-paged-transcript task 1.1 — this word count sits above
+    // both caps; the packing semantics themselves belong to the rendering
+    // suite, this test only pins the tool wiring over real MCP.)
     const count = GENERATION_PAGE_SIZE_WORDS + GENERATION_LINE_MAX_WORDS + 2;
     const words = Array.from({ length: count }, (_, i) => ({
       session_time: i % 10 === 0 ? '00:10:00' : '',
@@ -1268,6 +1273,236 @@ describe('get_transcript_words — run-start word snapshot (4.3, phase-3 carry)'
       expect(res2.content[0].text).not.toContain('live-word');
     } finally {
       await close();
+      turn.dispose();
+    }
+  });
+});
+
+// ── topic-generate-paged-transcript task 2.1 (design D1/D6) — the words-only
+// `pagedWords` snapshot, and the registration's page-coverage bookkeeping.
+//
+// KEYING and TRACKING only: what a page CONTAINS (packing, markers,
+// determinism, out-of-range wording) is owned by
+// aiMcpGenerationRendering.test.ts and is not re-asserted here. What this
+// block pins is (a) which registrations get the paged tool shape and where
+// their words come from, and (b) that the served-page counter the
+// `topics/generate` swap gate reads counts only VALID pages actually served.
+//
+// Byte-identity of the two pre-existing registration kinds is pinned by the
+// untouched suites above: chat (context-less) by 'get_transcript_words returns
+// COMPACT readable text' + 'accepts a live token and exposes the three tool
+// names', event generation by the 3.3/4.3 blocks.
+
+describe('get_transcript_words — pagedWords keying + page coverage (2.1)', () => {
+  /** A snapshot that spans several generation-density pages at the REAL
+   * constants (200-char words ⇒ the char cap pages it after ~40 lines). */
+  function multiPageSnapshot(): AiGenerationSnapshotWord[] {
+    return Array.from({ length: 600 }, (_, i) => ({
+      word: `w${i}`.padEnd(200, 'x'),
+      session_time: '00:00:01',
+      speaker: 'S1',
+    }));
+  }
+
+  const ONE_WORD_SNAPSHOT: AiGenerationSnapshotWord[] = [
+    { word: 'snapshot-only', session_time: '00:00:07', speaker: 'S1' },
+  ];
+
+  /** Fetch one page over real MCP. */
+  async function fetchPage(
+    turn: { url: string; token: string },
+    page?: number,
+  ): Promise<ToolResult> {
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      return (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: page === undefined ? {} : { page },
+      })) as ToolResult;
+    } finally {
+      await close();
+    }
+  }
+
+  it('a pagedWords registration exposes the `page` input and serves the SNAPSHOT, not the live hub', async () => {
+    // The live hub holds something ELSE entirely: a snapshot-sourced read can
+    // never show it (D1 — the pages come only from the captured list).
+    registry.get('paged-src').replaceTranscriptWords([
+      {
+        session_time: '00:00:01',
+        speaker: 'S1',
+        word: 'live-hub-word',
+        start_sec: 1,
+        end_sec: 2,
+      },
+    ]);
+    const turn = listener.registerTurn('paged-src', {
+      tools: ['get_transcript_words', 'create_topic'],
+      pagedWords: ONE_WORD_SNAPSHOT,
+    });
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const tool = (await client.listTools()).tools.find((t) => t.name === 'get_transcript_words');
+      const props = (tool?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+      // The PAGED shape — the same one an event-generation turn advertises —
+      // on a turn carrying no generation run at all.
+      expect(Object.keys(props)).toEqual(['page']);
+
+      const res = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: {},
+      })) as ToolResult;
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).toContain('snapshot-only');
+      expect(res.content[0].text).not.toContain('live-hub-word');
+
+      // A mid-run replacement cannot reach it either.
+      registry
+        .get('paged-src')
+        .replaceTranscriptWords([
+          { session_time: '00:59:59', speaker: 'Z', word: 'replaced', start_sec: 0, end_sec: 1 },
+        ]);
+      const again = (await client.callTool({
+        name: 'get_transcript_words',
+        arguments: { page: 0 },
+      })) as ToolResult;
+      expect(again.content[0].text).toBe(res.content[0].text);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it("the event run's own snapshot still wins when a registration carries both", async () => {
+    // Sourcing precedence (D1): `generation?.words ?? pagedWords ?? live hub`.
+    const turn = listener.registerTurn('paged-precedence', {
+      ...genContext({
+        words: [{ word: 'run-snapshot-word', session_time: '00:00:03', speaker: 'S1' }],
+      }),
+      pagedWords: ONE_WORD_SNAPSHOT,
+    });
+    try {
+      const res = await fetchPage(turn);
+      expect(res.content[0].text).toContain('run-snapshot-word');
+      expect(res.content[0].text).not.toContain('snapshot-only');
+    } finally {
+      turn.dispose();
+    }
+  });
+
+  it('the one-shot tool pair registers exactly get_transcript_words + create_topic', async () => {
+    const turn = listener.registerTurn('paged-tools', {
+      tools: ['get_transcript_words', 'create_topic'],
+      pagedWords: ONE_WORD_SNAPSHOT,
+    });
+    const { client, close } = await connectMcp(turn.url, turn.token);
+    try {
+      const names = (await client.listTools()).tools.map((t) => t.name).sort();
+      // The snapshot keys the RENDERING, never the tool set: no create_event
+      // (still keyed by `tools` alone) and no list_topics (D3's withholding).
+      expect(names).toEqual(['create_topic', 'get_transcript_words']);
+    } finally {
+      await close();
+      turn.dispose();
+    }
+  });
+
+  it('tracks DISTINCT served pages against the snapshot total; full coverage only after the last page', async () => {
+    const turn = listener.registerTurn('paged-cov', {
+      tools: ['get_transcript_words'],
+      pagedWords: multiPageSnapshot(),
+    });
+    try {
+      // Known before a single call — a run that never reads the transcript
+      // must still be measurable against a real total.
+      const { totalPages } = turn.pageCoverage();
+      expect(totalPages).toBeGreaterThanOrEqual(3);
+      expect(turn.pageCoverage()).toEqual({ totalPages, servedPages: 0 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(false);
+
+      // Page 0 only — the motivating partial-prefix read.
+      expect((await fetchPage(turn, 0)).isError).toBeFalsy();
+      expect(turn.pageCoverage()).toEqual({ totalPages, servedPages: 1 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(false);
+
+      // Re-reading a page does not inflate coverage.
+      await fetchPage(turn, 0);
+      expect(turn.pageCoverage().servedPages).toBe(1);
+
+      // Every page but the LAST: still not full coverage.
+      for (let p = 1; p < totalPages - 1; p += 1) await fetchPage(turn, p);
+      expect(turn.pageCoverage()).toEqual({ totalPages, servedPages: totalPages - 1 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(false);
+
+      const last = await fetchPage(turn, totalPages - 1);
+      expect(last.isError).toBeFalsy();
+      expect(last.content[0].text).not.toContain('transcript continues');
+      expect(turn.pageCoverage()).toEqual({ totalPages, servedPages: totalPages });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(true);
+    } finally {
+      turn.dispose();
+    }
+  });
+
+  it('an out-of-range or malformed page is a tool error that marks NO coverage', async () => {
+    const turn = listener.registerTurn('paged-cov-err', {
+      tools: ['get_transcript_words'],
+      pagedWords: ONE_WORD_SNAPSHOT, // exactly one page
+    });
+    try {
+      expect(turn.pageCoverage()).toEqual({ totalPages: 1, servedPages: 0 });
+      const past = await fetchPage(turn, 5);
+      expect(past.isError).toBe(true);
+      const negative = await fetchPage(turn, -1);
+      expect(negative.isError).toBe(true);
+      const fractional = await fetchPage(turn, 0.5);
+      expect(fractional.isError).toBe(true);
+      // Three tool errors, zero pages served — an errored call can never
+      // satisfy the swap gate.
+      expect(turn.pageCoverage()).toEqual({ totalPages: 1, servedPages: 0 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(false);
+
+      // …and the real page still counts.
+      expect((await fetchPage(turn, 0)).isError).toBeFalsy();
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(true);
+    } finally {
+      turn.dispose();
+    }
+  });
+
+  it('a chat (context-less) registration reports zero pages and makes no coverage claim', async () => {
+    registry
+      .get('chat-cov')
+      .replaceTranscriptWords([
+        { session_time: '00:00:01', speaker: 'S1', word: 'hello', start_sec: 1, end_sec: 2 },
+      ]);
+    const turn = listener.registerTurn('chat-cov');
+    try {
+      expect(turn.pageCoverage()).toEqual({ totalPages: 0, servedPages: 0 });
+      const res = await fetchPage(turn);
+      // Unpaged chat rendering (zero-arg), unchanged…
+      expect(res.content[0].text).toBe('[00:00:01] speaker S1: hello');
+      // …and reading it still claims no coverage, so a chat/topic turn whose
+      // registration carries no snapshot can never FAIL the gate.
+      expect(turn.pageCoverage()).toEqual({ totalPages: 0, servedPages: 0 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(true);
+    } finally {
+      turn.dispose();
+    }
+  });
+
+  it('a snapshot-less GENERATION registration (live hub) also makes no coverage claim', async () => {
+    registry
+      .get('gen-cov-live')
+      .replaceTranscriptWords([
+        { session_time: '00:00:01', speaker: 'S1', word: 'live', start_sec: 1, end_sec: 2 },
+      ]);
+    const turn = listener.registerTurn('gen-cov-live', genContext());
+    try {
+      expect((await fetchPage(turn, 0)).content[0].text).toContain('live');
+      expect(turn.pageCoverage()).toEqual({ totalPages: 0, servedPages: 0 });
+      expect(allTranscriptPagesServed(turn.pageCoverage())).toBe(true);
+    } finally {
       turn.dispose();
     }
   });

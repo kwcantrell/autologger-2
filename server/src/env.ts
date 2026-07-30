@@ -153,52 +153,62 @@ export function aiChatOpenNetworkRefused(env: Config): boolean {
 // workload than an incremental chat message -- so spend/time bounds are their
 // own dedicated config, defaulted higher than the chat's, rather than reused
 // (reuse would make the button deterministically fail on large sessions).
+// Those defaults were raised to the event-generate values
+// (topic-generate-paged-transcript, design D7) once the one-shot started
+// reading the transcript as multiple sequential pages at generation density:
+// that is exactly the workload the event-generate rationale below was derived
+// for -- a full-transcript-at-generation-density read plus a tool round-trip
+// per created row -- so the two knob pairs now default to the same numbers.
 
 /** Per-turn CLI cost ceiling in USD for a one-shot topic generation (design
- * D6); default 2.0 -- higher than aiChatMaxBudgetUsd's 0.5 since a generate
- * turn walks the full transcript with many create_topic round-trips.
+ * D6; default raised 2.0 -> 5.0 by topic-generate-paged-transcript D7) --
+ * higher than aiChatMaxBudgetUsd's 0.5 since a generate turn pages the full
+ * transcript at generation density with many create_topic round-trips.
  * Non-numeric / non-positive falls back to the default. */
 export function topicGenerateMaxBudgetUsd(env: Config): number {
   const n = Number((env.TOPIC_GENERATE_MAX_BUDGET_USD || '').trim());
-  return Number.isFinite(n) && n > 0 ? n : 2.0;
+  return Number.isFinite(n) && n > 0 ? n : 5.0;
 }
 
 /** Per-turn server-side timeout backstop in seconds for a one-shot topic
- * generation (design D6); default 300, matching aiChatTimeoutSec's default
- * (the same subprocess-timeout + process-group-kill mechanism, just its own
- * knob so it can be raised independently of the chat's). Non-numeric /
+ * generation (design D6; default raised 300 -> 600 by
+ * topic-generate-paged-transcript D7, sized for the multi-page sequential
+ * read) -- higher than aiChatTimeoutSec's 300, the same subprocess-timeout +
+ * process-group-kill mechanism under its own knob. Non-numeric /
  * non-positive falls back to the default. */
 export function topicGenerateTimeoutSec(env: Config): number {
   const n = Number((env.TOPIC_GENERATE_TIMEOUT_SEC || '').trim());
-  return Number.isFinite(n) && n > 0 ? n : 300;
+  return Number.isFinite(n) && n > 0 ? n : 600;
 }
 
 // ── Event auto-generation (auto-generate-event-logs, design D8) ────────────
 // `events/generate` reuses the AI chat's/topic-generate's CLI/MCP/gate/
 // registry (aiChatConfigured, aiChatOpenNetworkRefused, aiChatTurns,
-// AI_CHAT_MAX_CONCURRENT) as-is, but its own one-shot run is a STRICTLY
-// LARGER workload than topic-generate's: the full transcript at generation
-// density, an instruction sweep per instruction-bearing category/option, and
-// a create_event tool round-trip per hit. Reusing topicGenerateMaxBudgetUsd/
-// topicGenerateTimeoutSec would make the button deterministically fail on
-// large sessions (the same env.ts precedent topic-generate itself was
-// defaulted against) -- so this gets its own dedicated, higher-defaulted
-// knobs rather than sharing topic-generate's.
+// AI_CHAT_MAX_CONCURRENT) as-is, but its own one-shot run is a LARGE
+// workload: the full transcript at generation density, an instruction sweep
+// per instruction-bearing category/option, and a create_event tool round-trip
+// per hit -- far past what the CHAT bounds are sized for, so it gets its own
+// dedicated knobs rather than sharing the chat's. These knobs stay separate
+// from topic-generate's (either can be tuned without moving the other), but
+// the two pairs now DEFAULT TO THE SAME VALUES: topic-generate pages the same
+// full transcript at generation density, so the sizing rationale below covers
+// both (topic-generate-paged-transcript, design D7).
 
 /** Per-turn CLI cost ceiling in USD for a one-shot event-generate run (design
- * D8); default 5.0 -- higher than topicGenerateMaxBudgetUsd's 2.0 since a
- * generate turn does a full-transcript read plus a per-instruction sweep plus
- * a create_event round-trip per hit. Non-numeric / non-positive falls back to
- * the default. */
+ * D8); default 5.0 -- equal to topicGenerateMaxBudgetUsd's default and well
+ * above aiChatMaxBudgetUsd's 0.5, since a generate turn does a full
+ * paged-transcript read plus a per-instruction sweep plus a create_event
+ * round-trip per hit. Non-numeric / non-positive falls back to the default. */
 export function eventGenerateMaxBudgetUsd(env: Config): number {
   const n = Number((env.EVENT_GENERATE_MAX_BUDGET_USD || '').trim());
   return Number.isFinite(n) && n > 0 ? n : 5.0;
 }
 
 /** Per-turn server-side timeout backstop in seconds for a one-shot
- * event-generate run (design D8); default 600 -- higher than
- * topicGenerateTimeoutSec's 300 for the same strictly-larger-workload reason.
- * Non-numeric / non-positive falls back to the default. */
+ * event-generate run (design D8); default 600 -- equal to
+ * topicGenerateTimeoutSec's default and above aiChatTimeoutSec's 300, for the
+ * same large-workload reason. Non-numeric / non-positive falls back to the
+ * default. */
 export function eventGenerateTimeoutSec(env: Config): number {
   const n = Number((env.EVENT_GENERATE_TIMEOUT_SEC || '').trim());
   return Number.isFinite(n) && n > 0 ? n : 600;
