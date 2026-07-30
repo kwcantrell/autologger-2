@@ -191,8 +191,9 @@ incremental chat message — it is bounded by its own spend/time ceilings rather
 `TOPIC_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling) and
 `TOPIC_GENERATE_TIMEOUT_SEC` (default `600`, the server-side timeout backstop) — the same
 defaults as the event-generation knobs below, which the repo sizes for that same
-full-transcript-at-generation-density read — see `server/.env.example`. The AI chat tab remains the conversational path; `transcribe.csv`
-keeps its own, unrelated, unconditional `503`.
+full-transcript-at-generation-density read — see `server/.env.example`. The AI chat tab
+remains the conversational path; `transcribe.csv` keeps its own, unrelated, unconditional
+`503`.
 
 Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
 the endpoint's frozen `503 {detail}` and leaves unconfigured deployments byte-for-byte

@@ -82,9 +82,11 @@ export async function generateTopicsTurn(
   // The run's WORD SNAPSHOT (topic-generate-paged-transcript D2), mirroring the
   // `events/generate` precedent: the session's COMPLETE word list, read ONCE
   // and projected to the 3-field rendering shape (raw hub rows carry several
-  // MB of dead fields on a long session). This statement and the
-  // `driveAiTurn(...)` below are one synchronous prologue — no `await` occurs
-  // between here and the turn registration, so nothing can interleave: the
+  // MB of dead fields on a long session). The property that matters: this
+  // statement and the `driveAiTurn(...)` below are one synchronous prologue —
+  // the snapshot is MATERIALIZED before this function's first `await` (which
+  // is inside `driveAiTurn`, ahead of the registration it performs), and it is
+  // an immutable fresh copy, so no later mutation can reach it. Together: the
   // pages the run serves are computed from THIS list, and a concurrent
   // transcript replacement or single-word edit can shift neither their content
   // nor their boundaries mid-run. Do not insert an `await` above or between.
