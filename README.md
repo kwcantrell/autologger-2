@@ -185,11 +185,13 @@ the session's topics untouched, byte-for-byte. The endpoint requires an existing
 transcript itself) and returns `200 {topics}` on success, in the same shape `GET …/topics`
 returns, or `502 {detail}` if the CLI turn fails or produces zero topics (again leaving the
 prior topics untouched). Because a one-shot reads the **entire** transcript in a single turn —
-a bigger workload than an incremental chat message — it is bounded by its own, higher-by-default
-spend/time ceiling rather than the chat's, so large sessions don't deterministically fail:
-`TOPIC_GENERATE_MAX_BUDGET_USD` (default `2.0`, the per-turn CLI cost ceiling) and
-`TOPIC_GENERATE_TIMEOUT_SEC` (default `300`, the server-side timeout backstop) — see
-`server/.env.example`. The AI chat tab remains the conversational path; `transcribe.csv`
+delivered as multiple sequential pages at generation density, a much bigger workload than an
+incremental chat message — it is bounded by its own spend/time ceilings rather than the chat's
+(both defaulted well above the chat's), so large sessions don't deterministically fail:
+`TOPIC_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling) and
+`TOPIC_GENERATE_TIMEOUT_SEC` (default `600`, the server-side timeout backstop) — the same
+defaults as the event-generation knobs below, which the repo sizes for that same
+full-transcript-at-generation-density read — see `server/.env.example`. The AI chat tab remains the conversational path; `transcribe.csv`
 keeps its own, unrelated, unconditional `503`.
 
 Gated by `CLAUDE_CLI_PATH` (see `server/.env.example`): unset/blank/whitespace-only keeps
@@ -325,9 +327,11 @@ holders — the `ai/chat`, AI v2, and `topics/generate` busy/at-capacity strings
 
 **Egress and spend disclosure.** Like `topics/generate`, a run is a real, billed Anthropic
 API call over the operator's own `claude login` credentials — the transcript and the
-configured instructions are sent to Anthropic. Its workload is strictly larger than topic
-generation's (full transcript at generation density, a sweep per instruction, a
-`create_event` round trip per hit), so it gets its own higher-by-default ceilings:
+configured instructions are sent to Anthropic. Its workload is likewise far past what the chat
+ceilings are sized for (full transcript at generation density, a sweep per instruction, a
+`create_event` round trip per hit), so it gets its own ceilings — separately tunable from the
+topic-generation knobs, but defaulted to the same values, since topic generation pages that
+same full transcript at generation density:
 `EVENT_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling, passed as
 `--max-budget-usd`) and `EVENT_GENERATE_TIMEOUT_SEC` (default `600`, the server-side
 timeout backstop) — see `server/.env.example`. Concurrency exposure is bounded together
