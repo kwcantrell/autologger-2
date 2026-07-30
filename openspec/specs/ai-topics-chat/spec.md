@@ -175,9 +175,11 @@ MCP server never exposes it:
   `session_id`, …), which the model does not need and whose per-word repetition made the
   JSON form a single oversized payload that overflowed the CLI's tool-output limit and
   hid the transcript from the model. The output SHALL be a bounded, non-JSON rendering.
-  On an event-generation turn the same tool renders at generation density with
-  deterministic paging (governed by `auto-event-generation`'s "Generation-density
-  transcript rendering"); chat turns keep this rendering unchanged.
+  On a generation-density turn (event generation and the topic-generation one-shot) the
+  same tool renders at generation density with deterministic paging — defined solely by
+  `auto-event-generation`'s "Generation-density transcript rendering". Chat turns keep
+  the unpaged compact rendering unchanged, and a chat turn's registration SHALL NOT
+  carry the paged-transcript word snapshot (the field that keys paged delivery).
 - `list_topics` — returns the session's topics with the hub row fields.
 - `create_topic` — creates one topic; input SHALL be validated with the same bounds as
   the existing `topicCreateSchema` (`session_time` ≤ 20 chars, `duration_sec` ≥ 0,
@@ -214,6 +216,12 @@ an alteration of emission semantics.)
 - **THEN** the tool returns a compact per-speaker, session-time-anchored text rendering
   (not a JSON array of hub rows), so a multi-thousand-word transcript stays within the
   CLI's tool-output limit and is visible to the model
+
+#### Scenario: Chat turns keep the unpaged rendering
+- **WHEN** a chat turn's model calls `get_transcript_words`
+- **THEN** the tool has the zero-argument input shape and returns the whole compact
+  rendering in one result — no `page` argument, no continuation marker — and the chat
+  turn's registration carries no paged-transcript word snapshot
 
 #### Scenario: Chat turns cannot write events
 - **WHEN** a chat turn runs
