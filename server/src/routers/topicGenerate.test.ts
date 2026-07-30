@@ -61,10 +61,14 @@ describe('generateTopicsTurn', () => {
     });
     // `createdEvents: 0` — driveAiTurn's task-4.3 return widening; always 0 on
     // topic turns (their registration never exposes create_event).
+    // `pageCoverage` — topic-generate-paged-transcript task 2.2's widening;
+    // zero-of-zero until this turn registers a word snapshot (task 3.1), i.e.
+    // no coverage claim the route's swap gate could fail on.
     expect(outcome).toEqual({
       ok: true,
       claudeSessionId: 'fixture-cli-session-id',
       createdEvents: 0,
+      pageCoverage: { totalPages: 0, servedPages: 0 },
     });
   });
 
@@ -92,7 +96,12 @@ describe('generateTopicsTurn', () => {
       maxBudgetUsd: 2.0,
       timeoutMs: 10_000,
     });
-    expect(outcome).toEqual({ ok: false, detail: 'upstream-failed', createdEvents: 0 });
+    expect(outcome).toEqual({
+      ok: false,
+      detail: 'upstream-failed',
+      createdEvents: 0,
+      pageCoverage: { totalPages: 0, servedPages: 0 },
+    });
   });
 
   it(
@@ -110,7 +119,12 @@ describe('generateTopicsTurn', () => {
         maxBudgetUsd: 2.0,
         timeoutMs: 1,
       });
-      expect(outcome).toEqual({ ok: false, detail: 'timeout', createdEvents: 0 });
+      expect(outcome).toEqual({
+        ok: false,
+        detail: 'timeout',
+        createdEvents: 0,
+        pageCoverage: { totalPages: 0, servedPages: 0 },
+      });
     },
   );
 
