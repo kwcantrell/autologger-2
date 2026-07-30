@@ -53,7 +53,7 @@
 
 ## 3. Topic one-shot turn (topicGenerate.ts) + bounds (env.ts)
 
-- [ ] 3.1 `generateTopicsTurn`: capture the word snapshot synchronously as the
+- [x] 3.1 `generateTopicsTurn`: capture the word snapshot synchronously as the
       immediately-preceding statement before `driveAiTurn` (D2 — hub read projected to
       the 3-field shape; no `await` between read and turn registration, matching the
       `events.ts` precedent and its comment); pass as `mcpContext.pagedWords`;
