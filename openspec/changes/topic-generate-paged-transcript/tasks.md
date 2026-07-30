@@ -90,7 +90,7 @@
 
 ## 5. Docs, spec verification, final gates
 
-- [ ] 5.1 Verify all three delta specs against the implementation. Docs sweep: add one
+- [x] 5.1 Verify all three delta specs against the implementation. Docs sweep: add one
       sentence to README's topic-generation section stating the one-shot reads the
       transcript via the paged generation-density rendering (unconditional add — the
       section currently doesn't describe transcript delivery; README's "the chat
@@ -107,7 +107,7 @@
       turns)"), and the `registerTurn` JSDoc ("on generation turns — the run
       snapshot"); `aiTurn.ts` `mcpContext` JSDoc ("plus — on event-generation turns —
       the run snapshot"). Keep origin headers past-tense.
-- [ ] 5.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`,
+- [x] 5.2 Final gates: `npm run typecheck`, `npm test`, `npm run lint`,
       `npm run e2e` (chromium + login-gate), `npm run e2e:visual`. No UI surface is
       touched, so visual diffs are unexpected — investigate as unrelated drift rather
       than re-blessing.
