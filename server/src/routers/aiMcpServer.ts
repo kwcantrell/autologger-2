@@ -167,8 +167,10 @@ export interface AiMcpTurnContext {
   readonly generation?: AiGenerationRunContext;
   /** SEAM (topic-generate-paged-transcript D1) — the turn's paged-transcript
    * word snapshot, carrying ONLY words: the session's COMPLETE transcript word
-   * list, captured synchronously by the caller (no `await` between the hub read
-   * and `registerTurn`) and projected to the 3-field
+   * list, captured by the caller and materialized as an immutable fresh copy
+   * synchronously — before the caller's first `await` — so later transcript
+   * mutation can reach neither it nor this run's page boundaries, and
+   * projected to the 3-field
    * `AiGenerationSnapshotWord` shape. Its presence KEYS the paged
    * generation-density `get_transcript_words` rendering on a turn that has no
    * event-generation run (the topic one-shot), and the page-coverage
