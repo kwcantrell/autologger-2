@@ -78,7 +78,7 @@
 
 ## 4. Real-CLI acceptance (primary behavioral evidence)
 
-- [ ] 4.1 Extend `topicGenerate.real.test.ts` (D8): multi-page fixture (exceeds one
+- [x] 4.1 Extend `topicGenerate.real.test.ts` (D8): multi-page fixture (exceeds one
       size-capped page) with INCREASING per-word timecodes (the current fixture
       anchors every word at `00:00:01`) and an unguessable content canary present only
       on the LAST page, asserted to reach a topic summary; run at PRODUCTION defaults
