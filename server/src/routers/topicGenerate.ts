@@ -1,6 +1,6 @@
 // topic-generation (design D2/D3/D5/D6, task 2.3) — the one-shot,
 // non-conversational generate turn. Wraps `driveAiTurn` (task 2.1) with the
-// three properties that make it a *generate* rather than a chat message:
+// properties that make it a *generate* rather than a chat message:
 //
 //   - `list_topics` is WITHHELD from `--allowedTools` (only
 //     `get_transcript_words` + `create_topic` are exposed) so the model
@@ -17,6 +17,13 @@
 //   - NO `abortSignal` is wired (D2) — a synchronous POST runs to completion
 //     server-side so success-replace vs failure-restore stays deterministic
 //     even across a mid-run client/proxy disconnect.
+//   - the transcript is delivered PAGED (topic-generate-paged-transcript
+//     D1/D2): this function captures the session's complete word list
+//     synchronously before the turn and passes it as `mcpContext.pagedWords`,
+//     which keys the generation-density paged rendering, freezes the run's
+//     page boundaries, and is the list the route's page-coverage gate counts.
+//     Delivering the whole transcript as ONE tool result is what silently
+//     broke this button on long sessions — do not fall back to it.
 //
 // `emit` is a no-op: the route handler (task 3.1) reads the *returned*
 // `AiChatTurnOutcome`, never a stream (there is no SSE surface on

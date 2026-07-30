@@ -184,14 +184,27 @@ the session's topics untouched, byte-for-byte. The endpoint requires an existing
 (`400 {detail}` if the session has no transcript words — a generate never creates a
 transcript itself) and returns `200 {topics}` on success, in the same shape `GET …/topics`
 returns, or `502 {detail}` if the CLI turn fails or produces zero topics (again leaving the
-prior topics untouched). Because a one-shot reads the **entire** transcript in a single turn —
+prior topics untouched). The transcript reaches the model **paged**: the one-shot's
+`get_transcript_words` serves the generation-density rendering in deterministic sequential
+pages under a hard per-page size cap, each page but the last ending in an explicit
+continuation marker, computed from a word snapshot taken once at run start — so no single
+tool result can overflow the CLI's tool-output ceiling (the failure that let a run replace a
+good topic set with a "transcript unavailable" placeholder), and a mid-run transcript edit
+cannot shift the run's pages. A run that creates topics without fetching **every** page takes
+the same `502` restore path as a failed run rather than replacing the prior set. Because a
+one-shot reads the **entire** transcript in a single turn —
 delivered as multiple sequential pages at generation density, a much bigger workload than an
 incremental chat message — it is bounded by its own spend/time ceilings rather than the chat's
 (both defaulted well above the chat's), so large sessions don't deterministically fail:
 `TOPIC_GENERATE_MAX_BUDGET_USD` (default `5.0`, the per-turn CLI cost ceiling) and
 `TOPIC_GENERATE_TIMEOUT_SEC` (default `600`, the server-side timeout backstop) — the same
 defaults as the event-generation knobs below, which the repo sizes for that same
-full-transcript-at-generation-density read — see `server/.env.example`. The AI chat tab
+full-transcript-at-generation-density read — see `server/.env.example`. **Supported ceiling:**
+paging bounds each tool result, not the model's context window, so on very long sessions
+(roughly 50k+ words) the accumulated pages exceed that window and the CLI's own
+auto-compaction summarizes the earliest pages — the run still fetches every page and still
+succeeds, but topics for the early part of the session come out coarser. That is graceful
+degradation, not data loss, and it is not enforced by a new error status. The AI chat tab
 remains the conversational path; `transcribe.csv` keeps its own, unrelated, unconditional
 `503`.
 

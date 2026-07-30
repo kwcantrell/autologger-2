@@ -35,10 +35,14 @@
 // transcript-anchored event through the transactional `SessionHub.addEvent`
 // explicit-anchor path, gated by the generation run snapshot.
 // Registration is PER TURN (auto-generate-event-logs D6): each turn's
-// registration carries its tool set (+ generation run snapshot), and
-// `buildSessionMcpServer` registers only that set — chat passes its three
-// tools explicitly (D7, task 3.4), a context-less turn still gets the pinned
-// default three, and either way a chat turn can never reach `create_event`.
+// registration carries its tool set, plus — on a turn that reads the
+// transcript at generation density — a word snapshot (the event run's
+// `generation.words`, or the topic one-shot's `pagedWords`;
+// topic-generate-paged-transcript D1) whose pagination and served-page
+// bookkeeping live on the registration. `buildSessionMcpServer` registers only
+// that tool set — chat passes its three tools explicitly (D7, task 3.4), a
+// context-less turn still gets the pinned default three, and either way a chat
+// turn can never reach `create_event`.
 
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
@@ -147,15 +151,19 @@ export interface AiGenerationRunContext {
 }
 
 /** Per-turn registration context (auto-generate-event-logs D6): the turn's
- * tool set, plus the run snapshot on generation turns. `ai/chat` and
- * `topics/generate` pass explicit `{tools}` matching their argv allowlists
- * (D7, task 3.4); a context-less registration still gets the pinned default
- * three chat tools. */
+ * tool set, plus at most ONE transcript word snapshot — the event run's
+ * (`generation.words`) or the topic one-shot's (`pagedWords`;
+ * topic-generate-paged-transcript D1). `ai/chat` and `topics/generate` pass
+ * explicit `{tools}` matching their argv allowlists (D7, task 3.4); a
+ * context-less registration still gets the pinned default three chat tools. */
 export interface AiMcpTurnContext {
   /** Tool names the per-request MCP server registers for this turn — and
    * ONLY these; anything else in the registry is denied at the server. */
   readonly tools: readonly AiMcpToolName[];
-  /** Present on event-generation turns only. */
+  /** The EVENT run's snapshot — present on event-generation turns only, and
+   * the only carrier of event-run fields (`create_event`'s allowlist, cap,
+   * frame rate, run id). It is no longer the sole key for paged transcript
+   * delivery: `pagedWords` below keys it for turns that have no event run. */
   readonly generation?: AiGenerationRunContext;
   /** SEAM (topic-generate-paged-transcript D1) — the turn's paged-transcript
    * word snapshot, carrying ONLY words: the session's COMPLETE transcript word
@@ -373,26 +381,27 @@ function formatTranscriptForModel(
 //
 // The chat rendering above collapses a single-speaker session to ONE
 // timestamp (one anchor per speaker turn), which makes per-utterance event
-// placement impossible. For GENERATION turns `get_transcript_words` instead
-// renders a new anchored line at every speaker change AND every ≤ N words,
-// and pages deterministically when the transcript exceeds the page size —
-// never silently truncated. Chat turns keep `formatTranscriptForModel`
-// byte-identical.
+// placement impossible. For GENERATION-DENSITY turns — event generation and
+// the topic one-shot (topic-generate-paged-transcript D1), the two consumers
+// of this one shared pager — `get_transcript_words` instead renders a new
+// anchored line at every speaker change AND every ≤ N words, and pages
+// deterministically on line boundaries once a page would exceed the hard
+// rendered-size cap below — never silently truncated. Chat turns keep
+// `formatTranscriptForModel` byte-identical.
 
 /** N — max words per rendered line (spec: "bounded word count", small enough
  * that an utterance can be placed to within a few seconds: at ~150 wpm,
- * 10 words ≈ 4 seconds). Measured with the 27k-word fixture in
- * aiMcpGenerationRendering.test.ts: at N=10 + PAGE_SIZE_WORDS=8000 the
- * worst-case rendered page is 62,952 bytes. */
+ * 10 words ≈ 4 seconds). N drives the LINE shape only; what bounds a page is
+ * `GENERATION_PAGE_MAX_CHARS` below, since a smaller N means more anchored
+ * lines and so more rendered chars for the same words. */
 export const GENERATION_LINE_MAX_WORDS = 10;
 
-/** Page size in WORDS for generation-turn transcript paging, split on line
- * boundaries. Chosen from the task-3.3 measurement: the Claude CLI's default
- * MCP tool-output ceiling is 25k tokens (≈ 100KB ASCII; the child env
- * whitelist deliberately prevents operators from raising it). At 8000
- * words/page the realistic worst-case fixture page renders 62,952 bytes —
- * comfortably under the ~80KB safety bound pinned in
- * aiMcpGenerationRendering.test.ts. */
+/** SECONDARY page bound in WORDS for generation-density paging, split on line
+ * boundaries (topic-generate-paged-transcript D4 demoted it: the primary bound
+ * is the rendered-size cap below). Retained so a page of very short lines is
+ * still bounded in words, not only in chars; on realistic and adversarial
+ * fixtures alike the char cap binds first. A word cap can never be a size
+ * bound on its own — see `GENERATION_PAGE_MAX_CHARS`. */
 export const GENERATION_PAGE_SIZE_WORDS = 8000;
 
 /** HARD cap on ONE rendered page's size in CHARACTERS, marker line included
@@ -648,8 +657,8 @@ const generationTranscriptToolShape = {
 };
 
 /** Everything a tool builder may bind into its handlers. `generation` is the
- * run snapshot on generation turns (undefined on chat turns), and
- * `createdEvents` the registration's per-run counter — both consumed by
+ * EVENT run's snapshot (undefined on chat turns AND on the topic one-shot),
+ * and `createdEvents` the registration's per-run counter — both consumed by
  * `create_event` (task 3.2). */
 interface ToolBuildContext {
   readonly registry: SessionHubRegistry;
@@ -963,9 +972,11 @@ export class AiMcpListener {
    * it in the turn's `finally`.
    *
    * `context` (optional, auto-generate-event-logs D6) carries the turn's tool
-   * set and — on generation turns — the run snapshot. `ai/chat` and
-   * `topics/generate` pass explicit `{tools}` (D7, task 3.4); omitted ⇒ the
-   * pinned default three chat tools.
+   * set and, on a generation-density turn, its transcript word snapshot — the
+   * event run's `generation.words` or the topic one-shot's `pagedWords`
+   * (topic-generate-paged-transcript D1), whichever the caller passes.
+   * `ai/chat` and `topics/generate` pass explicit `{tools}` (D7, task 3.4);
+   * omitted ⇒ the pinned default three chat tools.
    */
   registerTurn(sessionId: string, context?: AiMcpTurnContext): AiMcpTurn {
     if (this.httpServer === null) throw new Error('AiMcpListener not started');

@@ -66,7 +66,10 @@ export interface DriveAiTurnOptions {
   /** Per-turn MCP registration context, passed VERBATIM to
    * `AiMcpListener#registerTurn` (auto-generate-event-logs D6/D7): the turn's
    * server-side tool set, plus — on event-generation turns (task 4.3) — the
-   * run snapshot. `ai/chat` and `topics/generate` both pass an explicit
+   * run snapshot, or — on the topic one-shot — its `pagedWords` word snapshot
+   * (topic-generate-paged-transcript D1/D2), the field that keys paged
+   * transcript delivery and the `pageCoverage` below.
+   * `ai/chat` and `topics/generate` both pass an explicit
    * `{tools}` matching their argv allowlist (task 3.4), so the server-side
    * registration is belt to the argv's braces; omit ⇒ `registerTurn`'s pinned
    * context-less default (the three chat tools). */
