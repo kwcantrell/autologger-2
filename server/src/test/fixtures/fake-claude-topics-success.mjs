@@ -15,10 +15,17 @@
 // sees it, so mode selection has to happen via `cliPath` — mirrors
 // `fake-claude-error.mjs`'s established precedent.
 //
-// Behavior: drains stdin, creates TOPIC_COUNT topics for real via the MCP
-// `create_topic` tool, then emits a genuine stream-json `system/init` +
+// Behavior: drains stdin, reads the transcript to its LAST page via the MCP
+// `get_transcript_words` tool (following each page's continuation marker, as
+// the prompt directs a real model to), creates TOPIC_COUNT topics for real via
+// the MCP `create_topic` tool, then emits a genuine stream-json `system/init` +
 // terminal `result` (subtype success, is_error:false) and exits 0 — a
 // real CLI-turn success with real topics attached.
+//
+// The paging loop is load-bearing, not decoration (topic-generate-paged-
+// transcript D6): the route's crash-safe swap only replaces the prior topics
+// when the run fetched EVERY page of its snapshot, so a double that created
+// topics without reading the transcript would take the 502-and-restore path.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -26,6 +33,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 const DEFAULT_SESSION_ID = 'fixture-cli-session-id';
 const TOPIC_COUNT = 2;
+/** Runaway guard on the paging loop (a fixture must never hang the suite). */
+const MAX_PAGES = 100;
 
 function resumeSessionId(argv) {
   const i = argv.indexOf('--resume');
@@ -62,12 +71,29 @@ async function connectMcp(url, token) {
   return { client, close: () => transport.close() };
 }
 
+/** Follow the continuation markers from page 0 to the last page, the way the
+ * system prompt directs the real model to. Returns the number of pages read. */
+async function readAllTranscriptPages(client) {
+  let page = 0;
+  for (let read = 1; read <= MAX_PAGES; read += 1) {
+    const res = await client.callTool({ name: 'get_transcript_words', arguments: { page } });
+    const text = res?.content?.[0]?.text ?? '';
+    const marker = /--- transcript continues: call get_transcript_words with page=(\d+) of \d+ ---$/.exec(
+      text.trimEnd(),
+    );
+    if (!marker) return read;
+    page = Number(marker[1]);
+  }
+  throw new Error(`fixture read ${MAX_PAGES} pages without reaching an unmarked page`);
+}
+
 async function createRealTopics(argv) {
   const cfg = JSON.parse(readFileSync(mcpConfigPath(argv), 'utf8'));
   const { url, headers } = cfg.mcpServers.autologger;
   const token = String(headers.Authorization).replace(/^Bearer /, '');
   const { client, close } = await connectMcp(url, token);
   try {
+    await readAllTranscriptPages(client);
     for (let i = 0; i < TOPIC_COUNT; i += 1) {
       await client.callTool({
         name: 'create_topic',
@@ -96,7 +122,7 @@ async function main() {
     subtype: 'init',
     cwd: process.cwd(),
     session_id: sessionId,
-    tools: ['mcp__autologger__create_topic'],
+    tools: ['mcp__autologger__get_transcript_words', 'mcp__autologger__create_topic'],
     mcp_servers: [{ name: 'autologger', status: 'connected' }],
     model: 'fixture-model',
     permissionMode: 'default',

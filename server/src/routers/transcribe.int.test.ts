@@ -292,6 +292,11 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       // Hub state matches the response exactly — no orphans, no stragglers.
       expect(currentTopics(s)).toEqual(body.topics);
 
+      // Full page coverage is part of what this 200 proves (topic-generate-
+      // paged-transcript D6): the turn registers the run's word snapshot, so a
+      // fixture that created these topics WITHOUT paging the transcript to its
+      // last page would have taken the 502-and-restore branch instead.
+
       // The spawned argv withholds list_topics (D3's crash-safe-swap mechanism).
       const argv = recordedArgv(s);
       const i = argv.indexOf('--allowedTools');
@@ -389,11 +394,14 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 //
 // The turn is stubbed at the `generateTopicsTurn` module export (`vi.spyOn`,
 // the technique ai.int.test.ts uses for `driveAiTurn` — it intercepts through
-// the shared `app` singleton, where a hoisted `vi.mock` would not): until
-// task 3.1 wires `pagedWords`, no production caller registers a word
-// snapshot, so a real fixture run can only ever report zero-of-zero coverage.
+// the shared `app` singleton, where a hoisted `vi.mock` would not): the real
+// turn now always registers a word snapshot (task 3.1), but a hermetic fixture
+// can only exercise the coverage values its own transcript produces, so the
+// stub is what enumerates the interesting partial-coverage combinations.
 // The stub creates its topics through the SAME registry the route reads, so
-// the swap/restore assertions below run against genuine rows.
+// the swap/restore assertions below run against genuine rows. The unstubbed
+// full-coverage path is covered above by `fake-claude-topics-success.mjs`,
+// which pages the transcript to its last page for real.
 describe('topics/generate — page-coverage gate on the crash-safe swap', () => {
   const FAILURE_DETAIL = 'Topic generation failed.';
   const CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
