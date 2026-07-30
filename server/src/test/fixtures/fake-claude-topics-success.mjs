@@ -26,6 +26,9 @@
 // transcript D6): the route's crash-safe swap only replaces the prior topics
 // when the run fetched EVERY page of its snapshot, so a double that created
 // topics without reading the transcript would take the 502-and-restore path.
+// The number of pages it actually read is recorded to `.fixture-pages.txt` in
+// the run's cwd (same convention as `.fixture-argv.json`) so a test can assert
+// the loop really iterated rather than short-circuiting on a single page.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -93,7 +96,8 @@ async function createRealTopics(argv) {
   const token = String(headers.Authorization).replace(/^Bearer /, '');
   const { client, close } = await connectMcp(url, token);
   try {
-    await readAllTranscriptPages(client);
+    const pagesRead = await readAllTranscriptPages(client);
+    writeIfSet('FAKE_CLAUDE_PAGES_OUT', '.fixture-pages.txt', String(pagesRead));
     for (let i = 0; i < TOPIC_COUNT; i += 1) {
       await client.callTool({
         name: 'create_topic',

@@ -160,6 +160,30 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     });
   }
 
+  /** Seed a transcript whose generation-density rendering is big enough to
+   * span MORE THAN ONE page (topic-generate-paged-transcript D4: pages are
+   * packed to a 45,000-char rendered cap). 30 words of ~2,000 chars group into
+   * 3 lines of `GENERATION_LINE_MAX_WORDS` (~20,000 chars each), so the packer
+   * must break after the second line. Without this the success fixture's
+   * continuation-marker loop would never iterate and the route's 200 would
+   * prove only the single-page case. */
+  function seedMultiPageTranscript(sessionId: string): void {
+    const hub = env.ports.sessions.get(sessionId);
+    for (let i = 0; i < 30; i += 1) {
+      hub.insertTranscriptWord({
+        session_time: '00:00:01',
+        speaker: 'Host',
+        word: `w${i}${'a'.repeat(2_000)}`,
+      });
+    }
+  }
+
+  /** Pages the success fixture actually fetched over real MCP (it records the
+   * count into its run cwd — see fake-claude-topics-success.mjs). */
+  function fixturePagesRead(sessionId: string): number {
+    return Number(readFileSync(join(stableSessionCwd(sessionId), '.fixture-pages.txt'), 'utf8'));
+  }
+
   function seedTopic(sessionId: string, summary: string) {
     return env.ports.sessions.get(sessionId).insertTopic({
       session_time: '00:00:00',
@@ -242,11 +266,11 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it(
-    'configured + transcript + success: 200 {topics} — the OLD topics are gone, the fresh ' +
-      'set (real create_topic calls) replaces them, and the shape matches GET …/topics',
+    'configured + MULTI-PAGE transcript + success: 200 {topics} — the OLD topics are gone, the ' +
+      'fresh set (real create_topic calls) replaces them, and the shape matches GET …/topics',
     async () => {
       const s = newSession();
-      seedTranscript(s);
+      seedMultiPageTranscript(s);
       const oldA = seedTopic(s, 'Old topic A');
       const oldB = seedTopic(s, 'Old topic B');
       expect(
@@ -295,7 +319,11 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       // Full page coverage is part of what this 200 proves (topic-generate-
       // paged-transcript D6): the turn registers the run's word snapshot, so a
       // fixture that created these topics WITHOUT paging the transcript to its
-      // last page would have taken the 502-and-restore branch instead.
+      // last page would have taken the 502-and-restore branch instead. And the
+      // transcript really did span MULTIPLE pages, so the 200 exercises the
+      // fixture's continuation-marker loop (and therefore the marker text the
+      // server emits) end to end, rather than the degenerate single-page case.
+      expect(fixturePagesRead(s)).toBeGreaterThan(1);
 
       // The spawned argv withholds list_topics (D3's crash-safe-swap mechanism).
       const argv = recordedArgv(s);

@@ -169,7 +169,9 @@ describe('topic generation config (design D6: dedicated budget/timeout, higher t
   });
 
   it('the topic-generate defaults are no lower than the event-generate defaults (D7)', () => {
-    expect(topicGenerateMaxBudgetUsd(E({}))).toBeGreaterThanOrEqual(eventGenerateMaxBudgetUsd(E({})));
+    expect(topicGenerateMaxBudgetUsd(E({}))).toBeGreaterThanOrEqual(
+      eventGenerateMaxBudgetUsd(E({})),
+    );
     expect(topicGenerateTimeoutSec(E({}))).toBeGreaterThanOrEqual(eventGenerateTimeoutSec(E({})));
   });
 });
