@@ -26,8 +26,9 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
   if (!res.ok) {
     let detail = res.statusText;
     try {
-      const j = (await res.json()) as { detail?: unknown };
+      const j = (await res.json()) as { detail?: unknown; message?: unknown };
       if (j.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+      else if (typeof j.message === 'string' && j.message.trim()) detail = j.message;
     } catch {
       // ignore parse errors — use statusText
     }

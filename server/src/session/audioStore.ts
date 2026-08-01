@@ -53,6 +53,8 @@ export function audioRowToMeta(r: Row): AudioSegmentMeta {
 const AUDIO_FORMATS = [
   { ext: 'ogg', tokens: ['ogg'], mime: 'audio/ogg' },
   { ext: 'wav', tokens: ['wav'], mime: 'audio/wav' },
+  { ext: 'mp3', tokens: ['mp3', 'mpeg'], mime: 'audio/mpeg' },
+  { ext: 'aiff', tokens: ['aif'], mime: 'audio/aiff' },
   { ext: 'm4a', tokens: ['mp4', 'm4a'], mime: 'audio/mp4' },
 ] as const;
 const FALLBACK_FORMAT = { ext: 'webm', mime: 'audio/webm' } as const;
@@ -162,7 +164,7 @@ export class AudioStore {
         k.r2_key,
       );
       if (exists !== null) continue;
-      const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a)$/i.exec(k.r2_key);
+      const m = /\/(\d{4})_([0-9a-f-]{36})\.(webm|ogg|wav|m4a|mp3|aiff)$/i.exec(k.r2_key);
       if (m === null) continue;
       const segId = m[2];
       const mime = mimeForExt(m[3].toLowerCase());

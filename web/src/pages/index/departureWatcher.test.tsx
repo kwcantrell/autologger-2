@@ -60,6 +60,7 @@ vi.mock('./components/V6Rail', () => ({
     onSelectSession: (sid: string) => void;
     onCloseSession: () => void;
     onNewSession: () => void;
+    onBatchImport: () => void;
   }) => (
     <div data-testid="rail" data-active-session-id={props.activeSessionId}>
       <button
@@ -74,6 +75,7 @@ vi.mock('./components/V6Rail', () => ({
       />
       <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
       <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
+      <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
     </div>
   ),
 }));
@@ -94,6 +96,10 @@ vi.mock('./components/SessionRoute', () => ({
 
 vi.mock('./components/NewSessionModal', () => ({
   NewSessionModal: () => null,
+}));
+
+vi.mock('./components/BatchImportModal', () => ({
+  BatchImportModal: () => null,
 }));
 
 vi.mock('./components/YouTubeImportErrorModal', () => ({

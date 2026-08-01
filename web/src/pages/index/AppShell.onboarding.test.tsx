@@ -64,6 +64,10 @@ vi.mock('./components/NewSessionModal', () => ({
   NewSessionModal: () => null,
 }));
 
+vi.mock('./components/BatchImportModal', () => ({
+  BatchImportModal: () => null,
+}));
+
 vi.mock('./components/YouTubeImportErrorModal', () => ({
   YouTubeImportErrorModal: () => null,
 }));

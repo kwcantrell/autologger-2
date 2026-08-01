@@ -57,16 +57,56 @@ export class EventStore {
     const tr = this.core.transportRow();
     const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
     const totalFrames = toTotalFrames(tc);
+    return this.insertEventRow({
+      category: input.category,
+      message: input.message,
+      metadataJson: input.metadataJson,
+      wallMs,
+      frameRate: tc.frame_rate,
+      totalFrames,
+      suppressBroadcast: input.suppressBroadcast,
+    });
+  }
+
+  /** sheets-log-import: place an event at an explicit session timecode (total frames). */
+  addEventAtTotalFrames(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    timecodeTotalFrames: number;
+    ctx: TimecodeCtx;
+  }): { event: EventRpc; projection: SessionProjection } {
+    const wallMs = this.core.now();
+    const fps = Math.round(input.ctx.frameRate);
+    return this.insertEventRow({
+      category: input.category,
+      message: input.message,
+      metadataJson: input.metadataJson,
+      wallMs,
+      frameRate: fps,
+      totalFrames: Math.max(0, Math.trunc(input.timecodeTotalFrames)),
+    });
+  }
+
+  private insertEventRow(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    wallMs: number;
+    frameRate: number;
+    totalFrames: number;
+    suppressBroadcast?: boolean;
+  }): { event: EventRpc; projection: SessionProjection } {
     const id = crypto.randomUUID();
-    const wallIso = isoZ(new Date(wallMs));
+    const wallIso = isoZ(new Date(input.wallMs));
     const metaJson = input.metadataJson || '{}';
     this.core.db.run(
       `INSERT INTO events (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id,
       wallIso,
-      tc.frame_rate,
-      totalFrames,
+      input.frameRate,
+      input.totalFrames,
       input.category,
       input.message,
       metaJson,

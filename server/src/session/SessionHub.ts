@@ -14,6 +14,12 @@ import Database from 'better-sqlite3';
 import type { Clock } from '../clock';
 import { systemClock } from '../clock';
 import { AudioStore } from './audioStore';
+import {
+  AUDIO_SEAM_PARTS_META_KEY,
+  type AudioSeamPart,
+  deserializeAudioSeamParts,
+  serializeAudioSeamParts,
+} from './audioSeamParts';
 import { DashboardStore } from './dashboardStore';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
@@ -186,6 +192,9 @@ export class SessionHub {
   addEvent(input: Parameters<EventStore['addEvent']>[0]) {
     return this.inTxn(() => this.events.addEvent(input));
   }
+  addEventAtTotalFrames(input: Parameters<EventStore['addEventAtTotalFrames']>[0]) {
+    return this.inTxn(() => this.events.addEventAtTotalFrames(input));
+  }
   listEvents(input: Parameters<EventStore['listEvents']>[0]) {
     return this.events.listEvents(input);
   }
@@ -312,6 +321,14 @@ export class SessionHub {
   }
   syncAudioFromBlobs(known: Parameters<AudioStore['syncAudioFromBlobs']>[0]) {
     return this.inTxn(() => this.audio.syncAudioFromBlobs(known));
+  }
+  setAudioSeamParts(parts: AudioSeamPart[]) {
+    return this.inTxn(() => {
+      this.core.metaSet(AUDIO_SEAM_PARTS_META_KEY, serializeAudioSeamParts(parts));
+    });
+  }
+  getAudioSeamParts(): AudioSeamPart[] | null {
+    return deserializeAudioSeamParts(this.core.metaGet(AUDIO_SEAM_PARTS_META_KEY));
   }
 
   // --- transcript delegates ---

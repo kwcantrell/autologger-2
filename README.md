@@ -390,7 +390,7 @@ server/src/
     auth.ts                  /auth/google/start|callback, /auth/logout
     profile.ts               GET /api/studio, GET|PUT /api/profile
     shows.ts                 GET|POST /api/shows
-    sessions.ts              list/create/update/archive/restore/delete; youtube-import (config-gated)
+    sessions.ts              list/create/update/archive/restore/delete; local-audio-import; youtube-import (config-gated)
     events.ts                events CRUD, transport, status, lease, WebSocket upgrade
     audio.ts                 upload/list/range-download, waveform, sync-from-disk
     companion.ts             Companion presence + state + log/transport/command (WS relay)
@@ -421,6 +421,9 @@ was ported from: historical provenance, not a live parity claim.
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
 | `POST …/topics/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
+| `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
+| `POST /api/shows/:showId/log-import` → **404** show · **400** bad body · **200** `{ job_id }` (public Sheets log import job) | — |
+| `GET /api/log-import/:jobId` → **404** unknown · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
