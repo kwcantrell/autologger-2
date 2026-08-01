@@ -32,6 +32,7 @@ import {
 import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
+import { allTranscriptPagesServed } from './aiMcpServer';
 import { generateTopicsTurn } from './topicGenerate';
 
 export const transcribeRouter = new Hono<AppEnv>();
@@ -153,12 +154,15 @@ const TOPIC_GENERATE_OPEN_NETWORK_DETAIL =
   'Topic generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
   'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
+// Names EVERY possible slot holder (the registry is shared with AI chat,
+// AI v2, and event generation; wording change authorized by the
+// auto-event-generation delta).
 const TOPIC_GENERATE_SESSION_BUSY_DETAIL =
-  'A turn (AI chat or topic generation) is already in progress for this session; wait for it to finish before ' +
-  'generating topics again. AI chat and topic generation share one per-session slot by design.';
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before generating topics again. These features share one per-session AI slot by design.';
 const TOPIC_GENERATE_AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and topic ' +
-  'generation); try again shortly.';
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
+  'topic generation, and event generation); try again shortly.';
 // Fixed, handler-owned — never the CLI's raw output or its internal outcome
 // token (design D3/spec "Failure mapping").
 const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
@@ -220,28 +224,43 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     const after = hub.listTopics();
     const newIds = after.filter((t) => !preRunIds.has(t.id)).map((t) => t.id);
 
-    if (outcome.ok && newIds.length >= 1) {
+    // Page-coverage gate (topic-generate-paged-transcript D6): a run that
+    // created topics from only SOME of its transcript pages must not replace
+    // a full-session topic set with partial-coverage ones — a corruption
+    // strictly less detectable than the oversized-payload bug paging fixes.
+    // This is the server's own bookkeeping (it served the pages), never
+    // model-output inference; a turn whose registration carried no word
+    // snapshot claims no coverage and cannot fail here.
+    const fullyRead = allTranscriptPagesServed(outcome.pageCoverage);
+
+    if (outcome.ok && newIds.length >= 1 && fullyRead) {
       // Success: delete the pre-run topics, leaving only the fresh set.
       hub.deleteTopics([...preRunIds]);
       return c.json({ topics: hub.listTopics() });
     }
 
-    // Failure (turn error/timeout/CLI error, or a run that created no
-    // topics): delete only the topics THIS run created — the pre-run topics
-    // were never touched and remain exactly as they were.
+    // Failure (turn error/timeout/CLI error, a run that created no topics, or
+    // one that never read the whole transcript): delete only the topics THIS
+    // run created — the pre-run topics were never touched and remain exactly
+    // as they were. Same status, same body as every other failure cause.
     hub.deleteTopics(newIds);
     // Operator-facing diagnostic: the `502` body is deliberately opaque to the
     // client (a fixed, non-sensitive string), but a self-hosted operator needs
     // the real reason to debug — an exceeded `--max-budget-usd` surfaces as the
     // outcome detail `upstream-failed`, a slow turn as `timeout`, an auth
-    // problem as `not-logged-in`, and a turn that ran clean but made no topics
-    // as `ok` with zero new topics. Logged to the server console only; never
-    // the response.
+    // problem as `not-logged-in`, a turn that ran clean but made no topics
+    // as `ok` with zero new topics, and a model that stopped reading pages
+    // early as incomplete page coverage. Logged to the server console only;
+    // never the response.
     console.warn(
       `[topics/generate] session=${sessionId}: generation failed — ` +
-        (outcome.ok
-          ? 'CLI turn succeeded but created 0 topics'
-          : `CLI turn failed (${outcome.detail})`),
+        (!outcome.ok
+          ? `CLI turn failed (${outcome.detail})`
+          : newIds.length === 0
+            ? 'CLI turn succeeded but created 0 topics'
+            : `CLI turn created ${newIds.length} topic(s) after reading only ` +
+              `${outcome.pageCoverage.servedPages} of ${outcome.pageCoverage.totalPages} ` +
+              'transcript page(s)'),
     );
     throw new ApiError(502, TOPIC_GENERATE_FAILURE_DETAIL);
   } finally {

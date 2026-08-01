@@ -38,6 +38,14 @@ export class EventStore {
     metadataJson: string;
     markedAtUtc: string | null;
     ctx: TimecodeCtx;
+    /** auto-generate-event-logs D4 — ONE insert path for generated events:
+     * when present, the `timecodeForMark` transport derivation is bypassed
+     * entirely — the given total frames and `wall_time_utc` are stored
+     * verbatim (frame_rate still derives from `ctx` exactly as the manual
+     * path stores it). Transaction, broadcast, and metadata handling are
+     * identical to the manual path. When absent, behavior is byte-identical
+     * to the manual path (pinned in eventStore.test.ts). */
+    explicitAnchor?: { timecodeTotalFrames: number; wallTimeUtc: string };
     /** youtube-audio-import Phase-9 fix-wave (finding 1); rationale updated by
      * code-health-consolidation D1: transaction/broadcast ATOMICITY is now owned
      * by the post-commit broadcast queue (`SessionHub.inTxn` +
@@ -52,61 +60,33 @@ export class EventStore {
      * existing per-write broadcast behavior. */
     suppressBroadcast?: boolean;
   }): { event: EventRpc; projection: SessionProjection } {
-    const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();
-    const wallMs = Number.isNaN(markMs) ? this.core.now() : markMs;
-    const tr = this.core.transportRow();
-    const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
-    const totalFrames = toTotalFrames(tc);
-    return this.insertEventRow({
-      category: input.category,
-      message: input.message,
-      metadataJson: input.metadataJson,
-      wallMs,
-      frameRate: tc.frame_rate,
-      totalFrames,
-      suppressBroadcast: input.suppressBroadcast,
-    });
-  }
-
-  /** sheets-log-import: place an event at an explicit session timecode (total frames). */
-  addEventAtTotalFrames(input: {
-    category: string;
-    message: string;
-    metadataJson: string;
-    timecodeTotalFrames: number;
-    ctx: TimecodeCtx;
-  }): { event: EventRpc; projection: SessionProjection } {
-    const wallMs = this.core.now();
-    const fps = Math.round(input.ctx.frameRate);
-    return this.insertEventRow({
-      category: input.category,
-      message: input.message,
-      metadataJson: input.metadataJson,
-      wallMs,
-      frameRate: fps,
-      totalFrames: Math.max(0, Math.trunc(input.timecodeTotalFrames)),
-    });
-  }
-
-  private insertEventRow(input: {
-    category: string;
-    message: string;
-    metadataJson: string;
-    wallMs: number;
-    frameRate: number;
-    totalFrames: number;
-    suppressBroadcast?: boolean;
-  }): { event: EventRpc; projection: SessionProjection } {
+    let wallIso: string;
+    let frameRate: number;
+    let totalFrames: number;
+    if (input.explicitAnchor) {
+      totalFrames = input.explicitAnchor.timecodeTotalFrames;
+      // Same frame_rate derivation the manual path stores (fromTotalFrames'
+      // millidecimal rounding of ctx.frameRate).
+      frameRate = fromTotalFrames(totalFrames, input.ctx.frameRate).frame_rate;
+      wallIso = input.explicitAnchor.wallTimeUtc;
+    } else {
+      const markMs = input.markedAtUtc ? parseUtcMs(input.markedAtUtc) : this.core.now();
+      const wallMs = Number.isNaN(markMs) ? this.core.now() : markMs;
+      const tr = this.core.transportRow();
+      const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
+      totalFrames = toTotalFrames(tc);
+      frameRate = tc.frame_rate;
+      wallIso = isoZ(new Date(wallMs));
+    }
     const id = crypto.randomUUID();
-    const wallIso = isoZ(new Date(input.wallMs));
     const metaJson = input.metadataJson || '{}';
     this.core.db.run(
       `INSERT INTO events (id, wall_time_utc, frame_rate, timecode_total_frames, category, message, metadata_json)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       id,
       wallIso,
-      input.frameRate,
-      input.totalFrames,
+      frameRate,
+      totalFrames,
       input.category,
       input.message,
       metaJson,
@@ -117,6 +97,27 @@ export class EventStore {
     }
     const r = this.core.first('SELECT * FROM events WHERE id = ?', id);
     return { event: eventRowToRpc(r as Row), projection: this.core.projection() };
+  }
+
+  /** sheets-log-import: place an event at an explicit session timecode (total frames). */
+  addEventAtTotalFrames(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    timecodeTotalFrames: number;
+    ctx: TimecodeCtx;
+  }): { event: EventRpc; projection: SessionProjection } {
+    return this.addEvent({
+      category: input.category,
+      message: input.message,
+      metadataJson: input.metadataJson,
+      markedAtUtc: null,
+      ctx: input.ctx,
+      explicitAnchor: {
+        timecodeTotalFrames: Math.max(0, Math.trunc(input.timecodeTotalFrames)),
+        wallTimeUtc: isoZ(new Date(this.core.now())),
+      },
+    });
   }
 
   listEvents(input: { limit: number; offset: number }): {

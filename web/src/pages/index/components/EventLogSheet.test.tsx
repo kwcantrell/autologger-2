@@ -148,6 +148,24 @@ function dispatchAlreadyConsumedEscape() {
   });
 }
 
+// --- Toolbar overflow clamp (auto-generate-event-logs, 6.2 fix wave / audit I1) ---
+//
+// The Event feed toolbar gained the AUTO GENERATE button; FeedShell's shared
+// `FEED_TOOLBAR` sizes the row `flex-[0_0_auto]` (max-content), so without a
+// max-width clamp its internal `flex-wrap` never engages and on narrow (390px)
+// viewports the row overflowed, pushing FILTER off-viewport. The fix threads
+// `toolbarClassName="max-w-full"` through FeedShell's optional prop. This test
+// pins that wiring: dropping either the prop at the EventLogSheet call site or
+// FeedShell's pass-through re-introduces the overflow with every gate green.
+describe('EventLogSheet toolbar overflow clamp', () => {
+  it('renders the feed toolbar with max-w-full so its flex-wrap can engage', async () => {
+    renderSheet();
+
+    const toolbar = await screen.findByRole('toolbar', { name: 'Event feed tools' });
+    expect(toolbar.className.split(/\s+/)).toContain('max-w-full');
+  });
+});
+
 describe('EventLogSheet batch-mode Escape (discard-confirm guard)', () => {
   it('does not re-arm the discard dialog for an Escape whose default is already prevented', async () => {
     renderSheet();

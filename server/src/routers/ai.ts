@@ -33,9 +33,26 @@ import { chatRequestSchema } from '../schemas';
 import type { AppEnv } from '../types';
 import { ApiError, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
+import type { AiMcpToolName } from './aiMcpServer';
 import { driveAiTurn } from './aiTurn';
 
 export const aiRouter = new Hono<AppEnv>();
+
+/** Chat's tool surface, pinned EXPLICITLY (auto-generate-event-logs D7, task
+ * 3.4): exactly the three chat tools, deliberately NOT derived from the full
+ * `AI_MCP_TOOL_NAMES` registry — the registry now also carries `create_event`
+ * (generation turns only), and growing it must never silently widen a chat
+ * turn. Passed to `driveAiTurn` below as BOTH the CLI `--allowedTools`
+ * allowlist and the server-side MCP registration context (`mcpContext`), so
+ * chat relies on the omit-path defaults nowhere. The wire string this produces
+ * is byte-identical to the pre-3.4 omit-path default (`AI_CHAT_DEFAULT_TOOLS`
+ * in `aiChatRunner.ts`, which stays as the fallback for callers that omit) —
+ * pinned by ai.int.test.ts "tool surface pinned explicitly". */
+export const AI_CHAT_ALLOWED_TOOLS = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+] as const satisfies readonly AiMcpToolName[];
 
 const NOT_CONFIGURED_DETAIL =
   'AI chat is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
@@ -45,16 +62,18 @@ const OPEN_NETWORK_DETAIL =
 const FOREIGN_CLAUDE_SESSION_ID_DETAIL =
   'claude_session_id was not issued for this session. Omit it to start a new conversation, or resume with the ' +
   "id from this session's most recent done event.";
-// Shared with the AI v2 design-turn registry (aiV2.ts, task 2.7) by design —
-// the wording names BOTH features, never just "AI chat", because the actual
-// holder of a busy slot may be either one (spec "Spend and concurrency
-// bounds": "responds 409 ... naming which feature holds the slot").
+// Shared with the AI v2 design-turn registry (aiV2.ts, task 2.7) and the
+// generate endpoints by design — the wording names EVERY possible holder,
+// never just "AI chat", because the actual holder of a busy slot may be any
+// of them (spec "Spend and concurrency bounds": "responds 409 ... naming
+// which feature holds the slot"; naming event generation is authorized by
+// the auto-event-generation delta).
 const SESSION_BUSY_DETAIL =
-  'A turn (AI chat or AI v2) is already in progress for this session; wait for it to finish before sending ' +
-  'another. AI chat and AI v2 share one per-session slot by design.';
+  'A turn (AI chat, AI v2, topic generation, or event generation) is already in progress for this session; ' +
+  'wait for it to finish before sending another. These features share one per-session AI slot by design.';
 const AT_CAPACITY_DETAIL =
-  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat and AI v2); ' +
-  'try again shortly.';
+  'The server is at its AI turn concurrency limit (AI_CHAT_MAX_CONCURRENT, shared between AI chat, AI v2, ' +
+  'topic generation, and event generation); try again shortly.';
 
 // ── Multi-turn continuity: issued-claude_session_id → autologger :sessionId ──
 // (design "Multi-turn continuity bound to the autologger session"). Recorded
@@ -140,6 +159,12 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
         cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,
         message: body.message,
+        // Explicit tool surface (D7, task 3.4): argv allowlist AND server-side
+        // MCP registration both name exactly the three chat tools — no
+        // reliance on either omit-path default, so a growing registry can
+        // never widen a chat turn.
+        allowedTools: AI_CHAT_ALLOWED_TOOLS,
+        mcpContext: { tools: AI_CHAT_ALLOWED_TOOLS },
         maxBudgetUsd: aiChatMaxBudgetUsd(c.env.config),
         timeoutMs: aiChatTimeoutSec(c.env.config) * 1000,
         resumeSessionId,

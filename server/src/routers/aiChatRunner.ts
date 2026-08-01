@@ -62,7 +62,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AiChatRelayOutcome, AiChatSseEvent } from './aiChatRelay';
 import { relayAiChatTurn } from './aiChatRelay';
-import { AI_MCP_TOOL_NAMES, type AiMcpToolName } from './aiMcpServer';
+import type { AiMcpToolName } from './aiMcpServer';
 import { runOuterAiTurn } from './aiTurnOrchestrator';
 import { DEFAULT_PROCESS_GROUP_KILL_GRACE_MS, killProcessGroup } from './processGroupKill';
 
@@ -87,9 +87,19 @@ const OPTIONAL_ENV_PASSTHROUGH = [
   'NODE_EXTRA_CA_CERTS',
 ] as const;
 
-/** The wire-name allowlist for `--allowedTools`, derived from the single
- * source of truth (`aiMcpServer.ts`) rather than re-listed here. */
-const ALLOWED_TOOLS = AI_MCP_TOOL_NAMES.map((name) => `mcp__autologger__${name}`).join(',');
+/** The DEFAULT wire-name allowlist for `--allowedTools` when a caller omits
+ * one: pinned to the three CHAT tools, deliberately NOT derived from the full
+ * `AI_MCP_TOOL_NAMES` registry (auto-generate-event-logs D7): the registry now
+ * also carries `create_event`, and growing it must never silently widen a
+ * chat turn's argv. As of task 3.4 `ai.ts` passes chat's allowlist explicitly
+ * (`AI_CHAT_ALLOWED_TOOLS` — same three, same order, byte-identical wire
+ * string); this pinned fallback stays for any caller that still omits. */
+const AI_CHAT_DEFAULT_TOOLS: readonly AiMcpToolName[] = [
+  'get_transcript_words',
+  'list_topics',
+  'create_topic',
+];
+const ALLOWED_TOOLS = AI_CHAT_DEFAULT_TOOLS.map((name) => `mcp__autologger__${name}`).join(',');
 
 export interface BuildAiChatArgvInput {
   /** Path to the generated `--mcp-config` file (written 0600 by the caller). */
@@ -101,9 +111,10 @@ export interface BuildAiChatArgvInput {
    * validating ownership before passing this; this builder does not. */
   resumeSessionId?: string;
   /** Wire-format `--allowedTools` value (comma-joined `mcp__autologger__*`
-   * names) — omit for the default full allowlist (`ai/chat`'s current,
-   * unchanged behavior). `topics/generate` (topic-generation design D7)
-   * passes a narrower set that withholds `list_topics`. */
+   * names) — omit for the pinned default chat allowlist (the three chat
+   * tools). `ai/chat` passes its explicit `AI_CHAT_ALLOWED_TOOLS` (task 3.4;
+   * wire-identical to the default); `topics/generate` (topic-generation
+   * design D7) passes a narrower set that withholds `list_topics`. */
   allowedTools?: string;
   /** `--append-system-prompt` value — omit for `AI_CHAT_SYSTEM_PROMPT_BRIEF`
    * (`ai/chat`'s current, unchanged behavior). `topics/generate` passes a
@@ -211,7 +222,8 @@ export interface AiChatSpawnOptions {
    * THIS :sessionId — omitted for a fresh CLI session. */
   resumeSessionId?: string;
   /** Restrict the `--allowedTools` set to these short tool names; omit for
-   * the default full allowlist (`ai/chat`'s current, unchanged behavior). */
+   * the pinned default chat allowlist (the three chat tools — every current
+   * caller passes an explicit set as of task 3.4). */
   allowedTools?: readonly AiMcpToolName[];
   /** Dedicated `--append-system-prompt`; omit for `ai/chat`'s reused brief. */
   systemPrompt?: string;

@@ -146,6 +146,10 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
       { label: 'Lav', needs_context: false },
       { label: 'Boom', needs_context: true },
     ]);
+    // auto-generate-event-logs: the additive top-level boolean is captured
+    // (false — the seed carries no instructions); the assignment above is what
+    // fails compilation if the server stops emitting it.
+    expect(check.auto_instructions_present).toBe(false);
   });
 
   it('/api/profile `active_studio.categories` carries bare label strings', () => {

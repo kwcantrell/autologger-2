@@ -68,9 +68,24 @@ export interface ShowCategory {
   label?: string;
   color: string;
   type: 'BUTTON' | 'DROPDOWN' | 'TEXT' | 'ON_OFF';
-  dropdown_options: DropdownOption[];
+  dropdown_options: ShowDropdownOption[];
   on_label: string;
   off_label: string;
+  /** Per-button generation instruction (auto-generate-event-logs): trimmed,
+   * ≤ 2000 chars, absent when empty; normalization drops it on ON_OFF
+   * categories. Round-trips through the profile show-update path; the
+   * show-categories/Companion read shapes (`Category`) never carry it. */
+  auto_instruction?: string;
+}
+
+/** `profile.shows[].categories[].dropdown_options[]` and the corresponding
+ * `show_updates[]` request entries — the *stored* option record (server:
+ * `normalizeDropdownOptionEntry`, `server/src/studio.ts`). Same
+ * `{label, needs_context}` pair as the read-shaped `DropdownOption`, plus the
+ * optional per-option generation instruction (same bounds and absence rule as
+ * `ShowCategory.auto_instruction`). */
+export interface ShowDropdownOption extends DropdownOption {
+  auto_instruction?: string;
 }
 
 export interface Show {
@@ -424,10 +439,28 @@ export interface EventsResponse {
   limit: number;
 }
 
+/**
+ * `POST …/events/generate` success body (auto-generate-event-logs) —
+ * server: `server/src/routers/events.ts`. `created` is the number of events
+ * the run inserted; `cap_hit` is true when the per-run created-events cap
+ * ended writing early (the run finished normally — it was not cut off).
+ * Errors carry the standard `{detail}` body surfaced via `ApiError`.
+ */
+export interface EventsGenerateResponse {
+  created: number;
+  cap_hit: boolean;
+}
+
 export interface ShowCategoriesResponse {
   categories: Category[];
   show_name: string;
   show_code: string;
+  /** True iff any of the show's categories is instruction-bearing
+   * (auto-generate-event-logs) — computed in the events router
+   * (`server/src/routers/events.ts`); the `categories` entries themselves
+   * never carry instruction fields (that is the profile shapes' job — see
+   * `ShowCategory`). */
+  auto_instructions_present: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -125,6 +125,54 @@ describe('categories + commands/wait', () => {
     expect(Array.isArray(((await res.json()) as { categories: unknown[] }).categories)).toBe(true);
   });
 
+  it('byte-shape is unchanged for an instruction-bearing show (auto-generate-event-logs)', async () => {
+    // Frozen-contract pin (delta scenario "Feed client learns instruction
+    // presence; Companion unchanged"): even when the show's categories carry
+    // `auto_instruction` values, the Companion response has no
+    // `auto_instructions_present` boolean and its category/option entries
+    // carry no instruction fields — exact body equality, not key sampling.
+    const { sessionId, showId } = seededSession({
+      categoriesJson: JSON.stringify([
+        {
+          id: 'mic',
+          name: 'Mic',
+          color: '#7cb7ff',
+          type: 'DROPDOWN',
+          auto_instruction: 'log every mic swap',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+            { label: 'Boom', needs_context: true },
+          ],
+          on_label: '',
+          off_label: '',
+        },
+      ]),
+    });
+    await setCompanionPresence('c1', sessionId);
+    const res = await app.request('/api/companion/categories', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      session_id: sessionId,
+      show_id: showId,
+      show_name: 'Test Show',
+      show_code: 'TS',
+      categories: [
+        {
+          id: 'mic',
+          label: 'Mic',
+          color: '#7cb7ff',
+          type: 'DROPDOWN',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false },
+            { label: 'Boom', needs_context: true },
+          ],
+          on_label: '',
+          off_label: '',
+        },
+      ],
+    });
+  });
+
   it('commands/wait with timeout=0 returns empty immediately', async () => {
     const res = await app.request(
       '/api/companion/commands/wait?timeout=0',

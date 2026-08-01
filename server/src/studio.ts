@@ -31,15 +31,25 @@ export interface StudioProfile {
   default_frame_rate: number;
 }
 
+/** Stored/normalized dropdown option (validate_categories_list output shape). */
+export interface DropdownOptionRecord {
+  label: string;
+  needs_context: boolean;
+  /** Optional per-option generation instruction (trimmed; omitted when empty). */
+  auto_instruction?: string;
+}
+
 /** Stored/normalized category record (validate_categories_list output shape). */
 export interface CategoryRecord {
   id: string;
   name: string;
   color: string;
   type: CategoryKind;
-  dropdown_options: Array<{ label: string; needs_context: boolean }>;
+  dropdown_options: DropdownOptionRecord[];
   on_label: string;
   off_label: string;
+  /** Optional generation instruction (trimmed; omitted when empty; never on ON_OFF). */
+  auto_instruction?: string;
 }
 
 export interface SettingsBlob {
@@ -90,7 +100,7 @@ function normalizeDropdownOptionEntry(
   item: unknown,
   catName: string,
   idx: number,
-): { label: string; needs_context: boolean } {
+): DropdownOptionRecord {
   if (typeof item === 'string') {
     const lab = item.trim();
     if (!lab)
@@ -102,7 +112,12 @@ function normalizeDropdownOptionEntry(
     const lab = String(o.label ?? o.name ?? '').trim();
     if (!lab)
       throw new ValidationError(`Category “${catName}”: dropdown option ${idx + 1} needs a label.`);
-    return { label: lab, needs_context: Boolean(o.needs_context ?? false) };
+    const instr = String(o.auto_instruction ?? '').trim();
+    return {
+      label: lab,
+      needs_context: Boolean(o.needs_context ?? false),
+      ...(instr ? { auto_instruction: instr } : {}),
+    };
   }
   throw new ValidationError(`Category “${catName}”: dropdown option ${idx + 1} is invalid.`);
 }
@@ -251,13 +266,15 @@ export function validateCategoriesList(catsRaw: unknown): CategoryRecord[] {
     const optsRaw = rec.dropdown_options ?? [];
     let onL = '';
     let offL = '';
-    let opts: Array<{ label: string; needs_context: boolean }> = [];
+    let opts: DropdownOptionRecord[] = [];
     if (kind === 'DROPDOWN') {
       if (!Array.isArray(optsRaw))
         throw new ValidationError(`Category “${name}”: dropdown needs a list of options.`);
       const objs = optsRaw.map((o, j) => {
         const ent = normalizeDropdownOptionEntry(o, name, j);
         if (ent.label.length > 200) throw new ValidationError('Dropdown option text is too long.');
+        if ((ent.auto_instruction?.length ?? 0) > 2000)
+          throw new ValidationError('Dropdown option instruction is too long.');
         return ent;
       });
       if (objs.length < 2)
@@ -272,6 +289,11 @@ export function validateCategoriesList(catsRaw: unknown): CategoryRecord[] {
         throw new ValidationError('ON / OFF label text is too long.');
     }
 
+    // Generation instruction: trimmed, ≤ 2000; empty ⇒ omitted; ON_OFF never
+    // carries one (a value arriving on one is dropped, not an error).
+    const instr = kind === 'ON_OFF' ? '' : String(rec.auto_instruction ?? '').trim();
+    if (instr.length > 2000) throw new ValidationError('Category instruction is too long.');
+
     categories.push({
       id: cid,
       name,
@@ -280,9 +302,33 @@ export function validateCategoriesList(catsRaw: unknown): CategoryRecord[] {
       dropdown_options: opts,
       on_label: kind === 'ON_OFF' ? onL : '',
       off_label: kind === 'ON_OFF' ? offL : '',
+      ...(instr ? { auto_instruction: instr } : {}),
     });
   });
   return categories;
+}
+
+/** The single "instruction-bearing" definition (auto-event-generation spec):
+ *  the category's own auto_instruction is non-empty, OR — DROPDOWN only — any
+ *  dropdown option's is. ON_OFF categories never participate, and option
+ *  instructions lingering on a non-DROPDOWN type (stale raw JSON after a type
+ *  switch) do not count. Accepts normalized CategoryRecords or loosely-typed
+ *  parsed categories JSON. */
+export function categoryIsInstructionBearing(cat: unknown): boolean {
+  if (!cat || typeof cat !== 'object' || Array.isArray(cat)) return false;
+  const rec = cat as Record<string, unknown>;
+  const type = String(rec.type ?? '')
+    .toUpperCase()
+    .trim();
+  if (type === 'ON_OFF') return false;
+  if (typeof rec.auto_instruction === 'string' && rec.auto_instruction.trim()) return true;
+  if (type !== 'DROPDOWN') return false;
+  const opts = Array.isArray(rec.dropdown_options) ? rec.dropdown_options : [];
+  return opts.some((o) => {
+    if (!o || typeof o !== 'object') return false;
+    const instr = (o as Record<string, unknown>).auto_instruction;
+    return typeof instr === 'string' && instr.trim() !== '';
+  });
 }
 
 /** Return a copy of each category dict with a new id (seeding/cloning shows). */

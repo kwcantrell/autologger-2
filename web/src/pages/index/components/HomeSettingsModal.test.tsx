@@ -66,11 +66,75 @@ vi.mock('./Select', () => ({
 vi.mock('./FpsSelect', () => ({ FpsSelect: () => null }));
 // Renders the `buttons` prop's names so hydration (D3) is observable; `(blank)` stands in
 // for an empty name so a wrongly-blanked hydration is distinguishable from "not rendered".
+// The set/clear-instruction buttons drive `onChange` exactly the way the real table's
+// instruction editor does (auto-generate-event-logs, task 1.3), so the modal's REAL
+// snapshot-comparison dirtiness path is exercised — the mock replaces only the table
+// chrome, never the dirtiness derivation.
 vi.mock('./EventButtonsTable', () => ({
-  EventButtonsTable: ({ buttons }: { buttons: Array<{ id: string; name: string }> }) => (
+  EventButtonsTable: ({
+    buttons,
+    palette,
+    palettePreset,
+    paletteCustom,
+    onChange,
+  }: {
+    buttons: Array<{ id: string; name: string; auto_instruction: string }>;
+    palette: string[];
+    palettePreset: string;
+    paletteCustom: string[];
+    onChange: (
+      buttons: Array<{ id: string; name: string; auto_instruction: string }>,
+      palette: string[],
+      palettePreset: string,
+      paletteCustom: string[],
+    ) => void;
+  }) => (
     <ul data-testid="event-buttons-mock">
       {buttons.map((b) => (
-        <li key={b.id}>{b.name || '(blank)'}</li>
+        <li key={b.id}>
+          {b.name || '(blank)'}
+          <button
+            type="button"
+            onClick={() =>
+              onChange(
+                buttons.map((x) =>
+                  x.id === b.id ? { ...x, auto_instruction: 'Log every slate call' } : x,
+                ),
+                palette,
+                palettePreset,
+                paletteCustom,
+              )
+            }
+          >
+            set-instruction-{b.id}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onChange(
+                buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '' } : x)),
+                palette,
+                palettePreset,
+                paletteCustom,
+              )
+            }
+          >
+            clear-instruction-{b.id}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onChange(
+                buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '   ' } : x)),
+                palette,
+                palettePreset,
+                paletteCustom,
+              )
+            }
+          >
+            whitespace-instruction-{b.id}
+          </button>
+        </li>
       ))}
     </ul>
   ),
@@ -337,6 +401,114 @@ describe('HomeSettingsModal category round-trip', () => {
       on_label: '',
       off_label: '',
     });
+  });
+
+  it('posts button- and option-level auto_instruction through the save mapping (task 1.3)', async () => {
+    // Wire-accurate fixture: instruction keys exactly as the server round-trips them —
+    // present only when non-empty (`auto_instruction`, category and option level).
+    const showWithInstructions = {
+      ...showWithCategories,
+      categories: [
+        { ...showWithCategories.categories[0], auto_instruction: 'Log each roll call' },
+        {
+          id: 'cat-2',
+          name: 'Camera',
+          color: '#223344',
+          type: 'DROPDOWN',
+          dropdown_options: [
+            { label: 'Cam A', needs_context: false, auto_instruction: 'When cam A goes live' },
+            { label: 'Cam B', needs_context: false },
+            // Option-level belt cases (audit M6): a padded instruction must post
+            // TRIMMED; a whitespace-only one must post NO key (the server trims
+            // and drops empties — posting either verbatim leaves a phantom local
+            // value after the post-save rebaseline).
+            { label: 'Cam C', needs_context: false, auto_instruction: '  When cam C cuts in  ' },
+            { label: 'Cam D', needs_context: true, auto_instruction: '   ' },
+          ],
+          on_label: '',
+          off_label: '',
+        },
+      ],
+    };
+    mockedUseProfile.mockReturnValue({
+      data: { ...profileWithShow, shows: [showWithInstructions] },
+    } as unknown as ReturnType<typeof useProfile>);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; categories?: Array<Record<string, unknown>> }>;
+    };
+    const cats = body.show_updates?.find((u) => u.show_id === 'show-1')?.categories ?? [];
+    expect(cats[0]).toEqual({
+      id: 'cat-1',
+      name: 'Roll Call',
+      color: '#112233',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+      auto_instruction: 'Log each roll call',
+    });
+    expect(cats[1]).toEqual({
+      id: 'cat-2',
+      name: 'Camera',
+      color: '#223344',
+      type: 'DROPDOWN',
+      dropdown_options: [
+        { label: 'Cam A', needs_context: false, auto_instruction: 'When cam A goes live' },
+        { label: 'Cam B', needs_context: false },
+        // Padded posts trimmed; whitespace-only posts no key (option-level belt,
+        // audit M6 — same trim gate as the category level).
+        { label: 'Cam C', needs_context: false, auto_instruction: 'When cam C cuts in' },
+        { label: 'Cam D', needs_context: true },
+      ],
+      on_label: '',
+      off_label: '',
+    });
+    // Option-only category: no button-level key on the wire (empty means absent).
+    expect('auto_instruction' in cats[1]).toBe(false);
+    expect('auto_instruction' in (cats[1].dropdown_options as object[])[0]).toBe(true);
+    expect('auto_instruction' in (cats[1].dropdown_options as object[])[3]).toBe(false);
+  });
+
+  it('a whitespace-only instruction draft posts no auto_instruction key (trim gate matches the server)', async () => {
+    // Server normalization trims and drops empty instructions: gating the wire key
+    // on truthiness alone would post a key the server drops, leaving a phantom
+    // local value after the post-save rebaseline. The save mapping must gate on
+    // trim() — whitespace-only means absent.
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    fireEvent.click(screen.getByRole('button', { name: 'whitespace-instruction-cat-1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; categories?: Array<Record<string, unknown>> }>;
+    };
+    const cats = body.show_updates?.find((u) => u.show_id === 'show-1')?.categories ?? [];
+    expect('auto_instruction' in cats[0]).toBe(false);
+  });
+
+  it('an instruction edit arms Save via the snapshot comparison, and clearing it round-trips clean', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+
+    // The mocked table drives the same onChange the real instruction editor calls.
+    fireEvent.click(screen.getByRole('button', { name: 'set-instruction-cat-1' }));
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+
+    // Round-trip back to the hydrated value ('' — no instruction on the fixture): the
+    // DERIVED snapshot comparison must read clean again, which a hand-armed dirty
+    // flag could not do (ui-refresh D11).
+    fireEvent.click(screen.getByRole('button', { name: 'clear-instruction-cat-1' }));
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('invalidates the show-categories query on save (D4)', async () => {

@@ -7,6 +7,11 @@ import { seededSession } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
+// Namespace import so the page-coverage suite below can `vi.spyOn` the live
+// module export (see that suite's header for why a hoisted `vi.mock` cannot
+// work through the shared `app` singleton).
+import type { generateTopicsTurn } from './topicGenerate';
+import * as topicGenerateModule from './topicGenerate';
 
 const J = { 'content-type': 'application/json' };
 
@@ -155,6 +160,30 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     });
   }
 
+  /** Seed a transcript whose generation-density rendering is big enough to
+   * span MORE THAN ONE page (topic-generate-paged-transcript D4: pages are
+   * packed to a 45,000-char rendered cap). 30 words of ~2,000 chars group into
+   * 3 lines of `GENERATION_LINE_MAX_WORDS` (~20,000 chars each), so the packer
+   * must break after the second line. Without this the success fixture's
+   * continuation-marker loop would never iterate and the route's 200 would
+   * prove only the single-page case. */
+  function seedMultiPageTranscript(sessionId: string): void {
+    const hub = env.ports.sessions.get(sessionId);
+    for (let i = 0; i < 30; i += 1) {
+      hub.insertTranscriptWord({
+        session_time: '00:00:01',
+        speaker: 'Host',
+        word: `w${i}${'a'.repeat(2_000)}`,
+      });
+    }
+  }
+
+  /** Pages the success fixture actually fetched over real MCP (it records the
+   * count into its run cwd — see fake-claude-topics-success.mjs). */
+  function fixturePagesRead(sessionId: string): number {
+    return Number(readFileSync(join(stableSessionCwd(sessionId), '.fixture-pages.txt'), 'utf8'));
+  }
+
   function seedTopic(sessionId: string, summary: string) {
     return env.ports.sessions.get(sessionId).insertTopic({
       session_time: '00:00:00',
@@ -237,11 +266,11 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it(
-    'configured + transcript + success: 200 {topics} — the OLD topics are gone, the fresh ' +
-      'set (real create_topic calls) replaces them, and the shape matches GET …/topics',
+    'configured + MULTI-PAGE transcript + success: 200 {topics} — the OLD topics are gone, the ' +
+      'fresh set (real create_topic calls) replaces them, and the shape matches GET …/topics',
     async () => {
       const s = newSession();
-      seedTranscript(s);
+      seedMultiPageTranscript(s);
       const oldA = seedTopic(s, 'Old topic A');
       const oldB = seedTopic(s, 'Old topic B');
       expect(
@@ -286,6 +315,15 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 
       // Hub state matches the response exactly — no orphans, no stragglers.
       expect(currentTopics(s)).toEqual(body.topics);
+
+      // Full page coverage is part of what this 200 proves (topic-generate-
+      // paged-transcript D6): the turn registers the run's word snapshot, so a
+      // fixture that created these topics WITHOUT paging the transcript to its
+      // last page would have taken the 502-and-restore branch instead. And the
+      // transcript really did span MULTIPLE pages, so the 200 exercises the
+      // fixture's continuation-marker loop (and therefore the marker text the
+      // server emits) end to end, rather than the degenerate single-page case.
+      expect(fixturePagesRead(s)).toBeGreaterThan(1);
 
       // The spawned argv withholds list_topics (D3's crash-safe-swap mechanism).
       const argv = recordedArgv(s);
@@ -370,6 +408,141 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     expect(await res.json()).toEqual({
       detail: 'Transcription is unavailable on this deployment.',
     });
+  });
+});
+
+// ── topics/generate — the page-coverage gate on the crash-safe swap ────────
+// (topic-generate-paged-transcript task 2.2, design D6.)
+//
+// Frozen-surface self-check: this suite asserts only statuses already in the
+// route's authorized matrix — 200 {topics} and 502 {detail} with the SAME
+// fixed detail string every other failure cause returns. The gate is a new
+// internal CAUSE for the existing failure mapping; no new status, shape, or
+// header.
+//
+// The turn is stubbed at the `generateTopicsTurn` module export (`vi.spyOn`,
+// the technique ai.int.test.ts uses for `driveAiTurn` — it intercepts through
+// the shared `app` singleton, where a hoisted `vi.mock` would not): the real
+// turn now always registers a word snapshot (task 3.1), but a hermetic fixture
+// can only exercise the coverage values its own transcript produces, so the
+// stub is what enumerates the interesting partial-coverage combinations.
+// The stub creates its topics through the SAME registry the route reads, so
+// the swap/restore assertions below run against genuine rows. The unstubbed
+// full-coverage path is covered above by `fake-claude-topics-success.mjs`,
+// which pages the transcript to its last page for real.
+describe('topics/generate — page-coverage gate on the crash-safe swap', () => {
+  const FAILURE_DETAIL = 'Topic generation failed.';
+  const CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+
+  let spy: ReturnType<typeof vi.spyOn> | null = null;
+
+  afterEach(() => {
+    spy?.mockRestore();
+    spy = null;
+    aiChatTurns.reset();
+  });
+
+  /** Replace the CLI turn with one that really inserts `count` topics and then
+   * reports the given page coverage. */
+  function stubTurn(pageCoverage: { totalPages: number; servedPages: number }, count = 2): void {
+    spy = vi
+      .spyOn(topicGenerateModule, 'generateTopicsTurn')
+      .mockImplementation(async (opts: Parameters<typeof generateTopicsTurn>[0]) => {
+        for (let i = 0; i < count; i += 1) {
+          opts.registry.get(opts.sessionId).insertTopic({
+            session_time: `00:00:0${i}`,
+            duration_sec: 1,
+            topic_level: 1,
+            summary: `Fresh stub topic ${i}`,
+          });
+        }
+        return { ok: true, claudeSessionId: 'stub-session', createdEvents: 0, pageCoverage };
+      }) as unknown as ReturnType<typeof vi.spyOn>;
+  }
+
+  function seedForGenerate(): { sessionId: string; priorIds: string[] } {
+    const sessionId = seededSession().sessionId;
+    const hub = env.ports.sessions.get(sessionId);
+    hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
+    const priorIds = ['Old topic A', 'Old topic B'].map(
+      (summary) =>
+        hub.insertTopic({ session_time: '00:00:00', duration_sec: 10, topic_level: 1, summary }).id,
+    );
+    return { sessionId, priorIds };
+  }
+
+  const generateReq = async (sessionId: string): Promise<Response> =>
+    app.request(
+      `/api/sessions/${sessionId}/topics/generate`,
+      { method: 'POST' },
+      envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+    );
+
+  // Every strict subset of the snapshot's pages, including the two the gate
+  // exists for: the page-0-only prefix read (the motivating hazard) and the
+  // all-but-last read (the one a "did it fetch more than one page?" check
+  // would wave through).
+  const partials: Array<[string, { totalPages: number; servedPages: number }]> = [
+    ['page 0 only, of 4', { totalPages: 4, servedPages: 1 }],
+    ['all pages but the last', { totalPages: 4, servedPages: 3 }],
+    ['no page at all', { totalPages: 2, servedPages: 0 }],
+  ];
+
+  for (const [label, pageCoverage] of partials) {
+    it(`${label}: 502 with the existing detail, prior topics byte-for-byte intact, fresh rows removed`, async () => {
+      const { sessionId, priorIds } = seedForGenerate();
+      const before = env.ports.sessions.get(sessionId).listTopics();
+      stubTurn(pageCoverage);
+
+      const res = await generateReq(sessionId);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
+
+      // The prior set is EXACTLY what it was — same ids, ordinals, timestamps.
+      const after = env.ports.sessions.get(sessionId).listTopics();
+      expect(after).toEqual(before);
+      expect(after.map((t) => t.id)).toEqual(priorIds);
+      // …and the run's own rows are gone, not orphaned alongside them.
+      expect(after.map((t) => t.summary)).not.toContain('Fresh stub topic 0');
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+    });
+  }
+
+  it('every page served: 200 {topics} — the prior set is replaced by the fresh one', async () => {
+    const { sessionId, priorIds } = seedForGenerate();
+    stubTurn({ totalPages: 4, servedPages: 4 });
+
+    const res = await generateReq(sessionId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { topics: Array<{ id: string; summary: string }> };
+    expect(body.topics.map((t) => t.summary)).toEqual(['Fresh stub topic 0', 'Fresh stub topic 1']);
+    for (const id of priorIds) expect(body.topics.map((t) => t.id)).not.toContain(id);
+    expect(env.ports.sessions.get(sessionId).listTopics()).toEqual(body.topics);
+  });
+
+  it('a turn with NO word snapshot (zero-of-zero) still replaces — chat/topic turns are unaffected', async () => {
+    // The pre-task-3.1 production shape, and the permanent shape of any turn
+    // whose registration carries no snapshot: no coverage claim ⇒ the gate
+    // cannot fail the run. (The real-fixture success test above exercises the
+    // same property end to end, through a genuine CLI turn.)
+    const { sessionId } = seedForGenerate();
+    stubTurn({ totalPages: 0, servedPages: 0 });
+
+    const res = await generateReq(sessionId);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { topics: Array<{ summary: string }> };
+    expect(body.topics.map((t) => t.summary)).toEqual(['Fresh stub topic 0', 'Fresh stub topic 1']);
+  });
+
+  it('coverage complete but ZERO topics created: still the existing 502 + restore', async () => {
+    const { sessionId } = seedForGenerate();
+    const before = env.ports.sessions.get(sessionId).listTopics();
+    stubTurn({ totalPages: 2, servedPages: 2 }, 0);
+
+    const res = await generateReq(sessionId);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ detail: FAILURE_DETAIL });
+    expect(env.ports.sessions.get(sessionId).listTopics()).toEqual(before);
   });
 });
 

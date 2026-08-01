@@ -49,6 +49,26 @@ export function formatSmpte(tc: Timecode): string {
   return `${p2(tc.hours)}:${p2(tc.minutes)}:${p2(tc.seconds)}${sep}${p2(tc.frames)}`;
 }
 
+/** Inverse of `formatSmpte`'s grammar: `HH:MM:SS`, `HH:MM:SS:FF`, or
+ * drop-frame `HH:MM:SS;FF` (frames default to 0 when absent; either frame
+ * separator parses at any rate — callers echo whichever form they read).
+ * Returns `null` on grammar or bounds violations: non-finite or non-positive
+ * frame rate, hours > 23 (≥ 24h), minutes/seconds > 59, or frames ≥
+ * round(fps) — matching this module's non-drop-frame math at round(fps). */
+export function parseTimecodeString(text: string, frameRate: number): Timecode | null {
+  if (!(Number.isFinite(frameRate) && frameRate > 0)) return null;
+  const m = /^(\d{2}):(\d{2}):(\d{2})(?:[:;](\d{2}))?$/.exec(String(text).trim());
+  if (!m) return null;
+  const hours = Number(m[1]);
+  const minutes = Number(m[2]);
+  const seconds = Number(m[3]);
+  const frames = m[4] === undefined ? 0 : Number(m[4]);
+  const fps = Math.round(frameRate * 1000) / 1000;
+  const fpsI = Math.max(1, Math.round(fps));
+  if (hours > 23 || minutes > 59 || seconds > 59 || frames >= fpsI) return null;
+  return { hours, minutes, seconds, frames, frame_rate: fps };
+}
+
 export interface TransportFields {
   is_rolling: boolean;
   elapsed_frames: number;
