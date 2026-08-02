@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
 import type {
+  EventsGenerateBody,
   EventsGenerateResponse,
   EventsResponse,
   EventUpdateBody,
@@ -50,7 +51,8 @@ export function useEvents(
  * `POST …/events/generate` — one synchronous AI generation run
  * (auto-generate-event-logs design D9). Void-variables mutation, matching
  * `useGenerateTopics`, so it slots straight into `useGatedGenerate`'s
- * `GenerateMutate` shape. The run's inserted rows reach the feed live via the
+ * `GenerateMutate` shape. The optional body selects append-all, regenerate-all,
+ * or a custom instruction subset. The run's inserted rows reach the feed live via the
  * existing `event.changed`-driven refetch; the on-success invalidation is
  * belt-and-braces for the terminal state. `sessionId` is captured by the
  * `mutationFn` closure at mutate time, so a session switch mid-run cannot
@@ -60,9 +62,10 @@ export function useEvents(
 export function useGenerateEvents(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (body?: EventsGenerateBody) =>
       apiFetch<EventsGenerateResponse>(`sessions/${sessionId}/events/generate`, {
         method: 'POST',
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) }),
   });

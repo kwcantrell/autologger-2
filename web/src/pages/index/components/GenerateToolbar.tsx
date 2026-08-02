@@ -30,6 +30,9 @@ interface Props {
    * exclusive per run (an error resets the mutation's data, a fresh run
    * clears the error), and `genError` wins if both are ever passed. */
   outcome?: ReactNode;
+  /** Optional caller-owned generate trigger (for example, a dropdown trigger).
+   * Error, outcome, and unavailable-reason channels remain owned here. */
+  generateControl?: ReactNode;
   /** Insert is optional: the Event feed has no Insert affordance (manual
    * logging happens through the event-button pad), while Transcribe/Topics
    * keep theirs. Omitting `onInsert` omits the button. */
@@ -66,6 +69,7 @@ export function GenerateToolbar({
   reason,
   reasonVisuallyHidden,
   outcome,
+  generateControl,
   onInsert,
   insertPending,
 }: Props) {
@@ -81,19 +85,21 @@ export function GenerateToolbar({
           {outcome}
         </span>
       )}
-      <button
-        type="button"
-        className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
-        disabled={generatePending}
-        aria-disabled={genUnavailable || undefined}
-        aria-describedby={genUnavailable ? reasonId : undefined}
-        onClick={() => {
-          if (genUnavailable) return;
-          onGenerate();
-        }}
-      >
-        {generatePending ? 'Generating…' : 'Auto Generate'}
-      </button>
+      {generateControl ?? (
+        <button
+          type="button"
+          className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
+          disabled={generatePending}
+          aria-disabled={genUnavailable || undefined}
+          aria-describedby={genUnavailable ? reasonId : undefined}
+          onClick={() => {
+            if (genUnavailable) return;
+            onGenerate();
+          }}
+        >
+          {generatePending ? 'Generating…' : 'Auto Generate'}
+        </button>
+      )}
       {genUnavailable && (
         <span
           id={reasonId}

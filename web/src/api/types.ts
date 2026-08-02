@@ -449,6 +449,17 @@ export interface EventsResponse {
 export interface EventsGenerateResponse {
   created: number;
   cap_hit: boolean;
+  deleted?: number;
+}
+
+export interface EventGenerateSelection {
+  category_id: string;
+  option_label?: string | null;
+}
+
+export interface EventsGenerateBody {
+  regenerate?: boolean;
+  selection?: EventGenerateSelection[];
 }
 
 export interface ShowCategoriesResponse {

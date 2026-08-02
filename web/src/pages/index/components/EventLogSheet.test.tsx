@@ -121,6 +121,19 @@ beforeEach(() => {
     if (path.includes('/show-categories')) {
       return { categories: [categoryFixture()], show_name: '', show_code: '' };
     }
+    if (path === 'profile') {
+      return {
+        active_studio_id: '',
+        active_show_id: '',
+        active_studio: { id: '', name: '', categories: [] },
+        studios: [],
+        studio_settings: {},
+        shows: [],
+        new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
+        admin: { restart_supported: false, restart_needs_token: false },
+        auth: { logged_in: false, oauth_configured: false, user: null },
+      };
+    }
     if (path.includes('/events')) return eventsFixture();
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
@@ -163,6 +176,27 @@ describe('EventLogSheet toolbar overflow clamp', () => {
 
     const toolbar = await screen.findByRole('toolbar', { name: 'Event feed tools' });
     expect(toolbar.className.split(/\s+/)).toContain('max-w-full');
+  });
+});
+
+describe('EventLogSheet filter checkmarks', () => {
+  it('shows checkmarks for enabled rows without the PopoverItem selected tint', async () => {
+    renderSheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    const general = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const internal = screen.getByRole('menuitemcheckbox', { name: 'Show internal events' });
+
+    expect(general.getAttribute('aria-checked')).toBe('true');
+    expect(internal.getAttribute('aria-checked')).toBe('true');
+    expect(general.textContent).toContain('✓');
+    expect(internal.textContent).toContain('✓');
+    expect(general.className).not.toContain(' bg-[rgba(56,189,248,0.14)]');
+    expect(general.className).toContain('aria-checked:!bg-transparent');
+
+    fireEvent.click(general);
+    expect(general.getAttribute('aria-checked')).toBe('false');
+    expect(general.textContent).not.toContain('✓');
   });
 });
 

@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, apiFetch } from '../../../api/client';
 import type {
   Category,
   EventsResponse,
+  LogEvent,
+  ProfilePayload,
   SessionStatus,
   ShowCategoriesResponse,
 } from '../../../api/types';
@@ -110,23 +112,116 @@ function emptyEventsFixture(): EventsResponse {
   return { events: [], total: 0, logged_event_count: 0, offset: 0, limit: 200 };
 }
 
+function autoEventFixture(): LogEvent {
+  return {
+    event_id: 'auto-1',
+    category: 'general',
+    category_label: 'General',
+    category_color: '#4488ff',
+    message: 'Generated event',
+    timecode: '00:00:10:00',
+    timecode_total_frames: 240,
+    frame_rate: 24,
+    wall_time_utc: '2026-07-29T00:00:10Z',
+    metadata: { auto_generated: true },
+  };
+}
+
+function customProfileFixture(): ProfilePayload {
+  return {
+    active_studio_id: 'studio-1',
+    active_show_id: 'show-1',
+    active_studio: { id: 'studio-1', name: 'Studio', categories: [] },
+    studios: [{ id: 'studio-1', name: 'Studio' }],
+    studio_settings: {},
+    shows: [
+      {
+        id: 'show-1',
+        studio_id: 'studio-1',
+        name: 'Show',
+        show_code: 'SHOW',
+        next_episode: 1,
+        categories: [
+          {
+            id: 'general',
+            name: 'General',
+            color: '#4488ff',
+            type: 'BUTTON',
+            dropdown_options: [],
+            on_label: '',
+            off_label: '',
+            auto_instruction: 'Log notable moments',
+          },
+          {
+            id: 'camera',
+            name: 'Camera',
+            color: '#22aa88',
+            type: 'DROPDOWN',
+            dropdown_options: [
+              {
+                label: 'Wide',
+                needs_context: false,
+                auto_instruction: 'Log a wide camera change',
+              },
+              { label: 'Close', needs_context: false },
+            ],
+            on_label: '',
+            off_label: '',
+            auto_instruction: 'Log camera discussion',
+          },
+        ],
+        event_palette: [],
+        event_palette_preset: '',
+        event_palette_custom: [],
+      },
+    ],
+    new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
+    admin: { restart_supported: false, restart_needs_token: false },
+    auth: { logged_in: false, oauth_configured: false, user: null },
+  };
+}
+
 /** Routes the sheet's reads for ANY session id; `POST …/events/generate` runs
  * `generateImpl` and is counted. */
 function mockRoutes(
-  generateImpl: () => Promise<unknown>,
-  opts: { instructionsPresent?: boolean } = {},
-): { count: number } {
-  const calls = { count: 0 };
-  mockedApiFetch.mockImplementation(async (path: string) => {
+  generateImpl: (body: unknown) => Promise<unknown>,
+  opts: {
+    instructionsPresent?: boolean;
+    events?: EventsResponse;
+    profile?: unknown;
+    statusShowId?: string | null;
+  } = {},
+): { count: number; bodies: unknown[] } {
+  const calls = { count: 0, bodies: [] as unknown[] };
+  mockedApiFetch.mockImplementation(async (path: string, request?: RequestInit) => {
     if (path.includes('/events/generate')) {
       calls.count += 1;
-      return generateImpl();
+      const body = typeof request?.body === 'string' ? JSON.parse(request.body) : undefined;
+      calls.bodies.push(body);
+      return generateImpl(body);
     }
-    if (path.includes('/status')) return statusFixture();
+    if (path.includes('/status')) {
+      return { ...statusFixture(), show_id: opts.statusShowId ?? null };
+    }
     if (path.includes('/show-categories')) {
       return showCategoriesFixture(opts.instructionsPresent ?? true);
     }
-    if (path.includes('/events')) return emptyEventsFixture();
+    if (path === 'profile') {
+      return (
+        opts.profile ?? {
+          active_studio_id: '',
+          active_show_id: '',
+          active_studio: { id: '', name: '', categories: [] },
+          studios: [],
+          studio_settings: {},
+          shows: [],
+          new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
+          admin: { restart_supported: false, restart_needs_token: false },
+          auth: { logged_in: false, oauth_configured: false, user: null },
+        }
+      );
+    }
+    if (path.includes('/events')) return opts.events ?? emptyEventsFixture();
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
   return calls;
@@ -157,6 +252,11 @@ function generateButton(): HTMLElement {
   return screen.getByRole('button', { name: /Auto Generate|Generating…/ });
 }
 
+async function startGenerate(item = 'Generate All') {
+  fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+}
+
 beforeEach(() => {
   mockedApiFetch.mockReset();
 });
@@ -166,7 +266,7 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
     const calls = mockRoutes(() => Promise.reject(new ApiError(503, 'Service Unavailable')));
     const { switchSession, unmount } = renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
 
     // Latched: still a real focusable button (no `disabled` attribute), marked
     // aria-disabled, described by the always-visible reason span naming the
@@ -209,6 +309,78 @@ describe('event feed — AUTO GENERATE 503 latch (honest capability gating)', ()
   });
 });
 
+describe('event feed — Auto Generate menu and custom selection', () => {
+  it('offers Generate All and posts without a body when no loaded event is auto-generated', async () => {
+    const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false }));
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Custom' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
+
+    await waitFor(() => expect(calls.count).toBe(1));
+    expect(calls.bodies).toEqual([undefined]);
+  });
+
+  it('offers Regenerate All and posts the regenerate body when a loaded auto event exists', async () => {
+    const auto = autoEventFixture();
+    const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false, deleted: 1 }), {
+      events: {
+        events: [auto],
+        total: 1,
+        logged_event_count: 1,
+        offset: 0,
+        limit: 200,
+      },
+    });
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
+
+    await waitFor(() => expect(calls.count).toBe(1));
+    expect(calls.bodies).toEqual([{ regenerate: true }]);
+  });
+
+  it('opens Custom without a request, requires a selection, and posts selection only', async () => {
+    const calls = mockRoutes(() => Promise.resolve({ created: 2, cap_hit: false }), {
+      profile: customProfileFixture(),
+      statusShowId: 'show-1',
+    });
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Custom' }));
+    expect(await screen.findByRole('dialog', { name: 'Custom event generation' })).toBeTruthy();
+    expect(calls.count).toBe(0);
+
+    const submit = screen.getByRole('button', { name: 'Generate' });
+    expect(submit.hasAttribute('disabled')).toBe(true);
+    const generalGroup = await screen.findByRole('group', { name: 'General' });
+    const cameraGroup = await screen.findByRole('group', { name: 'Camera' });
+    fireEvent.click(
+      within(generalGroup).getByRole('checkbox', {
+        name: /Button instruction/,
+      }),
+    );
+    fireEvent.click(
+      within(cameraGroup).getByRole('checkbox', {
+        name: /Wide/,
+      }),
+    );
+    expect(submit.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(calls.count).toBe(1));
+    expect(calls.bodies).toEqual([
+      {
+        selection: [{ category_id: 'general' }, { category_id: 'camera', option_label: 'Wide' }],
+      },
+    ]);
+  });
+});
+
 describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)', () => {
   it('renders the server 409 busy detail verbatim, retryable, NOT latched', async () => {
     const busyDetail =
@@ -217,7 +389,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
     const calls = mockRoutes(() => Promise.reject(new ApiError(409, busyDetail)));
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
 
     // The SERVER's detail, verbatim (never a client-derived holder list).
     const alert = await screen.findByRole('alert');
@@ -226,7 +398,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
     expect(calls.count).toBe(1);
 
     // Not latched: a retry goes back to the network.
-    fireEvent.click(generateButton());
+    await startGenerate();
     await waitFor(() => expect(calls.count).toBe(2));
   });
 
@@ -234,7 +406,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
     const calls = mockRoutes(() => Promise.reject(new ApiError(502, 'generation failed upstream')));
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('generation failed upstream');
@@ -246,7 +418,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
     mockRoutes(() => Promise.resolve({ created: 3, cap_hit: false }));
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
 
     // (Queried by text: FeedShell's count heading is itself a `role="status"`
     // live region, so the role alone is ambiguous.)
@@ -261,7 +433,7 @@ describe('event feed — AUTO GENERATE non-503 outcomes (single inline channel)'
     mockRoutes(() => Promise.resolve({ created: 200, cap_hit: true }));
     renderSheet(SESSION_A);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
 
     const status = await screen.findByText(/Created 200 events/);
     expect(status.getAttribute('role')).toBe('status');
@@ -312,7 +484,7 @@ describe('event feed — run state is scoped to the starting session (mounted-hi
     const { switchSession } = renderSheet(SESSION_A);
 
     // Start a run on A: the control shows the running state.
-    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    await startGenerate();
     expect(await screen.findByRole('button', { name: 'Generating…' })).toBeTruthy();
 
     // Switch to B mid-run: B renders IDLE (no running state, no outcome, no

@@ -18,13 +18,13 @@ Gate passed 2026-08-02 (owner-approved plan). Ready for `opsx:apply`.
 
 ## Phase 2 — Web menu + Custom modal + filter checkmarks
 
-- [ ] 2.1 `useGenerateEvents` accepts optional body; types for response `deleted`.
-- [ ] 2.2 Event feed: Auto Generate dropdown (Generate All / Regenerate All +
+- [x] 2.1 `useGenerateEvents` accepts optional body; types for response `deleted`.
+- [x] 2.2 Event feed: Auto Generate dropdown (Generate All / Regenerate All +
       Custom); preserve latch/pending/outcome behavior.
-- [ ] 2.3 `EventGenerateCustomModal`: button + option checkboxes; submit
+- [x] 2.3 `EventGenerateCustomModal`: button + option checkboxes; submit
       selection-only POST.
-- [ ] 2.4 FilterDropdown checkmarks without selected tint.
-- [ ] 2.5 Update/add web tests (latch, menu labels, custom modal, filter).
+- [x] 2.4 FilterDropdown checkmarks without selected tint.
+- [x] 2.5 Update/add web tests (latch, menu labels, custom modal, filter).
 
 ## Phase 3 — Verification
 

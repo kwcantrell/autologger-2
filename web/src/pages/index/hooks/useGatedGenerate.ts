@@ -4,7 +4,10 @@ import { ApiError } from '../../../api/client';
 /** The slice of a React Query mutation the latch drives — structurally
  * compatible with `useGenerateTranscript(...)`/`useGenerateTopics(...)`'s
  * `mutate` (void-variables mutations). */
-type GenerateMutate = (variables: undefined, options: { onError: (err: Error) => void }) => void;
+type GenerateMutate<TVariables> = (
+  variables: TVariables,
+  options: { onError: (err: Error) => void },
+) => void;
 
 /**
  * Shared generate-503-latch state machine for the Transcribe and Topics feeds
@@ -23,13 +26,13 @@ type GenerateMutate = (variables: undefined, options: { onError: (err: Error) =>
  *   panel only, no duplicate toast) and does NOT latch — a retry re-calls
  *   the endpoint.
  */
-export function useGatedGenerate(mutate: GenerateMutate) {
+export function useGatedGenerate<TVariables = undefined>(mutate: GenerateMutate<TVariables>) {
   const [genError, setGenError] = useState<string | null>(null);
   const [genUnavailable, setGenUnavailable] = useState(false);
 
-  function handleGenerate() {
+  function handleGenerate(variables?: TVariables) {
     setGenError(null);
-    mutate(undefined, {
+    mutate(variables as TVariables, {
       onError: (err) => {
         if (err instanceof ApiError && err.status === 503) {
           setGenUnavailable(true);
