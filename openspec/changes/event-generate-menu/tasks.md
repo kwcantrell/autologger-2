@@ -28,5 +28,5 @@ Gate passed 2026-08-02 (owner-approved plan). Ready for `opsx:apply`.
 
 ## Phase 3 — Verification
 
-- [ ] 3.1 Server tests green for generate/regenerate/selection.
-- [ ] 3.2 Web vitest for touched surfaces; `npm run typecheck` for touched pkgs.
+- [x] 3.1 Server tests green for generate/regenerate/selection.
+- [x] 3.2 Web vitest for touched surfaces; `npm run typecheck` for touched pkgs.
