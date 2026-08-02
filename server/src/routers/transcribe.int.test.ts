@@ -2,8 +2,9 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { app, env, envWith } from '../test/harness';
-import { seededSession } from '../test/helpers';
+import { catalogFor, seededSession } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
@@ -710,6 +711,7 @@ function generate(
 describe('transcript generation', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    transcriptGenerationLock.reset();
   });
 
   it('200 {words}: session_time/speaker strings, start_sec/end_sec, contiguous ordinals, ordinal order', async () => {
@@ -846,6 +848,8 @@ describe('transcript generation', () => {
 
     const secondRes = await generate(s);
     expect(secondRes.status).toBe(409);
+    const secondBody = (await secondRes.json()) as { detail: string };
+    expect(secondBody.detail).toContain('Test Session');
     expect(fetchMock).toHaveBeenCalledTimes(1); // second made no provider request
 
     release.fn?.();
@@ -1019,5 +1023,52 @@ describe('transcript generation', () => {
 
     const words = await listWords(s);
     expect(words.map((w) => w.word)).toEqual(['fresh']);
+  });
+});
+
+describe('transcript generation lock status', () => {
+  afterEach(() => {
+    transcriptGenerationLock.reset();
+  });
+
+  async function status() {
+    return app.request('/api/transcript-generation/status', { method: 'GET' }, { ...env });
+  }
+
+  it('idle: returns in_flight false with no busy-only fields', async () => {
+    const res = await status();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ in_flight: false });
+  });
+
+  it('busy: names the holder with catalog title and started_at', async () => {
+    const { sessionId } = seededSession();
+    const title = String(catalogFor().sessions.getSessionIndexRow(sessionId)?.title ?? '');
+    const startedAtMs = 1_700_000_000_000;
+    expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
+
+    const res = await status();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      in_flight: true,
+      session_id: sessionId,
+      session_title: title,
+      started_at: new Date(startedAtMs).toISOString(),
+    });
+  });
+
+  it('busy with missing catalog row: session_title is null', async () => {
+    const ghostId = 'ghost-session-no-row';
+    const startedAtMs = 1_700_000_000_000;
+    expect(transcriptGenerationLock.tryAcquire(ghostId, startedAtMs)).toBe(true);
+
+    const res = await status();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      in_flight: true,
+      session_id: ghostId,
+      session_title: null,
+      started_at: new Date(startedAtMs).toISOString(),
+    });
   });
 });

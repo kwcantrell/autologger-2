@@ -23,6 +23,7 @@ import {
   TranscriptGenerateError,
   TRANSCRIPT_UNAVAILABLE,
 } from '../node/generateTranscript';
+import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import {
   topicCreateSchema,
   topicUpdateSchema,
@@ -66,6 +67,31 @@ function mapGenerateError(err: unknown): never {
   throw err;
 }
 
+function resolveCatalogSessionTitle(
+  catalog: AppEnv['Variables']['catalog'],
+  sessionId: string,
+): string | null {
+  const row = catalog.sessions.getSessionIndexRow(sessionId);
+  if (row === null) return null;
+  return String(row.title ?? '');
+}
+
+// ── Transcript generation lock status (transcript-gen-lock-status) ───────────
+
+transcribeRouter.get('/api/transcript-generation/status', async (c) => {
+  const holder = transcriptGenerationLock.getLock();
+  if (holder === null) {
+    return c.json({ in_flight: false });
+  }
+  const catalog = c.get('catalog');
+  return c.json({
+    in_flight: true,
+    session_id: holder.sessionId,
+    session_title: resolveCatalogSessionTitle(catalog, holder.sessionId),
+    started_at: new Date(holder.startedAtMs).toISOString(),
+  });
+});
+
 // ── Legacy CSV download (transcription unavailable) ─────────────────────────────
 
 transcribeRouter.get('/api/sessions/:sessionId/transcribe.csv', async (c) => {
@@ -98,6 +124,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       ctx: timecodeCtx(row),
       sessionId,
       signal: c.req.raw.signal,
+      resolveSessionTitle: (id) => resolveCatalogSessionTitle(c.get('catalog'), id),
     });
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
   } catch (err) {

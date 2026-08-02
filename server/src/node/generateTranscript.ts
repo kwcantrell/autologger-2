@@ -11,6 +11,10 @@ import type { Bindings, Config } from '../types';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
+import {
+  generationInFlightDetail,
+  transcriptGenerationLock,
+} from './transcriptGenerationLock';
 import type { EnrichmentGroup, SegmentAnchorInfo } from './transcriptRemap';
 import {
   recordingStartAnchors,
@@ -21,6 +25,7 @@ import {
 export const DEEPGRAM_MAX_GROUP_BYTES = 2_000_000_000;
 
 export const TRANSCRIPT_UNAVAILABLE = 'Transcription is unavailable on this deployment.';
+/** Fallback detail when the holder title cannot be resolved (rare). */
 export const GENERATION_IN_FLIGHT_DETAIL =
   'A transcript generation run is already in progress on this deployment; try again once it completes.';
 export const NO_AUDIO_DETAIL = 'This session has no recorded audio to transcribe.';
@@ -55,11 +60,9 @@ export function exceedsGroupSizeLimit(bytes: number): boolean {
   return bytes > DEEPGRAM_MAX_GROUP_BYTES;
 }
 
-/** Process-wide slot (design D9) — shared by HTTP generate and log-import. */
-let generationInFlight = false;
-
+/** Process-wide slot — shared by HTTP generate, status GET, and log-import. */
 export function isTranscriptGenerationInFlight(): boolean {
-  return generationInFlight;
+  return transcriptGenerationLock.getLock() !== null;
 }
 
 export interface GenerateTranscriptDeps {
@@ -70,6 +73,8 @@ export interface GenerateTranscriptDeps {
   sessionId: string;
   /** Optional abort before the provider call starts. */
   signal?: AbortSignal | null;
+  /** Optional catalog title lookup for enriched 409 detail (lock-status). */
+  resolveSessionTitle?: (sessionId: string) => string | null;
 }
 
 /** Run DeepGram transcription and atomically replace session words. */
@@ -79,10 +84,18 @@ export async function generateTranscriptWords(
   if (!deepgramConfigured(deps.config)) {
     throw new TranscriptGenerateError('unavailable', TRANSCRIPT_UNAVAILABLE);
   }
-  if (generationInFlight) {
-    throw new TranscriptGenerateError('in_flight', GENERATION_IN_FLIGHT_DETAIL);
+  if (!transcriptGenerationLock.tryAcquire(deps.sessionId)) {
+    const holder = transcriptGenerationLock.getLock();
+    const detail =
+      holder === null
+        ? GENERATION_IN_FLIGHT_DETAIL
+        : generationInFlightDetail(
+            holder.sessionId,
+            deps.resolveSessionTitle?.(holder.sessionId) ?? null,
+            holder.startedAtMs,
+          );
+    throw new TranscriptGenerateError('in_flight', detail);
   }
-  generationInFlight = true;
 
   const blobStore = deps.audio;
   let scratchDir: string | null = null;
@@ -164,7 +177,7 @@ export async function generateTranscriptWords(
     const remappedEnrichment = remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors);
     return deps.getHub().replaceTranscriptWords(remappedWords, remappedEnrichment);
   } finally {
-    generationInFlight = false;
+    transcriptGenerationLock.release();
     if (scratchDir) await rm(scratchDir, { recursive: true, force: true });
   }
 }

@@ -73,6 +73,7 @@ function mockRoutes(generateError: () => Error, generateCalls: { count: number }
       generateCalls.count += 1;
       throw generateError();
     }
+    if (path === 'transcript-generation/status') return { in_flight: false };
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/transcript-words')) return { words: [] };
     if (path.includes('/topics')) return { topics: [] };
