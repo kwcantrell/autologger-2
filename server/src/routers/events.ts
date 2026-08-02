@@ -320,19 +320,22 @@ function toGenerationSnapshotCategory(raw: unknown): AiGenerationSnapshotCategor
 }
 
 /** Aggregate pre-spawn instruction size over the snapshot (design D8, guard
- * 6): `entries` = instruction-bearing categories + instruction-bearing
- * options (DROPDOWN only — the single definition ignores stale option
- * instructions on other types, and so does the prompt enumeration); `bytes` =
- * total UTF-8 bytes of every counted instruction. */
-function instructionAggregate(categories: readonly AiGenerationSnapshotCategory[]): {
+ * 6). Generate All preserves the legacy entry count: every bearing category
+ * plus every bearing DROPDOWN option. A filtered custom snapshot counts only
+ * participating button-level instructions and selected instructed options.
+ * `bytes` is the total UTF-8 size of every participating instruction. */
+function instructionAggregate(
+  categories: readonly AiGenerationSnapshotCategory[],
+  countEveryCategory: boolean,
+): {
   bytes: number;
   entries: number;
 } {
   let bytes = 0;
   let entries = 0;
   for (const cat of categories) {
+    if (countEveryCategory || cat.auto_instruction) entries += 1;
     if (cat.auto_instruction) {
-      entries += 1;
       bytes += Buffer.byteLength(cat.auto_instruction, 'utf8');
     }
     if (cat.type !== 'DROPDOWN') continue;
@@ -472,7 +475,10 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
 
   // 6. Aggregate pre-spawn instruction bound (design D8) — either half
   // tripping fails fast, before the CLI ever spawns.
-  const { bytes, entries } = instructionAggregate(categories);
+  const { bytes, entries } = instructionAggregate(
+    categories,
+    (body.selection?.length ?? 0) === 0,
+  );
   const maxBytes = eventGenerateMaxInstructionBytes(c.env.config);
   const maxEntries = eventGenerateMaxInstructionEntries(c.env.config);
   if (bytes > maxBytes || entries > maxEntries) {

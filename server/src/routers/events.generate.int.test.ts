@@ -98,6 +98,24 @@ const GEN_DROPDOWN_CATEGORIES_JSON = JSON.stringify([
   },
 ]);
 
+/** An option-only DROPDOWN at the legacy aggregate-entry boundary: Generate
+ * All counts the bearing category plus both options (3), while a custom
+ * one-option snapshot counts only that selected option (1). */
+const GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON = JSON.stringify([
+  {
+    id: 'mic',
+    name: 'Mic',
+    color: '#00ff00',
+    type: 'DROPDOWN',
+    dropdown_options: [
+      { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+      { label: 'Boom', needs_context: false, auto_instruction: 'log every boom adjustment' },
+    ],
+    on_label: '',
+    off_label: '',
+  },
+]);
+
 const seededIds: string[] = [];
 
 beforeEach(async () => {
@@ -453,6 +471,44 @@ describe('events/generate — optional body, regenerate, and selection', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ created: 0, cap_hit: false });
       expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the legacy category-plus-options bound for Generate All but counts only a custom option', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession({
+        categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
+      });
+      seedAnchoredTranscript(sessionId);
+      const boundedEnv = configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+        EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+      });
+
+      const all = await generateReq(sessionId, boundedEnv);
+      expect(all.status).toBe(400);
+      expect(await detailOf(all)).toMatch(/3 instruction-bearing entries vs max 2/i);
+      expect(spy).not.toHaveBeenCalled();
+
+      const custom = await generateReq(sessionId, boundedEnv, {
+        selection: [{ category_id: 'mic', option_label: 'Lav' }],
+      });
+      expect(custom.status, await custom.clone().text()).toBe(200);
+      expect(await custom.json()).toEqual({ created: 0, cap_hit: false });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].mcpContext?.generation?.categories).toEqual([
+        {
+          id: 'mic',
+          name: 'Mic',
+          type: 'DROPDOWN',
+          color: '#00ff00',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+          ],
+        },
+      ]);
     } finally {
       spy.mockRestore();
     }
