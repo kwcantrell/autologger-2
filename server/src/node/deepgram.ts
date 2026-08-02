@@ -26,6 +26,7 @@ const CONTENT_TYPE_BY_FAMILY: Record<CodecFamily, string> = {
   opus: 'audio/webm',
   aac: 'audio/mp4',
   pcm: 'audio/wav',
+  mp3: 'audio/mpeg',
 };
 
 /** Content type per codec family — the concat module's `MergedGroup` doesn't

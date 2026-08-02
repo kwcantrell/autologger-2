@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { app, env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 import type { Bindings } from '../types';
-import { MAX_AUDIO_BYTES } from './audio';
+import { MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own
 // module-private constants (not exported) so these tests assert the EXACT
@@ -17,7 +17,7 @@ const DURATION_EXCEEDS_MAX_DETAIL =
 const MISSING_CONTENT_TYPE_DETAIL = 'Content-Type header is required and must be non-empty.';
 const ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';
-const OVERSIZE_DETAIL = `Audio payload exceeds the ${MAX_AUDIO_BYTES}-byte limit.`;
+const OVERSIZE_DETAIL = `Audio payload exceeds the ${MAX_LOCAL_AUDIO_IMPORT_BYTES}-byte limit.`;
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
@@ -319,7 +319,7 @@ describe('POST /api/sessions/:sessionId/local-audio-import — byte limit (413)'
     const res = await postLocalImport(session, {
       durationS: '10',
       contentType: 'audio/wav',
-      contentLength: String(MAX_AUDIO_BYTES + 1),
+      contentLength: String(MAX_LOCAL_AUDIO_IMPORT_BYTES + 1),
       body: new Uint8Array([0x00]),
     });
     expect(res.status).toBe(413);

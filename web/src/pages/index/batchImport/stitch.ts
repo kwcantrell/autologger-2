@@ -85,13 +85,51 @@ function createAudioContext(): AudioContext {
   return new Ctor();
 }
 
-/** Decode files in order, concatenate PCM, and encode a WAV blob with total duration. */
+/**
+ * Read duration via media element metadata only — does NOT decode PCM into an
+ * AudioBuffer (which OOMs on long podcast MP3s when the old path re-encoded WAV).
+ */
+export async function probeMediaDurationS(file: Blob): Promise<number> {
+  const url = URL.createObjectURL(file);
+  try {
+    const audio = new Audio();
+    audio.preload = 'metadata';
+    const durationS = await new Promise<number>((resolve, reject) => {
+      audio.onloadedmetadata = () => {
+        const d = audio.duration;
+        if (!Number.isFinite(d) || d <= 0) {
+          reject(new Error('Could not read audio duration from file metadata.'));
+          return;
+        }
+        resolve(d);
+      };
+      audio.onerror = () => {
+        reject(new Error('Could not read audio duration from file metadata.'));
+      };
+      audio.src = url;
+    });
+    return durationS;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Decode files in order, concatenate PCM, and encode a WAV blob with total duration.
+ * Single-file groups pass through the original bytes (no PCM/WAV expansion). */
 export async function stitchAudioFiles(
   files: File[],
   audioContext?: AudioContext,
 ): Promise<StitchResult> {
   if (files.length === 0) {
     throw new Error('stitchAudioFiles requires at least one file');
+  }
+
+  // Single file: upload the original container. Decoding a long MP3 to WAV can
+  // allocate multi-GB ArrayBuffers and throw "Array buffer allocation failed".
+  if (files.length === 1) {
+    const file = files[0];
+    const durationS = await probeMediaDurationS(file);
+    return { blob: file, durationS, partDurationsS: [durationS] };
   }
 
   const ctx = audioContext ?? createAudioContext();

@@ -27,13 +27,31 @@ function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, 
   };
 }
 
-export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — bound the buffered upload.
+export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — live recorder segment upload.
+
+/**
+ * Batch / local-audio-import may send full episode files (compressed MP3/M4A),
+ * not short WebM chunks. Cap is higher than {@link MAX_AUDIO_BYTES}; still a
+ * single heap buffer per request (see README upload note).
+ */
+// Stay under typical V8 ArrayBuffer max (~2 GiB) while allowing full-episode MP3s.
+export const MAX_LOCAL_AUDIO_IMPORT_BYTES = 1500 * 1024 * 1024; // ~1.46 GiB
 
 /** Reject an over-cap upload with 413. No-op for unknown (null) or NaN sizes;
  * the post-read byteLength check is the backstop when Content-Length is absent. */
 export function enforceAudioByteLimit(bytes: number | null): void {
   if (bytes !== null && Number.isFinite(bytes) && bytes > MAX_AUDIO_BYTES) {
     throw new ApiError(413, `Audio payload exceeds the ${MAX_AUDIO_BYTES}-byte limit.`);
+  }
+}
+
+/** Same as {@link enforceAudioByteLimit} but for POST …/local-audio-import. */
+export function enforceLocalAudioImportByteLimit(bytes: number | null): void {
+  if (bytes !== null && Number.isFinite(bytes) && bytes > MAX_LOCAL_AUDIO_IMPORT_BYTES) {
+    throw new ApiError(
+      413,
+      `Audio payload exceeds the ${MAX_LOCAL_AUDIO_IMPORT_BYTES}-byte limit.`,
+    );
   }
 }
 

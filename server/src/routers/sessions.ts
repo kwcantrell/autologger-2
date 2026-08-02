@@ -32,7 +32,7 @@ import {
 } from '../session/audioSeamParts';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
-import { enforceAudioByteLimit } from './audio';
+import { enforceLocalAudioImportByteLimit } from './audio';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const sessionsRouter = new Hono<AppEnv>();
@@ -336,10 +336,10 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   }
 
   const declared = c.req.header('content-length');
-  enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
+  enforceLocalAudioImportByteLimit(declared !== undefined ? Number(declared) : null);
   const payload = await c.req.arrayBuffer();
   if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
-  enforceAudioByteLimit(payload.byteLength);
+  enforceLocalAudioImportByteLimit(payload.byteLength);
 
   if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
     throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);

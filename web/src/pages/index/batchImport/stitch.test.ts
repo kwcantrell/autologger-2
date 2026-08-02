@@ -37,8 +37,40 @@ function mockAudioContext(decodeMap: Map<string, AudioBuffer>): AudioContext {
   } as unknown as AudioContext;
 }
 
-function fileNamed(name: string): File {
-  return new File([name], name, { type: 'audio/mpeg' });
+function fileNamed(name: string, type = 'audio/mpeg'): File {
+  return new File([name], name, { type });
+}
+
+function stubMediaProbe(durationS: number): void {
+  const urls = new Map<string, Blob>();
+  let seq = 0;
+  vi.stubGlobal('URL', {
+    createObjectURL: (blob: Blob) => {
+      const id = `blob:mock-${++seq}`;
+      urls.set(id, blob);
+      return id;
+    },
+    revokeObjectURL: (id: string) => {
+      urls.delete(id);
+    },
+  });
+  vi.stubGlobal(
+    'Audio',
+    class {
+      preload = '';
+      duration = durationS;
+      onloadedmetadata: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      private _src = '';
+      get src(): string {
+        return this._src;
+      }
+      set src(value: string) {
+        this._src = value;
+        queueMicrotask(() => this.onloadedmetadata?.());
+      }
+    },
+  );
 }
 
 describe('encodeAudioBufferToWav', () => {
@@ -52,6 +84,7 @@ describe('encodeAudioBufferToWav', () => {
 describe('stitchAudioFiles', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('concatenates durations for multi-part input', async () => {
@@ -71,14 +104,18 @@ describe('stitchAudioFiles', () => {
     expect(ctx.decodeAudioData).toHaveBeenCalledTimes(2);
   });
 
-  it('decodes a single file to WAV with known duration', async () => {
-    const decodeMap = new Map<string, AudioBuffer>([['solo.wav', syntheticBuffer(3.25)]]);
-    const ctx = mockAudioContext(decodeMap);
+  it('passes through a single file without decoding to WAV', async () => {
+    stubMediaProbe(3.25);
+    const file = fileNamed('solo.mp3');
+    const decodeSpy = vi.fn();
+    const ctx = { decodeAudioData: decodeSpy, close: vi.fn() } as unknown as AudioContext;
 
-    const { blob, durationS } = await stitchAudioFiles([fileNamed('solo.wav')], ctx);
+    const { blob, durationS, partDurationsS } = await stitchAudioFiles([file], ctx);
 
     expect(durationS).toBeCloseTo(3.25, 5);
-    expect(blob.type).toBe('audio/wav');
-    expect(ctx.decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(partDurationsS).toEqual([3.25]);
+    expect(blob).toBe(file);
+    expect(blob.type).toBe('audio/mpeg');
+    expect(decodeSpy).not.toHaveBeenCalled();
   });
 });

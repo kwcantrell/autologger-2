@@ -98,12 +98,28 @@ async function createSessionForStem(
   });
 }
 
+/** Infer MIME when the browser leaves `File.type` empty (common for some OS picks). */
+export function contentTypeForAudioBlob(blob: Blob, fallbackName: string): string {
+  const trimmed = blob.type?.trim() ?? '';
+  if (trimmed !== '') return trimmed;
+  const lower = fallbackName.toLowerCase();
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'audio/mp4';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.webm')) return 'audio/webm';
+  if (lower.endsWith('.aiff') || lower.endsWith('.aif')) return 'audio/aiff';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  return 'application/octet-stream';
+}
+
 async function importLocalAudio(
   sessionId: string,
   blob: Blob,
   durationS: number,
   partDurationsS: number[],
   signal: AbortSignal,
+  fallbackName: string,
 ): Promise<void> {
   throwIfAborted(signal);
   const qs = `duration_s=${encodeURIComponent(String(durationS))}`;
@@ -111,7 +127,7 @@ async function importLocalAudio(
   await apiFetch(`sessions/${encodeURIComponent(sessionId)}/local-audio-import?${qs}`, {
     method: 'POST',
     headers: {
-      'Content-Type': blob.type,
+      'Content-Type': contentTypeForAudioBlob(blob, fallbackName),
       'X-Audio-Seam-Parts': JSON.stringify(seamParts),
     },
     body: blob,
@@ -228,7 +244,7 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
     });
 
     try {
-      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal);
+      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal, stem);
       state.lines.push(formatCompletedLine(stem));
     } catch (err) {
       const detail = errorDetail(err, 'Upload failed');
