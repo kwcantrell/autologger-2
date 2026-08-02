@@ -503,20 +503,38 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     }
   });
 
-  it('selection filters both the generation snapshot and prompt to matching entries', async () => {
+  it('mixed selection filters snapshot, prompt, and aggregate bound to the button plus one option', async () => {
     const spy = mockSuccessfulTurn();
     try {
       const { sessionId } = newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
       seedAnchoredTranscript(sessionId);
 
-      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
-        selection: [{ category_id: 'mic', option_label: 'Lav' }],
-      });
+      const res = await generateReq(
+        sessionId,
+        configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+          // The full snapshot has 3 entries; the mixed selection has 2.
+          EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+        }),
+        {
+          selection: [
+            { category_id: 'slate', option_label: null },
+            { category_id: 'mic', option_label: 'Lav' },
+          ],
+        },
+      );
 
-      expect(res.status).toBe(200);
+      expect(res.status, await res.clone().text()).toBe(200);
       expect(await res.json()).toEqual({ created: 0, cap_hit: false });
       const opts = spy.mock.calls[0][0];
       expect(opts.mcpContext?.generation?.categories).toEqual([
+        {
+          id: 'slate',
+          name: 'SLATE',
+          type: 'BUTTON',
+          color: '#ff0000',
+          auto_instruction: SLATE_INSTRUCTION,
+          dropdown_options: [],
+        },
         {
           id: 'mic',
           name: 'Mic',
@@ -527,26 +545,35 @@ describe('events/generate — optional body, regenerate, and selection', () => {
           ],
         },
       ]);
+      expect(opts.message).toContain(SLATE_INSTRUCTION);
       expect(opts.message).toContain('### Option "Lav"');
       expect(opts.message).not.toContain('microphone incidents in general');
-      expect(opts.message).not.toContain('SLATE');
     } finally {
       spy.mockRestore();
     }
   });
 
-  it('selection that matches no instruction entry returns 400, does not spawn, and releases the slot', async () => {
+  it('unmatched selection returns 400 before slot acquisition and deletes nothing', async () => {
     const { sessionId } = newSession();
     seedAnchoredTranscript(sessionId);
+    seedAutoSlateEvent(sessionId);
+    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    expect(slot.ok).toBe(true);
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        selection: [{ category_id: 'missing', option_label: null }],
+      });
 
-    const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
-      selection: [{ category_id: 'missing', option_label: null }],
-    });
-
-    expect(res.status).toBe(400);
-    expect(await detailOf(res)).toMatch(/instruction/i);
-    expect(neverSpawned(sessionId)).toBe(true);
-    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+      expect(res.status).toBe(400);
+      expect(await detailOf(res)).toMatch(/instruction/i);
+      expect(neverSpawned(sessionId)).toBe(true);
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(true);
+      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+        true,
+      );
+    } finally {
+      if (slot.ok) slot.release();
+    }
   });
 
   it('regenerate plus non-empty selection returns 400 before guards and deletes nothing', async () => {
