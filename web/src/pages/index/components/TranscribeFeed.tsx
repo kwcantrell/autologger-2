@@ -11,8 +11,9 @@ import {
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
+import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCsv';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FeedTable } from './FeedTable';
+import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { TranscriptGenerationLockBanner } from './TranscriptGenerationLockBanner';
 import { JUMP_COLUMN } from './JumpToTimeButton';
@@ -87,6 +88,11 @@ export function TranscribeFeed({ sessionId }: Props) {
     return Math.min(...nums) === 0 ? 1 : 0;
   }, [words]);
 
+  function handleExportCsv() {
+    if (!words || words.length === 0) return;
+    downloadTranscriptCsv(sessionId, buildTranscriptCsv(words, speakerOffset));
+  }
+
   const sortedWords = useMemo(() => {
     if (!words) return words;
     const mul = sort.dir === 'asc' ? 1 : -1;
@@ -135,15 +141,23 @@ export function TranscribeFeed({ sessionId }: Props) {
         onGenerate={handleGenerate}
         generatePending={generate.isPending || sameSessionGenerationBusy}
         reasonId={genReasonId}
-      reason={
-        <>
-          Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
-          Reload after configuring.
-        </>
-      }
+        reason={
+          <>
+            Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
+            Reload after configuring.
+          </>
+        }
         onInsert={handleInsert}
         insertPending={insert.isPending}
       />
+      <button
+        type="button"
+        className={FEED_GLASS_BTN}
+        disabled={wordCount === 0}
+        onClick={handleExportCsv}
+      >
+        Export CSV
+      </button>
       {generationStatus?.in_flight === true && (
         <TranscriptGenerationLockBanner status={generationStatus} currentSessionId={sessionId} />
       )}
