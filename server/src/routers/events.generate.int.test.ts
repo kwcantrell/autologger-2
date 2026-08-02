@@ -514,6 +514,25 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     }
   });
 
+  it('treats an empty selection as Generate All for the legacy category-plus-options bound', async () => {
+    const { sessionId } = newSession({
+      categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
+    });
+    seedAnchoredTranscript(sessionId);
+
+    const res = await generateReq(
+      sessionId,
+      configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+        EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+      }),
+      { selection: [] },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await detailOf(res)).toMatch(/3 instruction-bearing entries vs max 2/i);
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
   it('{regenerate:false} preserves existing auto rows and omits deleted', async () => {
     const spy = mockSuccessfulTurn();
     try {
