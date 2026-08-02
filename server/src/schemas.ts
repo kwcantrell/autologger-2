@@ -68,6 +68,23 @@ export const eventUpdateBodySchema = z.object({
 });
 export type EventUpdateBody = z.infer<typeof eventUpdateBodySchema>;
 
+export const eventGenerateBodySchema = z
+  .object({
+    regenerate: z.boolean().optional(),
+    selection: z
+      .array(
+        z.object({
+          category_id: z.string(),
+          option_label: z.string().nullable().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .refine((body) => !(body.regenerate === true && (body.selection?.length ?? 0) > 0), {
+    message: 'regenerate cannot be combined with a non-empty selection',
+  });
+export type EventGenerateBody = z.infer<typeof eventGenerateBodySchema>;
+
 export const audioRecordingLeaseBodySchema = z.object({
   client_id: z.string().min(1).max(256),
 });

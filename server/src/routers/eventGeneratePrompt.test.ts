@@ -144,6 +144,27 @@ describe('buildEventGenerateMessage', () => {
     expect(count(out, INSTRUCTION_OPEN)).toBe(2); // whole-button + one option
   });
 
+  it('renders a selection-filtered DROPDOWN snapshot with only the selected option entry', () => {
+    const out = build([
+      cat({
+        id: 'cat-d',
+        name: 'Audio issue',
+        type: 'DROPDOWN',
+        // The route removes the unselected whole-button instruction and
+        // unselected options before handing the snapshot to this builder.
+        auto_instruction: undefined,
+        dropdown_options: [
+          { label: 'Lav', needs_context: false, auto_instruction: 'Detect lav mic problems.' },
+        ],
+      }),
+    ]);
+    expect(out).toContain('### Option "Lav"');
+    expect(out).toContain('Detect lav mic problems.');
+    expect(out).not.toContain('Whole-button instruction');
+    expect(out).not.toContain('Boom');
+    expect(count(out, INSTRUCTION_OPEN)).toBe(1);
+  });
+
   it('delimiter framing is unforgeable: instruction text containing the tokens is neutralized', () => {
     const out = build([
       cat({

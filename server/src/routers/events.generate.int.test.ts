@@ -137,8 +137,24 @@ function configuredEnv(cliPath: string, overrides: Record<string, unknown> = {})
   });
 }
 
-function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
-  return app.request(`/api/sessions/${sessionId}/events/generate`, { method: 'POST' }, envOverride);
+function generateReq(
+  sessionId: string,
+  envOverride: ReturnType<typeof envWith>,
+  body?: unknown,
+) {
+  return app.request(
+    `/api/sessions/${sessionId}/events/generate`,
+    {
+      method: 'POST',
+      ...(body === undefined
+        ? {}
+        : {
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+    },
+    envOverride,
+  );
 }
 
 /** Anchored transcript: words carrying session-time anchors around the
@@ -174,6 +190,17 @@ function seedManualSlateEvent(sessionId: string): void {
   });
 }
 
+function seedAutoSlateEvent(sessionId: string, message = 'Old generated slate'): void {
+  env.ports.sessions.get(sessionId).addEvent({
+    category: 'slate',
+    message,
+    metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
+    markedAtUtc: null,
+    ctx: { frameRate: 24, startOffsetFrames: 0 },
+    explicitAnchor: { timecodeTotalFrames: 48, wallTimeUtc: '2026-01-01T00:00:02.000Z' },
+  });
+}
+
 function listEvents(sessionId: string) {
   return env.ports.sessions.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
 }
@@ -196,6 +223,15 @@ function recordedArgv(sessionId: string): string[] {
 
 function recordedStdin(sessionId: string): string {
   return readFileSync(join(stableSessionCwd(sessionId), '.fixture-stdin.txt'), 'utf8');
+}
+
+function mockSuccessfulTurn() {
+  return vi.spyOn(aiTurnModule, 'driveAiTurn').mockResolvedValueOnce({
+    ok: true,
+    claudeSessionId: 'body-test',
+    createdEvents: 0,
+    pageCoverage: { totalPages: 0, servedPages: 0 },
+  });
 }
 
 async function detailOf(res: Response): Promise<string> {
@@ -402,6 +438,147 @@ describe('events/generate — guard ladder', () => {
     } finally {
       if (slot.ok) slot.release();
     }
+  });
+});
+
+describe('events/generate — optional body, regenerate, and selection', () => {
+  it('absent body remains Generate All and returns the legacy success shape', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('{regenerate:false} preserves existing auto rows and omits deleted', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        regenerate: false,
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+        true,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('regenerate deletes only prior auto rows, preserves manual rows, and returns deleted', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        regenerate: true,
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false, deleted: 1 });
+      const events = listEvents(sessionId);
+      expect(events.some((event) => event.message === 'Old generated slate')).toBe(false);
+      expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
+      expect(catalogEventCount(sessionId)).toBe(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('selection filters both the generation snapshot and prompt to matching entries', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
+      seedAnchoredTranscript(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        selection: [{ category_id: 'mic', option_label: 'Lav' }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      const opts = spy.mock.calls[0][0];
+      expect(opts.mcpContext?.generation?.categories).toEqual([
+        {
+          id: 'mic',
+          name: 'Mic',
+          type: 'DROPDOWN',
+          color: '#00ff00',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+          ],
+        },
+      ]);
+      expect(opts.message).toContain('### Option "Lav"');
+      expect(opts.message).not.toContain('microphone incidents in general');
+      expect(opts.message).not.toContain('SLATE');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('selection that matches no instruction entry returns 400, does not spawn, and releases the slot', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+      selection: [{ category_id: 'missing', option_label: null }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await detailOf(res)).toMatch(/instruction/i);
+    expect(neverSpawned(sessionId)).toBe(true);
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+  });
+
+  it('regenerate plus non-empty selection returns 400 before guards and deletes nothing', async () => {
+    const { sessionId } = newSession();
+    seedAutoSlateEvent(sessionId);
+
+    const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }), {
+      regenerate: true,
+      selection: [{ category_id: 'slate', option_label: null }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+      true,
+    );
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('malformed JSON returns 400', async () => {
+    const { sessionId } = newSession();
+    const res = await app.request(
+      `/api/sessions/${sessionId}/events/generate`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{',
+      },
+      configuredEnv(EVENTS_SUCCESS_FIXTURE),
+    );
+
+    expect(res.status).toBe(400);
+    expect(neverSpawned(sessionId)).toBe(true);
   });
 });
 
