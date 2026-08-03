@@ -349,12 +349,14 @@ test('event-options-modal', async ({ page }) => {
   await expect(page).toHaveScreenshot('event-options-modal.png', { mask: VIDEO_MASK(page) });
 });
 
-test('export-modal', async ({ page }) => {
+test('export-tab', async ({ page }) => {
   await seedStoppedSession(page);
-  await page.locator('#btn-export-log').click();
-  await expect(page.getByRole('heading', { name: 'Export log' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Export' }).click();
+  // FeedShell titles use role="status" (accessible name from feedAriaLabel).
+  await expect(page.getByRole('status', { name: 'Export feed' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Event feed CSV' })).toBeVisible();
   await prepareForShot(page);
-  await expect(page).toHaveScreenshot('export-modal.png', { mask: VIDEO_MASK(page) });
+  await expect(page).toHaveScreenshot('export-tab.png', { mask: VIDEO_MASK(page) });
 });
 
 test('rename-session-modal', async ({ page }) => {

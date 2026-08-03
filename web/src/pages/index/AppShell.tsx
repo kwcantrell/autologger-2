@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query';
-import clsx from 'clsx';
 import { useCallback, useEffect, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
@@ -245,11 +244,17 @@ export function AppShell() {
             className="main-v3 v3-layout-session-focus flex-1 min-w-0 min-h-0 relative [overflow-x:clip] overflow-y-visible"
             id="v3-main"
           >
-            <div className="shrink-0 w-full mb-6 box-border">
-              {/* Hamburger: hidden ≥768px, off-canvas toggle <768px. The desktop-first
-                  source (base display:none + max-md:inline-flex) is expressed as the two
-                  mutually-exclusive breakpoints (md:hidden + inline-flex) so no
-                  utility-cascade-order quirk can leave `hidden` winning on mobile. */}
+            <div
+              className={
+                activeSessionId
+                  ? 'shrink-0 w-full box-border mb-0'
+                  : 'shrink-0 w-full box-border mb-6'
+              }
+            >
+              {/* Hamburger: home/teams only on mobile. Active session mounts the menu
+                  beside session controls in MaximizeLogStrip. md:hidden + inline-flex
+                  (not hidden+max-md:inline-flex) avoids utility-order hiding the button. */}
+              {!activeSessionId && (
               <button
                 type="button"
                 className="md:hidden inline-flex items-center justify-center w-11 h-11 mt-[0.6rem] ml-3 box-border rounded-v5-sm border border-v5-border-strong bg-white/[0.04] text-v5-text cursor-pointer"
@@ -272,6 +277,7 @@ export function AppShell() {
                   />
                 </svg>
               </button>
+              )}
               {/* Void top-bar strip: the .v6WorkspaceTopBarVoid !important zero-height
                   war vs .v4-top-bar min-height is resolved here by writing the winning
                   values directly — both rules were AppShell's own and now live as
@@ -281,38 +287,9 @@ export function AppShell() {
                 className="v4-top-bar w-full max-w-full flex-shrink-0 box-border h-0 min-h-0 max-h-0 p-0 m-0 border-none overflow-hidden opacity-0 pointer-events-none"
                 id="v4-app-top-bar"
               />
-              <output
-                className="flex flex-row items-center justify-end gap-[0.45rem] w-full box-border pl-4 pr-8"
-                aria-live="polite"
-                aria-label="Recording status"
-              >
-                {/* Persistent recording strip (ui-refresh): AudioRecorder now toggles
-                    body.v4-is-recording while the mic is live; the reveal rules live
-                    in tailwind.css (display must come from the body-ancestor rule,
-                    not a utility). AudioRecorder keeps writing the duration text
-                    imperatively into #top-bar-recording-dur. */}
-                <span
-                  className="items-center gap-[0.4rem] rounded-full border border-[rgba(251,113,133,0.45)] bg-[rgba(127,29,29,0.35)] px-[0.6rem] py-[0.2rem] text-[0.68rem] font-semibold tracking-[0.12em] uppercase text-[#fecaca] before:h-[0.45rem] before:w-[0.45rem] before:rounded-full before:bg-[#ef4444] before:content-[''] before:animate-wf-label-pulse motion-reduce:before:animate-none"
-                  id="top-bar-recording"
-                >
-                  Recording audio
-                </span>
-                {/* aria-hidden (spec "Truthful recording indication"): the duration
-                    ticks every second via imperative textContent writes; inside this
-                    aria-live container that would announce each tick. Excluding it
-                    from the accessibility tree keeps the live region quiet — only
-                    the strip's appearance/disappearance announces. */}
-                <span
-                  className={clsx(
-                    'text-[0.78rem] font-semibold text-[#fecaca] [font-variant-numeric:tabular-nums]',
-                    'mono',
-                  )}
-                  id="top-bar-recording-dur"
-                  aria-hidden="true"
-                >
-                  00:00:00
-                </span>
-              </output>
+              {/* Recording mic level + duration live in MaximizeLogStrip status
+                  (above timecode). AudioRecorder still toggles body.v4-is-recording
+                  and writes #top-bar-mic-level-fill / #top-bar-recording-dur. */}
             </div>
 
             {showNewSession && (
@@ -324,10 +301,7 @@ export function AppShell() {
             )}
 
             {showBatchImport && (
-              <BatchImportModal
-                profile={profile}
-                onClose={() => setShowBatchImport(false)}
-              />
+              <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
             )}
 
             {ytImportError && (
@@ -382,6 +356,7 @@ export function AppShell() {
                 sessionId={activeSessionId}
                 ytImportPending={ytImportPending}
                 onNewSession={handleOpenNewSession}
+                onOpenMobileNav={() => setRailOpen(true)}
               />
             )}
           </main>

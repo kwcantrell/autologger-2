@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { FeedToolbarCaption, IconPlus, IconSparkles } from './feedToolbarCaption';
 import { FEED_GLASS_BTN } from './FeedTable';
 
 interface Props {
@@ -97,7 +98,10 @@ export function GenerateToolbar({
             onGenerate();
           }}
         >
-          {generatePending ? 'Generating…' : 'Auto Generate'}
+          <FeedToolbarCaption
+            label={generatePending ? 'Generating…' : 'Auto Generate'}
+            icon={<IconSparkles />}
+          />
         </button>
       )}
       {genUnavailable && (
@@ -117,7 +121,7 @@ export function GenerateToolbar({
           disabled={insertPending}
           onClick={onInsert}
         >
-          Insert
+          <FeedToolbarCaption label="Insert" icon={<IconPlus />} />
         </button>
       )}
     </>

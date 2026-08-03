@@ -12,6 +12,7 @@ import { useLogEvent } from '../../../api/hooks/useEvents';
 import { showToast as appShowToast } from '../../../shared/components/Toast';
 import { getClientInstanceId } from '../../../shared/utils/clientId';
 import { computeDbPeaks01 } from '../../../shared/utils/waveformDecode';
+import { runMicLevelMeter } from '../utils/micLevelMeter';
 
 const WF_DB_FLOOR = -48;
 const HEARTBEAT_INTERVAL_MS = 8_000;
@@ -75,6 +76,8 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
     const mediaStreamRef = useRef<MediaStream | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const meterStopRef = useRef<(() => void) | null>(null);
+    const meterActiveRef = useRef(false);
     const stateRef = useRef(state);
     stateRef.current = state;
 
@@ -98,6 +101,23 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         heartbeatRef.current = null;
       }
     }, []);
+
+    const stopMicMeter = useCallback(() => {
+      // Own flag — do not gate on stateRef.phase. Meter starts during `claiming`,
+      // before CLAIM_OK re-renders, so a phase check aborted the loop forever.
+      meterActiveRef.current = false;
+      meterStopRef.current?.();
+      meterStopRef.current = null;
+    }, []);
+
+    const startMicMeter = useCallback(
+      (stream: MediaStream) => {
+        stopMicMeter();
+        meterActiveRef.current = true;
+        meterStopRef.current = runMicLevelMeter(stream, () => meterActiveRef.current);
+      },
+      [stopMicMeter],
+    );
 
     const releaseLeaseQuiet = useCallback(async () => {
       try {
@@ -216,6 +236,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       chunksRef.current = [];
       const mr = new MediaRecorder(stream);
       mediaRecorderRef.current = mr;
+      startMicMeter(stream);
 
       mr.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
@@ -226,6 +247,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         const mime = mr.mimeType || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type: mime });
         chunksRef.current = [];
+        stopMicMeter();
         for (const t of mediaStreamRef.current?.getTracks() ?? []) t.stop();
         mediaStreamRef.current = null;
         mediaRecorderRef.current = null;
@@ -297,6 +319,8 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       logEvent,
       heartbeat,
       stopHeartbeat,
+      startMicMeter,
+      stopMicMeter,
       doUpload,
       showToast,
       updateRecordingDur,
@@ -337,6 +361,10 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
         document.body.classList.remove('v4-is-recording');
       };
     }, [state.phase]);
+
+    // Tear down the analyser only on unmount (not on every phase flip — starting
+    // the meter races CLAIM_OK before this effect would otherwise re-run).
+    useEffect(() => () => stopMicMeter(), [stopMicMeter]);
 
     // Release on page hide / tab close
     useEffect(() => {

@@ -103,7 +103,7 @@ vi.mock('./CategoryButtonStrip', () => ({ CategoryButtonStrip: () => null }));
 vi.mock('./EventLogSheet', () => ({
   EventLogSheet: () => <div data-testid="event-log-sheet-stub" />,
 }));
-vi.mock('./ExportModal', () => ({ ExportModal: () => null }));
+vi.mock('./ExportFeed', () => ({ ExportFeed: () => null }));
 vi.mock('./MarkerNav', () => ({ MarkerNav: () => null }));
 vi.mock('./TimecodeDisplay', () => ({ TimecodeDisplay: () => null }));
 vi.mock('./Timeline', () => ({ Timeline: () => null }));
@@ -144,7 +144,7 @@ function isHidden(el: Element | null): boolean {
 }
 
 describe('SessionWorkspace tab restructure', () => {
-  it('renders the five top-level tabs and defaults to Event Feed', () => {
+  it('renders the six top-level tabs and defaults to Event Feed', () => {
     renderStrict(<SessionWorkspace sessionId="sess-1" />);
 
     const tablist = screen.getByRole('tablist', { name: 'Feed tabs' });
@@ -155,6 +155,7 @@ describe('SessionWorkspace tab restructure', () => {
       'Topics',
       'Assistant',
       'Dashboards',
+      'Export',
     ]);
     expect(screen.getByRole('tab', { name: 'Event Feed' }).getAttribute('aria-selected')).toBe(
       'true',

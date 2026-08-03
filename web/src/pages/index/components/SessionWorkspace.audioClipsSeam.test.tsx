@@ -85,7 +85,7 @@ vi.mock('./CategoryButtonStrip', () => ({ CategoryButtonStrip: () => null }));
 vi.mock('./EventLogSheet', () => ({
   EventLogSheet: () => <div data-testid="event-log-sheet-stub" />,
 }));
-vi.mock('./ExportModal', () => ({ ExportModal: () => null }));
+vi.mock('./ExportFeed', () => ({ ExportFeed: () => null }));
 vi.mock('./MarkerNav', () => ({ MarkerNav: () => null }));
 vi.mock('./TimecodeDisplay', () => ({ TimecodeDisplay: () => null }));
 vi.mock('./Timeline', () => ({ Timeline: () => null }));

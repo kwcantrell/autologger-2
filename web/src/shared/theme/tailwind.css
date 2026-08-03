@@ -100,6 +100,18 @@
     }
   }
 
+  /* YouTube import status — orange ↔ darker orange (MaximizeLogStrip). */
+  --animate-yt-import-pulse: yt-import-pulse 1.6s ease-in-out infinite;
+  @keyframes yt-import-pulse {
+    0%,
+    100% {
+      color: #fb923c;
+    }
+    50% {
+      color: #c2410c;
+    }
+  }
+
   /* Timeline nav-marker message marquee. Guarded at the consumer (Timeline's
    * NAV_MSG_TRACK carries motion-reduce:animate-none! — ui-refresh; the loop
    * was previously unguarded). */
@@ -285,7 +297,7 @@
   --v4-ctrl-btn-w: 4.05959375rem;
   --v4-ctrl-btn-h: 3.81625rem;
   --v4-ctrl-btn-my: 0.80625rem;
-  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 2);
+  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 1.4);
   --v4-session-nav-btn-h: calc(var(--v4-ctrl-btn-h) / 2);
   --v4-clock-box-h: 3.06375rem;
   --v4-clock-box-mb: 0.5375rem;
@@ -844,68 +856,34 @@
   }
 }
 
-/* --- Top-bar recording strip reveal (ui-refresh) ---
- * Hidden unless body.v4-is-recording (toggled by AudioRecorder while the mic is
- * live). Display comes from these ancestor rules, not per-element utilities, so
- * the swap can't be beaten by the utilities layer. */
+/* --- Strip recording meters (moved from AppShell top-bar) ---
+ * Duration: only while mic-recording (body.v4-is-recording from AudioRecorder).
+ * Mic level: while rolling or recording (data-show from MaximizeLogStrip). */
 @layer components {
-  #top-bar-recording,
-  #top-bar-recording-dur {
+  #top-bar-recording-dur,
+  #top-bar-mic-level {
     display: none;
-  }
-  body.v4-is-recording #top-bar-recording {
-    display: inline-flex;
   }
   body.v4-is-recording #top-bar-recording-dur {
     display: inline;
   }
+  #top-bar-mic-level[data-show='1'] {
+    display: inline-flex;
+  }
 }
 
-/* --- Capture / playback panel show-hide (body[data-v4-transport] + [data-v5-live-log]) ---
- * The `.v4-log-top__capture` / `.v4-log-top__playback` base `display:none` and every
- * ancestor rule that toggles them live together here: `display` cannot be an inline
- * utility on these elements because the utilities layer would beat these ancestor
- * selectors, breaking the capture-vs-playback swap. Kept AS-WRITTEN per the plan.
- * PARITY NOTE (post-migration open question): SessionWorkspace.tsx DOES set
- * `document.body.dataset.v4Transport = effectiveTransport` on every transport change,
- * so unlike the static `"rolling"` value the audit flagged in the Python app's
- * index.html, here the attribute IS dynamic. */
+/* --- Retired twin-panel capture / playback deck swap ---
+ * Sole fused strip (`MaximizeLogStrip`) stays mounted for every transport state.
+ * Rolling/recording swaps the scrubber lane for category buttons in React
+ * (`stripLaneSlot`); do NOT hide `.v5-session-timeline-stack` on live-log.
+ * Stale `__capture` / `__playback` element classes stay display:none if any
+ * leftover DOM still emits them. */
 @layer components {
   .v4-log-top__capture {
     display: none;
   }
   .v4-log-top__playback {
     display: none;
-  }
-  body[data-v4-transport='rolling'] .v4-log-top__capture,
-  body[data-v4-transport='recording'] .v4-log-top__capture {
-    display: flex;
-  }
-  /* ui-refresh (core-loop discoverability): the capture strip is ALSO visible in
-   * the stop/play states — buttons render disabled with an inline "press Roll"
-   * hint (SessionWorkspace), so a stopped session teaches the logging loop
-   * instead of hiding it. While rolling/recording the [data-v5-live-log='1']
-   * rules below still swap the strip into the live-log dock as before. */
-  body[data-v4-transport='play'] .v4-log-top__capture,
-  body[data-v4-transport='stop'] .v4-log-top__capture {
-    display: flex;
-  }
-  body[data-v4-transport='play'] .v4-log-top__playback,
-  body[data-v4-transport='stop'] .v4-log-top__playback {
-    display: flex;
-  }
-
-  /* Live-log docked (rolling/recording): hide the empty capture card, hide the
-   * timeline stack, force-show the playback timeline panel. Dynamic attribute
-   * (SessionWorkspace.tsx:261 sets data-v5-live-log). */
-  #v4-log-session[data-v5-live-log='1'] .v5-session-timeline-stack {
-    display: none !important;
-  }
-  #v4-log-session[data-v5-live-log='1'] .v4-log-top__capture {
-    display: none !important;
-  }
-  #v4-log-session[data-v5-live-log='1'] .v4-log-top__playback.v5-session-timeline-panel {
-    display: flex !important;
   }
 }
 
