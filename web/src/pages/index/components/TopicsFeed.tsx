@@ -105,7 +105,7 @@ export function TopicsFeed({ sessionId }: Props) {
   // generation has no external integration wired up on this deployment); see
   // `useGatedGenerate` for the full rationale.
   const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
-  const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
+  const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
 
   function handleInsert() {
     insert.mutate({});

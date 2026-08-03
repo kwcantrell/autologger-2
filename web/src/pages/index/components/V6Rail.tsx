@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useSessions } from '../../../api/hooks/useSessions';
+import { APP_VERSION } from '../../../shared/appVersion';
 import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
 
@@ -94,11 +95,20 @@ const RAIL_SEARCH_INPUT =
 const RAIL_SEARCH_CLEAR =
   'inline-flex h-5 w-5 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-v5-muted hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] [.v6-app--rail-collapsed_&]:hidden max-md:[.v6-app--rail-collapsed_&]:[display:revert]';
 
+// Pushes Teams/Settings + version to the bottom of the rail column.
+const RAIL_FOOTER_STACK = 'mt-auto flex w-full flex-shrink-0 flex-col items-stretch gap-2';
+
 // Expanded: Teams + Settings sit side-by-side. Collapsed: stack so the two
 // icon tiles fit the narrow rail (side-by-side overflows --v6-rail-w-collapsed).
 // Mobile drawer reverts to row like the other collapsed→drawer overrides.
 const RAIL_FOOTER =
-  'mt-auto flex w-full flex-shrink-0 justify-center gap-2 [.v6-app--rail-collapsed_&]:flex-col [.v6-app--rail-collapsed_&]:items-stretch max-md:[.v6-app--rail-collapsed_&]:flex-row max-md:[.v6-app--rail-collapsed_&]:items-center';
+  'flex w-full flex-shrink-0 justify-center gap-2 [.v6-app--rail-collapsed_&]:flex-col [.v6-app--rail-collapsed_&]:items-stretch [.v6-app--rail-collapsed_&]:gap-1 max-md:[.v6-app--rail-collapsed_&]:flex-row max-md:[.v6-app--rail-collapsed_&]:items-center max-md:[.v6-app--rail-collapsed_&]:gap-2';
+// Compact grey version chip — stays readable in the 4rem collapsed rail
+// (inner ~3.5rem); ellipsis is a safety net if the version string ever grows.
+// Pull up by half the rail's bottom pad so the version sits closer to the edge
+// (expanded pad 1.1rem → 0.55rem; collapsed-y 0.45rem → 0.225rem).
+const RAIL_VERSION =
+  'm-0 -mb-[calc(var(--v6-rail-pad)/2)] w-full max-w-full flex-shrink-0 overflow-hidden text-center text-[0.58rem] font-medium leading-none tracking-[0.06em] text-v5-muted text-ellipsis whitespace-nowrap [font-variant-numeric:tabular-nums] select-none [.v6-app--rail-collapsed_&]:-mb-[calc(var(--v6-rail-pad-collapsed-y)/2)] max-md:[.v6-app--rail-collapsed_&]:-mb-[calc(var(--v6-rail-pad)/2)]';
 
 const RAIL_NAV = clsx(
   COLLAPSE_TILE,
@@ -313,56 +323,61 @@ export function V6Rail({
         </div>
       )}
 
-      <div className={RAIL_FOOTER}>
-        {/* Shell affordance to reach `/teams` (teams-self-serve, task 6.2;
+      <div className={RAIL_FOOTER_STACK}>
+        <div className={RAIL_FOOTER}>
+          {/* Shell affordance to reach `/teams` (teams-self-serve, task 6.2;
             team-management spec: "Teams management UI" — "reachable from the
             app shell"). Uses the navigation wrapper ONLY, same as every other
             in-app navigation (design D1/D4) — no direct history/wouter call. */}
-        <button
-          type="button"
-          className={RAIL_NAV}
-          id="v6-btn-teams"
-          onClick={() => {
-            if (!onTeamsRoute) navigate('/teams');
-          }}
-        >
-          <span className={RAIL_NAV_ICON} aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="8.5" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.6" />
-              <circle cx="16" cy="9.5" r="2.25" stroke="currentColor" strokeWidth="1.6" />
-              <path
-                d="M3.75 18.25C3.75 15.35 5.9 13 8.75 13C11.24 13 13.3 14.79 13.66 17.15"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-              <path
-                d="M14.25 13.4C16.85 13.7 18.85 15.75 19.05 18.3"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-            </svg>
-          </span>
-          <span className={RAIL_NAV_LABEL}>Teams</span>
-        </button>
-        <button type="button" className={RAIL_NAV} id="v6-btn-settings" onClick={onOpenSettings}>
-          <span className={RAIL_NAV_ICON} aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M12 15.25C13.7949 15.25 15.25 13.7949 15.25 12C15.25 10.2051 13.7949 8.75 12 8.75C10.2051 8.75 8.75 10.2051 8.75 12C8.75 13.7949 10.2051 15.25 12 15.25Z"
-                stroke="currentColor"
-                strokeWidth="1.6"
-              />
-              <path
-                d="M19.4 15A1.66 1.66 0 0 0 19.73 16.83L19.79 16.89A2 2 0 1 1 16.96 19.72L16.9 19.66A1.66 1.66 0 0 0 15.07 19.33A1.66 1.66 0 0 0 14 20.85V21A2 2 0 1 1 10 21V20.91A1.66 1.66 0 0 0 8.91 19.39A1.66 1.66 0 0 0 7.09 19.72L7.03 19.78A2 2 0 1 1 4.2 16.95L4.26 16.89A1.66 1.66 0 0 0 4.59 15.06A1.66 1.66 0 0 0 3.07 14H3A2 2 0 1 1 3 10H3.09A1.66 1.66 0 0 0 4.61 8.91A1.66 1.66 0 0 0 4.28 7.09L4.22 7.03A2 2 0 1 1 7.05 4.2L7.11 4.26A1.66 1.66 0 0 0 8.94 4.59H9A1.66 1.66 0 0 0 10 3.07V3A2 2 0 1 1 14 3V3.09A1.66 1.66 0 0 0 15.09 4.61A1.66 1.66 0 0 0 16.91 4.28L16.97 4.22A2 2 0 1 1 19.8 7.05L19.74 7.11A1.66 1.66 0 0 0 19.41 8.94V9A1.66 1.66 0 0 0 20.93 10H21A2 2 0 1 1 21 14H20.91A1.66 1.66 0 0 0 19.39 15.09L19.4 15Z"
-                stroke="currentColor"
-                strokeWidth="1.3"
-              />
-            </svg>
-          </span>
-          <span className={RAIL_NAV_LABEL}>Settings</span>
-        </button>
+          <button
+            type="button"
+            className={RAIL_NAV}
+            id="v6-btn-teams"
+            onClick={() => {
+              if (!onTeamsRoute) navigate('/teams');
+            }}
+          >
+            <span className={RAIL_NAV_ICON} aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="8.5" cy="8" r="2.75" stroke="currentColor" strokeWidth="1.6" />
+                <circle cx="16" cy="9.5" r="2.25" stroke="currentColor" strokeWidth="1.6" />
+                <path
+                  d="M3.75 18.25C3.75 15.35 5.9 13 8.75 13C11.24 13 13.3 14.79 13.66 17.15"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M14.25 13.4C16.85 13.7 18.85 15.75 19.05 18.3"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+            <span className={RAIL_NAV_LABEL}>Teams</span>
+          </button>
+          <button type="button" className={RAIL_NAV} id="v6-btn-settings" onClick={onOpenSettings}>
+            <span className={RAIL_NAV_ICON} aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 15.25C13.7949 15.25 15.25 13.7949 15.25 12C15.25 10.2051 13.7949 8.75 12 8.75C10.2051 8.75 8.75 10.2051 8.75 12C8.75 13.7949 10.2051 15.25 12 15.25Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                />
+                <path
+                  d="M19.4 15A1.66 1.66 0 0 0 19.73 16.83L19.79 16.89A2 2 0 1 1 16.96 19.72L16.9 19.66A1.66 1.66 0 0 0 15.07 19.33A1.66 1.66 0 0 0 14 20.85V21A2 2 0 1 1 10 21V20.91A1.66 1.66 0 0 0 8.91 19.39A1.66 1.66 0 0 0 7.09 19.72L7.03 19.78A2 2 0 1 1 4.2 16.95L4.26 16.89A1.66 1.66 0 0 0 4.59 15.06A1.66 1.66 0 0 0 3.07 14H3A2 2 0 1 1 3 10H3.09A1.66 1.66 0 0 0 4.61 8.91A1.66 1.66 0 0 0 4.28 7.09L4.22 7.03A2 2 0 1 1 7.05 4.2L7.11 4.26A1.66 1.66 0 0 0 8.94 4.59H9A1.66 1.66 0 0 0 10 3.07V3A2 2 0 1 1 14 3V3.09A1.66 1.66 0 0 0 15.09 4.61A1.66 1.66 0 0 0 16.91 4.28L16.97 4.22A2 2 0 1 1 19.8 7.05L19.74 7.11A1.66 1.66 0 0 0 19.41 8.94V9A1.66 1.66 0 0 0 20.93 10H21A2 2 0 1 1 21 14H20.91A1.66 1.66 0 0 0 19.39 15.09L19.4 15Z"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                />
+              </svg>
+            </span>
+            <span className={RAIL_NAV_LABEL}>Settings</span>
+          </button>
+        </div>
+        <p className={RAIL_VERSION} title={`Autologger ${APP_VERSION}`}>
+          v{APP_VERSION}
+        </p>
       </div>
     </aside>
   );

@@ -9,40 +9,31 @@ client-mic **Recording audio** strip (separate from Session Controls lease statu
 
 ## Decisions
 
-### D1 — Preference vs displayed layout
-**Choice:** Persist preference `default` | `maximize-log` in `localStorage`. Displayed
-layout is maximize-log only when preference is maximize-log **and** the open session is
-not rolling and not recording (`audio_recording_lease_alive`). Force-default does **not**
-write the preference.
-**Alternatives:** Session-scoped preference — rejected (owner wants cross-session memory).
-Overwriting preference on roll/rec — rejected (owner: remember maximize across forced
-default).
+### D1 — Sole fused-strip layout
+**Choice (owner amendment 2026-08-02):** The fused strip is the **only** session deck
+layout. Twin glass panels, layout preference, and Maximize log / Default view toggle are
+retired. Rolling/recording no longer switch layouts.
+**Alternatives:** Preference + force-default — superseded by owner “this should be the
+only view.”
 
-### D2 — Force triggers
-**Choice:** Rolling **or** recording forces default (including remote lease → Controls
-shows Recording; local mic strip unchanged). Play/stop alone do not force.
-**Alternatives:** Only recording — rejected (live category dock needs default while
-rolling).
+### D2 — Live category buttons in the scrub lane
+**Choice:** While rolling or recording, replace the timeline scrubber with
+`CategoryButtonStrip` in a horizontal scroll row at the **same height** as the scrub lane
+(`≈80% of `--v5-timeline-lane-h``). Meta row + transport aside stay.
+**Alternatives:** Force twin-panel live dock — superseded.
 
-### D3 — Toggle placement and copy
-**Choice:** Labeled control at the trailing end of the Feed tabs tablist row (sibling of
-the tablist, not a `role="tab"`). Labels: **Maximize log** / **Default view** from
-preference (not from forced display). While forced default, Maximize log is
-`aria-disabled` (or equivalent non-actionable) with a keyboard-reachable reason naming
-rolling/recording.
-**Alternatives:** Icon-only — rejected. Controls-panel header — rejected (vanishes in
-fused strip). New top bar — rejected (YAGNI; recording strip exists).
+### D3 — Status + recording meters in the strip
+**Choice:** Session status (Stopped / Rolling / Recording) sits above the compact
+timecode. While the local mic is live (`body.v4-is-recording`), reveal mic level +
+recording duration beside status (same `#top-bar-mic-*` / `#top-bar-recording-dur` IDs
+AudioRecorder writes). AppShell “Recording audio” pill retired.
+**Alternatives:** Global AppShell strip — superseded by owner amendment.
 
 ### D4 — Fused strip composition and height
-**Choice:** Single fused strip composing: timeline scrubber/waveform/markers (existing
-Timeline innards without panel head/nav chrome) + TimecodeDisplay + TransportControls.
-Strip height ≈ **80% of the `#timeline-clips` lane** (default Timeline clips/waveform row;
-token orientation `--v4-tl-row-h` / that row’s computed height). The strip SHALL include the
-same **keyboard-shortcuts (`?`) button** as the default Session Controls panel head (in
-addition to the existing global `?` key) — gate amendment 2026-08-02.
-**Alternatives:** Two panels at 30% height — rejected (owner chose fused sketch B).
-~30% of full deck height — superseded by timeline-clips-relative sizing (gate).
-Omit strip `?` button (global key only) — superseded by owner “add that button.”
+**Choice:** No glass container. Timeline column: session meta (show · name · date left;
+marker nav right-aligned to the **timeline column**, not the full strip) + scrubber or
+live buttons. Trailing aside: status (+ meters when recording) → timecode → transport +
+`?`. Scrub/button lane ≈ **80% of `#timeline-clips` / `--v5-timeline-lane-h`.
 
 ### D5 — Storage key
 **Choice:** One browser-local key (e.g. `autologger.sessionLayoutPreference`) holding

@@ -195,6 +195,8 @@ export function MaximizeLogStrip({
   // `!` beats the fixed flex-basis/width utilities on the shared tile classes.
   const stripBtnDesktopGrow =
     'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
+  // Mute secondary chrome only while stopped/playing — full tiles while rolling/recording.
+  const secondaryQuiet = !isRolling && !isRecording;
 
   const transportButtons = (
     <div
@@ -216,13 +218,18 @@ export function MaximizeLogStrip({
         <button
           type="button"
           className={clsx(
-            'relative isolate box-border grid h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) w-(--v4-ctrl-btn-w) flex-[0_0_var(--v4-ctrl-btn-w)] place-items-center overflow-hidden rounded-v5-md border p-0 [--session-ctl-accent:#e2e8f0] [transition:border-color_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]',
+            'relative isolate box-border grid h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) w-(--v4-ctrl-btn-w) flex-[0_0_var(--v4-ctrl-btn-w)] place-items-center overflow-hidden p-0 [--session-ctl-accent:#e2e8f0] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]',
             // Phone-only hide (`!` beats other display utilities on the tile).
             'max-md:hidden!',
             stripBtnDesktopGrow,
-            controlsLocked
-              ? 'cursor-not-allowed border-dashed border-[rgba(148,163,184,0.14)] bg-[rgba(7,11,20,0.55)] opacity-[0.48] shadow-none'
-              : 'cursor-pointer border-[rgba(148,163,184,0.22)] [background:linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0)_42%),linear-gradient(180deg,rgba(19,27,48,0.88),rgba(11,16,30,0.78))] shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_4px_16px_rgba(2,8,23,0.42)] hover-always:[border-color:color-mix(in_srgb,var(--session-ctl-accent)_28%,rgba(148,163,184,0.22))]',
+            secondaryQuiet
+              ? controlsLocked
+                ? 'cursor-not-allowed rounded-v5-md border border-[rgba(148,163,184,0.12)] bg-white/[0.02] opacity-[0.55] text-[rgba(226,232,240,0.55)] shadow-none'
+                : // Soft mute: light border + faint fill (half as ghostly as full transparent).
+                  'cursor-pointer rounded-v5-md border border-[rgba(148,163,184,0.14)] bg-white/[0.03] text-[rgba(226,232,240,0.62)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] [transition:color_0.15s_ease,background_0.15s_ease,border-color_0.15s_ease] hover-always:border-[rgba(148,163,184,0.22)] hover-always:bg-white/[0.06] hover-always:text-[rgba(226,232,240,0.88)]'
+              : controlsLocked
+                ? 'cursor-not-allowed rounded-v5-md border border-dashed border-[rgba(148,163,184,0.14)] bg-[rgba(7,11,20,0.55)] opacity-[0.48] shadow-none'
+                : 'cursor-pointer rounded-v5-md border border-[rgba(148,163,184,0.22)] [background:linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0)_42%),linear-gradient(180deg,rgba(19,27,48,0.88),rgba(11,16,30,0.78))] shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_4px_16px_rgba(2,8,23,0.42)] [transition:border-color_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] hover-always:[border-color:color-mix(in_srgb,var(--session-ctl-accent)_28%,rgba(148,163,184,0.22))]',
           )}
           aria-label="Keyboard shortcuts"
           disabled={controlsLocked}
@@ -230,7 +237,12 @@ export function MaximizeLogStrip({
         >
           <span
             aria-hidden="true"
-            className="relative z-[1] text-[1.05rem] font-semibold leading-none text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]"
+            className={clsx(
+              'relative z-[1] text-[1.05rem] font-semibold leading-none',
+              secondaryQuiet
+                ? 'text-current'
+                : 'text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]',
+            )}
           >
             ?
           </span>

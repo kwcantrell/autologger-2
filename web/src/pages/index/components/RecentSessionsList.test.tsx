@@ -1,12 +1,13 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useArchiveSession,
   useDeleteSession,
   useRestoreSession,
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
-import type { Session } from '../../../api/types';
+import type { Session, SessionStatus } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { showToast } from '../utils/toast';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -31,6 +32,14 @@ vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
     useRestoreSession: vi.fn(),
   };
 });
+
+vi.mock('../../../api/hooks/useSessionStatus', () => ({
+  useSessionStatus: vi.fn(() => ({ data: undefined })),
+  sessionStatusKeys: {
+    all: () => ['session-status'],
+    bySession: (id: string | null) => ['session-status', id],
+  },
+}));
 
 vi.mock('../utils/toast', () => ({
   showToast: vi.fn(),
@@ -95,6 +104,9 @@ function sessionFixture(overrides: Partial<Session> = {}): Session {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(useSessionStatus).mockReturnValue({
+    data: undefined,
+  } as ReturnType<typeof useSessionStatus>);
   // Success-path mutation stubs: invoke onSuccess synchronously so the tests
   // can assert the per-variant toast wiring survives the extraction.
   vi.mocked(useUpdateSession).mockReturnValue({
@@ -230,6 +242,58 @@ describe('SessionCard (active-list variant)', () => {
     const el = card(container, 'sess-1');
     expect(within(el).getByText(/· 3 events$/)).toBeTruthy();
     expect(within(el).getByText('01:02:03')).toBeTruthy();
+  });
+
+  it('marks a rolling session live: red border class and current timecode', () => {
+    const { container } = renderRecent([
+      sessionFixture({
+        is_rolling: true,
+        rolling_timecode: '01:02:03:00',
+        total_runtime_hms: '00:10:00',
+      }),
+    ]);
+    const el = card(container, 'sess-1');
+    expect(el.getAttribute('data-live')).toBe('true');
+    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
+    expect(within(el).getByText('01:02:03').className.split(/\s+/)).toContain('text-[#ef4444]!');
+    expect(within(el).queryByText('00:10:00')).toBeNull();
+    expect(within(el).getByText('LIVE SESSION')).toBeTruthy();
+  });
+
+  it('marks an active recording session live even when the list row is not rolling yet', () => {
+    vi.mocked(useSessionStatus).mockReturnValue({
+      data: {
+        is_rolling: false,
+        timecode: '00:00:45:12',
+        session_timecode: '00:00:45:12',
+        master_timecode: '00:00:45:12',
+        frame_rate: 30,
+        current_take: 1,
+        audio_recording_lease_alive: true,
+        audio_recording_lease_holder_id: 'client-1',
+        event_count: 3,
+        logged_event_count: 3,
+        title: 'Session One',
+        deck_title: '',
+        show_name: null,
+        show_code: null,
+        episode: '',
+        session_created_at_utc: null,
+        now_utc: '2026-07-14T00:00:45Z',
+        notes: '',
+        show_id: null,
+        events_stream_revision: 1,
+      } satisfies SessionStatus,
+    } as ReturnType<typeof useSessionStatus>);
+
+    const { container } = renderRecent([sessionFixture({ is_rolling: false })], {
+      activeSessionId: 'sess-1',
+    });
+    const el = card(container, 'sess-1');
+    expect(el.getAttribute('data-live')).toBe('true');
+    expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
+    const tc = within(el).getByText('00:00:45:12');
+    expect(tc.className.split(/\s+/)).toContain('text-[#ef4444]!');
   });
 });
 

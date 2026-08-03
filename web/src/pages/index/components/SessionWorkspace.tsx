@@ -16,6 +16,10 @@ import { useAudioClips } from '../hooks/useAudioClips';
 import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
 import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
 import { useWaveforms } from '../hooks/useWaveforms';
+import {
+  REVEAL_EVENT,
+  scrollAndFlashEventRow,
+} from '../utils/revealEventInFeed';
 import { AiPanel } from './AiPanel';
 import { AiV2Panel } from './AiV2Panel';
 import type { AudioPlayerHandle } from './AudioPlayer';
@@ -127,6 +131,9 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   // session DATA, so they sit beside the Event Feed now. The two agent
   // surfaces carry human names (Assistant, Dashboards) instead of "AI"/"AI v2".
   const [feedTab, setFeedTab] = useState<FeedTabId>('events');
+  const feedTabRef = useRef(feedTab);
+  feedTabRef.current = feedTab;
+  const pendingRevealEventIdRef = useRef<string | null>(null);
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
     setOnOffState((prev) => {
@@ -135,6 +142,43 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
       return next;
     });
   }, []);
+
+  // Timeline marker click → Event Feed tab + scroll/flash the matching row.
+  useEffect(() => {
+    const runReveal = (eventId: string) => {
+      if (scrollAndFlashEventRow(eventId)) return;
+      // Tabpanel may still be hidden for one frame after setFeedTab — retry once.
+      window.setTimeout(() => {
+        scrollAndFlashEventRow(eventId);
+      }, 50);
+    };
+    const onReveal = (ev: Event) => {
+      const eventId = String(
+        (ev as CustomEvent<{ eventId?: string }>).detail?.eventId ?? '',
+      ).trim();
+      if (!eventId) return;
+      if (feedTabRef.current === 'events') {
+        runReveal(eventId);
+        return;
+      }
+      pendingRevealEventIdRef.current = eventId;
+      setFeedTab('events');
+    };
+    document.body.addEventListener(REVEAL_EVENT, onReveal);
+    return () => document.body.removeEventListener(REVEAL_EVENT, onReveal);
+  }, []);
+
+  useEffect(() => {
+    if (feedTab !== 'events') return;
+    const eventId = pendingRevealEventIdRef.current;
+    if (!eventId) return;
+    pendingRevealEventIdRef.current = null;
+    // Wait for the tabpanel to drop `hidden` before scrolling.
+    window.requestAnimationFrame(() => {
+      if (scrollAndFlashEventRow(eventId)) return;
+      window.setTimeout(() => scrollAndFlashEventRow(eventId), 50);
+    });
+  }, [feedTab]);
 
   const audioRecorderRef = useRef<AudioRecorderHandle>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
@@ -402,9 +446,11 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                 // (reaches into FeedShell's `.v4-log-sheet.v5-event-feed`) is an
                 // @layer components rule scoped by this ancestor class.
                 <div className="v5FeedTabsPanel flex flex-col flex-[1_1_0] min-h-0">
-                  <div className="mx-4 flex shrink-0 items-end gap-[0.18rem] px-[0.65rem] pt-[0.45rem] relative z-0 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
+                  {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
+                      aligns with the feed container. */}
+                  <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
                     <div
-                      className="flex min-w-0 flex-1 flex-nowrap items-end gap-[0.18rem] -mb-px"
+                      className="flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]"
                       role="tablist"
                       aria-label="Feed tabs"
                     >

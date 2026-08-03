@@ -10,6 +10,16 @@ import {
 import { useAiV2WidgetData } from './aiV2/useAiV2WidgetData';
 import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import type { DashboardConfig } from './aiV2/widgetTypes';
+import { FEED_SHEET_CLASS } from './FeedShell';
+import {
+  FeedToolbarCaption,
+  IconCheck,
+  IconPencil,
+  IconSparkles,
+  IconTrash,
+  IconKeep,
+  IconPlus,
+} from './feedToolbarCaption';
 import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 
 interface Props {
@@ -178,9 +188,10 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   const widgetData = useAiV2WidgetData(sessionId, displayConfig?.widgets ?? []);
 
   return (
-    <div className="flex flex-1 min-h-0 gap-3" data-testid="aiv2-panel">
+    <div className={FEED_SHEET_CLASS} data-testid="aiv2-panel">
+      <div className="flex flex-1 min-h-0 gap-3 px-4 pt-3 pb-4 max-md:flex-col">
       <section
-        className="flex flex-1 min-w-0 flex-col gap-3 rounded-v5-lg border border-v5-border glass-face p-4"
+        className="flex flex-1 min-w-0 flex-col gap-2 min-h-0"
         aria-label="Dashboard canvas"
         data-testid="aiv2-canvas-seam"
       >
@@ -209,7 +220,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                   data-testid="aiv2-dashboard-keep"
                   onClick={keepProposedDashboard}
                 >
-                  Keep
+                  <FeedToolbarCaption label="Keep" icon={<IconKeep />} />
                 </button>
                 <button
                   type="button"
@@ -217,7 +228,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                   data-testid="aiv2-dashboard-discard"
                   onClick={discardProposedDashboard}
                 >
-                  Discard
+                  <FeedToolbarCaption label="Discard" icon={<IconTrash />} />
                 </button>
               </div>
             ) : (
@@ -231,7 +242,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                     data-testid="aiv2-dashboard-done"
                     onClick={() => setEditingDashboard(false)}
                   >
-                    Done
+                    <FeedToolbarCaption label="Done" icon={<IconCheck />} />
                   </button>
                 ) : (
                   <button
@@ -240,7 +251,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                     data-testid="aiv2-dashboard-edit"
                     onClick={() => setEditingDashboard(true)}
                   >
-                    Edit
+                    <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
                   </button>
                 )}
               </div>
@@ -283,7 +294,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                     className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
                     onClick={() => setPendingStart(STARTER_MESSAGE)}
                   >
-                    Design with AI
+                    <FeedToolbarCaption alwaysLabel label="Design with AI" icon={<IconSparkles />} />
                   </button>
                   <button
                     type="button"
@@ -291,7 +302,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
                     data-testid="aiv2-start-blank"
                     onClick={startBlank}
                   >
-                    Start blank
+                    <FeedToolbarCaption alwaysLabel label="Start blank" icon={<IconPlus />} />
                   </button>
                 </div>
               </>
@@ -301,7 +312,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
       </section>
 
       <aside
-        className="flex w-[22.5rem] max-w-full flex-col rounded-v5-lg border border-v5-border glass-face"
+        className="flex w-[22.5rem] max-w-full min-h-0 flex-col border-l border-v5-border max-md:w-full max-md:border-l-0 max-md:border-t"
         aria-label="Design conversation"
       >
         <AiV2Design
@@ -324,6 +335,7 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
           }}
         />
       </aside>
+      </div>
     </div>
   );
 }

@@ -185,18 +185,79 @@ describe('EventLogSheet filter checkmarks', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
     const general = await screen.findByRole('menuitemcheckbox', { name: 'General' });
-    const internal = screen.getByRole('menuitemcheckbox', { name: 'Show internal events' });
+    const internal = screen.getByRole('menuitemcheckbox', { name: 'Internal' });
 
     expect(general.getAttribute('aria-checked')).toBe('true');
     expect(internal.getAttribute('aria-checked')).toBe('true');
-    expect(general.textContent).toContain('✓');
-    expect(internal.textContent).toContain('✓');
+    expect(general.querySelector('[data-testid="filter-check"]')).toBeTruthy();
+    expect(internal.querySelector('[data-testid="filter-check"]')).toBeTruthy();
     expect(general.className).not.toContain(' bg-[rgba(56,189,248,0.14)]');
     expect(general.className).toContain('aria-checked:!bg-transparent');
+    // Category label uses the show-category color (fixture General = #4488ff).
+    expect((general.querySelector('span.flex') as HTMLElement | null)?.style.color).toBe(
+      'rgb(68, 136, 255)',
+    );
 
     fireEvent.click(general);
     expect(general.getAttribute('aria-checked')).toBe('false');
-    expect(general.textContent).not.toContain('✓');
+    expect(general.querySelector('[data-testid="filter-check"]')).toBeNull();
+  });
+});
+
+describe('EventLogSheet category filter', () => {
+  it('lists every show category and hides matching rows when deselected', async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return {
+          categories: [
+            categoryFixture(),
+            {
+              id: 'slate',
+              label: 'Slate',
+              color: '#112233',
+              type: 'BUTTON',
+              dropdown_options: [],
+              on_label: '',
+              off_label: '',
+            },
+          ],
+          show_name: '',
+          show_code: '',
+        };
+      }
+      if (path.includes('/events')) {
+        return {
+          events: [
+            logEventFixture(),
+            {
+              ...logEventFixture(),
+              event_id: 'ev-2',
+              category: 'slate',
+              category_label: 'Slate',
+              message: 'Mark',
+            },
+          ],
+          total: 2,
+          logged_event_count: 2,
+          offset: 0,
+          limit: 200,
+        };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+
+    renderSheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'General' })).toBeTruthy();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Slate' })).toBeTruthy();
+    expect(screen.getByText('A logged note')).toBeTruthy();
+    expect(screen.getByText('Mark')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'General' }));
+    expect(screen.queryByText('A logged note')).toBeNull();
+    expect(screen.getByText('Mark')).toBeTruthy();
   });
 });
 

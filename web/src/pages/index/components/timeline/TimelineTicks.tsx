@@ -32,18 +32,38 @@ function useTimelineZoom(): number {
   return useSyncExternalStore(subscribeZoom, getZoom, () => 1);
 }
 
+/** Matches repo md breakpoint (≤767px). */
+const MOBILE_MQ = '(max-width: 767.9px)';
+
+function subscribeMobile(cb: () => void): () => void {
+  const m = window.matchMedia(MOBILE_MQ);
+  m.addEventListener('change', cb);
+  return () => m.removeEventListener('change', cb);
+}
+
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    subscribeMobile,
+    () => window.matchMedia(MOBILE_MQ).matches,
+    () => false,
+  );
+}
+
 interface Props {
   totalSec: number;
 }
 
 export function TimelineTicks({ totalSec }: Props) {
   const zoom = useTimelineZoom();
+  const isMobile = useIsMobile();
   const labels = useMemo(() => {
-    const tickCount = Math.min(29, Math.max(7, Math.round(5 + zoom * 3)));
+    const base = Math.min(29, Math.max(7, Math.round(5 + zoom * 3)));
+    // Phones: half the density so labels don't collide in the narrow scrubber.
+    const tickCount = isMobile ? Math.max(4, Math.round(base / 2)) : base;
     const span = totalSec > 0 ? totalSec : 0;
     const step = span / Math.max(1, tickCount - 1);
     return Array.from({ length: tickCount }, (_, i) => fmtHmsFromSec(Math.floor(i * step)));
-  }, [zoom, totalSec]);
+  }, [zoom, totalSec, isMobile]);
 
   return (
     <div className={TICKS} id="timeline-ticks">

@@ -11,6 +11,7 @@ import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
+import { feedTabButtonClassName } from './feedTabStyles';
 import { FpsSelect } from './FpsSelect';
 import { Select } from './Select';
 
@@ -32,14 +33,13 @@ const HS_INPUT_OVERRIDE =
 const TAB_VARS = [
   '[--v6-tab-panel-bg:linear-gradient(165deg,rgba(18,24,40,0.995)_0%,rgba(10,13,24,0.995)_100%)]',
   '[--v6-tab-panel-border:rgba(255,255,255,0.14)]',
-  '[--v6-tab-inactive-bg:linear-gradient(180deg,rgba(26,32,48,0.98)_0%,rgba(12,15,26,0.99)_100%)]',
-  '[--v6-tab-overlap:0.55rem]',
 ].join(' ');
 
-// `.section` tab-panel body (shares the panel bg/border with the active tab, radius open at
-// top-left where the tab attaches).
+// `.section` tab-panel body — z above the tablist (same stacking as feed sheets). No top
+// border: the grey seam under feed tabs is hidden by sheet overlap; settings uses the same
+// idea plus an explicit border-t-0 so a residual hairline can't show between tabs.
 const SECTION_CLASS =
-  'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-(--v6-tab-panel-border) rounded-[0_0.65rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
+  'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-t-0 border-x-(--v6-tab-panel-border) border-b-(--v6-tab-panel-border) rounded-[0_0.85rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
 
 // `.profileShowFieldsRow .profileShowField` base + the code/next-ep/fps width variants.
 const FIELD_BASE = 'flex-[1_1_0] min-w-[min(100%,8.5rem)] max-w-full';
@@ -514,11 +514,16 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       {/* Tabs + content */}
       <section className={clsx('flex-[1_1_auto] min-h-0 flex flex-col overflow-hidden', TAB_VARS)}>
         <div
-          className="flex flex-row flex-nowrap items-end gap-0 mx-0 mt-0 mb-[-1px] px-[0.15rem] pt-[0.35rem] pb-0 relative z-[2] shrink-0 overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]"
+          // Same stacking/overlap as SessionWorkspace feed tabs: tablist under the panel
+          // (z-0 / z-1). -mb-2 tucks the panel under the tab bottoms. pt ≥ the active tab's
+          // cyan ::before glow (0 0 12px) so overflow-y:hidden doesn't clip it; overflow-x
+          // only on small screens (same as feed) so desktop keeps overflow-y:visible for the
+          // glow — overflow-x:auto would force overflow-y to auto and re-clip.
+          className="relative z-0 flex shrink-0 flex-row flex-nowrap items-end gap-[0.18rem] -mb-2 px-[0.15rem] pt-[14px] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]"
           role="tablist"
           aria-label="Settings sections"
         >
-          {tabs.map((tab, tabIdx) => {
+          {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
@@ -526,20 +531,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                 type="button"
                 role="tab"
                 id={`v6-settings-tab-${tab.id}`}
-                // `.option` base + overlapping-folder-tab look. Per-tab z-index is positional
-                // (was .option:nth-child(n)); the active tab lifts to z-20 (was z-index:20 !important).
-                // first:ml-0 replaces .option:first-child { margin-left:0 }.
-                style={{ zIndex: isActive ? 20 : tabIdx + 1 }}
-                className={clsx(
-                  // Legacy `font: inherit` also inherited the 1.45 line-height; a bare button's UA
-                  // `normal` line-height would shrink each tab box ~2.4px → leading-[inherit].
-                  // Legacy `.option:hover` (0,2,0) outranks `.optionActive` (0,1,0), so the hover
-                  // wash applies to EVERY tab incl. the active one — put it on the base, not a branch.
-                  'relative flex-[0_1_auto] min-w-[min(7.5rem,28vw)] first:!ml-0 ml-[calc(-1*var(--v6-tab-overlap))] text-center font-[inherit] leading-[inherit] text-[0.75rem] font-semibold tracking-[0.04em] uppercase rounded-t-[0.55rem] rounded-b-none border border-b-0 cursor-pointer [transition:transform_0.12s_ease,background_0.12s_ease,color_0.12s_ease,box-shadow_0.12s_ease,border-color_0.12s_ease] hover-always:bg-[linear-gradient(180deg,rgba(34,40,58,0.99)_0%,rgba(18,22,36,0.995)_100%)] hover-always:text-[rgba(229,238,252,0.88)]',
-                  isActive
-                    ? '[transform:translateY(0)] pt-[0.52rem] pb-[0.58rem] px-4 border-[rgba(56,189,248,0.45)] bg-[image:var(--v6-tab-panel-bg)] text-v5-primary [box-shadow:inset_0_1px_0_rgba(255,255,255,0.1),0_-1px_0_0_rgba(56,189,248,0.2),4px_0_14px_rgba(0,0,0,0.28)]'
-                    : '[transform:translateY(3px)] pt-[0.42rem] pb-[0.48rem] px-4 border-(--v6-tab-panel-border) bg-[image:var(--v6-tab-inactive-bg)] text-[rgba(229,238,252,0.55)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06),2px_0_6px_rgba(0,0,0,0.22)]',
-                )}
+                // Shared glass-tab chrome with Event Feed / Transcript / … (cyan top stripe,
+                // no bottom border — feedTabStyles).
+                className={feedTabButtonClassName(isActive)}
                 aria-selected={isActive}
                 aria-controls={`v6-settings-section-${tab.id}`}
                 tabIndex={isActive ? 0 : -1}

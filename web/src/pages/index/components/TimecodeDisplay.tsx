@@ -9,9 +9,9 @@ interface Props {
 
 // Inline currentColor glyphs (ui-refresh: replaces the pre-tinted PNG pairs —
 // state now tints via text color, matching the transport tiles' SVG treatment).
-function MicGlyph() {
+function MicGlyph({ size = 15 }: { size?: number }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <rect x="9.25" y="3.5" width="5.5" height="10" rx="2.75" fill="currentColor" />
       <path
         d="M6 11.5C6 14.8137 8.68629 17.5 12 17.5C15.3137 17.5 18 14.8137 18 11.5"
@@ -24,17 +24,17 @@ function MicGlyph() {
   );
 }
 
-function RecordGlyph() {
+function RecordGlyph({ size = 15 }: { size?: number }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="6" fill="currentColor" />
     </svg>
   );
 }
 
-function StopGlyph() {
+function StopGlyph({ size = 15 }: { size?: number }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6.5" y="6.5" width="11" height="11" rx="1.75" fill="currentColor" />
     </svg>
   );
@@ -44,6 +44,7 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
   const { data: status } = useSessionStatus(sessionId);
   const isRolling = Boolean(status?.is_rolling);
   const isRecording = Boolean(status?.audio_recording_lease_alive);
+  const glyphSize = compact ? 18 : 15;
 
   return (
     // Outer .v4-clock-box + .v4-clock-box--tc (the second .v4-clock-box block's
@@ -68,7 +69,7 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
         className={clsx(
           'box-border flex h-full min-h-0 flex-[1_1_auto] flex-col items-stretch justify-start gap-0 border-0 bg-transparent',
           compact
-            ? 'px-[0.35rem] py-[0.15rem] justify-center'
+            ? 'px-[0.4rem] py-[0.1rem] justify-center'
             : 'px-[0.45rem] pt-[calc(var(--v4-clock-inner-py)+var(--v4-clock-label-straddle))] pb-(--v4-clock-inner-py)',
         )}
         aria-live="polite"
@@ -91,7 +92,7 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
           className={clsx(
             'flex min-h-0 w-full flex-[1_1_auto] items-center whitespace-nowrap font-mono font-medium leading-[1.2] tracking-[0.04em] [font-variant-numeric:tabular-nums]',
             compact
-              ? 'justify-between gap-[0.4rem] text-[0.88rem]'
+              ? 'justify-between gap-[0.45rem] text-[1.2rem]'
               : 'justify-between text-[1.34rem]',
             isRolling ? 'text-[#b44242]' : 'text-[#777e89]',
           )}
@@ -100,13 +101,13 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
           <span
             className={clsx(
               'inline-flex flex-shrink-0 items-center self-center p-0 leading-none',
-              compact ? 'gap-[0.22rem]' : 'gap-[0.42rem]',
+              compact ? 'gap-[0.28rem]' : 'gap-[0.42rem]',
             )}
           >
             <span
               className={clsx(
                 'inline-flex items-center justify-center',
-                compact ? 'h-[0.9rem] w-[0.9rem]' : 'h-[1.08rem] w-[1.08rem]',
+                compact ? 'h-[1.2rem] w-[1.2rem]' : 'h-[1.08rem] w-[1.08rem]',
                 // Mic: red only while mic-recording; white while rolling.
                 isRecording
                   ? 'text-[#ef4444]'
@@ -115,17 +116,17 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
                     : 'text-[#6b7280]',
               )}
             >
-              <MicGlyph />
+              <MicGlyph size={glyphSize} />
             </span>
             <span
               className={clsx(
                 'inline-flex items-center justify-center',
-                compact ? 'h-[0.9rem] w-[0.9rem]' : 'h-[1.08rem] w-[1.08rem]',
+                compact ? 'h-[1.2rem] w-[1.2rem]' : 'h-[1.08rem] w-[1.08rem]',
                 // Roll icon stays red while timecode is live.
                 isRolling || isRecording ? 'text-[#b44242]' : 'text-[#6b7280]',
               )}
             >
-              {isRolling ? <RecordGlyph /> : <StopGlyph />}
+              {isRolling ? <RecordGlyph size={glyphSize} /> : <StopGlyph size={glyphSize} />}
             </span>
           </span>
           <span
@@ -138,7 +139,7 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
               className={clsx(
                 'font-medium leading-none [font-variant-numeric:tabular-nums]',
                 compact
-                  ? 'text-[0.88rem] tracking-[0.02em]'
+                  ? 'text-[1.2rem] tracking-[0.03em]'
                   : '[font-size:clamp(0.75rem,calc((var(--v4-clock-inner-h)-var(--v4-clock-inner-py)-var(--v4-clock-label-straddle)-var(--v4-clock-inner-py))*0.88),1.35rem)]',
               )}
               id="session-tc-display"

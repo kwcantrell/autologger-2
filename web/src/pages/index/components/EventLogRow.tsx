@@ -21,9 +21,10 @@ import { Select } from './Select';
 
 /** Base sheet cell padding/border (was `.sheet td` + `.sheet-dense td`). `text-align`/
  *  `vertical-align` are set per cell (tc/cat: left+middle; the actions cell: center+middle via
- *  CELL_ACTIONS) so the two alignments never collide on one element. */
+ *  CELL_ACTIONS) so the two alignments never collide on one element.
+ *  Row height trimmed in steps; another ~30% via tighter py + slight type/icon scale. */
 const CELL_BASE =
-  'px-[0.55rem] py-[0.38rem] text-[0.84rem] [border-bottom:1px_solid_var(--border)]';
+  'px-[0.55rem] py-[0.17rem] text-[0.78rem] leading-none [border-bottom:1px_solid_var(--border)]';
 /** Row-hover tint for non-edit cells (was `.sheet tbody tr:hover td`). */
 const CELL_HOVER = '[.group:hover_&]:bg-[rgba(124,183,255,0.06)]';
 /** Timecode cell (was `.sheet .tc`). feed-row-seek, task 6.2: the legacy
@@ -54,7 +55,7 @@ const ROW_HOVER_ACTIONS =
   'absolute right-[0.4rem] top-1/2 -translate-y-1/2 inline-flex gap-[0.2rem] [transition:opacity_0.14s_ease]';
 /** Compact in-row icon action (ui-refresh): replaces the legacy `.btn`-with-emoji delete. */
 const ROW_ICON_BTN =
-  'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-[0.5rem] border border-v5-border-strong bg-[rgba(15,23,42,0.88)] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(251,113,133,0.5)] hover-always:text-[#fda4af] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
+  'inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[0.4rem] border border-v5-border-strong bg-[rgba(15,23,42,0.88)] p-0 text-v5-muted [transition:border-color_0.15s_ease,color_0.15s_ease,background_0.15s_ease] hover-always:border-[rgba(251,113,133,0.5)] hover-always:text-[#fda4af] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]';
 /** Reveal-on-hover/focus-within (non-batch): hidden until the row (`group`) is hovered. */
 const ROW_ACTIONS_HIDDEN =
   'opacity-0 pointer-events-none [.group:hover_&]:opacity-100 [.group:hover_&]:pointer-events-auto [.group:focus-within_&]:opacity-100 [.group:focus-within_&]:pointer-events-auto';
@@ -72,7 +73,7 @@ const CELL_CONTROL =
  *  message cell, mirroring ROW_ICON_BTN's muted bordered look at text scale. Presentation
  *  only — it sits beside the message text / input and never carries handlers. */
 const AUTO_CHIP =
-  'ml-[0.45rem] inline-flex shrink-0 items-center rounded-[0.35rem] border border-v5-border-strong px-[0.28rem] py-px align-middle font-[family-name:var(--font-mono)] text-[0.6rem] uppercase tracking-[0.08em] text-v5-muted';
+  'ml-[0.4rem] inline-flex shrink-0 items-center rounded-[0.3rem] border border-v5-border-strong px-[0.24rem] py-px align-middle font-[family-name:var(--font-mono)] text-[0.55rem] uppercase tracking-[0.08em] text-v5-muted';
 
 /** Generated-row detection (auto-generate-event-logs): true only when the row's metadata
  *  object carries `auto_generated: true`. The server parses `metadata_json` into the wire
@@ -408,7 +409,7 @@ export function EventLogRow({
           aria-label="Delete row"
           onClick={() => onDelete(event.event_id)}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             <path
               d="M9 7V5C9 4.44772 9.44772 4 10 4H14C14.5523 4 15 4.44772 15 5V7"
@@ -442,13 +443,16 @@ export function EventLogRow({
           inside the timecode cell — inline editing's contents/width/containing
           block are untouched by this. */}
       <td className={clsx(CELL_BASE, 'text-center align-middle')}>
-        <JumpToTimeButton
-          resolvedSec={resolvedSec}
-          displayTime={col1View}
-          onJump={onJump}
-          unavailable={jumpUnavailable}
-          reasonId={jumpReasonId}
-        />
+        {/* Slight scale so the shared h-6 jump control does not dominate row height. */}
+        <span className="inline-flex origin-center scale-[0.75]">
+          <JumpToTimeButton
+            resolvedSec={resolvedSec}
+            displayTime={col1View}
+            onJump={onJump}
+            unavailable={jumpUnavailable}
+            reasonId={jumpReasonId}
+          />
+        </span>
       </td>
       {editable ? (
         // `.colTcCellEdit`: centered (was `td.colTcCellEdit { text-align: center }`, the input

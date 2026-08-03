@@ -172,20 +172,66 @@ describe('EventButtonsTable.copyFromShow', () => {
 // spec: web-ui-system "Generation instruction fields in Settings") ---
 
 describe('EventButtonsTable instruction editor', () => {
-  it('editing the instruction in the row popover propagates through onChange', async () => {
+  it('saving the instruction modal propagates through onChange', async () => {
     const onChange = renderTable([makeDraft({ id: 'b1', name: 'Slate' })]);
 
-    fireEvent.click(screen.getByLabelText('Edit generation instruction'));
-    // Radix portals the popover content in asynchronously — findBy, like the
-    // RecentSessionsList popover tests.
+    fireEvent.click(screen.getByLabelText('AI Rules'));
     const textarea = (await screen.findByLabelText(
       'Generation instruction',
     )) as HTMLTextAreaElement;
     expect(textarea.maxLength).toBe(2000);
     fireEvent.change(textarea, { target: { value: 'Log every slate call' } });
+    // Draft only — not committed until Save.
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const [newButtons] = onChange.mock.lastCall as [EventButtonDraft[]];
     expect(newButtons[0].auto_instruction).toBe('Log every slate call');
+  });
+
+  it('cancel discards draft edits without calling onChange', async () => {
+    const onChange = renderTable([
+      makeDraft({ id: 'b1', name: 'Slate', auto_instruction: 'Keep me' }),
+    ]);
+
+    fireEvent.click(screen.getByLabelText('AI Rules (has instructions)'));
+    const textarea = (await screen.findByLabelText(
+      'Generation instruction',
+    )) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'Discard me' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Generation instruction')).toBeNull();
+  });
+
+  it('auto-grows the instruction textarea to fit existing text when opened', async () => {
+    // jsdom's scrollHeight is 0 — stub a content-driven height so the fit path
+    // is observable (same approach TopicsRow relies on in a real browser).
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLTextAreaElement) {
+        return Math.max(1, this.value.split('\n').length) * 20;
+      },
+    });
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 22,
+    });
+    Object.defineProperty(HTMLTextAreaElement.prototype, 'clientHeight', {
+      configurable: true,
+      get: () => 20,
+    });
+
+    const long = 'Line one\nLine two\nLine three\nLine four\nLine five';
+    renderTable([makeDraft({ id: 'b1', name: 'Slate', auto_instruction: long })]);
+
+    fireEvent.click(screen.getByLabelText('AI Rules (has instructions)'));
+    const textarea = (await screen.findByLabelText(
+      'Generation instruction',
+    )) as HTMLTextAreaElement;
+
+    expect(textarea.style.height).toBe('102px'); // 5*20 + 2px border
   });
 
   it('offers the editor for BUTTON, DROPDOWN and TEXT rows but not ON_OFF', () => {
@@ -197,7 +243,7 @@ describe('EventButtonsTable instruction editor', () => {
     ]);
 
     // Exactly three triggers: the ON_OFF row offers no instruction field at all.
-    expect(screen.getAllByLabelText('Edit generation instruction')).toHaveLength(3);
+    expect(screen.getAllByLabelText('AI Rules')).toHaveLength(3);
   });
 
   it('switching a type to ON_OFF drops button- and option-level instructions from the draft', () => {
@@ -227,8 +273,8 @@ describe('EventButtonsTable instruction-bearing indicator', () => {
   // `aria-label` wins the accessible-name computation, so state must live in the
   // label itself ("… (has instructions)") — a sibling sr-only span would never be
   // announced and the state would be conveyed by color alone.
-  const BEARING_NAME = 'Edit generation instruction (has instructions)';
-  const PLAIN_NAME = 'Edit generation instruction';
+  const BEARING_NAME = 'AI Rules (has instructions)';
+  const PLAIN_NAME = 'AI Rules';
 
   it('lights for an option-only DROPDOWN (single instruction-bearing definition)', () => {
     renderTable([

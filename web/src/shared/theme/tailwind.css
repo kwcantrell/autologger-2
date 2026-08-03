@@ -137,6 +137,29 @@
     }
   }
 
+  /* Timeline marker → Event Feed row reveal flash (uniform fill; accent is first-cell only).
+   * Hold full brightness 1.25s, then fade 1.25s (same fade as before; total 2.5s). */
+  --animate-event-row-flash: event-row-flash 2.5s ease-out forwards;
+  @keyframes event-row-flash {
+    0%,
+    50% {
+      background-color: rgba(56, 189, 248, 0.16);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  --animate-event-row-flash-accent: event-row-flash-accent 2.5s ease-out forwards;
+  @keyframes event-row-flash-accent {
+    0%,
+    50% {
+      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.85);
+    }
+    100% {
+      box-shadow: inset 3px 0 0 transparent;
+    }
+  }
+
   /* AppShell mobile rail-drawer scrim fade-in (Task 10, slice 5b). Unguarded in
    * the source (no motion-reduce). V6Rail deferred this token here. */
   --animate-rail-scrim-fade: rail-scrim-fade 0.2s ease-out;
@@ -238,6 +261,17 @@
     linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
   --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
     linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
+  /* Feed sheet: open glass so page glow/noise reads through. Top sits close to
+   * bot (subtle fade) — active tabs use --v5-glass-feed-surface-top so they
+   * bleed into the sheet with no color mismatch. */
+  --v5-glass-feed-top: rgba(16, 23, 41, 0.58);
+  --v5-glass-feed-bot: rgba(11, 16, 30, 0.48);
+  --v5-glass-feed-surface-top: color-mix(in srgb, #ffffff 4%, var(--v5-glass-feed-top));
+  --v5-glass-face-feed: linear-gradient(
+    180deg,
+    var(--v5-glass-feed-surface-top),
+    var(--v5-glass-feed-bot)
+  );
   --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
   --v5-border: rgba(255, 255, 255, 0.06);
   --v5-border-strong: rgba(255, 255, 255, 0.1);
@@ -348,6 +382,9 @@
 @utility glass-face-aside {
   background: var(--v5-glass-face-aside);
 }
+@utility glass-face-feed {
+  background: var(--v5-glass-face-feed);
+}
 @utility shadow-glow-v5 {
   box-shadow: var(--v5-shadow-glow);
 }
@@ -381,6 +418,26 @@
     --v6-rail-recent-shelf-pad: 0.6rem;
     --v6-rail-recent-shelf-radius: 1rem;
     --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
+  }
+
+  /* Timeline marker click → temporary Event Feed row highlight.
+   * Same fill on every cell; left accent only on the first so column seams stay even. */
+  #v4-log-sheet tr.event-row-flash > td {
+    animation: var(--animate-event-row-flash);
+  }
+  #v4-log-sheet tr.event-row-flash > td:first-child {
+    animation:
+      var(--animate-event-row-flash),
+      var(--animate-event-row-flash-accent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #v4-log-sheet tr.event-row-flash > td {
+      animation: none;
+      background-color: rgba(56, 189, 248, 0.12);
+    }
+    #v4-log-sheet tr.event-row-flash > td:first-child {
+      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.7);
+    }
   }
 }
 
@@ -938,9 +995,18 @@
  * the two top-radius overrides carry `!important` to beat it — the toggle-contract use of
  * `!` the recipe sanctions for beating a later layer. */
 @layer components {
+  /* Square TL under the first tab. No top border / top hairline / top rim so the
+   * active tab bleeds into the sheet; TR stays softly rounded. */
   .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
-    border-top-left-radius: 0.95rem !important;
-    border-top-right-radius: 0.95rem !important;
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0.7rem !important;
+    border-top-width: 0 !important;
+    background-color: var(--v5-glass-feed-surface-top);
+    /* Drop panel-elevate's top highlight + 1px ring (reads as a seam under the tab). */
+    box-shadow:
+      0 22px 60px rgba(2, 8, 23, 0.58),
+      0 0 128px -36px rgba(56, 189, 248, 0.14),
+      0 0 64px -28px rgba(14, 165, 233, 0.09) !important;
     position: relative;
     z-index: 1;
   }
