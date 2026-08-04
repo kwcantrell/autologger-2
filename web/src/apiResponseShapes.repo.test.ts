@@ -1225,9 +1225,9 @@ const EXEMPTIONS: readonly Exemption[] = [
       'The one global `fetch` inside the shared helper — the seam every typed call goes through. Its shape is whatever the caller asserts, checked at those call sites.',
   },
   {
-    key: 'api/client.ts :: const j = (await res.json()) as { detail?: unknown };',
+    key: 'api/client.ts :: const j = (await res.json()) as { detail?: unknown; message?: unknown };',
     reason:
-      'The shared error probe (audit §4, last row). Reads only `detail` off a non-2xx body and narrows it with a `typeof` check before use; no payload type is asserted.',
+      'The shared error probe (audit §4, last row). Reads only `detail`/`message` off a non-2xx body and narrows each with a `typeof` check before use; no payload type is asserted.',
   },
   {
     key: "api/client.ts :: if (ct.includes('application/json')) return res.json() as Promise<T>;",
@@ -1354,6 +1354,21 @@ const EXEMPTIONS: readonly Exemption[] = [
   {
     key: 'pages/index/hooks/useRecoveryStopWarning.ts :: apiFetch<>(`sessions/<var>/events`) [POST]',
     reason: 'audit §3/§5 row 40 — untyped recovery-stop event POST; value unused.',
+  },
+  {
+    key: "pages/index/batchImport/runner.ts :: apiFetch<>('profile') [PUT]",
+    reason:
+      'pr-3 remediation — untyped PUT /api/profile from `alignActiveShow`; the handler emits the full ProfilePayload but the batch runner awaits and discards it (same shape/site class as the NewSessionModal PUT above).',
+  },
+  {
+    key: 'pages/index/batchImport/runner.ts :: apiFetch<>(`sessions/<var>/local-audio-import?<var>`) [POST]',
+    reason:
+      'pr-3 remediation — untyped; POST local-audio-import has exactly one 2xx emission, the literal `{ok: true}` (server/src/routers/sessions.ts local-audio-import handler); every other path throws ApiError. Value unused by the runner.',
+  },
+  {
+    key: 'pages/index/batchImport/runner.ts :: apiFetch<>(`sessions/<var>`) [DELETE]',
+    reason:
+      'pr-3 remediation — untyped DELETE session on the batch rollback path; emits `{ok: true, hidden: true}` (audit §5 row 24 shape); value unused.',
   },
 
   // --- Untyped `fetchAdmin(…)` — population (b)'s five type-argument-free

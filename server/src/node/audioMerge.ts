@@ -66,7 +66,11 @@ type DecoderConfig = NonNullable<Awaited<ReturnType<InputAudioTrack['getDecoderC
 
 const PCM_CODECS: readonly string[] = PCM_AUDIO_CODECS;
 
-const FAMILY_CONTAINER: Record<CodecFamily, { ext: string; makeFormat: () => OutputFormat }> = {
+/** mp3 is deliberately absent: MP3 runs pass through unmerged (passThroughMp3Group). */
+const FAMILY_CONTAINER: Record<
+  Exclude<CodecFamily, 'mp3'>,
+  { ext: string; makeFormat: () => OutputFormat }
+> = {
   opus: { ext: 'webm', makeFormat: () => new WebMOutputFormat() },
   aac: { ext: 'mp4', makeFormat: () => new Mp4OutputFormat() },
   pcm: { ext: 'wav', makeFormat: () => new WavOutputFormat() },
@@ -147,7 +151,7 @@ function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
  * every group's output track needs its own config attached exactly once. */
 async function mergeGroup(
   run: ProbedSegment[],
-  family: CodecFamily,
+  family: Exclude<CodecFamily, 'mp3'>,
   outPath: string,
 ): Promise<MergedGroup> {
   const { makeFormat } = FAMILY_CONTAINER[family];
