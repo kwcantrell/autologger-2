@@ -88,7 +88,8 @@ export function deepgramModel(env: Config): string {
 
 // ── Shared: open-network refusal ────────────────────────────────────────────
 // Every outbound, spend-something-per-request feature (AI chat, AI v2,
-// YouTube import) refuses to serve when auth is open on a reachable network —
+// YouTube import, Sheets log import) refuses to serve when auth is open on a
+// reachable network —
 // REQUIRE_LOGIN disabled AND no IP_ALLOWLIST AND a non-loopback bind. One
 // core predicate, three feature-named call sites (kept as separate exported
 // functions — not a single shared export — so each feature's call site/tests
@@ -368,6 +369,13 @@ export function youtubeImportOpenNetworkRefused(env: Config): boolean {
  * job-status GET is not gated (it reads local state only). */
 export function sheetsLogImportConfigured(env: Config): boolean {
   return ['1', 'true', 'yes'].includes((env.SHEETS_LOG_IMPORT_ENABLED || '').trim().toLowerCase());
+}
+
+/** Sheets log import can trigger paid DeepGram transcription of session audio,
+ * so it shares the open-network refusal of the other spend-per-request
+ * features (see the shared predicate above). */
+export function sheetsLogImportOpenNetworkRefused(env: Config): boolean {
+  return openNetworkRefused(env);
 }
 
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */

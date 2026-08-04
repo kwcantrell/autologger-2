@@ -187,7 +187,9 @@ when an operator has set `SHEETS_LOG_IMPORT_ENABLED` **and** a user starts an im
 unconfigured deployment never contacts Google. Note the DeepGram interaction above: on a
 deployment with `DEEPGRAM_API_KEY` set, an import over sessions without transcripts triggers
 billed transcript generation. Only enable this on a box you operate and are prepared to have
-make Google requests on your behalf.
+make Google requests on your behalf. Like the other spend-per-request features (YouTube
+import, AI chat), the POST also refuses with `503` on an open-network deployment
+(`REQUIRE_LOGIN` disabled + non-loopback bind + no `IP_ALLOWLIST`), even when enabled.
 
 ### AI chat (Claude CLI)
 
@@ -544,7 +546,7 @@ was ported from: historical provenance, not a live parity claim.
 | `POST …/topics/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
-| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
+| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured/open-network · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |

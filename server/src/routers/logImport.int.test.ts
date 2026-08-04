@@ -6,10 +6,15 @@ import { loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 const NOT_CONFIGURED_DETAIL =
   'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
 const SHOW_NOT_FOUND_DETAIL = 'Show not found.';
+const OPEN_NETWORK_DETAIL =
+  'Google Sheets log import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
+  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing logs.';
 
 /** The base test env leaves SHEETS_LOG_IMPORT_ENABLED unset (503); suites that
- * exercise configured behavior opt in per-request, the envWith pattern. */
-const enabledEnv = () => envWith({ SHEETS_LOG_IMPORT_ENABLED: '1' });
+ * exercise configured behavior opt in per-request, the envWith pattern. The
+ * loopback HOST pin sidesteps the open-network refusal (the youtube-import
+ * configuredEnv precedent — the base env is open-network by default). */
+const enabledEnv = () => envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' });
 
 const BODY = JSON.stringify({
   spreadsheet_url: 'https://docs.google.com/spreadsheets/d/abc123xyz/edit',
@@ -47,6 +52,29 @@ describe('log-import job HTTP surface', () => {
     const studio = seedStudio();
     const show = seedShow({ studioId: studio });
     const res = await postImport(show, env);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
+  });
+
+  it('503s with the open-network detail when configured but REQUIRE_LOGIN is off on a non-loopback bind', async () => {
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const openNetwork = envWith({
+      SHEETS_LOG_IMPORT_ENABLED: '1',
+      REQUIRE_LOGIN: '0',
+      HOST: '0.0.0.0',
+      IP_ALLOWLIST: '',
+    });
+    const res = await postImport(show, openNetwork);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ detail: OPEN_NETWORK_DETAIL });
+  });
+
+  it('a deployment that is BOTH unconfigured AND open-network-refused returns the NOT_CONFIGURED detail (config gate first)', async () => {
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio });
+    const bothConditions = envWith({ REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' });
+    const res = await postImport(show, bothConditions);
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
   });
