@@ -131,3 +131,12 @@ revert — "fix all these issues".
 - `openspec validate transcript-gen-lock-status --strict` passed before and
   after the remediation amendments (this was the one change of the three that
   did not fail strict validation).
+
+### 2026-08-03 — Post-amendment consistency read: clean
+
+Light-tier read over the final four artifacts of all three PR-3 changes
+(proposal, spec deltas, design, tasks) after the remediation amendments: no
+stale pre-decision language, no disposition-vs-normative contradictions, no
+broken cross-references; cited commit hashes and load-bearing symbol/constant
+claims spot-verified against the branch; strict validation passing for all
+three changes.

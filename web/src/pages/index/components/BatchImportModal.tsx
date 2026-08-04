@@ -86,7 +86,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
   }, []);
 
   const hasAudio = Boolean(folderName && selectedFiles && selectedFiles.length > 0);
-  const hasLogs = Boolean(logsUrl && logsUrl.trim());
+  const hasLogs = Boolean(logsUrl?.trim());
   const canStart = Boolean(showId && (hasAudio || hasLogs) && !isImporting);
 
   const handleClose = () => {

@@ -25,7 +25,11 @@ import {
   validateYoutubeImportUrl,
   youtubeImportBodySchema,
 } from '../schemas';
-import { AUDIO_SEAM_PARTS_HEADER, parseAudioSeamPartsHeader } from '../session/audioSeamParts';
+import {
+  AUDIO_SEAM_PARTS_HEADER,
+  type AudioSeamPart,
+  parseAudioSeamPartsHeader,
+} from '../session/audioSeamParts';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
@@ -344,7 +348,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
 
   const durationS = parseLocalAudioImportDurationS(c.req.query('duration_s'));
   const mimeType = requireLocalAudioImportContentType(c.req.header('content-type'));
-  let seamParts;
+  let seamParts: AudioSeamPart[];
   try {
     seamParts = parseAudioSeamPartsHeader(c.req.header(AUDIO_SEAM_PARTS_HEADER), durationS);
   } catch (err) {

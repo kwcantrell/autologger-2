@@ -162,3 +162,12 @@ than revert — "fix all these issues".
   buffer must carry the XLSX PK zip magic before parsing
   (`server/src/logImport/sheetsFetch.ts`). A parser swap is a roadmap
   candidate.
+
+### 2026-08-03 — Post-amendment consistency read: clean
+
+Light-tier read over the final four artifacts of all three PR-3 changes
+(proposal, spec deltas, design, tasks) after the remediation amendments: no
+stale pre-decision language, no disposition-vs-normative contradictions, no
+broken cross-references; cited commit hashes and load-bearing symbol/constant
+claims spot-verified against the branch; strict validation passing for all
+three changes.

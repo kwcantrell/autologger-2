@@ -1327,6 +1327,30 @@ const EXEMPTIONS: readonly Exemption[] = [
       'a 200 at all — a capture is the right answer if this shape ever grows beyond the two-key literal.',
   },
 
+  // --- Types declared OUTSIDE `api/types.ts` — captured AND fixture-checked,
+  // but structurally invisible to this guard's covered-set, which only counts
+  // a name the site's file imports from the canonical `api/types` module
+  // (coverage clause (iv)) — a hook-local union or feature-module interface
+  // can never satisfy that no matter how well it is checked. Each shape below
+  // IS asserted against a captured fixture in api/types.conformance.test.ts;
+  // these entries exist because the guard cannot see those checks, not
+  // because the shapes are unchecked.
+  {
+    key: 'api/hooks/useTranscriptGenerationStatus.ts :: apiFetch<TranscriptGenerationStatus>(TRANSCRIPT_GENERATION_STATUS_PATH)',
+    reason:
+      'pr-3 remediation — TranscriptGenerationStatus is declared hook-locally, not in api/types, so no conformance check can confer coverage on this site (clause (iv)). Both union branches ARE captured from the real handler (fixtures transcriptGenerationStatusIdle/transcriptGenerationStatusBusy, the busy one taken while transcriptGenerationLock was genuinely held) and type-level asserted in api/types.conformance.test.ts, including the redacted-nulls busy variant. Moving the union into api/types.ts would retire this entry.',
+  },
+  {
+    key: 'pages/index/batchImport/logImportClient.ts :: apiFetch<{ job_id: string }>(`shows/<var>/log-import`) [POST]',
+    reason:
+      'pr-3 remediation — an inline object type containing no PascalCase name acquires nothing the covered-set can mark. The body IS captured from the real handler behind the SHEETS_LOG_IMPORT_ENABLED gate (fixtures/api-responses/logImportJobCreate.json) and asserted against the same `{ job_id: string }` annotation in api/types.conformance.test.ts.',
+  },
+  {
+    key: 'pages/index/batchImport/logImportClient.ts :: apiFetch<LogImportJobStatus>(`log-import/<var>`)',
+    reason:
+      'pr-3 remediation — LogImportJobStatus is declared in this feature module, not api/types, so its conformance check cannot confer coverage (clause (iv)). A real TERMINAL failed-job body is captured (fixtures/api-responses/logImportJobStatus.ts — a .ts fixture because of the `status` literal union) and type-level asserted in api/types.conformance.test.ts.',
+  },
+
   // --- Untyped `apiFetch(…)` — population (c), audit §3. Six sites, all
   // discarding the response, so the inferred `unknown` never reaches a
   // consumer. Verdict row 40 (CONFORMS vacuously — no type is asserted).

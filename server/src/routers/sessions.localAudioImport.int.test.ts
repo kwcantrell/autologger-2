@@ -425,6 +425,75 @@ describe('POST /api/sessions/:sessionId/local-audio-import — byte limit (413)'
   });
 });
 
+describe('POST /api/sessions/:sessionId/local-audio-import — X-Audio-Seam-Parts validation (pr-3-review)', () => {
+  // Detail strings are the exact `parseAudioSeamPartsHeader` error messages —
+  // the handler rethrows them verbatim as the 400 {detail} body.
+  it.each([
+    ['not JSON at all', 'not-json', 'X-Audio-Seam-Parts must be a JSON array of { duration_s }.'],
+    [
+      'a JSON object, not an array',
+      '{"duration_s":10}',
+      'X-Audio-Seam-Parts must be a non-empty JSON array.',
+    ],
+    ['an empty array', '[]', 'X-Audio-Seam-Parts must be a non-empty JSON array.'],
+    ['a non-object entry', '[10]', 'X-Audio-Seam-Parts entries must be objects with duration_s.'],
+    [
+      'a non-positive duration_s',
+      '[{"duration_s":0}]',
+      'X-Audio-Seam-Parts duration_s must be a positive finite number.',
+    ],
+  ])('400 { detail } for a malformed header (%s): no segment, no seam parts', async (_label, header, detail) => {
+    const session = await seededSession();
+    const before = await listSegmentsRaw(session, env);
+
+    const res = await postLocalImport(session, {
+      durationS: '10',
+      contentType: 'audio/wav',
+      seamParts: header,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail });
+
+    expect(await listSegmentsRaw(session, env)).toBe(before);
+    expect(env.ports.sessions.get(session).getAudioSeamParts()).toBeNull();
+  });
+
+  it('400 { detail } when the parts sum disagrees with duration_s beyond the 0.5 s tolerance', async () => {
+    const session = await seededSession();
+    const before = await listSegmentsRaw(session, env);
+
+    const res = await postLocalImport(session, {
+      durationS: '100',
+      contentType: 'audio/wav',
+      seamParts: JSON.stringify([{ duration_s: 30 }, { duration_s: 60 }]), // sums to 90
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      detail: 'X-Audio-Seam-Parts durations sum (90) must be within 0.5s of duration_s (100).',
+    });
+
+    expect(await listSegmentsRaw(session, env)).toBe(before);
+    expect(env.ports.sessions.get(session).getAudioSeamParts()).toBeNull();
+  });
+
+  it('a valid header persists its parts in order (readable via the hub the log-import sync uses)', async () => {
+    const session = await seededSession();
+
+    const res = await postLocalImport(session, {
+      durationS: '100',
+      contentType: 'audio/wav',
+      seamParts: JSON.stringify([{ duration_s: 40 }, { duration_s: 60 }]),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+
+    expect(env.ports.sessions.get(session).getAudioSeamParts()).toEqual([
+      { duration_s: 40 },
+      { duration_s: 60 },
+    ]);
+  });
+});
+
 describe('POST /api/sessions/:sessionId/local-audio-import — repeated imports accumulate seam parts', () => {
   it('a second import APPENDS its parts after the first take’s (full-timeline order for log-import sync)', async () => {
     const session = await seededSession();

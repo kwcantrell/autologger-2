@@ -100,6 +100,33 @@ describe('stitchAudioFiles', () => {
     expect(ctx.decodeAudioData).toHaveBeenCalledTimes(2);
   });
 
+  it('multi-part partDurationsS matches each source duration and sums to the output duration', async () => {
+    // Three parts, one at a different sample rate so the resampled-length
+    // branch of the per-part duration math is exercised too (22.05 kHz → the
+    // output's 44.1 kHz; its resampled length still spans the same 1.0 s).
+    const decodeMap = new Map<string, AudioBuffer>([
+      ['part-a.mp3', syntheticBuffer(2.5)],
+      ['part-b.mp3', syntheticBuffer(1.5)],
+      ['part-c.mp3', syntheticBuffer(1.0, 22050)],
+    ]);
+    const ctx = mockAudioContext(decodeMap);
+
+    const { durationS, partDurationsS } = await stitchAudioFiles(
+      [fileNamed('part-a.mp3'), fileNamed('part-b.mp3'), fileNamed('part-c.mp3')],
+      ctx,
+    );
+
+    expect(partDurationsS).toHaveLength(3);
+    expect(partDurationsS[0]).toBeCloseTo(2.5, 5);
+    expect(partDurationsS[1]).toBeCloseTo(1.5, 5);
+    expect(partDurationsS[2]).toBeCloseTo(1.0, 5);
+    // The seam-part invariant the server's X-Audio-Seam-Parts tolerance check
+    // depends on: the parts partition the stitched output exactly.
+    const sum = partDurationsS.reduce((acc, d) => acc + d, 0);
+    expect(sum).toBeCloseTo(durationS, 5);
+    expect(durationS).toBeCloseTo(5.0, 5);
+  });
+
   it('upmixes a mono segment to every output channel in a mixed mono/stereo group', () => {
     const mono = syntheticBuffer(0.001, 1000, 1); // 1 frame at 1 kHz
     mono.getChannelData(0).fill(0.5);
