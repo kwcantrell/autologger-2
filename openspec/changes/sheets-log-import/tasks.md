@@ -24,6 +24,10 @@
 
 - [x] 3.1 In-process job store; `POST /api/shows/:showId/log-import` +
       `GET /api/log-import/:jobId`; progress shape; wire app + README inventory.
+      *(2026-08-03 remediation: endpoints originally shipped ungated and
+      unscoped — the `SHEETS_LOG_IMPORT_ENABLED` config gate, open-network
+      refusal, membership/creator 404 scoping, and job-store TTL/cap
+      lifecycle landed on the PR branch; see design.md D10.)*
 - [x] 3.2 Per-session pipeline: match title → seams → ensure transcript (generate) →
       sync → map categories → create/skip duplicates; fail rules; integration tests.
 

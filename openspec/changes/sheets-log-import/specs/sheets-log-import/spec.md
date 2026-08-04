@@ -31,8 +31,24 @@ job by themselves.
 
 Before aligning log rows, the system SHALL use existing timed transcript words when
 present; otherwise it SHALL attempt transcript generation via the existing
-DeepGram-backed generate path. If no timed transcript is available afterward, that
+DeepGram-backed generate path (retrying once, after a short pause, on upstream or
+in-flight generation errors). If no timed transcript is available afterward, that
 session’s import SHALL fail.
+
+#### Scenario: Missing transcript is generated before sync
+
+- **WHEN** a matched session has no timed transcript words and the DeepGram
+  generate path produces words with usable timing
+- **THEN** the job reports transcript generation in its progress lines and sync
+  proceeds against the generated words
+
+#### Scenario: Generation failure fails only that session
+
+- **WHEN** transcript generation fails for a matched session (including after
+  the single retry for upstream/in-flight errors) or yields no words with
+  usable timing
+- **THEN** that session’s import fails with an operator-readable progress line
+  and the job continues with the remaining sheets
 
 ### Requirement: Score-based per-seam sync
 
@@ -69,6 +85,78 @@ event metadata as `import_option`.
 
 When creating an imported event, the system SHALL skip creation if a non-internal
 event already exists with the same message and the same `timecode_total_frames`.
+The comparison uses the post-mapping message (after any unmatched-type append)
+and the exact frame value computed for the row; skipped duplicates are counted
+in the session’s summary progress line.
+
+#### Scenario: Exact frame-and-message duplicate is skipped
+
+- **WHEN** an import row maps to message M at `timecode_total_frames` F and a
+  non-internal event with message M at exactly F already exists on the session
+- **THEN** no new event is created for that row and the summary line’s skipped
+  count includes it
+
+### Requirement: Configuration and network gating
+
+`POST /api/shows/:showId/log-import` SHALL be configuration-gated: unless
+`SHEETS_LOG_IMPORT_ENABLED` is `1`, `true`, or `yes` (trimmed,
+case-insensitive), the route SHALL respond `503 { detail }` with detail
+"Google Sheets log import is not configured on this deployment. Set
+SHEETS_LOG_IMPORT_ENABLED=1 to enable it." before any body parsing, job
+creation, or egress. When configured, the route SHALL apply the shared
+open-network refusal predicate (server bound to a non-loopback address with
+`REQUIRE_LOGIN` disabled and no `IP_ALLOWLIST`) and respond `503 { detail }` —
+a run can trigger paid DeepGram transcription, so the endpoint shares the
+spend-per-request posture of youtube-import. Check ordering follows
+youtube-import: show/membership `404` first, then the configuration gate, then
+the open-network refusal, then body validation. `GET /api/log-import/:jobId`
+SHALL NOT be egress-gated — it reads only local in-process state.
+
+#### Scenario: Unconfigured deployment refuses before any egress
+
+- **WHEN** `SHEETS_LOG_IMPORT_ENABLED` is unset and an authorized client POSTs
+  a log-import request for an existing show
+- **THEN** the response is `503 { detail }` naming `SHEETS_LOG_IMPORT_ENABLED`
+  and no fetch is issued and no job is created
+
+#### Scenario: Open-network deployment refuses even when configured
+
+- **WHEN** the deployment sets `SHEETS_LOG_IMPORT_ENABLED=1` but is bound to a
+  non-loopback address with `REQUIRE_LOGIN` disabled and no `IP_ALLOWLIST`
+- **THEN** the POST responds `503 { detail }` and no job is created
+
+### Requirement: Job authorization and lifecycle
+
+`POST /api/shows/:showId/log-import` SHALL respond `404 { detail: "Show not
+found." }` uniformly for a nonexistent show and for an authenticated requester
+who is not a member of the show’s studio (no existence oracle); anonymous
+requesters (`user == null`: `REQUIRE_LOGIN=0` dev mode, or API-token auth)
+pass, as on sibling routes. `GET /api/log-import/:jobId` SHALL be
+creator-scoped: an authenticated requester who did not create the job receives
+the same `404 { detail: "Log import job not found." }` as an unknown id. Job
+records live in process memory: terminal (completed/failed) jobs SHALL become
+prunable one hour after finishing, and the job map SHALL be capped at 200
+entries with the oldest terminal jobs evicted first — queued/running jobs are
+NEVER evicted (the map may transiently exceed the cap rather than orphan a
+live import’s status).
+
+#### Scenario: Non-member POST looks like a missing show
+
+- **WHEN** an authenticated user who is not a member of the show’s studio POSTs
+  a log-import request for that show
+- **THEN** the response is `404 { detail: "Show not found." }`, identical to a
+  nonexistent show id
+
+#### Scenario: Foreign job id is a uniform 404
+
+- **WHEN** an authenticated user GETs a job id created by a different user
+- **THEN** the response is `404 { detail: "Log import job not found." }`,
+  identical to an unknown id
+
+#### Scenario: Running jobs survive the size cap
+
+- **WHEN** the job map is at its 200-entry cap and holds running jobs
+- **THEN** only terminal jobs are evicted; no queued or running job is removed
 
 ### Requirement: Log-import job HTTP surface
 
@@ -76,8 +164,8 @@ The system SHALL expose:
 
 - `POST /api/shows/:showId/log-import` with JSON `{ spreadsheet_url }` returning
   `{ job_id }` on acceptance
-- `GET /api/log-import/:jobId` returning job status and progress lines (including
-  per-part offset/confidence when available)
+- `GET /api/log-import/:jobId` returning job status, progress lines (including
+  per-part offset/confidence when available), and a nullable `error` string
 
 #### Scenario: Unknown job id
 

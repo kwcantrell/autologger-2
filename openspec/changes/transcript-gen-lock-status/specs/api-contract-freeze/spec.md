@@ -8,11 +8,16 @@
 | Condition | Response |
 |---|---|
 | No generation run in flight | `200 { "in_flight": false }` |
-| Generation run in flight | `200 { "in_flight": true, "session_id": string, "session_title": string\|null, "started_at": string }` |
+| Generation run in flight | `200 { "in_flight": true, "session_id": string\|null, "session_title": string\|null, "started_at": string }` |
 
-`started_at` SHALL be ISO-8601 UTC. `session_title` SHALL be the catalog title at read
-time or `null` if the session row is absent. The route MUST NOT mutate generation state.
-Auth SHALL match sibling transcript list routes.
+`started_at` SHALL be ISO-8601 UTC. For a requester permitted to view the holding
+session (anonymous `user === null`, or a member of its studio — the same membership
+scope sibling routes enforce by 404), `session_id` SHALL be the holder's id and
+`session_title` SHALL be the catalog title at read time or `null` if the session row
+is absent. For a logged-in requester lacking that membership, `session_id` and
+`session_title` SHALL both be `null` — same key set, never absent keys, `in_flight`
+still `true`. The route MUST NOT mutate generation state. Auth SHALL match sibling
+transcript list routes.
 
 #### Scenario: Idle response shape
 - **WHEN** the slot is free
@@ -21,7 +26,8 @@ Auth SHALL match sibling transcript list routes.
 #### Scenario: Busy response shape
 - **WHEN** the slot is held
 - **THEN** the response is `200` with `in_flight` true and the busy fields populated as
-  specified
+  specified — identifiers for permitted requesters, `session_id`/`session_title` nulled
+  (same key set) for logged-in requesters without membership of the holding session
 
 ## MODIFIED Requirements
 
@@ -36,7 +42,7 @@ Auth SHALL match sibling transcript list routes.
 | configured, session has no audio segments | `400 {detail}` |
 | configured, segments exist but none is readable | `400 {detail}` (distinct detail) |
 | configured, provider succeeds but returns zero words | `400 {detail}` (no-speech detail); existing words preserved |
-| configured, another generation run in flight | `409 {detail}` whose detail names the busy session (title preferred, else id); no provider request issued |
+| configured, another generation run in flight | `409 {detail}`; the detail names the busy session (title preferred, else id) when the requester may view it (anonymous, or a member of the holder's studio), and falls back to the identifier-free generic in-flight detail for logged-in non-members or when the holder released in the race; no provider request issued |
 | configured, request aborted before any provider call | `400 {detail}` — a distinct aborted detail, not `200`/`503`; no provider request issued |
 | configured, upstream STT failure/timeout, or a group file over the provider size limit | `502 {detail}` |
 
@@ -57,9 +63,16 @@ surface changes — `GET/POST/PATCH/DELETE …/transcript-words`, `…/topics` C
   `GET /api/sessions/:id/transcript-words` entries
 
 #### Scenario: Concurrent run maps to 409 naming the holder
-- **WHEN** a generate request arrives while another run is already in flight
+- **WHEN** a generate request arrives while another run is already in flight and the
+  requester is anonymous or a member of the holder's studio
 - **THEN** the response is `409 {detail}` that identifies the busy session, and no
   provider spend occurs for it
+
+#### Scenario: Concurrent run 409 is identifier-free for non-members
+- **WHEN** a generate request from a logged-in requester without membership of the
+  holder's studio arrives while another run is in flight
+- **THEN** the response is `409` with the generic in-flight `{detail}` naming no session,
+  and no provider spend occurs for it
 
 #### Scenario: Pre-provider-call abort maps to 400, not a new status code
 - **WHEN** the originating HTTP request is already aborted before any DeepGram request
