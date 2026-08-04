@@ -163,7 +163,9 @@ describe('V6Rail Batch Import button', () => {
     const paths = batchBtn?.querySelectorAll('path') ?? [];
     const dValues = Array.from(paths).map((p) => p.getAttribute('d'));
     expect(dValues).toContain('M12 3V15');
-    expect(dValues.some((d) => d?.includes('L12 15'))).toBe(true);
+    // Arrow head points UP (apex at y=3), per the gated D8 upload affordance.
+    expect(dValues.some((d) => d?.includes('L12 3'))).toBe(true);
+    expect(dValues.some((d) => d?.includes('L12 15'))).toBe(false);
     expect(dValues).toContain('M4 19H20');
   });
 });
