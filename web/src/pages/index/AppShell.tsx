@@ -324,10 +324,7 @@ export function AppShell() {
             )}
 
             {showBatchImport && (
-              <BatchImportModal
-                profile={profile}
-                onClose={() => setShowBatchImport(false)}
-              />
+              <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
             )}
 
             {ytImportError && (

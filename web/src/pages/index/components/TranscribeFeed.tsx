@@ -15,9 +15,9 @@ import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCs
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
-import { TranscriptGenerationLockBanner } from './TranscriptGenerationLockBanner';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TranscribeRow } from './TranscribeRow';
+import { TranscriptGenerationLockBanner } from './TranscriptGenerationLockBanner';
 
 type SortKey = 'session_time' | 'speaker' | 'word';
 const sortReducer = clickSortReducer<SortKey>;
@@ -143,8 +143,8 @@ export function TranscribeFeed({ sessionId }: Props) {
         reasonId={genReasonId}
         reason={
           <>
-            Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>).
-            Reload after configuring.
+            Transcription isn&apos;t configured on this server (needs <code>DEEPGRAM_API_KEY</code>
+            ). Reload after configuring.
           </>
         }
         onInsert={handleInsert}

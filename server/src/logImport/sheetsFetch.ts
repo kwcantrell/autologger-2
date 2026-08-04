@@ -38,7 +38,9 @@ function cellText(value: ExcelJS.CellValue): string {
   return String(value);
 }
 
-export async function parseWorkbookBuffer(buf: ArrayBuffer | Uint8Array | Buffer): Promise<ParsedSheet[]> {
+export async function parseWorkbookBuffer(
+  buf: ArrayBuffer | Uint8Array | Buffer,
+): Promise<ParsedSheet[]> {
   const wb = new ExcelJS.Workbook();
   const nodeBuf = Buffer.isBuffer(buf) ? buf : Buffer.from(new Uint8Array(buf));
   await wb.xlsx.load(nodeBuf as never);
@@ -112,4 +114,3 @@ export async function fetchPublicWorkbookSheets(
   }
   throw lastErr ?? new Error('Could not download spreadsheet.');
 }
-

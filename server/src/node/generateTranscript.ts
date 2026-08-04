@@ -5,16 +5,13 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { deepgramConfigured, deepgramModel } from '../env';
 import type { SessionHub } from '../session/SessionHub';
-import type { TranscriptWord } from '../session/transcriptStore';
 import type { TimecodeCtx } from '../session/sessionCore';
+import type { TranscriptWord } from '../session/transcriptStore';
 import type { Bindings, Config } from '../types';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
-import {
-  generationInFlightDetail,
-  transcriptGenerationLock,
-} from './transcriptGenerationLock';
+import { generationInFlightDetail, transcriptGenerationLock } from './transcriptGenerationLock';
 import type { EnrichmentGroup, SegmentAnchorInfo } from './transcriptRemap';
 import {
   recordingStartAnchors,

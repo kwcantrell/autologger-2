@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapLogCategory, type CategoryLike } from './categoryMatch';
+import { type CategoryLike, mapLogCategory } from './categoryMatch';
 
 const cats: CategoryLike[] = [
   { id: 'edit', name: 'EDIT', type: 'BUTTON', dropdown_options: [], on_label: '', off_label: '' },

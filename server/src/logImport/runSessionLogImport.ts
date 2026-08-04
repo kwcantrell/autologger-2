@@ -1,8 +1,8 @@
-import type { CategoryRecord } from '../studio';
+import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
 import type { SessionHub } from '../session/SessionHub';
 import type { TimecodeCtx } from '../session/sessionCore';
+import type { CategoryRecord } from '../studio';
 import type { Bindings, Config } from '../types';
-import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
 import { mapLogCategory } from './categoryMatch';
 import type { ParsedLogRow } from './sheetsFetch';
 import { secondsToTotalFrames } from './sheetTimecode';
@@ -81,9 +81,7 @@ export async function ensureTimedTranscript(input: {
       err instanceof TranscriptGenerateError &&
       (err.code === 'upstream' || err.code === 'in_flight');
     if (isUpstream) {
-      input.onProgress(
-        `Transcript generation failed (${err.message}); retrying once…`,
-      );
+      input.onProgress(`Transcript generation failed (${err.message}); retrying once…`);
       // Brief pause: clears in-flight slot races and transient DeepGram blips.
       await new Promise((r) => setTimeout(r, 2000));
       try {
