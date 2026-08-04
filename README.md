@@ -89,8 +89,8 @@ refactor of this one.
 - **Filesystem blobs** = audio bytes under `DATA_DIR/blobs/audio/<session_id>/<ordinal>_<uuid>.<ext>`;
   the hub holds only metadata + relative keys. Download streams bytes back with HTTP range
   support (416 on unsatisfiable ranges).
-- **Transcript generation, YouTube audio import, topic generation, and event
-  auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
+- **Transcript generation, YouTube audio import, Google Sheets log import, topic generation,
+  and event auto-generation are configuration-gated; `transcribe.csv` stays unavailable.**
   `POST …/transcript-words/generate`
   returns a clean `503 {detail}` (the frontend toasts it) unless `DEEPGRAM_API_KEY` is set, in
   which case it combines the session's recorded audio and returns `200 {words}` from
@@ -98,6 +98,10 @@ refactor of this one.
   `POST …/youtube-import` returns the same frozen `503 {detail}` unless an operator-provided
   `yt-dlp` binary is configured (or resolvable on `PATH`), in which case it downloads a
   video's audio and attaches it to the session — see "YouTube audio import" below.
+  `POST …/log-import` returns the same `503 {detail}` unless the operator explicitly sets
+  `SHEETS_LOG_IMPORT_ENABLED=1`, in which case it downloads a public Google Sheets workbook
+  and imports its log rows into the show's sessions as events — see "Google Sheets log
+  import" below.
   `POST …/topics/generate` returns the same frozen `503 {detail}` unless `CLAUDE_CLI_PATH`
   is set (the AI chat's gate), in which case it runs a single, non-conversational `claude`
   CLI turn against the session's transcript and returns `200 {topics}` — a crash-safe
@@ -160,6 +164,30 @@ directory only (config/plugin/secret-exfil lockdown — no inherited `process.en
 cannot discover an `ffmpeg` installed elsewhere on the host's normal `PATH`. If a given video
 needs `ffmpeg` for post-processing (format merging/remuxing), `ffmpeg` must be co-located next
 to the resolved `yt-dlp` binary or that import fails (`502`) for that video.
+
+### Google Sheets log import
+
+`POST /api/shows/:showId/log-import` returns `503 {detail}` unless the operator explicitly
+sets `SHEETS_LOG_IMPORT_ENABLED=1` (see `server/.env.example`) — public sheets need no API
+key, so the gate is an explicit boolean opt-in (the `AI_V2_ENABLED` style) rather than a
+key's presence. When enabled, the endpoint starts a detached job that downloads the public
+Google Sheets workbook named in the request, matches each sheet's name against the show's
+session titles, aligns each sheet's log rows to the matched session's transcript (generating
+a transcript first when the session has none — billed DeepGram spend when `DEEPGRAM_API_KEY`
+is set), and writes the resulting events into those sessions. The POST is scoped to members
+of the show's studio (a non-member gets the same `404` as a nonexistent show). `GET
+/api/log-import/:jobId` polls the job (`{status, lines, error}`); it is **not** egress-gated
+(it only reads local in-process state) and answers only the job's creator — any other
+authenticated requester gets the same `404` as an unknown id. Terminal jobs are pruned from
+memory about an hour after finishing.
+
+**Egress disclosure.** What leaves the machine: outbound HTTPS requests to `docs.google.com`
+only (the workbook-export endpoint); the downloaded workbook is processed locally. When: only
+when an operator has set `SHEETS_LOG_IMPORT_ENABLED` **and** a user starts an import — an
+unconfigured deployment never contacts Google. Note the DeepGram interaction above: on a
+deployment with `DEEPGRAM_API_KEY` set, an import over sessions without transcripts triggers
+billed transcript generation. Only enable this on a box you operate and are prepared to have
+make Google requests on your behalf.
 
 ### AI chat (Claude CLI)
 
@@ -516,8 +544,8 @@ was ported from: historical provenance, not a live parity claim.
 | `POST …/topics/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
-| `POST /api/shows/:showId/log-import` → **404** show · **400** bad body · **200** `{ job_id }` (public Sheets log import job) | — |
-| `GET /api/log-import/:jobId` → **404** unknown · **200** `{ status, lines, error }` | — |
+| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
+| `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
 | `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
@@ -591,7 +619,8 @@ authoritative, fully-commented list (including the config-gate keys below); copy
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
 present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
-transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import, and
+transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import,
+`SHEETS_LOG_IMPORT_ENABLED` for the Google Sheets log import, and
 `CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the

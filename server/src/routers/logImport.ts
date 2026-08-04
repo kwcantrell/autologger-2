@@ -1,18 +1,24 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import type { CategoryRecord } from '../studio';
-import type { AppEnv } from '../types';
+import { sheetsLogImportConfigured } from '../env';
 import {
   appendLogImportLine,
   createLogImportJob,
   getLogImportJob,
   setLogImportStatus,
 } from '../logImport/jobStore';
-import { runSessionLogImport, ensureTimedTranscript } from '../logImport/runSessionLogImport';
+import { ensureTimedTranscript, runSessionLogImport } from '../logImport/runSessionLogImport';
 import { fetchPublicWorkbookSheets } from '../logImport/sheetsFetch';
+import type { CategoryRecord } from '../studio';
+import type { AppEnv } from '../types';
 import { ApiError, timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
+
+const SHEETS_LOG_IMPORT_NOT_CONFIGURED_DETAIL =
+  'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
+const SHOW_NOT_FOUND_DETAIL = 'Show not found.';
+const JOB_NOT_FOUND_DETAIL = 'Log import job not found.';
 
 const bodySchema = z.object({
   spreadsheet_url: z.string().trim().min(1),
@@ -31,8 +37,27 @@ function categoriesFromShowRow(row: { categories_json?: unknown }): CategoryReco
 logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
   const catalog = c.get('catalog');
+  const user = c.get('user');
   const show = catalog.shows.getShowRow(showId);
-  if (!show) throw new ApiError(404, 'Show not found.');
+  if (!show) throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
+  // Studio-membership scope (the requireSession pattern in _helpers.ts): an
+  // authenticated user who isn't a member of the show's studio gets the SAME
+  // 404 as a nonexistent show — no existence oracle. An anonymous requester
+  // (user === null: REQUIRE_LOGIN=0 dev mode, or API-token auth) passes,
+  // exactly as on every sibling route.
+  if (user !== null) {
+    const studioId = String(show.studio_id ?? '');
+    if (!studioId || !catalog.auth.authUserHasStudio(user.id, studioId)) {
+      throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
+    }
+  }
+
+  // Configuration gate AFTER the 404 scope check (the youtube-import ordering
+  // in sessions.ts): the outbound docs.google.com fetch is operator opt-in —
+  // unconfigured deployments 503 before any body parsing or job creation.
+  if (!sheetsLogImportConfigured(c.env.config)) {
+    throw new ApiError(503, SHEETS_LOG_IMPORT_NOT_CONFIGURED_DETAIL);
+  }
 
   let raw: unknown;
   try {
@@ -43,7 +68,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) throw new ApiError(400, 'spreadsheet_url is required.');
 
-  const job = createLogImportJob();
+  const job = createLogImportJob(user?.id ?? null);
   const env = c.env;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
@@ -134,8 +159,16 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
 });
 
 logImportRouter.get('/api/log-import/:jobId', (c) => {
+  const user = c.get('user');
   const job = getLogImportJob(c.req.param('jobId'));
-  if (!job) throw new ApiError(404, 'Log import job not found.');
+  // Creator scope: an authenticated requester who didn't create the job gets
+  // the SAME 404 as an unknown id — no existence oracle. Anonymous requesters
+  // (REQUIRE_LOGIN=0 dev mode, or API-token auth) pass, mirroring the
+  // studio-membership pattern on sibling routes. Not egress-gated: this route
+  // only reads local in-process state.
+  if (!job || (user !== null && job.createdByUserId !== user.id)) {
+    throw new ApiError(404, JOB_NOT_FOUND_DETAIL);
+  }
   return c.json({
     status: job.status,
     lines: job.lines,

@@ -357,6 +357,19 @@ export function youtubeImportOpenNetworkRefused(env: Config): boolean {
   return openNetworkRefused(env);
 }
 
+// ── Google Sheets log import ────────────────────────────────────────────────
+
+/** Gate: the Sheets log import runs only when the operator EXPLICITLY opts in
+ * with `SHEETS_LOG_IMPORT_ENABLED=1` (or `true`/`yes` — the `AI_V2_ENABLED`
+ * parse). Public sheets need no API key, so unlike `DEEPGRAM_API_KEY`/
+ * `CLAUDE_CLI_PATH` there is no credential whose presence can serve as the
+ * opt-in — the flag is the opt-in. Unset/blank/other keeps the POST route's
+ * 503 and the server never issues the outbound docs.google.com fetch; the
+ * job-status GET is not gated (it reads local state only). */
+export function sheetsLogImportConfigured(env: Config): boolean {
+  return ['1', 'true', 'yes'].includes((env.SHEETS_LOG_IMPORT_ENABLED || '').trim().toLowerCase());
+}
+
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */
 export function adminMeta(env: Config): Record<string, boolean> {
   return {
