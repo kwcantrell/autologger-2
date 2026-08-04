@@ -25,15 +25,12 @@ import {
   validateYoutubeImportUrl,
   youtubeImportBodySchema,
 } from '../schemas';
+import { AUDIO_SEAM_PARTS_HEADER, parseAudioSeamPartsHeader } from '../session/audioSeamParts';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
-import {
-  AUDIO_SEAM_PARTS_HEADER,
-  parseAudioSeamPartsHeader,
-} from '../session/audioSeamParts';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
-import { enforceLocalAudioImportByteLimit } from './audio';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();
 
@@ -321,6 +318,25 @@ function requireLocalAudioImportContentType(raw: string | undefined): string {
   return trimmed;
 }
 
+/** Post-put rollback for local-audio-import (PR-3 review fix): once
+ * `ports.audio.put` has succeeded, undoing the import must remove BOTH the
+ * metadata row and the blob bytes — a row-only delete strands up to
+ * MAX_LOCAL_AUDIO_IMPORT_BYTES on disk, and `sync-from-disk` would resurrect
+ * the orphaned blob as a fresh segment row. Ordering mirrors the
+ * youtube-import handler's D7 posture ("never leave a metadata row pointing
+ * at a missing blob"): row first (synchronous, transactional), then the blob;
+ * the blob delete is best-effort (`.catch`) so rollback can never mask the
+ * original failure — its residue is a plain orphan file, cleaned up by any
+ * later successful rollback or operator sweep, never a dangling row. */
+async function rollbackLocalAudioImportSegment(
+  c: Context<AppEnv>,
+  sessionId: string,
+  seg: { id: string; r2_key: string },
+): Promise<void> {
+  getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+  await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
+}
+
 sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => {
   const sessionId = c.req.param('sessionId');
   const sessionRow = await requireSession(c, sessionId);
@@ -337,7 +353,10 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
 
   const declared = c.req.header('content-length');
   enforceLocalAudioImportByteLimit(declared !== undefined ? Number(declared) : null);
-  const payload = await c.req.arrayBuffer();
+  // Streaming read (PR-3 review fix): counts bytes and aborts with the SAME
+  // 413 the pre-check uses — a chunked or lying-Content-Length request can no
+  // longer buffer unbounded heap before the post-read backstop below.
+  const payload = await readLocalAudioImportBody(c.req.raw.body);
   if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
   enforceLocalAudioImportByteLimit(payload.byteLength);
 
@@ -365,7 +384,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   }
 
   if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
-    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    await rollbackLocalAudioImportSegment(c, sessionId, seg);
     throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
   }
 
@@ -375,9 +394,9 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
       durationS,
       ctx,
     });
-    getSessionHub(c, sessionId).setAudioSeamParts(seamParts);
+    getSessionHub(c, sessionId).appendAudioSeamParts(seamParts);
   } catch (err) {
-    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    await rollbackLocalAudioImportSegment(c, sessionId, seg);
     throw err;
   }
 

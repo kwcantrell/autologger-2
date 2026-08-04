@@ -49,6 +49,22 @@ export function serializeAudioSeamParts(parts: AudioSeamPart[]): string {
   return JSON.stringify(parts);
 }
 
+/** Concatenate a session's stored seam parts (the raw meta value) with a new
+ * import's parts, serialized for writing back. The meta key describes the
+ * session's FULL audio timeline across every imported take, in take order —
+ * the log-import sync consumer (`seamPartsForSession` → `syncLogRowsToSeams`)
+ * maps part *i* to the session-time window starting at the cumulative
+ * duration of all prior parts, so a repeated import must extend, never
+ * replace, the earlier takes' parts. Corrupt or absent prior meta counts as
+ * empty. */
+export function appendSerializedAudioSeamParts(
+  existingRaw: string | null,
+  parts: AudioSeamPart[],
+): string {
+  const existing = deserializeAudioSeamParts(existingRaw) ?? [];
+  return serializeAudioSeamParts([...existing, ...parts]);
+}
+
 export function deserializeAudioSeamParts(raw: string | null): AudioSeamPart[] | null {
   if (raw === null || raw === '') return null;
   try {
