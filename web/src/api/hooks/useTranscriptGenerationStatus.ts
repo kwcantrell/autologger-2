@@ -9,9 +9,12 @@ const IDLE_POLL_MS = 10_000;
 
 export type TranscriptGenerationStatusIdle = { in_flight: false };
 
+/** Busy status. `session_id`/`session_title` are BOTH null when the holder
+ * belongs to a studio the requester is not a member of — the server redacts
+ * the identifiers but still reports busy-ness (and `started_at`) truthfully. */
 export type TranscriptGenerationStatusBusy = {
   in_flight: true;
-  session_id: string;
+  session_id: string | null;
   session_title: string | null;
   started_at: string;
 };

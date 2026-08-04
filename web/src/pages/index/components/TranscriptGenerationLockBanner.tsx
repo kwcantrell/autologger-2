@@ -11,8 +11,9 @@ interface Props {
 }
 
 export function TranscriptGenerationLockBanner({ status, currentSessionId }: Props) {
-  const displayName = status.session_title?.trim() || status.session_id;
-  const crossSession = status.session_id !== currentSessionId;
+  // Null when the server redacted the holder (another studio's session) —
+  // session_title is null alongside it, so there is nothing to name or link.
+  const busySessionId = status.session_id;
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -21,6 +22,21 @@ export function TranscriptGenerationLockBanner({ status, currentSessionId }: Pro
   }, []);
 
   const elapsed = formatTranscriptGenerationElapsed(status.started_at, nowMs);
+
+  if (busySessionId === null) {
+    return (
+      <span
+        className="ml-2 self-center text-[0.78rem] text-v5-muted"
+        role="status"
+        aria-label="Transcript generation in progress"
+      >
+        Transcribing another studio&rsquo;s session&hellip; {elapsed}
+      </span>
+    );
+  }
+
+  const displayName = status.session_title?.trim() || busySessionId;
+  const crossSession = busySessionId !== currentSessionId;
 
   return (
     <span
@@ -31,11 +47,11 @@ export function TranscriptGenerationLockBanner({ status, currentSessionId }: Pro
       Transcribing &ldquo;
       {crossSession ? (
         <a
-          href={`/sessions/${encodeURIComponent(status.session_id)}`}
+          href={`/sessions/${encodeURIComponent(busySessionId)}`}
           className="text-v5-text underline decoration-v5-border-strong underline-offset-2 hover-always:text-v5-primary"
           onClick={(e) => {
             e.preventDefault();
-            navigate(`/sessions/${encodeURIComponent(status.session_id)}`);
+            navigate(`/sessions/${encodeURIComponent(busySessionId)}`);
           }}
         >
           {displayName}

@@ -7,6 +7,7 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   aiChatConfigured,
@@ -19,9 +20,10 @@ import {
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
   exceedsGroupSizeLimit,
+  GENERATION_IN_FLIGHT_DETAIL,
   generateTranscriptWords,
-  TranscriptGenerateError,
   TRANSCRIPT_UNAVAILABLE,
+  TranscriptGenerateError,
 } from '../node/generateTranscript';
 import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import {
@@ -76,6 +78,20 @@ function resolveCatalogSessionTitle(
   return String(row.title ?? '');
 }
 
+/** Whether the requester may see the lock holder's session identifiers.
+ * Mirrors `requireSession`'s studio-membership scope exactly (including the
+ * dev-anonymous `user === null` case, which sees everything on every sibling
+ * route): a logged-in non-member gets the busy-ness fact but never the
+ * holder's session id or title — the same existence/title oracle sibling
+ * routes close by 404ing non-members. */
+function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): boolean {
+  const user = c.get('user');
+  if (user === null) return true;
+  const catalog = c.get('catalog');
+  const studioId = catalog.sessions.getSessionStudioId(sessionId);
+  return studioId !== null && catalog.auth.authUserHasStudio(user.id, studioId);
+}
+
 // ── Transcript generation lock status (transcript-gen-lock-status) ───────────
 
 transcribeRouter.get('/api/transcript-generation/status', async (c) => {
@@ -83,11 +99,14 @@ transcribeRouter.get('/api/transcript-generation/status', async (c) => {
   if (holder === null) {
     return c.json({ in_flight: false });
   }
-  const catalog = c.get('catalog');
+  // Cross-tenant redaction: the lock is process-wide, so the holder may belong
+  // to a studio the requester is not a member of. Busy-ness stays truthful;
+  // the identifiers are nulled (same key set, null values, never absent keys).
+  const visible = requesterCanViewSession(c, holder.sessionId);
   return c.json({
     in_flight: true,
-    session_id: holder.sessionId,
-    session_title: resolveCatalogSessionTitle(catalog, holder.sessionId),
+    session_id: visible ? holder.sessionId : null,
+    session_title: visible ? resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId) : null,
     started_at: new Date(holder.startedAtMs).toISOString(),
   });
 });
@@ -128,6 +147,18 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     });
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
   } catch (err) {
+    // Cross-tenant redaction on the enriched 409: the in-flight detail names
+    // the HOLDER's session (title or id), which may belong to a studio the
+    // requester is not a member of. Swap in the identifier-free generic
+    // detail for non-members (and for the rare race where the holder released
+    // between the failed acquire and this catch, leaving nothing to check
+    // membership against). Same 409 status either way.
+    if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
+      const holder = transcriptGenerationLock.getLock();
+      if (holder === null || !requesterCanViewSession(c, holder.sessionId)) {
+        throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
+      }
+    }
     mapGenerateError(err);
   }
 });

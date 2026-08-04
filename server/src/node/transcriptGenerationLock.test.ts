@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  TranscriptGenerationLock,
-  generationInFlightDetail,
-} from './transcriptGenerationLock';
+import { generationInFlightDetail, TranscriptGenerationLock } from './transcriptGenerationLock';
 
 describe('TranscriptGenerationLock', () => {
   const lock = new TranscriptGenerationLock();
@@ -34,18 +31,12 @@ describe('TranscriptGenerationLock', () => {
     expect(lock.getLock()?.sessionId).toBe('sess-b');
   });
 
-  it('release in finally semantics: errors after acquire still free the slot', () => {
-    expect(lock.tryAcquire('sess-a', 100)).toBe(true);
-    try {
-      throw new Error('simulated route failure');
-    } catch {
-      // route handler would catch/rethrow after this
-    } finally {
-      lock.release();
-    }
-    expect(lock.getLock()).toBeNull();
-    expect(lock.tryAcquire('sess-b', 200)).toBe(true);
-  });
+  // NOTE (pr-3-review): release-on-failure of the PRODUCTION `finally` in
+  // generateTranscriptWords cannot be proven at this class level — a local
+  // try/finally that calls release() itself only re-tests `release` above.
+  // The real proof lives in transcribe.int.test.ts ("a failed run releases
+  // the process-wide lock on its own — no manual reset needed"), which runs
+  // a failing generation and asserts the slot is free BEFORE any reset.
 });
 
 describe('generationInFlightDetail', () => {
