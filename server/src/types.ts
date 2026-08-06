@@ -97,6 +97,13 @@ export interface Config {
    * registry and ceiling (AI_CHAT_MAX_CONCURRENT) deliberately, so both
    * features bound the operator's exposure together. */
   AI_V2_MAX_BUDGET_USD: string;
+  /** Google Sheets log import (POST /api/shows/:showId/log-import). Public
+   * sheets need no API key, so the gate is an EXPLICIT boolean opt-in
+   * (`AI_V2_ENABLED` style — `1`/`true`/`yes` enables) rather than a key's
+   * presence: unset/blank/other keeps the endpoint's 503 and the server never
+   * fetches from docs.google.com. Optional so existing full-object `Config`
+   * literals elsewhere (pre-dating this field) keep type-checking. */
+  SHEETS_LOG_IMPORT_ENABLED?: string;
   /** YouTube audio import (youtube-audio-import, design D2). NOT a raw env
    * string like the fields above — it's the absolute yt-dlp binary path
    * resolved ONCE at startup (`resolveYtDlpPath` in env.ts, called from the

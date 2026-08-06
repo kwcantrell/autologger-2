@@ -88,7 +88,8 @@ export function deepgramModel(env: Config): string {
 
 // ── Shared: open-network refusal ────────────────────────────────────────────
 // Every outbound, spend-something-per-request feature (AI chat, AI v2,
-// YouTube import) refuses to serve when auth is open on a reachable network —
+// YouTube import, Sheets log import) refuses to serve when auth is open on a
+// reachable network —
 // REQUIRE_LOGIN disabled AND no IP_ALLOWLIST AND a non-loopback bind. One
 // core predicate, three feature-named call sites (kept as separate exported
 // functions — not a single shared export — so each feature's call site/tests
@@ -354,6 +355,26 @@ export function ytDlpConfigured(env: Config): boolean {
  * set AND the bind is non-loopback. This neutralizes the unauthenticated-
  * reachability edge of the PATH-inclusive config gate above. */
 export function youtubeImportOpenNetworkRefused(env: Config): boolean {
+  return openNetworkRefused(env);
+}
+
+// ── Google Sheets log import ────────────────────────────────────────────────
+
+/** Gate: the Sheets log import runs only when the operator EXPLICITLY opts in
+ * with `SHEETS_LOG_IMPORT_ENABLED=1` (or `true`/`yes` — the `AI_V2_ENABLED`
+ * parse). Public sheets need no API key, so unlike `DEEPGRAM_API_KEY`/
+ * `CLAUDE_CLI_PATH` there is no credential whose presence can serve as the
+ * opt-in — the flag is the opt-in. Unset/blank/other keeps the POST route's
+ * 503 and the server never issues the outbound docs.google.com fetch; the
+ * job-status GET is not gated (it reads local state only). */
+export function sheetsLogImportConfigured(env: Config): boolean {
+  return ['1', 'true', 'yes'].includes((env.SHEETS_LOG_IMPORT_ENABLED || '').trim().toLowerCase());
+}
+
+/** Sheets log import can trigger paid DeepGram transcription of session audio,
+ * so it shares the open-network refusal of the other spend-per-request
+ * features (see the shared predicate above). */
+export function sheetsLogImportOpenNetworkRefused(env: Config): boolean {
   return openNetworkRefused(env);
 }
 

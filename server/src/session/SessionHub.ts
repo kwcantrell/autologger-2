@@ -13,6 +13,12 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { Clock } from '../clock';
 import { systemClock } from '../clock';
+import {
+  AUDIO_SEAM_PARTS_META_KEY,
+  type AudioSeamPart,
+  appendSerializedAudioSeamParts,
+  deserializeAudioSeamParts,
+} from './audioSeamParts';
 import { AudioStore } from './audioStore';
 import { DashboardStore } from './dashboardStore';
 import { EventStore } from './eventStore';
@@ -186,6 +192,9 @@ export class SessionHub {
   addEvent(input: Parameters<EventStore['addEvent']>[0]) {
     return this.inTxn(() => this.events.addEvent(input));
   }
+  addEventAtTotalFrames(input: Parameters<EventStore['addEventAtTotalFrames']>[0]) {
+    return this.inTxn(() => this.events.addEventAtTotalFrames(input));
+  }
   listEvents(input: Parameters<EventStore['listEvents']>[0]) {
     return this.events.listEvents(input);
   }
@@ -312,6 +321,24 @@ export class SessionHub {
   }
   syncAudioFromBlobs(known: Parameters<AudioStore['syncAudioFromBlobs']>[0]) {
     return this.inTxn(() => this.audio.syncAudioFromBlobs(known));
+  }
+  /** Append this import's seam parts to the session's stored list (PR-3
+   * review fix): the meta key describes the session's FULL audio timeline
+   * across all imported takes, in take order — the log-import sync consumer
+   * (`seamPartsForSession` → `syncLogRowsToSeams`) maps part windows to
+   * cumulative session time, so a repeated import (take 2, 3, …) must extend,
+   * never replace, the prior takes' parts. Read-modify-write stays inside the
+   * one transaction. */
+  appendAudioSeamParts(parts: AudioSeamPart[]) {
+    return this.inTxn(() => {
+      this.core.metaSet(
+        AUDIO_SEAM_PARTS_META_KEY,
+        appendSerializedAudioSeamParts(this.core.metaGet(AUDIO_SEAM_PARTS_META_KEY), parts),
+      );
+    });
+  }
+  getAudioSeamParts(): AudioSeamPart[] | null {
+    return deserializeAudioSeamParts(this.core.metaGet(AUDIO_SEAM_PARTS_META_KEY));
   }
 
   // --- transcript delegates ---

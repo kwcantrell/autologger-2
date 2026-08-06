@@ -7,27 +7,25 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
-import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   aiChatConfigured,
   aiChatMaxConcurrent,
   aiChatOpenNetworkRefused,
   deepgramConfigured,
-  deepgramModel,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
 } from '../env';
-import { mergeAudioSegments } from '../node/audioMerge';
-import type { TranscribeGroupResult } from '../node/deepgram';
-import { DeepgramUpstreamError, transcribeGroup } from '../node/deepgram';
-import type { EnrichmentGroup, SegmentAnchorInfo } from '../node/transcriptRemap';
 import {
-  recordingStartAnchors,
-  remapTranscriptEnrichment,
-  remapTranscriptWords,
-} from '../node/transcriptRemap';
+  DEEPGRAM_MAX_GROUP_BYTES,
+  exceedsGroupSizeLimit,
+  GENERATION_IN_FLIGHT_DETAIL,
+  generateTranscriptWords,
+  TRANSCRIPT_UNAVAILABLE,
+  TranscriptGenerateError,
+} from '../node/generateTranscript';
+import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import {
   topicCreateSchema,
   topicUpdateSchema,
@@ -42,47 +40,76 @@ import { generateTopicsTurn } from './topicGenerate';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
-const UNAVAILABLE = 'Transcription is unavailable on this deployment.';
+const UNAVAILABLE = TRANSCRIPT_UNAVAILABLE;
 
-// ── Transcript generation (design: deepgram-transcription) ──────────────────
-
-const GENERATION_IN_FLIGHT_DETAIL =
-  'A transcript generation run is already in progress on this deployment; try again once it completes.';
-const NO_AUDIO_DETAIL = 'This session has no recorded audio to transcribe.';
-const ALL_UNREADABLE_DETAIL =
-  "None of this session's recorded audio segments could be read for transcription.";
-const NO_SPEECH_DETAIL =
-  "DeepGram detected no speech in this session's audio; the existing transcript was left unchanged.";
-const UPSTREAM_FAILURE_DETAIL = 'DeepGram transcription failed or timed out.';
-const ABORTED_DETAIL =
-  'Transcript generation request was aborted before transcription started; no provider request was made.';
-
-/** DeepGram's documented pre-recorded upload limit (2 GB = 2×10⁹ bytes; design
- * D2 / the phase-1 spike's size-limit math — a 3h stereo PCM session is the
- * real case that crosses it). */
-export const DEEPGRAM_MAX_GROUP_BYTES = 2_000_000_000;
-
-function sizeLimitDetail(bytes: number): string {
-  return `Combined audio for one codec group is ${bytes} bytes, over DeepGram's ${DEEPGRAM_MAX_GROUP_BYTES}-byte (2 GB) upload limit.`;
-}
-
-/** Pure predicate so the group-size cutoff is unit-testable without spooling
- * a real 2 GB file (design D2 / spike task 1.1's size-limit math). */
-export function exceedsGroupSizeLimit(bytes: number): boolean {
-  return bytes > DEEPGRAM_MAX_GROUP_BYTES;
-}
+// Re-export for existing tests that import the size-limit helpers from this module.
+export { DEEPGRAM_MAX_GROUP_BYTES, exceedsGroupSizeLimit };
 
 export function enforceGroupSizeLimit(bytes: number): void {
   if (exceedsGroupSizeLimit(bytes)) {
-    throw new ApiError(502, sizeLimitDetail(bytes));
+    throw new ApiError(
+      502,
+      `Combined audio for one codec group is ${bytes} bytes, over DeepGram's ${DEEPGRAM_MAX_GROUP_BYTES}-byte (2 GB) upload limit.`,
+    );
   }
 }
 
-/** Single process-wide slot (design D9): at most one generation run at a
- * time, across every session — a stricter bound than "one per session", so a
- * plain module-level flag suffices without a per-session map. Cleared in the
- * route's `finally`, so it can never wedge true across requests. */
-let generationInFlight = false;
+function mapGenerateError(err: unknown): never {
+  if (err instanceof TranscriptGenerateError) {
+    const status =
+      err.code === 'unavailable'
+        ? 503
+        : err.code === 'in_flight'
+          ? 409
+          : err.code === 'upstream' || err.code === 'oversize'
+            ? 502
+            : 400;
+    throw new ApiError(status, err.message);
+  }
+  throw err;
+}
+
+function resolveCatalogSessionTitle(
+  catalog: AppEnv['Variables']['catalog'],
+  sessionId: string,
+): string | null {
+  const row = catalog.sessions.getSessionIndexRow(sessionId);
+  if (row === null) return null;
+  return String(row.title ?? '');
+}
+
+/** Whether the requester may see the lock holder's session identifiers.
+ * Mirrors `requireSession`'s studio-membership scope exactly (including the
+ * dev-anonymous `user === null` case, which sees everything on every sibling
+ * route): a logged-in non-member gets the busy-ness fact but never the
+ * holder's session id or title — the same existence/title oracle sibling
+ * routes close by 404ing non-members. */
+function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): boolean {
+  const user = c.get('user');
+  if (user === null) return true;
+  const catalog = c.get('catalog');
+  const studioId = catalog.sessions.getSessionStudioId(sessionId);
+  return studioId !== null && catalog.auth.authUserHasStudio(user.id, studioId);
+}
+
+// ── Transcript generation lock status (transcript-gen-lock-status) ───────────
+
+transcribeRouter.get('/api/transcript-generation/status', async (c) => {
+  const holder = transcriptGenerationLock.getLock();
+  if (holder === null) {
+    return c.json({ in_flight: false });
+  }
+  // Cross-tenant redaction: the lock is process-wide, so the holder may belong
+  // to a studio the requester is not a member of. Busy-ness stays truthful;
+  // the identifiers are nulled (same key set, null values, never absent keys).
+  const visible = requesterCanViewSession(c, holder.sessionId);
+  return c.json({
+    in_flight: true,
+    session_id: visible ? holder.sessionId : null,
+    session_title: visible ? resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId) : null,
+    started_at: new Date(holder.startedAtMs).toISOString(),
+  });
+});
 
 // ── Legacy CSV download (transcription unavailable) ─────────────────────────────
 
@@ -107,107 +134,32 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
   if (!deepgramConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
   }
-  if (generationInFlight) {
-    throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
-  }
-  generationInFlight = true;
 
-  const blobStore = c.env.ports.audio;
-  let scratchDir: string | null = null;
   try {
-    const segments = getSessionHub(c, sessionId).listAudioSegments();
-    if (segments.length === 0) {
-      throw new ApiError(400, NO_AUDIO_DETAIL);
-    }
-
-    scratchDir = await mkdtemp(join(blobStore.scratchRoot(), `${sessionId}-`));
-    const inputPaths = segments.map((s) => blobStore.resolveKeyPath(s.r2_key));
-
-    // Concat + probe is genuinely long disk I/O; no hub reference is held
-    // across this await (each subsequent hub access below re-acquires via
-    // getSessionHub — idle eviction may have closed the prior handle).
-    const { groups } = await mergeAudioSegments(inputPaths, scratchDir);
-    if (groups.length === 0) {
-      throw new ApiError(400, ALL_UNREADABLE_DETAIL);
-    }
-
-    if (c.req.raw.signal?.aborted) {
-      throw new ApiError(400, ABORTED_DETAIL);
-    }
-
-    const apiKey = c.env.config.DEEPGRAM_API_KEY;
-    const model = deepgramModel(c.env.config);
-    const enrichmentGroups: EnrichmentGroup[] = [];
-    for (const group of groups) {
-      const { size } = await stat(group.outPath);
-      enforceGroupSizeLimit(size);
-      if (c.req.raw.signal?.aborted) {
-        throw new ApiError(400, ABORTED_DETAIL);
-      }
-      let result: TranscribeGroupResult;
-      try {
-        // The provider call itself: per spec, a client disconnect from here
-        // on does NOT abandon the run — no abort-check after this point.
-        result = await transcribeGroup({
-          outPath: group.outPath,
-          family: group.family,
-          apiKey,
-          model,
-        });
-      } catch (err) {
-        if (err instanceof DeepgramUpstreamError) {
-          throw new ApiError(502, UPSTREAM_FAILURE_DETAIL);
-        }
-        throw err;
-      }
-      // EnrichmentGroup extends GroupWords, so this same per-group array
-      // feeds both remapTranscriptWords and remapTranscriptEnrichment below.
-      enrichmentGroups.push({
-        segments: group.segments,
-        words: result.words,
-        paragraphs: result.paragraphs,
-        sentiments: result.sentiments,
-      });
-    }
-
-    // Re-acquire the hub after the merge/provider awaits above.
-    const events = getSessionHub(c, sessionId).exportEvents();
-    const anchors = recordingStartAnchors(events);
-    const segmentInfo: SegmentAnchorInfo[] = segments.map((s, i) => ({
-      path: inputPaths[i],
-      ordinal: s.ordinal,
-      recordingOrdinal: s.recording_ordinal,
-    }));
-    const remappedWords = remapTranscriptWords(
-      enrichmentGroups,
-      segmentInfo,
-      anchors,
-      timecodeCtx(row).frameRate,
-    );
-
-    if (remappedWords.length === 0) {
-      throw new ApiError(400, NO_SPEECH_DETAIL);
-    }
-
-    // Enrichment is remapped here, at the same point remapTranscriptWords ran
-    // above — i.e. only after ALL groups' provider calls succeeded (design
-    // D5/D10) — so a failed run persists neither words nor enrichment, and
-    // its output's `{ paragraphs, sentiment }` shape matches the replace
-    // RPC's enrichment param field-for-field (passed straight through).
-    const remappedEnrichment = remapTranscriptEnrichment(enrichmentGroups, segmentInfo, anchors);
-
-    // Replace only after ALL groups succeeded (design D5/D10) — a failed run
-    // never reaches this call, so pre-existing words and enrichment are left
-    // untouched. Words + enrichment go together in the one atomic RPC (no
-    // second write path).
-    const words = getSessionHub(c, sessionId).replaceTranscriptWords(
-      remappedWords,
-      remappedEnrichment,
-    );
+    const words = await generateTranscriptWords({
+      config: c.env.config,
+      audio: c.env.ports.audio,
+      getHub: () => getSessionHub(c, sessionId),
+      ctx: timecodeCtx(row),
+      sessionId,
+      signal: c.req.raw.signal,
+      resolveSessionTitle: (id) => resolveCatalogSessionTitle(c.get('catalog'), id),
+    });
     return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
-  } finally {
-    generationInFlight = false;
-    if (scratchDir) await rm(scratchDir, { recursive: true, force: true });
+  } catch (err) {
+    // Cross-tenant redaction on the enriched 409: the in-flight detail names
+    // the HOLDER's session (title or id), which may belong to a studio the
+    // requester is not a member of. Swap in the identifier-free generic
+    // detail for non-members (and for the rare race where the holder released
+    // between the failed acquire and this catch, leaving nothing to check
+    // membership against). Same 409 status either way.
+    if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
+      const holder = transcriptGenerationLock.getLock();
+      if (holder === null || !requesterCanViewSession(c, holder.sessionId)) {
+        throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
+      }
+    }
+    mapGenerateError(err);
   }
 });
 

@@ -219,6 +219,7 @@ function statusFixture(): SessionStatus {
 
 function mockApi() {
   mockedApiFetch.mockImplementation(async (path: string) => {
+    if (path === 'transcript-generation/status') return { in_flight: false };
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/audio/segments')) {
       return { segments: SEGMENTS, has_audio: true } satisfies AudioSegmentsResponse;

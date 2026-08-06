@@ -24,7 +24,9 @@
 // (assert-only otherwise — see `server/src/test/apiFixtures.ts` for why a
 // missing fixture fails instead of being written.)
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { clearLogImportJobs } from '../logImport/jobStore';
+import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { expectCapturedResponse } from '../test/apiFixtures';
 import { app, env, envWith } from '../test/harness';
 import {
@@ -789,5 +791,134 @@ describe('teams', () => {
       },
       res,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transcript generation status — both sides of the `in_flight` discriminated
+// union (pr-3-review test-gap wave). `.ts` fixtures: the client type carries
+// the literal discriminants `in_flight: false` / `in_flight: true`, which a
+// JSON import would widen to `boolean` (design D4's wrinkle).
+// ---------------------------------------------------------------------------
+
+describe('GET /api/transcript-generation/status', () => {
+  it('idle matches the captured fixture', async () => {
+    const res = await app.request(
+      '/api/transcript-generation/status',
+      { method: 'GET' },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'transcriptGenerationStatusIdle',
+        endpoint: 'GET /api/transcript-generation/status (idle)',
+        format: 'ts',
+        exportName: 'transcriptGenerationStatusIdle',
+      },
+      res,
+    );
+  });
+
+  it('busy matches the captured fixture (dev-anonymous requester sees the holder)', async () => {
+    // The MEMBER/dev-anonymous view: full identifiers. The cross-tenant
+    // REDACTED view differs only by `session_id`/`session_title` going null
+    // (same key set — see transcribe.int.test.ts), so the web tier covers it
+    // type-level off this same fixture with a nulled spread rather than a
+    // second capture.
+    const studioId = seedStudio();
+    const showId = seedShow({ studioId });
+    const sessionId = seedSession({ showId, episode: '002', title: 'ATS - 2' });
+    // Fixed acquisition instant — redacted to `#`s anyway, but deterministic.
+    expect(transcriptGenerationLock.tryAcquire(sessionId, 1_700_000_000_000)).toBe(true);
+    try {
+      const res = await app.request(
+        '/api/transcript-generation/status',
+        { method: 'GET' },
+        { ...env },
+      );
+      await expectCapturedResponse(
+        {
+          name: 'transcriptGenerationStatusBusy',
+          endpoint: 'GET /api/transcript-generation/status (busy, holder visible)',
+          format: 'ts',
+          exportName: 'transcriptGenerationStatusBusy',
+        },
+        res,
+      );
+    } finally {
+      transcriptGenerationLock.reset();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sheets log import — the POST job handle and a TERMINAL job status
+// (pr-3-review test-gap wave). Needs the config gate + loopback HOST (the
+// logImport.int.test.ts `enabledEnv` pattern) and a stubbed global fetch, so
+// the async job reaches a deterministic terminal state with no egress: the
+// stub serves HTML, which fetchPublicWorkbookSheets rejects with a fixed
+// message on both of its candidate URLs.
+// ---------------------------------------------------------------------------
+
+describe('log-import', () => {
+  it('POST /api/shows/:showId/log-import and GET /api/log-import/:jobId (terminal) match the captured fixtures', async () => {
+    const studioId = seedStudio();
+    const showId = seedShow({ studioId });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
+    );
+    try {
+      const bindings = envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' });
+      const post = await app.request(
+        `/api/shows/${showId}/log-import`,
+        {
+          method: 'POST',
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            spreadsheet_url: 'https://docs.google.com/spreadsheets/d/abc123xyz/edit',
+          }),
+        },
+        bindings,
+      );
+      // The capture consumes the body (redacting the uuid), so the live job id
+      // for the GET below has to come from a clone read first.
+      const postClone = post.clone();
+      await expectCapturedResponse(
+        {
+          name: 'logImportJobCreate',
+          endpoint: 'POST /api/shows/:showId/log-import',
+          format: 'json',
+        },
+        post,
+      );
+      const { job_id } = (await postClone.json()) as { job_id: string };
+
+      // Poll to the terminal state; capture THAT, not a racy in-flight body.
+      let status = 'queued';
+      for (let i = 0; i < 80 && status !== 'failed' && status !== 'completed'; i++) {
+        const probe = await app.request(`/api/log-import/${job_id}`, {}, { ...env });
+        expect(probe.status).toBe(200);
+        status = ((await probe.json()) as { status: string }).status;
+        if (status !== 'failed' && status !== 'completed') {
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      }
+      expect(status).toBe('failed');
+
+      const get = await app.request(`/api/log-import/${job_id}`, {}, { ...env });
+      await expectCapturedResponse(
+        {
+          name: 'logImportJobStatus',
+          endpoint: 'GET /api/log-import/:jobId (terminal: failed download)',
+          format: 'ts',
+          exportName: 'logImportJobStatus',
+        },
+        get,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      clearLogImportJobs();
+    }
   });
 });

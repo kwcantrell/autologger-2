@@ -60,6 +60,7 @@ vi.mock('./components/V6Rail', () => ({
     onSelectSession: (sid: string) => void;
     onCloseSession: () => void;
     onNewSession: () => void;
+    onBatchImport: () => void;
     onOpenSettings: () => void;
   }) => (
     <div data-testid="rail" data-active-session-id={props.activeSessionId}>
@@ -75,6 +76,7 @@ vi.mock('./components/V6Rail', () => ({
       />
       <button type="button" data-testid="rail-close" onClick={() => props.onCloseSession()} />
       <button type="button" data-testid="rail-new" onClick={() => props.onNewSession()} />
+      <button type="button" data-testid="rail-batch" onClick={() => props.onBatchImport()} />
       <button type="button" id="v6-btn-settings" onClick={() => props.onOpenSettings()} />
     </div>
   ),
@@ -120,6 +122,14 @@ vi.mock('./components/NewSessionModal', () => ({
       data-testid="new-session-create"
       onClick={() => props.onCreated('created-1')}
     />
+  ),
+}));
+
+vi.mock('./components/BatchImportModal', () => ({
+  BatchImportModal: (props: { profile?: unknown; onClose: () => void }) => (
+    <div role="dialog" aria-label="Batch Import" data-testid="batch-import-modal">
+      <button type="button" data-testid="batch-import-close" onClick={props.onClose} />
+    </div>
   ),
 }));
 
@@ -225,6 +235,17 @@ describe('AppShell routing (URL-addressed session state)', () => {
 
     expect(memory.history).toEqual(['/', '/sessions/created-1']);
     expect(workspaceSessionId()).toBe('created-1');
+  });
+
+  it('Batch Import opens the empty batch-import modal and closes via its close control', () => {
+    renderShell();
+
+    expect(screen.queryByTestId('batch-import-modal')).toBeNull();
+    fireEvent.click(screen.getByTestId('rail-batch'));
+    expect(screen.getByTestId('batch-import-modal')).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId('batch-import-close'));
+    expect(screen.queryByTestId('batch-import-modal')).toBeNull();
   });
 
   it('the studio-switch save path navigates to / like the close control, stopping an originated roll', () => {

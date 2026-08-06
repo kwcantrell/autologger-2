@@ -25,10 +25,16 @@ import {
   validateYoutubeImportUrl,
   youtubeImportBodySchema,
 } from '../schemas';
+import {
+  AUDIO_SEAM_PARTS_HEADER,
+  type AudioSeamPart,
+  parseAudioSeamPartsHeader,
+} from '../session/audioSeamParts';
 import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
 import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
 import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();
 
@@ -251,6 +257,14 @@ const YOUTUBE_IMPORT_AT_CAPACITY_DETAIL =
   'The server is already running the maximum number of concurrent YouTube imports; try again shortly.';
 const YOUTUBE_IMPORT_ROLLING_DETAIL =
   'YouTube import is refused while this session is actively recording; stop the recording and try again.';
+const LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL = 'duration_s must be a positive finite number.';
+/** batch-audio-import design D11 — upper bound keeps Date ISO timestamps and frame math representable. */
+const LOCAL_AUDIO_IMPORT_MAX_DURATION_S = 86_400; // 24 hours
+const LOCAL_AUDIO_IMPORT_DURATION_EXCEEDS_MAX_DETAIL = `duration_s exceeds the maximum supported duration of ${LOCAL_AUDIO_IMPORT_MAX_DURATION_S} seconds (24 hours).`;
+const LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL =
+  'Content-Type header is required and must be non-empty.';
+const LOCAL_AUDIO_IMPORT_ROLLING_DETAIL =
+  'Local audio import is refused while this session is actively recording; stop the recording and try again.';
 
 // design D12: `Recording N Started`/`Stopped` internal-event message shape —
 // parsed back out to compute the next collision-proof recording ordinal.
@@ -284,6 +298,114 @@ function nextRecordingOrdinal(hub: ReturnType<typeof getSessionHub>): number {
   }
   return maxOrdinal + 1;
 }
+
+/** batch-audio-import design D11 — positive finite `duration_s` query param. */
+function parseLocalAudioImportDurationS(raw: string | undefined): number {
+  if (raw === undefined || raw === '') {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_INVALID_DURATION_DETAIL);
+  }
+  if (n > LOCAL_AUDIO_IMPORT_MAX_DURATION_S) {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_DURATION_EXCEEDS_MAX_DETAIL);
+  }
+  return n;
+}
+
+function requireLocalAudioImportContentType(raw: string | undefined): string {
+  const trimmed = raw?.trim() ?? '';
+  if (trimmed === '') {
+    throw new ApiError(400, LOCAL_AUDIO_IMPORT_MISSING_CONTENT_TYPE_DETAIL);
+  }
+  return trimmed;
+}
+
+/** Post-put rollback for local-audio-import (PR-3 review fix): once
+ * `ports.audio.put` has succeeded, undoing the import must remove BOTH the
+ * metadata row and the blob bytes — a row-only delete strands up to
+ * MAX_LOCAL_AUDIO_IMPORT_BYTES on disk, and `sync-from-disk` would resurrect
+ * the orphaned blob as a fresh segment row. Ordering mirrors the
+ * youtube-import handler's D7 posture ("never leave a metadata row pointing
+ * at a missing blob"): row first (synchronous, transactional), then the blob;
+ * the blob delete is best-effort (`.catch`) so rollback can never mask the
+ * original failure — its residue is a plain orphan file, cleaned up by any
+ * later successful rollback or operator sweep, never a dangling row. */
+async function rollbackLocalAudioImportSegment(
+  c: Context<AppEnv>,
+  sessionId: string,
+  seg: { id: string; r2_key: string },
+): Promise<void> {
+  getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+  await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
+}
+
+sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const sessionRow = await requireSession(c, sessionId);
+  const ctx = timecodeCtx(sessionRow);
+
+  const durationS = parseLocalAudioImportDurationS(c.req.query('duration_s'));
+  const mimeType = requireLocalAudioImportContentType(c.req.header('content-type'));
+  let seamParts: AudioSeamPart[];
+  try {
+    seamParts = parseAudioSeamPartsHeader(c.req.header(AUDIO_SEAM_PARTS_HEADER), durationS);
+  } catch (err) {
+    throw new ApiError(400, err instanceof Error ? err.message : 'Invalid X-Audio-Seam-Parts.');
+  }
+
+  const declared = c.req.header('content-length');
+  enforceLocalAudioImportByteLimit(declared !== undefined ? Number(declared) : null);
+  // Streaming read (PR-3 review fix): counts bytes and aborts with the SAME
+  // 413 the pre-check uses — a chunked or lying-Content-Length request can no
+  // longer buffer unbounded heap before the post-read backstop below.
+  const payload = await readLocalAudioImportBody(c.req.raw.body);
+  if (payload.byteLength === 0) throw new ApiError(400, 'Audio payload is empty.');
+  enforceLocalAudioImportByteLimit(payload.byteLength);
+
+  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+    throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
+  }
+
+  const hub = getSessionHub(c, sessionId);
+  const recordingOrdinal = nextRecordingOrdinal(hub);
+  const nowMs = c.env.ports.clock.now();
+  const startedAtUtc = isoZ(new Date(nowMs));
+  const endedAtUtc = isoZ(new Date(nowMs + durationS * 1000));
+  const seg = hub.addAudioSegment({
+    sessionId,
+    mimeType,
+    startedAtUtc,
+    endedAtUtc,
+    recordingOrdinal,
+  });
+  try {
+    await c.env.ports.audio.put(seg.r2_key, payload, { contentType: mimeType });
+  } catch (err) {
+    await getSessionHub(c, sessionId).deleteAudioSegment(seg.id);
+    throw err;
+  }
+
+  if (getSessionHub(c, sessionId).statusLive(ctx).is_rolling) {
+    await rollbackLocalAudioImportSegment(c, sessionId, seg);
+    throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
+  }
+
+  try {
+    getSessionHub(c, sessionId).anchorImportedTake({
+      recordingOrdinal,
+      durationS,
+      ctx,
+    });
+    getSessionHub(c, sessionId).appendAudioSeamParts(seamParts);
+  } catch (err) {
+    await rollbackLocalAudioImportSegment(c, sessionId, seg);
+    throw err;
+  }
+
+  return c.json({ ok: true });
+});
 
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   const sessionId = c.req.param('sessionId');

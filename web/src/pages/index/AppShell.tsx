@@ -8,6 +8,7 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
+import { BatchImportModal } from './components/BatchImportModal';
 import { HomeSettingsModal } from './components/HomeSettingsModal';
 import { NewSessionModal } from './components/NewSessionModal';
 import { OnboardingPanel } from './components/OnboardingPanel';
@@ -44,6 +45,7 @@ export function AppShell() {
   // this is a plain boolean read off the URL, same idiom as onSessionRoute.
   const [onTeamsRoute] = useRoute('/teams');
   const [showNewSession, setShowNewSession] = useState(false);
+  const [showBatchImport, setShowBatchImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [ytImportPending, setYtImportPending] = useState(false);
   const [ytImportError, setYtImportError] = useState<{
@@ -224,6 +226,10 @@ export function AppShell() {
               setShowNewSession(true);
               closeRail();
             }}
+            onBatchImport={() => {
+              setShowBatchImport(true);
+              closeRail();
+            }}
             onOpenSettings={() => {
               handleOpenSettings();
               closeRail();
@@ -315,6 +321,10 @@ export function AppShell() {
                 onClose={() => setShowNewSession(false)}
                 onCreated={handleSelectSession}
               />
+            )}
+
+            {showBatchImport && (
+              <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
             )}
 
             {ytImportError && (

@@ -1,14 +1,16 @@
 // Lossless concatenation of recorded audio segments into per-codec-family
 // container files via mediabunny (pure TS, no ffmpeg/WebCodecs). Packets are
 // copied — never decoded or re-encoded. Each segment is probed by bytes
-// (never trusted by mime_type/extension) and classified into one of three
-// families: Opus, AAC, PCM. Segments are grouped in input order; a family or
-// stream-parameter (sample rate / channel count) change starts a new
+// (never trusted by mime_type/extension) and classified into one of four
+// families: Opus, AAC, PCM, MP3. Segments are grouped in input order; a family
+// or stream-parameter (sample rate / channel count) change starts a new
 // sub-group rather than failing the run. Unreadable/unparseable/unsupported
 // segments are skipped, not fatal. Opus groups write WebM, AAC groups write
-// MP4, PCM groups write WAVE — one packet loop shared by all three, spooled
+// MP4, PCM groups write WAVE — one packet loop shared by those three, spooled
 // through temp files (FilePathSource/FilePathTarget) — no BufferTarget, so
-// callers never hold a whole session's audio in memory.
+// callers never hold a whole session's audio in memory. MP3 cannot be
+// packet-concatenated here (no container remux target); each MP3 segment is
+// passed through as its own group pointing at the source file for DeepGram.
 //
 // Consumed by scripts/merge-session-audio.ts and (transcript generation) the
 // transcribe router; not part of the HTTP surface itself.
@@ -32,7 +34,7 @@ import {
   WebMOutputFormat,
 } from 'mediabunny';
 
-export type CodecFamily = 'opus' | 'aac' | 'pcm';
+export type CodecFamily = 'opus' | 'aac' | 'pcm' | 'mp3';
 
 /** One input segment's position within its group's output file. */
 export interface SegmentOffset {
@@ -41,7 +43,7 @@ export interface SegmentOffset {
   durationSeconds: number;
 }
 
-/** One packet-copied output file: all its segments share codec + stream params. */
+/** One packet-copied (or MP3 pass-through) output: segments share codec + stream params. */
 export interface MergedGroup {
   family: CodecFamily;
   outPath: string;
@@ -64,7 +66,11 @@ type DecoderConfig = NonNullable<Awaited<ReturnType<InputAudioTrack['getDecoderC
 
 const PCM_CODECS: readonly string[] = PCM_AUDIO_CODECS;
 
-const FAMILY_CONTAINER: Record<CodecFamily, { ext: string; makeFormat: () => OutputFormat }> = {
+/** mp3 is deliberately absent: MP3 runs pass through unmerged (passThroughMp3Group). */
+const FAMILY_CONTAINER: Record<
+  Exclude<CodecFamily, 'mp3'>,
+  { ext: string; makeFormat: () => OutputFormat }
+> = {
   opus: { ext: 'webm', makeFormat: () => new WebMOutputFormat() },
   aac: { ext: 'mp4', makeFormat: () => new Mp4OutputFormat() },
   pcm: { ext: 'wav', makeFormat: () => new WavOutputFormat() },
@@ -73,6 +79,7 @@ const FAMILY_CONTAINER: Record<CodecFamily, { ext: string; makeFormat: () => Out
 function classifyFamily(codec: AudioCodec): CodecFamily | null {
   if (codec === 'opus') return 'opus';
   if (codec === 'aac') return 'aac';
+  if (codec === 'mp3') return 'mp3';
   if (PCM_CODECS.includes(codec)) return 'pcm';
   return null;
 }
@@ -144,7 +151,7 @@ function partitionRuns(probed: ProbedSegment[]): ProbedSegment[][] {
  * every group's output track needs its own config attached exactly once. */
 async function mergeGroup(
   run: ProbedSegment[],
-  family: CodecFamily,
+  family: Exclude<CodecFamily, 'mp3'>,
   outPath: string,
 ): Promise<MergedGroup> {
   const { makeFormat } = FAMILY_CONTAINER[family];
@@ -199,9 +206,30 @@ async function mergeGroup(
   return { family, outPath, packets, durationSeconds: offset, segments };
 }
 
+/** Stream the source MP3 bytes as-is (DeepGram accepts audio/mpeg). One
+ * segment per group — we do not remux/concat MP3 without ffmpeg. */
+async function passThroughMp3Group(seg: ProbedSegment): Promise<MergedGroup> {
+  const input = new Input({ formats: ALL_FORMATS, source: new FilePathSource(seg.path) });
+  try {
+    const track = await input.getPrimaryAudioTrack();
+    if (!track) throw new Error(`${seg.path}: no audio track found on MP3 pass-through.`);
+    const durationSeconds = await track.computeDuration();
+    return {
+      family: 'mp3',
+      outPath: seg.path,
+      packets: 0,
+      durationSeconds,
+      segments: [{ path: seg.path, offsetSeconds: 0, durationSeconds }],
+    };
+  } finally {
+    input.dispose();
+  }
+}
+
 /** Probe, classify, and packet-copy-concatenate `inputPaths` (in ordinal
  * order) into one output file per codec-family+params run, written under
- * `outDir` as `group-<index>-<family>.<ext>` (webm/mp4/wav). Unreadable or
+ * `outDir` as `group-<index>-<family>.<ext>` (webm/mp4/wav). MP3 segments
+ * pass through as one group per file (source path). Unreadable or
  * unsupported segments are skipped rather than failing the run; a
  * stream-parameter change within a family starts a new group instead of
  * throwing. Returns the merged groups (each with per-segment cumulative
@@ -218,12 +246,20 @@ export async function mergeAudioSegments(
   }
 
   const runs = partitionRuns(probed);
-  if (runs.length > 0) await mkdir(outDir, { recursive: true });
+  const needsScratch = runs.some((run) => run[0].family !== 'mp3');
+  if (needsScratch) await mkdir(outDir, { recursive: true });
   const groups: MergedGroup[] = [];
-  for (let i = 0; i < runs.length; i += 1) {
-    const run = runs[i];
+  let mergeIndex = 0;
+  for (const run of runs) {
     const family = run[0].family;
-    const outPath = join(outDir, `group-${i}-${family}.${FAMILY_CONTAINER[family].ext}`);
+    if (family === 'mp3') {
+      for (const seg of run) {
+        groups.push(await passThroughMp3Group(seg));
+      }
+      continue;
+    }
+    const outPath = join(outDir, `group-${mergeIndex}-${family}.${FAMILY_CONTAINER[family].ext}`);
+    mergeIndex += 1;
     groups.push(await mergeGroup(run, family, outPath));
   }
 

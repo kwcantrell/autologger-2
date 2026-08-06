@@ -99,6 +99,27 @@ export class EventStore {
     return { event: eventRowToRpc(r as Row), projection: this.core.projection() };
   }
 
+  /** sheets-log-import: place an event at an explicit session timecode (total frames). */
+  addEventAtTotalFrames(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    timecodeTotalFrames: number;
+    ctx: TimecodeCtx;
+  }): { event: EventRpc; projection: SessionProjection } {
+    return this.addEvent({
+      category: input.category,
+      message: input.message,
+      metadataJson: input.metadataJson,
+      markedAtUtc: null,
+      ctx: input.ctx,
+      explicitAnchor: {
+        timecodeTotalFrames: Math.max(0, Math.trunc(input.timecodeTotalFrames)),
+        wallTimeUtc: isoZ(new Date(this.core.now())),
+      },
+    });
+  }
+
   listEvents(input: { limit: number; offset: number }): {
     events: EventRpc[];
     total: number;

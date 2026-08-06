@@ -75,6 +75,7 @@ describe('contentTypeForFamily', () => {
     expect(contentTypeForFamily('opus')).toBe('audio/webm');
     expect(contentTypeForFamily('aac')).toBe('audio/mp4');
     expect(contentTypeForFamily('pcm')).toBe('audio/wav');
+    expect(contentTypeForFamily('mp3')).toBe('audio/mpeg');
   });
 });
 

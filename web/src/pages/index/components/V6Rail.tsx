@@ -94,7 +94,11 @@ const RAIL_SEARCH_INPUT =
 const RAIL_SEARCH_CLEAR =
   'inline-flex h-5 w-5 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 text-v5-muted hover-always:text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] [.v6-app--rail-collapsed_&]:hidden max-md:[.v6-app--rail-collapsed_&]:[display:revert]';
 
-const RAIL_FOOTER = 'mt-auto flex w-full flex-shrink-0 justify-center gap-2';
+// Expanded: Teams + Settings sit side-by-side. Collapsed: stack so the two
+// icon tiles fit the narrow rail (side-by-side overflows --v6-rail-w-collapsed).
+// Mobile drawer reverts to row like the other collapsed→drawer overrides.
+const RAIL_FOOTER =
+  'mt-auto flex w-full flex-shrink-0 justify-center gap-2 [.v6-app--rail-collapsed_&]:flex-col [.v6-app--rail-collapsed_&]:items-stretch max-md:[.v6-app--rail-collapsed_&]:flex-row max-md:[.v6-app--rail-collapsed_&]:items-center';
 
 const RAIL_NAV = clsx(
   COLLAPSE_TILE,
@@ -110,6 +114,7 @@ interface Props {
   onSelectSession: (sid: string) => void;
   onCloseSession: () => void;
   onNewSession: () => void;
+  onBatchImport: () => void;
   onOpenSettings: () => void;
   /** Phone-first (≤767px): the rail renders as an off-canvas drawer. */
   isMobile?: boolean;
@@ -122,6 +127,7 @@ export function V6Rail({
   onSelectSession,
   onCloseSession,
   onNewSession,
+  onBatchImport,
   onOpenSettings,
   isMobile = false,
   mobileOpen = false,
@@ -196,6 +202,28 @@ export function V6Rail({
           </svg>
         </span>
         <span className={RAIL_PRIMARY_LABEL}>New Session</span>
+      </button>
+
+      <button
+        type="button"
+        className={RAIL_PRIMARY}
+        id="v6-btn-batch-import"
+        onClick={onBatchImport}
+      >
+        <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            <path
+              d="M7 8L12 3L17 8"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        </span>
+        <span className={RAIL_PRIMARY_LABEL}>Batch Import</span>
       </button>
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus convenience around the real <input>/<button>; keyboard users reach the button below directly */}

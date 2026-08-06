@@ -28,6 +28,7 @@ const wav = join(fixtures, 'seg3.wav');
 const wavMismatch = join(fixtures, 'seg4-pcm-mismatch.wav');
 const aac1 = join(fixtures, 'seg-aac.m4a');
 const aac2 = join(fixtures, 'seg-aac2.m4a');
+const mp3 = join(fixtures, 'deepgram-enrichment-source.mp3');
 const corrupt = join(fixtures, 'seg-corrupt.bin');
 
 let outDir: string;
@@ -173,5 +174,21 @@ describe('mergeAudioSegments', () => {
     const { groups, skipped } = await mergeAudioSegments([], groupOutDir);
     expect(groups).toEqual([]);
     expect(skipped).toEqual([]);
+  });
+
+  it('passes through MP3 segments as one group per file (no remux)', async () => {
+    const groupOutDir = join(outDir, 'mp3-passthrough');
+    const { groups, skipped } = await mergeAudioSegments([mp3, mp3], groupOutDir);
+
+    expect(skipped).toEqual([]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].family).toBe('mp3');
+    expect(groups[1].family).toBe('mp3');
+    expect(groups[0].outPath).toBe(mp3);
+    expect(groups[1].outPath).toBe(mp3);
+    expect(groups[0].durationSeconds).toBeGreaterThan(0);
+    expect(groups[0].segments).toEqual([
+      { path: mp3, offsetSeconds: 0, durationSeconds: groups[0].durationSeconds },
+    ]);
   });
 });

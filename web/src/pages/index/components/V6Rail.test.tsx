@@ -93,6 +93,7 @@ function renderRail(initialPath = '/') {
           onSelectSession={() => {}}
           onCloseSession={() => {}}
           onNewSession={() => {}}
+          onBatchImport={() => {}}
           onOpenSettings={() => {}}
         />
       </Router>
@@ -126,6 +127,63 @@ describe('V6Rail Teams button same-route guard (gate decision 1)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Teams' }));
 
     expect(memory.history).toEqual(['/teams']);
+  });
+});
+
+describe('V6Rail Batch Import button', () => {
+  it('calls onBatchImport when clicked', () => {
+    const onBatchImport = vi.fn();
+    const memory = memoryLocation({ path: '/', record: true });
+    setNavigationImplForTesting((path, options) => memory.navigate(path, options));
+    const client = new QueryClient();
+    renderStrict(
+      <QueryClientProvider client={client}>
+        <Router hook={memory.hook}>
+          <V6Rail
+            activeSessionId=""
+            onSelectSession={() => {}}
+            onCloseSession={() => {}}
+            onNewSession={() => {}}
+            onBatchImport={onBatchImport}
+            onOpenSettings={() => {}}
+          />
+        </Router>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Batch Import' }));
+    expect(onBatchImport).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses an up-arrow upload icon on the Batch Import rail button', () => {
+    renderRail();
+
+    const batchBtn = document.getElementById('v6-btn-batch-import');
+    expect(batchBtn).not.toBeNull();
+    const paths = batchBtn?.querySelectorAll('path') ?? [];
+    const dValues = Array.from(paths).map((p) => p.getAttribute('d'));
+    expect(dValues).toContain('M12 3V15');
+    // Arrow head points UP (apex at y=3), per the gated D8 upload affordance.
+    expect(dValues.some((d) => d?.includes('L12 3'))).toBe(true);
+    expect(dValues.some((d) => d?.includes('L12 15'))).toBe(false);
+    expect(dValues).toContain('M4 19H20');
+  });
+});
+
+describe('V6Rail footer layout (collapsed overflow)', () => {
+  it('footer carries collapsed flex-col + mobile drawer flex-row revert so Teams/Settings stack in the narrow rail', () => {
+    renderRail();
+
+    const teams = screen.getByRole('button', { name: 'Teams' });
+    const settings = screen.getByRole('button', { name: 'Settings' });
+    const footer = teams.parentElement;
+    expect(footer).not.toBeNull();
+    expect(footer).toBe(settings.parentElement);
+    // Tailwind ancestor variants live on the element; CSS activates under
+    // body.v6-app--rail-collapsed. Lock the class contract (jsdom won't compute
+    // layout for arbitrary utilities).
+    expect(footer?.className).toContain('[.v6-app--rail-collapsed_&]:flex-col');
+    expect(footer?.className).toContain('max-md:[.v6-app--rail-collapsed_&]:flex-row');
   });
 });
 

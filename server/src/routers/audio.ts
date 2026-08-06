@@ -27,7 +27,15 @@ function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, 
   };
 }
 
-export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — bound the buffered upload.
+export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — live recorder segment upload.
+
+/**
+ * Batch / local-audio-import may send full episode files (compressed MP3/M4A),
+ * not short WebM chunks. Cap is higher than {@link MAX_AUDIO_BYTES}; still a
+ * single heap buffer per request (see README upload note).
+ */
+// Stay under typical V8 ArrayBuffer max (~2 GiB) while allowing full-episode MP3s.
+export const MAX_LOCAL_AUDIO_IMPORT_BYTES = 1500 * 1024 * 1024; // ~1.46 GiB
 
 /** Reject an over-cap upload with 413. No-op for unknown (null) or NaN sizes;
  * the post-read byteLength check is the backstop when Content-Length is absent. */
@@ -35,6 +43,69 @@ export function enforceAudioByteLimit(bytes: number | null): void {
   if (bytes !== null && Number.isFinite(bytes) && bytes > MAX_AUDIO_BYTES) {
     throw new ApiError(413, `Audio payload exceeds the ${MAX_AUDIO_BYTES}-byte limit.`);
   }
+}
+
+// Live cap for the local-audio-import helpers below. Always
+// MAX_LOCAL_AUDIO_IMPORT_BYTES in production; only the test seam ever lowers
+// it (so the streaming 413 path is exercisable without allocating GiBs).
+let localAudioImportByteCap = MAX_LOCAL_AUDIO_IMPORT_BYTES;
+
+/** TEST-ONLY seam: lower the local-audio-import byte cap; `null` restores the
+ * production cap. Production code never calls this. */
+export function __setLocalAudioImportByteCapForTests(cap: number | null): void {
+  localAudioImportByteCap = cap ?? MAX_LOCAL_AUDIO_IMPORT_BYTES;
+}
+
+/** The ONE place the local-audio-import 413 body is built — the Content-Length
+ * pre-check and the streaming mid-read abort must stay byte-identical
+ * (api-contract-freeze: same {detail} string either way). */
+function localAudioImportOversizeError(): ApiError {
+  return new ApiError(413, `Audio payload exceeds the ${localAudioImportByteCap}-byte limit.`);
+}
+
+/** Same as {@link enforceAudioByteLimit} but for POST …/local-audio-import. */
+export function enforceLocalAudioImportByteLimit(bytes: number | null): void {
+  if (bytes !== null && Number.isFinite(bytes) && bytes > localAudioImportByteCap) {
+    throw localAudioImportOversizeError();
+  }
+}
+
+/** Buffer a local-audio-import request body while counting bytes, aborting
+ * with the SAME 413 the Content-Length pre-check uses the moment the cap is
+ * crossed — a chunked request (no Content-Length) or one with a lying
+ * Content-Length can no longer buffer unbounded heap before the post-read
+ * backstop. Well-formed under-cap requests see byte-identical behavior to the
+ * previous whole-body `arrayBuffer()` read. */
+export async function readLocalAudioImportBody(
+  body: ReadableStream<Uint8Array> | null,
+): Promise<Uint8Array> {
+  if (body === null) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > localAudioImportByteCap) throw localAudioImportOversizeError();
+      chunks.push(value);
+    }
+  } catch (err) {
+    // Abort the remaining upload; best-effort — never mask the 413/read error.
+    await reader.cancel().catch(() => {});
+    throw err;
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
