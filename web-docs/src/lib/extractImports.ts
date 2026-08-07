@@ -9,9 +9,19 @@
 // `typeof import('x')` and a direct `import('x').Member` type — collectively
 // `ts.ImportTypeNode`, always type-only; there is no value-level form of
 // this syntax) through that file's OWNING workspace's real
-// `compilerOptions`, covering all four real resolution regimes: server
-// (Bundler), web (bundler + `paths` aliases + `.ts` extensions), companion
-// (NodeNext `.js`-specifiers for `.ts` files), e2e (Bundler).
+// `compilerOptions`, covering all four real APPLICATION-workspace resolution
+// regimes: server (Bundler), web (bundler + `paths` aliases + `.ts`
+// extensions), companion (NodeNext `.js`-specifiers for `.ts` files), e2e
+// (Bundler) — plus two more regimes so spec R4's "resolves import/export
+// declarations ... of every mapped file" holds with no silent exception
+// (audit fix-now F1: these two were previously skipped entirely, hiding
+// real production edges like `web-docs/src/lib/erSchema.ts` -> server/src/
+// node/migrate.ts and server/src/session/{SessionHub,sessionCore}.ts):
+// web-docs itself (its own real tsconfig — a `runtime`-adjacent `tooling`
+// component is still a mapped component, so it gets no exemption), and
+// `fixtures/api-responses` (a plain-TS-module directory with no tsconfig.json
+// of its own — a minimal inline bundler-mode `compilerOptions` object
+// stands in; see `WorkspaceRegime.compilerOptions`).
 //
 // Resolution mechanics: `ts.createProgram` is used to parse each mapped
 // file into a `ts.SourceFile` (correct JSX/scriptKind handling per
@@ -24,14 +34,6 @@
 // before writing this module). `resolveModuleName` reuses the exact same
 // resolution algorithm and needs no whole-program cache, so the two are
 // equivalent for this extractor's purposes.
-//
-// Deliberately narrow: `fixtures/api-responses/**` and `web-docs/`'s own
-// mapped files fall outside all four regimes and are never used as
-// extraction roots — design.md D2 names exactly four regimes. Verified
-// empirically (see task-3.1-3.2 report) that no `fixtures/api-responses/*.ts`
-// file has an outgoing import outside its own component (`_mutable.ts` is
-// the only cross-file import, intra-component), so this scope decision
-// drops no real edge as of this writing.
 
 import path from 'node:path';
 import ts from 'typescript';
@@ -41,21 +43,51 @@ export interface WorkspaceRegime {
   name: string;
   /** Repo-relative workspace directory, e.g. 'server'. No trailing slash. */
   dir: string;
-  /** Repo-relative path to the workspace's tsconfig.json. */
-  tsconfigPath: string;
+  /**
+   * Repo-relative path to the workspace's tsconfig.json. Mutually exclusive
+   * with `compilerOptions` — exactly one of the two must be set.
+   */
+  tsconfigPath?: string;
+  /**
+   * Inline `compilerOptions`, used verbatim instead of reading
+   * `tsconfigPath` from disk. For a regime with no real tsconfig.json of its
+   * own — currently only `fixtures/api-responses`, a plain-TS-module
+   * directory shared by server and web with no build config — a minimal
+   * bundler-mode options object stands in for "this workspace's real
+   * compilerOptions" (D2's phrasing): it only has to resolve the plain
+   * relative specifiers those modules actually use, not type-check them.
+   */
+  compilerOptions?: ts.CompilerOptions;
 }
 
 /**
- * The four real resolution regimes (design.md D2). `compilerOptions` are
- * read from each workspace's real tsconfig at extraction time — never its
- * `include`/`exclude`, which only shapes each workspace's OWN build/
- * typecheck file set (and companion's excludes its own tests outright).
+ * The six real resolution regimes: the four application workspaces (design.md
+ * D2) plus web-docs itself and `fixtures/api-responses` (audit fix-now F1 —
+ * every mapped file gets extracted, per spec R4, with no silent exception).
+ * Workspace-tsconfig `compilerOptions` are read from each workspace's real
+ * tsconfig at extraction time — never its `include`/`exclude`, which only
+ * shapes each workspace's OWN build/typecheck file set (and companion's
+ * excludes its own tests outright).
  */
 export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
   { name: 'server', dir: 'server', tsconfigPath: 'server/tsconfig.json' },
   { name: 'web', dir: 'web', tsconfigPath: 'web/tsconfig.json' },
   { name: 'companion', dir: 'companion', tsconfigPath: 'companion/tsconfig.json' },
   { name: 'e2e', dir: 'e2e', tsconfigPath: 'e2e/tsconfig.json' },
+  { name: 'web-docs', dir: 'web-docs', tsconfigPath: 'web-docs/tsconfig.json' },
+  {
+    name: 'contract-fixtures',
+    dir: 'fixtures/api-responses',
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      resolveJsonModule: true,
+      esModuleInterop: true,
+      isolatedModules: true,
+      noEmit: true,
+    },
+  },
 ];
 
 export type FileImportKind = 'static' | 'dynamic-literal';
@@ -101,6 +133,12 @@ export interface ExtractFileImportsParams {
 }
 
 function loadCompilerOptions(regime: WorkspaceRegime, repoRoot: string): ts.CompilerOptions {
+  if (regime.compilerOptions) return regime.compilerOptions;
+  if (!regime.tsconfigPath) {
+    throw new Error(
+      `extractImports: regime "${regime.name}" declares neither tsconfigPath nor compilerOptions`,
+    );
+  }
   const configPath = path.join(repoRoot, regime.tsconfigPath);
   const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
   if (configFile.error) {
