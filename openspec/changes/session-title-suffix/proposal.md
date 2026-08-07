@@ -10,8 +10,13 @@ named (`HD_260802`, duplicates `HD_260802_002`, or padded episode numbers).
 
 ## What Changes
 
-- **Timeline header**: replace the `Episode [n]` meta with the session **title**
-  (session name). Show name remains the heading when a show is linked.
+- **Session-meta display**: the workspace chrome shows the session **title**
+  (session name) beside the show name — no `Episode [n]` meta. (Pre-apply
+  staleness note 2026-08-07: the literal Episode display was already removed by
+  unrelated strip work — da14b20 — and the slot now lives in
+  `MaximizeLogStrip.tsx`'s `sessionMeta`, which already prefers `title`; this
+  change's remaining work is wiring that display to the new derivation/
+  `deck_title` semantics, not removing a display.)
 - **Show settings (General)**: after **Code**, add **Suffix** dropdown with
   `Date` | `Episode Number`. Remove **Next Ep** from the UI and from the show
   wire (**BREAKING** show shape: `next_episode` omitted; `title_suffix` added).

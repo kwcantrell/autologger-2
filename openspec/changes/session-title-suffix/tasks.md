@@ -34,10 +34,15 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
       show `title_suffix === 'episode'`; stop seeding from `next_episode`; let
       omitted title/episode rely on server derivation for Date mode; clear
       stale episode when switching to a Date show.
-- [ ] 2.3 Timeline meta: replace Episode display with session `title` (same slot /
-      styling intent as today).
-- [ ] 2.4 Update web types/fixtures/tests that assume `next_episode` or
-      `Episode N` meta / Bonus UI.
+- [ ] 2.3 Session-meta display (`MaximizeLogStrip.tsx` `sessionMeta` — the former
+      Timeline Episode slot; the Episode display itself is already gone, removed
+      by unrelated strip work): verify the title-preferring display against the
+      new derivation + deck_title-equals-title semantics, and drop the now-
+      vestigial `?? deck_title` fallback in `sessionTitle` once D5 lands
+      server-side.
+- [ ] 2.4 Update web types/fixtures/tests that assume `next_episode` or the
+      Bonus UI (no test asserts an `Episode N` meta literal — verified in the
+      2026-08-07 staleness read; skip hunting for one).
 
 ## Phase 3 — Verification
 
@@ -47,8 +52,8 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
       `deck_title` emitters, batch-import still sends stem title+episode with
       no counter bump.
 - [ ] 3.2 Web tests for settings suffix, conditional episode field (no stale
-      episode when switching shows), timeline title; Companion label/test if
-      touched.
+      episode when switching shows), strip session-meta title
+      (`MaximizeLogStrip`); Companion label/test if touched.
 - [ ] 3.3 Repo-wide sweep: no live Next Ep UI / `next_episode` wire writers;
       column may still exist in SQL; `npm test`, companion tests if touched,
       web vitest, `npm run typecheck` green for touched surfaces.

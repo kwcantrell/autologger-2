@@ -135,17 +135,20 @@ The modal SHALL NOT display or seed a next-episode default from the show.
 - **THEN** the New Session modal shows an episode field, does not show Bonus,
   and refuses submit while episode is blank
 
-### Requirement: Timeline shows session title instead of Episode N
+### Requirement: Session meta shows session title instead of Episode N
 
-While a session with a linked show is open, the timeline header meta that
-previously rendered `Episode {episode}` SHALL instead render the session's
-`title` (session name). The show-name heading behavior MAY remain unchanged.
+While a session with a linked show is open, the workspace's session-meta
+display (the fused strip's `sessionMeta` line — the former Timeline header
+slot; the literal `Episode {episode}` display was already removed by unrelated
+prior strip work) SHALL render the session's `title` (session name) sourced
+from the stored title, and SHALL NOT render an `Episode` label. The show-name
+heading behavior MAY remain unchanged.
 
 #### Scenario: Open session shows title in meta
 
 - **WHEN** the operator views a session whose title is `HD_260802` and whose
   status includes a show code
-- **THEN** the timeline meta line includes `HD_260802` and does not include the
+- **THEN** the session-meta line includes `HD_260802` and does not include the
   literal label `Episode`
 
 ### Requirement: Wire deck_title is the session name

@@ -59,8 +59,12 @@ evaluated by integer value then re-padded when ≤9999 (`00001` → `0001`).
 ### D5 — Wire deck_title = stored title
 
 **Decision:** Shared `sessionDeckDisplayTitle` (Companion, session list/detail,
-session status) returns trimmed stored `title`, or `"—"` if blank. Timeline meta
-uses session `title` in the former Episode slot.
+session status) returns trimmed stored `title`, or `"—"` if blank. The
+session-meta display (now `MaximizeLogStrip.tsx`'s `sessionMeta` block — the
+former `Timeline.tsx` Episode slot, relocated by the maximize-log-view rework)
+uses session `title`; it already prefers `title` today, so the remaining work is
+confirming the wiring against the new semantics and dropping the vestigial
+`?? deck_title` fallback once deck_title === title holds.
 
 **Alternatives:** Companion-only mapping; keep `code - episode`.
 **Rationale:** One identity everywhere; owner asked Companion to show session name.
@@ -161,3 +165,22 @@ in place: (1) this log entry was still pending — filled; (2) freeze wording
 `NEED NOT cause 400` → `SHALL NOT cause 400 solely due to that key`. Otherwise
 clean against gate rulings (max+1, soft-retain column, existing→episode /
 new→date, ignore/strip).
+
+- **2026-08-07 — Pre-apply staleness read (light tier):** the change gated
+  2026-08-02; the codebase has since absorbed the PR#3 merge, the
+  maximize-log-view strip rework, several review fix waves, and
+  event-generate-hardening. Findings: the `Timeline.tsx` `Episode {episode}`
+  meta this change targeted was removed the SAME DAY by unrelated strip work
+  (da14b20, before this change's artifacts even landed) and the slot moved to
+  `MaximizeLogStrip.tsx`'s `sessionMeta`, which already prefers `title` —
+  directionally consistent with D5, so NO gate decision is invalidated and no
+  re-panel is needed. All server/DB targets (D1–D4, D6–D8), the Settings/New
+  Session UI targets, the three deck_title emitters, and batch-import behavior
+  verified CURRENT; both delta specs would sync cleanly (all-ADDED blocks, no
+  baseline collisions). Targeted updates applied per the post-gate
+  consistency-read rule: proposal "Timeline header" bullet, D5's pointer,
+  tasks 2.3 (rewritten: verify/wire + drop vestigial `?? deck_title` fallback,
+  nothing to "replace"), 2.4 (dead Episode-meta-test clause trimmed), 3.2
+  (repointed), and the delta spec's Timeline requirement retitled/reworded to
+  the session-meta display. Documents read: all four artifacts + both delta
+  specs + live code sweep.
