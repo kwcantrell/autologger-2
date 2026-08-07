@@ -16,10 +16,7 @@ import { useAudioClips } from '../hooks/useAudioClips';
 import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
 import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
 import { useWaveforms } from '../hooks/useWaveforms';
-import {
-  REVEAL_EVENT,
-  scrollAndFlashEventRowWithRetry,
-} from '../utils/revealEventInFeed';
+import { REVEAL_EVENT, scrollAndFlashEventRowWithRetry } from '../utils/revealEventInFeed';
 import { AiPanel } from './AiPanel';
 import { AiV2Panel } from './AiV2Panel';
 import type { AudioPlayerHandle } from './AudioPlayer';
@@ -184,9 +181,6 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   const audioRecorderRef = useRef<AudioRecorderHandle>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
-  const [recorderPhase, setRecorderPhase] = useState<
-    'idle' | 'claiming' | 'recording' | 'stopping' | 'uploading'
-  >('idle');
 
   const handleAudioRecord = useCallback(() => {
     audioRecorderRef.current?.toggle();
@@ -346,10 +340,7 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
             <AudioRecorder
               ref={audioRecorderRef}
               sessionId={sessionId}
-              onPhaseChange={(phase) => {
-                setRecorderPhase(phase);
-                setIsUploadingAudio(phase === 'uploading');
-              }}
+              onPhaseChange={(phase) => setIsUploadingAudio(phase === 'uploading')}
             />
             <AudioPlayer
               ref={audioPlayerRef}
