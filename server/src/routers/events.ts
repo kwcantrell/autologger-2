@@ -475,10 +475,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
 
   // 6. Aggregate pre-spawn instruction bound (design D8) — either half
   // tripping fails fast, before the CLI ever spawns.
-  const { bytes, entries } = instructionAggregate(
-    categories,
-    (body.selection?.length ?? 0) === 0,
-  );
+  const { bytes, entries } = instructionAggregate(categories, (body.selection?.length ?? 0) === 0);
   const maxBytes = eventGenerateMaxInstructionBytes(c.env.config);
   const maxEntries = eventGenerateMaxInstructionEntries(c.env.config);
   if (bytes > maxBytes || entries > maxEntries) {

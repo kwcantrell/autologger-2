@@ -155,11 +155,7 @@ function configuredEnv(cliPath: string, overrides: Record<string, unknown> = {})
   });
 }
 
-function generateReq(
-  sessionId: string,
-  envOverride: ReturnType<typeof envWith>,
-  body?: unknown,
-) {
+function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>, body?: unknown) {
   return app.request(
     `/api/sessions/${sessionId}/events/generate`,
     {
