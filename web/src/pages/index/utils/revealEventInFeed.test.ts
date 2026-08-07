@@ -3,6 +3,7 @@ import {
   REVEAL_EVENT,
   revealEventInFeed,
   scrollAndFlashEventRow,
+  scrollAndFlashEventRowWithRetry,
 } from './revealEventInFeed';
 
 describe('revealEventInFeed', () => {
@@ -66,5 +67,58 @@ describe('scrollAndFlashEventRow', () => {
 
   it('returns false when the row is missing', () => {
     expect(scrollAndFlashEventRow('missing')).toBe(false);
+  });
+});
+
+describe('scrollAndFlashEventRowWithRetry', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.useFakeTimers();
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  function insertRow(eventId: string) {
+    document.body.innerHTML = `
+      <div id="v4-log-sheet">
+        <table><tbody>
+          <tr data-event-id="${eventId}"><td>row</td></tr>
+        </tbody></table>
+      </div>`;
+    return document.querySelector(`tr[data-event-id="${eventId}"]`) as HTMLElement;
+  }
+
+  it('flashes immediately when the row is already present', () => {
+    const row = insertRow('evt-1');
+    scrollAndFlashEventRowWithRetry('evt-1');
+    expect(row.classList.contains('event-row-flash')).toBe(true);
+  });
+
+  it('flashes a row that only appears later (page growth / tab reveal)', () => {
+    scrollAndFlashEventRowWithRetry('evt-2');
+    vi.advanceTimersByTime(500);
+    const row = insertRow('evt-2');
+    expect(row.classList.contains('event-row-flash')).toBe(false);
+    vi.advanceTimersByTime(50);
+    expect(row.classList.contains('event-row-flash')).toBe(true);
+  });
+
+  it('gives up after the 2s bound', () => {
+    scrollAndFlashEventRowWithRetry('evt-3');
+    vi.advanceTimersByTime(2100);
+    const row = insertRow('evt-3');
+    vi.advanceTimersByTime(1000);
+    expect(row.classList.contains('event-row-flash')).toBe(false);
+  });
+
+  it('cancel stops the loop', () => {
+    const cancel = scrollAndFlashEventRowWithRetry('evt-4');
+    cancel();
+    const row = insertRow('evt-4');
+    vi.advanceTimersByTime(1000);
+    expect(row.classList.contains('event-row-flash')).toBe(false);
   });
 });

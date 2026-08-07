@@ -292,3 +292,80 @@ describe('EventLogSheet batch-mode Escape (discard-confirm guard)', () => {
     expect(screen.queryByRole('heading', { name: 'Discard changes' })).toBeNull();
   });
 });
+
+// --- Timeline marker reveal grows the loaded page (PR#4 review fix) ---
+//
+// Markers derive from the workspace-wide events query, but the sheet mounts
+// only its oldest `loadedLimit` (200) rows. A reveal targeting a newer event
+// used to find no row and silently do nothing. The sheet now listens for
+// REVEAL_EVENT and grows `loadedLimit` just enough to cover the target.
+describe('EventLogSheet marker reveal page growth', () => {
+  // The pagination-sentinel effect only mounts an observer when more rows
+  // exist than are loaded — the multi-page fixture below is the first test
+  // here to reach it, and jsdom has no IntersectionObserver.
+  beforeAll(() => {
+    if (typeof window.IntersectionObserver !== 'undefined') return;
+    class StubIntersectionObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.IntersectionObserver =
+      StubIntersectionObserver as unknown as typeof IntersectionObserver;
+  });
+
+  function manyEventsFixture(count: number): LogEvent[] {
+    return Array.from({ length: count }, (_, i) => ({
+      event_id: `ev-${i}`,
+      category: 'general',
+      category_label: 'General',
+      category_color: '#4488ff',
+      message: `note ${i}`,
+      timecode: '00:00:10:00',
+      timecode_total_frames: 240 + i * 24,
+      frame_rate: 24,
+      wall_time_utc: new Date(Date.UTC(2026, 6, 21, 0, 0, 10 + i)).toISOString(),
+      metadata: {},
+    }));
+  }
+
+  it('loads and renders a revealed row beyond the first 200-row page', async () => {
+    const all = manyEventsFixture(250);
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        const limit = Number(new URLSearchParams(path.split('?')[1] ?? '').get('limit') ?? 200);
+        return {
+          events: all.slice(0, limit),
+          total: all.length,
+          logged_event_count: all.length,
+          offset: 0,
+          limit,
+        };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderSheet();
+
+    // First page only: the target row does not exist yet.
+    await screen.findByText('note 0');
+    expect(document.querySelector('tr[data-event-id="ev-249"]')).toBeNull();
+
+    act(() => {
+      document.body.dispatchEvent(
+        new CustomEvent('autologger:reveal-event', { detail: { eventId: 'ev-249' } }),
+      );
+    });
+
+    // The sheet grows loadedLimit to the next 200 step covering index 249 (400)
+    // and the row renders once that page resolves.
+    await screen.findByText('note 249');
+    expect(document.querySelector('tr[data-event-id="ev-249"]')).toBeTruthy();
+    expect(
+      mockedApiFetch.mock.calls.some(([p]) => typeof p === 'string' && p.includes('limit=400')),
+    ).toBe(true);
+  });
+});

@@ -18,7 +18,7 @@ import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
 import { useWaveforms } from '../hooks/useWaveforms';
 import {
   REVEAL_EVENT,
-  scrollAndFlashEventRow,
+  scrollAndFlashEventRowWithRetry,
 } from '../utils/revealEventInFeed';
 import { AiPanel } from './AiPanel';
 import { AiV2Panel } from './AiV2Panel';
@@ -143,14 +143,15 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   }, []);
 
   // Timeline marker click → Event Feed tab + scroll/flash the matching row.
+  // The retry loop (not a one-shot) also covers EventLogSheet growing its
+  // loaded page in response to the same reveal event — the row may need a
+  // fetch + render before it exists.
+  const cancelRevealRetryRef = useRef<(() => void) | null>(null);
+  const runReveal = useCallback((eventId: string) => {
+    cancelRevealRetryRef.current?.();
+    cancelRevealRetryRef.current = scrollAndFlashEventRowWithRetry(eventId);
+  }, []);
   useEffect(() => {
-    const runReveal = (eventId: string) => {
-      if (scrollAndFlashEventRow(eventId)) return;
-      // Tabpanel may still be hidden for one frame after setFeedTab — retry once.
-      window.setTimeout(() => {
-        scrollAndFlashEventRow(eventId);
-      }, 50);
-    };
     const onReveal = (ev: Event) => {
       const eventId = String(
         (ev as CustomEvent<{ eventId?: string }>).detail?.eventId ?? '',
@@ -164,8 +165,12 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
       setFeedTab('events');
     };
     document.body.addEventListener(REVEAL_EVENT, onReveal);
-    return () => document.body.removeEventListener(REVEAL_EVENT, onReveal);
-  }, []);
+    return () => {
+      document.body.removeEventListener(REVEAL_EVENT, onReveal);
+      cancelRevealRetryRef.current?.();
+      cancelRevealRetryRef.current = null;
+    };
+  }, [runReveal]);
 
   useEffect(() => {
     if (feedTab !== 'events') return;
@@ -173,11 +178,8 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
     if (!eventId) return;
     pendingRevealEventIdRef.current = null;
     // Wait for the tabpanel to drop `hidden` before scrolling.
-    window.requestAnimationFrame(() => {
-      if (scrollAndFlashEventRow(eventId)) return;
-      window.setTimeout(() => scrollAndFlashEventRow(eventId), 50);
-    });
-  }, [feedTab]);
+    window.requestAnimationFrame(() => runReveal(eventId));
+  }, [feedTab, runReveal]);
 
   const audioRecorderRef = useRef<AudioRecorderHandle>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);

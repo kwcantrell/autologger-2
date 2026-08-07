@@ -40,3 +40,23 @@ export function scrollAndFlashEventRow(eventId: string): boolean {
   }, 2500);
   return true;
 }
+
+/**
+ * scrollAndFlashEventRow, retried every 50ms for up to 2s. A reveal's target
+ * row can be legitimately absent for a while: the tabpanel stays `hidden` for
+ * a frame after a tab switch, and EventLogSheet may have to grow its loaded
+ * page (fetch + render) before the row exists at all — a single fixed-delay
+ * retry misses the second case entirely. Returns a cancel function; callers
+ * starting a new reveal must cancel the previous loop first.
+ */
+export function scrollAndFlashEventRowWithRetry(eventId: string): () => void {
+  if (scrollAndFlashEventRow(eventId)) return () => {};
+  let attempts = 0;
+  const timer = window.setInterval(() => {
+    attempts += 1;
+    if (scrollAndFlashEventRow(eventId) || attempts >= 40) {
+      window.clearInterval(timer);
+    }
+  }, 50);
+  return () => window.clearInterval(timer);
+}
