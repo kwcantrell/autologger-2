@@ -28,5 +28,5 @@
 ## Phase 5 — Final gates
 
 - [x] 5.1 `npm run typecheck` + `npm test`.
-- [ ] 5.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual`; re-bless baselines if Batch Import chrome is in a covered shot.
+- [x] 5.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual`; re-bless baselines if Batch Import chrome is in a covered shot.
       *(2026-08-03 remediation: deliberately left unticked — deferred to the whole-branch gate on the PR branch.)*

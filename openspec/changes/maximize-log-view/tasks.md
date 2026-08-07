@@ -31,7 +31,7 @@
         EventButtonsTable WIP on this branch)
       - vitest: sessionLayoutPreference + SessionWorkspace.maximizeLog +
         SessionWorkspace tabs — 23/23
-- [ ] 3.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — re-bless
+- [x] 3.2 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual` — re-bless
       baselines only if this change legitimately alters captured chrome
       (deferred — run when operator wants full e2e on this polishing branch)
 
