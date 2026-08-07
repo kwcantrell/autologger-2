@@ -323,7 +323,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     expect(calls.bodies).toEqual([undefined]);
   });
 
-  it('offers Regenerate All and posts the regenerate body when a loaded auto event exists', async () => {
+  it('offers Regenerate All and posts the regenerate body only after the destructive confirm', async () => {
     const auto = autoEventFixture();
     const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false, deleted: 1 }), {
       events: {
@@ -339,8 +339,38 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
 
+    // Destructive confirm first — nothing posted yet, copy warns edited rows die too.
+    expect(await screen.findByRole('heading', { name: 'Regenerate all auto events' })).toBeTruthy();
+    expect(screen.getByText(/including any you edited/)).toBeTruthy();
+    expect(calls.count).toBe(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete and regenerate' }));
     await waitFor(() => expect(calls.count).toBe(1));
     expect(calls.bodies).toEqual([{ regenerate: true }]);
+  });
+
+  it('cancelling the regenerate confirm aborts without posting', async () => {
+    const auto = autoEventFixture();
+    const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false, deleted: 1 }), {
+      events: {
+        events: [auto],
+        total: 1,
+        logged_event_count: 1,
+        offset: 0,
+        limit: 200,
+      },
+    });
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
+    expect(await screen.findByRole('heading', { name: 'Regenerate all auto events' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Regenerate all auto events' })).toBeNull(),
+    );
+    expect(calls.count).toBe(0);
   });
 
   it('opens Custom without a request, requires a selection, and posts selection only', async () => {
