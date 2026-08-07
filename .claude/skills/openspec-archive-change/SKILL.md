@@ -69,7 +69,15 @@ Archive a completed change in the experimental workflow.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
-5. **Perform the archive**
+5. **Run the web-docs drift gate; attach any newly archived capability**
+
+   Run root `npm run docs:check`. If it fails, stop and report the failure — do not archive with a red gate.
+
+   Check whether this change's delta specs introduce a capability that doesn't yet exist in `openspec/specs/` on `main` (a **new** capability, not a modification of an existing one). If so, attach it in `web-docs/model/components.ts` — the component model backing the architecture atlas — in the same commit that performs the archive move (below); pending-grace for that capability ends once it joins the baseline. Re-run `npm run docs:check` after attaching it to confirm the capability-accounting gate now passes.
+
+   If no delta specs exist, or none introduce a new capability, skip the attach step but still run `docs:check`.
+
+6. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
    ```bash
@@ -86,7 +94,7 @@ Archive a completed change in the experimental workflow.
    mv "<changeRoot>" "<planningHome.changesDir>/archive/YYYY-MM-DD-<name>"
    ```
 
-6. **Display summary**
+7. **Display summary**
 
    Show archive completion summary including:
    - Change name

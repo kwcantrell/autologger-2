@@ -95,8 +95,10 @@ per-session spine is `server/src/session/SessionHub.ts` (+ domain stores alongsi
 catalog DB layer is `server/src/db/catalog.ts` with migrations in `server/src/db/migrations/`;
 Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
 lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tests live under
-`e2e/`. Full annotated tree + the normative endpoint table (with its historical Python-origin
-column) are in **`README.md`**.
+`e2e/`. The generated architecture atlas + docs SPA (component model, edge extraction, drift
+gates, mermaid site) live in `web-docs/` — see README's web-docs section. Full annotated tree
++ the normative endpoint table (with its historical Python-origin column) are in
+**`README.md`**.
 
 ## Conventions
 
@@ -174,6 +176,10 @@ change is complex enough to need it). On archive, delta specs sync into the dura
 check. The legacy `docs/superpowers/specs|plans/` are **frozen historical records** — new
 work goes through OpenSpec, not there. Repo conventions are also encoded as
 `openspec/config.yaml` `context` + per-artifact `rules`, so generated artifacts inherit them.
+**Final gates**: branch completion and archive both run root `npm run docs:check` (the
+web-docs architecture atlas' drift gate); a change whose archive adds a new capability to
+`openspec/specs/` attaches it in `web-docs/model/components.ts` in that same archive commit
+(pending-grace ends when the capability joins the baseline).
 
 **`opsx:propose` ordering — do not skip the gate.** `opsx:propose` drafts *all four*
 artifacts at once, and OpenSpec treats a change as apply-ready the moment `tasks.md` exists
