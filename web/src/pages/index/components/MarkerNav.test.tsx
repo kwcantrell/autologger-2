@@ -6,17 +6,19 @@ import type { EventsResponse, LogEvent, SessionStatus } from '../../../api/types
 import { renderStrict } from '../../../test/renderStrict';
 import { MarkerNav } from './MarkerNav';
 
-// --- MarkerNav characterization (feed-row-seek, task 1.1) ---
+// --- MarkerNav characterization (feed-row-seek task 1.1, re-pinned by maximize-log-view) ---
 //
-// MarkerNav.handleJump is about to be refactored onto a shared `timelineJump`
-// module (design D8, phase 10) so the feed row-seek feature can reuse it. This
-// test pins the CURRENT prev/next behavior — no source change — so that
-// refactor cannot silently change what marker navigation does. Four properties
-// are normative in the spec ("Marker navigation behavior is unchanged"):
+// Originally pinned the feed-row-seek baseline ahead of the shared `timelineJump`
+// refactor (design D8, phase 10). The maximize-log-view sole-strip polish then
+// deliberately gated marker nav off while rolling/recording ("No marker scrubbing
+// while rolling/recording — timeline lane is category buttons"; delta spec
+// scenario "Strip contents when rolling": marker prev/next controls are
+// disabled). This test now pins the CURRENT behavior:
 //
 //   1. each button issues AutoLogger_setManualScrubSec, AutoLogger_scrollTimelineToSec,
 //      and AutoLogger_seekAudio, in that order, all with the SAME grouped-marker second
-//   2. it fires while rolling — marker nav is deliberately ungated
+//   2. it is disabled while rolling or while the recording lease is alive
+//      (maximize-log-view; supersedes the feed-row-seek "ungated while rolling" pin)
 //   3. the audio seek is issued unconditionally, with no clip-coverage check
 //   4. it never starts playback
 //   (plus: the buttons are disabled when no markers exist)
@@ -126,8 +128,8 @@ beforeEach(() => {
 });
 
 describe('MarkerNav prev/next jump (characterization baseline)', () => {
-  it('next issues scrub, scroll, and audio-seek with the same grouped-marker second, in order, while rolling', () => {
-    mockHooks(MARKER_EVENTS, statusFixture({ is_rolling: true }));
+  it('next issues scrub, scroll, and audio-seek with the same grouped-marker second, in order, while idle', () => {
+    mockHooks(MARKER_EVENTS, statusFixture());
     renderStrict(<MarkerNav sessionId={SESSION_ID} />);
 
     screen.getByRole('button', { name: 'Next marker' }).click();
@@ -143,8 +145,8 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
     expect(order[1]).toBeLessThan(order[2]);
   });
 
-  it('prev issues scrub, scroll, and audio-seek with the same grouped-marker second, in order, while rolling', () => {
-    mockHooks(MARKER_EVENTS, statusFixture({ is_rolling: true }));
+  it('prev issues scrub, scroll, and audio-seek with the same grouped-marker second, in order, while idle', () => {
+    mockHooks(MARKER_EVENTS, statusFixture());
     renderStrict(<MarkerNav sessionId={SESSION_ID} />);
 
     screen.getByRole('button', { name: 'Previous marker' }).click();
@@ -158,17 +160,34 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
     expect(order[1]).toBeLessThan(order[2]);
   });
 
-  it('fires identically whether or not the session is rolling — marker nav is ungated', () => {
-    mockHooks(MARKER_EVENTS, statusFixture({ is_rolling: false }));
+  it('disables both buttons while rolling — no scrub/scroll/seek fires', () => {
+    mockHooks(MARKER_EVENTS, statusFixture({ is_rolling: true }));
     renderStrict(<MarkerNav sessionId={SESSION_ID} />);
 
-    screen.getByRole('button', { name: 'Next marker' }).click();
+    const nextBtn = screen.getByRole('button', { name: 'Next marker' }) as HTMLButtonElement;
+    const prevBtn = screen.getByRole('button', { name: 'Previous marker' }) as HTMLButtonElement;
+    expect(prevBtn.disabled).toBe(true);
+    expect(nextBtn.disabled).toBe(true);
 
-    expect(seekMock).toHaveBeenCalledWith(20);
+    nextBtn.click();
+    prevBtn.click();
+    expect(scrubMock).not.toHaveBeenCalled();
+    expect(scrollMock).not.toHaveBeenCalled();
+    expect(seekMock).not.toHaveBeenCalled();
+  });
+
+  it('disables both buttons while the recording lease is alive', () => {
+    mockHooks(MARKER_EVENTS, statusFixture({ audio_recording_lease_alive: true }));
+    renderStrict(<MarkerNav sessionId={SESSION_ID} />);
+
+    const nextBtn = screen.getByRole('button', { name: 'Next marker' }) as HTMLButtonElement;
+    expect(nextBtn.disabled).toBe(true);
+    nextBtn.click();
+    expect(seekMock).not.toHaveBeenCalled();
   });
 
   it('issues the audio seek unconditionally, with no clip-coverage check, and never starts playback', () => {
-    mockHooks(MARKER_EVENTS, statusFixture({ is_rolling: true }));
+    mockHooks(MARKER_EVENTS, statusFixture());
     renderStrict(<MarkerNav sessionId={SESSION_ID} />);
 
     // MarkerNav has no notion of audio clips or coverage at all (no
