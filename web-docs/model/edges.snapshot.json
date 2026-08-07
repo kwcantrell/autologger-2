@@ -315,6 +315,16 @@
     "kind": "test"
   },
   {
+    "from": "web-docs",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "web-docs",
+    "to": "session",
+    "kind": "production"
+  },
+  {
     "from": "web-shared",
     "to": "web-api",
     "kind": "production"
