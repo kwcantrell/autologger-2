@@ -12,7 +12,8 @@
 //   - capability accounting                     IMPLEMENTED below (task 4.2)
 //   - spec-markdown parser count-equality gate  IMPLEMENTED below (task 5.1)
 //   - active-changes overlay (warnings only)    IMPLEMENTED below (task 5.3)
-//   - ER schema introspection                   STUB — task 5.2 (no gate; feeds diagram generation)
+//   - ER schema introspection + emission        IMPLEMENTED below (task 5.2 — unguarded,
+//                                                no drift gate of its own; see runErExtraction)
 //   - diagram validity (parse/structural/budget) STUB — task 6.3
 // Each stub is a clearly marked no-op that exits 0 — it must be replaced
 // with the real gate in its task, never left as a silent pass once that
@@ -27,6 +28,7 @@ import { diffEdgeSnapshot, type EdgeSnapshot, projectComponentEdges } from '../m
 import { buildOverlay } from '../model/overlay';
 import { checkRelationshipEvidence } from '../model/relationships';
 import { parseAllSpecs } from '../model/specParser';
+import { buildCatalogSchema, buildSessionSchema, emitErDiagram } from '../src/lib/erSchema';
 import { extractFileImports } from '../src/lib/extractImports';
 import {
   listActiveChangeNames,
@@ -38,7 +40,7 @@ import {
 import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 
 export function gatesNotYetImplementedMessage(): string {
-  return 'web-docs: ER extraction and diagram validity gates not yet implemented — land in a later phase.';
+  return 'web-docs: diagram validity gates not yet implemented — land in a later phase.';
 }
 
 const SNAPSHOT_PATH = 'web-docs/model/edges.snapshot.json';
@@ -172,6 +174,28 @@ function runDiagramValidityGateStub(): string[] {
   return [];
 }
 
+/**
+ * Runs ER schema introspection + mermaid emission for both the catalog and
+ * session databases (task 5.2; design.md D5) against the live tree.
+ * Deliberately unguarded: the spec assigns this step no drift gate of its
+ * own ("the ER content itself has no drift gate — it's fully mechanical"),
+ * so the only failure mode worth surfacing is introspection or emission
+ * throwing (e.g. a future server refactor renaming `applyMigrations`,
+ * `SessionCore`, or `sqliteSessionSql` — design.md Risks "Docs build
+ * coupled to server internals"). Letting that propagate uncaught crashes
+ * docs:check loudly with the real stack trace, rather than silently
+ * skipping ER extraction — the orchestrator directive is "fail loudly if
+ * introspection or emit throws", so this function catches nothing.
+ */
+function runErExtraction(root: string): { catalogDiagram: string; sessionDiagram: string } {
+  const catalogSchema = buildCatalogSchema(path.join(root, 'server/src/db/migrations'));
+  const sessionSchema = buildSessionSchema();
+  return {
+    catalogDiagram: emitErDiagram(catalogSchema, { title: 'catalog' }),
+    sessionDiagram: emitErDiagram(sessionSchema, { title: 'session' }),
+  };
+}
+
 export function runAllGates(): string[] {
   const root = repoRoot();
   const trackedTsFiles = listTrackedFiles({ extensions: ['.ts', '.tsx'] });
@@ -180,6 +204,7 @@ export function runAllGates(): string[] {
   const baselineCapabilities = listBaselineCapabilities(allTrackedFiles);
 
   runOverlayGate(root, allTrackedFiles);
+  runErExtraction(root);
 
   return [
     ...coverageIssues.map((issue) => `[coverage:${issue.kind}] ${issue.message}`),
