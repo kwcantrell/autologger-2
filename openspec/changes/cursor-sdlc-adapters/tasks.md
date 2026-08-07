@@ -1,8 +1,8 @@
 # Tasks: cursor-sdlc-adapters
 
-> PROVISIONAL until the final human gate approval (E1/E2/E3 ruled 2026-08-06:
-> keep-restart-with-ownership-fix / keep six adapters / native-panel-or-handoff).
-> Do not apply before the gate's final approval.
+> GATED 2026-08-06: panel + consistency read complete, E1/E2/E3 ruled
+> (keep-restart-with-ownership-fix / keep six adapters / native-panel-or-handoff),
+> final human gate APPROVED. This is the plan of record.
 
 ## 1. Routed-target alignment (encoding amendment, D8)
 
