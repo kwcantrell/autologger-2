@@ -210,6 +210,32 @@ describe('mappedFiles', () => {
   it('drops excluded files too (extraction roots, not "known" files)', () => {
     expect(mappedFiles(['tooling/vite.config.ts'], model)).toEqual([]);
   });
+
+  // Audit re-review minor 3: __fixtures__ paths are test fixture DATA (e.g.
+  // web-docs/src/lib/__fixtures__/extract-imports/dynamic/entry.ts
+  // deliberately contains a non-literal dynamic import as extractImports.ts
+  // test input) — extracting them as if they were real source emits a
+  // phantom non-literal-dynamic-import warning on every docs:check run.
+  // mappedFiles feeds the extractor's roots (scripts/check.ts,
+  // scripts/snapshot.ts), so it drops __fixtures__ paths even though they
+  // match a glob-bearing component.
+  it('drops __fixtures__-segment paths from the extraction roots, even when matched by a component glob', () => {
+    expect(
+      mappedFiles(
+        [
+          'src/alpha/a.ts',
+          'src/alpha/__fixtures__/extract-imports/dynamic/entry.ts',
+          'src/alpha/nested/__fixtures__/thing.ts',
+        ],
+        model,
+      ),
+    ).toEqual(['src/alpha/a.ts']);
+  });
+
+  it('still treats __fixtures__ paths as mapped for the coverage gate (coverage and extraction are different passes)', () => {
+    const fixtureFile = 'src/alpha/__fixtures__/extract-imports/dynamic/entry.ts';
+    expect(checkCoverage([fixtureFile], model)).toEqual([]);
+  });
 });
 
 describe('validateModelStructure — bare workspace source root globs', () => {

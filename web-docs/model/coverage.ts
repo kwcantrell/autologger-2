@@ -43,19 +43,40 @@ export function isMappedOrExcluded(file: string, model: ComponentModel): boolean
 }
 
 /**
+ * True for any path with an `__fixtures__` path segment — currently only
+ * `web-docs/src/lib/__fixtures__/extract-imports/**` (audit re-review minor
+ * 3). Those files are test fixture DATA for `extractImports.test.ts` —
+ * several scenarios (e.g. `dynamic/entry.ts`) deliberately contain
+ * non-literal dynamic imports and other resolution edge cases as inputs to
+ * assert against, not real web-docs source. Extracting them as if they were
+ * real source emitted a phantom `non-literal-dynamic-import` warning (and
+ * the risk of similar phantom noise from future fixture scenarios) on every
+ * real `docs:check` run. Extraction-only: this predicate is NOT consulted by
+ * `checkCoverage`/`isMappedOrExcluded`, so fixture files stay mapped to
+ * their owning component (`web-docs`) for the coverage gate — coverage and
+ * extraction are different passes over different file lists.
+ */
+function isExtractionFixtureFile(file: string): boolean {
+  return file.split('/').includes('__fixtures__');
+}
+
+/**
  * Filters a tracked-file list down to files assigned to a real (glob-
- * bearing) component — the extractor's roots (task 3.1/3.2). Excluded
- * files and files matching no component are dropped (extraction never
- * treats them as program roots; `isMappedOrExcluded` separately governs
- * whether an *import into* such a file is an error). Single shared
- * definition — both `scripts/check.ts` and `scripts/snapshot.ts` import
- * this rather than each re-deriving it.
+ * bearing) component — the extractor's roots (task 3.1/3.2) — minus any
+ * `__fixtures__`-segment path (`isExtractionFixtureFile`; audit re-review
+ * minor 3). Excluded files and files matching no component are dropped
+ * (extraction never treats them as program roots; `isMappedOrExcluded`
+ * separately governs whether an *import into* such a file is an error).
+ * Single shared definition — both `scripts/check.ts` and `scripts/snapshot.ts`
+ * import this rather than each re-deriving it.
  */
 export function mappedFiles(trackedFiles: string[], model: ComponentModel): string[] {
-  return trackedFiles.filter((file) =>
-    model.components.some(
-      (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
-    ),
+  return trackedFiles.filter(
+    (file) =>
+      !isExtractionFixtureFile(file) &&
+      model.components.some(
+        (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
+      ),
   );
 }
 
