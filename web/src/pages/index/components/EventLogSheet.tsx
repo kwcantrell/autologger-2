@@ -356,7 +356,7 @@ export function EventLogSheet({ sessionId }: Props) {
   // keyed on its actual inputs, output unchanged.
   const sorted = useMemo(() => {
     // Only hide rows whose category is a known show button the operator
-    // toggled off ? orphan/unknown categories stay visible.
+    // toggled off — orphan/unknown categories stay visible.
     const knownIds = new Set(categories.map((c) => c.id));
     const filtered = events.filter((event) => {
       if (!showInternal && event.category.toLowerCase() === 'internal') return false;
@@ -543,10 +543,10 @@ export function EventLogSheet({ sessionId }: Props) {
   // --- Column definitions (time column label/sortKey are dynamic) ---
   // Event Feed: the <th> keeps its legacy `.sheet th { text-align: center }` (FEED_TH sets
   // no text-align, so that legacy rule still applies). The visible label reads left because
-  // the full-width sort button is `text-left` ? but the <th>'s own centering still governs
+  // the full-width sort button is `text-left` — but the <th>'s own centering still governs
   // auto-layout column widths, so we must NOT force `text-left` here (doing so reflows the
   // columns and narrows the table by ~3px). Transcribe/Topics DO pass `text-left` (no
-  // `.sheet` context ? their legacy `.feedTh` was left-aligned).
+  // `.sheet` context — their legacy `.feedTh` was left-aligned).
   // Headers use FeedTable's default sticky `FEED_TH` (same as Transcribe/Topics).
   const eventColumns: ColumnDef[] = [
     JUMP_COLUMN,
@@ -702,7 +702,7 @@ export function EventLogSheet({ sessionId }: Props) {
   );
 
   // `sheet sheet-dense` stay as retained literal chrome hooks (chrome.css `.sheet .mono`).
-  // `.logSheetBatchEdit` is dropped ? batch-edit cell styling moved onto EventLogRow
+  // `.logSheetBatchEdit` is dropped — batch-edit cell styling moved onto EventLogRow
   // via its `batchEdit`/`pendingDelete` props.
   const tableClassName = 'sheet sheet-dense';
 
