@@ -4,8 +4,8 @@ import clsx from 'clsx';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -778,9 +778,7 @@ export function Timeline({
       )}
       id="marker-current-cat-pill"
       aria-label="Current marker"
-      style={
-        currentNavMarker ? { ['--nav-cat-col' as string]: currentNavMarker.col } : undefined
-      }
+      style={currentNavMarker ? { ['--nav-cat-col' as string]: currentNavMarker.col } : undefined}
       title={
         currentNavMarker
           ? `Current marker: ${currentNavMarker.cat} — ${currentNavMarker.msg}`
@@ -843,206 +841,206 @@ export function Timeline({
             'flex h-auto w-full min-w-0 flex-col items-stretch gap-2 md:flex-row md:items-end md:gap-2.5',
         )}
       >
-      {stripOnly ? stripTrailing : null}
-      {stripOnly ? (
-        <div
-          className={clsx(
-            'relative flex w-full min-w-0 flex-col gap-0 md:flex-[1_1_0]',
-            controlsLocked && 'pointer-events-none opacity-[0.48]',
-          )}
-          aria-disabled={controlsLocked || undefined}
-        >
-          {stripLaneSlot}
+        {stripOnly ? stripTrailing : null}
+        {stripOnly ? (
           <div
-            className={clsx(V4_TIMELINE_ROW_STRIP, stripLaneSlot != null && 'hidden')}
-            aria-hidden={stripLaneSlot != null || undefined}
+            className={clsx(
+              'relative flex w-full min-w-0 flex-col gap-0 md:flex-[1_1_0]',
+              controlsLocked && 'pointer-events-none opacity-[0.48]',
+            )}
+            aria-disabled={controlsLocked || undefined}
           >
-            <div className={V4_TL_TRACK_LIVE_STRIP} role="presentation">
-              <div
-                className={clsx(TIMELINE_SHELL, 'h-auto min-h-0 justify-start')}
-                id="timeline-shell"
-              >
-                {/* Marker caption chip — flush on the track (joined one element). */}
-                <div className="relative w-full min-w-0 overflow-visible">
-                  {stripLaneSlot == null ? (
-                    <div className={clsx(MARKER_CHIP_HANG, 'w-full shrink-0')} aria-hidden="true" />
-                  ) : null}
-                  {stripLaneSlot == null ? (
-                    <div
-                      className={clsx(
-                        'pointer-events-none absolute inset-x-0 top-0 z-[8] flex w-full items-stretch',
-                        MARKER_CHIP_HANG,
-                      )}
-                    >
+            {stripLaneSlot}
+            <div
+              className={clsx(V4_TIMELINE_ROW_STRIP, stripLaneSlot != null && 'hidden')}
+              aria-hidden={stripLaneSlot != null || undefined}
+            >
+              <div className={V4_TL_TRACK_LIVE_STRIP} role="presentation">
+                <div
+                  className={clsx(TIMELINE_SHELL, 'h-auto min-h-0 justify-start')}
+                  id="timeline-shell"
+                >
+                  {/* Marker caption chip — flush on the track (joined one element). */}
+                  <div className="relative w-full min-w-0 overflow-visible">
+                    {stripLaneSlot == null ? (
                       <div
-                        className={clsx(
-                          'w-full min-w-0',
-                          !controlsLocked && 'pointer-events-auto',
-                        )}
-                      >
-                        {markerReadout}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div
-                    ref={viewportRef}
-                    className={TIMELINE_VIEWPORT_STRIP}
-                    id="timeline-viewport"
-                  >
-                    <div
-                      ref={innerRef}
-                      className={clsx(TIMELINE_INNER, 'relative min-h-0 gap-0 overflow-visible')}
-                      id="timeline-inner"
-                    >
-                      {/* Track + border-centered ticks. Spacer below keeps the hanging
-                          half of the labels inside the scrollport — overflow-x:auto
-                          forces y-clip, so absolute overflow alone gets cut off. */}
-                      <div className="relative w-full overflow-visible">
-                        <div
-                          className={clsx(
-                            TIMELINE_TRACK_STRIP,
-                            controlsLocked && 'cursor-not-allowed',
-                          )}
-                          id="timeline-track"
-                          role="slider"
-                          aria-label="Timeline scrubber"
-                          aria-disabled={controlsLocked || undefined}
-                          aria-valuemin={0}
-                          aria-valuemax={Math.round(totalSec)}
-                          aria-valuenow={Math.round(activeSec)}
-                          tabIndex={stripLaneSlot != null || controlsLocked ? -1 : 0}
-                          onPointerDown={onTrackPointerDown}
-                          onPointerMove={onTrackPointerMove}
-                          onPointerUp={onTrackPointerUp}
-                          onPointerCancel={onTrackPointerUp}
-                          onPointerLeave={onTrackPointerLeave}
-                          onDoubleClick={onTrackDoubleClick}
-                          onKeyDown={onTrackKeyDown}
-                        >
-                          <div className={TIMELINE_TRACK_LAYERS}>
-                            <TimelineClips
-                              clips={audioClips}
-                              totalSec={totalSec}
-                              activeClipIdx={activeClipIdx}
-                            />
-                            <TimelineWaveform
-                              mergedPeaks={mergedPeaks}
-                              isDecoding={isWaveformDecoding ?? false}
-                              activeSec={activeSec}
-                              totalSec={totalSec}
-                              clips={audioClips}
-                            />
-                            <div
-                              className={clsx(
-                                TIMELINE_HOVER_PLAYHEAD,
-                                hoverPct != null && TIMELINE_HOVER_PLAYHEAD_VISIBLE,
-                              )}
-                              id="timeline-hover-playhead"
-                              aria-hidden={true}
-                              style={hoverPct != null ? { left: `${hoverPct}%` } : undefined}
-                            />
-                            <div
-                              ref={glowRef}
-                              className={TIMELINE_MARKER_PLAYHEAD_GLOW}
-                              id="timeline-marker-playhead-glow"
-                              aria-hidden={true}
-                            />
-                            <TimelineMarkers
-                              events={events}
-                              status={status}
-                              totalSec={totalSec}
-                              selectedEventId={selectedEventId}
-                              onMouseOver={onMarkersMouseOver}
-                              onMouseMove={onMarkersMouseMove}
-                              onMouseOut={onMarkersMouseOut}
-                              onClick={onMarkersClick}
-                            />
-                            <div
-                              className={TIMELINE_PLAYHEAD}
-                              id="timeline-playhead"
-                              style={{ left: `${playheadPct}%` }}
-                            />
-                          </div>
-                        </div>
-                        <TimelineTicks totalSec={totalSec} />
-                      </div>
-                      {/* Half-label hang only — keeps ticks clear of overflow clip
-                          without extra air above the zoom rail. */}
-                      <div
-                        className="h-[0.32rem] w-full shrink-0"
+                        className={clsx(MARKER_CHIP_HANG, 'w-full shrink-0')}
                         aria-hidden="true"
                       />
+                    ) : null}
+                    {stripLaneSlot == null ? (
+                      <div
+                        className={clsx(
+                          'pointer-events-none absolute inset-x-0 top-0 z-[8] flex w-full items-stretch',
+                          MARKER_CHIP_HANG,
+                        )}
+                      >
+                        <div
+                          className={clsx(
+                            'w-full min-w-0',
+                            !controlsLocked && 'pointer-events-auto',
+                          )}
+                        >
+                          {markerReadout}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div
+                      ref={viewportRef}
+                      className={TIMELINE_VIEWPORT_STRIP}
+                      id="timeline-viewport"
+                    >
+                      <div
+                        ref={innerRef}
+                        className={clsx(TIMELINE_INNER, 'relative min-h-0 gap-0 overflow-visible')}
+                        id="timeline-inner"
+                      >
+                        {/* Track + border-centered ticks. Spacer below keeps the hanging
+                          half of the labels inside the scrollport — overflow-x:auto
+                          forces y-clip, so absolute overflow alone gets cut off. */}
+                        <div className="relative w-full overflow-visible">
+                          <div
+                            className={clsx(
+                              TIMELINE_TRACK_STRIP,
+                              controlsLocked && 'cursor-not-allowed',
+                            )}
+                            id="timeline-track"
+                            role="slider"
+                            aria-label="Timeline scrubber"
+                            aria-disabled={controlsLocked || undefined}
+                            aria-valuemin={0}
+                            aria-valuemax={Math.round(totalSec)}
+                            aria-valuenow={Math.round(activeSec)}
+                            tabIndex={stripLaneSlot != null || controlsLocked ? -1 : 0}
+                            onPointerDown={onTrackPointerDown}
+                            onPointerMove={onTrackPointerMove}
+                            onPointerUp={onTrackPointerUp}
+                            onPointerCancel={onTrackPointerUp}
+                            onPointerLeave={onTrackPointerLeave}
+                            onDoubleClick={onTrackDoubleClick}
+                            onKeyDown={onTrackKeyDown}
+                          >
+                            <div className={TIMELINE_TRACK_LAYERS}>
+                              <TimelineClips
+                                clips={audioClips}
+                                totalSec={totalSec}
+                                activeClipIdx={activeClipIdx}
+                              />
+                              <TimelineWaveform
+                                mergedPeaks={mergedPeaks}
+                                isDecoding={isWaveformDecoding ?? false}
+                                activeSec={activeSec}
+                                totalSec={totalSec}
+                                clips={audioClips}
+                              />
+                              <div
+                                className={clsx(
+                                  TIMELINE_HOVER_PLAYHEAD,
+                                  hoverPct != null && TIMELINE_HOVER_PLAYHEAD_VISIBLE,
+                                )}
+                                id="timeline-hover-playhead"
+                                aria-hidden={true}
+                                style={hoverPct != null ? { left: `${hoverPct}%` } : undefined}
+                              />
+                              <div
+                                ref={glowRef}
+                                className={TIMELINE_MARKER_PLAYHEAD_GLOW}
+                                id="timeline-marker-playhead-glow"
+                                aria-hidden={true}
+                              />
+                              <TimelineMarkers
+                                events={events}
+                                status={status}
+                                totalSec={totalSec}
+                                selectedEventId={selectedEventId}
+                                onMouseOver={onMarkersMouseOver}
+                                onMouseMove={onMarkersMouseMove}
+                                onMouseOut={onMarkersMouseOut}
+                                onClick={onMarkersClick}
+                              />
+                              <div
+                                className={TIMELINE_PLAYHEAD}
+                                id="timeline-playhead"
+                                style={{ left: `${playheadPct}%` }}
+                              />
+                            </div>
+                          </div>
+                          <TimelineTicks totalSec={totalSec} />
+                        </div>
+                        {/* Half-label hang only — keeps ticks clear of overflow clip
+                          without extra air above the zoom rail. */}
+                        <div className="h-[0.32rem] w-full shrink-0" aria-hidden="true" />
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Zoom rail visible in strip mode; scrubber keeps ~80% lane height above. */}
-              <div
-                className={clsx(ZOOM_RAIL_STRIP, stripLaneSlot != null && 'hidden')}
-                role="toolbar"
-                aria-label="Timeline zoom"
-                aria-hidden={stripLaneSlot != null || undefined}
-              >
+                {/* Zoom rail visible in strip mode; scrubber keeps ~80% lane height above. */}
                 <div
-                  ref={zoomTooltipRef}
-                  className={clsx(ZOOM_TOOLTIP, 'hidden')}
-                  id="timeline-zoom-tooltip"
-                  role="status"
-                  aria-live="polite"
-                />
-                <input
-                  ref={zoomValueRef}
-                  type="text"
-                  className={clsx(ZOOM_VALUE, 'mono', 'faint')}
-                  id="timeline-zoom-value"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label="Timeline zoom percent"
-                  defaultValue="100%"
-                  disabled={controlsLocked}
-                  tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
-                />
-                <div ref={zoomRangeRef} className={ZOOM_RANGE} id="timeline-zoom-range">
-                  <div ref={zoomBarRef} className={ZOOM_BAR} id="timeline-zoom-bar" />
-                  <button
-                    ref={zoomOutRef}
-                    type="button"
-                    className={ZOOM_HANDLE}
-                    id="timeline-zoom-out"
-                    aria-label="Reduce timeline zoom"
+                  className={clsx(ZOOM_RAIL_STRIP, stripLaneSlot != null && 'hidden')}
+                  role="toolbar"
+                  aria-label="Timeline zoom"
+                  aria-hidden={stripLaneSlot != null || undefined}
+                >
+                  <div
+                    ref={zoomTooltipRef}
+                    className={clsx(ZOOM_TOOLTIP, 'hidden')}
+                    id="timeline-zoom-tooltip"
+                    role="status"
+                    aria-live="polite"
+                  />
+                  <input
+                    ref={zoomValueRef}
+                    type="text"
+                    className={clsx(ZOOM_VALUE, 'mono', 'faint')}
+                    id="timeline-zoom-value"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Timeline zoom percent"
+                    defaultValue="100%"
                     disabled={controlsLocked}
                     tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
                   />
-                  <button
-                    ref={zoomInRef}
-                    type="button"
-                    className={ZOOM_HANDLE}
-                    id="timeline-zoom-in"
-                    aria-label="Increase timeline zoom"
-                    disabled={controlsLocked}
-                    tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
-                  />
-                </div>
-                {/* Position readout only — full session TC lives in the transport aside. */}
-                <div className="flex shrink-0 flex-row items-baseline gap-[0.15rem] whitespace-nowrap [font-variant-numeric:tabular-nums]">
-                  <span
-                    className="text-[0.85rem] font-semibold tracking-[0.02em] text-v5-text"
-                    id="timeline-readout-pos"
-                  >
-                    {fmtHmsFromSec(activeSec)}
-                  </span>
-                  <span
-                    className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted opacity-[0.82]"
-                    id="timeline-readout-total"
-                  >
-                    {` / ${fmtHmsFromSec(rollingSec)}`}
-                  </span>
+                  <div ref={zoomRangeRef} className={ZOOM_RANGE} id="timeline-zoom-range">
+                    <div ref={zoomBarRef} className={ZOOM_BAR} id="timeline-zoom-bar" />
+                    <button
+                      ref={zoomOutRef}
+                      type="button"
+                      className={ZOOM_HANDLE}
+                      id="timeline-zoom-out"
+                      aria-label="Reduce timeline zoom"
+                      disabled={controlsLocked}
+                      tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
+                    />
+                    <button
+                      ref={zoomInRef}
+                      type="button"
+                      className={ZOOM_HANDLE}
+                      id="timeline-zoom-in"
+                      aria-label="Increase timeline zoom"
+                      disabled={controlsLocked}
+                      tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
+                    />
+                  </div>
+                  {/* Position readout only — full session TC lives in the transport aside. */}
+                  <div className="flex shrink-0 flex-row items-baseline gap-[0.15rem] whitespace-nowrap [font-variant-numeric:tabular-nums]">
+                    <span
+                      className="text-[0.85rem] font-semibold tracking-[0.02em] text-v5-text"
+                      id="timeline-readout-pos"
+                    >
+                      {fmtHmsFromSec(activeSec)}
+                    </span>
+                    <span
+                      className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted opacity-[0.82]"
+                      id="timeline-readout-total"
+                    >
+                      {` / ${fmtHmsFromSec(rollingSec)}`}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </div>
         ) : null}
       </div>

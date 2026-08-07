@@ -4,15 +4,14 @@ import { useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
 import { buildTopicsCsv, downloadTopicsCsv } from '../utils/topicsCsv';
 import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCsv';
-import { FeedToolbarCaption, IconDownload } from './feedToolbarCaption';
 import { FeedShell } from './FeedShell';
+import { FeedToolbarCaption, IconDownload } from './feedToolbarCaption';
 
 interface Props {
   sessionId: string;
 }
 
-const EXPORT_BTN =
-  'btn primary inline-flex items-center justify-center gap-2 text-center';
+const EXPORT_BTN = 'btn primary inline-flex items-center justify-center gap-2 text-center';
 
 export function ExportFeed({ sessionId }: Props) {
   const base = `${API_ROOT}/sessions/${sessionId}`;

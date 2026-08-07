@@ -11,8 +11,8 @@ import { normalizePalette9 } from '../utils/palette9';
 import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
-import { feedTabButtonClassName } from './feedTabStyles';
 import { FpsSelect } from './FpsSelect';
+import { feedTabButtonClassName } from './feedTabStyles';
 import { Select } from './Select';
 
 // Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width

@@ -98,6 +98,7 @@ vi.mock('./TransportControls', () => ({
     recording ? 'audio-recording' : rolling ? 'rolling' : 'stop',
   TransportControls: () => <div data-testid="transport-controls-stub" />,
 }));
+
 import { SessionWorkspace } from './SessionWorkspace';
 
 function renderWorkspace(sessionId = 'sess-a', ytImportPending = false) {

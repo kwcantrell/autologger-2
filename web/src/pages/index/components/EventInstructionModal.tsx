@@ -1,9 +1,4 @@
-import {
-  useLayoutEffect,
-  useRef,
-  useState,
-  type TextareaHTMLAttributes,
-} from 'react';
+import { type TextareaHTMLAttributes, useLayoutEffect, useRef, useState } from 'react';
 import { Dialog } from '../../../shared/ui/Dialog';
 
 interface Props {
@@ -46,22 +41,15 @@ const TEXTAREA_CLASS =
  * Centered modal editor for a button's AUTO GENERATE instruction
  * (replaces the row popover so long rules stay on-screen).
  */
-export function EventInstructionModal({
-  buttonName,
-  initialInstruction,
-  onSave,
-  onClose,
-}: Props) {
+export function EventInstructionModal({ buttonName, initialInstruction, onSave, onClose }: Props) {
   const [draft, setDraft] = useState(initialInstruction);
-  const title = buttonName.trim()
-    ? `${buttonName.trim()} — Auto generate`
-    : 'Auto generate';
+  const title = buttonName.trim() ? `${buttonName.trim()} — Auto generate` : 'Auto generate';
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()} title={title}>
       <p className="modal-hint">
-        Tell AUTO GENERATE when to log this event from the transcript. Leave blank to opt
-        out for this button.
+        Tell AUTO GENERATE when to log this event from the transcript. Leave blank to opt out for
+        this button.
       </p>
       <label className="field">
         <span>Generation instruction</span>

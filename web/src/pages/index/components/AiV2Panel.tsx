@@ -11,16 +11,16 @@ import { useAiV2WidgetData } from './aiV2/useAiV2WidgetData';
 import { renderCatalogWidgetPreview } from './aiV2/widgetRegistry';
 import type { DashboardConfig } from './aiV2/widgetTypes';
 import { FEED_SHEET_CLASS } from './FeedShell';
+import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 import {
   FeedToolbarCaption,
   IconCheck,
+  IconKeep,
   IconPencil,
+  IconPlus,
   IconSparkles,
   IconTrash,
-  IconKeep,
-  IconPlus,
 } from './feedToolbarCaption';
-import { FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY } from './FeedTable';
 
 interface Props {
   sessionId: string;
@@ -190,151 +190,155 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
   return (
     <div className={FEED_SHEET_CLASS} data-testid="aiv2-panel">
       <div className="flex flex-1 min-h-0 gap-3 px-4 pt-3 pb-4 max-md:flex-col">
-      <section
-        className="flex flex-1 min-w-0 flex-col gap-2 min-h-0"
-        aria-label="Dashboard canvas"
-        data-testid="aiv2-canvas-seam"
-      >
-        {dashboardError ? (
-          <div
-            role="alert"
-            data-testid="aiv2-dashboard-error"
-            className="shrink-0 rounded-v5-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[0.8rem] text-red-200"
-          >
-            {dashboardError}
-          </div>
-        ) : null}
-        {!dashboardLoaded ? null : displayConfig ? (
-          <>
-            {proposedDashboard ? (
-              <div
-                className="flex shrink-0 items-center gap-2 rounded-v5-md border border-v5-border-strong glass-face px-3 py-2 text-[0.8rem] text-v5-text"
-                data-testid="aiv2-dashboard-proposal-banner"
-              >
-                <span className="flex-1">
-                  Draft — the agent proposed this dashboard. Keep it to save, or discard it.
-                </span>
-                <button
-                  type="button"
-                  className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-                  data-testid="aiv2-dashboard-keep"
-                  onClick={keepProposedDashboard}
-                >
-                  <FeedToolbarCaption label="Keep" icon={<IconKeep />} />
-                </button>
-                <button
-                  type="button"
-                  className={FEED_GLASS_BTN}
-                  data-testid="aiv2-dashboard-discard"
-                  onClick={discardProposedDashboard}
-                >
-                  <FeedToolbarCaption label="Discard" icon={<IconTrash />} />
-                </button>
-              </div>
-            ) : (
-              <div className="flex shrink-0 items-center gap-2">
-                <h2 className="m-0 text-sm font-semibold text-v5-text">Session overview</h2>
-                <span className="ml-auto" />
-                {editingDashboard ? (
-                  <button
-                    type="button"
-                    className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-                    data-testid="aiv2-dashboard-done"
-                    onClick={() => setEditingDashboard(false)}
-                  >
-                    <FeedToolbarCaption label="Done" icon={<IconCheck />} />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className={FEED_GLASS_BTN}
-                    data-testid="aiv2-dashboard-edit"
-                    onClick={() => setEditingDashboard(true)}
-                  >
-                    <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
-                  </button>
-                )}
-              </div>
-            )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {!proposedDashboard && dashboardConfig && editingDashboard ? (
-                <DashboardEditor
-                  config={dashboardConfig}
-                  onChange={handleDashboardChange}
-                  widgetData={widgetData}
-                />
-              ) : (
-                <DashboardGrid
-                  widgets={displayConfig.widgets}
-                  interactions={displayConfig.interactions}
-                  widgetData={widgetData}
-                />
-              )}
+        <section
+          className="flex flex-1 min-w-0 flex-col gap-2 min-h-0"
+          aria-label="Dashboard canvas"
+          data-testid="aiv2-canvas-seam"
+        >
+          {dashboardError ? (
+            <div
+              role="alert"
+              data-testid="aiv2-dashboard-error"
+              className="shrink-0 rounded-v5-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[0.8rem] text-red-200"
+            >
+              {dashboardError}
             </div>
-          </>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-            {hasActivity ? (
-              <p className="m-0 max-w-[40ch] text-sm text-v5-muted">
-                The dashboard renders here once the design turn finishes. The design conversation on
-                the right keeps running independently of this placeholder.
-              </p>
-            ) : (
-              <>
-                <h2 className="m-0 text-base font-semibold text-v5-text">
-                  No dashboard for this session yet
-                </h2>
-                <p className="m-0 max-w-[36ch] text-sm text-v5-muted">
-                  A dashboard turns this session's transcript, topics, and events into a visual
-                  record. Design one with AI, or start from a blank grid.
-                </p>
-                <div className="flex gap-2">
+          ) : null}
+          {!dashboardLoaded ? null : displayConfig ? (
+            <>
+              {proposedDashboard ? (
+                <div
+                  className="flex shrink-0 items-center gap-2 rounded-v5-md border border-v5-border-strong glass-face px-3 py-2 text-[0.8rem] text-v5-text"
+                  data-testid="aiv2-dashboard-proposal-banner"
+                >
+                  <span className="flex-1">
+                    Draft — the agent proposed this dashboard. Keep it to save, or discard it.
+                  </span>
                   <button
                     type="button"
                     className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
-                    onClick={() => setPendingStart(STARTER_MESSAGE)}
+                    data-testid="aiv2-dashboard-keep"
+                    onClick={keepProposedDashboard}
                   >
-                    <FeedToolbarCaption alwaysLabel label="Design with AI" icon={<IconSparkles />} />
+                    <FeedToolbarCaption label="Keep" icon={<IconKeep />} />
                   </button>
                   <button
                     type="button"
                     className={FEED_GLASS_BTN}
-                    data-testid="aiv2-start-blank"
-                    onClick={startBlank}
+                    data-testid="aiv2-dashboard-discard"
+                    onClick={discardProposedDashboard}
                   >
-                    <FeedToolbarCaption alwaysLabel label="Start blank" icon={<IconPlus />} />
+                    <FeedToolbarCaption label="Discard" icon={<IconTrash />} />
                   </button>
                 </div>
-              </>
-            )}
-          </div>
-        )}
-      </section>
+              ) : (
+                <div className="flex shrink-0 items-center gap-2">
+                  <h2 className="m-0 text-sm font-semibold text-v5-text">Session overview</h2>
+                  <span className="ml-auto" />
+                  {editingDashboard ? (
+                    <button
+                      type="button"
+                      className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                      data-testid="aiv2-dashboard-done"
+                      onClick={() => setEditingDashboard(false)}
+                    >
+                      <FeedToolbarCaption label="Done" icon={<IconCheck />} />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={FEED_GLASS_BTN}
+                      data-testid="aiv2-dashboard-edit"
+                      onClick={() => setEditingDashboard(true)}
+                    >
+                      <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {!proposedDashboard && dashboardConfig && editingDashboard ? (
+                  <DashboardEditor
+                    config={dashboardConfig}
+                    onChange={handleDashboardChange}
+                    widgetData={widgetData}
+                  />
+                ) : (
+                  <DashboardGrid
+                    widgets={displayConfig.widgets}
+                    interactions={displayConfig.interactions}
+                    widgetData={widgetData}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+              {hasActivity ? (
+                <p className="m-0 max-w-[40ch] text-sm text-v5-muted">
+                  The dashboard renders here once the design turn finishes. The design conversation
+                  on the right keeps running independently of this placeholder.
+                </p>
+              ) : (
+                <>
+                  <h2 className="m-0 text-base font-semibold text-v5-text">
+                    No dashboard for this session yet
+                  </h2>
+                  <p className="m-0 max-w-[36ch] text-sm text-v5-muted">
+                    A dashboard turns this session's transcript, topics, and events into a visual
+                    record. Design one with AI, or start from a blank grid.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className={clsx(FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY)}
+                      onClick={() => setPendingStart(STARTER_MESSAGE)}
+                    >
+                      <FeedToolbarCaption
+                        alwaysLabel
+                        label="Design with AI"
+                        icon={<IconSparkles />}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className={FEED_GLASS_BTN}
+                      data-testid="aiv2-start-blank"
+                      onClick={startBlank}
+                    >
+                      <FeedToolbarCaption alwaysLabel label="Start blank" icon={<IconPlus />} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </section>
 
-      <aside
-        className="flex w-[22.5rem] max-w-full min-h-0 flex-col border-l border-v5-border max-md:w-full max-md:border-l-0 max-md:border-t"
-        aria-label="Design conversation"
-      >
-        <AiV2Design
-          sessionId={sessionId}
-          messages={messages}
-          onMessagesChange={setMessages}
-          isStreaming={isStreaming}
-          onStreamingChange={setIsStreaming}
-          abortControllerRef={abortControllerRef}
-          pendingQuestion={pendingQuestion}
-          onPendingQuestionChange={setPendingQuestion}
-          pendingStart={pendingStart}
-          onPendingStartConsumed={() => setPendingStart(null)}
-          renderOptionPreview={(widgetType, option) =>
-            widgetType ? renderCatalogWidgetPreview(widgetType, option.label) : null
-          }
-          onDashboardProposed={(config, turnId) => {
-            setProposedDashboard(config);
-            setProposedDashboardTurnId(turnId);
-          }}
-        />
-      </aside>
+        <aside
+          className="flex w-[22.5rem] max-w-full min-h-0 flex-col border-l border-v5-border max-md:w-full max-md:border-l-0 max-md:border-t"
+          aria-label="Design conversation"
+        >
+          <AiV2Design
+            sessionId={sessionId}
+            messages={messages}
+            onMessagesChange={setMessages}
+            isStreaming={isStreaming}
+            onStreamingChange={setIsStreaming}
+            abortControllerRef={abortControllerRef}
+            pendingQuestion={pendingQuestion}
+            onPendingQuestionChange={setPendingQuestion}
+            pendingStart={pendingStart}
+            onPendingStartConsumed={() => setPendingStart(null)}
+            renderOptionPreview={(widgetType, option) =>
+              widgetType ? renderCatalogWidgetPreview(widgetType, option.label) : null
+            }
+            onDashboardProposed={(config, turnId) => {
+              setProposedDashboard(config);
+              setProposedDashboardTurnId(turnId);
+            }}
+          />
+        </aside>
       </div>
     </div>
   );

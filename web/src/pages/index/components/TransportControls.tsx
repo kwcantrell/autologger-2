@@ -411,10 +411,7 @@ export function TransportControls({
             aria-label={cfg.ariaLabel}
             onClick={() => handleClick(i)}
           >
-            <span
-              className={compact ? CTRL_ICON_COMPACT : CTRL_ICON}
-              id={`btn-ctl-${i + 1}-icon`}
-            >
+            <span className={compact ? CTRL_ICON_COMPACT : CTRL_ICON} id={`btn-ctl-${i + 1}-icon`}>
               <TransportGlyph icon={cfg.icon} size={compact ? 18 : 29} />
             </span>
           </button>

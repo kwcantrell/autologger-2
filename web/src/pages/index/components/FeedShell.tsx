@@ -27,8 +27,7 @@ export const FEED_SHEET_CLASS = clsx(
 
 // FeedShell content inset — top half of the former `p-6` so the header sits
 // closer to the sheet edge; horizontal/bottom stay 1.5rem.
-const SHEET_PAD =
-  '[#v4-log-session_&]:px-6 [#v4-log-session_&]:pt-3 [#v4-log-session_&]:pb-6';
+const SHEET_PAD = '[#v4-log-session_&]:px-6 [#v4-log-session_&]:pt-3 [#v4-log-session_&]:pb-6';
 
 const SHEET = clsx(FEED_SHEET_CLASS, SHEET_PAD);
 

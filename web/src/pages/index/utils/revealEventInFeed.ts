@@ -12,9 +12,7 @@ function cssAttrEscape(value: string): string {
 export function revealEventInFeed(eventId: string): void {
   const id = String(eventId || '').trim();
   if (!id) return;
-  document.body.dispatchEvent(
-    new CustomEvent(REVEAL_EVENT, { detail: { eventId: id } }),
-  );
+  document.body.dispatchEvent(new CustomEvent(REVEAL_EVENT, { detail: { eventId: id } }));
 }
 
 /**

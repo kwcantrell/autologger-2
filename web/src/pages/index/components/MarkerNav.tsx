@@ -12,15 +12,13 @@ const NAV_BTN =
   'relative isolate box-border grid h-(--v4-ctrl-btn-h) max-h-(--v4-ctrl-btn-h) min-h-(--v4-ctrl-btn-h) w-(--v4-ctrl-btn-w) flex-[0_0_var(--v4-ctrl-btn-w)] cursor-pointer place-items-center overflow-visible rounded-v5-md border border-[rgba(148,163,184,0.22)] p-0 [background:linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0)_42%),linear-gradient(180deg,rgba(19,27,48,0.88),rgba(11,16,30,0.78))] shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_4px_16px_rgba(2,8,23,0.42)] [--session-ctl-accent:#e2e8f0] [transition:border-color_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] hover-always:not-disabled:[border-color:color-mix(in_srgb,var(--session-ctl-accent)_28%,rgba(148,163,184,0.22))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)] disabled:cursor-not-allowed disabled:border-dashed disabled:border-[rgba(148,163,184,0.14)] disabled:bg-[rgba(7,11,20,0.55)] disabled:opacity-[0.48] disabled:shadow-none';
 // Desktop strip (ungrouped): grow equally with transport / ? tiles.
 // `!` beats the fixed flex-basis/width utilities on NAV_BTN.
-const NAV_BTN_DESKTOP_GROW =
-  'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
+const NAV_BTN_DESKTOP_GROW = 'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
 
 const NAV_ICON =
   'pointer-events-none relative z-[1] inline-flex h-[1.15rem] w-[1.15rem] items-center justify-center text-[color:color-mix(in_srgb,var(--session-ctl-accent)_70%,#e2e8f0)]';
 
 // Category-color hint centered on the outer border (prev = left, next = right).
-const NAV_HINT =
-  'pointer-events-none absolute top-1/2 z-[2] h-[0.45rem] w-[0.45rem] rounded-full';
+const NAV_HINT = 'pointer-events-none absolute top-1/2 z-[2] h-[0.45rem] w-[0.45rem] rounded-full';
 
 // Marker positions MUST use the same coordinate space as the rendered timeline
 // markers and audio clips (eventTimelineSec, frame-rate aware — the shared
@@ -108,9 +106,7 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
 
   const markers = useMemo(() => groupTimelineMarkers(events, status), [events, status]);
   // No marker scrubbing while rolling/recording — timeline lane is category buttons.
-  const liveTransport = Boolean(
-    status?.is_rolling || status?.audio_recording_lease_alive,
-  );
+  const liveTransport = Boolean(status?.is_rolling || status?.audio_recording_lease_alive);
   const enabled = markers.length > 0 && !liveTransport && !disabled;
 
   const currentSec = useMemo(() => {
@@ -188,7 +184,9 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
             backgroundColor: prevColor,
             opacity: enabled && prevEvent ? 1 : 0,
             boxShadow:
-              enabled && prevEvent ? `0 0 6px color-mix(in srgb, ${prevColor} 55%, transparent)` : undefined,
+              enabled && prevEvent
+                ? `0 0 6px color-mix(in srgb, ${prevColor} 55%, transparent)`
+                : undefined,
           }}
         />
         <span className={NAV_ICON}>
@@ -214,7 +212,9 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
             backgroundColor: nextColor,
             opacity: enabled && nextEvent ? 1 : 0,
             boxShadow:
-              enabled && nextEvent ? `0 0 6px color-mix(in srgb, ${nextColor} 55%, transparent)` : undefined,
+              enabled && nextEvent
+                ? `0 0 6px color-mix(in srgb, ${nextColor} 55%, transparent)`
+                : undefined,
           }}
         />
         <span className={NAV_ICON}>

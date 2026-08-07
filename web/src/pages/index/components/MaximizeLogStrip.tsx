@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import type { LogEvent, SessionStatus } from '../../../api/types';
-import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { Tooltip } from '../../../shared/ui/Tooltip';
+import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { CategoryButtonStrip } from './CategoryButtonStrip';
 import { MarkerNav } from './MarkerNav';
 import { TimecodeDisplay } from './TimecodeDisplay';
@@ -74,8 +74,7 @@ export function MaximizeLogStrip({
   const showName = (status?.show_name ?? '').trim();
   const sessionTitle = (status?.title ?? '').trim() || (status?.deck_title ?? '').trim();
   const stripShow = showName || code || sessionTitle || '—';
-  const stripSessionName =
-    sessionTitle && sessionTitle !== stripShow ? sessionTitle : '';
+  const stripSessionName = sessionTitle && sessionTitle !== stripShow ? sessionTitle : '';
   const dateText = fmtSessionDate(status?.session_created_at_utc ?? status?.now_utc);
   const displayStatus = ytImportPending ? 'Importing YouTube Audio' : statusText;
   const statusIsYtImport = displayStatus === 'Importing YouTube Audio';
@@ -193,8 +192,7 @@ export function MaximizeLogStrip({
 
   // Desktop: equal-grow tiles across the full controls column. Mobile keeps fixed tiles.
   // `!` beats the fixed flex-basis/width utilities on the shared tile classes.
-  const stripBtnDesktopGrow =
-    'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
+  const stripBtnDesktopGrow = 'md:min-w-(--v4-ctrl-btn-w) md:w-auto! md:max-w-none md:flex-1!';
   // Mute secondary chrome only while stopped/playing — full tiles while rolling/recording.
   const secondaryQuiet = !isRolling && !isRecording;
 
@@ -324,4 +322,3 @@ export function MaximizeLogStrip({
     </div>
   );
 }
-

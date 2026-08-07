@@ -69,7 +69,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 const MAX_LINES = 30;
 const MAX_CHARS = 2000;
 
-const BANNED_PHRASES = ['Make the code changes', 'Ready for implementation', 'to start implementing'];
+const BANNED_PHRASES = [
+  'Make the code changes',
+  'Ready for implementation',
+  'to start implementing',
+];
 
 /** The exact pinned MCP server package spec (D4: no floating install). */
 const MCP_PACKAGE_LITERAL = '@colbymchenry/codegraph@1.5.0';
@@ -264,7 +268,8 @@ function checkAllowlistedFile(relPath: string, content: string): string[] {
   const violations: string[] = [];
   const lines = countLines(content);
   if (lines > MAX_LINES) violations.push(`exceeds line budget: ${lines} > ${MAX_LINES}`);
-  if (content.length > MAX_CHARS) violations.push(`exceeds char budget: ${content.length} > ${MAX_CHARS}`);
+  if (content.length > MAX_CHARS)
+    violations.push(`exceeds char budget: ${content.length} > ${MAX_CHARS}`);
   for (const phrase of BANNED_PHRASES) {
     if (content.includes(phrase)) violations.push(`contains banned phrase: "${phrase}"`);
   }
@@ -360,7 +365,8 @@ describe('scanAgentSurface + closedWorldViolations (mutation check on a real fil
 
   const CLEAN_FILES: Record<string, string> = {
     'AGENTS.md': 'CLAUDE.md is normative.\n',
-    '.cursor/rules/openspec-sdlc.mdc': 'CLAUDE.md .claude/skills/openspec-apply-change/SKILL.md openspec/config.yaml\n',
+    '.cursor/rules/openspec-sdlc.mdc':
+      'CLAUDE.md .claude/skills/openspec-apply-change/SKILL.md openspec/config.yaml\n',
     '.cursor/rules/restart-server-yourself.mdc': 'Ask first.\n',
     '.cursor/commands/opsx/explore.md': '.claude/skills/openspec-explore/SKILL.md\n',
     '.cursor/commands/opsx/propose.md': '.claude/skills/openspec-propose/SKILL.md\n',
@@ -424,7 +430,8 @@ describe('scanAgentSurface + closedWorldViolations (mutation check on a real fil
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-guard-mcp-json-'));
     writeTree(tmpRoot, {
       ...CLEAN_FILES,
-      '.cursor/mcp.json': '{"mcpServers":{"codegraph":{"args":["--path","/home/someone/checkout"]}}}\n',
+      '.cursor/mcp.json':
+        '{"mcpServers":{"codegraph":{"args":["--path","/home/someone/checkout"]}}}\n',
     });
     const surface = scanAgentSurface(tmpRoot);
     expect(surface.cursorFiles).toContain('.cursor/mcp.json');

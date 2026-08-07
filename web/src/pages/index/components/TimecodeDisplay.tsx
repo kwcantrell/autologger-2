@@ -109,11 +109,7 @@ export function TimecodeDisplay({ sessionId, compact = false }: Props) {
                 'inline-flex items-center justify-center',
                 compact ? 'h-[1.2rem] w-[1.2rem]' : 'h-[1.08rem] w-[1.08rem]',
                 // Mic: red only while mic-recording; white while rolling.
-                isRecording
-                  ? 'text-[#ef4444]'
-                  : isRolling
-                    ? 'text-[#e2e8f0]'
-                    : 'text-[#6b7280]',
+                isRecording ? 'text-[#ef4444]' : isRolling ? 'text-[#e2e8f0]' : 'text-[#6b7280]',
               )}
             >
               <MicGlyph size={glyphSize} />

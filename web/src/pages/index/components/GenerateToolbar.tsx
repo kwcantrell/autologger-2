@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { FeedToolbarCaption, IconPlus, IconSparkles } from './feedToolbarCaption';
 import { FEED_GLASS_BTN } from './FeedTable';
+import { FeedToolbarCaption, IconPlus, IconSparkles } from './feedToolbarCaption';
 
 interface Props {
   /** Non-503 inline error from `useGatedGenerate` (single error channel). */
