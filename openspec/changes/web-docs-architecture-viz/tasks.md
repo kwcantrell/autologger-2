@@ -75,7 +75,7 @@
 
 ## 5. Spec, schema, and change extraction
 
-- [ ] 5.1 TDD the spec-markdown parser: capability → requirements → scenarios tree from
+- [x] 5.1 TDD the spec-markdown parser: capability → requirements → scenarios tree from
       `### Requirement:` / `#### Scenario:` headings, with the count-equality gate
       (parsed counts equal direct heading counts; unclassifiable heading in a
       Requirements section fails naming the capability). Fixtures + live-repo smoke.
@@ -86,7 +86,7 @@
       `foreign_key_list`; emit `erDiagram` sources excluding `sqlite_%` and
       `_migrations`, schema only. Assert catalog tables/columns/FKs and session tables/
       columns present; no DDL text parsing.
-- [ ] 5.3 TDD the overlay extraction: active changes = git-tracked `proposal.md` dirs
+- [x] 5.3 TDD the overlay extraction: active changes = git-tracked `proposal.md` dirs
       under `openspec/changes/` (archive excluded); partial/untracked dirs skipped with
       a warning; touched capabilities from delta dirs; component-scoped ⇒ tint,
       cross-cutting ⇒ listed untinted, unknown ⇒ pending; delta-less changes listed
