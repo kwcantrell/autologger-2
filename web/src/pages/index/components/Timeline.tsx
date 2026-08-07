@@ -26,7 +26,6 @@ import { clipIndexContainingTimelineSec } from '../../../shared/utils/waveformSv
 import { useZoomRail } from '../hooks/useZoomRail';
 import { groupTimelineMarkers } from '../utils/markerGrouping';
 import { revealEventInFeed } from '../utils/revealEventInFeed';
-import { MarkerNav } from './MarkerNav';
 import { TimelineClips } from './timeline/TimelineClips';
 import { TimelineMarkers } from './timeline/TimelineMarkers';
 import { TimelineTicks } from './timeline/TimelineTicks';
@@ -54,50 +53,8 @@ import { TimelineWaveform } from './timeline/TimelineWaveform';
 // --v4-zoom-rail-below-extra); utilities reference them via (--name). Dynamic inline
 // styles (playhead/marker/waveform geometry, zoom rail) are untouched.
 
-// ---- Deck / meta rules (were :global(#v4-log-session ...) in SessionWorkspace.module.css) ----
-// These style Timeline-emitted DOM and move here with their target (contextual overrides
-// travel with the element that renders them). All were #v4-log-session-scoped; Timeline is
-// always inside it, so they convert as plain utilities.
-
 const TL_STACK =
   'v5-session-timeline-stack flex flex-col flex-[1_1_auto] min-h-0 w-full gap-0 box-border';
-
-// The v5-panel-head / -head__main / -head__actions / -eyebrow group is a MULTI-EMITTER
-// class family (Timeline + SessionWorkspace + FeedShell all emit it); its rules live in a
-// commented @layer components block in tailwind.css (slice 5b) so all three emitters
-// resolve from one place. Timeline keeps emitting the bare legacy class strings.
-const PANEL_HEAD = 'v5-panel-head v5-panel-head--timeline';
-const PANEL_HEAD_MAIN = 'v5-panel-head__main';
-const PANEL_EYEBROW = 'v5-panel-eyebrow';
-
-const DECK_HEADER =
-  'v4-playback-deck-header flex flex-row items-center justify-start gap-[0.75rem] w-full min-w-0 flex-[0_0_auto]';
-const DECK_TITLE_CLUSTER =
-  'v5-deck-title-cluster flex flex-row flex-wrap items-baseline justify-start gap-[0.45rem_0.65rem] min-w-0 flex-[1_1_auto]';
-// .v4-playback-deck-title base is unstyled locally; the #v4-log-session rule is the
-// only styling and applies always here. `flex-[0_1_auto]` from the cluster child rule.
-const DECK_TITLE =
-  'v4-playback-deck-title flex-[0_1_auto] m-0 min-w-0 [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[1.35rem] font-semibold tracking-[-0.02em] leading-[1.2] text-v5-text normal-case overflow-hidden text-ellipsis whitespace-nowrap';
-const DECK_SESSION_META =
-  'v5-deck-session-meta inline-flex flex-row flex-wrap items-baseline justify-start gap-[0.35rem_0.45rem] min-w-0 flex-[0_1_auto]';
-const DECK_META_SEP = 'v5-deck-meta-sep text-white/[0.32] font-medium select-none';
-// .v4-episode.v5-studio-name-inline — the #v4-log-session .v5-studio-name-inline rule sets
-// weight 600, but the higher-specificity `#v4-log-session #studio-name.v4-episode` rule
-// overrode it to weight 400 (+ capitalize, font-variation-settings:normal). Both those source
-// rules were deleted here, so the resolved cascade (font-weight 400) is written directly.
-const STUDIO_NAME =
-  'v4-episode v5-studio-name-inline flex-[0_1_auto] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.9rem] font-normal [font-variation-settings:normal] capitalize text-v5-primary whitespace-nowrap';
-// .v4-session-date.v5-session-date-inline — the #v4-log-session .v5-session-date-inline rule.
-const SESSION_DATE =
-  'v4-session-date v5-session-date-inline flex-[0_1_auto] text-[0.72rem] font-medium tracking-[0.1em] uppercase text-v5-muted whitespace-nowrap';
-// ---- v4-scratch ext row / nav ----
-// .v4ExtRow base + #v4-log-session override (padding + flex-basis with --v4-ext-row-pad-y,
-// background transparent, border-bottom none). --v4-ext-row-pad-y is a local prop set here.
-// Height hugs the nav-area row (--v4-nav-area-h) instead of the taller legacy
-// --v4-ext-row-h (= 2× nav-area), which left ~20px of empty vertical padding and made
-// the timeline panel taller than Session Controls.
-const V4_EXT_ROW =
-  '[--v4-ext-row-pad-y:0.15rem] flex flex-row items-center gap-[0.5rem] w-full min-w-0 overflow-visible box-border py-(--v4-ext-row-pad-y) pl-(--v4-nav-edge-m) pr-(--v4-nav-edge-m) flex-[0_0_calc(var(--v4-nav-area-h)+2*var(--v4-ext-row-pad-y))] h-[calc(var(--v4-nav-area-h)+2*var(--v4-ext-row-pad-y))] min-h-[calc(var(--v4-nav-area-h)+2*var(--v4-ext-row-pad-y))] max-h-[calc(var(--v4-nav-area-h)+2*var(--v4-ext-row-pad-y))] bg-transparent border-b-0';
 
 // Single marker caption chip (cat accent + label + marquee) — replaces the old
 // dual floating cat-pill + message bar above the track.
@@ -135,9 +92,6 @@ const NAV_MSG_GAP = '[display:inline]';
 const MARKER_CHIP_HANG = 'h-[1.7rem]';
 
 // ---- timeline row / track / shell (v4 base + #v4-log-session v5 overrides) ----
-// .v4TimelineRow base + #v4-log-session (min-height with lane-delta, height auto).
-const V4_TIMELINE_ROW =
-  'flex flex-row items-center w-full min-w-0 box-border gap-0 flex-[1_1_auto] h-auto max-h-none min-h-[calc(var(--v4-tl-row-h)+2*var(--v4-nav-grid-my,0.5rem)+var(--v5-timeline-lane-delta))]';
 // Strip scrub column: track (~80% lane) + zoom rail under it. Sized to content so
 // the transport aside cannot squeeze the zoom row under the feed.
 const V4_TIMELINE_ROW_STRIP =
@@ -148,14 +102,8 @@ const TIMELINE_TRACK_STRIP_H =
 // Compact zoom rail — sits under the scrubber at full width.
 const ZOOM_RAIL_STRIP =
   'flex flex-row flex-nowrap items-center gap-[0.3rem] w-full min-w-0 relative box-border px-0 pt-0 pb-0 flex-[0_0_auto]';
-// .v4TlTrack + .v4TlTrackLive (both classes on the row child). Resolved cascade under
-// #v4-log-session: the higher-specificity `.v4TimelineRow > .v4TlTrack` v5 rule (id+2class)
-// wins for flex (100 1 0 — fills the row width) and min-height; `.v4TlTrackLive` (id+1class)
-// supplies the column stack, items-stretch, overflow-visible, and the v5 gap 0.45rem. The
-// literal `v4TlTrackLive` is retained for the perf-debug @layer rules that target it.
-const V4_TL_TRACK_LIVE =
-  'v4TlTrackLive flex flex-[100_1_0] flex-col items-stretch self-center justify-center p-0 bg-transparent min-w-0 h-auto max-h-none overflow-visible gap-[0.3rem] min-h-[calc(var(--v4-tl-bar-h)+2*var(--v4-nav-grid-my,0.5rem)+var(--v5-timeline-lane-delta))]';
-// Tight gap under ticks so zoom sits closer to the border-centered labels.
+// The literal `v4TlTrackLive` class is retained for the perf-debug @layer rules that
+// target it. Tight gap under ticks so zoom sits closer to the border-centered labels.
 const V4_TL_TRACK_LIVE_STRIP =
   'v4TlTrackLive flex h-auto w-full min-w-0 flex-[0_0_auto] flex-col items-stretch justify-start gap-[0.1rem] overflow-visible bg-transparent p-0';
 // .timelineShell base + `.v4TlTrackLive .timelineShell` base + #v4-log-session override
@@ -244,14 +192,6 @@ declare global {
   }
 }
 
-function fmtSessionDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}/${d.getUTCFullYear()}`;
-}
-
 /** Marker tooltip placement matches session.js's showTimelineMarkerTooltip math. */
 function placeTooltip(
   el: HTMLElement,
@@ -308,7 +248,6 @@ interface Props {
   isWaveformDecoding?: boolean;
   audioPlaybackSec: number | null;
   onSeekAudio: (sec: number) => void;
-  hidden?: boolean;
   /**
    * Session strip: timeline column with marker readout overlay; aside (via
    * stripTrailing) holds session meta + transport to the left.
@@ -332,23 +271,11 @@ export function Timeline({
   isWaveformDecoding,
   audioPlaybackSec,
   onSeekAudio,
-  hidden,
   stripOnly,
   stripTrailing,
   stripLaneSlot,
   controlsLocked = false,
 }: Props) {
-  const code = (status?.show_code ?? '').trim();
-  const showName = (status?.show_name ?? '').trim();
-  // Session name = stored title (not episode). Episode was removed from the
-  // naming workflow; never surface "Episode N" in the session deck meta.
-  const sessionTitle = (status?.title ?? '').trim() || (status?.deck_title ?? '').trim();
-
-  const titleText = code ? showName || code : sessionTitle || '—';
-  const titleAttr = code || '';
-  const studioLine = code && sessionTitle && sessionTitle !== titleText ? sessionTitle : '';
-  const dateText = fmtSessionDate(status?.session_created_at_utc ?? status?.now_utc);
-
   // Start at 0 so a freshly opened session does not jump to last session_timecode.
   const [manualScrubSec, setManualScrubSec] = useState<number | null>(0);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -907,51 +834,7 @@ export function Timeline({
         stripOnly && 'h-auto min-h-0 flex-[0_0_auto] gap-1 overflow-visible',
       )}
       id="v5-session-timeline-stack"
-      hidden={hidden}
     >
-      {!stripOnly && (
-      <div className={PANEL_HEAD}>
-        <div className={PANEL_HEAD_MAIN}>
-          <p className={PANEL_EYEBROW}>Session Timeline</p>
-          <header className={DECK_HEADER}>
-            <div className={DECK_TITLE_CLUSTER}>
-              <h1
-                className={DECK_TITLE}
-                id="session-deck-title"
-                aria-label="Session show and name"
-              >
-                <span id="session-title-code" className="session-title-code" title={titleAttr}>
-                  {titleText}
-                </span>
-                <span className="session-title-sep" aria-hidden={true} hidden={true}>
-                  {' - '}
-                </span>
-                <span id="session-title-ep" className="session-title-ep" hidden={true} />
-              </h1>
-              <div className={DECK_SESSION_META}>
-                <span className={STUDIO_NAME} id="studio-name" hidden={!studioLine}>
-                  {studioLine}
-                </span>
-                <span className={DECK_META_SEP} aria-hidden={true}>
-                  &middot;
-                </span>
-                <span className={SESSION_DATE} id="session-aside-date">
-                  {dateText}
-                </span>
-              </div>
-            </div>
-          </header>
-        </div>
-      </div>
-      )}
-
-      {!stripOnly && (
-      <div className={clsx(V4_EXT_ROW, 'justify-between gap-[0.65rem]')}>
-        <div className="min-w-0 flex-1">{markerReadout}</div>
-        {sessionId ? <MarkerNav sessionId={sessionId} /> : null}
-      </div>
-      )}
-
       <div
         className={clsx(
           // Mobile: controls row on top, timeline full-width underneath.
@@ -1161,15 +1044,7 @@ export function Timeline({
             </div>
           </div>
           </div>
-        ) : (
-          <div className={V4_TIMELINE_ROW}>
-            <div className={V4_TL_TRACK_LIVE} role="presentation">
-              <div className={TIMELINE_SHELL} id="timeline-shell-legacy">
-                <p className="m-0 text-v5-muted text-sm">Legacy twin-panel timeline removed.</p>
-              </div>
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
 
       {/* Marker tooltip — React-owned, positioned in useLayoutEffect. */}
