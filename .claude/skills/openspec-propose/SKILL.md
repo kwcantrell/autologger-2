@@ -12,12 +12,20 @@ metadata:
 
 Propose a new change - create the change and generate all artifacts in one step.
 
+> **Repo customization (autologger):** the stock Output step below ended with an
+> apply-now prompt that contradicts this repo's SDLC gate ordering. It is replaced with a
+> gate stop: artifacts complete, but tasks.md stays
+> provisional until the fact-check pass, adversarial panel, and human gate recorded in
+> CLAUDE.md "How we work (SDLC)" have run — this file does not suggest or trigger apply.
+> If the `openspec` CLI ever regenerates this file, re-apply this customization.
+
 I'll create a change with artifacts:
 - proposal.md (what & why)
 - design.md (how)
 - tasks.md (implementation steps)
 
-When ready to implement, run /opsx:apply
+Artifacts are provisional until the fact-check pass, adversarial panel, and human gate
+recorded in CLAUDE.md "How we work (SDLC)" have run — see Output below.
 
 ---
 
@@ -93,8 +101,11 @@ When ready to implement, run /opsx:apply
 After completing all artifacts, summarize:
 - Change name and location
 - List of artifacts created with brief descriptions
-- What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `/opsx:apply` or ask me to implement to start working on the tasks."
+- What's ready: "All artifacts created." tasks.md is provisional — it does not authorize
+  implementation yet.
+- Stop: the fact-check pass, adversarial panel, and human gate recorded in CLAUDE.md "How
+  we work (SDLC)" have not run. Do not suggest or run apply; that decision belongs to the
+  gate, not this step.
 
 **Artifact Creation Guidelines**
 
