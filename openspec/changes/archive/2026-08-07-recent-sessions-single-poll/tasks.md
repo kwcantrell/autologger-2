@@ -21,6 +21,6 @@
       run `npm run e2e:visual` — any diff other than a background rolling
       card's timecode format is a defect, not a re-bless (no current visual
       fixture shows a background rolling card, so expect zero diffs).
-- [ ] 2.2 At archive: touch the web-home-launch Purpose line to cover rail
+- [x] 2.2 At archive: touch the web-home-launch Purpose line to cover rail
       session cards so the ADDED requirement sits inside its capability
       header.
