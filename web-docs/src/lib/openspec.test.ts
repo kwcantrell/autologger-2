@@ -75,11 +75,26 @@ describe('listAllActiveDeltaCapabilities — fixture tracked-file list', () => {
     expect(listAllActiveDeltaCapabilities(files)).toEqual(['cap-a', 'cap-b']);
   });
 
-  it('the live repo currently surfaces web-docs-site as an active delta capability', () => {
-    // Smoke test against the real repo tracked tree — this branch's own
-    // proposal.md + specs/web-docs-site/spec.md are git-tracked right now.
+  // Audit fix-now F2: this used to pin THIS branch's own capability name
+  // ("web-docs-site") as an active delta — a fact about the live repo's
+  // CURRENT, transient state (this very change), not a property true of any
+  // valid repo state. It breaks the moment this change archives (the
+  // capability joins the baseline and the delta disappears) and root `npm
+  // test` must never depend on which changes happen to be active right now
+  // (spec R2 / gate ruling). Rewritten as a property: every name this
+  // function returns really is a delta-capability directory of some active,
+  // tracked-proposal change — true regardless of which changes exist.
+  it('every returned capability is really a delta-spec directory of some active (tracked-proposal) change', () => {
     const all = listTrackedFiles();
-    expect(listAllActiveDeltaCapabilities(all)).toContain('web-docs-site');
+    const activeChangeNames = listActiveChangeNames(all);
+    const allDeltaCapabilities = listAllActiveDeltaCapabilities(all);
+
+    for (const capability of allDeltaCapabilities) {
+      const owningChange = activeChangeNames.find((name) =>
+        listChangeDeltaCapabilities(all, name).includes(capability),
+      );
+      expect(owningChange).toBeDefined();
+    }
   });
 });
 
@@ -148,18 +163,39 @@ describe('listChangeDirectoriesOnDisk — fixture directory tree', () => {
   });
 });
 
+// Audit fix-now F2: this used to pin the name of a specific real, currently-
+// untracked scaffold directory ("recent-sessions-single-poll") — a fact
+// about the live repo's CURRENT, transient state (a directory that doesn't
+// exist on a fresh clone at all — F2 mutation check (i) proves this: root
+// `npm test` must not depend on which untracked scaffolds happen to exist
+// right now). Rewritten as the general property `listChangeDirectoriesOnDisk`
+// exists to guarantee: every real on-disk directory is listed (whether or
+// not it has a tracked proposal.md), `archive` never is, and every listed
+// directory that is NOT an active (tracked-proposal) change is exactly the
+// "untracked/partial" case this function was built for — true with zero
+// such directories, with one, or with several.
 describe('listChangeDirectoriesOnDisk — live-repo smoke', () => {
-  it('sees the real, currently-untracked recent-sessions-single-poll scaffold directory', () => {
-    // A real instance of the "untracked change directory" case this
-    // function exists for: its only contents are a gitignored `.apply/`,
-    // so it has zero tracked files and is invisible to
-    // listActiveChangeNames — but it is a real directory on disk.
+  it('lists every real on-disk change directory (tracked or not), excluding archive/, consistent with listActiveChangeNames', () => {
     const root = repoRoot();
+    const trackedFiles = listTrackedFiles();
     const onDisk = listChangeDirectoriesOnDisk(root);
-    expect(onDisk).toContain('recent-sessions-single-poll');
-    expect(onDisk).not.toContain('archive');
+    const tracked = listActiveChangeNames(trackedFiles);
 
-    const tracked = listActiveChangeNames(listTrackedFiles());
-    expect(tracked).not.toContain('recent-sessions-single-poll');
+    expect(onDisk.length).toBeGreaterThan(0);
+    expect(onDisk).not.toContain('archive');
+    expect(onDisk).toEqual([...onDisk].sort());
+
+    // Every active (tracked-proposal) change name is a real directory on disk.
+    for (const name of tracked) {
+      expect(onDisk).toContain(name);
+    }
+
+    // Any on-disk directory NOT in the tracked set is exactly the
+    // "untracked/partial scaffold" case — real per the filesystem, invisible
+    // to the tracked-file-based enumerators.
+    const untracked = onDisk.filter((name) => !tracked.includes(name));
+    for (const name of untracked) {
+      expect(listActiveChangeNames(trackedFiles)).not.toContain(name);
+    }
   });
 });

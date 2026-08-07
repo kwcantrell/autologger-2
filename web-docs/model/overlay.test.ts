@@ -179,8 +179,22 @@ describe('buildOverlay — sorted, deterministic output', () => {
   });
 });
 
+// Audit fix-now F2: this used to pin this branch's OWN change name/status
+// ("web-docs-architecture-viz" with capability "web-docs-site" pending) and
+// a specific untracked-scaffold directory name ("recent-sessions-single-
+// poll") — both facts about the live repo's CURRENT, transient state, not
+// properties true of any valid repo state. The first breaks the moment this
+// change archives (its own capability leaves "pending" and its proposal
+// moves under archive/, so `ownChange` becomes undefined); the second
+// breaks on a fresh clone (the directory is untracked — F2 mutation check
+// (i) also proves this: it's gone entirely if the directory is absent).
+// Root `npm test` must never depend on which changes happen to be active
+// right now (spec R2 / gate ruling), so this asserts the INVARIANTS the
+// pipeline promises for however many active changes and untracked
+// directories exist at test time — true before this change, during it,
+// after it archives, and on every future clone.
 describe('buildOverlay — live-repo smoke', () => {
-  it("surfaces this branch's own change with web-docs-site as pending, and excludes archive/", () => {
+  it('builds a coherent overlay over the real repo: every listed change has a tracked proposal.md, archive/ never contributes, every untracked on-disk directory produces exactly one warning naming it, and every capability status bucket is internally consistent', () => {
     const root = repoRoot();
     const trackedFiles = listTrackedFiles();
     const baselineCapabilities = listBaselineCapabilities(trackedFiles);
@@ -195,26 +209,50 @@ describe('buildOverlay — live-repo smoke', () => {
       deltaCapabilitiesFor: (name) => listChangeDeltaCapabilities(trackedFiles, name),
     });
 
-    const ownChange = result.changes.find((change) => change.name === 'web-docs-architecture-viz');
-    expect(ownChange).toBeDefined();
-    expect(ownChange?.proposalPath).toBe('openspec/changes/web-docs-architecture-viz/proposal.md');
-    expect(ownChange?.capabilities).toEqual([
-      { capability: 'web-docs-site', status: 'pending', components: [] },
-    ]);
-    expect(ownChange?.tintedComponents).toEqual([]);
+    // The overlay lists exactly the tracked-proposal change names, sorted —
+    // never fabricates or drops one — and every proposalPath really is a
+    // tracked file.
+    expect(result.changes.map((change) => change.name)).toEqual([...activeChangeNames].sort());
+    for (const change of result.changes) {
+      expect(change.proposalPath).toBe(`openspec/changes/${change.name}/proposal.md`);
+      expect(trackedFiles).toContain(change.proposalPath);
+    }
 
     // archive/ never contributes a change nor a warning.
     expect(result.changes.some((change) => change.name === 'archive')).toBe(false);
     expect(result.changes.some((change) => change.name.startsWith('archive/'))).toBe(false);
     expect(result.warnings.every((warning) => !warning.includes('archive/'))).toBe(true);
 
-    // The real, currently-untracked recent-sessions-single-poll scaffold
-    // produces a warning naming it, not a crash and not a change entry.
-    expect(result.changes.some((change) => change.name === 'recent-sessions-single-poll')).toBe(
-      false,
-    );
-    expect(result.warnings.some((warning) => warning.includes('recent-sessions-single-poll'))).toBe(
-      true,
-    );
+    // Every on-disk directory without a tracked proposal.md produces exactly
+    // one warning naming it, and never a change entry — whatever those
+    // directories happen to be called right now.
+    const activeSet = new Set(activeChangeNames);
+    const untrackedDirs = changeDirectoriesOnDisk.filter((name) => !activeSet.has(name));
+    for (const dirName of untrackedDirs) {
+      expect(result.changes.some((change) => change.name === dirName)).toBe(false);
+      expect(result.warnings.some((warning) => warning.includes(dirName))).toBe(true);
+    }
+    expect(result.warnings).toHaveLength(untrackedDirs.length);
+
+    // Every capability status bucket is well-formed, and tintedComponents is
+    // exactly the sorted, deduplicated union of component-scoped
+    // capabilities' components.
+    for (const change of result.changes) {
+      for (const capability of change.capabilities) {
+        if (capability.status === 'component-scoped') {
+          expect(capability.components.length).toBeGreaterThan(0);
+        } else {
+          expect(capability.components).toEqual([]);
+        }
+      }
+      const expectedTinted = [
+        ...new Set(
+          change.capabilities
+            .filter((capability) => capability.status === 'component-scoped')
+            .flatMap((capability) => capability.components),
+        ),
+      ].sort();
+      expect(change.tintedComponents).toEqual(expectedTinted);
+    }
   });
 });

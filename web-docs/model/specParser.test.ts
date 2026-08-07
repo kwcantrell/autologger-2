@@ -179,17 +179,24 @@ describe('parseAllSpecs — multiple capabilities', () => {
   });
 });
 
+// Audit fix-now F2: this used to pin the live repo's current capability
+// count and total requirement/scenario counts (17/156/424) — facts about
+// the CURRENT baseline, not properties true of any valid repo state. Any
+// spec.md edit anywhere in the repo (on an unrelated branch/change) would
+// red root `npm test` here, which spec R2 / the gate ruling forbid ("root
+// npm test runs fixture-based unit tests only"). Rewritten as a property
+// that holds for however many capabilities/requirements/scenarios exist:
+// every baseline capability parses with zero issues, at least one
+// requirement, and its parsed requirement/scenario counts equal a direct
+// heading count of ITS OWN file on disk — the same count-equality property
+// `parseAllSpecs`'s gate enforces, checked per-capability against whatever
+// the live tree currently contains rather than a fixed total.
 describe('live-repo smoke — the real openspec/specs/ tree parses cleanly', () => {
-  it('parses all 17 baseline capabilities with nonzero requirement counts, totaling the real number', () => {
+  it('parses every baseline capability with zero issues, at least one requirement, and parsed counts matching each file’s own direct heading count', () => {
     const root = repoRoot();
     const trackedFiles = listTrackedFiles();
     const baselineCapabilities = listBaselineCapabilities(trackedFiles);
-
-    // Pinned to the live repo's current baseline (verified via `grep -rc
-    // '^### Requirement:'|'^#### Scenario:' openspec/specs/*/spec.md`) —
-    // this smoke test is meant to notice drift, not silently tolerate it;
-    // update these three numbers deliberately when the baseline changes.
-    expect(baselineCapabilities).toHaveLength(17);
+    expect(baselineCapabilities.length).toBeGreaterThan(0);
 
     const readSpecFile = (capability: string): string | undefined => {
       try {
@@ -201,18 +208,21 @@ describe('live-repo smoke — the real openspec/specs/ tree parses cleanly', () 
 
     const { trees, issues } = parseAllSpecs(baselineCapabilities, readSpecFile);
     expect(issues).toEqual([]);
-    expect(trees).toHaveLength(17);
+    expect(trees).toHaveLength(baselineCapabilities.length);
 
-    for (const tree of trees) {
-      expect(tree.requirements.length).toBeGreaterThan(0);
+    for (const capability of baselineCapabilities) {
+      const source = readSpecFile(capability);
+      expect(source).toBeDefined();
+      const directRequirementCount = (source?.match(/^### Requirement:/gm) ?? []).length;
+      const directScenarioCount = (source?.match(/^#### Scenario:/gm) ?? []).length;
+
+      const tree = trees.find((t) => t.capability === capability);
+      expect(tree).toBeDefined();
+      expect(tree?.requirements.length).toBeGreaterThan(0);
+      expect(tree?.requirements.length).toBe(directRequirementCount);
+
+      const scenarioCount = tree?.requirements.reduce((sum, r) => sum + r.scenarios.length, 0) ?? 0;
+      expect(scenarioCount).toBe(directScenarioCount);
     }
-
-    const totalRequirements = trees.reduce((sum, tree) => sum + tree.requirements.length, 0);
-    const totalScenarios = trees.reduce(
-      (sum, tree) => sum + tree.requirements.reduce((s, r) => s + r.scenarios.length, 0),
-      0,
-    );
-    expect(totalRequirements).toBe(156);
-    expect(totalScenarios).toBe(424);
   });
 });
