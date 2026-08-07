@@ -289,6 +289,8 @@ export function EventLogSheet({ sessionId }: Props) {
   const loggedTotal = data?.logged_event_count ?? 0;
 
   // --- View state ---
+  // Default direction is oldest-first across all three feeds (owner decision
+  // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
   const [sortState, dispatchSort] = useReducer(sortReducer, { key: 'timecode', dir: 'asc' });
   const [showInternal, setShowInternal] = useState(true);
   const [hiddenCategoryIds, setHiddenCategoryIds] = useState<Set<string>>(new Set());

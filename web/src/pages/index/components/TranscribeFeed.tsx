@@ -69,6 +69,8 @@ export function TranscribeFeed({ sessionId }: Props) {
   // `useGatedGenerate` for the full rationale; the copy below tells the
   // operator to reload after configuring.
   const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
+  // Default direction is oldest-first across all three feeds (owner decision
+  // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
   const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
   // Reactive scroll viewport: OverlayScrollbars publishes its viewport via the
   // `scrollRef` callback below. Storing it in state (not a ref) re-renders so

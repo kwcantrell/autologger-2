@@ -293,6 +293,46 @@ describe('EventLogSheet batch-mode Escape (discard-confirm guard)', () => {
   });
 });
 
+// --- Default sort: oldest-first (owner decision 2026-08-06, PR#4 review) ---
+//
+// All three feeds default to ascending time — the log reads top-down like a
+// sheet. Nothing else pins the direction (visual shots mask timestamps), so a
+// silent flip back to newest-first would ship with every gate green.
+describe('EventLogSheet default sort', () => {
+  it('defaults to Session Time ascending: oldest event renders first', async () => {
+    const older = logEventFixture();
+    const newer: LogEvent = {
+      ...logEventFixture(),
+      event_id: 'ev-2',
+      message: 'A newer note',
+      timecode: '00:00:20:00',
+      timecode_total_frames: 480,
+      wall_time_utc: '2026-07-21T00:00:20Z',
+    };
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        // Serve newest-first so the asserted order can only come from the
+        // sheet's own default sort, not the wire order.
+        return { events: [newer, older], total: 2, logged_event_count: 2, offset: 0, limit: 200 };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderSheet();
+
+    await screen.findByText('A newer note');
+    const timeHeader = screen.getByRole('columnheader', { name: 'Session Time' });
+    expect(timeHeader.getAttribute('aria-sort')).toBe('ascending');
+    const rowIds = Array.from(document.querySelectorAll('tr[data-event-id]')).map((tr) =>
+      tr.getAttribute('data-event-id'),
+    );
+    expect(rowIds.indexOf('ev-1')).toBeLessThan(rowIds.indexOf('ev-2'));
+  });
+});
+
 // --- Timeline marker reveal grows the loaded page (PR#4 review fix) ---
 //
 // Markers derive from the workspace-wide events query, but the sheet mounts
