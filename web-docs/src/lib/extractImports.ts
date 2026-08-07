@@ -4,8 +4,11 @@
 // Builds a `ts.Program` from an explicitly supplied file list — never from
 // a workspace tsconfig's own `include`/`exclude` (companion's tsconfig
 // excludes its own test files, which this extractor must still see) — then
-// resolves every static import/export-from declaration and literal dynamic
-// `import()` call through that file's OWNING workspace's real
+// resolves every static import/export-from declaration, literal dynamic
+// `import()` call, and type-position `import('...')` reference (both
+// `typeof import('x')` and a direct `import('x').Member` type — collectively
+// `ts.ImportTypeNode`, always type-only; there is no value-level form of
+// this syntax) through that file's OWNING workspace's real
 // `compilerOptions`, covering all four real resolution regimes: server
 // (Bundler), web (bundler + `paths` aliases + `.ts` extensions), companion
 // (NodeNext `.js`-specifiers for `.ts` files), e2e (Bundler).
@@ -178,6 +181,15 @@ function walkSourceFile(
           node.getStart(sourceFile),
         );
         warnings.push({ file: fromFileRel, line: line + 1, column: character + 1 });
+      }
+    } else if (ts.isImportTypeNode(node)) {
+      // Type-position `import('...')` references — both `typeof import('x')`
+      // (isTypeOf: true) and a direct `import('x').Member` type reference
+      // (isTypeOf: false). Always a type-only structural dependency: there
+      // is no value-level form of this syntax.
+      const argument = node.argument;
+      if (ts.isLiteralTypeNode(argument) && ts.isStringLiteralLike(argument.literal)) {
+        recordSpecifier(argument.literal, 'static', true);
       }
     }
     ts.forEachChild(node, visit);

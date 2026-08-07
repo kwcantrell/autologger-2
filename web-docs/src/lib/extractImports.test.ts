@@ -138,6 +138,44 @@ describe('extractFileImports — type-only imports', () => {
   });
 });
 
+describe('extractFileImports — type-position `import(...)` references (ImportTypeNode)', () => {
+  it('captures `typeof import(...)` as an edge when it is the ONLY reference to the target', () => {
+    const result = extractFileImports({
+      files: ['import-type-node-typeof/entry.ts', 'import-type-node-typeof/thing.ts'],
+      repoRoot: FIXTURES_ROOT,
+      isKnown: alwaysKnown,
+      regimes: [regime('import-type-node-typeof')],
+    });
+    expect(result.imports).toEqual([
+      {
+        fromFile: 'import-type-node-typeof/entry.ts',
+        toFile: 'import-type-node-typeof/thing.ts',
+        kind: 'static',
+        isTypeOnly: true,
+        line: 5,
+      },
+    ]);
+  });
+
+  it('captures a direct `import(...).Member` type reference as an edge, not just the `typeof` form', () => {
+    const result = extractFileImports({
+      files: ['import-type-node-direct/entry.ts', 'import-type-node-direct/thing.ts'],
+      repoRoot: FIXTURES_ROOT,
+      isKnown: alwaysKnown,
+      regimes: [regime('import-type-node-direct')],
+    });
+    expect(result.imports).toEqual([
+      {
+        fromFile: 'import-type-node-direct/entry.ts',
+        toFile: 'import-type-node-direct/thing.ts',
+        kind: 'static',
+        isTypeOnly: true,
+        line: 3,
+      },
+    ]);
+  });
+});
+
 describe('extractFileImports — unmapped in-repo targets', () => {
   it('fails naming both files when an import resolves to an unmapped, unexcluded in-repo file', () => {
     const result = extractFileImports({

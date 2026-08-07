@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ComponentModel } from './components';
-import { checkCoverage, isMappedOrExcluded, validateModelStructure } from './coverage';
+import { checkCoverage, isMappedOrExcluded, mappedFiles, validateModelStructure } from './coverage';
 
 function baseModel(overrides: Partial<ComponentModel> = {}): ComponentModel {
   return {
@@ -175,6 +175,40 @@ describe('isMappedOrExcluded', () => {
 
   it('is false for a file matching neither a component nor an exclusion', () => {
     expect(isMappedOrExcluded('src/orphan.ts', model)).toBe(false);
+  });
+});
+
+describe('mappedFiles', () => {
+  const model = baseModel({
+    components: [
+      {
+        name: 'alpha',
+        kind: 'runtime',
+        description: 'a',
+        globs: ['src/alpha/**'],
+        capabilities: [],
+        authoredDiagrams: [],
+      },
+      {
+        name: 'catalog-database',
+        kind: 'datastore',
+        description: 'glob-less',
+        globs: [],
+        capabilities: [],
+        authoredDiagrams: [],
+      },
+    ],
+    exclusions: [{ file: 'tooling/vite.config.ts', reason: 'build tool config' }],
+  });
+
+  it('keeps only files matching a glob-bearing component', () => {
+    expect(
+      mappedFiles(['src/alpha/a.ts', 'src/orphan.ts', 'tooling/vite.config.ts'], model),
+    ).toEqual(['src/alpha/a.ts']);
+  });
+
+  it('drops excluded files too (extraction roots, not "known" files)', () => {
+    expect(mappedFiles(['tooling/vite.config.ts'], model)).toEqual([]);
   });
 });
 
