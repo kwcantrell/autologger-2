@@ -1,0 +1,21 @@
+%% AUTHORED diagram (design.md D7) — derived from a read of
+%% server/src/session/SessionHub.ts (class SessionHubRegistry), not
+%% generated. "Absent" and "Active" are the only two real registry states:
+%% eviction is not a persisted third state — hub.close() and
+%% hubs.delete(id) happen together in the same evictIdle() loop iteration,
+%% so a session id transitions straight from Active back to Absent. A
+%% later get() on that same id constructs a brand-new SessionHub instance
+%% (not the same object "reopened" — CLAUDE.md's "reopen lazily" prose is
+%% looser than the code; see design.md D7). Structural validity is gated
+%% mechanically (task 6.3); semantic accuracy against the code is reviewed
+%% under the normal SDLC. See
+%% openspec/changes/web-docs-architecture-viz/.apply/task-6.1-6.2-report.md
+%% for the file:line quotes justifying every transition below.
+stateDiagram-v2
+    [*] --> Absent
+
+    Absent --> Active: get(sessionId) — no hub in the Map: construct new SessionHub, hubs.set(id, hub)
+    Active --> Active: get(sessionId) — hub already in the Map: lastTouchedMs touched, same instance returned
+    Active --> Absent: evictIdle() — triple idle guard holds (socketCount===0 AND !hasArmedAlarm AND idle>threshold): hub.close(), hubs.delete(id)
+    Absent --> Active: get(sessionId) — evicted session id accessed again: construct a NEW SessionHub instance (evict-and-reconstruct, a fresh object)
+    Active --> Absent: closeAll() — process shutdown: every hub closed, the Map cleared

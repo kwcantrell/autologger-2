@@ -1,0 +1,347 @@
+[
+  {
+    "from": "aiV2",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "aiV2",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "auth",
+    "to": "catalog-db",
+    "kind": "production"
+  },
+  {
+    "from": "auth",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "auth",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "auth",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "catalog-db",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "catalog-db",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "catalog-db",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "companion-actions",
+    "to": "companion-api",
+    "kind": "production"
+  },
+  {
+    "from": "companion-actions",
+    "to": "companion-core",
+    "kind": "production"
+  },
+  {
+    "from": "companion-api",
+    "to": "companion-core",
+    "kind": "production"
+  },
+  {
+    "from": "companion-core",
+    "to": "companion-actions",
+    "kind": "production"
+  },
+  {
+    "from": "companion-core",
+    "to": "companion-api",
+    "kind": "production"
+  },
+  {
+    "from": "log-import",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "log-import",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "log-import",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "middleware",
+    "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "middleware",
+    "to": "catalog-db",
+    "kind": "production"
+  },
+  {
+    "from": "middleware",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "middleware",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "node-infra",
+    "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "node-infra",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "aiV2",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "catalog-db",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "log-import",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "server-bootstrap",
+    "kind": "test"
+  },
+  {
+    "from": "routers",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "routers",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "middleware",
+    "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "routers",
+    "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "server-core",
+    "to": "aiV2",
+    "kind": "production"
+  },
+  {
+    "from": "server-core",
+    "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "server-core",
+    "to": "catalog-db",
+    "kind": "production"
+  },
+  {
+    "from": "server-core",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "server-core",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "auth",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "catalog-db",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "node-infra",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "server-bootstrap",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "server-core",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "session",
+    "kind": "test"
+  },
+  {
+    "from": "session",
+    "to": "aiV2",
+    "kind": "production"
+  },
+  {
+    "from": "session",
+    "to": "routers",
+    "kind": "test"
+  },
+  {
+    "from": "session",
+    "to": "server-core",
+    "kind": "production"
+  },
+  {
+    "from": "session",
+    "to": "server-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "web-admin",
+    "to": "contract-fixtures",
+    "kind": "test"
+  },
+  {
+    "from": "web-admin",
+    "to": "web-api",
+    "kind": "production"
+  },
+  {
+    "from": "web-admin",
+    "to": "web-shared",
+    "kind": "production"
+  },
+  {
+    "from": "web-admin",
+    "to": "web-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "web-api",
+    "to": "contract-fixtures",
+    "kind": "test"
+  },
+  {
+    "from": "web-api",
+    "to": "web-app",
+    "kind": "test"
+  },
+  {
+    "from": "web-api",
+    "to": "web-shared",
+    "kind": "production"
+  },
+  {
+    "from": "web-app",
+    "to": "aiV2",
+    "kind": "test"
+  },
+  {
+    "from": "web-app",
+    "to": "web-api",
+    "kind": "production"
+  },
+  {
+    "from": "web-app",
+    "to": "web-shared",
+    "kind": "production"
+  },
+  {
+    "from": "web-app",
+    "to": "web-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "web-docs",
+    "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "web-docs",
+    "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "web-shared",
+    "to": "web-api",
+    "kind": "production"
+  },
+  {
+    "from": "web-shared",
+    "to": "web-test-harness",
+    "kind": "test"
+  },
+  {
+    "from": "web-test-harness",
+    "to": "web-shared",
+    "kind": "test"
+  }
+]
