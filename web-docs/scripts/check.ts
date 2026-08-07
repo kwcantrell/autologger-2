@@ -14,6 +14,9 @@
 //   - active-changes overlay (warnings only)    IMPLEMENTED below (task 5.3)
 //   - ER schema introspection + emission        IMPLEMENTED below (task 5.2 — unguarded,
 //                                                no drift gate of its own; see runErExtraction)
+//   - L0 renderer assertion (no silent elision) IMPLEMENTED below (task 6.1 — every
+//                                                snapshot production edge + declared
+//                                                relationship must appear in the L0 source)
 //   - diagram validity (parse/structural/budget) STUB — task 6.3
 // Each stub is a clearly marked no-op that exits 0 — it must be replaced
 // with the real gate in its task, never left as a silent pass once that
@@ -25,7 +28,8 @@ import { checkCapabilityAccounting, pendingCapabilities } from '../model/capabil
 import { model } from '../model/components';
 import { checkCoverage, isMappedOrExcluded, mappedFiles } from '../model/coverage';
 import { diffEdgeSnapshot, type EdgeSnapshot, projectComponentEdges } from '../model/edges';
-import { buildOverlay } from '../model/overlay';
+import { assertL0CoversSnapshotAndRelationships, generateL0 } from '../model/generateL0';
+import { buildOverlay, type OverlayResult } from '../model/overlay';
 import { checkRelationshipEvidence } from '../model/relationships';
 import { parseAllSpecs } from '../model/specParser';
 import { buildCatalogSchema, buildSessionSchema, emitErDiagram } from '../src/lib/erSchema';
@@ -154,9 +158,11 @@ function runSpecParserGate(root: string, baselineCapabilities: string[]): string
 /**
  * Builds the active-changes overlay (task 5.3) and prints its warnings
  * (partial/untracked change directories) non-fatally — the overlay itself
- * never fails the gate; only its warnings surface.
+ * never fails the gate; only its warnings surface. Returns the built
+ * `OverlayResult` so callers (the L0 renderer-assertion gate, task 6.1) can
+ * feed it into diagram generation without re-deriving it.
  */
-function runOverlayGate(root: string, allTrackedFiles: string[]): void {
+function buildLiveOverlay(root: string, allTrackedFiles: string[]): OverlayResult {
   const overlay = buildOverlay({
     model,
     changeDirectoriesOnDisk: listChangeDirectoriesOnDisk(root),
@@ -167,6 +173,26 @@ function runOverlayGate(root: string, allTrackedFiles: string[]): void {
   for (const warning of overlay.warnings) {
     console.warn(`[warning:overlay] ${warning}`);
   }
+  return overlay;
+}
+
+/**
+ * Renderer assertion (task 6.1; design.md D4; spec "L0 cannot silently
+ * elide edges"). Generates the L0 source with EVERY toggle on
+ * (`{ showTest: true, showTooling: true }`) — the only variant guaranteed
+ * to give every snapshot production edge and every declared relationship a
+ * visible endpoint on both sides — and asserts it contains a rendering of
+ * all of them. This is not decoration: a future generator bug that silently
+ * drops an edge (a filter wired backwards, a toggle default flipped) must
+ * fail `docs:check` hard, naming the missing edge/relationship, never ship
+ * a diagram that quietly elides real architecture.
+ */
+function runL0RendererAssertionGate(root: string, overlay: OverlayResult): string[] {
+  const snapshot = loadSnapshot(root);
+  const { source } = generateL0(model, snapshot, overlay, { showTest: true, showTooling: true });
+  return assertL0CoversSnapshotAndRelationships(source, snapshot, model.relationships).map(
+    (issue) => `[l0-renderer:${issue.kind}] ${issue.message}`,
+  );
 }
 
 /** STUB — task 6.3: jsdom-bootstrapped mermaid parse + structural checks + size budgets. */
@@ -203,7 +229,7 @@ export function runAllGates(): string[] {
   const coverageIssues = checkCoverage(trackedTsFiles, model);
   const baselineCapabilities = listBaselineCapabilities(allTrackedFiles);
 
-  runOverlayGate(root, allTrackedFiles);
+  const overlay = buildLiveOverlay(root, allTrackedFiles);
   runErExtraction(root);
 
   return [
@@ -212,6 +238,7 @@ export function runAllGates(): string[] {
     ...runRelationshipEvidenceGate(root),
     ...runCapabilityAccountingGate(allTrackedFiles),
     ...runSpecParserGate(root, baselineCapabilities),
+    ...runL0RendererAssertionGate(root, overlay),
     ...runDiagramValidityGateStub(),
   ];
 }
