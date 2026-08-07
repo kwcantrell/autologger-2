@@ -998,12 +998,16 @@
  * `!` the recipe sanctions for beating a later layer. */
 @layer components {
   /* Square TL under the first tab. No top border / top hairline / top rim so the
-   * active tab bleeds into the sheet; TR stays softly rounded. */
+   * active tab bleeds into the sheet; TR stays softly rounded. The sheet's face
+   * comes ONLY from the glass-face-feed UTILITY (utilities layer beats this
+   * components-layer rule, and its `background` shorthand would reset any
+   * `background-color` set here) — the tab↔sheet seam matches because that
+   * gradient's top stop is `--v5-glass-feed-surface-top`, the same var the
+   * active tab uses. */
   .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
     border-top-left-radius: 0 !important;
     border-top-right-radius: 0.7rem !important;
     border-top-width: 0 !important;
-    background-color: var(--v5-glass-feed-surface-top);
     /* Drop panel-elevate's top highlight + 1px ring (reads as a seam under the tab). */
     box-shadow:
       0 22px 60px rgba(2, 8, 23, 0.58),
