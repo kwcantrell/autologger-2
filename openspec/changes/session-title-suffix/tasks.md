@@ -46,14 +46,14 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
 
 ## Phase 3 — Verification
 
-- [ ] 3.1 Server unit + integration tests for create derivation, collision
+- [x] 3.1 Server unit + integration tests for create derivation, collision
       (incl. gap/rename), concurrent same-clock creates, profile + `/api/shows`
       round-trip, migration on populated DB (existing→episode), Companion/
       `deck_title` emitters, batch-import still sends stem title+episode with
       no counter bump.
-- [ ] 3.2 Web tests for settings suffix, conditional episode field (no stale
+- [x] 3.2 Web tests for settings suffix, conditional episode field (no stale
       episode when switching shows), strip session-meta title
       (`MaximizeLogStrip`); Companion label/test if touched.
-- [ ] 3.3 Repo-wide sweep: no live Next Ep UI / `next_episode` wire writers;
+- [x] 3.3 Repo-wide sweep: no live Next Ep UI / `next_episode` wire writers;
       column may still exist in SQL; `npm test`, companion tests if touched,
       web vitest, `npm run typecheck` green for touched surfaces.

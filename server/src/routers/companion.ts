@@ -130,11 +130,7 @@ companionRouter.get('/api/companion/state', async (c) => {
       sessionOut = {
         id: activeSid,
         title: String(row.title ?? ''),
-        deck_title: sessionDeckDisplayTitle({
-          showCode: String(row.show_code ?? ''),
-          episode: String(row.episode ?? ''),
-          storedTitle: String(row.title ?? ''),
-        }),
+        deck_title: sessionDeckDisplayTitle({ storedTitle: String(row.title ?? '') }),
         timecode: live.session_timecode,
         frame_rate: Number(row.frame_rate ?? 24.0),
         is_rolling: live.is_rolling,

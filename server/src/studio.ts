@@ -445,14 +445,9 @@ export function suggestedShowCode(name: string): string {
  * `"—"` when blank (session-title-suffix design D5, gate ruling
  * 2026-08-02): every emitter (Companion state, session list/detail, session
  * status) SHALL show the session name, not a `{show_code} - {episode}`
- * derivation. `showCode`/`episode` are still accepted so the three existing
- * call sites (sessions.ts, events.ts, companion.ts) don't need to change
- * their argument mapping — they are intentionally unused here. */
-export function sessionDeckDisplayTitle(opts: {
-  showCode?: string | null;
-  episode?: string | null;
-  storedTitle?: string;
-}): string {
+ * derivation. `showCode`/`episode` params were trimmed in phase 3 (Unit B
+ * review F4) once no call site needed them anymore. */
+export function sessionDeckDisplayTitle(opts: { storedTitle?: string }): string {
   const t = String(opts.storedTitle ?? '').trim();
   return t || '—';
 }

@@ -125,7 +125,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     expect(json.title).toBe(`${base}_004`);
   });
 
-  it('Date suffix collision considers archived and ui_hidden rows too', async () => {
+  it('Date suffix collision considers ui_hidden rows too', async () => {
     const studio = await activeStudioId();
     const show = seedShow({ studioId: studio, code: 'HD4' });
     const stamp = utcDateStamp();
@@ -134,6 +134,26 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     await app.request(`/api/sessions/${hiddenId}`, { method: 'DELETE' }, { ...env }); // ui_hidden
     const { json } = await postSession({ show_id: show });
     expect(json.title).toBe(`${base}_002`);
+  });
+
+  // Unit A review observation 3: the store's Date-mode collision SELECT reads
+  // every session for the show with no archived filter (server/src/db/
+  // sessionIndexStore.ts), but until now nothing exercised an ARCHIVED row
+  // (as opposed to ui_hidden, above) through the real archive endpoint.
+  it('Date suffix collision considers archived rows too', async () => {
+    const studio = await activeStudioId();
+    const show = seedShow({ studioId: studio, code: 'HD5' });
+    const stamp = utcDateStamp();
+    const base = `HD5_${stamp}`;
+    const archivedId = seedSession({ showId: show, title: `${base}_002` });
+    const archiveRes = await app.request(
+      `/api/sessions/${archivedId}/archive`,
+      { method: 'POST' },
+      { ...env },
+    );
+    expect(archiveRes.status).toBe(200);
+    const { json } = await postSession({ show_id: show });
+    expect(json.title).toBe(`${base}_003`);
   });
 
   it('Episode suffix: numeric episode is zero-padded to width 4 in the title, stored as sent', async () => {

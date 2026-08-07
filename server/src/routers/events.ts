@@ -113,7 +113,7 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const masterTc = fromTotalFrames(Math.round(sec * ctx.frameRate), ctx.frameRate);
   const episode = String(row.episode ?? '');
   const showCode = (row.show_code as string | null) ?? null;
-  const deck = sessionDeckDisplayTitle({ showCode, episode, storedTitle: String(row.title ?? '') });
+  const deck = sessionDeckDisplayTitle({ storedTitle: String(row.title ?? '') });
 
   return c.json({
     timecode: live.session_timecode,

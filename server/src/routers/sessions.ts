@@ -79,11 +79,7 @@ function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unkno
   return {
     id: String(s.id),
     title: String(s.title ?? ''),
-    deck_title: sessionDeckDisplayTitle({
-      showCode: s.show_code as string | null,
-      episode: ep,
-      storedTitle: String(s.title ?? ''),
-    }),
+    deck_title: sessionDeckDisplayTitle({ storedTitle: String(s.title ?? '') }),
     show_id: (s.show_id as string | null) ?? null,
     show_code: (s.show_code as string | null) ?? null,
     show_name: (s.show_name as string | null) ?? null,

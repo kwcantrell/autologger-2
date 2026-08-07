@@ -34,8 +34,15 @@ export async function openRailIfMobile(page: Page): Promise<void> {
 /** Create a session through the UI (goto `/` → New Session → submit) and wait
  * for the workspace to mount. Options:
  * - `episode`: pin the episode text (visual.spec pins 'VIS01' so the derived
- *   deck/rail title is identical run to run); default keeps the show's
- *   next_episode-derived value.
+ *   deck/rail title is identical run to run). The episode field only renders
+ *   for an Episode-suffix show (session-title-suffix design D6/D7 — the
+ *   default seeded studio's shows are backfilled to `title_suffix: 'episode'`)
+ *   and the modal no longer seeds any default into it (spec: "SHALL NOT
+ *   display or seed a next-episode default from the show" — submit is
+ *   refused while it's blank). When `episode` is omitted, this helper fills a
+ *   stable placeholder ('1') so callers that don't care about the exact text
+ *   still submit successfully; it's a no-op for a Date-suffix show, where the
+ *   field never renders.
  * - `expectShowText`: assert the preselected show label before submitting
  *   (smoke.spec's Radix-Select preselection check). */
 export async function createSession(
@@ -50,8 +57,9 @@ export async function createSession(
   if (opts.expectShowText !== undefined) {
     await expect(page.locator('#ns-show')).toContainText(opts.expectShowText);
   }
-  if (opts.episode !== undefined) {
-    await page.locator('#ns-episode').fill(opts.episode);
+  const episodeField = page.locator('#ns-episode');
+  if ((await episodeField.count()) > 0) {
+    await episodeField.fill(opts.episode ?? '1');
   }
   await page.locator('#ns-submit').click();
   await expect(page.locator('#v3-session-grid')).not.toHaveClass(/hidden/);

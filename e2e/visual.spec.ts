@@ -115,9 +115,10 @@ const FEED_MASK = (page: Page): Locator[] => [
 // -----------------------------------------------------------------------------
 
 // The shared helper (./createSession.ts) with this suite's fixed episode text
-// — the title (show code + episode) appears in shots and the default is
-// derived from the show's next_episode counter. Pin it so the deck/rail title
-// text is identical run to run.
+// — the title (show code + episode) appears in shots, and the modal no longer
+// seeds any episode default (session-title-suffix design D6/D7 — the operator
+// must type one). Pin it so the deck/rail title text is identical run to run
+// instead of the helper's generic '1' fallback.
 async function createSession(page: Page): Promise<void> {
   await createSessionShared(page, { episode: 'VIS01' });
 }
