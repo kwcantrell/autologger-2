@@ -24,8 +24,8 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
 // yields undefined unless `--localstorage-file` is passed; under vitest's jsdom
 // environment (where `window` IS globalThis) it shadows jsdom's Storage, so
 // `window.localStorage` comes back undefined. Install a minimal in-memory
-// Storage so browser-truthful localStorage code (sessionLayoutPreference,
-// dashboardPersistence's default backend) behaves as it does in real browsers.
+// Storage so browser-truthful localStorage code (e.g. dashboardPersistence's
+// default backend, AiChat) behaves as it does in real browsers.
 if (typeof window !== 'undefined' && !window.localStorage) {
   const store = new Map<string, string>();
   const storageStub: Storage = {

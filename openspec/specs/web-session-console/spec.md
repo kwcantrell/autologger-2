@@ -6,7 +6,7 @@ The session workspace console: the sole owner of the workspace tab inventory/ord
 (Event Feed, Transcript, Topics, Assistant, Dashboards), plus the console-level UX around
 them — stopped-state logging visibility, the 1–9 logging hotkeys, a discoverable keyboard-
 shortcut reference, transport tooltips, truthful recording indication from two scoped
-sources, honest capability gating on generation features, the session-ID copy chip, and the
+sources, honest capability gating on generation features, and the
 feed jump column.
 
 ## Requirements
@@ -277,21 +277,6 @@ SHALL still end with a refetch that reflects the final state.
 - **WHEN** 60 `event.changed` frames arrive within a few seconds
 - **THEN** the client issues a bounded number of coalesced refetches (not 60), and
   after the burst ends the feed reflects all 60 events
-
-### Requirement: Session-ID copy chip
-The Session Controls session-ID line SHALL be an explicit copy affordance: a button with a
-copy glyph and "Copy session ID" labeling. On activation it copies the ID to the clipboard
-and confirms via toast; when the Clipboard API is unavailable (e.g. non-secure LAN origins,
-a documented deployment mode) it SHALL report failure or fall back — never a silent no-op.
-
-#### Scenario: Copying the session ID
-- **WHEN** the user activates the session-ID chip in a secure context
-- **THEN** the session ID is written to the clipboard and a confirmation toast appears
-
-#### Scenario: Clipboard unavailable
-- **WHEN** the user activates the chip where `navigator.clipboard` is unavailable
-- **THEN** the UI reports the failure (or provides a selectable fallback) — it does not
-  silently do nothing
 
 ### Requirement: Feed jump column
 

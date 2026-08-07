@@ -755,7 +755,7 @@ export function EventLogSheet({ sessionId }: Props) {
             />
           )}
           {/* `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
-              matches `sr-only`; the inputs collapse to 0??0 (was the `#v4-log-session`-prefixed
+              matches `sr-only`; the inputs collapse to 0×0 (was the `#v4-log-session`-prefixed
               rules; that ancestor was a specificity hack). */}
           <div className="sr-only pointer-events-none" aria-hidden="true">
             <input

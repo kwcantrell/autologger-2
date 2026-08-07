@@ -122,3 +122,14 @@ Clean after shortcuts-button amendment — strip contents scenarios and task 2.1
   preference + toggle, ticked) describe work the same commit's delta rewrite retired —
   recorded here as WIP drift, dead code now deleted, ticks left as historical record.
   Residual: task 3.2 (e2e + visual re-bless) still open — run before archive.
+
+- **2026-08-06 — Post-archive amendment (fix-wave re-review finding):** this change's
+  delta authorized the strip's "no session-id chip" but never carried a REMOVED entry
+  for the baseline "Session-ID copy chip" requirement, so the 2026-08-06 archive sync
+  left the baseline mandating a copy affordance the shipped UI no longer has anywhere.
+  Baseline requirement removed (with its Purpose mention) in the same motion as this
+  entry. Residual also recorded here: the strip mic-level meter is keyed to the
+  session-wide `audio_recording_lease_alive` rather than this-client recording, so a
+  remote client's recording shows this client an empty meter — spec says "local mic
+  recording"; narrowing to the local-recorder signal (as `#top-bar-recording-dur`
+  already does via `body.v4-is-recording`) is a follow-up candidate.
