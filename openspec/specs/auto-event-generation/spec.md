@@ -76,10 +76,12 @@ exists:
    AND at-capacity variants of `ai/chat`, the AI v2 design turn, and
    `topics/generate` — are authorized by this delta.
 
-The route takes no generation parameters from the client; instructions and the
-category snapshot are read server-side at run start. On success it SHALL respond
-`200 {created, cap_hit}` (`created` = events inserted by the run; `cap_hit` = whether
-the per-run cap ended writing early). A CLI/turn failure after spawn SHALL map to the
+The optional request body carries only run modifiers (`regenerate`, `selection` —
+see "Optional generate body for regenerate and selection"); instructions and the
+category snapshot are read server-side at run start, never from the client. On
+success it SHALL respond `200 {created, cap_hit}` (`created` = events inserted by
+the run; `cap_hit` = whether the per-run cap ended writing early), plus `deleted`
+when `regenerate` was true. A CLI/turn failure after spawn SHALL map to the
 same opaque scrubbed failure mechanics as `topics/generate` (a `502 {detail}` that
 never carries raw subprocess output); events inserted before the failure remain
 persisted and are reported nowhere in the error body.

@@ -89,13 +89,13 @@ text-entry element (input, textarea, select, contenteditable) has focus; while a
 The workspace SHALL provide a keyboard-shortcut reference dialog listing the real shortcuts
 with their real scopes (1–9 logging while the live dock is shown; Space play/pause; arrow
 scrub 1s / Shift 10s **when the timeline playhead is focused**; +/− zoom; Esc; ?), opened by
-the `?` key and by a visible labeled control in the Session Controls panel. The `?` key guard
+the `?` key and by a visible labeled control in the fused strip's controls column. The `?` key guard
 is: not in text entry, no dialog open, no Ctrl/Meta/Alt — **Shift is permitted** (it is how
 `?` is typed on most layouts).
 
 #### Scenario: Opening the reference
 - **WHEN** the user presses `?` (Shift+/) outside text entry with no dialog open, or activates
-  the Session Controls keyboard button
+  the strip's keyboard-shortcuts button
 - **THEN** the shortcut reference dialog opens listing the shortcuts above
 
 ### Requirement: Transport tooltips
@@ -108,29 +108,32 @@ and on keyboard focus.
 
 ### Requirement: Truthful recording indication (two scoped sources)
 Recording indication SHALL be truthful per its scope, and the two indicators have different,
-deliberate sources: the shell's top-bar recording strip (pulsing dot, "Recording audio", live
-duration) reflects **this client's** recorder phase — visible only while this browser's
-microphone is actively recording (not during upload), hidden when recording stops **and when
-the recorder unmounts mid-recording** (session close/switch, route change). The Session
-Controls status line (red "Recording" with pulsing dot) reflects the **session-wide recording
-lease** (any client). The duration counter SHALL NOT be announced repeatedly by assistive
-technology (its per-second updates are excluded from the live region; only the strip's
-appearance/disappearance announces). Both pulses are static under reduced motion.
+deliberate sources: the fused strip's status area (mic level meter + live recording
+duration — the AudioRecorder targets; the retired AppShell "Recording audio" pill's
+successor) reflects **this client's** recorder phase — revealed only while this browser's
+microphone is actively recording (not during upload, not while merely rolling), hidden when
+recording stops **and when the recorder unmounts mid-recording** (session close/switch,
+route change). The strip's session status value (red "Recording") reflects the
+**session-wide recording lease** (any client). The duration counter SHALL NOT be announced
+repeatedly by assistive technology (its per-second updates are excluded from the live
+region; only the indication's appearance/disappearance announces). Pulsing indication is
+static under reduced motion.
 
-#### Scenario: Recording strip lifecycle
+#### Scenario: Recording indication lifecycle
 - **WHEN** this client starts recording, then stops
-- **THEN** the top-bar strip appears with a running duration during recording and is hidden
-  after stop
+- **THEN** the strip status area reveals the mic level meter with a running duration during
+  recording and hides them after stop
 
-#### Scenario: Unmount while recording clears the strip
+#### Scenario: Unmount while recording clears the indication
 - **WHEN** the recorder unmounts while recording (user navigates to /teams or closes the
   session)
-- **THEN** the strip is hidden (no stale "Recording audio" indicator persists)
+- **THEN** the meter and duration are hidden (no stale recording indication persists)
 
 #### Scenario: Remote client recording
 - **WHEN** another client holds the recording lease
-- **THEN** the Session Controls status shows Recording (session truth) while the top-bar strip
-  stays hidden (this client's microphone is not recording) — a deliberate divergence
+- **THEN** the strip's session status shows Recording (session truth) while this client's
+  mic-level indication stays hidden (this browser's microphone is not recording) — a
+  deliberate divergence
 
 ### Requirement: Honest capability gating on generation features
 When transcript, topic, or event generation returns HTTP 503 (feature not configured on

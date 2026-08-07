@@ -133,3 +133,24 @@ Clean after shortcuts-button amendment — strip contents scenarios and task 2.1
   remote client's recording shows this client an empty meter — spec says "local mic
   recording"; narrowing to the local-recorder signal (as `#top-bar-recording-dur`
   already does via `body.v4-is-recording`) is a follow-up candidate.
+
+- **2026-08-06 — Post-archive amendment #2 (fresh multi-agent PR#4 review finding):**
+  the same under-carry class as the copy-chip fix above, one requirement over: this
+  change's delta retired the AppShell "Recording audio" pill ("The strip SHALL omit …
+  the retired AppShell 'Recording audio' pill") but never carried a MODIFIED entry for
+  the baseline "Truthful recording indication (two scoped sources)" requirement, so
+  the archive sync left the baseline mandating the retired top-bar strip — a SHALL the
+  same file's fused-strip requirement contradicts and shipped code violates. Baseline
+  requirement rewritten in the same motion as this entry: the local-scope indicator is
+  now the fused strip's status area (mic level meter + recording duration, AudioRecorder
+  targets), revealed only while this browser's microphone is actively recording; the
+  session-wide scope is the strip's status value; AT/reduced-motion clauses carried
+  over. Adjacent naming staleness fixed too: the shortcut-reference requirement's
+  "Session Controls panel"/"Session Controls keyboard button" wording now names the
+  strip's controls column (the panel it referenced was retired by this change; the
+  control itself survives). The meter's lease-vs-local-recorder keying residual recorded
+  in amendment #1 stands unchanged — the rewritten requirement keeps the local-scope
+  mandate as the target.
+  Consistency read (2026-08-06, light-tier): clean — full read of both amended baseline
+  specs + both ledger entries; no stale pre-amendment language, no sibling-requirement
+  contradictions, cross-references resolve.

@@ -104,3 +104,17 @@ banner removed from tasks.
   generate aggregate entry counting) and 977fc82 (empty-selection aggregate bound test)
   landed after phase-3 ticks without a log entry; recorded here. Both covered by
   events.generate.int.test.ts (passing).
+- **2026-08-06 — Post-archive amendment (fresh multi-agent PR#4 review finding):** this
+  change's delta ADDED "Optional generate body for regenerate and selection" but never
+  carried a MODIFIED entry for the older "Gated generation endpoint with pre-spawn
+  preconditions" requirement, whose prose still asserted "The route takes no generation
+  parameters from the client" and a success shape of exactly `200 {created, cap_hit}` —
+  so the synced baseline contradicted itself about whether the route takes client
+  parameters and omitted the conditional `deleted` field. Baseline sentence rewritten in
+  the same motion as this entry: the optional body carries only run modifiers
+  (`regenerate`, `selection`, cross-referencing the ADDED requirement); instructions and
+  the category snapshot stay server-side; the success shape now names `deleted` when
+  `regenerate` was true. No behavior change — spec-record drift only.
+  Consistency read (2026-08-06, light-tier): clean — full read of both amended baseline
+  specs + both ledger entries; success shape matches the ADDED requirement verbatim,
+  cross-reference resolves.
