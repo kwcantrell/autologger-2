@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "tsx scripts/writeAtlas.ts",
     "dev": "vite",
+    "prebuild": "tsx scripts/writeAtlas.ts --strict",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write src/ model/ scripts/",
@@ -16,6 +18,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^26.1.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
