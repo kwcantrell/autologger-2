@@ -79,7 +79,7 @@
       `### Requirement:` / `#### Scenario:` headings, with the count-equality gate
       (parsed counts equal direct heading counts; unclassifiable heading in a
       Requirements section fails naming the capability). Fixtures + live-repo smoke.
-- [ ] 5.2 TDD ER extraction: catalog via exported `applyMigrations(db, dir)` on a bare
+- [x] 5.2 TDD ER extraction: catalog via exported `applyMigrations(db, dir)` on a bare
       in-memory better-sqlite3 handle; session via `SessionCore` over a second handle
       (`sqliteSessionSql` adapter + inert stubs, per `server/src/test/fakeCore.ts`) then
       `initSchema()`; introspect `sqlite_master`/`pragma table_info`/
