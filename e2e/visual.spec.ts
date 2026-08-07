@@ -53,18 +53,17 @@ async function prepareForShot(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
 }
 
-// Wall-clock text renders in the timeline deck (`#session-aside-date`, class
-// `.v4-session-date` / `.v5-session-date-inline`) and in the recent-sessions
-// rail cards (`.sessionCardMeta` inside `#session-list`) — baselines captured
-// today would fail tomorrow. Date regions are masked in EVERY shot that shows
-// them (loss logged: date typography is verified by the per-slice review
-// checklist instead). The random session UUID (`#v4-session-id-display`) is
-// masked for the same reason.
+// Wall-clock text renders in the recent-sessions rail cards (dates + running
+// session runtime inside `#session-list`) and in the home resume card —
+// baselines captured today would fail tomorrow. Date regions are masked in
+// EVERY shot that shows them (loss logged: date typography is verified by the
+// per-slice review checklist instead). The old deck date/UUID elements
+// (`.v4-session-date`, `.v5-session-date-inline`, `#v4-session-id-display`)
+// were retired by the maximize-log strip rework: the session date now lives
+// in a tooltip + an sr-only span inside `#session-deck-title`, neither of
+// which paints pixels.
 const DATE_MASK = (page: Page): Locator[] => [
-  page.locator('.v4-session-date'),
-  page.locator('.v5-session-date-inline'),
   page.locator('#session-list'), // rail session cards carry dates + runtime
-  page.locator('#v4-session-id-display'), // random per-run session UUID
   // ui-refresh home launch surface: the resume card shows the most recent
   // active session (title/date/count from the shared hermetic DB), which
   // varies with whatever other specs in this run created sessions first.
@@ -74,24 +73,40 @@ const VIDEO_MASK = (page: Page): Locator[] => [
   page.locator('video'),
   page.locator('.autologger-loading-video'),
 ];
-// Time-driven regions for rolling/playing shots: the timecode aside (live
-// clock) + the timeline geometry (playhead/readout are wall-clock-driven).
+// The fused transport strip (MaximizeLogStrip) replaced the old
+// `#v4-session-aside` clock deck. Its time/level-driven regions, masked in
+// every session shot:
+//   * `#session-roll-line` — mic/roll glyphs + the timecode readout, whose
+//     frame digits depend on ms-level click timing (and tick while rolling);
+//   * `#top-bar-mic-level` — meter fill driven by the fake media device's
+//     live level (hidden unless rolling/recording; masking a hidden element
+//     is a no-op);
+//   * `#top-bar-recording-dur` — duration counter, ticks every second while
+//     audio-recording.
+const STRIP_CLOCK_MASK = (page: Page): Locator[] => [
+  page.locator('#session-roll-line'),
+  page.locator('#top-bar-mic-level'),
+  page.locator('#top-bar-recording-dur'),
+];
+// Time-driven regions for rolling/playing shots: the strip clock/meter (live)
+// + the timeline geometry (playhead/readout are wall-clock-driven).
 const LIVE_MASK = (page: Page): Locator[] => [
   ...VIDEO_MASK(page),
   ...DATE_MASK(page),
+  ...STRIP_CLOCK_MASK(page),
   page.locator('#timeline-shell'),
-  page.locator('#v4-session-aside'),
 ];
 // Stopped-session feed/workspace shots keep the timeline chrome visible (ticks,
 // track, readout) but must mask `#timeline-markers`: a seeded event's marker is
 // positioned from its timecode, whose frame digits depend on ms-level click
 // timing, so the marker glyph + playhead-glow jitter sub-pixel run-to-run. The
-// aside (live/last clock) is masked for the same reason. Timeline typography is
-// covered by the always-visible ticks/readout and by the per-slice review.
+// strip clock (stopped readout still shows the last timecode's frame digits)
+// is masked for the same reason. Timeline typography is covered by the
+// always-visible ticks/readout and by the per-slice review.
 const FEED_MASK = (page: Page): Locator[] => [
   ...VIDEO_MASK(page),
   ...DATE_MASK(page),
-  page.locator('#v4-session-aside'),
+  ...STRIP_CLOCK_MASK(page),
   page.locator('#timeline-markers'),
 ];
 
@@ -299,7 +314,11 @@ test('new-session-modal', async ({ page }) => {
   await expect(page.locator('#new-session-form')).toBeVisible();
   await expect(page.locator('#ns-show')).toBeEnabled();
   await prepareForShot(page);
-  await expect(page).toHaveScreenshot('new-session-modal.png', { mask: VIDEO_MASK(page) });
+  // DATE_MASK too: the rail (session cards with dates + runtime) stays visible
+  // behind the modal on desktop.
+  await expect(page).toHaveScreenshot('new-session-modal.png', {
+    mask: [...VIDEO_MASK(page), ...DATE_MASK(page)],
+  });
 });
 
 test('home-settings-modal', async ({ page }) => {
@@ -322,14 +341,13 @@ test('event-options-modal', async ({ page }) => {
   await page.locator('#v6-btn-settings').click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.locator('#v6-settings-tab-event-buttons').click();
-  // The Options-cell button carries the dropdown/on-off summary and is enabled
-  // only for DROPDOWN / ON_OFF rows. The hermetic default show seeds an
-  // "Audio issue" DROPDOWN whose options are "Lav, Boom" (server/src/studio.ts),
-  // so the summary text is deterministic — target that enabled options button.
-  const optsBtn = page
-    .locator('table[aria-label="Event buttons"] button:not([disabled])')
-    .filter({ hasText: 'Lav, Boom' })
-    .first();
+  // The maximize-log-strip-era EventButtonsTable renders DROPDOWN rows'
+  // Options cell as a dedicated "Edit dropdown options" button holding one
+  // bubble per option (no more "Lav, Boom" summary text — the old
+  // `hasText: 'Lav, Boom'` filter matches nothing now). The hermetic default
+  // show seeds exactly one DROPDOWN ("Audio issue", options Lav/Boom —
+  // server/src/studio.ts), so `.first()` is deterministic.
+  const optsBtn = page.getByRole('button', { name: 'Edit dropdown options' }).first();
   await optsBtn.click();
   // The nested EventOptionsModal opens as a Radix Dialog titled "Dropdown
   // options" (the DROPDOWN variant). The settings modal behind it does not
@@ -356,7 +374,11 @@ test('export-tab', async ({ page }) => {
   await expect(page.getByRole('status', { name: 'Export feed' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Event feed CSV' })).toBeVisible();
   await prepareForShot(page);
-  await expect(page).toHaveScreenshot('export-tab.png', { mask: VIDEO_MASK(page) });
+  // FEED_MASK, not just VIDEO_MASK: this is a stopped-session workspace shot —
+  // the rail cards (dates + runtime), the strip clock's frame digits, and the
+  // seeded event's timeline marker are all visible and time-driven here, same
+  // as in the other stopped-session shots.
+  await expect(page).toHaveScreenshot('export-tab.png', { mask: FEED_MASK(page) });
 });
 
 test('rename-session-modal', async ({ page }) => {
@@ -494,9 +516,13 @@ test('topics-feed tab', async ({ page }) => {
 
 test('hide-internal toggle', async ({ page }) => {
   await seedStoppedSession(page);
-  // Filter popover → uncheck "Show internal events" (default is ON).
+  // Filter popover → uncheck "Internal" (default is ON). The strip-era filter
+  // menu lists one menuitemcheckbox per category ("Scene", "Audio issue",
+  // "Note", "Internal") — the old single "Show internal events" item is gone;
+  // the "Internal" item is the one wired to `showInternal`/`data-hide-internal`
+  // (EventLogSheet.tsx).
   await page.getByRole('button', { name: 'Filter' }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Show internal events' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Internal' }).click();
   await expect(page.locator('body')).toHaveAttribute('data-hide-internal', '1');
   await prepareForShot(page);
   await expect(page).toHaveScreenshot('hide-internal.png', {
@@ -565,11 +591,11 @@ async function stallAudioUploads(page: Page): Promise<void> {
 test('audio-recording transport state', async ({ page }) => {
   await startRecording(page);
   await prepareForShot(page);
-  // LIVE_MASK covers the ticking aside/timeline; the top recording bar's
-  // duration counter ticks every second → masked. The "RECORDING AUDIO"
+  // LIVE_MASK covers the ticking strip clock + timeline, the live mic-level
+  // meter, and the recording duration counter (STRIP_CLOCK_MASK). The status
   // label itself is static text and stays visible.
   await expect(page).toHaveScreenshot('audio-recording.png', {
-    mask: [...LIVE_MASK(page), page.locator('#top-bar-recording-dur')],
+    mask: LIVE_MASK(page),
   });
 });
 
@@ -581,9 +607,9 @@ test('audio-save overlay', async ({ page }) => {
   await prepareForShot(page); // also pauses/rewinds the overlay's loading video
   // Per spec the shot covers the overlay CHROME; the looping video region is
   // masked (VIDEO_MASK matches it), as are the time-driven regions behind the
-  // translucent overlay.
+  // translucent overlay (LIVE_MASK includes the strip clock/meter/duration).
   await expect(page).toHaveScreenshot('audio-save-overlay.png', {
-    mask: [...LIVE_MASK(page), page.locator('#top-bar-recording-dur')],
+    mask: LIVE_MASK(page),
   });
 });
 
@@ -618,6 +644,13 @@ test('timeline seeked-paused', async ({ page }) => {
   test.skip(count === 0, 'timeline has no markers without audio (totalSec === 0)');
   await markers.first().click();
   await expect(markers.first()).toHaveClass(/[Ss]elected/);
+  // The click leaves the mouse resting on the marker, keeping the marker
+  // tooltip + hover playhead up at the marker's time-jittered x — a moving
+  // region that neither tolerance (desktop) nor a mask (its own mask box
+  // would move run-to-run) can pin. Park the mouse at a fixed corner so both
+  // hover-only layers unmount deterministically before the shot.
+  await page.mouse.move(0, 0);
+  await expect(page.locator('#timeline-marker-tooltip')).toBeHidden();
   await prepareForShot(page);
   // This is the UNMASKED-timeline pixel gate. The seeded event's timecode
   // varies with ms-level click timing, so the marker glyph, its label, and the
@@ -636,7 +669,7 @@ test('timeline seeked-paused', async ({ page }) => {
   //     track chrome, readout, and zoom rail remain pixel-gated on both.
   const vp = page.viewportSize();
   const isDesktop = (vp?.width ?? 0) >= 768;
-  const baseMask = [...VIDEO_MASK(page), ...DATE_MASK(page), page.locator('#v4-session-aside')];
+  const baseMask = [...VIDEO_MASK(page), ...DATE_MASK(page), ...STRIP_CLOCK_MASK(page)];
   if (isDesktop) {
     await expect(page).toHaveScreenshot('timeline-seeked-paused.png', {
       mask: baseMask,
