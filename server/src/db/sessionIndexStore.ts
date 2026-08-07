@@ -2,11 +2,10 @@
 // session→studio profile resolution. Moved verbatim out of catalog.ts (Catalog),
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
-import type { CatalogDb } from '../node/catalogStore';
-import type { SettingsBlob, StudioProfile } from '../studio';
-import { blobToProfile, ValidationError } from '../studio';
+import type { Row, SettingsBlob, StudioProfile } from '@autologger/domain';
+import { blobToProfile, ValidationError } from '@autologger/domain';
+import type { CatalogDb } from '@autologger/ports';
 import { allocateTitleForBase, dateSuffixBase, padEpisodeToken } from './sessionTitleDerivation';
-import type { Row } from './shared';
 import type { ShowsStore } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
 

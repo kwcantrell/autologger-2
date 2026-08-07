@@ -18,7 +18,7 @@ import {
   validateDashboardConfig,
   WIDGET_TYPES,
   widgetTypeSchema,
-} from './catalog';
+} from './aiV2Catalog';
 
 function widget(overrides: Partial<Record<string, unknown>> = {}) {
   return {

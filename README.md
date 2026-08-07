@@ -494,13 +494,13 @@ server/src/
   main.ts                Node entry: env config → bindings → app → listen
   app.ts                 Hono app wiring: middleware chain + router mounts + static (← web/app.py)
   env.ts                 Typed env accessors                           (← auth_identity.py getters)
-  schemas.ts             Zod request schemas                           (← web/schemas.py)
-  studio.ts              Studios + palette/category + event enrichment (← studio.py)
-  timecode.ts            SMPTE timecode math + UTC helpers             (← models.py)
-  clock.ts               Clock port — the single injected time source (leases, TTLs, timecodes)
-  types.ts               Shared Hono generics (Ports + Config + Variables)
+  appEnv.ts              Composition root's Hono generics: Ports + Config + Variables (AppEnv) —
+                          the only app-level module naming the concrete SessionHubRegistry/Catalog
+                          handle types (port interfaces + Config now live in packages/ports)
   node/
     config.ts            Composition root: Ports + Config from process env (DATA_DIR layout, wiring)
+    systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
+                           (interface lives in packages/ports; moved from the former clock.ts)
     migrate.ts            Startup migrator for the catalog DB (filename-ordered .sql, transactional)
     catalogStore.ts       CatalogDb — better-sqlite3-backed catalog query layer
     kvStore.ts            KV replacement (login sessions, OAuth CSRF, Companion presence) on the catalog DB
@@ -534,6 +534,28 @@ server/src/
     transcribe.ts             transcript-words + topics CRUD; generate/csv (503)
     exports.ts                export.csv / export.jsonl (← export.py)
     admin.ts                  ADMIN_TOKEN-gated users + studio-definitions admin
+
+packages/                 Source-only npm workspace packages (no build step; server's tsx and
+                           the root tsc --noEmit resolve them straight from src/); boundaries
+                           between them are enforced by server/src/packageBoundaries.repo.test.ts,
+                           not the compiler.
+  domain/src/              @autologger/domain — pure, dependency-free domain modules (L0)
+    studio.ts                Studios + palette/category + event enrichment (← studio.py)
+    timecode.ts              SMPTE timecode math + UTC helpers             (← models.py)
+    dbShared.ts              Shared catalog-layer row types (AuthUser, …), dependency-free
+                              (← former server/src/db/shared.ts)
+  contract/src/            @autologger/contract — wire schemas + dashboard catalog (L0; zod
+                           declared as a peerDependency so the app's instanceof ZodError → 422
+                           mapping can never see a second zod copy)
+    schemas.ts               Zod request schemas                           (← web/schemas.py)
+    aiV2Catalog.ts            Dashboard widget catalog + layout/interaction schema
+                               (← former server/src/aiV2/catalog.ts)
+  ports/src/               @autologger/ports — interface-only port types + Config (L0; no
+                           runtime implementations — systemClock stays with the composition root)
+    clock.ts / blobStore.ts / kvStore.ts / presenceRegistry.ts / catalogDb.ts /
+    identityVerifier.ts / config.ts / ports.ts
+                              Clock, BlobStore, KvStore, PresenceRegistry, CatalogDb,
+                              IdentityVerifier interfaces + the Config type + the base Ports shape
 ```
 
 ## Endpoints

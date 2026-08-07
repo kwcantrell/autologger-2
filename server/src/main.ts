@@ -7,9 +7,9 @@ import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from './app';
+import type { AppEnv } from './appEnv';
 import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
-import type { AppEnv } from './types';
 
 const { bindings, close } = createBindings(process.env);
 const port = Number(process.env.PORT || '8787');

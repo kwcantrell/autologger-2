@@ -1,27 +1,6 @@
-// Shared Hono generics: the composition root's Ports + Config + per-request
-// context Variables.
+// Plain configuration strings from process env — moved verbatim from
+// server/src/types.ts (package-split-foundation task 4.1).
 
-import type { IdentityVerifier } from './auth/oauth_google';
-import type { Clock } from './clock';
-import type { AuthUser, Catalog } from './db/catalog';
-import type { BlobStore } from './node/blobStore';
-import type { CatalogDb } from './node/catalogStore';
-import type { KvStore } from './node/kvStore';
-import type { PresenceRegistry } from './node/presence';
-import type { SessionHubRegistry } from './session/SessionHub';
-
-/** Constructed services, role-named. */
-export interface Ports {
-  clock: Clock;
-  identity: IdentityVerifier;
-  catalog: CatalogDb;
-  kv: KvStore;
-  sessions: SessionHubRegistry;
-  audio: BlobStore;
-  presence: PresenceRegistry;
-}
-
-/** Plain configuration strings from process env. */
 export interface Config {
   PUBLIC_BASE_URL: string;
   /** Bind interface (also read directly by main.ts for serve()); surfaced here so
@@ -113,21 +92,3 @@ export interface Config {
    * literals elsewhere (pre-dating this field) keep type-checking. */
   YTDLP_RESOLVED_PATH?: string | null;
 }
-
-/** The per-request env object. Callers MUST pass a fresh env per request and
- * wireApp mutates it IN PLACE (never replace/spread c.env): @hono/node-ws's
- * upgrade handshake compares this object's identity to complete upgrades. */
-export interface Bindings {
-  ports: Ports;
-  config: Config;
-  /** Injected per-request by @hono/node-server; absent in app.request() tests. */
-  incoming?: import('node:http').IncomingMessage;
-}
-
-export interface Variables {
-  catalog: Catalog;
-  user: AuthUser | null;
-  apiTokenAuth: boolean;
-}
-
-export type AppEnv = { Bindings: Bindings; Variables: Variables };

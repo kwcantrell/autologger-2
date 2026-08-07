@@ -1,15 +1,17 @@
 // Event log domain — events table CRUD, the export feed, and the one-shot
 // orphan-relink pass. Moved verbatim out of the original single-file session spine.
 
-import { type EventRpc, UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
 import {
+  type EventRpc,
   formatSmpte,
   fromTotalFrames,
   isoZ,
   parseUtcMs,
   timecodeForMark,
   toTotalFrames,
-} from '../timecode';
+  UI_SNAPSHOT_COLOR_KEY,
+  UI_SNAPSHOT_LABEL_KEY,
+} from '@autologger/domain';
 import type { Row, SessionCore, SessionProjection, TimecodeCtx } from './sessionCore';
 
 /** rowToRpc — pure events-row → RPC mapper. */

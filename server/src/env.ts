@@ -10,7 +10,7 @@
 
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import type { Config } from './types';
+import type { Config } from '@autologger/ports';
 
 export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';

@@ -28,9 +28,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseTimecodeString, toTotalFrames } from '@autologger/domain';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SessionHubRegistry } from '../session/SessionHub';
-import { parseTimecodeString, toTotalFrames } from '../timecode';
 import { stableSessionCwd } from './aiChatRunner';
 import {
   __resetAiMcpListenerForTests,

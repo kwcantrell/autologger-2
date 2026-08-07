@@ -10,19 +10,18 @@
 // member. `requireSession` and content routers are untouched — role checks
 // live ONLY here.
 
-import { type Context, Hono } from 'hono';
-import type { ZodTypeAny, z } from 'zod';
-import type { TeamRole } from '../db/authStore';
-import type { AuthUser, Catalog, Row } from '../db/catalog';
-import { normalizeEmail } from '../db/shared';
 import {
   teamCreateBodySchema,
   teamInviteBodySchema,
   teamRenameBodySchema,
   teamRoleChangeBodySchema,
-} from '../schemas';
-import { BUILTIN_STUDIO_ORDER, ValidationError } from '../studio';
-import type { AppEnv } from '../types';
+} from '@autologger/contract';
+import { BUILTIN_STUDIO_ORDER, normalizeEmail, ValidationError } from '@autologger/domain';
+import { type Context, Hono } from 'hono';
+import type { ZodTypeAny, z } from 'zod';
+import type { AppEnv } from '../appEnv';
+import type { TeamRole } from '../db/authStore';
+import type { AuthUser, Catalog, Row } from '../db/catalog';
 import { ApiError } from './_helpers';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422

@@ -1,5 +1,5 @@
 // ai-v2-dashboards — the grid renderer (task 4.3), driven entirely by the
-// layout DSL from server/src/aiV2/catalog.ts (`WidgetLayout`'s x/y/w/h +
+// layout DSL from packages/contract/src/aiV2Catalog.ts (`WidgetLayout`'s x/y/w/h +
 // `DashboardInteraction`'s named `kind`/source/target). A 12-column grid with
 // 5.4rem auto-rows, matching design/mockup.html's `.grid`/`.widget` — the
 // mockup is the visual spec (design.md "UI design brief"), so this fixes the
@@ -35,7 +35,7 @@ interface Props {
 
 /** Render-side backstop (ai-v2-dashboards task 5.3, spec "Dashboard
  * persistence"). The server's write-time validation
- * (`validateDashboardConfig`, server/src/aiV2/catalog.ts) already caps a
+ * (`validateDashboardConfig`, packages/contract/src/aiV2Catalog.ts) already caps a
  * dashboard at `MAX_WIDGETS_PER_DASHBOARD` (64) widgets, but this component
  * has no way to KNOW a config it's handed actually passed through that path
  * — a stored row edited directly on disk, an older row from before a bound
@@ -44,7 +44,7 @@ interface Props {
  * nodes would let any of those hang the browser; this cap makes that
  * impossible regardless of how the array got this large, independent of
  * whatever the server currently enforces. Mirrors
- * `MAX_WIDGETS_PER_DASHBOARD` in server/src/aiV2/catalog.ts (kept as a
+ * `MAX_WIDGETS_PER_DASHBOARD` in packages/contract/src/aiV2Catalog.ts (kept as a
  * literal, not an import — web never imports from server/src, see
  * widgetTypes.ts's module header on the two staying in sync by hand). */
 const MAX_RENDERED_WIDGETS = 64;

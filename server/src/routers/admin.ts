@@ -2,12 +2,12 @@
 // POST /api/admin/restart is dropped: serverless has no supervised process to
 // restart (adminMeta already returns restart_supported:false).
 
+import { adminMembershipBodySchema, adminStudioCreateBodySchema } from '@autologger/contract';
+import { BUILTIN_STUDIO_ORDER, ValidationError } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
+import type { AppEnv } from '../appEnv';
 import { requestHasValidAdminToken } from '../auth/identity';
 import { adminTokenConfigured } from '../env';
-import { adminMembershipBodySchema, adminStudioCreateBodySchema } from '../schemas';
-import { BUILTIN_STUDIO_ORDER, ValidationError } from '../studio';
-import type { AppEnv } from '../types';
 import { ApiError } from './_helpers';
 
 export const adminRouter = new Hono<AppEnv>();

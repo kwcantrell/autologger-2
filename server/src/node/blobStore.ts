@@ -7,20 +7,13 @@ import { createReadStream, type Dirent } from 'node:fs';
 import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
+import type { BlobObject, BlobRange, BlobStore as BlobStorePort } from '@autologger/ports';
 
 export class InvalidRangeError extends Error {}
 
-export type BlobRange = { offset: number; length?: number } | { suffix: number };
-
-export interface BlobObject {
-  size: number;
-  range?: { offset: number; length: number };
-  body: ReadableStream;
-}
-
 let tmpCounter = 0;
 
-export class BlobStore {
+export class BlobStore implements BlobStorePort {
   private rootAbs: string;
 
   constructor(

@@ -4,8 +4,8 @@
 // "Membership roles" / "Self-serve team creation" / "Team lifecycle and
 // last-admin protection" / "Email invites" requirements.
 
+import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_STUDIO_ORDER } from '../studio';
 import { app, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 

@@ -12,9 +12,9 @@ import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
+import type { AppEnv } from '../appEnv';
 import { env } from '../test/harness';
 import { seededSession, setCompanionPresence } from '../test/helpers';
-import type { AppEnv } from '../types';
 
 let server: ServerType;
 let port: number;

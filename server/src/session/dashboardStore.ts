@@ -28,9 +28,9 @@
 // this store) rather than trivially satisfied by always upserting the same
 // row — a future multi-dashboard feature can reuse this store unchanged.
 
-import type { DashboardConfig } from '../aiV2/catalog';
-import { MAX_DASHBOARDS_PER_SESSION, validateDashboardConfig } from '../aiV2/catalog';
-import { isoZ } from '../timecode';
+import type { DashboardConfig } from '@autologger/contract';
+import { MAX_DASHBOARDS_PER_SESSION, validateDashboardConfig } from '@autologger/contract';
+import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore } from './sessionCore';
 
 export interface StoredDashboard {

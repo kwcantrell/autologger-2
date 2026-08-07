@@ -10,9 +10,8 @@
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { Clock } from '@autologger/ports';
 import Database from 'better-sqlite3';
-import type { Clock } from '../clock';
-import { systemClock } from '../clock';
 import {
   AUDIO_SEAM_PARTS_META_KEY,
   type AudioSeamPart,
@@ -21,6 +20,7 @@ import {
 } from './audioSeamParts';
 import { AudioStore } from './audioStore';
 import { DashboardStore } from './dashboardStore';
+import { timecodeWallAnchors, wallTimeUtcForTimecode } from './eventAnchors';
 import { EventStore } from './eventStore';
 import { LeaseStore } from './leaseStore';
 import type {
@@ -46,6 +46,16 @@ export type { TranscriptWord } from './transcriptStore';
 interface HubSocket extends AttachedSocket {
   raw: { send(data: string): void };
 }
+
+// Constructor default only — the composition root (node/config.ts) always
+// passes a Clock explicitly, so this fallback exists purely for callers
+// (mostly tests) that don't care about time semantics. Deliberately NOT
+// `systemClock`: that adapter lives in `server/src/node/`, and importing it
+// here would give `session/` an edge into `node/` while `node/config.ts`
+// already imports `session/SessionHub` — recreating, in a new place, the
+// kind of directory cycle this change (package-split-foundation, design D3)
+// exists to remove.
+const DEFAULT_CLOCK: Clock = { now: () => Date.now() };
 
 /** The real SessionSql adapter: prepared statements over better-sqlite3.
  * Reads return rows, writes return the affected-row count, and exec() is the
@@ -79,7 +89,7 @@ export class SessionHub {
 
   constructor(
     dbPath: string,
-    private clock: Clock = systemClock,
+    private clock: Clock = DEFAULT_CLOCK,
   ) {
     this.lastTouchedMs = clock.now();
     this.db = new Database(dbPath);
@@ -295,6 +305,60 @@ export class SessionHub {
     return { started, stopped, projection };
   }
 
+  /** package-split-foundation D6 — `create_event`'s read-filter-anchor-insert
+   * sequence as ONE transactional RPC, upgrading a comment-enforced
+   * interleaving invariant ("one synchronous block, never held across an
+   * await") into an actual `inTxn` transaction. Synchronous, zero awaits, one
+   * `inTxn` block: the live-event read (`exportEvents`) → exclude
+   * `excludeEventIds` (event-generate-hardening D3's regenerate
+   * snapshot-id exclusion, so a regenerate run's doomed pre-spawn rows never
+   * steer the replacement rows' placement) → `timecodeWallAnchors` →
+   * `wallTimeUtcForTimecode` → the STORE-level `this.events.addEvent` — NOT
+   * the self-transactional `addEvent` delegate above, following
+   * `anchorImportedTake`'s precedent above: nesting a self-transactional
+   * delegate inside `inTxn` would be behavior-preserving today (better-sqlite3
+   * savepoints nest fine) but `withBroadcastsHeld` documents
+   * inner-catch-and-continue as unsupported, so this avoids creating that
+   * trap. The store's one `event.changed` broadcast is deliberately NOT
+   * suppressed — manual-insert semantics, byte-identical to the pre-reshape
+   * tool body's `hub.addEvent` call. */
+  createAnchoredEvent(input: {
+    category: string;
+    message: string;
+    metadataJson: string;
+    timecodeTotalFrames: number;
+    frameRate: number;
+    startOffsetFrames: number;
+    startedAtUtc: string;
+    /** event-generate-hardening D3 — a regenerate run's pre-spawn snapshot
+     * ids, excluded from the anchor-basis read only (never from the insert).
+     * Absent on non-regenerate runs — anchor behavior is then byte-identical
+     * to a run with no exclusion. Iterable so the caller's `ReadonlySet`
+     * needs no conversion before calling. */
+    excludeEventIds?: Iterable<string>;
+  }) {
+    return this.inTxn(() => {
+      const liveEvents = this.events.exportEvents();
+      const exclude = input.excludeEventIds ? new Set(input.excludeEventIds) : undefined;
+      const anchorEvents =
+        exclude !== undefined ? liveEvents.filter((e) => !exclude.has(e.event_id)) : liveEvents;
+      const anchors = timecodeWallAnchors(anchorEvents);
+      const wallTimeUtc = wallTimeUtcForTimecode(input.timecodeTotalFrames, anchors, {
+        frameRate: input.frameRate,
+        startOffsetFrames: input.startOffsetFrames,
+        startedAtUtc: input.startedAtUtc,
+      });
+      return this.events.addEvent({
+        category: input.category,
+        message: input.message,
+        metadataJson: input.metadataJson,
+        markedAtUtc: null,
+        ctx: { frameRate: input.frameRate, startOffsetFrames: input.startOffsetFrames },
+        explicitAnchor: { timecodeTotalFrames: input.timecodeTotalFrames, wallTimeUtc },
+      });
+    });
+  }
+
   // --- lease delegates ---
   claimLease(clientId: string) {
     return this.inTxn(() => this.lease.claimLease(clientId));
@@ -433,7 +497,7 @@ export class SessionHubRegistry {
 
   constructor(
     private sessionsDir: string,
-    private clock: Clock = systemClock,
+    private clock: Clock = DEFAULT_CLOCK,
   ) {
     mkdirSync(sessionsDir, { recursive: true });
   }

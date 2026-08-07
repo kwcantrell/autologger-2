@@ -1,5 +1,7 @@
+import type { CategoryRecord } from '@autologger/domain';
 import { Hono } from 'hono';
 import { z } from 'zod';
+import type { AppEnv } from '../appEnv';
 import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
 import {
   appendLogImportLine,
@@ -9,8 +11,6 @@ import {
 } from '../logImport/jobStore';
 import { ensureTimedTranscript, runSessionLogImport } from '../logImport/runSessionLogImport';
 import { fetchPublicWorkbookSheets } from '../logImport/sheetsFetch';
-import type { CategoryRecord } from '../studio';
-import type { AppEnv } from '../types';
 import { ApiError, timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();

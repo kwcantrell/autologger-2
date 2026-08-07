@@ -11,16 +11,17 @@
     "server",
     "web",
     "companion",
-    "web-docs"
+    "web-docs",
+    "packages/*"
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta --kill-others-on-fail \"npm run dev -w server\" \"npm run dev -w web\"",
     "teardown": "node scripts/teardown.mjs",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
-    "test": "npm run test -w server && npm run test -w web && npm run test -w companion && npm run test -w web-docs",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w companion && tsc --noEmit -p e2e && npm run typecheck -w web-docs",
-    "lint": "npm run lint -w web && npm run lint -w web-docs && biome check --write e2e playwright.config.ts companion/src server/src",
+    "test": "npm run test -w server && npm run test -w web && npm run test -w companion && npm run test -w web-docs && npm run test -w packages/domain && npm run test -w packages/contract && npm run test -w packages/ports",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && npm run typecheck -w companion && tsc --noEmit -p e2e && npm run typecheck -w web-docs && tsc --noEmit -p packages/domain && tsc --noEmit -p packages/contract && tsc --noEmit -p packages/ports",
+    "lint": "npm run lint -w web && npm run lint -w web-docs && biome check --write e2e playwright.config.ts companion/src server/src packages",
     "docs:check": "npm run check -w web-docs",
     "e2e": "npm run build -w web && playwright test --project=chromium --project=login-gate",
     "e2e:visual": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile",

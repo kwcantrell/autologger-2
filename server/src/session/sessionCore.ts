@@ -6,8 +6,8 @@
 // Runtime-agnostic by design: it sees only the structural SessionRuntime seam
 // (SessionHub is the sole substrate today; tests may supply a fake).
 
-import type { Clock } from '../clock';
-import type { TransportFields } from '../timecode';
+import type { TransportFields } from '@autologger/domain';
+import type { Clock } from '@autologger/ports';
 
 export type SqlValue = string | number | null;
 export type Row = Record<string, SqlValue>;

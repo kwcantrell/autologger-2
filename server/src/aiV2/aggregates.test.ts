@@ -6,10 +6,10 @@
 // TDD note: this file is written before `aggregates.ts` exists (RED), then
 // the implementation is added to turn it GREEN.
 
+import type { EventRpc } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import type { Topic } from '../session/topicStore';
 import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
-import type { EventRpc } from '../studio';
 import {
   computeEventCounts,
   computeEventDensity,

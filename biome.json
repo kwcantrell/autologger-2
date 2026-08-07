@@ -24,7 +24,8 @@
       "e2e/**/*.ts",
       "playwright.config.ts",
       "companion/src/**/*.ts",
-      "server/src/**/*.ts"
+      "server/src/**/*.ts",
+      "packages/**/*.ts"
     ]
   }
 }

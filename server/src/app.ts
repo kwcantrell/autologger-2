@@ -4,10 +4,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ValidationError } from '@autologger/domain';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Context, Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
+import type { AppEnv, Bindings } from './appEnv';
 import { authContext } from './middleware/auth';
 import { ipAllowlistMiddleware } from './middleware/ipAllowlist';
 import { InvalidRangeError } from './node/blobStore';
@@ -27,8 +29,6 @@ import { mountSessionWs } from './routers/sessionWs';
 import { showsRouter } from './routers/shows';
 import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
-import { ValidationError } from './studio';
-import type { AppEnv, Bindings } from './types';
 
 export function wireApp(
   app: Hono<AppEnv>,

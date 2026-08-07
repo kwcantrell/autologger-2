@@ -4,7 +4,7 @@
 // byte-compatible with the current React app's api/types.ts.
 
 import { z } from 'zod';
-import { widgetTypeSchema } from './aiV2/catalog';
+import { widgetTypeSchema } from './aiV2Catalog';
 
 export const MAX_METADATA_BYTES = 8000; // matches the message length cap.
 
@@ -183,7 +183,7 @@ export type AiV2DesignRequest = z.infer<typeof aiV2DesignRequestSchema>;
 // are STRUCTURALLY different shapes, never conflated:
 //   - `kind: 'option'` carries a catalog widget-type identifier, validated
 //     against the SAME closed enum `widgetTypeSchema` already enforces for
-//     stored dashboards (`server/src/aiV2/catalog.ts`) — an option naming a
+//     stored dashboards (`./aiV2Catalog.ts`) — an option naming a
 //     type outside the catalog fails validation here (422), so "resolving an
 //     option to its component is an exact lookup" never depends on matching
 //     agent-authored display text.

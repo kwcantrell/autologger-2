@@ -3,9 +3,8 @@
 // IdentityVerifier port: the JWKS cache is instance state (no module-level
 // singleton) and its TTL reads the injected Clock.
 
+import type { Clock, IdentityVerifier as IdentityVerifierPort } from '@autologger/ports';
 import { createLocalJWKSet, errors, type JSONWebKeySet, type JWTPayload, jwtVerify } from 'jose';
-import type { Clock } from '../clock';
-import { systemClock } from '../clock';
 
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const JWKS_TTL_MS = 10 * 60_000;
@@ -27,27 +26,17 @@ export function googleAuthorizationUrl(opts: {
   return `https://accounts.google.com/o/oauth2/v2/auth?${q.toString()}`;
 }
 
-/** Identity verification + OAuth code exchange, as a substitutable port —
- * tests supply a fake and never touch the network. */
-export interface IdentityVerifier {
-  authorizationUrl(opts: { clientId: string; state: string; redirectUri: string }): string;
-  /** Exchange the authorization code for tokens (includes id_token). Throws on HTTP error. */
-  exchangeCode(opts: {
-    code: string;
-    redirectUri: string;
-    clientId: string;
-    clientSecret: string;
-  }): Promise<Record<string, unknown>>;
-  /** Verify signature + audience + issuer; returns claims. Throws on failure. */
-  verifyIdToken(idToken: string, clientId: string): Promise<JWTPayload>;
-}
-
-export class GoogleIdentityVerifier implements IdentityVerifier {
+export class GoogleIdentityVerifier implements IdentityVerifierPort {
   /** JWKS cache — instance state, TTL from the injected Clock. */
   private jwksCache: { keys: ReturnType<typeof createLocalJWKSet>; fetchedAt: number } | null =
     null;
 
-  constructor(private clock: Clock = systemClock) {}
+  // No default: every call site (the composition root, tests) passes a Clock
+  // explicitly. A default here would need `systemClock`, which lives in
+  // `server/src/node/` — importing it would give `auth/` an edge back into
+  // `node/`, recreating the very `auth ⇄ node` cycle this change breaks
+  // (package-split-foundation design D3).
+  constructor(private clock: Clock) {}
 
   /** Fetch-and-cache Google's JWKS via global fetch — NOT jose's remote-JWKS
    * path, whose node:https transport broke both test mocking and the

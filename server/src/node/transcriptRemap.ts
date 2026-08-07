@@ -19,7 +19,7 @@
 // re-parsing a formatted SMPTE string or recomputing from live transport
 // state, which would be wrong after a restart.
 
-import { formatSmpte, fromTotalFrames } from '../timecode';
+import { formatSmpte, fromTotalFrames } from '@autologger/domain';
 import type { SegmentOffset } from './audioMerge';
 import type { DeepgramParagraph, DeepgramSentimentSegment, DeepgramWord } from './deepgram';
 

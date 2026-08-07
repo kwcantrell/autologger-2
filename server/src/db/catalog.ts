@@ -4,14 +4,14 @@
 // the `readonly` store fields are the sole API surface (callers use
 // catalog.shows.x() etc.). KV login sessions + OAuth CSRF live in auth/identity.ts.
 
-import type { CatalogDb } from '../node/catalogStore';
+import type { CatalogDb } from '@autologger/ports';
 import { AuthStore } from './authStore';
 import { ProfileAssembler } from './profileAssembler';
 import { SessionIndexStore } from './sessionIndexStore';
 import { ShowsStore } from './showsStore';
 import { StudioRegistry } from './studioRegistry';
 
-export type { AuthUser, ProfileCtx, Row } from './shared';
+export type { AuthUser, ProfileCtx, Row } from '@autologger/domain';
 export { showApiDict, showCategoriesApiShape } from './showsStore';
 
 export class Catalog {

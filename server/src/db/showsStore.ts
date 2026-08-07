@@ -1,10 +1,9 @@
 // Shows CRUD + the pure per-show / per-category shaping functions the React
 // app's api/types.ts expects. Moved verbatim out of catalog.ts (Catalog).
 
-import type { CatalogDb } from '../node/catalogStore';
-import { normalizeEventPaletteNine, validateEventPalettePreset } from '../studio';
-import type { Row } from './shared';
-import { nowIso } from './shared';
+import type { Row } from '@autologger/domain';
+import { normalizeEventPaletteNine, nowIso, validateEventPalettePreset } from '@autologger/domain';
+import type { CatalogDb } from '@autologger/ports';
 
 function categoriesListFromShowRow(r: Row): unknown[] {
   try {

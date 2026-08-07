@@ -7,9 +7,9 @@
 // spanning 2.5 hours of wall time) is kept as a secondary case only — it
 // cannot produce the duplicate-timecode shape (Phase-2 review finding 2).
 
+import { isoZ } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import { fakeRuntime } from '../test/fakeCore';
-import { isoZ } from '../timecode';
 import {
   timecodeWallAnchors,
   type WallAnchorCandidateEvent,

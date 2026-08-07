@@ -8,7 +8,7 @@ import type { DashboardInteraction, WidgetLayout } from './widgetTypes';
 // --- DashboardGrid (ai-v2-dashboards, task 4.3) ---
 //
 // The grid renderer is driven entirely by the layout DSL (position/size) and
-// the named interaction vocabulary from server/src/aiV2/catalog.ts. These
+// the named interaction vocabulary from packages/contract/src/aiV2Catalog.ts. These
 // tests exercise: layout (grid-column/-row derived from x/y/w/h), an unknown
 // widget type being skipped rather than crashing, a widget id with no data
 // rendering an honest placeholder (never a fabricated widget), and the one

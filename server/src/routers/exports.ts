@@ -3,10 +3,10 @@
 // CSV (frozen dialect: columns TIMECODE/UTC/CATEGORY/MESSAGE, CRLF, minimal quoting —
 // the Python csv-module defaults, kept from the origin) or JSONL.
 
+import type { EventRpc } from '@autologger/domain';
+import { enrichEventRpc } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
-import type { EventRpc } from '../studio';
-import { enrichEventRpc } from '../studio';
-import type { AppEnv } from '../types';
+import type { AppEnv } from '../appEnv';
 import { getSessionHub, requireSession } from './_helpers';
 
 export const exportsRouter = new Hono<AppEnv>();

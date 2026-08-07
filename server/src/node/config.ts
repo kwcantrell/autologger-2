@@ -4,16 +4,16 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
-import { systemClock } from '../clock';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { SessionHubRegistry } from '../session/SessionHub';
-import type { Bindings } from '../types';
 import { BlobStore } from './blobStore';
 import { CatalogDb } from './catalogStore';
 import { KvStore } from './kvStore';
 import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
+import { systemClock } from './systemClock';
 import { sweepStaleYoutubeImportTempDirs } from './youtubeImportScratch';
 
 // Resolved from this file's location, not cwd — the server must work both via

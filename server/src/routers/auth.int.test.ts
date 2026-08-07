@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
 import { AuthStore } from '../db/authStore';
 import { app, env, envWith } from '../test/harness';
@@ -10,7 +11,6 @@ import {
   mockGoogleToken,
   resetMockAgent,
 } from '../test/oauth';
-import type { Bindings } from '../types';
 
 const CLIENT = 'test-client';
 const OAUTH_ENV = envWith({

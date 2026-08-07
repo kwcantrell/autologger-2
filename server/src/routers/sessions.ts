@@ -11,8 +11,25 @@
 
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  newSessionBodySchema,
+  sessionUpdateBodySchema,
+  validateYoutubeImportUrl,
+  youtubeImportBodySchema,
+} from '@autologger/contract';
+import {
+  formatRuntimeHms,
+  formatSmpte,
+  isoZ,
+  SETTING_ACTIVE_SHOW,
+  sessionDeckDisplayTitle,
+  toTotalFrames,
+  transportTimecode,
+  ValidationError,
+} from '@autologger/domain';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import type { AppEnv } from '../appEnv';
 import type { Row } from '../db/catalog';
 import { normalizeUploadDate } from '../db/sessionIndexStore';
 import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
@@ -20,19 +37,10 @@ import { youtubeImportGuard } from '../node/youtubeImportGuard';
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
 import {
-  newSessionBodySchema,
-  sessionUpdateBodySchema,
-  validateYoutubeImportUrl,
-  youtubeImportBodySchema,
-} from '../schemas';
-import {
   AUDIO_SEAM_PARTS_HEADER,
   type AudioSeamPart,
   parseAudioSeamPartsHeader,
 } from '../session/audioSeamParts';
-import { SETTING_ACTIVE_SHOW, sessionDeckDisplayTitle, ValidationError } from '../studio';
-import { formatRuntimeHms, formatSmpte, isoZ, toTotalFrames, transportTimecode } from '../timecode';
-import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 

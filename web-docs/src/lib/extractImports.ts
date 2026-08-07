@@ -21,7 +21,18 @@
 // component is still a mapped component, so it gets no exemption), and
 // `fixtures/api-responses` (a plain-TS-module directory with no tsconfig.json
 // of its own — a minimal inline bundler-mode `compilerOptions` object
-// stands in; see `WorkspaceRegime.compilerOptions`).
+// stands in; see `WorkspaceRegime.compilerOptions`) — plus one regime per
+// `packages/*` L0 npm workspace package (`domain`, `contract`, `ports`;
+// package-split-foundation), each with its own real `tsconfig.json`.
+//
+// Cross-package edges into `packages/*` are resolved via each consumer's
+// bare `@autologger/*` specifier, which TypeScript resolves through a
+// `node_modules/@autologger/*` npm-workspace symlink and therefore always
+// flags `isExternalLibraryImport: true` — the SAME flag it sets for a truly
+// external npm dependency. This extractor does NOT use that flag to decide
+// "external": it inspects the resolved (symlink-followed) real path instead
+// — inside the repo root and not under any `node_modules` segment means an
+// in-repo edge, even though TS calls it "external" (see `recordSpecifier`).
 //
 // Resolution mechanics: `ts.createProgram` is used to parse each mapped
 // file into a `ts.SourceFile` (correct JSX/scriptKind handling per
@@ -61,13 +72,15 @@ export interface WorkspaceRegime {
 }
 
 /**
- * The six real resolution regimes: the four application workspaces (design.md
- * D2) plus web-docs itself and `fixtures/api-responses` (audit fix-now F1 —
- * every mapped file gets extracted, per spec R4, with no silent exception).
- * Workspace-tsconfig `compilerOptions` are read from each workspace's real
- * tsconfig at extraction time — never its `include`/`exclude`, which only
- * shapes each workspace's OWN build/typecheck file set (and companion's
- * excludes its own tests outright).
+ * The nine real resolution regimes: the four application workspaces (design.md
+ * D2) plus web-docs itself, `fixtures/api-responses` (audit fix-now F1 —
+ * every mapped file gets extracted, per spec R4, with no silent exception),
+ * and the three `packages/*` L0 npm workspace packages introduced by
+ * package-split-foundation (`domain`, `contract`, `ports`). Workspace-tsconfig
+ * `compilerOptions` are read from each workspace's real tsconfig at
+ * extraction time — never its `include`/`exclude`, which only shapes each
+ * workspace's OWN build/typecheck file set (and companion's excludes its own
+ * tests outright).
  */
 export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
   { name: 'server', dir: 'server', tsconfigPath: 'server/tsconfig.json' },
@@ -75,6 +88,21 @@ export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
   { name: 'companion', dir: 'companion', tsconfigPath: 'companion/tsconfig.json' },
   { name: 'e2e', dir: 'e2e', tsconfigPath: 'e2e/tsconfig.json' },
   { name: 'web-docs', dir: 'web-docs', tsconfigPath: 'web-docs/tsconfig.json' },
+  {
+    name: 'domain',
+    dir: 'packages/domain',
+    tsconfigPath: 'packages/domain/tsconfig.json',
+  },
+  {
+    name: 'contract',
+    dir: 'packages/contract',
+    tsconfigPath: 'packages/contract/tsconfig.json',
+  },
+  {
+    name: 'ports',
+    dir: 'packages/ports',
+    tsconfigPath: 'packages/ports/tsconfig.json',
+  },
   {
     name: 'contract-fixtures',
     dir: 'fixtures/api-responses',
@@ -186,15 +214,24 @@ function walkSourceFile(
     isTypeOnly: boolean,
   ) {
     const resolved = resolveSpecifier(specifierNode.text);
-    // Unresolved (CSS/images/bundler-only assets) or a node_modules package —
-    // both ignored per spec ("unresolvable non-TypeScript specifiers ...
-    // ignored"); external libraries are simply not in-repo edges.
-    if (!resolved || resolved.isExternalLibraryImport) return;
+    // Unresolved (CSS/images/bundler-only assets) is ignored per spec
+    // ("unresolvable non-TypeScript specifiers ... ignored"). Note this does
+    // NOT bail out on `resolved.isExternalLibraryImport` — TS sets that flag
+    // for ANY specifier resolved via a `node_modules` lookup, including
+    // scoped npm-workspace packages (`@autologger/*`) whose `node_modules`
+    // entry is a symlink to a real in-repo `packages/*` directory: for those,
+    // `resolvedFileName` is the real (symlink-followed) in-repo path, not a
+    // `node_modules` path, so they are genuine in-repo edges, not external
+    // ones. The two checks below are what actually discriminate "external":
+    // resolved outside the repo root entirely, or resolved to a path that
+    // still runs through a literal `node_modules` segment (a true external
+    // package, even one hoisted to the workspace root).
+    if (!resolved) return;
     const resolvedAbs = path.resolve(resolved.resolvedFileName);
     if (resolvedAbs !== repoRoot && !resolvedAbs.startsWith(repoRoot + path.sep)) {
-      return; // defensive: resolved outside the repo root entirely
+      return; // resolved outside the repo root entirely — a true external package
     }
-    if (resolvedAbs.includes(`${path.sep}node_modules${path.sep}`)) return;
+    if (resolvedAbs.includes(`${path.sep}node_modules${path.sep}`)) return; // hoisted external package
 
     const toFile = toRepoRelative(resolvedAbs, repoRoot);
     const { line } = sourceFile.getLineAndCharacterOfPosition(specifierNode.getStart(sourceFile));

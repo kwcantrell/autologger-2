@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { app, env } from '../test/harness';
-import type { Bindings } from '../types';
 
 /** Simulate the @hono/node-server env: bindings + a fake socket peer. */
 const envFrom = (remoteAddress: string, overrides: Record<string, string> = {}): Bindings =>

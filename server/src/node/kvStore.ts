@@ -2,11 +2,11 @@
 // companion last_command). Lazy expiry on get; purgeExpired() runs once at
 // startup — no background sweep (spec: scope #3).
 
+import type { Clock, KvStore as KvStorePort } from '@autologger/ports';
 import type { Database } from 'better-sqlite3';
-import type { Clock } from '../clock';
-import { systemClock } from '../clock';
+import { systemClock } from './systemClock';
 
-export class KvStore {
+export class KvStore implements KvStorePort {
   constructor(
     private db: Database,
     private clock: Clock = systemClock,

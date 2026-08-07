@@ -1,7 +1,7 @@
 // Transcript-words domain — manual CRUD over session_transcript_words
 // (generation is stubbed in the router). Moved verbatim out of the original single-file session spine.
 
-import { isoZ } from '../timecode';
+import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore } from './sessionCore';
 import { buildPatch, nextOrdinal } from './storeHelpers';
 

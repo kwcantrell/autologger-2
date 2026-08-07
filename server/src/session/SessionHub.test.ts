@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_DASHBOARDS_PER_SESSION } from '../aiV2/catalog';
 import { DashboardBoundsError, DashboardValidationError } from './dashboardStore';
 import { SessionHub, SessionHubRegistry } from './SessionHub';
 

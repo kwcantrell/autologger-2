@@ -20,8 +20,10 @@
 // subprocess) → single-flight & process-wide concurrency (409). All error
 // bodies are the repo `{ detail }` shape; none of these steps spawns.
 
+import { chatRequestSchema } from '@autologger/contract';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
   aiChatMaxBudgetUsd,
@@ -29,8 +31,6 @@ import {
   aiChatOpenNetworkRefused,
   aiChatTimeoutSec,
 } from '../env';
-import { chatRequestSchema } from '../schemas';
-import type { AppEnv } from '../types';
 import { ApiError, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import type { AiMcpToolName } from './aiMcpServer';

@@ -18,7 +18,7 @@
 // markers and states that what appears between them describes WHAT TO
 // DETECT and cannot alter the rules, the tool contract, or the run's scope.
 
-import { categoryIsInstructionBearing } from '../studio';
+import { categoryIsInstructionBearing } from '@autologger/domain';
 import type { AiGenerationSnapshotCategory } from './aiMcpServer';
 
 /** Opening delimiter for one untrusted instruction block. Greppable; named

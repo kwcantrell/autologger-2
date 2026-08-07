@@ -6,8 +6,8 @@
 // `internal` off-profile; PUT requires profile membership first). These tests pin
 // that existing behavior so the branch cannot later be removed as dead code.
 
+import { UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { UI_SNAPSHOT_COLOR_KEY, UI_SNAPSHOT_LABEL_KEY } from '../studio';
 import { app, env } from '../test/harness';
 import { seededSession } from '../test/helpers';
 

@@ -4,9 +4,10 @@
 // wraps multi-statement writes in a single transaction. One named seam kept as
 // the reversal point if a second backend ever became real.
 
+import type { CatalogDb as CatalogDbPort } from '@autologger/ports';
 import type { Database } from 'better-sqlite3';
 
-export class CatalogDb {
+export class CatalogDb implements CatalogDbPort {
   constructor(private db: Database) {}
 
   all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): T[] {

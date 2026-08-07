@@ -3,6 +3,7 @@
 
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
+import type { AppEnv } from '../appEnv';
 import {
   apiRequestRequiresLogin,
   requestHasValidApiToken,
@@ -10,7 +11,6 @@ import {
 } from '../auth/identity';
 import { Catalog } from '../db/catalog';
 import { requireLoginEnabled, sessionCookieName } from '../env';
-import type { AppEnv } from '../types';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   const catalog = new Catalog(c.env.ports.catalog);

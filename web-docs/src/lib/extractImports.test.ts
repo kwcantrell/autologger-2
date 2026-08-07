@@ -72,6 +72,41 @@ describe('extractFileImports — resolution regimes', () => {
       },
     ]);
   });
+
+  // Regression coverage for package-split-foundation's rebase-onto-web-docs
+  // fix: TypeScript sets `isExternalLibraryImport: true` for ANY specifier
+  // resolved through a `node_modules` lookup — including a scoped npm
+  // *workspace* package whose `node_modules/@scope/pkg` entry is a symlink
+  // to a real in-repo directory (exactly how `packages/domain` etc. resolve
+  // from `server/`). The fixture below reproduces that symlink shape:
+  // `workspace-pkg/node_modules/@fixture/lib` -> `../../lib-pkg` (a real,
+  // non-node_modules sibling directory), alongside a genuinely external
+  // package (`faux-external`) that lives entirely inside `node_modules`
+  // with no symlink. The extractor must resolve the real (symlink-followed)
+  // path and use THAT to decide in-repo vs. external — not the
+  // `isExternalLibraryImport` flag, which is true for both.
+  it('resolves a workspace package (node_modules symlink to an in-repo dir) as an in-repo edge, while a true external package (living inside node_modules) is still excluded', () => {
+    const result = extractFileImports({
+      files: ['workspace-pkg/entry.ts', 'workspace-pkg/lib-pkg/src/index.ts'],
+      repoRoot: FIXTURES_ROOT,
+      isKnown: alwaysKnown,
+      regimes: [regime('workspace-pkg')],
+    });
+    expect(result.unmappedImportErrors).toEqual([]);
+    expect(result.imports).toEqual([
+      {
+        fromFile: 'workspace-pkg/entry.ts',
+        toFile: 'workspace-pkg/lib-pkg/src/index.ts',
+        kind: 'static',
+        isTypeOnly: false,
+        line: 1,
+      },
+    ]);
+    // The genuinely external `faux-external` import produced no edge at all
+    // (not even an unmapped-import error) — it resolved into node_modules
+    // and stayed excluded.
+    expect(result.imports.some((imp) => imp.toFile.includes('faux-external'))).toBe(false);
+  });
 });
 
 describe('extractFileImports — dynamic imports', () => {

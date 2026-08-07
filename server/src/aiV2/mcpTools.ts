@@ -41,6 +41,8 @@
 // already computes, verbatim, rather than re-deciding availability itself.
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import type { DashboardConfig } from '@autologger/contract';
+import { validateDashboardConfig } from '@autologger/contract';
 import { z } from 'zod';
 import type { SessionHubRegistry } from '../session/SessionHub';
 import {
@@ -52,8 +54,6 @@ import {
   computeTopicTimeline,
   computeUtteranceStats,
 } from './aggregates';
-import type { DashboardConfig } from './catalog';
-import { validateDashboardConfig } from './catalog';
 
 /** MCP server name for the per-turn aggregate toolset. Deliberately distinct
  * from `aiMcpServer.ts`'s `'autologger'` (the AI chat's loopback listener,

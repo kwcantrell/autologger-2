@@ -1,6 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Config } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   adminMeta,
@@ -27,7 +28,6 @@ import {
   youtubeImportOpenNetworkRefused,
   ytDlpConfigured,
 } from './env';
-import type { Config } from './types';
 
 const E = (o: Record<string, string | null | undefined>): Config => o as unknown as Config;
 

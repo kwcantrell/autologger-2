@@ -3,11 +3,12 @@
 
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Config } from '@autologger/ports';
+import type { Bindings } from '../appEnv';
 import { deepgramConfigured, deepgramModel } from '../env';
 import type { SessionHub } from '../session/SessionHub';
 import type { TimecodeCtx } from '../session/sessionCore';
 import type { TranscriptWord } from '../session/transcriptStore';
-import type { Bindings, Config } from '../types';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';

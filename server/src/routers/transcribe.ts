@@ -7,8 +7,15 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
+import {
+  topicCreateSchema,
+  topicUpdateSchema,
+  transcriptWordCreateSchema,
+  transcriptWordUpdateSchema,
+} from '@autologger/contract';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
   aiChatMaxConcurrent,
@@ -26,13 +33,6 @@ import {
   TranscriptGenerateError,
 } from '../node/generateTranscript';
 import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
-import {
-  topicCreateSchema,
-  topicUpdateSchema,
-  transcriptWordCreateSchema,
-  transcriptWordUpdateSchema,
-} from '../schemas';
-import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { allTranscriptPagesServed } from './aiMcpServer';

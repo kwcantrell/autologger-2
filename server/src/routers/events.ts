@@ -3,7 +3,29 @@
 // projection onto the catalog sessions row, and enriches events in the router
 // layer using the show profile (keeping show logic out of the hub).
 
+import {
+  audioRecordingLeaseBodySchema,
+  type EventGenerateBody,
+  eventGenerateBodySchema,
+  eventUpdateBodySchema,
+  logBodySchema,
+} from '@autologger/contract';
+import {
+  type CategoryKind,
+  categoryIsInstructionBearing,
+  type EventRpc,
+  enrichEventRpc,
+  formatSmpte,
+  fromTotalFrames,
+  isoZ,
+  mergeCategoryUiSnapshotsIntoMetadata,
+  normalizeEventButtonNameForRelink,
+  type StudioProfile,
+  sessionDeckDisplayTitle,
+  stripCategoryUiSnapshots,
+} from '@autologger/domain';
 import { Hono } from 'hono';
+import type { AppEnv } from '../appEnv';
 import { showCategoriesApiShape } from '../db/catalog';
 import {
   aiChatConfigured,
@@ -15,26 +37,6 @@ import {
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
 } from '../env';
-import {
-  audioRecordingLeaseBodySchema,
-  type EventGenerateBody,
-  eventGenerateBodySchema,
-  eventUpdateBodySchema,
-  logBodySchema,
-} from '../schemas';
-import {
-  type CategoryKind,
-  categoryIsInstructionBearing,
-  type EventRpc,
-  enrichEventRpc,
-  mergeCategoryUiSnapshotsIntoMetadata,
-  normalizeEventButtonNameForRelink,
-  type StudioProfile,
-  sessionDeckDisplayTitle,
-  stripCategoryUiSnapshots,
-} from '../studio';
-import { formatSmpte, fromTotalFrames, isoZ } from '../timecode';
-import type { AppEnv } from '../types';
 import {
   ApiError,
   getSessionHub,

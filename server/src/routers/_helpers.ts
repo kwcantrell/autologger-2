@@ -2,9 +2,9 @@
 // per-session hub resolution, timecode context, and marked-at parsing.
 
 import type { Context } from 'hono';
+import type { AppEnv } from '../appEnv';
 import type { Row } from '../db/catalog';
 import type { SessionHub } from '../session/SessionHub';
-import type { AppEnv } from '../types';
 
 /** Maps to an HTTP response in app.onError — mirrors FastAPI's HTTPException. */
 export class ApiError extends Error {

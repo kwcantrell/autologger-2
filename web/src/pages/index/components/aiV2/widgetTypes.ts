@@ -1,9 +1,12 @@
 // ai-v2-dashboards — web-side widget catalog + aggregate prop shapes (tasks
-// 4.3/4.4/4.7). Mirrors two server modules deliberately KEPT IN SYNC BY HAND
-// rather than imported across the workspace boundary (web never imports from
-// server/src — the two ship as independent deployables):
-//   - server/src/aiV2/catalog.ts   -> WIDGET_TYPES / WidgetType / WidgetLayout /
-//                                      INTERACTION_KINDS / DashboardInteraction
+// 4.3/4.4/4.7). Mirrors two modules deliberately KEPT IN SYNC BY HAND rather
+// than imported across the workspace boundary (web never imports from
+// server/src or packages/** — the two ship as independent deployables; see
+// package-split-foundation Non-Goals, "No shared server/web contract
+// package"):
+//   - packages/contract/src/aiV2Catalog.ts -> WIDGET_TYPES / WidgetType /
+//                                      WidgetLayout / INTERACTION_KINDS /
+//                                      DashboardInteraction
 //   - server/src/aiV2/aggregates.ts -> the `*AggregateData` interfaces below
 //     (field-for-field matches of computeSessionDuration/computeTalkTimeBySpeaker/
 //     computeUtteranceStats/computeFillerStats/computeTopicTimeline/
@@ -16,7 +19,7 @@
 // these shapes directly.
 
 /** The full v1 widget catalog — verbatim copy of `WIDGET_TYPES` in
- * server/src/aiV2/catalog.ts. A widget type is registered here ONLY when a
+ * packages/contract/src/aiV2Catalog.ts. A widget type is registered here ONLY when a
  * component exists for it below (closed set — spec "Widget catalog is a
  * closed set"). No `sentiment_series`/`sentiment_by_topic` entry. */
 export const WIDGET_TYPES = [

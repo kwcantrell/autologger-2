@@ -3,7 +3,7 @@
 
 import type { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
-import type { AppEnv } from '../types';
+import type { AppEnv } from '../appEnv';
 import { requireSession } from './_helpers';
 
 export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSocket): void {

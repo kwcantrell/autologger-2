@@ -35,3 +35,10 @@ playwright-report/
 
 # Playwright MCP session captures (page snapshots dumped during interactive use)
 .playwright-mcp/
+
+# web-docs extractImports fixture: a real `node_modules/` symlink tree is the
+# only way to reproduce TypeScript's node_modules-mediated module resolution
+# (npm workspace hoisting) inside a test fixture — un-ignore it specifically
+# rather than the pattern above.
+!web-docs/src/lib/__fixtures__/extract-imports/workspace-pkg/node_modules/
+!web-docs/src/lib/__fixtures__/extract-imports/workspace-pkg/node_modules/**

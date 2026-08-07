@@ -4,9 +4,10 @@
 // concurrent turns on distinct sessions. These assert the security boundary,
 // not merely that the listener boots.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -914,17 +915,22 @@ describe('create_event — per-run cap (3.2)', () => {
 
 describe('create_event — counter reflects only successful inserts (3.2)', () => {
   it(
-    'an insert-time failure (hub.addEvent throws) returns isError and leaves the per-run ' +
+    'an insert-time failure (hub.createAnchoredEvent throws) returns isError and leaves the per-run ' +
       'counter unchanged; a subsequent real success reports a count that excludes the failed attempt',
     async () => {
       const turn = listener.registerTurn('gen-fault', genContext({ cap: 5 }));
       // Force the ONE insert path itself to fail — distinct from the
       // pre-insert validation failures covered by the "per-run cap" describe
-      // above, which never reach `hub.addEvent` at all and so can't tell
-      // apart an increment placed before vs. after the insert call.
-      const spy = vi.spyOn(SessionHub.prototype, 'addEvent').mockImplementationOnce(() => {
-        throw new Error('simulated insert fault');
-      });
+      // above, which never reach `hub.createAnchoredEvent` at all and so
+      // can't tell apart an increment placed before vs. after the insert
+      // call. package-split-foundation D6: the tool body now calls the
+      // transactional `createAnchoredEvent` RPC directly (not the
+      // `SessionHub.addEvent` delegate), so the spy targets that RPC.
+      const spy = vi
+        .spyOn(SessionHub.prototype, 'createAnchoredEvent')
+        .mockImplementationOnce(() => {
+          throw new Error('simulated insert fault');
+        });
       try {
         const faulted = await createEventViaMcp(turn.url, turn.token, {
           category: 'cat1',
@@ -936,8 +942,8 @@ describe('create_event — counter reflects only successful inserts (3.2)', () =
         expect(listEventRows('gen-fault')).toHaveLength(0);
 
         // The mock only fires once — this call hits the real (transactional)
-        // addEvent and must succeed, reporting a count of 1, not 2: the
-        // failed attempt above must not have incremented the counter.
+        // createAnchoredEvent and must succeed, reporting a count of 1, not
+        // 2: the failed attempt above must not have incremented the counter.
         const ok = await createEventViaMcp(turn.url, turn.token, {
           category: 'cat1',
           message: 'SLATE',
@@ -1071,6 +1077,191 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
     // And it's still there, undeleted — this tool call never deletes.
     expect(rows.some((r) => r.message === 'Old generated slate')).toBe(true);
     turn.dispose();
+  });
+});
+
+// ── create_event characterization pins (package-split-foundation task 5.1) ──
+//
+// Pins current pre-reshape `create_event` behavior NOT already covered by the
+// blocks above, ahead of the `createAnchoredEvent` hub-RPC reshape (task 5.2,
+// design D6). These must stay green across the reshape — a byte-identical
+// behavior parity requirement (delta spec "Behavior parity with the prior
+// insert path").
+
+describe('create_event — broadcast emission is per SUCCESSFUL insert only (delta spec: "exactly one event.changed per successful insert")', () => {
+  it('failed calls (bad category, bad timecode) emit zero event.changed frames; only the two successful inserts do', async () => {
+    const sent: string[] = [];
+    registry.get('gen-ws-fail').attachSocket({ send: (d) => sent.push(d) }, 'browser');
+    const turn = listener.registerTurn('gen-ws-fail', genContext());
+
+    const badCat = await createEventViaMcp(turn.url, turn.token, {
+      category: 'not-in-snapshot',
+      message: 'x',
+      session_time: '00:00:01:00',
+    });
+    expect(badCat.isError).toBe(true);
+
+    const ok1 = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(ok1.isError).toBeFalsy();
+
+    const badTc = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'x',
+      session_time: 'not-a-timecode',
+    });
+    expect(badTc.isError).toBe(true);
+
+    const ok2 = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:02:00',
+    });
+    expect(ok2.isError).toBeFalsy();
+
+    const frames = sent.map((d) => JSON.parse(d) as { type: string });
+    // Exactly two frames — one per successful insert — despite four calls,
+    // two of which failed and must produce none.
+    expect(frames.filter((f) => f.type === 'event.changed')).toHaveLength(2);
+    turn.dispose();
+  });
+});
+
+describe('create_event — cap holds under concurrent calls (delta spec scenario "Cap holds under concurrent calls")', () => {
+  it('two overlapping create_event calls at cap-1 created events: at most one succeeds, {created} never exceeds the cap', async () => {
+    const turn = listener.registerTurn('gen-cap-race', genContext({ cap: 2 }));
+    // Seed to cap-1 (one already created) sequentially first.
+    const seed = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:00:01:00',
+    });
+    expect(seed.isError).toBeFalsy();
+    expect(turn.createdEvents()).toBe(1);
+
+    // Fire two overlapping calls for the LAST remaining slot. Today's handler
+    // has zero awaits, so — however the two HTTP requests interleave at the
+    // transport layer — each tool invocation runs to completion on Node's
+    // single thread before the other's cap-check/insert/increment sequence
+    // can begin: this is the property the reshape (5.2) must preserve.
+    const [a, b] = await Promise.all([
+      createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'race-a',
+        session_time: '00:00:02:00',
+      }),
+      createEventViaMcp(turn.url, turn.token, {
+        category: 'cat1',
+        message: 'race-b',
+        session_time: '00:00:03:00',
+      }),
+    ]);
+    const results = [a, b];
+    const successes = results.filter((r) => !r.isError);
+    const failures = results.filter((r) => r.isError);
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0].content[0].text).toMatch(/cap/i);
+    // {created} — surfaced here via the turn's counter — never exceeds cap.
+    expect(turn.createdEvents()).toBe(2);
+    expect(listEventRows('gen-cap-race')).toHaveLength(2);
+    turn.dispose();
+  });
+});
+
+describe('create_event — anchor basis is clamped monotone before interpolation (D4 fallback, pinned through create_event)', () => {
+  it('an inverted (later timecode, earlier wall) anchor pair is clamped before placement, not interpolated raw', async () => {
+    const FPS = 24;
+    const CTX = { frameRate: FPS, startOffsetFrames: 0 };
+    const sessionId = 'gen-clamp';
+    const hub = registry.get(sessionId);
+    // Anchor A: 10min timecode, LATE wall (12:00).
+    hub.addEvent({
+      category: 'internal',
+      message: 'Recording 1 Started',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+      explicitAnchor: {
+        timecodeTotalFrames: framesAt(FPS, 0, 10, 0),
+        wallTimeUtc: '2026-01-01T12:00:00.000Z',
+      },
+    });
+    // Anchor B: 20min timecode, EARLIER wall (11:00) — inverted vs. A, so a
+    // raw (un-clamped) interpolation would run wall time BACKWARD across the
+    // segment.
+    hub.addEvent({
+      category: 'cat1',
+      message: 'manual note',
+      metadataJson: '{}',
+      markedAtUtc: null,
+      ctx: CTX,
+      explicitAnchor: {
+        timecodeTotalFrames: framesAt(FPS, 0, 20, 0),
+        wallTimeUtc: '2026-01-01T11:00:00.000Z',
+      },
+    });
+
+    const turn = listener.registerTurn(sessionId, genContext());
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:15:00:00', // exact midpoint between the two anchors
+    });
+    expect(res.isError).toBeFalsy();
+    const rows = listEventRows(sessionId);
+    const generated = rows.find((r) => r.message === 'SLATE');
+    // A raw (un-clamped) interpolation would land at 2026-01-01T11:30:00.000Z
+    // (halfway from 12:00 down to 11:00). Clamped/monotone anchors raise B's
+    // wall up to A's (both pin at 12:00), so the midpoint is 12:00 exactly —
+    // proof the reshape still normalizes the anchor basis before
+    // interpolating, matching `eventAnchors.test.ts`'s unit-level pin at the
+    // `create_event` call surface.
+    expect(generated?.wall_time_utc).toBe('2026-01-01T12:00:00.000Z');
+    turn.dispose();
+  });
+});
+
+/** Strip `//` and `/* *\/` comments while preserving string/template literal
+ * content verbatim — the same dependency-free regex idiom
+ * `packageBoundaries.repo.test.ts` uses for source inspection without a real
+ * parser. Comments in the `create_event` handler literally contain the word
+ * "await" in prose ("never held across an await"), so comments MUST be
+ * stripped before a substring search for the keyword, or the pin below would
+ * false-positive on its own documentation. */
+function stripComments(src: string): string {
+  return src.replace(
+    /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*|\/\*[\s\S]*?\*\//g,
+    (m) => (m.startsWith('//') || m.startsWith('/*') ? '' : m),
+  );
+}
+
+describe('create_event handler — zero-await invariant (package-split-foundation D6 / delta spec "Handler is uninterruptible")', () => {
+  const AI_MCP_SERVER_SRC = join(dirname(fileURLToPath(import.meta.url)), 'aiMcpServer.ts');
+
+  it('stripComments removes a comment containing the word "await" (mutation check — proves the predicate is not vacuous)', () => {
+    const sample = 'const x = 1; // never held across an await\nconst y = 2;';
+    const stripped = stripComments(sample);
+    expect(stripped).not.toMatch(/await/);
+    expect(stripped).toContain('const y = 2;');
+  });
+
+  it('the create_event tool-builder registration contains zero `await` expressions', () => {
+    const source = readFileSync(AI_MCP_SERVER_SRC, 'utf8');
+    const startMarker =
+      'create_event: (server, { registry, sessionId, generation, createdEvents }) => {';
+    const startIdx = source.indexOf(startMarker);
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    // The unique two-line close of TOOL_BUILDERS ("  },\n};") — create_event
+    // is TOOL_BUILDERS' last key, so this is the entry's own close too.
+    const endMarker = '\n  },\n};';
+    const endIdx = source.indexOf(endMarker, startIdx);
+    expect(endIdx).toBeGreaterThan(startIdx);
+    const handlerSource = source.slice(startIdx, endIdx);
+    expect(stripComments(handlerSource)).not.toMatch(/\bawait\b/);
   });
 });
 

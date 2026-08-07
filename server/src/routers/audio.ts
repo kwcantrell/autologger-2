@@ -3,12 +3,12 @@
 // lives in the session hub. Upload streams to the blob store then records
 // metadata; download streams back with HTTP range support (audio scrubbing).
 
+import { audioSegmentWaveformBodySchema } from '@autologger/contract';
+import type { BlobRange } from '@autologger/ports';
 import { Hono } from 'hono';
-import type { BlobRange } from '../node/blobStore';
+import type { AppEnv } from '../appEnv';
 import { InvalidRangeError } from '../node/blobStore';
-import { audioSegmentWaveformBodySchema } from '../schemas';
 import type { AudioSegmentMeta } from '../session/SessionHub';
-import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
 export const audioRouter = new Hono<AppEnv>();

@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { wireApp } from '../app';
+import type { AppEnv, Bindings } from '../appEnv';
 import { createBindings } from '../node/config';
-import type { AppEnv, Bindings } from '../types';
 
 let current: { bindings: Bindings; close(): void; dir: string } | null = null;
 

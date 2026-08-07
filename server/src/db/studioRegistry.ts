@@ -2,21 +2,20 @@
 // per-studio settings blobs, and admin studio create/delete. Moved verbatim
 // out of catalog.ts (Catalog) — this module owns the order/names registry state.
 
-import type { CatalogDb } from '../node/catalogStore';
-import type { SettingsBlob, StudioProfile } from '../studio';
+import type { Row, SettingsBlob, StudioProfile } from '@autologger/domain';
 import {
   BUILTIN_STUDIO_NAMES,
   BUILTIN_STUDIO_ORDER,
   blobToProfile,
   DEFAULT_STUDIO_ID,
   defaultSettingsBlob,
+  nowIso,
   SETTING_ACTIVE_STUDIO,
   studioConfigKey,
   ValidationError,
   validateSettingsBlob,
-} from '../studio';
-import type { Row } from './shared';
-import { nowIso } from './shared';
+} from '@autologger/domain';
+import type { CatalogDb } from '@autologger/ports';
 
 export class StudioRegistry {
   private order: string[] = [];

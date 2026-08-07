@@ -1,7 +1,14 @@
 // Auth routes — ported from src/autologger/web/routers/auth.py.
 
+import {
+  DEFAULT_STUDIO_ID,
+  normalizeEmail,
+  SETTING_ACTIVE_SHOW,
+  SETTING_ACTIVE_STUDIO,
+} from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import type { AppEnv } from '../appEnv';
 import {
   createLoginSession,
   newOauthState,
@@ -10,7 +17,6 @@ import {
   revokeLoginSession,
   takeOauthState,
 } from '../auth/identity';
-import { normalizeEmail } from '../db/shared';
 import {
   cookieSecureForRequest,
   googleClientId,
@@ -20,8 +26,6 @@ import {
   sessionCookieName,
   sessionTtlDays,
 } from '../env';
-import { DEFAULT_STUDIO_ID, SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '../studio';
-import type { AppEnv } from '../types';
 
 export const authRouter = new Hono<AppEnv>();
 

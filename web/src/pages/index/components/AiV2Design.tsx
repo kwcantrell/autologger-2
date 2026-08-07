@@ -204,7 +204,7 @@ function parseDashboardInteraction(raw: unknown): DashboardInteraction | null {
 /** Defensive parse of the `dashboard` SSE frame's JSON payload
  * (`{ config: { widgets, interactions } }`, task 5.5, design D10). The
  * server already ran the SAME whole-config validator a user write is held to
- * (`validateDashboardConfig`, server/src/aiV2/catalog.ts) before ever
+ * (`validateDashboardConfig`, packages/contract/src/aiV2Catalog.ts) before ever
  * streaming this event, so this parse is defense-in-depth against a
  * malformed frame — not a second security boundary. Returns `null` for
  * anything unusable (including a config with no valid widgets); a proposal

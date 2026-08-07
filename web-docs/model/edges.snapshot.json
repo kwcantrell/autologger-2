@@ -1,7 +1,12 @@
 [
   {
     "from": "aiV2",
-    "to": "server-core",
+    "to": "contract",
+    "kind": "production"
+  },
+  {
+    "from": "aiV2",
+    "to": "domain",
     "kind": "production"
   },
   {
@@ -16,12 +21,7 @@
   },
   {
     "from": "auth",
-    "to": "node-infra",
-    "kind": "production"
-  },
-  {
-    "from": "auth",
-    "to": "server-core",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -31,12 +31,12 @@
   },
   {
     "from": "catalog-db",
-    "to": "node-infra",
+    "to": "domain",
     "kind": "production"
   },
   {
     "from": "catalog-db",
-    "to": "server-core",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -71,7 +71,17 @@
   },
   {
     "from": "log-import",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "log-import",
     "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "log-import",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -107,6 +117,16 @@
   {
     "from": "node-infra",
     "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -141,12 +161,27 @@
   },
   {
     "from": "routers",
+    "to": "contract",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
     "to": "log-import",
     "kind": "production"
   },
   {
     "from": "routers",
     "to": "node-infra",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -167,6 +202,11 @@
   {
     "from": "routers",
     "to": "session",
+    "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "domain",
     "kind": "production"
   },
   {
@@ -191,22 +231,12 @@
   },
   {
     "from": "server-core",
-    "to": "aiV2",
-    "kind": "production"
-  },
-  {
-    "from": "server-core",
-    "to": "auth",
-    "kind": "production"
-  },
-  {
-    "from": "server-core",
     "to": "catalog-db",
     "kind": "production"
   },
   {
     "from": "server-core",
-    "to": "node-infra",
+    "to": "ports",
     "kind": "production"
   },
   {
@@ -227,6 +257,11 @@
   {
     "from": "server-test-harness",
     "to": "node-infra",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "ports",
     "kind": "test"
   },
   {
@@ -246,18 +281,23 @@
   },
   {
     "from": "session",
-    "to": "aiV2",
+    "to": "contract",
+    "kind": "production"
+  },
+  {
+    "from": "session",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "session",
+    "to": "ports",
     "kind": "production"
   },
   {
     "from": "session",
     "to": "routers",
     "kind": "test"
-  },
-  {
-    "from": "session",
-    "to": "server-core",
-    "kind": "production"
   },
   {
     "from": "session",

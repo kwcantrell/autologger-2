@@ -2,7 +2,7 @@
 // bytes themselves live in the blob store (the router layer owns it). Moved
 // verbatim out of the original single-file session spine.
 
-import { isoZ } from '../timecode';
+import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore } from './sessionCore';
 
 export interface AudioSegmentMeta {

@@ -54,6 +54,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Config } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { aiChatOpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
@@ -64,7 +65,6 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
-import type { Config } from '../types';
 import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';

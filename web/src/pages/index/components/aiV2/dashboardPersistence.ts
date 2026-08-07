@@ -10,7 +10,7 @@
 // endpoints, and is now `AiV2Panel`'s DEFAULT (no call-site changes there —
 // only the default value the `persistence?` prop falls back to). It carries
 // exactly the `DashboardConfig` JSON the spec already defines
-// (server/src/aiV2/catalog.ts's `dashboardConfigSchema`, mirrored on the web
+// (packages/contract/src/aiV2Catalog.ts's `dashboardConfigSchema`, mirrored on the web
 // side as `DashboardConfig` in ./widgetTypes) as the bare GET/PUT body — no
 // wrapper beyond `{ config }` on the response envelope.
 //

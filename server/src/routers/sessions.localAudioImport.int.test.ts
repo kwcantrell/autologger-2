@@ -3,9 +3,9 @@
 // batch-audio-import spec "Local audio import HTTP surface").
 
 import { describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { app, env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
-import type { Bindings } from '../types';
 import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own

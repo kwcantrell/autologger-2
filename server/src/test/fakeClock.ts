@@ -4,8 +4,8 @@
 // the injected time base and vitest's timer queue advance in lockstep, so
 // staleness/TTL expiry is provable with zero real elapsed time.
 
+import type { Clock } from '@autologger/ports';
 import { vi } from 'vitest';
-import type { Clock } from '../clock';
 
 export function makeFakeClock(startMs = 1_750_000_000_000): {
   clock: Clock;

@@ -27,6 +27,7 @@ import type {
   Query,
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { Config } from '@autologger/ports';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,7 +43,6 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
-import type { Config } from '../types';
 import { aiChatTurns } from './aiChatRegistry';
 import { aiV2PendingQuestions } from './aiV2PendingQuestions';
 import * as aiV2SdkSpawnModule from './aiV2SdkSpawn';

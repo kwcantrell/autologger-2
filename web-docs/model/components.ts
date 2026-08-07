@@ -141,22 +141,12 @@ const serverComponents: Component[] = [
   ),
   runtimeComponent(
     'server-core',
-    'Cross-cutting server domain/config/time utilities shared by routers and the session ' +
-      'spine: typed env accessors, the Clock port (core-ports-architecture), Zod request ' +
-      'schemas, studio domain logic (profiles/categories/palette), SMPTE timecode math, ' +
-      'and the composition-root Ports/Config/Variables type generics.',
-    [
-      'server/src/env.ts',
-      'server/src/env.test.ts',
-      'server/src/clock.ts',
-      'server/src/schemas.ts',
-      'server/src/schemas.test.ts',
-      'server/src/studio.ts',
-      'server/src/studio.test.ts',
-      'server/src/timecode.ts',
-      'server/src/timecode.test.ts',
-      'server/src/types.ts',
-    ],
+    'Cross-cutting server config utilities shared by routers and the session spine: typed ' +
+      'env accessors, and (package-split-foundation D3) `appEnv.ts` — the composition-root ' +
+      'Ports/Config/Variables/AppEnv generics that replaced the retired `types.ts` ' +
+      'god-barrel, the one app-level module allowed to name the concrete ' +
+      '`SessionHubRegistry`/`Catalog` handle types.',
+    ['server/src/env.ts', 'server/src/env.test.ts', 'server/src/appEnv.ts'],
   ),
   runtimeComponent(
     'routers',
@@ -218,8 +208,48 @@ const serverComponents: Component[] = [
   testHarnessComponent(
     'server-test-harness',
     'Shared server test infrastructure: fake clock/core, the HTTP test harness, OAuth ' +
-      'test doubles, integration-test setup, and captured-fixture assertion helpers.',
-    ['server/src/test/**'],
+      'test doubles, integration-test setup, and captured-fixture assertion helpers, plus ' +
+      'root-level repo-wide guard tests for the package split (package-split-foundation): ' +
+      'the cross-package layering-boundary test and the cross-package 422/400 error-' +
+      'identity pin, mirroring the web-test-harness convention for `*.repo.test.ts` files ' +
+      'that assert a property of the whole tree rather than one module.',
+    [
+      'server/src/test/**',
+      'server/src/packageBoundaries.repo.test.ts',
+      'server/src/crossPackageErrorIdentity.int.test.ts',
+    ],
+  ),
+];
+
+const packageComponents: Component[] = [
+  runtimeComponent(
+    'domain',
+    '`@autologger/domain` (package-split-foundation D2): pure, dependency-free domain ' +
+      'logic moved out of server/src — studio domain rules (profiles/categories/palette), ' +
+      'SMPTE timecode math, and shared catalog/session-DB row types (formerly ' +
+      '`server/src/studio.ts`, `timecode.ts`, `db/shared.ts`). Zero runtime dependencies.',
+    ['packages/domain/src/**'],
+  ),
+  runtimeComponent(
+    'contract',
+    '`@autologger/contract` (package-split-foundation D2/D4): the wire-contract package — ' +
+      'Zod request schemas validated at the Hono route boundary, and the AI v2 dashboard ' +
+      'widget catalog/config validator (formerly `server/src/schemas.ts` and ' +
+      '`server/src/aiV2/catalog.ts`). Gives dashboard-config validation a single ' +
+      'structural home and structurally breaks the former session ⇄ aiV2 directory cycle; ' +
+      '`zod` is a peerDependency so a second zod install can never break the app’s ' +
+      '`instanceof ZodError` → 422 mapping.',
+    ['packages/contract/src/**'],
+  ),
+  runtimeComponent(
+    'ports',
+    '`@autologger/ports` (package-split-foundation D2/D3): interface-only injectable port ' +
+      'definitions (`Clock`, `BlobStore`, `KvStore`, `IdentityVerifier`, `CatalogDb`, ' +
+      '`PresenceRegistry`) plus the `Config` type and the base `Ports` shape. No runtime ' +
+      'implementations ship here — `systemClock` and the other concrete adapters live at ' +
+      'the composition root (`server/src/node/**`); `server/src/appEnv.ts` composes the ' +
+      'app-level `Ports`/`AppEnv` by extending this package’s base shape.',
+    ['packages/ports/src/**'],
   ),
 ];
 
@@ -560,7 +590,18 @@ const capabilityScopes: CapabilityScope[] = [
   {
     type: 'cross-cutting',
     capability: 'core-ports-architecture',
-    components: ['server-bootstrap', 'server-core', 'node-infra', 'session', 'catalog-db', 'auth'],
+    // package-split-foundation D3 (modified capability): the injectable port
+    // types now live as interfaces in `ports`, composed into the app-level
+    // `AppEnv` by `server-core`'s appEnv.ts.
+    components: [
+      'server-bootstrap',
+      'server-core',
+      'node-infra',
+      'session',
+      'catalog-db',
+      'auth',
+      'ports',
+    ],
   },
   // Process (attached to no component; listed on the About page).
   { type: 'process', capability: 'sdlc-process' },
@@ -683,6 +724,7 @@ function attachCapabilities(components: Component[], scopes: CapabilityScope[]):
 
 const allComponents: Component[] = [
   ...serverComponents,
+  ...packageComponents,
   ...webComponents,
   ...companionComponents,
   ...otherComponents,

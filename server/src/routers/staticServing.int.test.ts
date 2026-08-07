@@ -11,9 +11,9 @@ import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { afterAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
+import type { AppEnv } from '../appEnv';
 import { env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
-import type { AppEnv } from '../types';
 
 const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
   c.text('WebSocket unavailable in HTTP tests', 426)) as unknown as UpgradeWebSocket;

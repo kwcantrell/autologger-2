@@ -1,7 +1,7 @@
 // Topics domain — manual CRUD over session_topics. Moved verbatim out of
 // the original single-file session spine.
 
-import { isoZ } from '../timecode';
+import { isoZ } from '@autologger/domain';
 import type { Row, SessionCore } from './sessionCore';
 import { buildPatch, nextOrdinal } from './storeHelpers';
 

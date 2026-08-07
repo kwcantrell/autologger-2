@@ -54,10 +54,12 @@
 // refines the slot-acquisition semantics; the option set, spawn override,
 // kill ladder, SSE relay, and timeout backstop live in aiV2SdkSpawn.ts.
 
+import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '@autologger/contract';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { buildAggregateMcpServer } from '../aiV2/mcpTools';
+import type { AppEnv } from '../appEnv';
 import type { AuthUser } from '../db/catalog';
 import {
   aiChatMaxConcurrent,
@@ -68,9 +70,7 @@ import {
   aiV2MaxBudgetUsd,
   aiV2OpenNetworkRefused,
 } from '../env';
-import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '../schemas';
 import { DashboardBoundsError, DashboardValidationError } from '../session/SessionHub';
-import type { AppEnv } from '../types';
 import { ApiError, getSessionHub, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import {
@@ -293,7 +293,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions, {
           // Task 5.4/5.5 (design D10). The propose_dashboard tool has ALREADY
           // validated the whole config (the same validator a user write is
-          // held to, ../aiV2/catalog.ts) before this callback ever runs — an
+          // held to, @autologger/contract's aiV2Catalog.ts) before this callback ever runs — an
           // invalid/markup-bearing proposal never reaches here at all. Emits
           // a direct `stream.writeSSE` on THIS turn's own stream, exactly
           // mirroring the `question` event immediately below: independent of

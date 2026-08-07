@@ -2,7 +2,13 @@
 // counter, elapsed frames, and the live timecode snapshot. Moved verbatim out
 // of the original single-file session spine.
 
-import { formatSmpte, isoZ, parseUtcMs, toTotalFrames, transportTimecode } from '../timecode';
+import {
+  formatSmpte,
+  isoZ,
+  parseUtcMs,
+  toTotalFrames,
+  transportTimecode,
+} from '@autologger/domain';
 import type { SessionCore, SessionProjection, TimecodeCtx, TransportState } from './sessionCore';
 
 export class TransportStore {

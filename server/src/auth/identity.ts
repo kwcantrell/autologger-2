@@ -2,8 +2,8 @@
 // and the /api login gate. Ported from src/autologger/web/auth_identity.py; the
 // login_sessions + oauth_csrf_tokens SQLite tables become KV keys with TTL.
 
+import type { KvStore } from '@autologger/ports';
 import type { AuthUser, Catalog } from '../db/catalog';
-import type { KvStore } from '../node/kvStore';
 
 const SESSION_PREFIX = 'session:'; // session:<sha256(token)> -> userId
 const CSRF_PREFIX = 'csrf:'; // csrf:<state> -> "1"

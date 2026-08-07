@@ -25,7 +25,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
-import type { AiV2AnswerItem } from '../schemas';
+import type { AiV2AnswerItem } from '@autologger/contract';
 
 /** 16 bytes = 128 bits — the spec's stated floor ("at least 128 bits of
  * entropy"). Mirrors `aiMcpServer.ts`'s bearer-token construction

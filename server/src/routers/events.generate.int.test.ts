@@ -24,9 +24,9 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '@autologger/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionIndexStore } from '../db/sessionIndexStore';
-import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '../studio';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';

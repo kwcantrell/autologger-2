@@ -27,7 +27,7 @@
 // unparseable `started_at_utc` falls back to the Unix epoch, so relative
 // ordering among generated events still holds even without a session start.
 
-import { isoZ, parseUtcMs } from '../timecode';
+import { isoZ, parseUtcMs } from '@autologger/domain';
 
 /** The subset of event-row fields anchor extraction needs — kept structural
  * (like transcriptRemap's `AnchorCandidateEvent`) so this module doesn't

@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
 import { recordingStartAnchors } from '../node/transcriptRemap';
@@ -44,7 +45,6 @@ import { YOUTUBE_IMPORT_MAX_CONCURRENT, youtubeImportGuard } from '../node/youtu
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { app, env, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
-import type { Bindings } from '../types';
 
 const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-ytdlp.mjs', import.meta.url));
 

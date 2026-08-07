@@ -9,9 +9,10 @@ this file stays short and points there rather than duplicating it.
 Portable TypeScript/Node backend for AutoLogger — originally a faithful port of the Python
 AutoLogger backend; this repo is now the canonical implementation, serving the **frozen JSON
 shapes** the React frontend expects. The repo is **npm workspaces**: `server/` (Node backend)
-+ `web/` (React frontend, canonical copy) + `companion/` (Bitfocus Companion module), plus
-`e2e/` (Playwright smoke, not a workspace). **Hono** routing + **Zod** validation + **jose**
-for Google ID-token verify, on:
++ `web/` (React frontend, canonical copy) + `companion/` (Bitfocus Companion module) +
+`packages/*` (`domain`/`contract`/`ports` — source-only L0 packages shared by server, no
+build step), plus `e2e/` (Playwright smoke, not a workspace). **Hono** routing + **Zod**
+validation + **jose** for Google ID-token verify, on:
 
 - **better-sqlite3** — catalog DB (`DATA_DIR/catalog.db`: users/studios/shows/prefs, login
   sessions, OAuth CSRF, Companion presence, sessions index) + one DB file per session
@@ -94,11 +95,19 @@ live in `server/src/routers/`; the live
 per-session spine is `server/src/session/SessionHub.ts` (+ domain stores alongside it); the
 catalog DB layer is `server/src/db/catalog.ts` with migrations in `server/src/db/migrations/`;
 Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
-lives in `server/src/node/`. Frontend code lives under `web/src/`; e2e smoke tests live under
-`e2e/`. The generated architecture atlas + docs SPA (component model, edge extraction, drift
-gates, mermaid site) live in `web-docs/` — see README's web-docs section. Full annotated tree
-+ the normative endpoint table (with its historical Python-origin column) are in
-**`README.md`**.
+lives in `server/src/node/`. Three source-only L0 packages live under `packages/`:
+`@autologger/domain` (`studio.ts`, `timecode.ts`, `dbShared.ts` — pure, dependency-free),
+`@autologger/contract` (`schemas.ts`, `aiV2Catalog.ts`; `zod` declared as a
+peerDependency), and `@autologger/ports` (interface-only port types + `Config` — no
+runtime implementations). `server/src/appEnv.ts` composes the app-level `AppEnv`
+(`Ports`/`Variables`) over the packages' interfaces, naming only the two concrete handle
+types (`SessionHubRegistry`, `Catalog`) that stay residuals of later extraction changes;
+cross-package import boundaries are enforced by a repo test
+(`server/src/packageBoundaries.repo.test.ts`), not the compiler. Frontend code lives under
+`web/src/`; e2e smoke tests live under `e2e/`. The generated architecture atlas + docs SPA
+(component model, edge extraction, drift gates, mermaid site) live in `web-docs/` — see
+README's web-docs section. Full annotated tree + the normative endpoint table (with its
+historical Python-origin column) are in **`README.md`**.
 
 ## Conventions
 

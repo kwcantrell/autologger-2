@@ -31,9 +31,11 @@
 // in `TOOL_BUILDERS`: `get_transcript_words` and `list_topics`
 // read hub rows at call time; `create_topic` validates with `topicCreateSchema`
 // and writes through the transactional `SessionHub.insertTopic` path;
-// `create_event` (auto-generate-event-logs task 3.2, design D4) writes a
-// transcript-anchored event through the transactional `SessionHub.addEvent`
-// explicit-anchor path, gated by the generation run snapshot.
+// `create_event` (auto-generate-event-logs task 3.2, design D4; reshaped by
+// package-split-foundation D6) writes a transcript-anchored event through the
+// transactional `SessionHub.createAnchoredEvent` RPC (one `inTxn` block
+// covering the anchor-basis read and the explicit-anchor insert), gated by
+// the generation run snapshot.
 // Registration is PER TURN (auto-generate-event-logs D6): each turn's
 // registration carries its tool set, plus — on a turn that reads the
 // transcript at generation density — a word snapshot (the event run's
@@ -47,18 +49,18 @@
 import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { z } from 'zod';
-import { topicCreateSchema } from '../schemas';
-import { timecodeWallAnchors, wallTimeUtcForTimecode } from '../session/eventAnchors';
-import type { SessionHubRegistry } from '../session/SessionHub';
+import { topicCreateSchema } from '@autologger/contract';
 import {
   type CategoryDef,
   type CategoryKind,
   mergeCategoryUiSnapshotsIntoMetadata,
-} from '../studio';
-import { parseTimecodeString, toTotalFrames } from '../timecode';
+  parseTimecodeString,
+  toTotalFrames,
+} from '@autologger/domain';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+import type { SessionHubRegistry } from '../session/SessionHub';
 
 const LOOPBACK = '127.0.0.1';
 const MCP_PATH = '/mcp';
@@ -874,40 +876,26 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
             { auto_generated: true, auto_generate_run_id: generation.runId },
             snapshotDef,
           );
-          // Hub resolved AT CALL TIME (D3) — the read + insert below are one
-          // synchronous block, never held across an await. Anchors are rebuilt
-          // FRESH each call: events accrue during the run, and re-reading them
-          // keeps generated events sorting among themselves in timecode order
-          // (each insert becomes an anchor for the next, monotone-clamped).
-          // event-generate-hardening D3: on regenerate, the doomed pre-spawn
-          // snapshot rows are excluded from this basis too — otherwise they'd
-          // steer the replacement rows' persisted wall times right up until
-          // the post-success delete removes them.
+          // Hub resolved AT CALL TIME (D3) — the RPC call below is synchronous,
+          // no await introduced anywhere in this handler (package-split-
+          // foundation D6: the handler's cap-check→insert→counter-increment
+          // sequence stays uninterruptible). The read-filter-anchor-insert
+          // sequence itself now runs as ONE transactional hub RPC
+          // (`createAnchoredEvent`) instead of a comment-enforced inline
+          // block — same anchor math (anchors rebuilt fresh each call, so
+          // generated events keep sorting among themselves in timecode
+          // order), same event-generate-hardening D3 regenerate-snapshot
+          // exclusion, same one-insert-path (D4) manual-insert semantics.
           const hub = registry.get(sessionId);
-          const liveEvents = hub.exportEvents();
-          const snapshotIds = generation.regenerateSnapshotIds;
-          const anchorEvents = snapshotIds
-            ? liveEvents.filter((e) => !snapshotIds.has(e.event_id))
-            : liveEvents;
-          const anchors = timecodeWallAnchors(anchorEvents);
-          const wallTimeUtc = wallTimeUtcForTimecode(totalFrames, anchors, {
-            frameRate: generation.frameRate,
-            startOffsetFrames: generation.startOffsetFrames,
-            startedAtUtc: generation.startedAtUtc,
-          });
-          // One insert path (D4): the transactional manual-path addEvent with
-          // the explicit anchor — same metadata handling, and its single
-          // event.changed broadcast per insert is deliberately NOT suppressed.
-          const { event } = hub.addEvent({
+          const { event } = hub.createAnchoredEvent({
             category,
             message,
             metadataJson: JSON.stringify(metadata),
-            markedAtUtc: null,
-            ctx: {
-              frameRate: generation.frameRate,
-              startOffsetFrames: generation.startOffsetFrames,
-            },
-            explicitAnchor: { timecodeTotalFrames: totalFrames, wallTimeUtc },
+            timecodeTotalFrames: totalFrames,
+            frameRate: generation.frameRate,
+            startOffsetFrames: generation.startOffsetFrames,
+            startedAtUtc: generation.startedAtUtc,
+            excludeEventIds: generation.regenerateSnapshotIds,
           });
           createdEvents.count += 1; // ONLY on successful insert
           return { content: [{ type: 'text', text: JSON.stringify(event) }] };

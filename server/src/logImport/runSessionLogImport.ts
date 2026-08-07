@@ -1,8 +1,9 @@
+import type { CategoryRecord } from '@autologger/domain';
+import type { Config } from '@autologger/ports';
+import type { Bindings } from '../appEnv';
 import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
 import type { SessionHub } from '../session/SessionHub';
 import type { TimecodeCtx } from '../session/sessionCore';
-import type { CategoryRecord } from '../studio';
-import type { Bindings, Config } from '../types';
 import { mapLogCategory } from './categoryMatch';
 import type { ParsedLogRow } from './sheetsFetch';
 import { secondsToTotalFrames } from './sheetTimecode';

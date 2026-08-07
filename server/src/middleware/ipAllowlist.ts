@@ -3,8 +3,8 @@
 // explicitly delegates to the first X-Forwarded-For hop. Empty IP_ALLOWLIST ⇒ disabled.
 
 import type { Context, MiddlewareHandler } from 'hono';
+import type { AppEnv } from '../appEnv';
 import { trustProxyEnabled } from '../env';
-import type { AppEnv } from '../types';
 
 interface Net {
   version: 4 | 6;

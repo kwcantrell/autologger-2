@@ -8,8 +8,8 @@
 // entirely once no call site needed them — this file now pins the
 // single-param shape.
 
+import { sessionDeckDisplayTitle } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { sessionDeckDisplayTitle } from '../studio';
 
 const TITLES: unknown[] = ['My Session', '  padded  ', '', '   ', null, undefined];
 

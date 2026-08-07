@@ -1,9 +1,9 @@
 // Users, studio memberships, per-user prefs, and admin user operations.
 // Moved verbatim out of catalog.ts (Catalog). Self-contained on this.db.
 
-import type { CatalogDb } from '../node/catalogStore';
-import type { Row } from './shared';
-import { normalizeEmail, nowIso } from './shared';
+import type { Row } from '@autologger/domain';
+import { normalizeEmail, nowIso } from '@autologger/domain';
+import type { CatalogDb } from '@autologger/ports';
 
 export type TeamRole = 'admin' | 'member';
 

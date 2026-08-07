@@ -2,19 +2,18 @@
 // persisted; rebuilt by browser heartbeats after a restart). Replaces the
 // earlier KV-metadata presence keys (spec panel: all reviewers).
 
+import type {
+  Clock,
+  PresenceMeta,
+  PresenceRegistry as PresenceRegistryPort,
+} from '@autologger/ports';
+import { systemClock } from './systemClock';
+
+export type { PresenceMeta };
+
 export const PRESENCE_FRESH_MS = 15_000;
 
-export interface PresenceMeta {
-  session_id: string;
-  visible: boolean;
-  is_playing: boolean;
-  updated: number;
-}
-
-import type { Clock } from '../clock';
-import { systemClock } from '../clock';
-
-export class PresenceRegistry {
+export class PresenceRegistry implements PresenceRegistryPort {
   private map = new Map<string, PresenceMeta>();
 
   constructor(private clock: Clock = systemClock) {}
