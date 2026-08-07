@@ -20,6 +20,12 @@
     }
   },
   "files": {
-    "includes": ["**/src/**/*.ts", "**/src/**/*.tsx", "model/**/*.ts"]
+    "includes": [
+      "**/src/**/*.ts",
+      "**/src/**/*.tsx",
+      "!src/lib/__fixtures__/**",
+      "model/**/*.ts",
+      "scripts/**/*.ts"
+    ]
   }
 }

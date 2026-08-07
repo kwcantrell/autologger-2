@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check --write src/ model/",
+    "lint": "biome check --write src/ model/ scripts/",
     "format": "biome format --write src/",
     "test": "vitest run",
-    "check": "tsx scripts/check.ts"
+    "check": "tsx scripts/check.ts",
+    "snapshot": "tsx scripts/snapshot.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
