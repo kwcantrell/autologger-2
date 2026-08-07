@@ -402,7 +402,7 @@ function filterGenerationCategories(
  * unconditionally from client-supplied metadata in that handler so the auto
  * predicate below stays server-authoritative. ONE place to extend if
  * generation ever grows more attribution keys (tests pin this constant to
- * superset the predicate's own key — see events.int.test.ts). NOT a
+ * superset the predicate’s own key — see events.metadataStrip.test.ts). NOT a
  * general allowlist: every other metadata key remains client-writable. */
 export const AUTO_GENERATION_RESERVED_METADATA_KEYS = [
   'auto_generated',

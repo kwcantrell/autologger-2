@@ -94,3 +94,16 @@ would be a destructive data op for a corner already self-healing.
   recent-sessions-single-poll):** one finding — proposal Contract impact still
   carried the unqualified "all other keys unchanged" universal; qualified in
   place. All else coherent (documents read: all four artifacts, both deltas).
+
+- **2026-08-07 — Apply record + review/audit:** single-unit apply (bc2ba1c);
+  combined phase review + whole-change audit verdict **MERGEABLE** — every
+  delta scenario mapped to a named test, four of them EMPIRICALLY verified to
+  fail pre-change via a transient reverse-apply, strip mechanics
+  (unconditional/value-independent/pre-merge/constant placement) confirmed in
+  code, no collateral (5-file diff, all task-mapped), grandfathered-sweep
+  coverage claim verified against the hub-seeding fixture. Minors: stale test
+  filename in the constant's comment (fixed at close-out), an "8 scenarios"
+  count nit in the tick (6 int + 2 unit — bookkeeping only), deep-subset
+  ordinary-metadata comparison accepted with its in-test rationale. Final
+  gates green (typecheck, full tests, lint, e2e 20/20; visual skipped with
+  recorded rationale — server-only).
