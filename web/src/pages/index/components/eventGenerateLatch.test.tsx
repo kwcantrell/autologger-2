@@ -188,6 +188,8 @@ function mockRoutes(
   opts: {
     instructionsPresent?: boolean;
     events?: EventsResponse;
+    /** Served ONLY to the workspace-wide query (`limit=2000`); defaults to `events`. */
+    workspaceEvents?: EventsResponse;
     profile?: unknown;
     statusShowId?: string | null;
   } = {},
@@ -221,7 +223,12 @@ function mockRoutes(
         }
       );
     }
-    if (path.includes('/events')) return opts.events ?? emptyEventsFixture();
+    if (path.includes('/events')) {
+      if (path.includes('limit=2000')) {
+        return opts.workspaceEvents ?? opts.events ?? emptyEventsFixture();
+      }
+      return opts.events ?? emptyEventsFixture();
+    }
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
   return calls;
@@ -371,6 +378,31 @@ describe('event feed — Auto Generate menu and custom selection', () => {
       expect(screen.queryByRole('heading', { name: 'Regenerate all auto events' })).toBeNull(),
     );
     expect(calls.count).toBe(0);
+  });
+
+  it('derives the Regenerate label from the workspace-wide query, not the visible page', async () => {
+    // Paginated first page (limit=200) has NO auto rows; the workspace-wide
+    // query (limit=2000) holds one beyond the visible page. The menu must
+    // still read Regenerate All and post the regenerate body after confirm.
+    const auto = autoEventFixture();
+    const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false, deleted: 1 }), {
+      events: emptyEventsFixture(),
+      workspaceEvents: {
+        events: [auto],
+        total: 1,
+        logged_event_count: 1,
+        offset: 0,
+        limit: 2000,
+      },
+    });
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete and regenerate' }));
+
+    await waitFor(() => expect(calls.count).toBe(1));
+    expect(calls.bodies).toEqual([{ regenerate: true }]);
   });
 
   it('opens Custom without a request, requires a selection, and posts selection only', async () => {
