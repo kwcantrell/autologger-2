@@ -221,7 +221,13 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
   if (!validIds.has(body.category) && body.category !== 'internal') {
     throw new ApiError(400, 'Unknown category for this studio profile.');
   }
+  // event-metadata-reserved-keys D1/D2 — strip the auto-generation
+  // attribution keys unconditionally (both the internal and non-internal
+  // category paths below), silently and regardless of the values sent, so a
+  // client can never stamp a row as generation-attributed. The size cap
+  // (logBodySchema's refine) already ran on the body as sent, pre-strip.
   let meta: Record<string, unknown> = { ...body.metadata };
+  for (const key of AUTO_GENERATION_RESERVED_METADATA_KEYS) delete meta[key];
   if (body.category.toLowerCase() !== 'internal') {
     const catDef = profile.categories.find((cat) => cat.id === body.category) ?? null;
     if (catDef !== null) meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
@@ -390,6 +396,18 @@ function filterGenerationCategories(
     return categoryIsInstructionBearing(filtered) ? [filtered] : [];
   });
 }
+
+/** event-metadata-reserved-keys D2 — the auto-generation attribution keys a
+ * client is never allowed to write via the manual events POST. Stripped
+ * unconditionally from client-supplied metadata in that handler so the auto
+ * predicate below stays server-authoritative. ONE place to extend if
+ * generation ever grows more attribution keys (tests pin this constant to
+ * superset the predicate's own key — see events.int.test.ts). NOT a
+ * general allowlist: every other metadata key remains client-writable. */
+export const AUTO_GENERATION_RESERVED_METADATA_KEYS = [
+  'auto_generated',
+  'auto_generate_run_id',
+] as const;
 
 /** event-generate-hardening D1/gate ruling E3 — the route's JS auto-generated
  * predicate: `metadata_json` parses to an object whose `auto_generated` key
