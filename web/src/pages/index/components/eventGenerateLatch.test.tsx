@@ -354,9 +354,11 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Regenerate All' }));
 
-    // Destructive confirm first — nothing posted yet, copy warns edited rows die too.
+    // Destructive confirm first — nothing posted yet, copy states the
+    // delete-after-success truth and warns mid-run edits are lost on success.
     expect(await screen.findByRole('heading', { name: 'Regenerate all auto events' })).toBeTruthy();
-    expect(screen.getByText(/including any you edited/)).toBeTruthy();
+    expect(screen.getByText(/replaced once this run succeeds/)).toBeTruthy();
+    expect(screen.getByText(/lost when it succeeds/)).toBeTruthy();
     expect(calls.count).toBe(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete and regenerate' }));
@@ -389,19 +391,18 @@ describe('event feed — Auto Generate menu and custom selection', () => {
     expect(calls.count).toBe(0);
   });
 
-  it('derives the Regenerate label from the workspace-wide query, not the visible page', async () => {
-    // Paginated first page (limit=200) has NO auto rows; the workspace-wide
-    // query (limit=2000) holds one beyond the visible page. The menu must
-    // still read Regenerate All and post the regenerate body after confirm.
-    const auto = autoEventFixture();
+  it('derives the Regenerate label from the has_auto_generated envelope field, not the loaded rows', async () => {
+    // The sheet's own page response carries NO auto rows but reports
+    // has_auto_generated: true (the auto row lies beyond the loaded page /
+    // the server's list clamp). The menu must still read Regenerate All and
+    // post the regenerate body after confirm — the label never row-scans.
     const calls = mockRoutes(() => Promise.resolve({ created: 1, cap_hit: false, deleted: 1 }), {
-      events: emptyEventsFixture(),
-      workspaceEvents: {
-        events: [auto],
+      events: {
+        events: [],
         total: 1,
         logged_event_count: 1,
         offset: 0,
-        limit: 2000,
+        limit: 200,
         has_auto_generated: true,
       },
     });
@@ -413,6 +414,67 @@ describe('event feed — Auto Generate menu and custom selection', () => {
 
     await waitFor(() => expect(calls.count).toBe(1));
     expect(calls.bodies).toEqual([{ regenerate: true }]);
+  });
+
+  it('defaults to the Generate All label and plain-generate click while the events response is loading', async () => {
+    // Before the sheet's events query resolves, `data` is undefined — the
+    // label must default to the non-destructive Generate All, and a click in
+    // that window must POST plain generate (no regenerate flag), per spec
+    // "Loading state defaults to the non-destructive label".
+    let resolveEvents: ((value: EventsResponse) => void) | undefined;
+    const pendingEvents = new Promise<EventsResponse>((resolve) => {
+      resolveEvents = resolve;
+    });
+    const calls = { count: 0, bodies: [] as unknown[] };
+    mockedApiFetch.mockImplementation(async (path: string, request?: RequestInit) => {
+      if (path.includes('/events/generate')) {
+        calls.count += 1;
+        const body = typeof request?.body === 'string' ? JSON.parse(request.body) : undefined;
+        calls.bodies.push(body);
+        return { created: 1, cap_hit: false };
+      }
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) return showCategoriesFixture(true);
+      if (path === 'profile') {
+        return {
+          active_studio_id: '',
+          active_show_id: '',
+          active_studio: { id: '', name: '', categories: [] },
+          studios: [],
+          studio_settings: {},
+          shows: [],
+          new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
+          admin: { restart_supported: false, restart_needs_token: false },
+          auth: { logged_in: false, oauth_configured: false, user: null },
+        };
+      }
+      if (path.includes('/events')) {
+        if (path.includes('limit=2000')) return emptyEventsFixture();
+        return pendingEvents;
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderSheet(SESSION_A);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Auto Generate' }));
+    expect(screen.getByRole('menuitem', { name: 'Generate All' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Generate All' }));
+
+    await waitFor(() => expect(calls.count).toBe(1));
+    expect(calls.bodies).toEqual([undefined]);
+
+    // Let the pending query resolve so no unhandled promise/act warnings leak.
+    resolveEvents?.({
+      events: [autoEventFixture()],
+      total: 1,
+      logged_event_count: 1,
+      offset: 0,
+      limit: 200,
+      has_auto_generated: true,
+    });
+    await act(async () => {
+      await pendingEvents;
+    });
   });
 
   it('opens Custom without a request, requires a selection, and posts selection only', async () => {

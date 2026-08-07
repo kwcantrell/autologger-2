@@ -60,10 +60,10 @@
 
 ## 3. Web: truthful Regenerate label
 
-- [ ] 3.1 `web/src/api/types.ts`: `EventsResponse.has_auto_generated: boolean` —
+- [x] 3.1 `web/src/api/types.ts`: `EventsResponse.has_auto_generated: boolean` —
       REQUIRED, not optional (an optional field defeats the conformance forcing
       function); re-capture web conformance fixtures.
-- [ ] 3.2 `EventLogSheet`: label logic reads `data.has_auto_generated` from the
+- [x] 3.2 `EventLogSheet`: label logic reads `data.has_auto_generated` from the
       sheet's own events query, defaulting to Generate All while the response is
       unavailable (spec "Loading state defaults to the non-destructive label");
       drop the row-scan of the workspace-wide query (KEEP that subscription — the
