@@ -599,7 +599,7 @@ export function EventLogSheet({ sessionId }: Props) {
     const ok = await confirm({
       title: 'Regenerate all auto events',
       message:
-        'Prior auto-generated events will be replaced once this run succeeds — a failed run leaves them in place. Any edits made to those events during the run will be lost when it succeeds. This cannot be undone.',
+        'Prior auto-generated events will be replaced once this run succeeds — a failed run, or a run that finds nothing to log, leaves them in place. Any edits made to those events during the run will be lost when it succeeds. This cannot be undone.',
       confirmLabel: 'Delete and regenerate',
       cancelLabel: 'Cancel',
       danger: true,
