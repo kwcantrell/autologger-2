@@ -32,8 +32,22 @@ const mockedApiFetch = vi.mocked(apiFetch);
 const SESSION_ID = 'sess-export-1';
 
 const WORDS = [
-  { id: 'w-1', session_id: SESSION_ID, session_time: '00:00:01:00', speaker: '0', word: 'hi', ordinal: 1 },
-  { id: 'w-2', session_id: SESSION_ID, session_time: '00:00:02:00', speaker: '1', word: 'there', ordinal: 2 },
+  {
+    id: 'w-1',
+    session_id: SESSION_ID,
+    session_time: '00:00:01:00',
+    speaker: '0',
+    word: 'hi',
+    ordinal: 1,
+  },
+  {
+    id: 'w-2',
+    session_id: SESSION_ID,
+    session_time: '00:00:02:00',
+    speaker: '1',
+    word: 'there',
+    ordinal: 2,
+  },
 ];
 const TOPICS = [
   {
