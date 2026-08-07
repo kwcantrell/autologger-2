@@ -1,6 +1,7 @@
 // Per-request context + login gate — combines attach_auth_user and
 // auth_identity_and_gate from src/autologger/web/app.py.
 
+import { createCatalog } from '@autologger/catalog';
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
@@ -9,11 +10,10 @@ import {
   requestHasValidApiToken,
   resolveSessionUser,
 } from '../auth/identity';
-import { Catalog } from '../db/catalog';
 import { requireLoginEnabled, sessionCookieName } from '../env';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const catalog = new Catalog(c.env.ports.catalog);
+  const catalog = createCatalog(c.env.ports.catalog);
   catalog.init();
   c.set('catalog', catalog);
 

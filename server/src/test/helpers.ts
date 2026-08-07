@@ -1,5 +1,5 @@
+import { Catalog } from '@autologger/catalog';
 import { createLoginSession } from '../auth/identity';
-import { Catalog } from '../db/catalog';
 import { sessionCookieName } from '../env';
 import { env } from './harness';
 

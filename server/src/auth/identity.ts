@@ -2,8 +2,8 @@
 // and the /api login gate. Ported from src/autologger/web/auth_identity.py; the
 // login_sessions + oauth_csrf_tokens SQLite tables become KV keys with TTL.
 
+import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { KvStore } from '@autologger/ports';
-import type { AuthUser, Catalog } from '../db/catalog';
 
 const SESSION_PREFIX = 'session:'; // session:<sha256(token)> -> userId
 const CSRF_PREFIX = 'csrf:'; // csrf:<state> -> "1"
@@ -74,7 +74,7 @@ export async function revokeLoginSession(kv: KvStore, rawToken: string): Promise
 /** Resolve a session cookie value to an AuthUser via KV → catalog, or null. */
 export async function resolveSessionUser(
   kv: KvStore,
-  catalog: Catalog,
+  catalog: CatalogFacade,
   rawToken: string | undefined,
 ): Promise<AuthUser | null> {
   const t = (rawToken ?? '').trim();

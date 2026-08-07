@@ -18,8 +18,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SessionHubRegistry } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionHubRegistry } from '../session/SessionHub';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests, AiMcpListener } from './aiMcpServer';
 import {

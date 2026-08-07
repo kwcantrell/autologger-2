@@ -6,18 +6,21 @@
 // session schema by constructing the server's exported `SessionCore` over a
 // second in-memory handle — wrapped with the exported `sqliteSessionSql`
 // adapter and inert clock/sockets/alarm runtime stubs, the exact pattern
-// `server/src/test/fakeCore.ts` already uses for domain-store unit tests —
-// then calling its `initSchema()`. Both are introspected via
+// `@autologger/session-core`'s own `test/fakeCore.ts` (package-internal test
+// infrastructure) already uses for domain-store unit tests — then calling
+// its `initSchema()`. Both are introspected via
 // `sqlite_master` / `pragma table_info` / `pragma foreign_key_list` and
 // reduced to a typed, sorted `ERSchema`; `emitErDiagram` renders that into a
 // mermaid `erDiagram` source string.
 //
-// Server-internals coupling (design.md Risks — "Docs build coupled to
-// server internals"): this module imports `applyMigrations` from
-// server/src/node/migrate.ts and `SessionCore` / `sqliteSessionSql` from
-// server/src/session/{sessionCore,SessionHub}.ts, read-only. A future
-// rename or signature change to any of the three breaks `docs:check`, not
-// root `npm test` — the coupling is narrow, read-only, and named here so a
+// Package coupling (design.md Risks — "Docs build coupled to server
+// internals"): this module imports `applyMigrations` from
+// `@autologger/storage` (persistence-package-extraction task 2.2 — formerly
+// server/src/node/migrate.ts) and `SessionCore` / `sqliteSessionSql` from
+// `@autologger/session-core` (task 4.3 — formerly
+// server/src/session/{sessionCore,SessionHub}.ts). A future rename or
+// signature change to any of the three breaks `docs:check`, not root
+// `npm test` — the coupling is narrow, read-only, and named here so a
 // future whole-branch review checks these call sites when those seams move.
 // Measured empirically before writing this module: importing
 // `sqliteSessionSql` from SessionHub.ts transitively pulls in every domain
@@ -26,11 +29,10 @@
 // module load (no top-level `process.env`/fs reads), so the import resolves
 // and runs cleanly with no fallback to hand-rolled stubs needed.
 
+import type { SessionRuntime } from '@autologger/session-core';
+import { SessionCore, sqliteSessionSql } from '@autologger/session-core';
+import { applyMigrations } from '@autologger/storage';
 import Database from 'better-sqlite3';
-import { applyMigrations } from '../../../server/src/node/migrate';
-import { sqliteSessionSql } from '../../../server/src/session/SessionHub';
-import type { SessionRuntime } from '../../../server/src/session/sessionCore';
-import { SessionCore } from '../../../server/src/session/sessionCore';
 
 /** SQLite-internal objects and the migrator's own bookkeeping table are
  * never part of the app schema (spec "excludes sqlite_% and _migrations"). */

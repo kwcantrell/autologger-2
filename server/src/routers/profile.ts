@@ -1,5 +1,6 @@
 // Profile + studio routes — ported from src/autologger/web/routers/profile.py.
 
+import type { ProfileCtx } from '@autologger/catalog';
 import { profileUpdateBodySchema } from '@autologger/contract';
 import {
   normalizeEventPaletteNine,
@@ -12,7 +13,6 @@ import {
 import type { Config } from '@autologger/ports';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import type { ProfileCtx } from '../db/catalog';
 import { adminMeta, oauthConfigured } from '../env';
 
 export const profileRouter = new Hono<AppEnv>();

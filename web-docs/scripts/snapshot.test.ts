@@ -9,13 +9,21 @@ import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 // extractFileImports silently skipped every file outside the four app
 // workspaces (server/web/companion/e2e), so web-docs's OWN mapped source —
 // including src/lib/erSchema.ts, which really does import
-// server/src/node/migrate.ts and server/src/session/{SessionHub,sessionCore}.ts
+// `@autologger/storage` and server/src/session/{SessionHub,sessionCore}.ts
 // (see the module-header comment on erSchema.ts) — never contributed edges to
 // the derived snapshot. This is a live-repo check, not a count pin (spec
 // "Live-repo drift gates run at build and via docs:check" / F2 disposition):
 // it asserts a specific, source-documented architectural coupling exists,
 // not an exact edge count — it stays true unless erSchema.ts's imports
 // themselves change, which is the exact drift this pipeline exists to catch.
+//
+// persistence-package-extraction task 2.2: erSchema.ts's `applyMigrations`
+// import moved from server/src/node/migrate.ts to `@autologger/storage`, so
+// the web-docs -> node-infra edge this test used to assert is now
+// web-docs -> storage. Task 4.3: erSchema.ts's other two imports
+// (sqliteSessionSql/SessionCore) moved from server/src/session/ to
+// `@autologger/session-core`, so the web-docs -> session edge is now
+// web-docs -> session-core.
 //
 // Deliberately does NOT call `buildSnapshot` (audit re-review minor 1):
 // `buildSnapshot` throws on any unmapped-import error, which is correct for
@@ -33,7 +41,7 @@ import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 // erSchema.ts's own imports to keep resolving, which is independent of
 // whatever else the live tree happens to contain.
 describe('web-docs live-repo edges — web-docs is itself extracted (audit F1 regression)', () => {
-  it("captures erSchema.ts's real imports as production edges web-docs -> node-infra and web-docs -> session", {
+  it("captures erSchema.ts's real imports as production edges web-docs -> storage and web-docs -> session-core", {
     timeout: 30_000,
   }, () => {
     const root = repoRoot();
@@ -50,6 +58,6 @@ describe('web-docs live-repo edges — web-docs is itself extracted (audit F1 re
       .filter((edge) => edge.from === 'web-docs' && edge.kind === 'production')
       .map((edge) => edge.to);
 
-    expect(webDocsTargets).toEqual(expect.arrayContaining(['node-infra', 'session']));
+    expect(webDocsTargets).toEqual(expect.arrayContaining(['storage', 'session-core']));
   });
 });

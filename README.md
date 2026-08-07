@@ -489,38 +489,37 @@ DATA_DIR/
 
 ## Source layout
 
+Persistence lives in three L1 source-only sibling packages under `packages/` (extracted
+from `server/src/session|db/` and part of `server/src/node/` by `persistence-package-extraction`);
+`server/src/` keeps the composition root, routers, auth, and app wiring, reaching persistence
+only through the packages' exported facade interfaces (`appEnv.ts` names zero concrete
+persistence classes — `server/src/node/config.ts` is the sole production module that
+constructs the concretes; `middleware/auth.ts` constructs the per-request `Catalog` via the
+package's `createCatalog` factory).
+
 ```
 server/src/
   main.ts                Node entry: env config → bindings → app → listen
   app.ts                 Hono app wiring: middleware chain + router mounts + static (← web/app.py)
   env.ts                 Typed env accessors                           (← auth_identity.py getters)
   appEnv.ts              Composition root's Hono generics: Ports + Config + Variables (AppEnv) —
-                          the only app-level module naming the concrete SessionHubRegistry/Catalog
-                          handle types (port interfaces + Config now live in packages/ports)
+                          types Ports.sessions/Variables.catalog with the session-core/catalog
+                          packages' facade interfaces and names ZERO concrete persistence class
+                          (port interfaces + Config live in packages/ports)
   node/
-    config.ts            Composition root: Ports + Config from process env (DATA_DIR layout, wiring)
+    config.ts            Composition root: Ports + Config from process env (DATA_DIR layout,
+                          wiring) — the sole production module naming the concrete
+                          SessionHubRegistry/Catalog(Db)/KvStore/BlobStore classes, all imported
+                          from the packages below
     systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
                            (interface lives in packages/ports; moved from the former clock.ts)
-    migrate.ts            Startup migrator for the catalog DB (filename-ordered .sql, transactional)
-    catalogStore.ts       CatalogDb — better-sqlite3-backed catalog query layer
-    kvStore.ts            KV replacement (login sessions, OAuth CSRF, Companion presence) on the catalog DB
-    blobStore.ts          Filesystem blob store: atomic put, range get, list, traversal guard
-    presence.ts           In-memory Companion presence registry
-  session/
-    SessionHub.ts          In-process per-session hub: registry, idle eviction, RPC surface
-    sessionCore.ts          Shared substrate: SQLite handle, WS fan-out, events_stream_revision, lease
-    eventStore.ts / transportStore.ts / audioStore.ts / leaseStore.ts / transcriptStore.ts / topicStore.ts
-                            Domain stores built on SessionCore                (← storage/db.py)
-  db/
-    catalog.ts             Catalog query layer + profile + sessions index + admin (← storage/db.py, deps.py)
-    authStore.ts / profileAssembler.ts / sessionIndexStore.ts / showsStore.ts / studioRegistry.ts
-    migrations/0001_init.sql                  Catalog DDL + seeded built-in shows
-    migrations/0002_sessions_live_split.sql   Sessions index metadata + live projection
+    presence.ts           In-memory Companion presence registry (stays in server — not persistence)
   auth/
     oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
     identity.ts             Login sessions + CSRF, bearer compare, gate rule (← auth_identity.py)
   middleware/
-    auth.ts                 Per-request context + REQUIRE_LOGIN gate      (← app.py auth_identity_and_gate)
+    auth.ts                 Per-request context + REQUIRE_LOGIN gate      (← app.py auth_identity_and_gate);
+                             constructs the per-request Catalog via @autologger/catalog's createCatalog
     ipAllowlist.ts           CIDR allowlist on client IP                   (← app.py ip_allowlist_middleware)
   routers/
     _helpers.ts              ApiError, session access gate, hub lookup, marked-at parsing
@@ -538,12 +537,18 @@ server/src/
 packages/                 Source-only npm workspace packages (no build step; server's tsx and
                            the root tsc --noEmit resolve them straight from src/); boundaries
                            between them are enforced by server/src/packageBoundaries.repo.test.ts,
-                           not the compiler.
+                           not the compiler. L0 (domain/contract/ports) ships no runtime
+                           persistence; L1 (session-core/catalog/storage) are dependency-free
+                           siblings of each other — no L1→L1 edges — each depending only on L0.
   domain/src/              @autologger/domain — pure, dependency-free domain modules (L0)
     studio.ts                Studios + palette/category + event enrichment (← studio.py)
     timecode.ts              SMPTE timecode math + UTC helpers             (← models.py)
     dbShared.ts              Shared catalog-layer row types (AuthUser, …), dependency-free
                               (← former server/src/db/shared.ts)
+    isAutoGeneratedMetadataJson()  Writer/reader agreement predicate shared by routers/events.ts
+                                   and the session-core eventStore SQL predicate — the only
+                                   session→server edge, killed by the move (← former
+                                   routers/events.ts; persistence-package-extraction D4)
   contract/src/            @autologger/contract — wire schemas + dashboard catalog (L0; zod
                            declared as a peerDependency so the app's instanceof ZodError → 422
                            mapping can never see a second zod copy)
@@ -556,6 +561,49 @@ packages/                 Source-only npm workspace packages (no build step; ser
     identityVerifier.ts / config.ts / ports.ts
                               Clock, BlobStore, KvStore, PresenceRegistry, CatalogDb,
                               IdentityVerifier interfaces + the Config type + the base Ports shape
+  session-core/src/        @autologger/session-core — the in-process per-session live spine
+                           (L1; deps: domain, contract, ports; better-sqlite3 peerDependency)
+                           moved from server/src/session/ (persistence-package-extraction task 4.3)
+    SessionHub.ts            In-process per-session hub: registry, idle eviction, RPC surface;
+                             exports the SessionHubFacade/SessionHubRegistryFacade property-style
+                             interfaces (facade membership = reached through Ports.sessions by an
+                             outside consumer) and DashboardValidationError/DashboardBoundsError
+                             (mapped to 422 by instanceof at routers/aiV2.ts)
+    sessionCore.ts           Shared substrate: SQLite handle, WS fan-out, events_stream_revision,
+                             lease, the SessionRuntime port
+    eventStore.ts / transportStore.ts / audioStore.ts / leaseStore.ts / transcriptStore.ts /
+    topicStore.ts / dashboardStore.ts / eventAnchors.ts / audioSeamParts.ts / storeHelpers.ts
+                            Domain stores built on SessionCore                (← storage/db.py)
+  catalog/src/             @autologger/catalog — the global catalog query layer (L1; deps:
+                           domain, ports only — no better-sqlite3, speaks the CatalogDb port)
+                           moved from server/src/db/ (persistence-package-extraction task 3.2)
+    catalog.ts              Catalog facade + profile + sessions index + admin (← storage/db.py,
+                            deps.py); exports the CatalogFacade property-style interface, the
+                            five store facade interfaces, and the createCatalog(db) factory (the
+                            sanctioned non-composition-root construction path for
+                            middleware/auth.ts's per-request construct-then-init() lifecycle)
+    authStore.ts / profileAssembler.ts / sessionIndexStore.ts / showsStore.ts / studioRegistry.ts /
+    sessionTitleDerivation.ts
+    index.ts                 Exports CATALOG_MIGRATIONS_DIR (resolved via import.meta.url) —
+                             the package owns migrations/*.sql (schema and stores evolve
+                             together, design D7); the directory-generic migrator that applies
+                             them stays in @autologger/storage
+  catalog/migrations/       Catalog DDL, filename-ordered (0001_init.sql through
+                           0005_show_title_suffix.sql: init + seeded built-in shows, sessions
+                           index + live projection, kv table, team roles/invites, title suffix)
+  storage/src/             @autologger/storage — the SQLite/filesystem persistence adapters
+                           (L1; deps: ports only; better-sqlite3 peerDependency) moved from
+                           server/src/node/ (persistence-package-extraction task 2.2)
+    migrate.ts               openCatalogDb + the directory-generic applyMigrations (filename-
+                             ordered .sql, transactional) — takes any migrations dir, wired to
+                             the catalog package's CATALOG_MIGRATIONS_DIR by node/config.ts
+    catalogStore.ts          CatalogDb — better-sqlite3-backed catalog query layer (the port
+                             implementation catalog/ speaks to, never imports)
+    kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion presence) on
+                             the catalog DB; clock is a required constructor parameter
+    blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
+                             guard; exports InvalidRangeError, mapped to 416 by instanceof at
+                             app.ts and routers/audio.ts
 ```
 
 ## Endpoints

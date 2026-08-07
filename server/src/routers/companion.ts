@@ -6,6 +6,7 @@
 //     record/play because it owns the mic), replacing the long-poll relay.
 // The thin HTTP endpoints still drive the per-session hub.
 
+import { type Row, showCategoriesApiShape } from '@autologger/catalog';
 import {
   companionCommandAckBodySchema,
   companionCommandBodySchema,
@@ -21,7 +22,6 @@ import {
 import type { PresenceRegistry } from '@autologger/ports';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { type Row, showCategoriesApiShape } from '../db/catalog';
 import { ApiError, getSessionHub, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();

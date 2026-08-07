@@ -16,14 +16,17 @@
 // declarations ... of every mapped file" holds with no silent exception
 // (audit fix-now F1: these two were previously skipped entirely, hiding
 // real production edges like `web-docs/src/lib/erSchema.ts` -> server/src/
-// node/migrate.ts and server/src/session/{SessionHub,sessionCore}.ts):
+// node/migrate.ts and server/src/session/{SessionHub,sessionCore}.ts, the
+// latter now packages/session-core/src/{SessionHub,sessionCore}.ts):
 // web-docs itself (its own real tsconfig — a `runtime`-adjacent `tooling`
 // component is still a mapped component, so it gets no exemption), and
 // `fixtures/api-responses` (a plain-TS-module directory with no tsconfig.json
 // of its own — a minimal inline bundler-mode `compilerOptions` object
 // stands in; see `WorkspaceRegime.compilerOptions`) — plus one regime per
-// `packages/*` L0 npm workspace package (`domain`, `contract`, `ports`;
-// package-split-foundation), each with its own real `tsconfig.json`.
+// `packages/*` npm workspace package: the L0 packages (`domain`, `contract`,
+// `ports`; package-split-foundation) and `persistence-package-extraction`'s
+// L1 packages (`storage` from task 2.2, `catalog` from task 3.2/3.3,
+// `session-core` from task 4.3), each with its own real `tsconfig.json`.
 //
 // Cross-package edges into `packages/*` are resolved via each consumer's
 // bare `@autologger/*` specifier, which TypeScript resolves through a
@@ -72,11 +75,13 @@ export interface WorkspaceRegime {
 }
 
 /**
- * The nine real resolution regimes: the four application workspaces (design.md
- * D2) plus web-docs itself, `fixtures/api-responses` (audit fix-now F1 —
- * every mapped file gets extracted, per spec R4, with no silent exception),
- * and the three `packages/*` L0 npm workspace packages introduced by
- * package-split-foundation (`domain`, `contract`, `ports`). Workspace-tsconfig
+ * The twelve real resolution regimes: the four application workspaces
+ * (design.md D2) plus web-docs itself, `fixtures/api-responses` (audit
+ * fix-now F1 — every mapped file gets extracted, per spec R4, with no silent
+ * exception), the three `packages/*` L0 npm workspace packages introduced by
+ * package-split-foundation (`domain`, `contract`, `ports`), and
+ * `persistence-package-extraction`'s three L1 packages (`storage`, task 2.2;
+ * `catalog`, task 3.2/3.3; `session-core`, task 4.3). Workspace-tsconfig
  * `compilerOptions` are read from each workspace's real tsconfig at
  * extraction time — never its `include`/`exclude`, which only shapes each
  * workspace's OWN build/typecheck file set (and companion's excludes its own
@@ -102,6 +107,21 @@ export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
     name: 'ports',
     dir: 'packages/ports',
     tsconfigPath: 'packages/ports/tsconfig.json',
+  },
+  {
+    name: 'storage',
+    dir: 'packages/storage',
+    tsconfigPath: 'packages/storage/tsconfig.json',
+  },
+  {
+    name: 'catalog',
+    dir: 'packages/catalog',
+    tsconfigPath: 'packages/catalog/tsconfig.json',
+  },
+  {
+    name: 'session-core',
+    dir: 'packages/session-core',
+    tsconfigPath: 'packages/session-core/tsconfig.json',
   },
   {
     name: 'contract-fixtures',

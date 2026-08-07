@@ -1,9 +1,8 @@
 import type { CategoryRecord } from '@autologger/domain';
 import type { Config } from '@autologger/ports';
+import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
 import type { Bindings } from '../appEnv';
 import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
-import type { SessionHub } from '../session/SessionHub';
-import type { TimecodeCtx } from '../session/sessionCore';
 import { mapLogCategory } from './categoryMatch';
 import type { ParsedLogRow } from './sheetsFetch';
 import { secondsToTotalFrames } from './sheetTimecode';
@@ -15,7 +14,7 @@ export interface SessionLogImportResult {
   lines: string[];
 }
 
-export function timedTranscriptTokens(hub: SessionHub): TranscriptToken[] {
+export function timedTranscriptTokens(hub: SessionHubFacade): TranscriptToken[] {
   const words = hub.listTranscriptWords();
   const out: TranscriptToken[] = [];
   for (const w of words) {
@@ -27,7 +26,7 @@ export function timedTranscriptTokens(hub: SessionHub): TranscriptToken[] {
   return out;
 }
 
-function seamPartsForSession(hub: SessionHub): { duration_s: number }[] {
+function seamPartsForSession(hub: SessionHubFacade): { duration_s: number }[] {
   const seams = hub.getAudioSeamParts();
   if (seams && seams.length > 0) return seams;
   const segs = hub.listAudioSegments();
@@ -43,7 +42,7 @@ function seamPartsForSession(hub: SessionHub): { duration_s: number }[] {
 /** Ensure timed transcript words exist; generate via DeepGram when missing. */
 export async function ensureTimedTranscript(input: {
   sessionId: string;
-  getHub: () => SessionHub;
+  getHub: () => SessionHubFacade;
   config: Config;
   audio: Bindings['ports']['audio'];
   ctx: TimecodeCtx;
@@ -105,7 +104,7 @@ export async function ensureTimedTranscript(input: {
 
 /** Import parsed log rows into a session event feed (sync + create-at-frames). */
 export function runSessionLogImport(input: {
-  hub: SessionHub;
+  hub: SessionHubFacade;
   rows: ParsedLogRow[];
   categories: CategoryRecord[];
   ctx: TimecodeCtx;

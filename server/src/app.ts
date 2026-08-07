@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ValidationError } from '@autologger/domain';
+import { InvalidRangeError } from '@autologger/storage';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Context, Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
@@ -12,7 +13,6 @@ import { ZodError } from 'zod';
 import type { AppEnv, Bindings } from './appEnv';
 import { authContext } from './middleware/auth';
 import { ipAllowlistMiddleware } from './middleware/ipAllowlist';
-import { InvalidRangeError } from './node/blobStore';
 import { ApiError } from './routers/_helpers';
 import { adminRouter } from './routers/admin';
 import { aiRouter } from './routers/ai';

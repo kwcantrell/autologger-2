@@ -5,10 +5,10 @@
 
 import { audioSegmentWaveformBodySchema } from '@autologger/contract';
 import type { BlobRange } from '@autologger/ports';
+import type { AudioSegmentMeta } from '@autologger/session-core';
+import { InvalidRangeError } from '@autologger/storage';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { InvalidRangeError } from '../node/blobStore';
-import type { AudioSegmentMeta } from '../session/SessionHub';
 import { ApiError, getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
 export const audioRouter = new Hono<AppEnv>();

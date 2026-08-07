@@ -13,10 +13,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DashboardConfig } from '@autologger/contract';
+import { SessionHubRegistry } from '@autologger/session-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SessionHubRegistry } from '../session/SessionHub';
 import {
   AGGREGATE_TOOL_NAMES,
   type BuildAggregateMcpServerDeps,

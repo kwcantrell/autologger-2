@@ -26,6 +26,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { type Atlas, buildAtlas } from '../model/atlas';
 import { checkCapabilityAccounting, pendingCapabilities } from '../model/capabilities';
 import type { ComponentModel } from '../model/components';
@@ -229,13 +230,13 @@ function runL0RendererAssertionGate(atlas: Atlas, snapshot: EdgeSnapshot): strin
  * feed the diagram-validity budget check, task 6.3) alongside the emitted
  * diagram strings (the atlas's `er` field).
  */
-function runErExtraction(root: string): {
+function runErExtraction(): {
   catalogSchema: ERSchema;
   sessionSchema: ERSchema;
   catalogDiagram: string;
   sessionDiagram: string;
 } {
-  const catalogSchema = buildCatalogSchema(path.join(root, 'server/src/db/migrations'));
+  const catalogSchema = buildCatalogSchema(CATALOG_MIGRATIONS_DIR);
   const sessionSchema = buildSessionSchema();
   return {
     catalogSchema,
@@ -381,7 +382,7 @@ export async function runAllGates(): Promise<{ issues: string[]; atlas: Atlas }>
   const baselineCapabilities = listBaselineCapabilities(allTrackedFiles);
 
   const overlay = buildLiveOverlay(root, allTrackedFiles);
-  const er = runErExtraction(root);
+  const er = runErExtraction();
 
   const mapped = mappedFiles(trackedTsFiles, model);
   const extraction = extractFileImports({

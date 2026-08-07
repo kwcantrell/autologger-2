@@ -16,6 +16,9 @@
     "snapshot": "tsx scripts/snapshot.ts"
   },
   "devDependencies": {
+    "@autologger/catalog": "*",
+    "@autologger/session-core": "*",
+    "@autologger/storage": "*",
     "@biomejs/biome": "^2.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsdom": "^28.0.3",

@@ -7,9 +7,8 @@
 // the implementation is added to turn it GREEN.
 
 import type { EventRpc } from '@autologger/domain';
+import type { Topic, TranscriptParagraph, TranscriptWord } from '@autologger/session-core';
 import { describe, expect, it } from 'vitest';
-import type { Topic } from '../session/topicStore';
-import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
 import {
   computeEventCounts,
   computeEventDensity,

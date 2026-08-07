@@ -1,10 +1,10 @@
 // Shared router helpers — the session access gate (_session_access_gate),
 // per-session hub resolution, timecode context, and marked-at parsing.
 
+import type { Row } from '@autologger/catalog';
+import type { SessionHubFacade } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
-import type { Row } from '../db/catalog';
-import type { SessionHub } from '../session/SessionHub';
 
 /** Maps to an HTTP response in app.onError — mirrors FastAPI's HTTPException. */
 export class ApiError extends Error {
@@ -30,7 +30,7 @@ export function timecodeCtx(row: Row): TimecodeCtx {
 }
 
 /** Resolve the in-process per-session hub (addressed by session id). */
-export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHub {
+export function getSessionHub(c: Context<AppEnv>, sessionId: string): SessionHubFacade {
   return c.env.ports.sessions.get(sessionId);
 }
 

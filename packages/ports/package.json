@@ -11,6 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "peerDependencies": {
+    "jose": "^5.9.6"
+  },
   "devDependencies": {
     "jose": "^5.9.6",
     "typescript": "^5.7.2",

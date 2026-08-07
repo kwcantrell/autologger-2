@@ -11,6 +11,7 @@
 
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { normalizeUploadDate, type Row } from '@autologger/catalog';
 import {
   newSessionBodySchema,
   sessionUpdateBodySchema,
@@ -27,20 +28,18 @@ import {
   transportTimecode,
   ValidationError,
 } from '@autologger/domain';
-import type { Context } from 'hono';
-import { Hono } from 'hono';
-import type { AppEnv } from '../appEnv';
-import type { Row } from '../db/catalog';
-import { normalizeUploadDate } from '../db/sessionIndexStore';
-import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
-import { youtubeImportGuard } from '../node/youtubeImportGuard';
-import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
-import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
 import {
   AUDIO_SEAM_PARTS_HEADER,
   type AudioSeamPart,
   parseAudioSeamPartsHeader,
-} from '../session/audioSeamParts';
+} from '@autologger/session-core';
+import type { Context } from 'hono';
+import { Hono } from 'hono';
+import type { AppEnv } from '../appEnv';
+import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
+import { youtubeImportGuard } from '../node/youtubeImportGuard';
+import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
+import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
 import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 

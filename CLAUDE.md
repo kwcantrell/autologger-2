@@ -91,23 +91,32 @@ npm run lint                                   # biome: web src/, e2e/, playwrig
 
 Server code keeps the module-for-module layout it inherited from its Python origin under
 `server/src/`; files ported from Python note their origin in a header comment. Router files
-live in `server/src/routers/`; the live
-per-session spine is `server/src/session/SessionHub.ts` (+ domain stores alongside it); the
-catalog DB layer is `server/src/db/catalog.ts` with migrations in `server/src/db/migrations/`;
-Node-specific infrastructure (config wiring, migrator, blob store, kv-on-sqlite, presence)
-lives in `server/src/node/`. Three source-only L0 packages live under `packages/`:
-`@autologger/domain` (`studio.ts`, `timecode.ts`, `dbShared.ts` — pure, dependency-free),
-`@autologger/contract` (`schemas.ts`, `aiV2Catalog.ts`; `zod` declared as a
-peerDependency), and `@autologger/ports` (interface-only port types + `Config` — no
-runtime implementations). `server/src/appEnv.ts` composes the app-level `AppEnv`
-(`Ports`/`Variables`) over the packages' interfaces, naming only the two concrete handle
-types (`SessionHubRegistry`, `Catalog`) that stay residuals of later extraction changes;
-cross-package import boundaries are enforced by a repo test
-(`server/src/packageBoundaries.repo.test.ts`), not the compiler. Frontend code lives under
-`web/src/`; e2e smoke tests live under `e2e/`. The generated architecture atlas + docs SPA
-(component model, edge extraction, drift gates, mermaid site) live in `web-docs/` — see
-README's web-docs section. Full annotated tree + the normative endpoint table (with its
-historical Python-origin column) are in **`README.md`**.
+live in `server/src/routers/`; Node-specific infrastructure that stays in the server
+(composition-root wiring, `systemClock`, presence) lives in `server/src/node/`. Persistence
+itself lives in three source-only **L1** sibling packages under `packages/` (extracted from
+`server/src/session/` and `server/src/db/` and part of `server/src/node/` by
+`persistence-package-extraction`, siblings of each other — no L1→L1 edges):
+`@autologger/session-core` (the live per-session spine — `SessionHub.ts` + domain stores),
+`@autologger/catalog` (the catalog query layer — `catalog.ts` + five stores + migrations
+`.sql`, no `better-sqlite3` dependency — it speaks the `CatalogDb` port), and
+`@autologger/storage` (the SQLite/filesystem adapters — blob store, kv store, `CatalogDb`
+implementation, the directory-generic migrator). Three source-only **L0** packages sit
+beneath them: `@autologger/domain` (`studio.ts`, `timecode.ts`, `dbShared.ts` — pure,
+dependency-free), `@autologger/contract` (`schemas.ts`, `aiV2Catalog.ts`; `zod` declared as a
+peerDependency), and `@autologger/ports` (interface-only port types + `Config` — no runtime
+implementations). Each L1 package exports **facade interfaces** (property-style function-type
+members, so drift is compiler-checked) instead of its concrete classes;
+`server/src/appEnv.ts` composes the app-level `AppEnv` (`Ports`/`Variables`) over those
+facade interfaces and **names zero concrete persistence classes** — `server/src/node/
+config.ts` (the composition root) is the sole production module that still constructs the
+concretes, and `middleware/auth.ts` constructs the per-request `Catalog` via
+`@autologger/catalog`'s exported `createCatalog` factory (lifecycle unchanged). Cross-package
+import boundaries — including the L1-sibling and facade-only-consumer rules above — are
+enforced by a repo test (`server/src/packageBoundaries.repo.test.ts`), not the compiler.
+Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. The generated
+architecture atlas + docs SPA (component model, edge extraction, drift gates, mermaid site)
+live in `web-docs/` — see README's web-docs section. Full annotated tree + the normative
+endpoint table (with its historical Python-origin column) are in **`README.md`**.
 
 ## Conventions
 

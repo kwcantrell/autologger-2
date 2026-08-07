@@ -155,28 +155,6 @@ const serverComponents: Component[] = [
       'exports, companion, logImport, flows, static serving).',
     ['server/src/routers/**'],
   ),
-  {
-    ...runtimeComponent(
-      'session',
-      'The in-process SessionHub live spine: events, transport, audio metadata, the ' +
-        'recording lease, transcript words, topics, WebSocket fan-out, and the ' +
-        'SessionHubRegistry evict-and-reconstruct idle lifecycle.',
-      ['server/src/session/**'],
-    ),
-    // Task 6.2 (design.md D7): two v1 authored state diagrams, derived from a
-    // read of the current code, not prose — sorted for determinism.
-    authoredDiagrams: [
-      'web-docs/diagrams/recording-lease.mmd',
-      'web-docs/diagrams/session-hub-registry.mmd',
-    ].sort(),
-  },
-  runtimeComponent(
-    'catalog-db',
-    'The catalog SQLite access layer: users/studios/shows/prefs, login sessions, OAuth ' +
-      'CSRF, Companion presence, and the sessions index, plus the sessions-index and ' +
-      'active-changes readers.',
-    ['server/src/db/**'],
-  ),
   runtimeComponent(
     'node-infra',
     'Node-specific infrastructure: config wiring/composition root, the blob store, ' +
@@ -212,7 +190,13 @@ const serverComponents: Component[] = [
       'root-level repo-wide guard tests for the package split (package-split-foundation): ' +
       'the cross-package layering-boundary test and the cross-package 422/400 error-' +
       'identity pin, mirroring the web-test-harness convention for `*.repo.test.ts` files ' +
-      'that assert a property of the whole tree rather than one module.',
+      'that assert a property of the whole tree rather than one module. Also carries the ' +
+      'three catalog integration-test files (persistence-package-extraction task 3.4) ' +
+      'relocated to `server/src/test/` alongside the migration integration scenarios ' +
+      "(task 3.5) that pin the catalog package's migrations directory and content, plus " +
+      '(task 4.4) the two session integration-test files (`SessionHub.int.test.ts`, ' +
+      '`rowsWrittenReaders.int.test.ts`) relocated from the now-fully-retired ' +
+      '`server/src/session/` — the directory glob below covers all of it.',
     [
       'server/src/test/**',
       'server/src/packageBoundaries.repo.test.ts',
@@ -251,6 +235,57 @@ const packageComponents: Component[] = [
       'app-level `Ports`/`AppEnv` by extending this package’s base shape.',
     ['packages/ports/src/**'],
   ),
+  runtimeComponent(
+    'storage',
+    '`@autologger/storage` (persistence-package-extraction task 2.2): the SQLite/' +
+      'filesystem persistence adapters moved out of `server/src/node/` — `BlobStore` ' +
+      '(filesystem audio blobs; exports `InvalidRangeError`, mapped to 416 by `instanceof` ' +
+      'at server-bootstrap/routers), `KvStore` (the catalog `kv`-table adapter), `CatalogDb` ' +
+      '(the synchronous better-sqlite3-backed `CatalogDb` port implementation), and the ' +
+      'directory-generic migrator (`openCatalogDb`/`applyMigrations` — the catalog package ' +
+      'owns the migrations `*.sql` files themselves; wired to them by ' +
+      "`server/src/node/config.ts` via `@autologger/catalog`'s exported " +
+      '`CATALOG_MIGRATIONS_DIR`, task 3.2/3.3). Depends only on `ports`; `better-sqlite3` ' +
+      'is a peerDependency (design D5), never a second copy.',
+    ['packages/storage/src/**'],
+  ),
+  runtimeComponent(
+    'catalog',
+    '`@autologger/catalog` (persistence-package-extraction task 3.2/3.3): the `Catalog` ' +
+      'facade and its five domain stores — `studios`, `shows`, `auth`, `sessions` ' +
+      '(session-index), `profile` — plus `sessionTitleDerivation`, moved out of ' +
+      '`server/src/db/`, and the catalog schema migration `*.sql` files (design D7 — schema ' +
+      'and stores evolve together; the directory-generic migrator that applies them stays ' +
+      'in `@autologger/storage`). Exports `CATALOG_MIGRATIONS_DIR` (resolved via ' +
+      '`import.meta.url`) and the `createCatalog(db)` factory — the sanctioned ' +
+      "non-composition-root construction path for `middleware/auth.ts`'s per-request " +
+      '`new Catalog(db)` + `init()` lifecycle. Depends on `domain` and `ports` only — no ' +
+      '`better-sqlite3`: `Catalog` speaks the `CatalogDb` port, never the driver.',
+    ['packages/catalog/src/**'],
+  ),
+  {
+    ...runtimeComponent(
+      'session-core',
+      '`@autologger/session-core` (persistence-package-extraction task 4.3): the ' +
+        'in-process SessionHub live spine, moved out of `server/src/session/` — events, ' +
+        'transport, audio metadata, the recording lease, transcript words, topics, ' +
+        'WebSocket fan-out, the SessionHubRegistry evict-and-reconstruct idle lifecycle, ' +
+        'and the `SessionRuntime` port (the package-internal substitution seam, alongside ' +
+        '`SessionCore`). Exports `DashboardValidationError`/`DashboardBoundsError` (mapped ' +
+        'to 422 by `instanceof` at routers/aiV2.ts). Depends on `domain`, `contract`, and ' +
+        '`ports`; `better-sqlite3` is a peerDependency (design D5), never a second copy — ' +
+        'the same single-resolved-copy property `storage` relies on.',
+      ['packages/session-core/src/**'],
+    ),
+    // Task 6.2 (design.md D7): two v1 authored state diagrams, derived from a
+    // read of the current code, not prose — sorted for determinism. Relocated
+    // here from the retired `session` server/src component at task 4.3 (the
+    // diagrams describe SessionHub/LeaseStore behavior, which moved with it).
+    authoredDiagrams: [
+      'web-docs/diagrams/recording-lease.mmd',
+      'web-docs/diagrams/session-hub-registry.mmd',
+    ].sort(),
+  },
 ];
 
 const webComponents: Component[] = [
@@ -516,11 +551,13 @@ const relationships: Relationship[] = [
     evidence: [{ file: 'server/src/node/config.ts', mustContain: ['new BlobStore', 'blobs'] }],
   },
   {
-    id: 'session-to-session-databases',
-    from: 'session',
+    id: 'session-core-to-session-databases',
+    from: 'session-core',
     to: 'session-databases',
     label: 'Opens the per-session SQLite database file',
-    evidence: [{ file: 'server/src/session/SessionHub.ts', mustContain: ['new Database(dbPath)'] }],
+    evidence: [
+      { file: 'packages/session-core/src/SessionHub.ts', mustContain: ['new Database(dbPath)'] },
+    ],
   },
   {
     id: 'node-infra-to-deepgram',
@@ -608,8 +645,8 @@ const capabilityScopes: CapabilityScope[] = [
       'server-bootstrap',
       'server-core',
       'node-infra',
-      'session',
-      'catalog-db',
+      'session-core',
+      'catalog',
       'auth',
       'ports',
     ],
@@ -642,21 +679,23 @@ const capabilityScopes: CapabilityScope[] = [
     // progress UI are web-app (BatchImportModal, pages/index/batchImport/**).
     // The server side is the local-audio-import HTTP surface (routers) plus
     // the seam-parts/audio-take persistence it drives on the session spine
-    // (session: audioSeamParts.ts, audioStore.ts). node-infra's transcript
-    // machinery is reused unmodified (spec: "remains transcribable via the
-    // existing generate route") rather than extended for this capability, so
-    // node-infra is deliberately NOT listed here — that reuse is
-    // transcript-generation's scope, not batch-audio-import's.
-    components: ['routers', 'session', 'web-app'],
+    // (session-core: audioSeamParts.ts, audioStore.ts). node-infra's
+    // transcript machinery is reused unmodified (spec: "remains
+    // transcribable via the existing generate route") rather than extended
+    // for this capability, so node-infra is deliberately NOT listed here —
+    // that reuse is transcript-generation's scope, not batch-audio-import's.
+    components: ['routers', 'session-core', 'web-app'],
   },
   {
     type: 'component',
     capability: 'session-title-suffix',
-    // catalog-db: showsStore.ts/sessionIndexStore.ts persistence + the
-    // migration. routers: profile.ts (read/write) and sessions.ts (deck-title
-    // derivation at create time). web-app: the Settings General Suffix
-    // control (HomeSettingsModal) and NewSessionModal's session-meta wiring.
-    components: ['routers', 'catalog-db', 'web-app'],
+    // catalog: showsStore.ts/sessionIndexStore.ts persistence + the
+    // migration (persistence-package-extraction: moved out of server/src/db/
+    // into @autologger/catalog). routers: profile.ts (read/write) and
+    // sessions.ts (deck-title derivation at create time). web-app: the
+    // Settings General Suffix control (HomeSettingsModal) and
+    // NewSessionModal's session-meta wiring.
+    components: ['routers', 'catalog', 'web-app'],
   },
   {
     type: 'component',
@@ -672,22 +711,22 @@ const capabilityScopes: CapabilityScope[] = [
   {
     type: 'component',
     capability: 'team-management',
-    components: ['routers', 'catalog-db', 'web-app'],
+    components: ['routers', 'catalog', 'web-app'],
   },
   {
     type: 'component',
     capability: 'topic-generation',
-    components: ['routers', 'session', 'web-app'],
+    components: ['routers', 'session-core', 'web-app'],
   },
   {
     type: 'component',
     capability: 'transcript-generation',
-    components: ['routers', 'node-infra', 'session', 'web-app'],
+    components: ['routers', 'node-infra', 'session-core', 'web-app'],
   },
   {
     type: 'component',
     capability: 'web-admin-users',
-    components: ['routers', 'catalog-db', 'web-admin'],
+    components: ['routers', 'catalog', 'web-admin'],
   },
   {
     type: 'component',

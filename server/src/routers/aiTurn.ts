@@ -24,7 +24,7 @@
 // exception" pins this for `ai/chat` via a real, hermetic `mkdirSync` EEXIST
 // failure).
 
-import type { SessionHubRegistry } from '../session/SessionHub';
+import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiChatSseEvent } from './aiChatRelay';
 import {
   type AiChatSpawnResult,
@@ -48,7 +48,7 @@ const NO_PAGE_COVERAGE: AiMcpPageCoverage = { totalPages: 0, servedPages: 0 };
 
 export interface DriveAiTurnOptions {
   /** The process-wide session registry — resolves the MCP listener singleton. */
-  registry: SessionHubRegistry;
+  registry: SessionHubRegistryFacade;
   /** `CLAUDE_CLI_PATH`, already trimmed. */
   cliPath: string;
   sessionId: string;

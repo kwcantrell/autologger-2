@@ -10,6 +10,7 @@
 // member. `requireSession` and content routers are untouched — role checks
 // live ONLY here.
 
+import type { AuthUser, CatalogFacade, Row, TeamRole } from '@autologger/catalog';
 import {
   teamCreateBodySchema,
   teamInviteBodySchema,
@@ -20,8 +21,6 @@ import { BUILTIN_STUDIO_ORDER, normalizeEmail, ValidationError } from '@autologg
 import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
-import type { TeamRole } from '../db/authStore';
-import type { AuthUser, Catalog, Row } from '../db/catalog';
 import { ApiError } from './_helpers';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422
@@ -87,7 +86,7 @@ function requireTeamAdmin(c: Context<AppEnv>, teamId: string): AuthUser {
  * an N+1 over every membership the user holds, which didn't scale with a
  * user's total membership count even though the cap only bounds admin'd
  * teams). */
-function countOwnedNonBuiltinTeams(catalog: Catalog, userId: string): number {
+function countOwnedNonBuiltinTeams(catalog: CatalogFacade, userId: string): number {
   return catalog.auth.authCountAdminTeams(userId, [...BUILTIN_STUDIO_ORDER]);
 }
 
@@ -96,7 +95,7 @@ function countOwnedNonBuiltinTeams(catalog: Catalog, userId: string): number {
  * admin seat (a disabled admin row never counts, so demoting/removing one is
  * always safe). */
 function wouldStripLastEnabledAdmin(
-  catalog: Catalog,
+  catalog: CatalogFacade,
   teamId: string,
   targetUserId: string,
 ): boolean {
@@ -118,7 +117,7 @@ function guardedAgainstLastAdmin(
   c: Context<AppEnv>,
   teamId: string,
   targetUserId: string,
-  mutate: (catalog: Catalog) => void,
+  mutate: (catalog: CatalogFacade) => void,
 ): void {
   const catalog = c.get('catalog');
   let blocked = false;

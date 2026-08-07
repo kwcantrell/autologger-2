@@ -4,5 +4,6 @@
 // math + UTC helpers, and shared catalog-layer row types.
 
 export * from './dbShared';
+export * from './eventMetadata';
 export * from './studio';
 export * from './timecode';

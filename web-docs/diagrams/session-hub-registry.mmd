@@ -1,6 +1,8 @@
 %% AUTHORED diagram (design.md D7) — derived from a read of
-%% server/src/session/SessionHub.ts (class SessionHubRegistry), not
-%% generated. "Absent" and "Active" are the only two real registry states:
+%% packages/session-core/src/SessionHub.ts (class SessionHubRegistry;
+%% formerly server/src/session/SessionHub.ts — persistence-package-
+%% extraction task 4.3), not generated. "Absent" and "Active" are the only
+%% two real registry states:
 %% eviction is not a persisted third state — hub.close() and
 %% hubs.delete(id) happen together in the same evictIdle() loop iteration,
 %% so a session id transitions straight from Active back to Absent. A

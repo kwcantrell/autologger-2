@@ -166,6 +166,22 @@ const ALLOWED_LAYER_EDGES = new Set<string>([
   '@autologger/contract->@autologger/domain',
   '@autologger/ports->@autologger/domain',
   '@autologger/ports->@autologger/contract',
+  // persistence-package-extraction task 2.1 (design D1/D6): storage's only
+  // permitted L1 edge — it speaks ports, never a sibling L1 package.
+  '@autologger/storage->@autologger/ports',
+  // persistence-package-extraction task 3.1 (design D1/D6): catalog's two
+  // permitted L1 edges — domain (pure predicates/normalizers) and ports (the
+  // CatalogDb port it speaks through); no better-sqlite3, no storage sibling.
+  '@autologger/catalog->@autologger/domain',
+  '@autologger/catalog->@autologger/ports',
+  // persistence-package-extraction task 4.2 (design D1/D6): session-core's
+  // three permitted L1 edges. Added ahead of the task 4.3 module move (the
+  // package has no production imports yet beyond a placeholder) so the move
+  // commit's gate is green from the first file it lands, not red until the
+  // last one; no storage/catalog sibling edge.
+  '@autologger/session-core->@autologger/domain',
+  '@autologger/session-core->@autologger/contract',
+  '@autologger/session-core->@autologger/ports',
 ]);
 
 /** Bare specifiers naming an app workspace's own package.json `name` — the
@@ -534,6 +550,218 @@ describe('packages/* layer graph — real repo (spec: "L0 packages do not reach 
 });
 
 // ---------------------------------------------------------------------------
+// Task 6.1 — dedicated enforcement checks (design D6): the checks genuinely
+// new to this phase, on top of the per-phase `ALLOWED_LAYER_EDGES` /
+// `SERVER_SRC_LAYER_DIRS` deltas already landed in phases 2-4. All three
+// reuse the walker/extraction primitives above rather than deriving a
+// parallel one. Negative-case coverage for these three checks is a
+// one-time, working-tree-only demonstration recorded in `.apply/ledger.md`
+// (task 6.2) — matching this file's existing discipline for the original
+// three checks (see the file-header note above): a repo-invariant guard
+// doesn't ship permanent fixtures proving its own violations.
+// ---------------------------------------------------------------------------
+
+/** The three layer-1 sibling packages (design D1): each may reach downward
+ * into L0 only, never into another L1 package. This check is deliberately
+ * independent of `ALLOWED_LAYER_EDGES` above (rather than trusting that set
+ * to simply omit L1-L1 entries) so a future edit that mistakenly ADDS an
+ * L1-L1 edge to `ALLOWED_LAYER_EDGES` itself cannot silently defeat the
+ * sibling rule — this is the "no-L1->L1-sibling assertion" task 6.1 calls
+ * for. */
+const L1_PACKAGES = new Set<string>([
+  '@autologger/session-core',
+  '@autologger/catalog',
+  '@autologger/storage',
+]);
+
+describe('L1 packages are siblings — no L1 package imports another L1 package (task 6.1, design D1)', () => {
+  it('the real inter-package import graph contains no edge between two L1 packages', () => {
+    const graph = packageImportGraph(REPO_ROOT);
+    const siblingViolations: string[] = [];
+    for (const [from, targets] of graph) {
+      if (!L1_PACKAGES.has(from)) continue;
+      for (const to of targets) {
+        if (L1_PACKAGES.has(to)) siblingViolations.push(`${from}->${to}`);
+      }
+    }
+    expect(siblingViolations).toEqual([]);
+  });
+});
+
+// Third-party bare-specifier vs manifest check, over PRODUCTION source only
+// (design D6, spec scenario "Boundary test fails on an undeclared third-party
+// specifier"). Every third-party bare specifier a package's production
+// source imports must be declared in that package's own
+// `dependencies`/`peerDependencies` — an undeclared import resolves today
+// only via npm workspace hoisting from the server workspace's installs,
+// which is exactly the silent-duplication risk D5/D8 close for
+// `better-sqlite3`. `*.test.ts` files and each package's REVIEWED, explicit
+// test-infrastructure exemption list (below) are exempt and may use
+// devDependencies (`vitest`) freely.
+//
+// Type-only-import decision: every import specifier counts, including
+// `import type { X } from 'y'`. `tsc` erases type-only imports at build
+// time, but this check is about MANIFEST DECLARATION HONESTY, not runtime
+// necessity (design D6's wording: "every third-party bare specifier
+// imported") — a type-only import from an undeclared third-party package
+// still means the manifest misrepresents what the source touches, and would
+// silently ride on hoisting the moment that same import needed a value.
+const NODE_BUILTIN_PREFIX = 'node:';
+
+/** Reviewed, explicit per-package test-infrastructure exemption list (design
+ * D6: "named in a per-package list inside the boundary test — reviewed, not
+ * improvised"). Both listed files import `vitest` (a devDependency) and are
+ * non-exported test infrastructure consumed only by that package's own unit
+ * tests, never by production modules (see each file's own header comment for
+ * the duplicate-per-package provenance decided at tasks 2.4/4.3). Paths are
+ * package-relative. `@autologger/catalog` has no test-infrastructure files
+ * outside `*.test.ts`, so it has no entry here. */
+const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
+  '@autologger/storage': ['src/test/fakeClock.ts'],
+  '@autologger/session-core': ['src/test/fakeClock.ts', 'src/test/fakeCore.ts'],
+};
+
+interface ThirdPartyViolation {
+  file: string;
+  specifier: string;
+  detail: string;
+}
+
+/** The bare package name a third-party specifier resolves to for manifest
+ * lookup — `@scope/pkg/subpath` -> `@scope/pkg`, `pkg/subpath` -> `pkg` (the
+ * same two-segments-if-scoped-else-one-segment shape `checkPackagesBoundary`
+ * already applies to `@autologger/*` specifiers above). */
+function thirdPartyPackageName(specifier: string): string {
+  const segments = specifier.split('/');
+  return specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+}
+
+/** Every third-party (non-`@autologger/*`, non-relative, non-`node:`) bare
+ * specifier imported by a package's production source, cross-checked against
+ * that package's own declared `dependencies`/`peerDependencies`. */
+function checkThirdPartySpecifiers(repoRoot: string): ThirdPartyViolation[] {
+  const packagesRoot = path.join(repoRoot, 'packages');
+  const packages = discoverPackages(packagesRoot);
+  const violations: ThirdPartyViolation[] = [];
+  for (const pkg of packages) {
+    const srcDir = path.join(pkg.dir, 'src');
+    const exemptFiles = new Set(
+      (TEST_INFRASTRUCTURE_EXEMPTIONS[pkg.name] ?? []).map((rel) =>
+        path.join(pkg.dir, ...rel.split('/')),
+      ),
+    );
+    for (const file of walkTsFiles(srcDir)) {
+      if (file.endsWith('.test.ts')) continue;
+      if (exemptFiles.has(file)) continue;
+      const content = fs.readFileSync(file, 'utf8');
+      for (const specifier of extractImportSpecifiers(content)) {
+        if (specifier.startsWith('.')) continue;
+        if (specifier.startsWith('@autologger/')) continue;
+        if (specifier.startsWith(NODE_BUILTIN_PREFIX)) continue;
+        const pkgName = thirdPartyPackageName(specifier);
+        if (!pkg.declaredDeps.has(pkgName)) {
+          violations.push({
+            file: relOf(repoRoot, file),
+            specifier,
+            detail: `${pkg.name}'s production source imports third-party specifier '${specifier}' but its manifest does not declare '${pkgName}' in dependencies/peerDependencies`,
+          });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+describe('packages/* third-party bare specifiers are declared in the manifest (task 6.1, design D6)', () => {
+  it('every third-party specifier imported by production source is declared (dependencies/peerDependencies)', () => {
+    expect(checkThirdPartySpecifiers(REPO_ROOT)).toEqual([]);
+  });
+});
+
+// Interface-only assertion (design D3; spec "Persistence facades are
+// consumed through package-exported interfaces" / "Interface-only
+// consumption is continuously enforced"): among server/src PRODUCTION files,
+// only `node/config.ts` (the composition root) may import the concrete
+// persistence classes from `@autologger/session-core` / `@autologger/catalog`
+// as named imports. Everyone else consumes the facade interfaces, which are
+// all named with a `Facade` suffix (`SessionHubFacade`, `CatalogFacade`,
+// ...) — a word-boundary match on the bare concrete identifier can't trip on
+// them, since there is no word boundary between an identifier and an
+// immediately-following `Facade` suffix (verified against the real barrel
+// exports: `SessionHubFacade`, `SessionHubRegistryFacade`, `CatalogFacade`,
+// `AuthStoreFacade`, `ShowsStoreFacade`, `StudioRegistryFacade`,
+// `SessionIndexStoreFacade`, `ProfileAssemblerFacade`); likewise
+// `createCatalog`/`CatalogDb` don't match `\bCatalog\b` for the same reason.
+const CONCRETE_PERSISTENCE_IDENTIFIERS = [
+  'SessionHub',
+  'SessionHubRegistry',
+  'Catalog',
+  'AuthStore',
+  'ShowsStore',
+  'StudioRegistry',
+  'SessionIndexStore',
+  'ProfileAssembler',
+] as const;
+
+const CONCRETE_PACKAGE_SPECIFIERS = new Set<string>([
+  '@autologger/session-core',
+  '@autologger/catalog',
+]);
+
+const COMPOSITION_ROOT_REL = 'node/config.ts';
+
+/** Captures an `import`'s clause text (between `import` and `from`) alongside
+ * its specifier — a superset of `extractImportSpecifiers`'s `fromClauseRe`
+ * (which discards the clause), needed here because the violation is about
+ * WHICH identifiers a clause names, not just which module it names. */
+const IMPORT_CLAUSE_RE = /\bimport\b([^;]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+
+interface ConcreteImportViolation {
+  file: string;
+  identifier: string;
+  specifier: string;
+}
+
+/** Every production `.ts` file under `server/src`: excludes `*.test.ts` /
+ * `*.int.test.ts` (both end in `.test.ts`) and everything under
+ * `server/src/test/` (test-only infrastructure — exempt per the spec
+ * scenario's "tests exempt"). */
+function walkServerSrcProductionFiles(repoRoot: string): string[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  return walkTsFiles(srcRoot).filter((f) => {
+    const rel = relOf(srcRoot, f);
+    return !rel.endsWith('.test.ts') && !rel.startsWith('test/');
+  });
+}
+
+function checkInterfaceOnlyConsumption(repoRoot: string): ConcreteImportViolation[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  const violations: ConcreteImportViolation[] = [];
+  for (const file of walkServerSrcProductionFiles(repoRoot)) {
+    const rel = relOf(srcRoot, file);
+    if (rel === COMPOSITION_ROOT_REL) continue;
+    const content = fs.readFileSync(file, 'utf8');
+    for (const m of content.matchAll(IMPORT_CLAUSE_RE)) {
+      const clause = m[1];
+      const specifier = m[2];
+      if (!CONCRETE_PACKAGE_SPECIFIERS.has(specifier)) continue;
+      for (const identifier of CONCRETE_PERSISTENCE_IDENTIFIERS) {
+        if (new RegExp(`\\b${identifier}\\b`).test(clause)) {
+          violations.push({ file: relOf(repoRoot, file), identifier, specifier });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+describe('interface-only consumption of persistence facades (task 6.1, design D3)', () => {
+  it('only node/config.ts imports the concrete persistence identifiers among server/src production files', () => {
+    expect(checkInterfaceOnlyConsumption(REPO_ROOT)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // server/src directory-level acyclicity (task 6.2 extension point — reuses
 // extractImportSpecifiers/findCycles above rather than re-deriving a walker)
 // ---------------------------------------------------------------------------
@@ -547,27 +775,36 @@ describe('packages/* layer graph — real repo (spec: "L0 packages do not reach 
 // `KvStore`-to-`@autologger/ports` move (phase 4) were each designed to kill
 // one direction of its cycle. This guard proves both stayed dead.
 //
-// SCOPE: production (non-test) files only. A pre-existing, out-of-scope test
-// file (`session/eventStore.test.ts` imports `isAutoGeneratedMetadataJson`
-// from `../routers/events`, predating this change — present on `main` before
-// this branch) creates a `session -> routers` test-only edge that, combined
-// with the many production `routers -> session` edges, would read as a
-// `session <-> routers` cycle if test files were included. That pairing is
-// neither of the two cycles this change targets and isn't touched by any
-// phase here, so folding it into this guard would either force an unrelated
-// fix or an unrelated allowlist entry — out of scope for this sweep. Every
-// directory this change actually rewired (session, aiV2, auth, node) is
-// still covered in full via its production import edges.
-const SERVER_SRC_LAYER_DIRS = [
-  'db',
-  'node',
-  'session',
-  'auth',
-  'middleware',
-  'routers',
-  'aiV2',
-  'logImport',
-];
+// SCOPE: production (non-test) files only. A pre-existing test-only edge
+// used to live here (`session/eventStore.test.ts` imported
+// `isAutoGeneratedMetadataJson` from `../routers/events`, predating this
+// change), which — combined with the many production `routers -> session`
+// edges — would have read as a `session <-> routers` cycle had test files
+// been included. persistence-package-extraction task 4.1 killed that edge
+// outright: the predicate moved to `@autologger/domain`, and
+// `eventStore.test.ts` now imports it from there, so this scope carve-out no
+// longer has anything to except (kept as a historical note; not a live
+// exception anymore).
+// persistence-package-extraction task 3.1/3.4 (design D6): `db`'s production
+// modules and unit tests moved to `@autologger/catalog` at task 3.2/3.3; its
+// three `*.int.test.ts` files (packages never import the app harness those
+// files need) relocated to `server/src/test/` at task 3.4, which fully
+// emptied `server/src/db/` — so `db` is pruned from this list here. No
+// positive directory pin ever named `db` (unlike the `aiV2 -> session` /
+// `node -> auth` pins tracked below), so nothing else needs restating for
+// this prune.
+// persistence-package-extraction task 4.3 (design D6): `session`'s
+// production modules and unit tests moved to `@autologger/session-core` at
+// this task (mirroring the `db` prune above); its two `*.int.test.ts` files
+// (packages never import the app harness those files need) stay at
+// `server/src/session/` for now and relocate to `server/src/test/` at task
+// 4.4 — so `server/src/session/` is not yet fully empty, but it holds no
+// production files anymore, and `session` is pruned from this production-
+// import-graph list here since the directory's only remaining role is
+// int-test-only. No positive directory pin ever named `session` alone (the
+// pin below was `aiV2 -> session`, retired together with this prune — see
+// the removed assertion note below).
+const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'aiV2', 'logImport'];
 
 /** Production-only `.ts` files under `dir` (excludes `*.test.ts` and
  * `*.int.test.ts` — both end in `.test.ts`). */
@@ -612,14 +849,23 @@ describe('server/src directory import graph — real repo (task 6.2: former cycl
     expect(findCycles(graph)).toEqual([]);
   });
 
-  it('does NOT contain the two retired directions: session -> aiV2, auth -> node', () => {
+  it('does NOT contain the retired direction: auth -> node', () => {
     const graph = serverSrcDirectoryImportGraph(REPO_ROOT);
-    expect(graph.get('session')?.has('aiV2')).toBe(false);
     expect(graph.get('auth')?.has('node')).toBe(false);
-    // The reverse, one-directional edges are legitimate and expected to remain:
-    // aiV2 -> session (D4: aiV2/{aggregates,mcpTools}.ts read session stores/hub)
-    // and node -> auth (the composition root's node/config.ts -> auth/oauth_google).
-    expect(graph.get('aiV2')?.has('session')).toBe(true);
+    // The reverse, one-directional edge is legitimate and expected to
+    // remain: node -> auth (the composition root's node/config.ts ->
+    // auth/oauth_google).
+    //
+    // persistence-package-extraction task 4.3 (design D6): the former
+    // `session -> aiV2` retired-direction check and `aiV2 -> session`
+    // positive pin are both REMOVED here (not flipped to `false`/restated) —
+    // task 4.3's move rewrote aiV2's imports to the `@autologger/session-core`
+    // bare specifier and pruned `session` from `SERVER_SRC_LAYER_DIRS` above,
+    // so `session` is no longer a node in this directory-relative walker's
+    // graph at all; the directory pairing stopped being a meaningful question
+    // the moment `server/src/session/` held no production files. `node ->
+    // auth` is unaffected by 4.3 and is the sole surviving positive directory
+    // pin this guard restates.
     expect(graph.get('node')?.has('auth')).toBe(true);
   });
 });

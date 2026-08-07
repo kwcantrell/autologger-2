@@ -57,10 +57,10 @@ import {
   parseTimecodeString,
   toTotalFrames,
 } from '@autologger/domain';
+import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import type { SessionHubRegistry } from '../session/SessionHub';
 
 const LOOPBACK = '127.0.0.1';
 const MCP_PATH = '/mcp';
@@ -673,7 +673,7 @@ const generationTranscriptToolShape = {
  * and `createdEvents` the registration's per-run counter — both consumed by
  * `create_event` (task 3.2). */
 interface ToolBuildContext {
-  readonly registry: SessionHubRegistry;
+  readonly registry: SessionHubRegistryFacade;
   readonly sessionId: string;
   readonly generation: AiGenerationRunContext | undefined;
   readonly createdEvents: { count: number };
@@ -909,7 +909,10 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
   },
 };
 
-function buildSessionMcpServer(registry: SessionHubRegistry, reg: TurnRegistration): McpServer {
+function buildSessionMcpServer(
+  registry: SessionHubRegistryFacade,
+  reg: TurnRegistration,
+): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
   // Register ONLY the turn's tool set (D6). No context ⇒ the pinned default
   // three chat tools — byte-identical to the pre-context behavior. The Set
@@ -939,7 +942,7 @@ export class AiMcpListener {
   /** token → registration. The bearer allowlist: unknown token ⇒ 401. */
   private readonly turns = new Map<string, TurnRegistration>();
 
-  constructor(private readonly registry: SessionHubRegistry) {}
+  constructor(private readonly registry: SessionHubRegistryFacade) {}
 
   /** Start the listener (idempotent). Binds 127.0.0.1 on an ephemeral port —
    * NEVER a non-loopback address. Resolves once listening. */
@@ -1097,14 +1100,15 @@ let singletonPromise: Promise<AiMcpListener> | null = null;
 
 /**
  * Get the process-wide MCP listener, starting it on first use with the app's
- * `SessionHubRegistry`. Single Node process ⇒ one registry ⇒ one listener; the
+ * registry (typed to the `SessionHubRegistryFacade` interface — the concrete
+ * `SessionHubRegistry` is composition-root-only). Single Node process ⇒ one registry ⇒ one listener; the
  * CLI runner (task 3.2) calls this, then `registerTurn` / `dispose` per turn.
  * The STARTED promise is cached (not the bare instance), so concurrent first
  * callers all await the same completed `start()` — never an unstarted listener
  * whose `port` getter would throw. A failed start clears the cache so a later
  * call can retry.
  */
-export function getAiMcpListener(registry: SessionHubRegistry): Promise<AiMcpListener> {
+export function getAiMcpListener(registry: SessionHubRegistryFacade): Promise<AiMcpListener> {
   singletonPromise ??= (async () => {
     const listener = new AiMcpListener(registry);
     await listener.start();

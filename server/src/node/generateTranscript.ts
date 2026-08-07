@@ -4,11 +4,9 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from '@autologger/ports';
+import type { SessionHubFacade, TimecodeCtx, TranscriptWord } from '@autologger/session-core';
 import type { Bindings } from '../appEnv';
 import { deepgramConfigured, deepgramModel } from '../env';
-import type { SessionHub } from '../session/SessionHub';
-import type { TimecodeCtx } from '../session/sessionCore';
-import type { TranscriptWord } from '../session/transcriptStore';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
@@ -66,7 +64,7 @@ export function isTranscriptGenerationInFlight(): boolean {
 export interface GenerateTranscriptDeps {
   config: Config;
   audio: Bindings['ports']['audio'];
-  getHub: () => SessionHub;
+  getHub: () => SessionHubFacade;
   ctx: TimecodeCtx;
   sessionId: string;
   /** Optional abort before the provider call starts. */

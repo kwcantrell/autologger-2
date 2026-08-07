@@ -54,13 +54,14 @@
 // refines the slot-acquisition semantics; the option set, spawn override,
 // kill ladder, SSE relay, and timeout backstop live in aiV2SdkSpawn.ts.
 
+import type { AuthUser } from '@autologger/catalog';
 import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '@autologger/contract';
+import { DashboardBoundsError, DashboardValidationError } from '@autologger/session-core';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { buildAggregateMcpServer } from '../aiV2/mcpTools';
 import type { AppEnv } from '../appEnv';
-import type { AuthUser } from '../db/catalog';
 import {
   aiChatMaxConcurrent,
   aiChatTimeoutSec,
@@ -70,7 +71,6 @@ import {
   aiV2MaxBudgetUsd,
   aiV2OpenNetworkRefused,
 } from '../env';
-import { DashboardBoundsError, DashboardValidationError } from '../session/SessionHub';
 import { ApiError, getSessionHub, requireSession } from './_helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import {

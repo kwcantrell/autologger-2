@@ -1,22 +1,30 @@
 // appEnv.ts — the composition root's Hono generics (package-split-foundation,
 // design D3; spec: core-ports-architecture). Replaces the former
 // server/src/types.ts god-barrel: the injectable port types now live as
-// interfaces in @autologger/ports, and this module is the ONLY app-level
-// type-composition point permitted to name the two concrete handle types,
-// `SessionHubRegistry` and `Catalog` — interface-extracting their ~52/~71
-// method facades is named residual work owned by the session-core and
-// catalog extraction changes, not this one.
+// interfaces in @autologger/ports. The former allowance for this module to
+// name the two concrete persistence classes, `SessionHubRegistry` and
+// `Catalog`, is RETIRED (persistence-package-extraction, design D3; spec
+// "Persistence facades are consumed through package-exported interfaces"):
+// `Ports.sessions` and `Variables.catalog` are typed with the facade
+// interfaces the session-core and catalog packages export
+// (`SessionHubRegistryFacade`, `CatalogFacade`), and this module names ZERO
+// concrete persistence class. `server/src/node/config.ts` (the composition
+// root) is the sole production module that still names the concretes.
+// `AuthUser` is a plain domain type re-exported through the catalog
+// package's barrel, not a concrete class — importing it here is fine.
 
+import type { AuthUser, CatalogFacade } from '@autologger/catalog';
 import type { Ports as BasePorts, Config } from '@autologger/ports';
-import type { AuthUser, Catalog } from './db/catalog';
-import type { SessionHubRegistry } from './session/SessionHub';
+import type { SessionHubRegistryFacade } from '@autologger/session-core';
 
 export type { Config };
 
 /** Constructed services, role-named. Extends the package's base Ports shape
- * with the one concrete handle type it deliberately does not carry. */
+ * with the one handle type it deliberately does not carry as a base-Ports
+ * member — narrowed to the registry's facade interface (D3), never the
+ * concrete `SessionHubRegistry` class. */
 export interface Ports extends BasePorts {
-  sessions: SessionHubRegistry;
+  sessions: SessionHubRegistryFacade;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and
@@ -30,7 +38,7 @@ export interface Bindings {
 }
 
 export interface Variables {
-  catalog: Catalog;
+  catalog: CatalogFacade;
   user: AuthUser | null;
   apiTokenAuth: boolean;
 }

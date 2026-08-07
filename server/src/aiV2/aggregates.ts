@@ -18,8 +18,7 @@
 // unavailable state.
 
 import type { EventRpc } from '@autologger/domain';
-import type { Topic } from '../session/topicStore';
-import type { TranscriptParagraph, TranscriptWord } from '../session/transcriptStore';
+import type { Topic, TranscriptParagraph, TranscriptWord } from '@autologger/session-core';
 
 // -- shared helpers ------------------------------------------------------------
 

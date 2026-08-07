@@ -1,7 +1,7 @@
+import { AuthStore } from '@autologger/catalog';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
-import { AuthStore } from '../db/authStore';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
 import {

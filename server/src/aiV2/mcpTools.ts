@@ -43,8 +43,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DashboardConfig } from '@autologger/contract';
 import { validateDashboardConfig } from '@autologger/contract';
+import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import { z } from 'zod';
-import type { SessionHubRegistry } from '../session/SessionHub';
 import {
   computeEventCounts,
   computeEventDensity,
@@ -107,7 +107,7 @@ export interface BuildAggregateMcpServerDeps {
  */
 export function buildAggregateMcpServer(
   sessionId: string,
-  registry: SessionHubRegistry,
+  registry: SessionHubRegistryFacade,
   deps: BuildAggregateMcpServerDeps = {},
 ) {
   const speakerStats = tool(

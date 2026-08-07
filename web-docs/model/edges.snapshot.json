@@ -11,12 +11,12 @@
   },
   {
     "from": "aiV2",
-    "to": "session",
+    "to": "session-core",
     "kind": "production"
   },
   {
     "from": "auth",
-    "to": "catalog-db",
+    "to": "catalog",
     "kind": "production"
   },
   {
@@ -30,19 +30,14 @@
     "kind": "test"
   },
   {
-    "from": "catalog-db",
+    "from": "catalog",
     "to": "domain",
     "kind": "production"
   },
   {
-    "from": "catalog-db",
+    "from": "catalog",
     "to": "ports",
     "kind": "production"
-  },
-  {
-    "from": "catalog-db",
-    "to": "server-test-harness",
-    "kind": "test"
   },
   {
     "from": "companion-actions",
@@ -91,7 +86,7 @@
   },
   {
     "from": "log-import",
-    "to": "session",
+    "to": "session-core",
     "kind": "production"
   },
   {
@@ -101,7 +96,7 @@
   },
   {
     "from": "middleware",
-    "to": "catalog-db",
+    "to": "catalog",
     "kind": "production"
   },
   {
@@ -117,6 +112,11 @@
   {
     "from": "node-infra",
     "to": "auth",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "catalog",
     "kind": "production"
   },
   {
@@ -141,7 +141,12 @@
   },
   {
     "from": "node-infra",
-    "to": "session",
+    "to": "session-core",
+    "kind": "production"
+  },
+  {
+    "from": "node-infra",
+    "to": "storage",
     "kind": "production"
   },
   {
@@ -156,7 +161,7 @@
   },
   {
     "from": "routers",
-    "to": "catalog-db",
+    "to": "catalog",
     "kind": "production"
   },
   {
@@ -201,7 +206,12 @@
   },
   {
     "from": "routers",
-    "to": "session",
+    "to": "session-core",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "storage",
     "kind": "production"
   },
   {
@@ -230,8 +240,13 @@
     "kind": "production"
   },
   {
+    "from": "server-bootstrap",
+    "to": "storage",
+    "kind": "production"
+  },
+  {
     "from": "server-core",
-    "to": "catalog-db",
+    "to": "catalog",
     "kind": "production"
   },
   {
@@ -241,7 +256,7 @@
   },
   {
     "from": "server-core",
-    "to": "session",
+    "to": "session-core",
     "kind": "production"
   },
   {
@@ -251,7 +266,7 @@
   },
   {
     "from": "server-test-harness",
-    "to": "catalog-db",
+    "to": "catalog",
     "kind": "test"
   },
   {
@@ -276,33 +291,28 @@
   },
   {
     "from": "server-test-harness",
-    "to": "session",
+    "to": "storage",
     "kind": "test"
   },
   {
-    "from": "session",
+    "from": "session-core",
     "to": "contract",
     "kind": "production"
   },
   {
-    "from": "session",
+    "from": "session-core",
     "to": "domain",
     "kind": "production"
   },
   {
-    "from": "session",
+    "from": "session-core",
     "to": "ports",
     "kind": "production"
   },
   {
-    "from": "session",
-    "to": "routers",
-    "kind": "test"
-  },
-  {
-    "from": "session",
-    "to": "server-test-harness",
-    "kind": "test"
+    "from": "storage",
+    "to": "ports",
+    "kind": "production"
   },
   {
     "from": "web-admin",
@@ -361,12 +371,17 @@
   },
   {
     "from": "web-docs",
-    "to": "node-infra",
+    "to": "catalog",
     "kind": "production"
   },
   {
     "from": "web-docs",
-    "to": "session",
+    "to": "session-core",
+    "kind": "production"
+  },
+  {
+    "from": "web-docs",
+    "to": "storage",
     "kind": "production"
   },
   {

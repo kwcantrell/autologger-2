@@ -2,7 +2,9 @@
 // diagrams (task 6.2; design.md D7; spec "Authored state diagrams are
 // attached, structurally validated, and labeled"). Mermaid *parse* validity
 // (task 6.3) is out of scope here — these tests assert (1) the diagrams are
-// attached to the `session` component in the model, (2) each file exists
+// attached to the `session-core` component in the model (persistence-
+// package-extraction task 4.3 renamed the owning component from `session` —
+// see `web-docs/model/components.ts`), (2) each file exists
 // with non-empty content, and (3) the states/transitions authored from the
 // code read (see task-6.1-6.2-report.md for the file:line quotes
 // justifying each line below) are actually present as text, so a future
@@ -23,9 +25,9 @@ function readDiagram(repoRelativePath: string): string {
 const RECORDING_LEASE_PATH = 'web-docs/diagrams/recording-lease.mmd';
 const SESSION_HUB_REGISTRY_PATH = 'web-docs/diagrams/session-hub-registry.mmd';
 
-describe('authored diagrams — attached to the session component', () => {
-  it('attaches exactly the two v1 authored diagrams to the session component', () => {
-    const session = model.components.find((c) => c.name === 'session');
+describe('authored diagrams — attached to the session-core component', () => {
+  it('attaches exactly the two v1 authored diagrams to the session-core component', () => {
+    const session = model.components.find((c) => c.name === 'session-core');
     expect(session).toBeDefined();
     expect(session?.authoredDiagrams).toEqual(
       [RECORDING_LEASE_PATH, SESSION_HUB_REGISTRY_PATH].sort(),

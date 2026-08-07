@@ -1,5 +1,6 @@
 // Shows routes — ported from src/autologger/web/routers/shows.py.
 
+import { showApiDict } from '@autologger/catalog';
 import { showCreateBodySchema } from '@autologger/contract';
 import {
   DEFAULT_STUDIO_ID,
@@ -11,7 +12,6 @@ import {
 } from '@autologger/domain';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { showApiDict } from '../db/catalog';
 import { oauthConfigured } from '../env';
 
 export const showsRouter = new Hono<AppEnv>();

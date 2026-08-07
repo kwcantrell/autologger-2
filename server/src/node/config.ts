@@ -3,22 +3,15 @@
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
+import { SessionHubRegistry } from '@autologger/session-core';
+import { applyMigrations, BlobStore, CatalogDb, KvStore, openCatalogDb } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
-import { SessionHubRegistry } from '../session/SessionHub';
-import { BlobStore } from './blobStore';
-import { CatalogDb } from './catalogStore';
-import { KvStore } from './kvStore';
-import { applyMigrations, openCatalogDb } from './migrate';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 import { sweepStaleYoutubeImportTempDirs } from './youtubeImportScratch';
-
-// Resolved from this file's location, not cwd — the server must work both via
-// `npm run -w server` (cwd = server/) and under test runners started elsewhere.
-const MIGRATIONS_DIR = fileURLToPath(new URL('../db/migrations', import.meta.url));
 
 export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;
@@ -33,7 +26,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   mkdirSync(join(dataDir, 'tmp'), { recursive: true });
 
   const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
-  applyMigrations(catalog, MIGRATIONS_DIR);
+  applyMigrations(catalog, CATALOG_MIGRATIONS_DIR);
   const clock = systemClock;
   const kv = new KvStore(catalog, clock);
   kv.purgeExpired(); // startup hygiene — no sweep timer (spec)

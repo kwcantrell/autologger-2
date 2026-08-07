@@ -1,0 +1,27 @@
+{
+  "name": "@autologger/session-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@autologger/domain": "*",
+    "@autologger/contract": "*",
+    "@autologger/ports": "*"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^12.11.1"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^12.11.1",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  }
+}
