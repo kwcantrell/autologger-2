@@ -20,10 +20,10 @@ migration mechanism (re-skinning the legacy class family in place versus porting
 a design decision (design D1), not a spec obligation, and later retiring the legacy class
 family at zero consumers is compatible with this requirement.
 
-#### Scenario: Export modal buttons match the workspace vocabulary
-- **WHEN** the Export dialog renders its CSV/JSONL/Close actions
-- **THEN** they render as V5 glass buttons (primary variants sky-tinted) with no flat legacy
-  grey (`#2a2d36`) chrome
+#### Scenario: Export tab actions match the workspace vocabulary
+- **WHEN** the Export feed tab renders its CSV/JSONL download actions
+- **THEN** they render as V5 glass buttons (primary variants sky-tinted where applicable)
+  with no flat legacy grey (`#2a2d36`) chrome
 
 #### Scenario: Disabled buttons are visibly non-interactive without hover response
 - **WHEN** any button in the shared vocabulary is disabled and hovered
