@@ -33,13 +33,13 @@ vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
   };
 });
 
-vi.mock('../../../api/hooks/useSessionStatus', () => ({
-  useSessionStatus: vi.fn(() => ({ data: undefined })),
-  sessionStatusKeys: {
-    all: () => ['session-status'],
-    bySession: (id: string | null) => ['session-status', id],
-  },
-}));
+vi.mock('../../../api/hooks/useSessionStatus', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../api/hooks/useSessionStatus')>();
+  return {
+    ...actual,
+    useSessionStatus: vi.fn(() => ({ data: undefined })),
+  };
+});
 
 vi.mock('../utils/toast', () => ({
   showToast: vi.fn(),
