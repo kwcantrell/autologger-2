@@ -914,8 +914,10 @@
 }
 
 /* --- Strip recording meters (moved from AppShell top-bar) ---
- * Duration: only while mic-recording (body.v4-is-recording from AudioRecorder).
- * Mic level: only while mic-recording (data-show from MaximizeLogStrip). */
+ * Both keyed to `body.v4-is-recording` (AudioRecorder, phase === 'recording'):
+ * a LOCAL-recorder signal, per web-session-console "Truthful recording
+ * indication" — the session-wide lease must not reveal this client's meter
+ * (a remote client's recording would show an empty bar here). */
 @layer components {
   #top-bar-recording-dur,
   #top-bar-mic-level {
@@ -924,7 +926,7 @@
   body.v4-is-recording #top-bar-recording-dur {
     display: inline;
   }
-  #top-bar-mic-level[data-show='1'] {
+  body.v4-is-recording #top-bar-mic-level {
     display: inline-flex;
   }
 }

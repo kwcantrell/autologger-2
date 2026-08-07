@@ -189,9 +189,11 @@ describe('SessionWorkspace fused strip layout', () => {
     expect(screen.getByTestId('strip-lane-slot')).toBeTruthy();
     expect(screen.getByTestId('category-strip-stub')).toBeTruthy();
     expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Rolling');
-    // Mic level meter is recording-only, not rolling-only (web-session-console spec:
-    // "Truthful recording indication" — the meter must not appear while merely rolling).
-    expect(document.getElementById('top-bar-mic-level')?.getAttribute('data-show')).toBeNull();
+    // Mic level meter is local-recording-only (web-session-console spec:
+    // "Truthful recording indication") — its CSS reveal keys on
+    // `body.v4-is-recording`, which only AudioRecorder (mocked out here)
+    // toggles, so merely rolling must not set it.
+    expect(document.body.classList.contains('v4-is-recording')).toBe(false);
     // Obsolete live-dock attribute must not be set (it used to CSS-hide the strip).
     expect(document.getElementById('v4-log-session')?.getAttribute('data-v5-live-log')).toBeNull();
   });
@@ -202,9 +204,15 @@ describe('SessionWorkspace fused strip layout', () => {
     expect(document.getElementById('v5-maximize-log-strip')).toBeTruthy();
     expect(screen.getByTestId('category-strip-stub')).toBeTruthy();
     expect(document.getElementById('v5-controls-status-value')?.textContent).toBe('Recording');
+    // Meter/duration elements exist for AudioRecorder to drive, but their CSS
+    // reveal keys on `body.v4-is-recording` (this client's recorder), NOT the
+    // session-wide lease this fixture sets — a REMOTE client's recording shows
+    // "Recording" status while this client's (empty) meter stays hidden
+    // (spec "Remote client recording" — the deliberate divergence).
     expect(document.getElementById('top-bar-mic-level')).toBeTruthy();
-    expect(document.getElementById('top-bar-mic-level')?.getAttribute('data-show')).toBe('1');
+    expect(document.getElementById('top-bar-mic-level')?.getAttribute('data-show')).toBeNull();
     expect(document.getElementById('top-bar-recording-dur')).toBeTruthy();
+    expect(document.body.classList.contains('v4-is-recording')).toBe(false);
   });
 
   // PR#4 review fix: the retired MicLevelPreview opened getUserMedia for every

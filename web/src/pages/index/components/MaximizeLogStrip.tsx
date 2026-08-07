@@ -80,7 +80,6 @@ export function MaximizeLogStrip({
   const statusIsYtImport = displayStatus === 'Importing YouTube Audio';
   // Lock transport / marker / scrub / shortcuts while YouTube audio is importing.
   const controlsLocked = statusIsYtImport;
-  const showMicLevel = isRecording;
 
   const liveButtons = (
     <div
@@ -162,10 +161,13 @@ export function MaximizeLogStrip({
         >
           {displayStatus}
         </span>
+        {/* Visibility comes from CSS `body.v4-is-recording` (AudioRecorder's
+            LOCAL-recorder signal), never from the session-wide `isRecording`
+            lease — a remote client's recording must not reveal this client's
+            (necessarily empty) meter. */}
         <span
           id="top-bar-mic-level"
           className="items-center gap-[0.35rem] h-[1.05rem]"
-          data-show={showMicLevel ? '1' : undefined}
           aria-hidden="true"
           title="Microphone level"
         >
