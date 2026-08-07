@@ -26,6 +26,22 @@ export interface CoverageIssue {
   message: string;
 }
 
+/**
+ * True when `file` is mapped to at least one glob-bearing component or sits
+ * on the model's exclusion list — i.e. it is "known" to the model, whether
+ * or not it's actually covered (overlap is still a coverage violation; this
+ * predicate only answers "is there anywhere to route an edge into/out of").
+ * Shared by the edge extractor (phase 3) so an import resolving to a
+ * genuinely unmapped in-repo file fails the gate, while one resolving to an
+ * excluded file does not.
+ */
+export function isMappedOrExcluded(file: string, model: ComponentModel): boolean {
+  if (model.exclusions.some((exclusion) => exclusion.file === file)) return true;
+  return model.components.some(
+    (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
+  );
+}
+
 /** Structural checks on the model itself, independent of any tracked-file list. */
 export function validateModelStructure(model: ComponentModel): CoverageIssue[] {
   const issues: CoverageIssue[] = [];
