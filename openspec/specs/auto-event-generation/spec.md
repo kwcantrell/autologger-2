@@ -167,36 +167,73 @@ feed's vocabulary):
   vocabulary from a manual press
 
 ### Requirement: Generated events append, bounded and attributable
-Generation SHALL only ever **append** events: no existing event is modified or deleted
-by a run. Each run SHALL enforce a server-side **per-run created-events cap** (a
-configured ceiling, default 200): once reached, further
-`create_event` calls SHALL return a tool error naming the cap, and the run's response
-reports `cap_hit: true`. Each generated event's `metadata_json` SHALL carry
-`auto_generated: true` and a per-run `auto_generate_run_id`, so rows are attributable
-to their run. A generated insert SHALL otherwise perform **every side effect a manual
-insert performs**: the same transactional hub write path, server-assigned id, one
-`event.changed` broadcast per insert (unchanged emission semantics), category
-label/color UI snapshots merged into metadata (so later button deletion/rename
-degrades and relinks identically to manual rows), and the catalog live projection
-(`event_count` / max-timecode mirror) so `GET /api/sessions` stays truthful — the run
-SHALL leave the catalog projection current by the time the route responds.
 
-#### Scenario: Re-run does not duplicate or destroy
-- **WHEN** a run previously logged three SLATE events and a second run executes over an
-  unchanged transcript
-- **THEN** no existing event is modified or deleted, the second run's prompt embeds
-  the three existing SLATE events (complete for that category), and the prompt directs
-  the model to log only moments not already logged
+Generation SHALL **append** events by default: when `regenerate` is absent or
+false, no existing event is modified or deleted by the run. When
+`regenerate` is true and no `selection` is supplied, the server SHALL first
+delete every session event whose metadata has `auto_generated === true`, then
+append newly generated events under the same per-run created-events cap and
+attribution rules (`auto_generated: true` + `auto_generate_run_id`) as today.
+Manual (non-auto) events SHALL NOT be deleted. `regenerate: true` combined with
+a non-empty `selection` SHALL be rejected with `400`. Each run SHALL still
+enforce the per-run created-events cap; further `create_event` calls SHALL
+return a tool error naming the cap.
 
-#### Scenario: The cap ends writing, not the world
-- **WHEN** a run reaches the per-run cap mid-transcript
-- **THEN** subsequent `create_event` calls return a tool error, previously created
-  events persist, and the route responds `200` with `cap_hit: true`
+#### Scenario: Generate All appends without deleting
 
-#### Scenario: Sessions list stays truthful
-- **WHEN** a run creates 40 events and completes
-- **THEN** `GET /api/sessions` reflects the updated `event_count` without any
-  intervening manual write
+- **WHEN** generate runs with no body or `{ regenerate: false }`
+- **THEN** no existing events are deleted and new auto rows may be appended
+
+#### Scenario: Regenerate All deletes auto rows then generates
+
+- **WHEN** generate runs with `{ regenerate: true }` and no `selection`
+- **THEN** all `auto_generated` events for the session are deleted before the
+  CLI turn, manual events remain, and new auto rows may be appended
+
+#### Scenario: Regenerate with selection is rejected
+
+- **WHEN** generate runs with `{ regenerate: true, selection: [...] }` where
+  `selection` is non-empty
+- **THEN** the response is `400 { detail }` and no events are deleted
+
+### Requirement: Optional generate body for regenerate and selection
+
+`POST /api/sessions/:sessionId/events/generate` SHALL accept an optional JSON
+body. Absent or empty body SHALL mean Generate All (full instruction-bearing
+set, no delete). Fields:
+
+- `regenerate` (boolean, default false)
+- `selection` (optional array of `{ category_id, option_label? }`):
+  - omitted or empty → full instruction-bearing set
+  - non-empty → only matching instruction-bearing **entries** participate
+    (button-level when `option_label` is null/omitted; a dropdown option when
+    `option_label` equals that option’s stored label and that option has a
+    non-empty `auto_instruction`)
+  - unknown ids/labels that match nothing SHALL be ignored for membership;
+    if after filtering zero instruction entries remain, SHALL `400` (same
+    class as no-instructions)
+
+Delete of auto rows (when `regenerate` is true) SHALL occur only after the
+existing guard ladder and successful AI-slot acquire, and before CLI spawn,
+inside the session hub (transactional bulk delete). A failed pre-guard SHALL
+NOT delete events.
+
+On success the response SHALL be `{ created, cap_hit }` and, when
+`regenerate` was true, SHALL also include `deleted` (number of auto rows
+removed).
+
+#### Scenario: Custom selection filters the run
+
+- **WHEN** generate runs with a `selection` naming one button-level entry and
+  one dropdown option entry, and `regenerate` is false
+- **THEN** no events are deleted and the run snapshot/prompt/allowlist include
+  only those instruction entries
+
+#### Scenario: Empty selection after filter fails
+
+- **WHEN** generate runs with a `selection` that matches no instruction-bearing
+  entry
+- **THEN** the response is `400 { detail }` and no CLI turn runs
 
 ### Requirement: Events are anchored at transcript timecodes
 `create_event` SHALL accept a category id (which MUST match the run's snapshot of
