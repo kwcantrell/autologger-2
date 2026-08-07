@@ -328,6 +328,11 @@ describe('sessions', () => {
       code: 'ATS',
       categoriesJson: CATEGORIES_JSON,
     });
+    // session-title-suffix: pin this show to Episode-suffix derivation so the
+    // captured title is deterministic (`ATS_0002`) rather than embedding
+    // today's UTC date — the Date-suffix derivation path has its own
+    // dedicated, non-fixture coverage in sessions.int.test.ts.
+    env.ports.catalog.run('UPDATE shows SET title_suffix = ? WHERE id = ?', 'episode', showId);
     const res = await app.request(
       '/api/sessions',
       {

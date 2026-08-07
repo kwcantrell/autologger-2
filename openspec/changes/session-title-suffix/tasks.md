@@ -5,15 +5,15 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
 
 ## Phase 1 — Schema + title derivation (server)
 
-- [ ] 1.1 Add catalog migration: `shows.title_suffix TEXT NOT NULL` with create
+- [x] 1.1 Add catalog migration: `shows.title_suffix TEXT NOT NULL` with create
       default `date`; backfill **existing** rows to `episode`; **retain**
       `shows.next_episode` column (unused; comment in migration/store); do not
       bump on create.
-- [ ] 1.2 Implement pure title helpers (pad episode incl. `0`/`9999`/`10000`/
+- [x] 1.2 Implement pure title helpers (pad episode incl. `0`/`9999`/`10000`/
       `00001`, `CODE_YYMMDD`, max-occupied-slot+1 collision `_002+`) with unit
       tests; literal match must not treat `_`/`%` in show codes as wildcards;
       gap case `base`+`_003` → next `_004`.
-- [ ] 1.3 Wire create path in one catalog transaction: when `title` blank,
+- [x] 1.3 Wire create path in one catalog transaction: when `title` blank,
       derive from show `code` + `title_suffix` + episode/date; reject blank
       trimmed show code on derivation (`400`); stop next-episode bump; Date
       stores `episode=''`; Episode requires non-blank episode unless explicit

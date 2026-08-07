@@ -149,31 +149,50 @@ sessionsRouter.post('/api/sessions', async (c) => {
     throw new ApiError(400, 'Show does not belong to the active team.');
   }
 
-  const episode = body.episode.trim() || '1';
   const notes = (body.notes ?? '').trim();
   const showCode = String(showRow.show_code ?? '').trim();
-  const title =
-    (body.title ?? '').trim() || sessionDeckDisplayTitle({ showCode, episode, storedTitle: '' });
-  const now = isoZ(new Date(c.env.ports.clock.now()));
-  const id = catalog.sessions.createSessionIndex({
-    showId: body.show_id.trim(),
-    title,
-    frameRate: body.frame_rate,
-    startOffsetFrames: body.start_offset_frames,
-    episode,
-    notes,
-    startedAtUtc: now,
-    createdAtUtc: now,
-  });
+  // Only 'episode' selects the Episode-suffix path; every other stored value
+  // (including the column default 'date') derives under Date (design D7 —
+  // the two persisted values are 'date' and 'episode').
+  const titleSuffix =
+    String(showRow.title_suffix ?? 'date')
+      .trim()
+      .toLowerCase() === 'episode'
+      ? 'episode'
+      : 'date';
+  const explicitTitle = (body.title ?? '').trim();
+  const rawEpisode = (body.episode ?? '').trim();
+  const nowMs = c.env.ports.clock.now();
+  const now = isoZ(new Date(nowMs));
+
+  let created: { id: string; title: string; episode: string };
+  try {
+    created = catalog.sessions.createSessionForShow({
+      showId: body.show_id.trim(),
+      showCode,
+      titleSuffix,
+      explicitTitle,
+      rawEpisode,
+      frameRate: body.frame_rate,
+      startOffsetFrames: body.start_offset_frames,
+      notes,
+      startedAtUtc: now,
+      createdAtUtc: now,
+      nowMs,
+    });
+  } catch (e) {
+    if (e instanceof ValidationError) throw new ApiError(400, e.message);
+    throw e;
+  }
   // Instantiate the hub so its transport row exists.
-  getSessionHub(c, id).ensure();
+  getSessionHub(c, created.id).ensure();
   return c.json({
-    id,
-    title,
+    id: created.id,
+    title: created.title,
     frame_rate: body.frame_rate,
     start_offset_frames: body.start_offset_frames,
     show_id: body.show_id.trim(),
-    episode,
+    episode: created.episode,
     notes,
   });
 });

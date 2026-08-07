@@ -115,6 +115,11 @@ export class ShowsStore {
     paletteCustomJson: string;
   }): string {
     const sid = crypto.randomUUID();
+    // next_episode is soft-retained but UNUSED as of session-title-suffix
+    // (design D1, gate ruling 2026-08-02) — left at its column default (1)
+    // and never bumped (see sessionIndexStore.ts createSessionIndex). The
+    // INSERT omits title_suffix so newly created shows pick up the column
+    // default 'date' (0005_show_title_suffix.sql, design D7).
     this.db.run(
       `INSERT INTO shows
          (id, studio_id, name, show_code, next_episode, categories_json,
@@ -149,6 +154,11 @@ export class ShowsStore {
     return this.db.tx(() => {
       const row = this.getShowRow(showId);
       if (row === null) return false;
+      // fields.next_episode (below) is soft-retained but UNUSED as of
+      // session-title-suffix (design D1, gate ruling 2026-08-02) — the
+      // column stays writable here for rollback safety; product code no
+      // longer treats it as a live counter (no create-path bump; see
+      // sessionIndexStore.ts).
       const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
       const sc =
         fields.show_code !== undefined

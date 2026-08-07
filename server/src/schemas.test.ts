@@ -32,7 +32,7 @@ describe('logBodySchema.metadata cap', () => {
 });
 
 describe('newSessionBodySchema', () => {
-  it('defaults frame_rate=24, start_offset=0 and requires show_id+episode', () => {
+  it('defaults frame_rate=24, start_offset=0 and requires show_id', () => {
     const r = newSessionBodySchema.safeParse({ show_id: 's', episode: '001' });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data).toMatchObject({ frame_rate: 24, start_offset_frames: 0 });
@@ -45,8 +45,13 @@ describe('newSessionBodySchema', () => {
       newSessionBodySchema.safeParse({ show_id: 's', episode: '1', frame_rate: 121 }).success,
     ).toBe(false);
   });
-  it('requires non-empty episode', () => {
-    expect(newSessionBodySchema.safeParse({ show_id: 's', episode: '' }).success).toBe(false);
+  // session-title-suffix (design D6): blank/omitted episode is valid at the
+  // schema level — the create-path handler (not the schema) enforces
+  // "required" conditionally on the show's title_suffix + whether an
+  // explicit title bypasses derivation (see sessions.int.test.ts).
+  it('allows a blank or omitted episode', () => {
+    expect(newSessionBodySchema.safeParse({ show_id: 's', episode: '' }).success).toBe(true);
+    expect(newSessionBodySchema.safeParse({ show_id: 's' }).success).toBe(true);
   });
 });
 

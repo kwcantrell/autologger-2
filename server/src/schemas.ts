@@ -36,7 +36,11 @@ export const newSessionBodySchema = z.object({
   frame_rate: z.number().min(1.0).max(120.0).default(24.0),
   start_offset_frames: z.number().int().min(0).default(0),
   show_id: z.string().min(1).max(120),
-  episode: z.string().min(1).max(80),
+  // session-title-suffix (design D6): blank/omitted episode is valid at the
+  // schema level — whether it's REQUIRED depends on the linked show's
+  // title_suffix (date vs episode) and whether an explicit title bypasses
+  // derivation, both enforced by the create-path handler (400), not here.
+  episode: z.string().max(80).nullish(),
   notes: z.string().max(2000).nullish(),
 });
 export type NewSessionBody = z.infer<typeof newSessionBodySchema>;
