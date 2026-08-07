@@ -20,7 +20,7 @@
 
 ## 2. Component model & coverage gate
 
-- [ ] 2.1 TDD the model schema + coverage gate: types for components (name, `kind`:
+- [x] 2.1 TDD the model schema + coverage gate: types for components (name, `kind`:
       runtime | datastore | external | tooling | test-harness, description, globs,
       capabilities, authoredDiagrams), declared relationships with evidence rules,
       capability scopes (component | cross-cutting + set | process), and the reasoned
@@ -28,7 +28,7 @@
       `.ts`/`.tsx` via `git ls-files`: orphan (not excluded) and overlap each fail naming
       the file and nearest component; no glob may be a bare workspace source root
       (fixture-tree unit tests).
-- [ ] 2.2 Author the real component model covering the whole tracked tree — module
+- [x] 2.2 Author the real component model covering the whole tracked tree — module
       clusters (routers, session spine, catalog DB, node infra, auth, aiV2, logImport,
       middleware, web SPA, companion, e2e), `server/src/test/` as a `test-harness`
       component, `fixtures/api-responses/` as the contract-fixtures component, homes for
