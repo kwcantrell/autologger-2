@@ -184,3 +184,26 @@ new→date, ignore/strip).
   (repointed), and the delta spec's Timeline requirement retitled/reworded to
   the session-meta display. Documents read: all four artifacts + both delta
   specs + live code sweep.
+
+- **2026-08-07 — Apply record + whole-change layered audit:** applied via four
+  sequential implementer subagents (d1ed9f8 migration/derivation/create,
+  06c08e4 show wire + deck_title, c6f8f96 web UI, 283fd16 sweep/gates) atop the
+  staleness-read reconciliation (83872f2). Phase reviews: Unit A CLEAN (3 low
+  observations — archived-inclusion test added in D; '1'→'' whitespace-episode
+  corner and ≥2^53 rename slot-math recorded residual), Unit B PASS (F1 interim
+  Next-Ep silent-discard closed by C's control deletion; F2 companion label
+  test added in C; F3 stale e2e comments + F4 dead deck-title params closed in
+  D — F3's fix surfaced and fixed a real e2e helper gap: episode fill only when
+  the field renders). Units C/D deferred to the audit. Audit verdict:
+  **MERGEABLE** — Suffix/episode/meta requirements conformant with non-vacuous
+  tests (Timeline stripTrailing mock verified), all three seams verified
+  end-to-end, 25 re-blessed snapshots all explained by the D5 title-format flip
+  or the session modals, 12/12 tasks ticked (2.3's rewrite via the recorded
+  staleness read, not silent reinterpretation), every scenario mapped to a
+  named test. Minor observations recorded: one foreign commit in the span
+  (3b21112, event-generate-hardening residual closure, zero file overlap —
+  process note); updateShowFields' internal next_episode param soft-retained;
+  Episode→Episode switch keeps typed episode (conforms — stale-clear is
+  Date-scoped); mixed-suffix profile fixture reflects real capture flow. Final
+  gates green: typecheck, server 1228/web 914/companion 21, lint 0, e2e 20/20,
+  visual 44 clean post-bless.
