@@ -18,24 +18,15 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { model } from '../model/components';
-import { checkCoverage, isMappedOrExcluded } from '../model/coverage';
+import { checkCoverage, isMappedOrExcluded, mappedFiles } from '../model/coverage';
 import { diffEdgeSnapshot, type EdgeSnapshot, projectComponentEdges } from '../model/edges';
 import { extractFileImports } from '../src/lib/extractImports';
-import { listTrackedFiles, matchesAnyGlob, repoRoot } from '../src/lib/repo';
+import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 
 export function gatesNotYetImplementedMessage(): string {
   return (
     'web-docs: relationship evidence, capability accounting, and diagram validity ' +
     'gates not yet implemented — land in later phases.'
-  );
-}
-
-/** Tracked .ts/.tsx files assigned to a real (glob-bearing) component — the extractor's roots. */
-function mappedFiles(trackedFiles: string[]): string[] {
-  return trackedFiles.filter((file) =>
-    model.components.some(
-      (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
-    ),
   );
 }
 
@@ -59,7 +50,7 @@ function runEdgeSnapshotGate(): string[] {
   const root = repoRoot();
   const trackedTsFiles = listTrackedFiles({ extensions: ['.ts', '.tsx'] });
   const extraction = extractFileImports({
-    files: mappedFiles(trackedTsFiles),
+    files: mappedFiles(trackedTsFiles, model),
     repoRoot: root,
     isKnown: (file) => isMappedOrExcluded(file, model),
   });

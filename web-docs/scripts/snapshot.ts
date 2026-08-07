@@ -9,25 +9,17 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { model } from '../model/components';
-import { isMappedOrExcluded } from '../model/coverage';
+import { isMappedOrExcluded, mappedFiles } from '../model/coverage';
 import { type EdgeSnapshot, projectComponentEdges } from '../model/edges';
 import { extractFileImports } from '../src/lib/extractImports';
-import { listTrackedFiles, matchesAnyGlob, repoRoot } from '../src/lib/repo';
+import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 
 const SNAPSHOT_PATH = 'web-docs/model/edges.snapshot.json';
-
-function mappedFiles(trackedFiles: string[]): string[] {
-  return trackedFiles.filter((file) =>
-    model.components.some(
-      (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
-    ),
-  );
-}
 
 export function buildSnapshot(root: string): EdgeSnapshot {
   const trackedTsFiles = listTrackedFiles({ extensions: ['.ts', '.tsx'], cwd: root });
   const extraction = extractFileImports({
-    files: mappedFiles(trackedTsFiles),
+    files: mappedFiles(trackedTsFiles, model),
     repoRoot: root,
     isKnown: (file) => isMappedOrExcluded(file, model),
   });

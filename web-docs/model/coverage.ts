@@ -42,6 +42,23 @@ export function isMappedOrExcluded(file: string, model: ComponentModel): boolean
   );
 }
 
+/**
+ * Filters a tracked-file list down to files assigned to a real (glob-
+ * bearing) component — the extractor's roots (task 3.1/3.2). Excluded
+ * files and files matching no component are dropped (extraction never
+ * treats them as program roots; `isMappedOrExcluded` separately governs
+ * whether an *import into* such a file is an error). Single shared
+ * definition — both `scripts/check.ts` and `scripts/snapshot.ts` import
+ * this rather than each re-deriving it.
+ */
+export function mappedFiles(trackedFiles: string[], model: ComponentModel): string[] {
+  return trackedFiles.filter((file) =>
+    model.components.some(
+      (component) => component.globs.length > 0 && matchesAnyGlob(file, component.globs),
+    ),
+  );
+}
+
 /** Structural checks on the model itself, independent of any tracked-file list. */
 export function validateModelStructure(model: ComponentModel): CoverageIssue[] {
   const issues: CoverageIssue[] = [];
