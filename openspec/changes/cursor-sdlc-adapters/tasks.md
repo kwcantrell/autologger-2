@@ -45,8 +45,8 @@
 
 ## 4. Final gates
 
-- [ ] 4.1 `npm run typecheck` + `npm test` green (guard runs in the web project).
-- [ ] 4.2 Declared-proportionality gate skip: no runtime surface (adapters, one repo-scan
+- [x] 4.1 `npm run typecheck` + `npm test` green (guard runs in the web project).
+- [x] 4.2 Declared-proportionality gate skip: no runtime surface (adapters, one repo-scan
       test, skill-text customization), so `npm run e2e` and `npm run e2e:visual` are
       SKIPPED; state this in the ledger. Whole-branch review per the apply skill.
 
