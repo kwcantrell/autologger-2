@@ -71,13 +71,19 @@ export type EventUpdateBody = z.infer<typeof eventUpdateBodySchema>;
 export const eventGenerateBodySchema = z
   .object({
     regenerate: z.boolean().optional(),
+    // event-generate-hardening D5: DoS-hardening bounds, not semantic limits —
+    // 500 entries exceeds any realistic instruction-bearing set; category_id
+    // mirrors eventUpdateBodySchema.category's 200-char cap (ids are UUIDs);
+    // option_label mirrors the settings write path's 200-char dropdown-option
+    // cap (validateCategoriesList), so no storable label is ever excluded.
     selection: z
       .array(
         z.object({
-          category_id: z.string(),
-          option_label: z.string().nullable().optional(),
+          category_id: z.string().max(200),
+          option_label: z.string().max(200).nullable().optional(),
         }),
       )
+      .max(500)
       .optional(),
   })
   .refine((body) => !(body.regenerate === true && (body.selection?.length ?? 0) > 0), {

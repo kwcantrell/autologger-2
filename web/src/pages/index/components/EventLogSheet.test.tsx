@@ -111,7 +111,14 @@ function statusFixture(): SessionStatus {
 
 function eventsFixture(): EventsResponse {
   const events = [logEventFixture()];
-  return { events, total: events.length, logged_event_count: events.length, offset: 0, limit: 200 };
+  return {
+    events,
+    total: events.length,
+    logged_event_count: events.length,
+    offset: 0,
+    limit: 200,
+    has_auto_generated: false,
+  };
 }
 
 beforeEach(() => {

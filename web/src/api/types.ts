@@ -437,6 +437,13 @@ export interface EventsResponse {
   logged_event_count: number;
   offset: number;
   limit: number;
+  /**
+   * event-generate-hardening (D1) — whether any event in the WHOLE session
+   * (not just this page) carries `auto_generated === true` in its metadata.
+   * Required (not optional): an optional field would defeat the conformance
+   * check's assignability-forcing function.
+   */
+  has_auto_generated: boolean;
 }
 
 /**

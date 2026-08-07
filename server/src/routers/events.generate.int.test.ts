@@ -678,6 +678,21 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     expect(res.status).toBe(400);
     expect(neverSpawned(sessionId)).toBe(true);
   });
+
+  it('over-bound selection (501 entries) returns 400 before any delete/spawn (D5)', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedAutoSlateEvent(sessionId);
+    const selection = Array.from({ length: 501 }, (_, i) => ({ category_id: `c${i}` }));
+
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), { selection });
+
+    expect(res.status).toBe(400);
+    expect(neverSpawned(sessionId)).toBe(true);
+    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+      true,
+    );
+  });
 });
 
 // ── Configured behavior: success / cap / failure ────────────────────────────

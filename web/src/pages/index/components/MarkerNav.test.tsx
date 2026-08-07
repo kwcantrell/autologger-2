@@ -96,6 +96,7 @@ function eventsResponseFixture(events: LogEvent[]): EventsResponse {
     logged_event_count: events.length,
     offset: 0,
     limit: 1000,
+    has_auto_generated: false,
   };
 }
 

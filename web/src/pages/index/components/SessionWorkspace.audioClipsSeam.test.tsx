@@ -232,6 +232,7 @@ function mockApi() {
         logged_event_count: EVENTS.length,
         offset: 0,
         limit: 2000,
+        has_auto_generated: false,
       } satisfies EventsResponse;
     }
     throw new Error(`unexpected apiFetch call: ${path}`);

@@ -109,7 +109,14 @@ function statusFixture(): SessionStatus {
 }
 
 function emptyEventsFixture(): EventsResponse {
-  return { events: [], total: 0, logged_event_count: 0, offset: 0, limit: 200 };
+  return {
+    events: [],
+    total: 0,
+    logged_event_count: 0,
+    offset: 0,
+    limit: 200,
+    has_auto_generated: false,
+  };
 }
 
 function autoEventFixture(): LogEvent {
@@ -339,6 +346,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
         logged_event_count: 1,
         offset: 0,
         limit: 200,
+        has_auto_generated: true,
       },
     });
     renderSheet(SESSION_A);
@@ -365,6 +373,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
         logged_event_count: 1,
         offset: 0,
         limit: 200,
+        has_auto_generated: true,
       },
     });
     renderSheet(SESSION_A);
@@ -393,6 +402,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
         logged_event_count: 1,
         offset: 0,
         limit: 2000,
+        has_auto_generated: true,
       },
     });
     renderSheet(SESSION_A);
