@@ -41,7 +41,7 @@
 
 ## 3. Edge extraction, classification & snapshot gate
 
-- [ ] 3.1 TDD file-level import extraction: `ts.Program` built from the mapped-file list
+- [x] 3.1 TDD file-level import extraction: `ts.Program` built from the mapped-file list
       (never tsconfig `include`/`exclude`), per-workspace `compilerOptions` for
       resolution across the four regimes (server Bundler + `scripts/`; web bundler +
       `paths` aliases + `.ts` extensions; companion NodeNext `.js`→`.ts`; e2e). Literal
@@ -49,7 +49,7 @@
       with call sites; unresolvable non-TS specifiers (CSS/images/assets) ignored; an
       import resolving to an unmapped, unexcluded in-repo file fails naming both files
       (fixture-based unit tests). Extractor runs under `tsx`.
-- [ ] 3.2 TDD component-edge projection, `production`/`test` classification (test file
+- [x] 3.2 TDD component-edge projection, `production`/`test` classification (test file
       or test-harness endpoint ⇒ test edge — the live `web → server/src/aiV2/
       aggregates.ts` test-only import is the characterization case), and the snapshot
       gate: derived set diffed against committed
