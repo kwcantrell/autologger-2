@@ -1,0 +1,276 @@
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f4f5f7;
+  --fg: #1a1d21;
+  --fg-muted: #5c636e;
+  --border: #d9dce1;
+  --link: #364fc7;
+  --badge-bg: #e9ecef;
+  --badge-fg: #333;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --bg-alt: #1f2227;
+    --fg: #e7e9ec;
+    --fg-muted: #a3a9b3;
+    --border: #33373f;
+    --link: #91a7ff;
+    --badge-bg: #2a2e35;
+    --badge-fg: #d0d3d8;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--link);
+}
+
+code {
+  font-family: var(--mono);
+  background: var(--bg-alt);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.site-title {
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.site-header nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.quick-jump {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+}
+
+.site-main {
+  padding: 1.25rem;
+  max-width: 72rem;
+  margin: 0 auto;
+}
+
+.lede {
+  color: var(--fg-muted);
+  max-width: 60rem;
+}
+
+.toggles {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  display: flex;
+  gap: 1.5rem;
+  margin: 1rem 0;
+}
+
+.toggles legend {
+  padding: 0 0.4rem;
+  color: var(--fg-muted);
+}
+
+.mermaid-diagram {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  background: var(--bg-alt);
+}
+
+.mermaid-diagram svg {
+  max-width: none;
+}
+
+.diagram-error {
+  color: #e03131;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1em 0.5em;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--badge-fg);
+  vertical-align: middle;
+}
+
+.badge-pending {
+  background: #fff3bf;
+  color: #664d03;
+}
+
+.badge-authored {
+  background: #d0bfff;
+  color: #362466;
+}
+
+.badge-mechanical {
+  background: #99e9f2;
+  color: #0b525b;
+}
+
+.badge-gated {
+  background: #ffc9c9;
+  color: #7d1a1a;
+  margin-left: 0.5em;
+}
+
+.legend .kind-legend {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.legend .swatch {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 3px;
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+
+.tinted-swatch {
+  background: transparent;
+  border: 3px solid;
+}
+
+.l0-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 60rem) {
+  .l0-page {
+    grid-template-columns: 1fr;
+  }
+}
+
+.l0-sidebar {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  background: var(--bg-alt);
+}
+
+.change-list,
+.l0-sidebar ul {
+  list-style: none;
+  padding: 0;
+}
+
+.change-list > li {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0;
+}
+
+.change-name {
+  font-weight: 600;
+  margin: 0;
+}
+
+.change-proposal-path {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin: 0.1rem 0 0.4rem;
+}
+
+.change-capabilities {
+  margin: 0;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.spec-text {
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  background: var(--bg-alt);
+  padding: 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.requirement {
+  margin: 1.5rem 0;
+}
+
+.scenario {
+  margin-left: 1rem;
+}
+
+.badge-kind-runtime {
+  background: #4c6ef5;
+  color: #fff;
+}
+.badge-kind-datastore {
+  background: #12b886;
+  color: #fff;
+}
+.badge-kind-external {
+  background: #fa5252;
+  color: #fff;
+}
+.badge-kind-tooling {
+  background: #868e96;
+  color: #fff;
+}
+.badge-kind-test-harness {
+  background: #adb5bd;
+  color: #000;
+}
