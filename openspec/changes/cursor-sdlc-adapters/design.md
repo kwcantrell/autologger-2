@@ -204,7 +204,11 @@ normative in the capability spec.
 - [Guard and adapters are same-commit editable; a session that edits both and skips
   review defeats the tripwire] → RESIDUAL, recorded honestly: the guard protects against
   drift-by-accident and forces conspicuousness under review; it does not constrain a
-  session that also rewrites the guard.
+  session that also rewrites the guard. The `mcp.json.example` machine-specific-path
+  denylist is the same shapes-not-proof pattern: it now also catches UNC paths
+  (`\\server\share`) and tilde-user paths (`~user/...`) alongside drive/`/Users/`/`/home/`
+  shapes, but exotic or novel absolute-path shapes it doesn't enumerate remain a
+  review-time catch, not a guaranteed one.
 - [Supply chain: version pin has no integrity hash; transitive deps resolve fresh;
   example↔local-copy drift is silent] → RESIDUAL: the guard's exact-literal check makes
   package changes reviewable; deeper controls (lockfile'd install) out of scope.

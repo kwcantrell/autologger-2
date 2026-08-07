@@ -474,13 +474,16 @@ describe('cursor adapter surface — MCP config portability (D4)', () => {
 
   it('mcp.json.example contains no machine-specific absolute path (spec requirement 2)', () => {
     const content = fs.readFileSync(path.join(REPO_ROOT, '.cursor/mcp.json.example'), 'utf8');
-    // Denylist, not an allowlist: a Windows drive path (any letter), or a
-    // /Users/ or /home/ absolute path, all indicate a real machine's local
+    // Denylist, not an allowlist: a Windows drive path (any letter), a
+    // /Users/ or /home/ absolute path, a UNC path (\\server\share), or a
+    // tilde-user path (~user/...) all indicate a real machine's local
     // checkout leaked into the tracked example (the recorded B3 defect
     // shape). The placeholder "/absolute/path/to/your/checkout" contains
     // none of these substrings and must keep passing.
     expect(content).not.toMatch(/[A-Za-z]:\\/);
     expect(content).not.toMatch(/\/Users\//);
     expect(content).not.toMatch(/\/home\//);
+    expect(content).not.toMatch(/\\\\/);
+    expect(content).not.toMatch(/~[A-Za-z]/);
   });
 });
