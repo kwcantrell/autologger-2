@@ -299,3 +299,17 @@ are synchronous" invariant.)
   which query feeds the flag; confirm copy omits the zero-created-keep edge
   (nothing false). Final gates green: typecheck, full tests, lint 0, e2e 20/20,
   visual 44 (no re-bless).
+
+- **2026-08-07 — Residual closure:** fake-CLI pause hook added (file-signal);
+  mid-run GET-visibility and mid-run manual-delete now pinned by int tests
+  `events/generate — mid-run interleaving (real HTTP requests during a paused
+  CLI turn) > mid-run GET …/events still returns the prior auto row
+  (has_auto_generated true) while paused; after resume, success deletes
+  exactly that row` and `… > mid-run manual DELETE of the only snapshotted id
+  leaves deleted:0 after resume — the run's own created rows and the manual
+  row persist` (`events.generate.int.test.ts`), backed by a new paused
+  fixture (`fake-claude-events-paused.mjs`) that makes one real create_event
+  call, blocks on a cwd-local file signal (no env var — the runner's minimal
+  child-env whitelist never forwards test-only vars), then completes on
+  signal. The eventStore-level unit test (task 2.3(d)) stays as complementary
+  coverage of the same property at the deciding layer.

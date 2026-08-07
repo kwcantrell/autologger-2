@@ -21,7 +21,7 @@
 // pre-existing ai/chat route (authorized by the same delta). No other
 // route's status or shape is asserted.
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,15 @@ const EVENTS_PARTIAL_FAIL_FIXTURE = fileURLToPath(
 // not merely mocked.
 const NO_TOOL_CALLS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
+);
+// event-generate-hardening residual closure (2026-08-07) — the paused
+// double: makes ONE real create_event call, blocks on a file signal, then
+// makes the remaining two and exits like EVENTS_SUCCESS_FIXTURE. Lets the
+// "mid-run interleaving" tests below issue a REAL HTTP request against the
+// app while a generate run is still in flight (see the fixture's own header
+// for why a file signal, not an env var).
+const EVENTS_PAUSED_FIXTURE = fileURLToPath(
+  new URL('../test/fixtures/fake-claude-events-paused.mjs', import.meta.url),
 );
 
 const EVENT_GENERATE_FAILURE_DETAIL = 'Event generation failed.';
@@ -246,6 +255,32 @@ function recordedArgv(sessionId: string): string[] {
 
 function recordedStdin(sessionId: string): string {
   return readFileSync(join(stableSessionCwd(sessionId), '.fixture-stdin.txt'), 'utf8');
+}
+
+// event-generate-hardening residual closure — EVENTS_PAUSED_FIXTURE's two
+// signal files, both inside the stable per-session cwd the test already
+// knows without any env plumbing (see the fixture's header).
+function pausedMarkerPath(sessionId: string): string {
+  return join(stableSessionCwd(sessionId), '.fixture-paused.txt');
+}
+
+function resumeSignalPath(sessionId: string): string {
+  return join(stableSessionCwd(sessionId), '.fixture-resume.txt');
+}
+
+const PAUSE_POLL_INTERVAL_MS = 20;
+const PAUSE_POLL_TIMEOUT_MS = 4000;
+
+/** Deterministic wait for the fixture's "I have paused" marker — no bare
+ * sleeps. Fails loudly (rather than hanging) if the marker never appears. */
+async function waitForFile(path: string, timeoutMs = PAUSE_POLL_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${path}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, PAUSE_POLL_INTERVAL_MS));
+  }
 }
 
 function mockSuccessfulTurn() {
@@ -984,6 +1019,105 @@ describe('events/generate — configured behavior (real create_event MCP round t
       } finally {
         spy.mockRestore();
       }
+    },
+  );
+});
+
+// event-generate-hardening residual closure (2026-08-07) — the two
+// delete-after-success properties that the archived change's apply-time
+// audit could only pin structurally/at the eventStore unit level, because
+// the fake-CLI harness had no way to pause a fixture subprocess mid-turn and
+// interleave a real HTTP request (events.generate.int.test.ts's original
+// header note; eventStore.test.ts's "mid-run manual delete" comment).
+// EVENTS_PAUSED_FIXTURE now supplies that pause; these tests exercise it
+// end-to-end through the real app.
+describe('events/generate — mid-run interleaving (real HTTP requests during a paused CLI turn)', () => {
+  it(
+    'mid-run GET …/events still returns the prior auto row (has_auto_generated true) while ' +
+      'paused; after resume, success deletes exactly that row',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const genPromise = generateReq(sessionId, configuredEnv(EVENTS_PAUSED_FIXTURE), {
+        regenerate: true,
+      });
+
+      await waitForFile(pausedMarkerPath(sessionId));
+
+      // Mid-run, via a REAL GET through the app (not the hub helper): the
+      // pre-run auto row is still present, and has_auto_generated still
+      // reflects it — delete-after-success means the snapshot survives until
+      // the turn actually succeeds.
+      const midRunRes = await app.request(
+        `/api/sessions/${sessionId}/events`,
+        { method: 'GET' },
+        { ...env },
+      );
+      expect(midRunRes.status).toBe(200);
+      const midRunBody = (await midRunRes.json()) as {
+        events: Array<Record<string, unknown>>;
+        has_auto_generated: boolean;
+      };
+      expect(midRunBody.has_auto_generated).toBe(true);
+      expect(midRunBody.events.some((e) => e.message === 'Old generated slate')).toBe(true);
+
+      writeFileSync(resumeSignalPath(sessionId), 'resume');
+
+      const res = await genPromise;
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+      expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
+    },
+  );
+
+  it(
+    'mid-run manual DELETE of the only snapshotted id leaves deleted:0 after resume — the run’s ' +
+      'own created rows and the manual row persist',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+      const priorAutoId = listEvents(sessionId).find(
+        (e) => e.message === 'Old generated slate',
+      )?.event_id;
+      expect(priorAutoId).toBeDefined();
+
+      const genPromise = generateReq(sessionId, configuredEnv(EVENTS_PAUSED_FIXTURE), {
+        regenerate: true,
+      });
+
+      await waitForFile(pausedMarkerPath(sessionId));
+
+      // Mid-run, via a REAL DELETE through the app: an operator removes the
+      // ONLY snapshotted id before the post-success bulk delete runs.
+      const deleteRes = await app.request(
+        `/api/sessions/${sessionId}/events/${priorAutoId}`,
+        { method: 'DELETE' },
+        { ...env },
+      );
+      expect(deleteRes.status).toBe(200);
+
+      writeFileSync(resumeSignalPath(sessionId), 'resume');
+
+      const res = await genPromise;
+      expect(res.status, await res.clone().text()).toBe(200);
+      // deleteEventsByIds receives the pre-spawn snapshot verbatim, but the
+      // snapshotted row is already gone — nothing still present to remove —
+      // while the run's OWN 3 new rows and the manual row are untouched.
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 0 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+      expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
     },
   );
 });
