@@ -16,11 +16,11 @@
 
 ## 2. Adapter files
 
-- [ ] 2.1 Write `AGENTS.md` pointer (~12 lines: CLAUDE.md is normative, read fully, no
+- [x] 2.1 Write `AGENTS.md` pointer (~12 lines: CLAUDE.md is normative, read fully, no
       restatements, D9 handoff sentence) and `.cursor/rules/openspec-sdlc.mdc`
       (`alwaysApply: true`; three encodings by path; read-before-design-bearing; the four
       bounded stop-conditions per D3).
-- [ ] 2.2 Write the opsx command adapters per D1: five runnable-verb
+- [x] 2.2 Write the opsx command adapters per D1: five runnable-verb
       pointers (explore/propose/update/sync/archive; propose carries TWO stop-conditions
       — D8's gate stop, phrased to avoid the guard's banned-phrase collision, and D9's
       panel-dispatch-or-handoff) and the apply stop/handoff adapter.
