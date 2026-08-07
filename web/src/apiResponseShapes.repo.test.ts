@@ -1225,9 +1225,9 @@ const EXEMPTIONS: readonly Exemption[] = [
       'The one global `fetch` inside the shared helper — the seam every typed call goes through. Its shape is whatever the caller asserts, checked at those call sites.',
   },
   {
-    key: 'api/client.ts :: const j = (await res.json()) as { detail?: unknown };',
+    key: 'api/client.ts :: const j = (await res.json()) as { detail?: unknown; message?: unknown };',
     reason:
-      'The shared error probe (audit §4, last row). Reads only `detail` off a non-2xx body and narrows it with a `typeof` check before use; no payload type is asserted.',
+      'The shared error probe (audit §4, last row). Reads only `detail`/`message` off a non-2xx body and narrows each with a `typeof` check before use; no payload type is asserted.',
   },
   {
     key: "api/client.ts :: if (ct.includes('application/json')) return res.json() as Promise<T>;",
@@ -1327,6 +1327,30 @@ const EXEMPTIONS: readonly Exemption[] = [
       'a 200 at all — a capture is the right answer if this shape ever grows beyond the two-key literal.',
   },
 
+  // --- Types declared OUTSIDE `api/types.ts` — captured AND fixture-checked,
+  // but structurally invisible to this guard's covered-set, which only counts
+  // a name the site's file imports from the canonical `api/types` module
+  // (coverage clause (iv)) — a hook-local union or feature-module interface
+  // can never satisfy that no matter how well it is checked. Each shape below
+  // IS asserted against a captured fixture in api/types.conformance.test.ts;
+  // these entries exist because the guard cannot see those checks, not
+  // because the shapes are unchecked.
+  {
+    key: 'api/hooks/useTranscriptGenerationStatus.ts :: apiFetch<TranscriptGenerationStatus>(TRANSCRIPT_GENERATION_STATUS_PATH)',
+    reason:
+      'pr-3 remediation — TranscriptGenerationStatus is declared hook-locally, not in api/types, so no conformance check can confer coverage on this site (clause (iv)). Both union branches ARE captured from the real handler (fixtures transcriptGenerationStatusIdle/transcriptGenerationStatusBusy, the busy one taken while transcriptGenerationLock was genuinely held) and type-level asserted in api/types.conformance.test.ts, including the redacted-nulls busy variant. Moving the union into api/types.ts would retire this entry.',
+  },
+  {
+    key: 'pages/index/batchImport/logImportClient.ts :: apiFetch<{ job_id: string }>(`shows/<var>/log-import`) [POST]',
+    reason:
+      'pr-3 remediation — an inline object type containing no PascalCase name acquires nothing the covered-set can mark. The body IS captured from the real handler behind the SHEETS_LOG_IMPORT_ENABLED gate (fixtures/api-responses/logImportJobCreate.json) and asserted against the same `{ job_id: string }` annotation in api/types.conformance.test.ts.',
+  },
+  {
+    key: 'pages/index/batchImport/logImportClient.ts :: apiFetch<LogImportJobStatus>(`log-import/<var>`)',
+    reason:
+      'pr-3 remediation — LogImportJobStatus is declared in this feature module, not api/types, so its conformance check cannot confer coverage (clause (iv)). A real TERMINAL failed-job body is captured (fixtures/api-responses/logImportJobStatus.ts — a .ts fixture because of the `status` literal union) and type-level asserted in api/types.conformance.test.ts.',
+  },
+
   // --- Untyped `apiFetch(…)` — population (c), audit §3. Six sites, all
   // discarding the response, so the inferred `unknown` never reaches a
   // consumer. Verdict row 40 (CONFORMS vacuously — no type is asserted).
@@ -1354,6 +1378,21 @@ const EXEMPTIONS: readonly Exemption[] = [
   {
     key: 'pages/index/hooks/useRecoveryStopWarning.ts :: apiFetch<>(`sessions/<var>/events`) [POST]',
     reason: 'audit §3/§5 row 40 — untyped recovery-stop event POST; value unused.',
+  },
+  {
+    key: "pages/index/batchImport/runner.ts :: apiFetch<>('profile') [PUT]",
+    reason:
+      'pr-3 remediation — untyped PUT /api/profile from `alignActiveShow`; the handler emits the full ProfilePayload but the batch runner awaits and discards it (same shape/site class as the NewSessionModal PUT above).',
+  },
+  {
+    key: 'pages/index/batchImport/runner.ts :: apiFetch<>(`sessions/<var>/local-audio-import?<var>`) [POST]',
+    reason:
+      'pr-3 remediation — untyped; POST local-audio-import has exactly one 2xx emission, the literal `{ok: true}` (server/src/routers/sessions.ts local-audio-import handler); every other path throws ApiError. Value unused by the runner.',
+  },
+  {
+    key: 'pages/index/batchImport/runner.ts :: apiFetch<>(`sessions/<var>`) [DELETE]',
+    reason:
+      'pr-3 remediation — untyped DELETE session on the batch rollback path; emits `{ok: true, hidden: true}` (audit §5 row 24 shape); value unused.',
   },
 
   // --- Untyped `fetchAdmin(…)` — population (b)'s five type-argument-free

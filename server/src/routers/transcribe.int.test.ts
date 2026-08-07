@@ -4,7 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { app, env, envWith } from '../test/harness';
-import { catalogFor, seededSession } from '../test/helpers';
+import {
+  catalogFor,
+  loginCookie,
+  seededSession,
+  seedSession,
+  seedShow,
+  seedStudio,
+  seedUser,
+} from '../test/helpers';
 import { aiChatTurns } from './aiChatRegistry';
 import { stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests } from './aiMcpServer';
@@ -857,6 +865,75 @@ describe('transcript generation', () => {
     expect(firstRes.status).toBe(200);
   });
 
+  it('a failed run releases the process-wide lock on its own — no manual reset needed', async () => {
+    // Guards the `finally` in generateTranscriptWords: every other failure-path
+    // test here is followed by this suite's unconditional afterEach reset, so
+    // dropping that `finally` would wedge the lock without failing any of them.
+    // This test asserts release BEFORE any reset runs.
+    const s = seededSession().sessionId;
+    // Zero audio segments → the run fails (400 no_audio) AFTER acquiring the
+    // process-wide slot.
+    const res = await generate(s);
+    expect(res.status).toBe(400);
+
+    // WITHOUT any reset: the slot must already be free, and a fresh
+    // acquisition must succeed.
+    expect(transcriptGenerationLock.getLock()).toBeNull();
+    expect(transcriptGenerationLock.tryAcquire('probe-session')).toBe(true);
+    transcriptGenerationLock.release();
+  });
+
+  it('409 concurrent: the enriched detail is redacted for a logged-in non-member of the holding session’s studio', async () => {
+    // Holder: a session in a studio the requester does NOT belong to.
+    const holderStudio = seedStudio();
+    const holderShow = seedShow({ studioId: holderStudio });
+    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
+    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
+
+    // Requester: member of their own session's studio only.
+    const myStudio = seedStudio();
+    const myShow = seedShow({ studioId: myStudio });
+    const mySession = seedSession({ showId: myShow });
+    const cookie = await loginCookie(seedUser({ studios: [myStudio] }));
+
+    const res = await generate(
+      mySession,
+      { headers: { Cookie: cookie } },
+      deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { detail: string };
+    // The identifier-free generic detail — never the holder's id or title.
+    expect(body.detail).toBe(
+      'A transcript generation run is already in progress on this deployment; try again once it completes.',
+    );
+    expect(body.detail).not.toContain(holderSession);
+    expect(body.detail).not.toContain('Foreign Holder Title');
+  });
+
+  it('409 concurrent: a logged-in member of the holding session’s studio keeps the enriched detail', async () => {
+    const holderStudio = seedStudio();
+    const holderShow = seedShow({ studioId: holderStudio });
+    const holderSession = seedSession({ showId: holderShow, title: 'Visible Holder Title' });
+    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
+
+    // Requester: member of BOTH studios — their own (to pass requireSession)
+    // and the holder's (to see its identifiers).
+    const myStudio = seedStudio();
+    const myShow = seedShow({ studioId: myStudio });
+    const mySession = seedSession({ showId: myShow });
+    const cookie = await loginCookie(seedUser({ studios: [myStudio, holderStudio] }));
+
+    const res = await generate(
+      mySession,
+      { headers: { Cookie: cookie } },
+      deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { detail: string };
+    expect(body.detail).toContain('Visible Holder Title');
+  });
+
   it('502 upstream failure preserves existing words', async () => {
     const s = seededSession().sessionId;
     await uploadSegment(s, SEG1);
@@ -1068,6 +1145,60 @@ describe('transcript generation lock status', () => {
       in_flight: true,
       session_id: ghostId,
       session_title: null,
+      started_at: new Date(startedAtMs).toISOString(),
+    });
+  });
+
+  // ── Cross-tenant redaction (pr-3-review) — the lock is process-wide, so the
+  // holder can belong to a studio the requester is not a member of. Sibling
+  // routes close the existence/title oracle by 404ing non-members; here
+  // busy-ness stays truthful but the identifiers are nulled (same key set,
+  // null values). The anonymous `busy:` test above pins the dev-mode
+  // (REQUIRE_LOGIN=0, user === null) full-detail behavior.
+
+  it('busy for a logged-in NON-member of the holder’s studio: identifiers are null, busy-ness truthful', async () => {
+    const holderStudio = seedStudio();
+    const holderShow = seedShow({ studioId: holderStudio });
+    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
+    const startedAtMs = 1_700_000_000_000;
+    expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
+
+    const otherStudio = seedStudio();
+    const cookie = await loginCookie(seedUser({ studios: [otherStudio] }));
+
+    const res = await app.request(
+      '/api/transcript-generation/status',
+      { method: 'GET', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      in_flight: true,
+      session_id: null,
+      session_title: null,
+      started_at: new Date(startedAtMs).toISOString(),
+    });
+  });
+
+  it('busy for a logged-in MEMBER of the holder’s studio: full identifiers', async () => {
+    const holderStudio = seedStudio();
+    const holderShow = seedShow({ studioId: holderStudio });
+    const holderSession = seedSession({ showId: holderShow, title: 'Member-Visible Title' });
+    const startedAtMs = 1_700_000_000_000;
+    expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
+
+    const cookie = await loginCookie(seedUser({ studios: [holderStudio] }));
+
+    const res = await app.request(
+      '/api/transcript-generation/status',
+      { method: 'GET', headers: { Cookie: cookie } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      in_flight: true,
+      session_id: holderSession,
+      session_title: 'Member-Visible Title',
       started_at: new Date(startedAtMs).toISOString(),
     });
   });

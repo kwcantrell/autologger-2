@@ -85,6 +85,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       AI_V2_ENABLED: procEnv.AI_V2_ENABLED || '',
       AI_V2_API_KEY: procEnv.AI_V2_API_KEY || '',
       AI_V2_MAX_BUDGET_USD: procEnv.AI_V2_MAX_BUDGET_USD || '',
+      SHEETS_LOG_IMPORT_ENABLED: procEnv.SHEETS_LOG_IMPORT_ENABLED || '',
       // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
       // no business running per request. ytDlpConfigured(env) reads this.
       YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),

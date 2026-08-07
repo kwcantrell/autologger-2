@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import type { SessionStatus } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
@@ -61,7 +61,7 @@ function statusFixture(): SessionStatus {
 function mockRoutes(
   generationStatus: {
     in_flight: boolean;
-    session_id?: string;
+    session_id?: string | null;
     session_title?: string | null;
     started_at?: string;
   } = { in_flight: false },
@@ -149,6 +149,24 @@ describe('TranscribeFeed — transcript generation lock banner', () => {
 
     const generateBtn = screen.getByRole('button', { name: 'Generating…' });
     expect(generateBtn.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('renders a generic no-link banner when the server redacts the holder (another studio)', async () => {
+    // Cross-tenant redaction: session_id AND session_title are null for a
+    // requester who is not a member of the holding session's studio.
+    mockRoutes({
+      in_flight: true,
+      session_id: null,
+      session_title: null,
+      started_at: '2026-07-28T12:00:00.000Z',
+    });
+    renderFeed();
+
+    const banner = await screen.findByRole('status', { name: 'Transcript generation in progress' });
+    expect(banner.textContent).toContain('Transcribing another studio’s session');
+    expect(banner.textContent).toContain('01:05');
+    // No holder to name or navigate to — no dead link.
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('advances elapsed display on the 1s client tick', async () => {

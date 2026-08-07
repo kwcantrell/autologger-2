@@ -135,11 +135,15 @@ async function importLocalAudio(
   });
 }
 
-async function deleteSession(sessionId: string, signal: AbortSignal): Promise<void> {
-  throwIfAborted(signal);
+/**
+ * Roll back a created-but-audio-less session. Deliberately takes NO abort
+ * signal: this must run even when the failure being cleaned up IS an abort
+ * (modal close / unmount), otherwise the ghost session would match
+ * `findMatchingSession` on the next run and the stem would be skipped forever.
+ */
+async function deleteSession(sessionId: string): Promise<void> {
   await apiFetch(`sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
-    signal,
   });
 }
 
@@ -221,40 +225,43 @@ export async function runBatchImport(options: RunBatchImportOptions): Promise<vo
 
     throwIfAborted(signal);
 
-    let sessionId: string;
+    // MIME sniffing needs the real file name (with extension) for single-file
+    // pass-through blobs; stitched multi-file blobs are typed audio/wav anyway.
+    const uploadName = group.segments.length === 1 ? group.segments[0].name : stem;
+
+    // From session create until upload success, ANY failure — including abort —
+    // must attempt the delete rollback, or the audio-less session would match
+    // this stem on the next run and block it forever.
+    let sessionId: string | null = null;
     try {
       const created = await createSessionForStem(showId, stem, profile, signal);
       sessionId = created.id;
       onSessionCreated?.();
       sessions = await fetchSessions(signal);
-    } catch (err) {
-      const detail = errorDetail(err, 'Create failed');
-      state.lines.push(formatFailedLine(stem, detail));
+
+      throwIfAborted(signal);
       emit({
-        current: null,
-        percent: Math.round((clipIndex / total) * 100),
+        current: `Uploading ${stem}...`,
+        percent: Math.round(((i + 0.5) / total) * 100),
       });
-      continue;
-    }
 
-    throwIfAborted(signal);
-    emit({
-      current: `Uploading ${stem}...`,
-      percent: Math.round(((i + 0.5) / total) * 100),
-    });
-
-    try {
-      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal, stem);
+      await importLocalAudio(sessionId, blob, durationS, partDurationsS, signal, uploadName);
       state.lines.push(formatCompletedLine(stem));
     } catch (err) {
-      const detail = errorDetail(err, 'Upload failed');
-      state.lines.push(formatFailedLine(stem, detail));
-      try {
-        await deleteSession(sessionId, signal);
-        sessions = await fetchSessions(signal);
-      } catch {
-        // Best-effort rollback; a leftover empty session would block retry via match.
+      const aborted = isAbortError(err);
+      if (sessionId !== null) {
+        try {
+          await deleteSession(sessionId);
+          if (!aborted) sessions = await fetchSessions(signal);
+        } catch {
+          // Best-effort rollback; a leftover empty session would block retry via match.
+        }
       }
+      // Abort still stops the whole run — but only after the cleanup above.
+      if (aborted) throw err;
+      const fallback = sessionId === null ? 'Create failed' : 'Upload failed';
+      const detail = err instanceof Error ? err.message : fallback;
+      state.lines.push(formatFailedLine(stem, detail));
     }
 
     emit({

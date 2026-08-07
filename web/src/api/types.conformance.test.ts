@@ -56,6 +56,8 @@ import audioSegmentCreate from '../../../fixtures/api-responses/audioSegmentCrea
 import audioSegmentsList from '../../../fixtures/api-responses/audioSegmentsList.json';
 import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
+import logImportJobCreate from '../../../fixtures/api-responses/logImportJobCreate.json';
+import { logImportJobStatus } from '../../../fixtures/api-responses/logImportJobStatus';
 import { profileAnonymous } from '../../../fixtures/api-responses/profileAnonymous';
 import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
 import { profileLoggedOutOauth } from '../../../fixtures/api-responses/profileLoggedOutOauth';
@@ -73,11 +75,19 @@ import teamRename from '../../../fixtures/api-responses/teamRename.json';
 import { teamRoleChange } from '../../../fixtures/api-responses/teamRoleChange';
 import topicCreate from '../../../fixtures/api-responses/topicCreate.json';
 import topicsList from '../../../fixtures/api-responses/topicsList.json';
+import { transcriptGenerationStatusBusy } from '../../../fixtures/api-responses/transcriptGenerationStatusBusy';
+import { transcriptGenerationStatusIdle } from '../../../fixtures/api-responses/transcriptGenerationStatusIdle';
 import transcriptWordCreate from '../../../fixtures/api-responses/transcriptWordCreate.json';
 import transcriptWordsList from '../../../fixtures/api-responses/transcriptWordsList.json';
 import transportStart from '../../../fixtures/api-responses/transportStart.json';
 import transportStop from '../../../fixtures/api-responses/transportStop.json';
+import type { LogImportJobStatus } from '../pages/index/batchImport/logImportClient';
 import { fmtDateOnly } from '../shared/utils/fmtDateOnly';
+import type {
+  TranscriptGenerationStatus,
+  TranscriptGenerationStatusBusy,
+  TranscriptGenerationStatusIdle,
+} from './hooks/useTranscriptGenerationStatus';
 import type {
   ActiveStudioCategory,
   AdminDataResponse,
@@ -513,6 +523,77 @@ describe('POST …/transcript-words — the created word', () => {
     // The asymmetry CW-6 turns on, captured on the create route too: the
     // transcript-words handlers spread `{...w, session_id}`; topics do not.
     expect(check.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pr-3-review test-gap wave — the three call sites the repo guard listed as
+// unverified (useTranscriptGenerationStatus.ts and logImportClient.ts). Their
+// client types live OUTSIDE `api/types.ts` — a hook-local union and a
+// feature-module interface — so the repo guard's covered-set (which only
+// counts names imported from the canonical `api/types`) structurally cannot
+// mark those call sites covered from the checks below; each site instead
+// carries an EXEMPTIONS entry in `apiResponseShapes.repo.test.ts` pointing
+// here. The checks themselves are the same instrument as every block above:
+// captured fixture, type-level assignment, no casts.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/transcript-generation/status — both union branches', () => {
+  it('the idle capture is assignable to TranscriptGenerationStatusIdle and the union', () => {
+    const idle: TranscriptGenerationStatusIdle = transcriptGenerationStatusIdle;
+    const asUnion: TranscriptGenerationStatus = transcriptGenerationStatusIdle;
+    expect(idle.in_flight).toBe(false);
+    expect(asUnion.in_flight).toBe(false);
+    // The idle branch is the bare discriminant — no busy-only keys at all.
+    for (const key of ['session_id', 'session_title', 'started_at']) {
+      expect(key in transcriptGenerationStatusIdle).toBe(false);
+    }
+  });
+
+  it('the busy capture is assignable to TranscriptGenerationStatusBusy and the union', () => {
+    const busy: TranscriptGenerationStatusBusy = transcriptGenerationStatusBusy;
+    const asUnion: TranscriptGenerationStatus = transcriptGenerationStatusBusy;
+    expect(busy.in_flight).toBe(true);
+    expect(asUnion.in_flight).toBe(true);
+    // Captured from the dev-anonymous (holder-visible) view: identifiers
+    // populated, `started_at` an ISO instant (redacted in place).
+    expect(busy.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+    expect(busy.session_title).toBe('ATS - 2');
+    expect(busy.started_at).toMatch(/^#+-#+-#+T#+:#+:#+\.#+Z$/);
+  });
+
+  it('the cross-tenant REDACTED busy view — nulled identifiers over the same capture', () => {
+    // For a logged-in requester outside the holder's studio the server nulls
+    // `session_id`/`session_title` but keeps the key set and `started_at`
+    // (transcribe.int.test.ts pins that behaviour end-to-end). The view
+    // differs from the capture above ONLY by those nulls, so the null side of
+    // both `string | null` fields is held in place off the same captured
+    // binding rather than a second capture.
+    const redacted: TranscriptGenerationStatusBusy = {
+      ...transcriptGenerationStatusBusy,
+      session_id: null,
+      session_title: null,
+    };
+    expect(redacted.in_flight).toBe(true);
+    expect(redacted.session_id).toBeNull();
+    expect(redacted.session_title).toBeNull();
+  });
+});
+
+describe('sheets log import — the two logImportClient.ts responses', () => {
+  it("the POST capture is assignable to the call site's inline `{ job_id: string }`", () => {
+    // `startLogImport` names the type inline; this is the same annotation.
+    const created: { job_id: string } = logImportJobCreate;
+    expect(created.job_id).toMatch(/^#+-#+-#+-#+-#+$/);
+  });
+
+  it('the terminal GET capture is assignable to LogImportJobStatus', () => {
+    const check: LogImportJobStatus = logImportJobStatus;
+    // A real terminal state (failed download), captured from the live job
+    // runner — the `status` literal union is why this is a `.ts` fixture.
+    expect(check.status).toBe('failed');
+    expect(check.lines.length).toBeGreaterThan(0);
+    expect(check.error).toContain('XLSX');
   });
 });
 

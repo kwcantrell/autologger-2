@@ -12,10 +12,7 @@ export function normalizeToken(raw: string): string {
 }
 
 export function tokenize(text: string): string[] {
-  return text
-    .split(/\s+/)
-    .map(normalizeToken)
-    .filter(Boolean);
+  return text.split(/\s+/).map(normalizeToken).filter(Boolean);
 }
 
 function editDistance(a: string, b: string): number {
@@ -38,7 +35,11 @@ function editDistance(a: string, b: string): number {
 
 function tokenScore(a: string, b: string): number {
   if (a === b) return 1;
-  if (a.length >= 4 && b.length >= 4 && (a.startsWith(b.slice(0, 4)) || b.startsWith(a.slice(0, 4)))) {
+  if (
+    a.length >= 4 &&
+    b.length >= 4 &&
+    (a.startsWith(b.slice(0, 4)) || b.startsWith(a.slice(0, 4)))
+  ) {
     return 0.7;
   }
   if (editDistance(a, b) <= 1) return 0.7;
@@ -132,7 +133,10 @@ export function syncLogRowsToSeams(
   rows: LogRow[],
   parts: SeamPart[],
   transcript: TranscriptToken[],
-): { parts: PartSyncResult[]; assignments: Array<{ row: LogRow; partIndex: number; sessionSec: number }> } {
+): {
+  parts: PartSyncResult[];
+  assignments: Array<{ row: LogRow; partIndex: number; sessionSec: number }>;
+} {
   if (parts.length === 0) throw new Error('No audio seam parts available.');
   if (transcript.length === 0) throw new Error('Transcript is empty.');
 
@@ -200,7 +204,21 @@ export function syncLogRowsToSeams(
   }
 
   for (const row of rows) {
-    const part = partResults.find((p) => row.sheetSec >= p.sheetStart && row.sheetSec <= p.sheetEnd);
+    // Windows are CONTIGUOUS: part i owns [sheetStart, part i+1's sheetStart).
+    // `sheetEnd` is generally FRACTIONAL (duration − offset) while row.sheetSec
+    // is an integer, so a closed-interval test (`<= sheetEnd`) leaves a gap
+    // between part i's sheetEnd (e.g. 100.4) and part i+1's sheetStart
+    // (101.4): a row at 101 matched NO part and was silently mishandled by the
+    // fallback below. A gap row belongs to the tail of part i — the stretch of
+    // audio whose transcript-derived offset was computed for it — so part i's
+    // window extends to just under part i+1's start. Rows strictly inside a
+    // window are unaffected. The LAST part stays closed at its own sheetEnd;
+    // rows past it take the past-end fallback below.
+    const part = partResults.find((p, idx) => {
+      if (row.sheetSec < p.sheetStart) return false;
+      const next = partResults[idx + 1];
+      return next ? row.sheetSec < next.sheetStart : row.sheetSec <= p.sheetEnd;
+    });
     if (!part) {
       // Assign to last part if past end (clock rounding).
       const last = partResults[partResults.length - 1];

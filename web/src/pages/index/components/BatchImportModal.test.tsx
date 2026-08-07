@@ -1,6 +1,6 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
 import type { ProfilePayload } from '../../../api/types';
 import { renderWithQueryClient } from '../../../test/renderWithQueryClient';
@@ -86,7 +86,9 @@ describe('BatchImportModal', () => {
   });
 
   it('Import Logs prompts for a Sheets URL and stores it', () => {
-    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
+    const prompt = vi
+      .spyOn(window, 'prompt')
+      .mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
@@ -97,12 +99,14 @@ describe('BatchImportModal', () => {
   });
 
   it('Start Import is enabled when only a logs URL is set', () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('https://docs.google.com/spreadsheets/d/abc123/edit');
+    vi.spyOn(window, 'prompt').mockReturnValue(
+      'https://docs.google.com/spreadsheets/d/abc123/edit',
+    );
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Import Logs' }));
-    expect((screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole('button', { name: 'Start Import' }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it('shows the folder name after simulating a directory file input change', () => {
@@ -188,7 +192,10 @@ describe('BatchImportModal', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
 
-    renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />, client);
+    renderWithQueryClient(
+      <BatchImportModal profile={profileFixture()} onClose={() => {}} />,
+      client,
+    );
     pickFolder(folderFile('YMH_002.mp3', 'Batch/YMH_002.mp3'));
     fireEvent.click(screen.getByRole('button', { name: 'Start Import' }));
 
@@ -227,7 +234,9 @@ describe('BatchImportModal', () => {
   });
 
   it('abort on close clears progress on remount', async () => {
-    let resolveStitch: ((v: { blob: Blob; durationS: number; partDurationsS: number[] }) => void) | undefined;
+    let resolveStitch:
+      | ((v: { blob: Blob; durationS: number; partDurationsS: number[] }) => void)
+      | undefined;
     mockedStitch.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -259,7 +268,11 @@ describe('BatchImportModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     unmount();
 
-    resolveStitch?.({ blob: new Blob(['wav'], { type: 'audio/wav' }), durationS: 1, partDurationsS: [1] });
+    resolveStitch?.({
+      blob: new Blob(['wav'], { type: 'audio/wav' }),
+      durationS: 1,
+      partDurationsS: [1],
+    });
 
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
     expect(screen.getByTestId('batch-import-progress').textContent).toBe('');

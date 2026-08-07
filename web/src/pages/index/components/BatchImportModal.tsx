@@ -1,13 +1,10 @@
-import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
+import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import type { ProfilePayload } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
-import {
-  runBatchImport,
-  type BatchImportProgressState,
-} from '../batchImport/runner';
+import { type BatchImportProgressState, runBatchImport } from '../batchImport/runner';
 import { Select } from './Select';
 
 interface Props {
@@ -52,10 +49,9 @@ function BatchImportIcon() {
       aria-hidden="true"
       className="shrink-0 text-[rgba(229,238,252,0.72)]"
     >
-      <title>Batch import</title>
       <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
       <path
-        d="M7 10L12 15L17 10"
+        d="M7 8L12 3L17 8"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
@@ -90,7 +86,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
   }, []);
 
   const hasAudio = Boolean(folderName && selectedFiles && selectedFiles.length > 0);
-  const hasLogs = Boolean(logsUrl && logsUrl.trim());
+  const hasLogs = Boolean(logsUrl?.trim());
   const canStart = Boolean(showId && (hasAudio || hasLogs) && !isImporting);
 
   const handleClose = () => {
@@ -186,10 +182,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
       setProgress((prev) => ({
         ...prev,
         current: null,
-        lines: [
-          ...prev.lines,
-          `Failed: ${status ? `HTTP ${status} — ` : ''}${detail}${hint}`,
-        ],
+        lines: [...prev.lines, `Failed: ${status ? `HTTP ${status} — ` : ''}${detail}${hint}`],
       }));
     } finally {
       if (abortRef.current === controller) {
@@ -266,10 +259,7 @@ export function BatchImportModal({ profile, onClose }: Props) {
             onChange={handleFolderChange}
           />
           {folderName ? (
-            <span
-              className="text-[0.85rem] text-v5-muted"
-              data-testid="batch-import-folder-name"
-            >
+            <span className="text-[0.85rem] text-v5-muted" data-testid="batch-import-folder-name">
               {folderName}
             </span>
           ) : null}
@@ -286,7 +276,10 @@ export function BatchImportModal({ profile, onClose }: Props) {
             Import Logs
           </button>
           {logsUrl ? (
-            <span className="truncate text-[0.85rem] text-v5-muted" data-testid="batch-import-logs-url">
+            <span
+              className="truncate text-[0.85rem] text-v5-muted"
+              data-testid="batch-import-logs-url"
+            >
               {logsUrl}
             </span>
           ) : null}

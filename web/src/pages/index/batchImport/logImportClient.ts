@@ -11,14 +11,11 @@ export async function startLogImport(
   spreadsheetUrl: string,
   signal: AbortSignal,
 ): Promise<string> {
-  const res = await apiFetch<{ job_id: string }>(
-    `shows/${encodeURIComponent(showId)}/log-import`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ spreadsheet_url: spreadsheetUrl }),
-      signal,
-    },
-  );
+  const res = await apiFetch<{ job_id: string }>(`shows/${encodeURIComponent(showId)}/log-import`, {
+    method: 'POST',
+    body: JSON.stringify({ spreadsheet_url: spreadsheetUrl }),
+    signal,
+  });
   return res.job_id;
 }
 

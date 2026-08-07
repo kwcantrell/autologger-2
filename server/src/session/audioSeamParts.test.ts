@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendSerializedAudioSeamParts,
   deserializeAudioSeamParts,
   parseAudioSeamPartsHeader,
   serializeAudioSeamParts,
@@ -34,5 +35,29 @@ describe('serialize/deserializeAudioSeamParts', () => {
   it('returns null for corrupt meta', () => {
     expect(deserializeAudioSeamParts(null)).toBeNull();
     expect(deserializeAudioSeamParts('nope')).toBeNull();
+  });
+});
+
+describe('appendSerializedAudioSeamParts', () => {
+  it('starts from absent/empty meta', () => {
+    const raw = appendSerializedAudioSeamParts(null, [{ duration_s: 30 }]);
+    expect(deserializeAudioSeamParts(raw)).toEqual([{ duration_s: 30 }]);
+    const rawEmpty = appendSerializedAudioSeamParts('', [{ duration_s: 12.5 }]);
+    expect(deserializeAudioSeamParts(rawEmpty)).toEqual([{ duration_s: 12.5 }]);
+  });
+
+  it('appends the new import parts AFTER the stored ones, in take order', () => {
+    const take1 = appendSerializedAudioSeamParts(null, [{ duration_s: 30 }, { duration_s: 60 }]);
+    const take2 = appendSerializedAudioSeamParts(take1, [{ duration_s: 45 }]);
+    expect(deserializeAudioSeamParts(take2)).toEqual([
+      { duration_s: 30 },
+      { duration_s: 60 },
+      { duration_s: 45 },
+    ]);
+  });
+
+  it('treats corrupt stored meta as empty rather than failing the import', () => {
+    const raw = appendSerializedAudioSeamParts('nope', [{ duration_s: 2 }]);
+    expect(deserializeAudioSeamParts(raw)).toEqual([{ duration_s: 2 }]);
   });
 });

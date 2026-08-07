@@ -96,3 +96,47 @@ implementer within the MUST-name-session rule.
 Clean — `proposal.md`, `design.md`, `specs/transcript-generation/spec.md`,
 `specs/api-contract-freeze/spec.md`, `tasks.md` agree on endpoint path, idle/busy shapes,
 409 string enrichment (not structured body), and UI polling/banner behavior.
+
+### 2026-08-03 — Adversarial multi-agent review + owner gate (PR #3 remediation)
+
+This change shipped with a Cursor-plan gate standing in for the repo's
+adversarial panel. A 25-agent adversarial review (6 dimensions, per-finding
+adversarial verification) stood in for the skipped panel and found post-gate
+behavior drift on the PR branch; the owner gated it with "fix all these
+issues" — remediate on the PR branch. Dispositions in the three-bucket style:
+
+**Blockers/majors fixed in place (this change):**
+- Cross-tenant leak: the process-wide lock meant the status endpoint and the
+  enriched 409 named a session (id + title) that could belong to a studio the
+  requester is not a member of — the very existence/title oracle sibling
+  routes close by 404ing non-members. Fixed by redaction
+  (`requesterCanViewSession` in `server/src/routers/transcribe.ts`): busy
+  status nulls `session_id`/`session_title` (same key set) for logged-in
+  non-members, and the 409 falls back to the identifier-free
+  `GENERATION_IN_FLIGHT_DETAIL` for non-members and the released-in-race case.
+  Dev-anonymous (`user === null`) sees everything, sibling-route parity.
+  Both delta specs amended to authorize the shipped shapes.
+- Release-on-failure of the lock was asserted but unproven — now covered by
+  tests (commit 0e600cc's "prove release-on-failure" wave).
+
+**Escalated → decided (owner):** remediate on the PR branch rather than
+revert — "fix all these issues".
+
+**Residual minors accepted:**
+- Process residual: the PR branch also carried an unspec'd client-side
+  transcript-CSV-export feature on the Transcript tab (commit 9001ff9),
+  accepted as shipped — client-only, not contract-bearing; recorded here
+  because this change owns the Transcript-tab surface. Future feature work of
+  that kind goes through OpenSpec.
+- `openspec validate transcript-gen-lock-status --strict` passed before and
+  after the remediation amendments (this was the one change of the three that
+  did not fail strict validation).
+
+### 2026-08-03 — Post-amendment consistency read: clean
+
+Light-tier read over the final four artifacts of all three PR-3 changes
+(proposal, spec deltas, design, tasks) after the remediation amendments: no
+stale pre-decision language, no disposition-vs-normative contradictions, no
+broken cross-references; cited commit hashes and load-bearing symbol/constant
+claims spot-verified against the branch; strict validation passing for all
+three changes.

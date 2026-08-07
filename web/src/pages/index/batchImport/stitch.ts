@@ -6,6 +6,20 @@ export interface StitchResult {
   partDurationsS: number[];
 }
 
+/**
+ * Pre-flight cap on the SUMMED compressed input size of a multi-file group.
+ *
+ * Multi-file stitching decodes every part to Float32 PCM. A 128 kbps MP3 is
+ * ~16 KB/s compressed but ~353 KB/s decoded at 44.1 kHz stereo Float32 — a
+ * ~22x expansion. Peak memory holds the decoded buffers PLUS the concatenated
+ * copy PLUS the 16-bit WAV encode (~2.5x decoded size in flight), so 150 MB of
+ * compressed input already means ~3.3 GB decoded and several GB peak — the
+ * practical ceiling before browsers throw "Array buffer allocation failed"
+ * (the failure this file's single-file pass-through exists to dodge). Groups
+ * above the cap fail with a per-group error instead of crashing the tab.
+ */
+export const MAX_STITCH_INPUT_BYTES = 150 * 1024 * 1024;
+
 function resampleChannel(src: Float32Array, targetLength: number): Float32Array {
   if (src.length === targetLength) return src;
   const dst = new Float32Array(targetLength);
@@ -21,7 +35,10 @@ function resampleChannel(src: Float32Array, targetLength: number): Float32Array 
   return dst;
 }
 
-function concatAudioBuffers(buffers: AudioBuffer[]): AudioBuffer {
+/** Exported for tests. Concatenate decoded buffers; mono sources upmix to all
+ * output channels (standard Web Audio up-mix), multi-channel sources keep their
+ * own channels with any extra output channels silent. */
+export function concatAudioBuffers(buffers: AudioBuffer[]): AudioBuffer {
   if (buffers.length === 0) {
     throw new Error('concatAudioBuffers requires at least one buffer');
   }
@@ -47,7 +64,11 @@ function concatAudioBuffers(buffers: AudioBuffer[]): AudioBuffer {
     for (let ch = 0; ch < numberOfChannels; ch++) {
       const dst = channelData[ch];
       const raw =
-        ch < buffer.numberOfChannels ? buffer.getChannelData(ch) : new Float32Array(buffer.length);
+        buffer.numberOfChannels === 1
+          ? buffer.getChannelData(0)
+          : ch < buffer.numberOfChannels
+            ? buffer.getChannelData(ch)
+            : new Float32Array(buffer.length);
       const samples =
         buffer.sampleRate === sampleRate && raw.length === len ? raw : resampleChannel(raw, len);
       dst.set(samples, offset);
@@ -130,6 +151,16 @@ export async function stitchAudioFiles(
     const file = files[0];
     const durationS = await probeMediaDurationS(file);
     return { blob: file, durationS, partDurationsS: [durationS] };
+  }
+
+  const totalInputBytes = files.reduce((sum, f) => sum + f.size, 0);
+  if (totalInputBytes > MAX_STITCH_INPUT_BYTES) {
+    const totalMb = Math.round(totalInputBytes / (1024 * 1024));
+    const capMb = Math.round(MAX_STITCH_INPUT_BYTES / (1024 * 1024));
+    throw new Error(
+      `Group is too large to stitch in the browser (${totalMb} MB of audio; limit ${capMb} MB). ` +
+        'Import the files individually instead.',
+    );
   }
 
   const ctx = audioContext ?? createAudioContext();

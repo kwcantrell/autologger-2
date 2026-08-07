@@ -44,6 +44,10 @@ timeline gets a proper Recording take — that is the only shared machinery.)
 - **Stitch** multi-file groups in the **browser** (Web Audio decode → concatenate →
   WAV). No ffmpeg. Single-file groups upload as-is when the MIME is already
   attachable; otherwise decode→WAV as needed for a reliable attach.
+  *(Amended 2026-08-03: as shipped, single-file groups ALWAYS pass the original
+  bytes through — duration comes from media-element metadata, never a PCM
+  decode, which OOMs on long MP3s — and multi-file stitching is pre-flight
+  capped at 150 MB of summed input; see design.md Panel & review log.)*
 - Upload the resulting blob to the new local-audio-import endpoint (attach + anchor
   one take).
 

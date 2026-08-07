@@ -224,7 +224,7 @@ export function V6Rail({
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             <path
-              d="M7 10L12 15L17 10"
+              d="M7 8L12 3L17 8"
               stroke="currentColor"
               strokeWidth="1.8"
               strokeLinecap="round"

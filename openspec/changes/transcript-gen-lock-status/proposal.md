@@ -55,3 +55,9 @@ the slot, or how long it has been running.
   envelope; status code unchanged).
 - No change to success `200 {words}`, other generate failure codes, or
   `GET …/transcript-words` list shape.
+- *(Amended 2026-08-03, PR #3 remediation)*: both surfaces redact across tenants — the
+  busy status nulls `session_id`/`session_title` (same key set) for logged-in requesters
+  without studio membership of the holding session, and the enriched `409` falls back to
+  the identifier-free generic detail for non-members (and the released-in-race case).
+  Dev-anonymous requesters (`user === null`) see full identifiers, matching sibling-route
+  scope. See the delta specs and design.md Panel & review log.
