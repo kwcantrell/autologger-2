@@ -24,11 +24,11 @@
       pointers (explore/propose/update/sync/archive; propose carries TWO stop-conditions
       — D8's gate stop, phrased to avoid the guard's banned-phrase collision, and D9's
       panel-dispatch-or-handoff) and the apply stop/handoff adapter.
-- [ ] 2.3 Write `.cursor/rules/restart-server-yourself.mdc` per the ownership-scoped
+- [x] 2.3 Write `.cursor/rules/restart-server-yourself.mdc` per the ownership-scoped
       requirement (agent-started or identified-by-command-line only; ask-first otherwise;
       `:8791` off-limits; `:5173` disposition explicit; script references not command
       lines). Guard applies size/phrase checks but not the pointer check (E1).
-- [ ] 2.4 Add `.cursor/mcp.json` to `.gitignore`; write `.cursor/mcp.json.example`
+- [x] 2.4 Add `.cursor/mcp.json` to `.gitignore`; write `.cursor/mcp.json.example`
       (portable, exact-version package spec, localization instructions).
 
 ## 3. Drift guard (TDD pair with 2.x — batch into one dispatch unit)
