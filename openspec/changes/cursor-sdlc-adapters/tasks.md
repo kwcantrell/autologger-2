@@ -33,13 +33,13 @@
 
 ## 3. Drift guard (TDD pair with 2.x — batch into one dispatch unit)
 
-- [ ] 3.1 Write `web/src/cursorAdapters.repo.test.ts` per D5: closed-world walk
+- [x] 3.1 Write `web/src/cursorAdapters.repo.test.ts` per D5: closed-world walk
       (`.cursor/**` recursive + all-depth `AGENTS.md` + `.cursorrules`) with allowlist
       failure on unenumerated files; per-file line+char budgets counted over the whole
       file; path-literal pointer checks; banned-phrase scan including frontmatter;
       gitignore/example/package-spec-literal assertions. Root resolution via
       `fileURLToPath(import.meta.url)`; no git subprocesses.
-- [ ] 3.2 One-time predicate check against the pre-drop stock bodies via
+- [x] 3.2 One-time predicate check against the pre-drop stock bodies via
       `git show ed43b29^:<path>` (never committed as fixtures); record the outcome in the
       `.apply/` ledger.
 
