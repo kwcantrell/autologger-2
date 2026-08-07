@@ -637,6 +637,17 @@ const capabilityScopes: CapabilityScope[] = [
     capability: 'web-admin-users',
     components: ['routers', 'catalog-db', 'web-admin'],
   },
+  {
+    type: 'component',
+    capability: 'web-docs-site',
+    // The workspace this capability specs is itself: the component model,
+    // extraction pipeline, drift gates, and static site all live under
+    // web-docs/** (the sole `web-docs` component, toolingComponent above).
+    // No other component implements any part of this capability's
+    // requirements, so it is single-component-scoped rather than
+    // cross-cutting.
+    components: ['web-docs'],
+  },
   { type: 'component', capability: 'web-home-launch', components: ['web-app'] },
   { type: 'component', capability: 'web-login-experience', components: ['web-app', 'auth'] },
   { type: 'component', capability: 'web-session-console', components: ['web-app'] },
