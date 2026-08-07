@@ -94,14 +94,14 @@
 
 ## 6. Diagram generation, validation & atlas assembly
 
-- [ ] 6.1 TDD mermaid source generation: L0 flowchart (kind-styled nodes with
+- [x] 6.1 TDD mermaid source generation: L0 flowchart (kind-styled nodes with
       tooling/test-harness and test-edge toggles, production snapshot edges,
       relationships rendered distinctly, navigation ids, overlay tints; all
       disk-derived strings escaped), per-component L1 module graphs (subdirectory
       grouping above threshold, test files elided by default with counts). Renderer
       assertion: L0 source contains every snapshot production edge + declared
       relationship.
-- [ ] 6.2 Author the two v1 state diagrams in `web-docs/diagrams/` from code reads:
+- [x] 6.2 Author the two v1 state diagrams in `web-docs/diagrams/` from code reads:
       recording lease (grant → heartbeat → stale-holder takeover → expiry, alarm
       re-arm; `leaseStore.ts`) and SessionHub registry (constructed → active →
       evicted-and-reconstructed under the triple idle guard; `SessionHubRegistry`).

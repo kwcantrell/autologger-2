@@ -157,13 +157,21 @@ const serverComponents: Component[] = [
       'exports, companion, logImport, flows, static serving).',
     ['server/src/routers/**'],
   ),
-  runtimeComponent(
-    'session',
-    'The in-process SessionHub live spine: events, transport, audio metadata, the ' +
-      'recording lease, transcript words, topics, WebSocket fan-out, and the ' +
-      'SessionHubRegistry idle-close/reopen lifecycle.',
-    ['server/src/session/**'],
-  ),
+  {
+    ...runtimeComponent(
+      'session',
+      'The in-process SessionHub live spine: events, transport, audio metadata, the ' +
+        'recording lease, transcript words, topics, WebSocket fan-out, and the ' +
+        'SessionHubRegistry evict-and-reconstruct idle lifecycle.',
+      ['server/src/session/**'],
+    ),
+    // Task 6.2 (design.md D7): two v1 authored state diagrams, derived from a
+    // read of the current code, not prose — sorted for determinism.
+    authoredDiagrams: [
+      'web-docs/diagrams/recording-lease.mmd',
+      'web-docs/diagrams/session-hub-registry.mmd',
+    ].sort(),
+  },
   runtimeComponent(
     'catalog-db',
     'The catalog SQLite access layer: users/studios/shows/prefs, login sessions, OAuth ' +
