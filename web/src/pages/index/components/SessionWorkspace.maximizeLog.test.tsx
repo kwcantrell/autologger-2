@@ -206,6 +206,29 @@ describe('SessionWorkspace fused strip layout', () => {
     expect(document.getElementById('top-bar-recording-dur')).toBeTruthy();
   });
 
+  // PR#4 review fix: the retired MicLevelPreview opened getUserMedia for every
+  // viewer of a *rolling* session (session-wide state) to feed a meter the
+  // web-session-console spec keeps hidden outside local mic recording — an
+  // unprompted permission dialog + lit mic-in-use indicator serving nothing
+  // visible. The mic may only open through AudioRecorder's own record flow.
+  it('never opens the local microphone while the session is merely rolling', () => {
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }) as unknown as MediaStream);
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    try {
+      rollingStatus();
+      renderWorkspace();
+      expect(getUserMedia).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: undefined,
+      });
+    }
+  });
+
   it('restores scrubber lane when returning to idle', () => {
     rollingStatus();
     const { rerender } = renderWorkspace();

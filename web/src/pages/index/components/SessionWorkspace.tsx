@@ -26,7 +26,6 @@ import type { AudioPlayerHandle } from './AudioPlayer';
 import { AudioPlayer } from './AudioPlayer';
 import type { AudioRecorderHandle } from './AudioRecorder';
 import { AudioRecorder } from './AudioRecorder';
-import { MicLevelPreview } from './MicLevelPreview';
 import { AudioSaveOverlay } from './AudioSaveOverlay';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportFeed } from './ExportFeed';
@@ -350,8 +349,6 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                 setIsUploadingAudio(phase === 'uploading');
               }}
             />
-            {/* Live level while rolling; AudioRecorder takes over when mic-recording. */}
-            <MicLevelPreview active={isRolling && recorderPhase === 'idle'} />
             <AudioPlayer
               ref={audioPlayerRef}
               segments={segments}
