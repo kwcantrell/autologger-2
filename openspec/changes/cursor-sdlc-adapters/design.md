@@ -118,7 +118,8 @@ content, not `git ls-files`). Checks:
    case-sensitive substring; the propose adapter's legitimate stop-condition is phrased
    to avoid collision ("stop before apply", never "run /opsx:apply") — the guard is why
    that phrasing constraint exists.
-4. D4 assertions (gitignore entry, example presence/content/package-spec literal).
+4. D4 assertions (gitignore entry, example presence/content/package-spec literal, and a
+   machine-specific-absolute-path denylist).
 5. Stop-condition line cap per D3 is enforced as review discipline, not parsed by the
    guard (adjudicating "what is a stop-condition" mechanically is not worth the
    machinery; the size budgets are the mechanical backstop).
