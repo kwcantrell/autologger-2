@@ -589,6 +589,17 @@ const capabilityScopes: CapabilityScope[] = [
   },
   {
     type: 'cross-cutting',
+    capability: 'package-architecture',
+    // package-split-foundation (archived 2026-08-07): the workspace-package
+    // layout/layering rules — the three L0 packages it establishes, the
+    // boundary/acyclicity repo test (server-test-harness, where
+    // packageBoundaries.repo.test.ts and the cross-package error-identity
+    // pin live), and server-bootstrap whose error mapping the
+    // nominal-identity (zod-dedup) requirement protects.
+    components: ['domain', 'contract', 'ports', 'server-test-harness', 'server-bootstrap'],
+  },
+  {
+    type: 'cross-cutting',
     capability: 'core-ports-architecture',
     // package-split-foundation D3 (modified capability): the injectable port
     // types now live as interfaces in `ports`, composed into the app-level
