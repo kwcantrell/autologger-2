@@ -244,7 +244,7 @@ describe('SessionCard (active-list variant)', () => {
     expect(within(el).getByText('01:02:03')).toBeTruthy();
   });
 
-  it('marks a rolling session live: red border class and current timecode', () => {
+  it('marks a background rolling session live from list data alone: red border, list-derived HH:MM:SS timecode, no status subscription', () => {
     const { container } = renderRecent([
       sessionFixture({
         is_rolling: true,
@@ -258,6 +258,25 @@ describe('SessionCard (active-list variant)', () => {
     expect(within(el).getByText('01:02:03').className.split(/\s+/)).toContain('text-[#ef4444]!');
     expect(within(el).queryByText('00:10:00')).toBeNull();
     expect(within(el).getByText('LIVE SESSION')).toBeTruthy();
+    // Not the open session: the status-query gate must have received null
+    // (query disabled — no fetch of this session's status URL). The hook
+    // itself is still called per rules-of-hooks; only its argument matters.
+    expect(useSessionStatus).toHaveBeenCalledWith(null);
+  });
+
+  it('zero-open-session case: rolling cards in the list subscribe no status query anywhere', () => {
+    const { container } = renderRecent(
+      [
+        sessionFixture({ is_rolling: true, rolling_timecode: '00:05:10:00' }),
+        sessionFixture({ id: 'sess-2', title: 'Session Two', is_rolling: true }),
+      ],
+      { activeSessionId: '' },
+    );
+    expect(card(container, 'sess-1').getAttribute('data-live')).toBe('true');
+    expect(card(container, 'sess-2').getAttribute('data-live')).toBe('true');
+    for (const call of vi.mocked(useSessionStatus).mock.calls) {
+      expect(call[0]).toBeNull();
+    }
   });
 
   it('marks an active recording session live even when the list row is not rolling yet', () => {
@@ -294,6 +313,9 @@ describe('SessionCard (active-list variant)', () => {
     expect(el.className.split(/\s+/)).toContain('border-[#ef4444]!');
     const tc = within(el).getByText('00:00:45:12');
     expect(tc.className.split(/\s+/)).toContain('text-[#ef4444]!');
+    // Open-card path unchanged: the shared status query is subscribed keyed
+    // to this session.
+    expect(useSessionStatus).toHaveBeenCalledWith('sess-1');
   });
 });
 

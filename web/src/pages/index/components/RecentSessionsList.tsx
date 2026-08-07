@@ -248,11 +248,14 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   const { mutate: archiveSession } = useArchiveSession();
   const { confirm, confirmElement } = useConfirm();
   const handleDelete = useDeleteSessionConfirm(s, confirm);
-  // Share the workspace status query when this card is selected (or still rolling
-  // from the list poll). Audio record only arms while rolling, so list
-  // `is_rolling` covers both live cases for background cards; status supplies a
-  // fresher timecode for the open session.
-  const { data: status } = useSessionStatus(isActive || s.is_rolling ? s.id : null);
+  // Subscribe to the per-session status query only for the OPEN session — that
+  // query is shared with the workspace's own status subscription (same query
+  // key), so selecting it adds no poller beyond the workspace's. Background
+  // (non-open) cards, rolling or not, derive their live badge and timecode
+  // from the sessions-list poll's own row fields instead (`is_rolling`,
+  // `rolling_timecode`, refreshed at that poll's ~5s cadence in `HH:MM:SS`
+  // form — no frame field; see recent-sessions-single-poll).
+  const { data: status } = useSessionStatus(isActive ? s.id : null);
   const isLive = Boolean(s.is_rolling || status?.is_rolling || status?.audio_recording_lease_alive);
   const liveTimecode = isLive ? (status?.timecode ?? formatTimecodeHMS(s.rolling_timecode)) : null;
 
