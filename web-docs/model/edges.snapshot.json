@@ -251,6 +251,11 @@
   },
   {
     "from": "session",
+    "to": "routers",
+    "kind": "test"
+  },
+  {
+    "from": "session",
     "to": "server-core",
     "kind": "production"
   },

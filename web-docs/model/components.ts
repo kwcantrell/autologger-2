@@ -61,7 +61,15 @@ export type CapabilityScope =
   | { type: 'cross-cutting'; capability: string; components: string[] }
   | { type: 'process'; capability: string };
 
-/** A tracked `.ts`/`.tsx` file that is genuinely tooling-config, not application code. */
+/**
+ * A tracked file the model deliberately does not map to a component: most
+ * entries are `.ts`/`.tsx` tooling-config that is genuinely not application
+ * code, but the mechanism is untyped by extension — `isMappedOrExcluded`
+ * (model/coverage.ts) matches on `file` as a plain path, so a non-`.ts`
+ * import *target* (e.g. a workspace `package.json` pulled in for its
+ * `version` field) can also be excluded to resolve an otherwise-unmapped
+ * import edge without widening any component's globs.
+ */
 export interface Exclusion {
   file: string;
   reason: string;
@@ -257,6 +265,16 @@ const webComponents: Component[] = [
       'web/src/noAgentAuthoredMarkup.repo.test.ts',
       'web/src/queryKeyFactories.repo.test.ts',
       'web/src/apiResponseShapes.repo.test.ts',
+      // cursorAdapters.repo.test.ts (cursor-agent-adapters) is the same shape
+      // as the three repo-wide policy tests above — a root-level
+      // `*.repo.test.ts` walking the whole repo tree from disk to assert a
+      // property of the tree as a whole, not one module — and its own header
+      // comment says it mirrors noAgentAuthoredMarkup.repo.test.ts's
+      // vendor/generated-dir exclusion set for the same reason. It has no
+      // application-code counterpart under web/src (it tests `.cursor/**`
+      // adapter files, which live outside every mapped component), so it
+      // belongs here on proximity-of-kind rather than proximity-of-subject.
+      'web/src/cursorAdapters.repo.test.ts',
     ],
   ),
 ];
@@ -275,6 +293,7 @@ const companionComponents: Component[] = [
       'companion/src/state.test.ts',
       'companion/src/upgrades.ts',
       'companion/src/variables.ts',
+      'companion/src/variables.test.ts',
     ],
   ),
   runtimeComponent(
@@ -386,6 +405,14 @@ const exclusions: Exclusion[] = [
   {
     file: 'server/scripts/merge-session-audio.ts',
     reason: 'Operator-run maintenance script, not part of the runtime app or its test suite.',
+  },
+  {
+    file: 'web/package.json',
+    reason:
+      'Workspace manifest, imported (as a named JSON import, web/src/shared/appVersion.ts) ' +
+      'only for its `version` field to display the app version — not architecture. Not a ' +
+      '.ts/.tsx file so it can never itself be a tracked/mapped component member; this entry ' +
+      'exists purely to resolve the import edge rather than leave it unmapped.',
   },
 ];
 
@@ -537,6 +564,17 @@ const capabilityScopes: CapabilityScope[] = [
   },
   // Process (attached to no component; listed on the About page).
   { type: 'process', capability: 'sdlc-process' },
+  // cursor-agent-adapters governs the `.cursor/**` + AGENTS.md pointer-adapter
+  // surface (per its spec, "the sdlc-process capability's bounded pointer-
+  // adapter allowance"): those files are not `.ts`/`.tsx` sources, so no
+  // component's globs can ever cover them, and its only in-repo TS artifact
+  // is the CI drift guard (web/src/cursorAdapters.repo.test.ts, itself placed
+  // in web-test-harness as a repo-wide policy test, not as this capability's
+  // "home"). Declared `process`, alongside sdlc-process, rather than
+  // attached to web-test-harness or invented a `tooling`/`process` component
+  // for one guard test — it is a process/SDLC convention capability, not a
+  // runtime feature owned by any component.
+  { type: 'process', capability: 'cursor-agent-adapters' },
   // Component-scoped.
   { type: 'component', capability: 'ai-topics-chat', components: ['routers', 'web-app'] },
   {
@@ -545,6 +583,40 @@ const capabilityScopes: CapabilityScope[] = [
     components: ['routers', 'aiV2', 'web-app'],
   },
   { type: 'component', capability: 'auto-event-generation', components: ['routers', 'web-app'] },
+  {
+    type: 'component',
+    capability: 'batch-audio-import',
+    // Rail control, folder discovery/grouping, client-side stitch, and
+    // progress UI are web-app (BatchImportModal, pages/index/batchImport/**).
+    // The server side is the local-audio-import HTTP surface (routers) plus
+    // the seam-parts/audio-take persistence it drives on the session spine
+    // (session: audioSeamParts.ts, audioStore.ts). node-infra's transcript
+    // machinery is reused unmodified (spec: "remains transcribable via the
+    // existing generate route") rather than extended for this capability, so
+    // node-infra is deliberately NOT listed here — that reuse is
+    // transcript-generation's scope, not batch-audio-import's.
+    components: ['routers', 'session', 'web-app'],
+  },
+  {
+    type: 'component',
+    capability: 'session-title-suffix',
+    // catalog-db: showsStore.ts/sessionIndexStore.ts persistence + the
+    // migration. routers: profile.ts (read/write) and sessions.ts (deck-title
+    // derivation at create time). web-app: the Settings General Suffix
+    // control (HomeSettingsModal) and NewSessionModal's session-meta wiring.
+    components: ['routers', 'catalog-db', 'web-app'],
+  },
+  {
+    type: 'component',
+    capability: 'sheets-log-import',
+    // log-import: the domain logic (categoryMatch, jobStore, sheetsFetch,
+    // sheetTimecode, syncScore, runSessionLogImport). routers: logImport.ts.
+    // node-infra: reuses the existing DeepGram generate path when a matched
+    // session has no timed transcript yet (spec "Transcript required before
+    // sync"). web-app: BatchImportModal's Import Logs control +
+    // batchImport/logImportClient.ts.
+    components: ['routers', 'log-import', 'node-infra', 'web-app'],
+  },
   {
     type: 'component',
     capability: 'team-management',
