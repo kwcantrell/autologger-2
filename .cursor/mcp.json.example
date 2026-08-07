@@ -1,0 +1,16 @@
+{
+  "_instructions": "Copy this file to .cursor/mcp.json (gitignored, machine-local) and replace the --path value below with the absolute path to your local checkout of this repo.",
+  "mcpServers": {
+    "codegraph": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@colbymchenry/codegraph@1.5.0",
+        "serve",
+        "--mcp",
+        "--path",
+        "/absolute/path/to/your/checkout"
+      ]
+    }
+  }
+}

@@ -16,6 +16,9 @@ data/
 # opsx:apply scratch (per-task subagent reports, diff files, progress ledger)
 openspec/changes/**/.apply/
 
+# Cursor MCP config — machine-local (absolute checkout path); see .cursor/mcp.json.example
+.cursor/mcp.json
+
 # graphify knowledge-graph output (regenerable via /graphify)
 graphify-out/
 

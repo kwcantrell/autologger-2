@@ -1,0 +1,16 @@
+---
+description: Restart the dev server yourself only when you started it or positively identified it — ask first otherwise.
+alwaysApply: true
+---
+
+After a server-code change, restart the dev process yourself — but ONLY when it is
+(a) a process you started in this session, or (b) a listener you positively identified
+as this repo's dev process by inspecting its command line.
+
+- Any other listener — an unidentified process on `:8787`, and ALWAYS the hermetic e2e
+  server on `:8791` — ask the user first; never restart or kill it yourself.
+- `:5173` (Vite) follows the same ownership rule: restart it yourself only if you started
+  it or identified its command line as this repo's Vite dev process; an unidentified
+  `:5173` listener is also ask-first.
+- Reference the repo's dev script — see the `dev` scripts in `server/package.json` and
+  the root `package.json` — rather than reconstructing or duplicating a command line here.
