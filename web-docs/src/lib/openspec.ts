@@ -16,6 +16,9 @@
 // Later phases (5.1 spec parsing, 5.3 overlay extraction) should import from
 // here rather than re-deriving this enumeration.
 
+import { type Dirent, readdirSync } from 'node:fs';
+import path from 'node:path';
+
 const SPECS_PREFIX = 'openspec/specs/';
 const CHANGES_PREFIX = 'openspec/changes/';
 const ARCHIVE_PREFIX = 'openspec/changes/archive/';
@@ -76,4 +79,32 @@ export function listAllActiveDeltaCapabilities(trackedFiles: string[]): string[]
     }
   }
   return [...names].sort();
+}
+
+/**
+ * Directory names that physically exist on disk under openspec/changes/
+ * (excluding archive/), regardless of git-tracked status. Unlike every other
+ * function in this module, this one is NOT pure over a tracked-file array —
+ * it reads the filesystem directly (only directory *names*, never file
+ * contents, so it stays within the "no reads of git-ignored artifact
+ * content" determinism rule) — because a directory whose only contents are
+ * gitignored (this repo has a real example: `openspec/changes/
+ * recent-sessions-single-poll/`, which holds only a gitignored `.apply/`)
+ * produces zero tracked files and so is entirely invisible to
+ * `listActiveChangeNames`. The overlay's "partial/untracked directories are
+ * skipped with a warning" requirement needs to see that directory exists at
+ * all, which only a real directory listing can do.
+ */
+export function listChangeDirectoriesOnDisk(root: string): string[] {
+  const changesDir = path.join(root, CHANGES_PREFIX);
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(changesDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name !== 'archive')
+    .map((entry) => entry.name)
+    .sort();
 }

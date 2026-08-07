@@ -10,6 +10,9 @@
 //   - edge derivation + snapshot conformance    IMPLEMENTED below (task 3.1/3.2)
 //   - relationship evidence                     IMPLEMENTED below (task 4.1)
 //   - capability accounting                     IMPLEMENTED below (task 4.2)
+//   - spec-markdown parser count-equality gate  IMPLEMENTED below (task 5.1)
+//   - active-changes overlay (warnings only)    IMPLEMENTED below (task 5.3)
+//   - ER schema introspection                   STUB — task 5.2 (no gate; feeds diagram generation)
 //   - diagram validity (parse/structural/budget) STUB — task 6.3
 // Each stub is a clearly marked no-op that exits 0 — it must be replaced
 // with the real gate in its task, never left as a silent pass once that
@@ -21,13 +24,21 @@ import { checkCapabilityAccounting, pendingCapabilities } from '../model/capabil
 import { model } from '../model/components';
 import { checkCoverage, isMappedOrExcluded, mappedFiles } from '../model/coverage';
 import { diffEdgeSnapshot, type EdgeSnapshot, projectComponentEdges } from '../model/edges';
+import { buildOverlay } from '../model/overlay';
 import { checkRelationshipEvidence } from '../model/relationships';
+import { parseAllSpecs } from '../model/specParser';
 import { extractFileImports } from '../src/lib/extractImports';
-import { listAllActiveDeltaCapabilities, listBaselineCapabilities } from '../src/lib/openspec';
+import {
+  listActiveChangeNames,
+  listAllActiveDeltaCapabilities,
+  listBaselineCapabilities,
+  listChangeDeltaCapabilities,
+  listChangeDirectoriesOnDisk,
+} from '../src/lib/openspec';
 import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 
 export function gatesNotYetImplementedMessage(): string {
-  return 'web-docs: diagram validity gates not yet implemented — land in a later phase.';
+  return 'web-docs: ER extraction and diagram validity gates not yet implemented — land in a later phase.';
 }
 
 const SNAPSHOT_PATH = 'web-docs/model/edges.snapshot.json';
@@ -121,6 +132,41 @@ function runCapabilityAccountingGate(allTrackedFiles: string[]): string[] {
   );
 }
 
+/**
+ * Parses every baseline capability's spec.md into its requirement/scenario
+ * tree and runs the count-equality gate (task 5.1). A parse issue
+ * (count-mismatch, unclassified heading, or an unreadable file) is fatal.
+ */
+function runSpecParserGate(root: string, baselineCapabilities: string[]): string[] {
+  const readSpecFile = (capability: string): string | undefined => {
+    try {
+      return readFileSync(path.join(root, 'openspec/specs', capability, 'spec.md'), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  const { issues } = parseAllSpecs(baselineCapabilities, readSpecFile);
+  return issues.map((issue) => `[spec-parser:${issue.kind}] ${issue.message}`);
+}
+
+/**
+ * Builds the active-changes overlay (task 5.3) and prints its warnings
+ * (partial/untracked change directories) non-fatally — the overlay itself
+ * never fails the gate; only its warnings surface.
+ */
+function runOverlayGate(root: string, allTrackedFiles: string[]): void {
+  const overlay = buildOverlay({
+    model,
+    changeDirectoriesOnDisk: listChangeDirectoriesOnDisk(root),
+    activeChangeNames: listActiveChangeNames(allTrackedFiles),
+    baselineCapabilities: listBaselineCapabilities(allTrackedFiles),
+    deltaCapabilitiesFor: (name) => listChangeDeltaCapabilities(allTrackedFiles, name),
+  });
+  for (const warning of overlay.warnings) {
+    console.warn(`[warning:overlay] ${warning}`);
+  }
+}
+
 /** STUB — task 6.3: jsdom-bootstrapped mermaid parse + structural checks + size budgets. */
 function runDiagramValidityGateStub(): string[] {
   return [];
@@ -131,12 +177,16 @@ export function runAllGates(): string[] {
   const trackedTsFiles = listTrackedFiles({ extensions: ['.ts', '.tsx'] });
   const allTrackedFiles = listTrackedFiles();
   const coverageIssues = checkCoverage(trackedTsFiles, model);
+  const baselineCapabilities = listBaselineCapabilities(allTrackedFiles);
+
+  runOverlayGate(root, allTrackedFiles);
 
   return [
     ...coverageIssues.map((issue) => `[coverage:${issue.kind}] ${issue.message}`),
     ...runEdgeSnapshotGate(),
     ...runRelationshipEvidenceGate(root),
     ...runCapabilityAccountingGate(allTrackedFiles),
+    ...runSpecParserGate(root, baselineCapabilities),
     ...runDiagramValidityGateStub(),
   ];
 }
