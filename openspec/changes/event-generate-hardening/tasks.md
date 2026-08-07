@@ -76,9 +76,9 @@
 
 ## 4. Docs + final gates
 
-- [ ] 4.1 README endpoint table: events row gains `has_auto_generated` mention;
+- [x] 4.1 README endpoint table: events row gains `has_auto_generated` mention;
       events/generate row's regenerate parenthetical updated to
       delete-after-success wording.
-- [ ] 4.2 Final gates: `npm run typecheck`, `npm test`, `npm run e2e`,
+- [x] 4.2 Final gates: `npm run typecheck`, `npm test`, `npm run e2e`,
       `npm run e2e:visual` (no UI pixels should change — label text is
       data-driven; any visual diff is a defect, not a re-bless).
