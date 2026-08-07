@@ -51,3 +51,28 @@ active, the strip status area SHALL reveal the mic level meter and recording dur
 - **WHEN** local mic recording is active
 - **THEN** status reads Recording and the status row shows mic level and recording
   duration
+
+## MODIFIED Requirements
+
+### Requirement: Marker navigation behavior is unchanged
+
+Marker navigation's prev/next jump SHALL keep its current observable behavior while the
+session is neither rolling nor recording: available whenever markers exist, targeting
+grouped marker seconds, issuing its audio seek unconditionally without a clip-coverage
+check, and never starting playback. While the session is rolling or recording, the
+maximize-log strip SHALL disable marker prev/next (this change's "Strip contents when
+rolling" scenario) — superseding the earlier including-while-rolling availability from
+feed-row-seek; the not-rolling gate on feed jumps is unchanged.
+
+#### Scenario: Marker navigation still works while idle
+
+- **WHEN** the session is neither rolling nor recording and the user activates the
+  previous- or next-marker button
+- **THEN** the marker jump performs the same scrub, scroll, and audio seek it performed
+  before this change
+
+#### Scenario: Marker navigation is disabled while rolling or recording
+
+- **WHEN** the session is rolling or local mic recording is active
+- **THEN** the marker prev/next controls are disabled and no scrub, scroll, or seek is
+  issued

@@ -82,3 +82,25 @@ delete, D3 trigger label, selection = buttons+options, filter checkmarks.
 
 Read proposal/design/specs/tasks — clean against locked plan. Provisional
 banner removed from tasks.
+
+- **2026-08-06 — Retroactive multi-agent review (PR #4 pre-merge)**, standing in for the
+  skipped contract-phase review and whole-change audit (precedent: the 2026-08-03 PR-3
+  remediation). Three independent reviewers (frozen-contract auditor, code-quality
+  reviewer, SDLC auditor) covered this change's cumulative diff. Contract: every
+  observable events/generate change traced to this change's deltas — no unauthorized
+  items; server path verified clean (transactional bulk delete post-slot-acquire
+  pre-spawn, broadcast parity, dedup-after-delete, cap semantics preserved). Fixed in
+  the PR fix wave: stale README row/prose (now documents body 400s, `deleted`, and the
+  authorized regenerate exception); Regenerate-menu flag was derived from the paginated
+  first page (long sessions mislabeled — fixed); one-click destructive regenerate gained
+  a confirmation dialog. Residuals accepted: body-validation precedence (malformed body
+  now 400s before the unconfigured 503 — authorized reading of the delta's
+  unconditional malformed→400, recorded here as the delta doesn't pin precedence);
+  `selection`/`option_label` bounds unbounded pre-cap (deliberately NOT changed — adding
+  bounds is a contract change needing its own delta); delete-before-generate ordering is
+  spec'd but inverts the topics-generate crash-safe-swap precedent — a delete-after-
+  success swap would need a delta amendment (roadmap candidate).
+- **2026-08-06 — Fix-wave record (retroactive):** post-tick fixes 9d7a09e (restore
+  generate aggregate entry counting) and 977fc82 (empty-selection aggregate bound test)
+  landed after phase-3 ticks without a log entry; recorded here. Both covered by
+  events.generate.int.test.ts (passing).

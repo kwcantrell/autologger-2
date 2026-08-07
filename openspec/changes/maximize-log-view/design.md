@@ -107,3 +107,18 @@ fused-strip height = 80% of `#timeline-clips`, and shortcuts `?` button on the s
 
 Clean after shortcuts-button amendment — strip contents scenarios and task 2.1 mention the
 `?` control; no stale “global `?` only” normative language remains.
+
+- **2026-08-06 — Retroactive multi-agent review (PR #4 pre-merge)**, standing in for the
+  skipped adversarial panel and whole-change review (artifacts and ~2k lines of
+  implementation landed together in the da14b20 checkpoint commit — recorded deviation).
+  Findings fixed in the PR fix wave: mojibake'd em-dashes ("???") in EventLogSheet copy
+  restored; dead deck-cohesion trio (SessionLayoutToggle/useSessionLayoutPreference/
+  sessionLayoutPreference + test) deleted and Timeline's unreachable !stripOnly branches
+  stripped; MarkerNav tests re-pinned to this change's rolling-disable behavior (they
+  still asserted the superseded feed-row-seek including-while-rolling pin). Artifact
+  fixes: the web-session-console delta gained the missing MODIFIED entry for the
+  baseline "Marker navigation behavior is unchanged" requirement (ADD-only delta would
+  have left a baseline contradiction at archive); tasks.md phases 1–2 (layout
+  preference + toggle, ticked) describe work the same commit's delta rewrite retired —
+  recorded here as WIP drift, dead code now deleted, ticks left as historical record.
+  Residual: task 3.2 (e2e + visual re-bless) still open — run before archive.

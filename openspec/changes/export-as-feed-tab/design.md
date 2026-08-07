@@ -85,3 +85,17 @@ toolbar Export CSV remains (Non-Goal).
 Clean — `proposal.md`, `design.md`, delta specs, and `tasks.md` agree on six-tab order,
 inline Export panel, Timeline removal, and web-ui-system scenario retargeting; no
 server/contract claims.
+
+- **2026-08-06 — Retroactive multi-agent review (PR #4 pre-merge)**, standing in for the
+  skipped adversarial panel and whole-change review (this change's artifacts were
+  authored after its implementation; tasks born ticked — recorded deviation). Three
+  independent reviewers (contract, code-quality, SDLC) covered the cumulative
+  da14b20+8db4e40 web diff. No contract-surface impact (client-side CSV only). Clean
+  except items recorded in the maximize-log-view entry (shared diff).
+- **2026-08-06 — Transcript CSV export disposition (owner-authorized best-judgment
+  call):** commit 9001ff9 (toolbar Export CSV + transcriptCsv util, 2026-07-27) shipped
+  with no OpenSpec change, and this change's Non-Goal ("Transcript toolbar Export CSV
+  remains") orphaned it — then this change itself relocated the button into the Export
+  feed. Disposition: the surviving surface (transcriptCsv util + ExportFeed) is covered
+  by THIS change's specs; the interim ungated commit is recorded here as an accepted
+  process residual (web-only, no frozen surface). No retroactive change written.
