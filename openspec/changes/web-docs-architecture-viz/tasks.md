@@ -5,13 +5,13 @@
 
 ## 1. Workspace scaffold & root wiring
 
-- [ ] 1.1 Create `web-docs/` workspace: `package.json` with devDeps — `typescript` and
+- [x] 1.1 Create `web-docs/` workspace: `package.json` with devDeps — `typescript` and
       `mermaid` **exact-pinned**, `tsx`, `jsdom`, `vite`, `react`, `react-dom`, `vitest`,
       `better-sqlite3` at `server/`'s exact specifier — plus `tsconfig.json`,
       `biome.json` (the `web/` pattern), and a Vite + React shell rendering a placeholder
       page, dev server loopback-bound on port 5175. Verify `npm install`,
       `npm run typecheck -w web-docs`, `npm run lint -w web-docs`.
-- [ ] 1.2 Wire root `package.json`: add `web-docs` to `workspaces`; append web-docs legs
+- [x] 1.2 Wire root `package.json`: add `web-docs` to `workspaces`; append web-docs legs
       to root `typecheck`, `lint`, and `test` (test leg = workspace unit tests only); add
       root `docs:check` script (extraction + all gates against the live tree). Root
       `dev`/`build`/`start` untouched. Then assert via `git diff package-lock.json` that
