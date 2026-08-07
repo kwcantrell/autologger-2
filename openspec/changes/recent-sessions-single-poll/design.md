@@ -91,3 +91,14 @@ absent and `s.is_rolling` governs (recording implies rolling for list purposes
   (reworded to the observable no-extra-poller bound) and carried the
   pre-fact-check MODIFIED-conditional placeholder (resolved to ADDED). All
   else coherent (documents read: all four artifacts + delta).
+
+- **2026-08-07 — Apply record + review/audit:** single-unit apply (9b62b29);
+  combined review + audit verdict **MERGEABLE** — all three delta scenarios
+  mapped to named tests, the two new/extended assertions MUTATION-VERIFIED
+  (pre-change component restored transiently: exactly they failed), comment
+  accuracy checked claim-by-claim, single-hunk tsx diff with everything else
+  untouched, tasks ticked without reinterpretation (2.2 left for archive).
+  Minors accepted: compositional coverage of scenario 1's WHEN; the
+  zero-open-session loop lacks an explicit non-empty guard (vacuity precluded
+  by the data-live assertions). Gates green incl. e2e 20/20 and visual 44
+  with ZERO diffs.
