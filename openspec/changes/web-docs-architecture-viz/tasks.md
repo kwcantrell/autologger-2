@@ -117,14 +117,14 @@
 
 ## 7. Site pages
 
-- [ ] 7.1 L0 page: render from `atlas.json` with `securityLevel: 'strict'`,
+- [x] 7.1 L0 page: render from `atlas.json` with `securityLevel: 'strict'`,
       `htmlLabels: false`; node navigation via post-render DOM handlers; kind/test
       toggles; active-changes sidebar (links, pending capabilities); tint legend; About
       page listing exclusions and process capabilities.
-- [ ] 7.2 L1 component pages: module graph with grouping + elided-test counts and
+- [x] 7.2 L1 component pages: module graph with grouping + elided-test counts and
       toggle, capability list with requirement counts linking into the browser,
       in-flight changes touching the component.
-- [ ] 7.3 L2 views: catalog + session ER pages (labeled mechanical; sparsity note),
+- [x] 7.3 L2 views: catalog + session ER pages (labeled mechanical; sparsity note),
       authored state diagrams labeled "authored", requirement/scenario browser rendering
       parsed text as text nodes. Tests: extraction-level vitest plus one routing smoke
       with the mermaid module stubbed (mermaid `render()` cannot run under jsdom).
