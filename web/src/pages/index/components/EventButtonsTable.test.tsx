@@ -54,7 +54,7 @@ const sourceShow = {
   studio_id: 'studio-1',
   name: 'Evening News',
   show_code: 'EN',
-  next_episode: 3,
+  title_suffix: 'episode',
   categories: [
     {
       id: 'cat-9',

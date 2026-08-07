@@ -25,7 +25,13 @@ function profileFixture(overrides: Partial<ProfilePayload> = {}): ProfilePayload
     active_studio_id: 'studio-1',
     active_show_id: 'show-1',
     shows: [
-      { id: 'show-1', name: 'Your Mom', show_code: 'YMH', next_episode: 1, studio_id: 'studio-1' },
+      {
+        id: 'show-1',
+        name: 'Your Mom',
+        show_code: 'YMH',
+        title_suffix: 'episode',
+        studio_id: 'studio-1',
+      },
     ],
     new_session_defaults: { default_frame_rate: 24, title_prefix: '' },
     ...overrides,

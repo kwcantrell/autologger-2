@@ -170,7 +170,7 @@ const showWithCategories = {
   studio_id: 'studio-1',
   name: 'Morning News',
   show_code: 'MN',
-  next_episode: 12,
+  title_suffix: 'episode',
   categories: [
     {
       id: 'cat-1',
@@ -521,5 +521,66 @@ describe('HomeSettingsModal category round-trip', () => {
     await waitFor(() =>
       expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['show-categories'] }),
     );
+  });
+});
+
+// --- Suffix control (session-title-suffix, task 2.1) ---
+//
+// Replaces the removed Next Ep counter control. `showWithCategories` carries
+// `title_suffix: 'episode'`, matching the migration default for pre-existing
+// shows (design D7).
+describe('HomeSettingsModal Suffix control', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileWithShow,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('renders the Suffix select immediately after Code, and no Next Ep control exists', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    const fieldsRow = document.getElementById('profile-show-fields');
+    const labels = Array.from(fieldsRow?.querySelectorAll('label') ?? []).map(
+      (l) => l.querySelector('span')?.textContent,
+    );
+    expect(labels).toEqual(['Name:', 'Code:', 'Suffix:', 'Default Frame Rate:']);
+
+    expect(screen.queryByText('Next Ep:')).toBeNull();
+    expect(document.getElementById('profile-show-next-ep')).toBeNull();
+  });
+
+  it("hydrates the Suffix select from the show's title_suffix", () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect((screen.getByLabelText('Suffix') as HTMLSelectElement).value).toBe('episode');
+  });
+
+  it('offers Date and Episode Number as the only two Suffix options', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    const select = screen.getByLabelText('Suffix') as HTMLSelectElement;
+    const options = Array.from(select.options).map((o) => ({
+      value: o.value,
+      label: o.textContent,
+    }));
+    expect(options).toEqual([
+      { value: 'date', label: 'Date' },
+      { value: 'episode', label: 'Episode Number' },
+    ]);
+  });
+
+  it('persists an edited Suffix via show_updates[].title_suffix, with no next_episode key on the wire', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Suffix'), { target: { value: 'date' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; title_suffix?: string }>;
+    };
+    const showUpdate = body.show_updates?.find((u) => u.show_id === 'show-1');
+    expect(showUpdate?.title_suffix).toBe('date');
+    expect(showUpdate && 'next_episode' in showUpdate).toBe(false);
   });
 });

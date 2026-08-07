@@ -527,7 +527,10 @@ export interface NewSessionBody {
   frame_rate: number;
   start_offset_frames: number;
   show_id: string;
-  episode: string;
+  /** session-title-suffix (design D6): required only for Episode-suffix shows.
+   * Date-suffix shows omit it — the server derives the title from the show
+   * code + UTC date rather than a client-fabricated value. */
+  episode?: string | null;
   notes?: string | null;
 }
 

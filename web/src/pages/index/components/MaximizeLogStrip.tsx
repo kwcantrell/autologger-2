@@ -72,7 +72,10 @@ export function MaximizeLogStrip({
 }: Props) {
   const code = (status?.show_code ?? '').trim();
   const showName = (status?.show_name ?? '').trim();
-  const sessionTitle = (status?.title ?? '').trim() || (status?.deck_title ?? '').trim();
+  // session-title-suffix (design D5, task 2.3): `deck_title` is now the server-derived
+  // mirror of `title` everywhere on the wire, so the `?? deck_title` fallback this used
+  // to need is vestigial — `title` alone is authoritative.
+  const sessionTitle = (status?.title ?? '').trim();
   const stripShow = showName || code || sessionTitle || '—';
   const stripSessionName = sessionTitle && sessionTitle !== stripShow ? sessionTitle : '';
   const dateText = fmtSessionDate(status?.session_created_at_utc ?? status?.now_utc);

@@ -28,19 +28,19 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
 
 ## Phase 2 — Web: settings + new session + timeline
 
-- [ ] 2.1 Settings: after Code, add Suffix select (`Date` / `Episode Number`);
+- [x] 2.1 Settings: after Code, add Suffix select (`Date` / `Episode Number`);
       remove Next Ep control; persist via profile `title_suffix`.
-- [ ] 2.2 New Session modal: remove Bonus toggle; show Episode field only when
+- [x] 2.2 New Session modal: remove Bonus toggle; show Episode field only when
       show `title_suffix === 'episode'`; stop seeding from `next_episode`; let
       omitted title/episode rely on server derivation for Date mode; clear
       stale episode when switching to a Date show.
-- [ ] 2.3 Session-meta display (`MaximizeLogStrip.tsx` `sessionMeta` — the former
+- [x] 2.3 Session-meta display (`MaximizeLogStrip.tsx` `sessionMeta` — the former
       Timeline Episode slot; the Episode display itself is already gone, removed
       by unrelated strip work): verify the title-preferring display against the
       new derivation + deck_title-equals-title semantics, and drop the now-
       vestigial `?? deck_title` fallback in `sessionTitle` once D5 lands
       server-side.
-- [ ] 2.4 Update web types/fixtures/tests that assume `next_episode` or the
+- [x] 2.4 Update web types/fixtures/tests that assume `next_episode` or the
       Bonus UI (no test asserts an `Episode N` meta literal — verified in the
       2026-08-07 staleness read; skip hunting for one).
 

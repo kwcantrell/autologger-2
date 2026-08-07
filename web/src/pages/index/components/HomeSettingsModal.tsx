@@ -41,9 +41,12 @@ const TAB_VARS = [
 const SECTION_CLASS =
   'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-t-0 border-x-(--v6-tab-panel-border) border-b-(--v6-tab-panel-border) rounded-[0_0.85rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
 
-// `.profileShowFieldsRow .profileShowField` base + the code/next-ep/fps width variants.
+// `.profileShowFieldsRow .profileShowField` base + the code/suffix/fps width variants.
 const FIELD_BASE = 'flex-[1_1_0] min-w-[min(100%,8.5rem)] max-w-full';
-const FIELD_CODE_NEXTEP = 'flex-[0_1_5.5rem] min-w-16 max-w-[6.5rem]';
+const FIELD_CODE = 'flex-[0_1_5.5rem] min-w-16 max-w-[6.5rem]';
+// Wider than FIELD_CODE — the Suffix select's "Episode Number" option label needs more room
+// than the 3-4 char show code the field sat next to before (session-title-suffix, task 2.1).
+const FIELD_SUFFIX = 'flex-[0_1_9rem] min-w-[8rem] max-w-[11rem]';
 const FIELD_FPS = 'flex-[1_1_12rem] min-w-[min(100%,10rem)] max-w-full';
 // `.profileShowFieldsRow` container.
 const FIELDS_ROW =
@@ -67,7 +70,7 @@ interface Props {
 interface ShowDraft {
   name: string;
   show_code: string;
-  next_episode: number;
+  title_suffix: 'date' | 'episode';
   categories: EventButtonDraft[];
   event_palette: string[];
   event_palette_preset: string;
@@ -86,13 +89,10 @@ function showToShowDraft(show: Show): ShowDraft {
   return {
     name: show.name ?? '',
     show_code: show.show_code ?? '',
-    // session-title-suffix (Unit B mechanical fix, task 1.5 report): the wire
-    // `Show.next_episode` field this hydrated from is gone. Minimal fix to
-    // keep this compiling — `ShowDraft.next_episode` stays a local draft
-    // field (the "Next Ep" control still reads/writes it below) but it no
-    // longer round-trips through the server. Replacing this with the Suffix
-    // select + dropping "Next Ep" entirely is Unit C's UI work (task 2.1).
-    next_episode: 1,
+    // session-title-suffix task 2.1: hydrate from the show's persisted Suffix
+    // preference. Defensive default to 'date' if a payload ever omits it —
+    // the real server always emits it (showApiDict, task 1.4).
+    title_suffix: show.title_suffix === 'episode' ? 'episode' : 'date',
     categories: (show.categories ?? []).map((c) => ({
       id: c.id,
       // `show.categories` is wire-accurate `name`-keyed (server: `showApiDict` passes
@@ -308,7 +308,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           show_id: s.id,
           name: draft.name,
           show_code: draft.show_code,
-          next_episode: draft.next_episode,
+          title_suffix: draft.title_suffix,
           categories: draft.categories.map((c) => ({
             id: c.id,
             // The update validator requires `name` (`server/src/studio.ts`
@@ -579,7 +579,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     onChange={(e) => updateShowDraft({ name: e.target.value })}
                   />
                 </label>
-                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
+                <label className={clsx('field', FIELD_CODE)}>
                   <span>Code:</span>
                   <input
                     type="text"
@@ -592,21 +592,22 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     onChange={(e) => updateShowDraft({ show_code: e.target.value.toUpperCase() })}
                   />
                 </label>
-                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
-                  <span>Next Ep:</span>
-                  <input
-                    type="number"
-                    id="profile-show-next-ep"
-                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                    min={1}
-                    max={999999}
-                    step={1}
-                    value={currentDraft.next_episode}
-                    onChange={(e) =>
-                      updateShowDraft({
-                        next_episode: Math.max(1, Number.parseInt(e.target.value, 10) || 1),
-                      })
+                {/* session-title-suffix task 2.1: replaces the removed Next Ep counter
+                    control. Maps to the show's `title_suffix` preference, which the
+                    server uses to derive untitled-create titles (design D5-D8). */}
+                <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
+                  <span>Suffix:</span>
+                  <Select
+                    id="profile-show-suffix"
+                    ariaLabel="Suffix"
+                    value={currentDraft.title_suffix}
+                    onChange={(v) =>
+                      updateShowDraft({ title_suffix: v === 'episode' ? 'episode' : 'date' })
                     }
+                    options={[
+                      { value: 'date', label: 'Date' },
+                      { value: 'episode', label: 'Episode Number' },
+                    ]}
                   />
                 </label>
                 <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">
