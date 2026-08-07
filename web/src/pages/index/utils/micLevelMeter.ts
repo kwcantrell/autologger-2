@@ -40,7 +40,11 @@ export function runMicLevelMeter(
     const data = new Uint8Array(analyser.fftSize);
     const tick = () => {
       if (!isActive()) {
-        raf = null;
+        // Going inactive runs the full stop path — close the AudioContext and
+        // reset the fill — instead of leaking a live context until the
+        // disposer runs. `stop` nulls `ctx` before closing, so a later
+        // disposer call cannot double-close.
+        stop();
         return;
       }
       analyser.getByteTimeDomainData(data);
