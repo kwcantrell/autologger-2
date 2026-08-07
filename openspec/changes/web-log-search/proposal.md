@@ -1,8 +1,9 @@
 # Proposal: web-log-search (DRAFT — queued by the ui-refresh gate, 2026-07-21)
 
 > Status: draft proposal only — not fact-checked, not paneled, not gated. Queued by the
-> `ui-refresh` gate's D3 ruling. Sequencing: after `ui-refresh` (and after
-> `ai-session-analyst` is re-planned). Remaining artifacts (specs/design/tasks) are
+> `ui-refresh` gate's D3 ruling. Sequencing: after `ui-refresh`. (An earlier
+> after-`ai-session-analyst` dependency was dropped 2026-08-07 — that change was
+> superseded and removed, never applied.) Remaining artifacts (specs/design/tasks) are
 > deliberately not drafted until this is picked up.
 
 ## Why
