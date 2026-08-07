@@ -59,13 +59,13 @@
 
 ## 4. Relationship evidence & capability accounting gates
 
-- [ ] 4.1 TDD relationship evidence checks (each a named file + literal rule): web→server
+- [x] 4.1 TDD relationship evidence checks (each a named file + literal rule): web→server
       (`web/src/api/client.ts` fetch/WS), companion→server (`companion/src/api.ts`
       base-URL fetch), server→web static-serve (`serveStatic` call site), e2e
       process-spawn (harness spawn sites), datastore/external call sites with
       config-gate labels. Unevidenced declared relationship fails naming relationship +
       rule. Declare the real relationships; verify via `docs:check`.
-- [ ] 4.2 TDD capability accounting: every baseline `openspec/specs/` dir attached /
+- [x] 4.2 TDD capability accounting: every baseline `openspec/specs/` dir attached /
       cross-cutting / process, else fail naming it; dangling model refs fail;
       capabilities named only by active-change deltas resolve as **pending** (no
       failure). Account for all 17 baseline capabilities (cross-cutting:
