@@ -777,7 +777,6 @@ export function Timeline({
         !currentNavMarker && 'opacity-[0.35]',
       )}
       id="marker-current-cat-pill"
-      aria-label="Current marker"
       style={currentNavMarker ? { ['--nav-cat-col' as string]: currentNavMarker.col } : undefined}
       title={
         currentNavMarker
@@ -785,6 +784,10 @@ export function Timeline({
           : 'No markers'
       }
     >
+      {/* Names the readout for SR users without ARIA-on-a-generic-div (a11y
+          pass): a plain div supports neither aria-label nor a role that fits
+          a passive readout, so the name is real text instead. */}
+      <span className="sr-only">Current marker: </span>
       <span ref={navCatRef} id="marker-current-cat" className={MARKER_CHIP_BODY}>
         <span
           className={MARKER_CHIP_ACCENT}

@@ -155,6 +155,7 @@ export function MarkerNav({ sessionId, disabled = false, ungrouped = false }: Pr
   const nextColor = enabled && nextEvent ? colorOf(nextEvent) : 'transparent';
 
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: false positive — the label travels with role="toolbar" (both undefined when ungrouped); the rule can't see the conditional pairing.
     <div
       className={
         ungrouped

@@ -584,6 +584,7 @@ export function EventButtonsTable({
                       >
                         {btn.dropdown_options.length ? (
                           btn.dropdown_options.map((opt, optIdx) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: read-only positional bubbles inside one button — options have no id, labels may legitimately duplicate, and the list never reorders in place (any edit replaces the whole array).
                             <span key={`${btn.id}-opt-${optIdx}`} className={OPTION_BUBBLE}>
                               {opt.label.trim() || '—'}
                             </span>

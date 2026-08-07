@@ -386,6 +386,7 @@ export function TransportControls({
   );
 
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: false positive — the label travels with role="toolbar" (both undefined when compact); the rule can't see the conditional pairing.
     <div
       className={compact ? CTRL_BTNS_COMPACT : CTRL_BTNS}
       id="session-controls-v3"

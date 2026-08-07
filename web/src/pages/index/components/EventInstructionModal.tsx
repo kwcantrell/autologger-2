@@ -51,9 +51,13 @@ export function EventInstructionModal({ buttonName, initialInstruction, onSave, 
         Tell AUTO GENERATE when to log this event from the transcript. Leave blank to opt out for
         this button.
       </p>
-      <label className="field">
+      {/* Explicit htmlFor/id: the control is nested, but it's a custom
+          component (AutoGrowTextarea), so the association must be stated
+          rather than inferred (a11y pass). */}
+      <label className="field" htmlFor="event-instruction-input">
         <span>Generation instruction</span>
         <AutoGrowTextarea
+          id="event-instruction-input"
           className={TEXTAREA_CLASS}
           rows={1}
           maxLength={2000}

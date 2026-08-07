@@ -105,11 +105,14 @@ export function MaximizeLogStrip({
       {/* Date lives in a hover/focus tooltip — saves a meta row; rail already
           shows dates for session picking. */}
       <Tooltip content={`Date ${dateText}`} side="right" align="start" delayDuration={200}>
+        {/* No aria-label: a generic <p> can't take one (a11y pass), and the
+            visible show/name text plus the sr-only date span below already
+            carry everything the label duplicated. */}
         <p
           className="m-0 flex min-w-0 cursor-default flex-row flex-wrap items-baseline gap-x-[0.35rem] overflow-hidden [font-family:Inter,var(--font-poppins),system-ui,sans-serif] text-[0.78rem] leading-[1.15] text-v5-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgba(56,189,248,0.55)]"
           id="session-deck-title"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: deliberately focusable — the date lives only in this hover/FOCUS tooltip (spec "Maximize-log fused transport strip": "date via hover/focus tooltip"), so keyboard users need a way to summon it.
           tabIndex={0}
-          aria-label={`Session ${stripShow}${stripSessionName ? ` · ${stripSessionName}` : ''}, date ${dateText}`}
         >
           <span
             id="session-title-code"
@@ -293,7 +296,7 @@ export function MaximizeLogStrip({
   );
 
   return (
-    <div
+    <section
       id="v5-maximize-log-strip"
       className={clsx(
         'v5-maximize-log-strip min-w-0 overflow-visible box-border bg-[#050912]',
@@ -321,6 +324,6 @@ export function MaximizeLogStrip({
         stripLaneSlot={liveDock ? liveButtons : undefined}
         controlsLocked={controlsLocked}
       />
-    </div>
+    </section>
   );
 }
