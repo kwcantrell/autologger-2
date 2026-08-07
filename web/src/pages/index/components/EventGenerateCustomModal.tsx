@@ -18,7 +18,7 @@ interface Candidate {
 }
 
 function selectionCandidates(categories: ShowCategory[]): Candidate[] {
-  return categories.flatMap((category) => {
+  const flat = categories.flatMap((category) => {
     if (category.type === 'ON_OFF') return [];
     const categoryLabel = category.name || category.label || category.id;
     const buttonInstruction = category.auto_instruction?.trim();
@@ -52,6 +52,16 @@ function selectionCandidates(categories: ShowCategory[]): Candidate[] {
         : [];
     return [...button, ...options];
   });
+  // The server matches a selection entry by (category_id, trimmed option
+  // label) and dedupes labels into a Set — duplicate option labels within a
+  // dropdown are ONE selectable entry on the wire, so present them as one row
+  // here too (first wins). Also keeps React keys unique: rendering duplicates
+  // would share one checkbox state across visually distinct rows.
+  const byKey = new Map<string, Candidate>();
+  for (const candidate of flat) {
+    if (!byKey.has(candidate.key)) byKey.set(candidate.key, candidate);
+  }
+  return [...byKey.values()];
 }
 
 export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
@@ -69,19 +79,28 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
     });
   }
 
+  // Derived from the LIVE candidate list, not `selected` alone: a profile
+  // refetch mid-modal (instruction removed elsewhere) can orphan selected
+  // keys, and gating Generate on this intersection keeps the button honest —
+  // it can never be enabled while a click would submit nothing.
+  const selection = useMemo(
+    () =>
+      candidates.flatMap((candidate): EventGenerateSelection[] =>
+        selected.has(candidate.key)
+          ? [
+              {
+                category_id: candidate.categoryId,
+                ...(candidate.optionLabel === undefined
+                  ? {}
+                  : { option_label: candidate.optionLabel }),
+              },
+            ]
+          : [],
+      ),
+    [candidates, selected],
+  );
+
   function submit() {
-    const selection = candidates.flatMap((candidate): EventGenerateSelection[] =>
-      selected.has(candidate.key)
-        ? [
-            {
-              category_id: candidate.categoryId,
-              ...(candidate.optionLabel === undefined
-                ? {}
-                : { option_label: candidate.optionLabel }),
-            },
-          ]
-        : [],
-    );
     if (selection.length > 0) onSubmit(selection);
   }
 
@@ -144,7 +163,7 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
         <button
           type="button"
           className="btn primary"
-          disabled={selected.size === 0}
+          disabled={selection.length === 0}
           onClick={submit}
         >
           Generate
