@@ -107,7 +107,7 @@
       evicted-and-reconstructed under the triple idle guard; `SessionHubRegistry`).
       Attach in the model. No transcript diagram (deferred pending
       `transcript-gen-lock-status`).
-- [ ] 6.3 TDD diagram validity + atlas assembly: jsdom-bootstrapped mermaid parse
+- [x] 6.3 TDD diagram validity + atlas assembly: jsdom-bootstrapped mermaid parse
       (no browser-downloading deps), structural checks (non-empty; authored diagrams
       have ≥1 state and ≥1 transition; every navigation id resolves to a component
       route), per-diagram node/edge budgets as hard failures, shared mermaid config
