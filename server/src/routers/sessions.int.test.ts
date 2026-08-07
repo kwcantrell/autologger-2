@@ -210,6 +210,33 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     expect(row?.next_episode).toBe(1);
   });
 
+  // Batch import (web/src/pages/index/batchImport/runner.ts createSessionForStem)
+  // sends explicit `title` AND `episode` both set to the file stem, bypassing
+  // derivation entirely (D6) — mirrored here rather than trusted to the more
+  // generic derivation-path counter test above, since it's the one real
+  // caller that posts both fields explicit and together (task 3.1).
+  it('batch-import-shaped create (explicit title + episode, no derivation) stores both verbatim and does not bump the counter', async () => {
+    const studio = await activeStudioId();
+    const show = seedShow({ studioId: studio, code: 'BI' });
+    const before = env.ports.catalog.first<{ next_episode: number }>(
+      'SELECT next_episode FROM shows WHERE id = ?',
+      show,
+    );
+    const { status, json } = await postSession({
+      show_id: show,
+      title: 'clip_003',
+      episode: 'clip_003',
+    });
+    expect(status).toBe(200);
+    expect(json.title).toBe('clip_003');
+    expect(json.episode).toBe('clip_003');
+    const after = env.ports.catalog.first<{ next_episode: number }>(
+      'SELECT next_episode FROM shows WHERE id = ?',
+      show,
+    );
+    expect(after?.next_episode).toBe(before?.next_episode);
+  });
+
   it('concurrent same-clock creates for the same show never duplicate a title', async () => {
     const studio = await activeStudioId();
     const show = seedShow({ studioId: studio, code: 'CC' });
@@ -449,5 +476,88 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ detail: 'Session not found' });
     }
+  });
+});
+
+// session-title-suffix (design D5, gate ruling 2026-08-02, task 1.5/3.1):
+// `deck_title` equals the stored session `title` everywhere — it no longer
+// derives `{show_code} - {episode}` even though a show code is present.
+// `GET /api/sessions/:id/status` (events.ts) is covered here too, since it's
+// the third of the three frozen `deck_title` emitters (Companion state is
+// covered separately in companion.int.test.ts).
+describe('deck_title equals stored title (D5) — list/detail/status', () => {
+  it('list + detail + status all report the stored title as deck_title, not CODE - episode', async () => {
+    // Explicit active-show prefs (the detail-endpoint parity test's idiom
+    // above) — the list endpoint scopes to ONE active show, and a fresh
+    // studio's default active-show setting is otherwise not guaranteed to
+    // resolve to the show seeded below.
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio, code: 'HD' });
+    const session = seedSession({ showId: show, episode: '7', title: 'HD_260802' });
+    const userId = seedUser({ studios: [studio] });
+    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const cookie = await loginCookie(userId);
+    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+
+    const listRes = await app.request(
+      '/api/sessions',
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };
+    const listEntry = listBody.active.find((r) => r.id === session);
+    expect(listEntry?.deck_title).toBe('HD_260802');
+
+    const detailRes = await app.request(
+      `/api/sessions/${session}`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const detailBody = (await detailRes.json()) as { deck_title: string };
+    expect(detailBody.deck_title).toBe('HD_260802');
+
+    const statusRes = await app.request(
+      `/api/sessions/${session}/status`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const statusBody = (await statusRes.json()) as { deck_title: string };
+    expect(statusBody.deck_title).toBe('HD_260802');
+  });
+
+  it('falls back to "—" for a blank stored title, even with a show code present', async () => {
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio, code: 'HD' });
+    const session = seedSession({ showId: show, episode: '7', title: '' });
+    const userId = seedUser({ studios: [studio] });
+    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const cookie = await loginCookie(userId);
+    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+
+    const listRes = await app.request(
+      '/api/sessions',
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };
+    const listEntry = listBody.active.find((r) => r.id === session);
+    expect(listEntry?.title).toBe('');
+    expect(listEntry?.deck_title).toBe('—');
+
+    const detailRes = await app.request(
+      `/api/sessions/${session}`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const detailBody = (await detailRes.json()) as { deck_title: string };
+    expect(detailBody.deck_title).toBe('—');
+
+    const statusRes = await app.request(
+      `/api/sessions/${session}/status`,
+      { method: 'GET', headers: { Cookie: cookie } },
+      reqEnv,
+    );
+    const statusBody = (await statusRes.json()) as { deck_title: string };
+    expect(statusBody.deck_title).toBe('—');
   });
 });

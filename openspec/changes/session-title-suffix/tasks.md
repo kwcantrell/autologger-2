@@ -18,11 +18,11 @@ new→date, D8=ignore stale next_episode). Ready for `opsx:apply`.
       trimmed show code on derivation (`400`); stop next-episode bump; Date
       stores `episode=''`; Episode requires non-blank episode unless explicit
       title; trim explicit titles as today.
-- [ ] 1.4 Update shared `showApiDict` + profile/show schemas: emit/accept
+- [x] 1.4 Update shared `showApiDict` + profile/show schemas: emit/accept
       `title_suffix`; omit `next_episode` from responses; ignore legacy
       `next_episode` on updates; regenerate profile/show fixtures; new show
       create defaults `title_suffix` to `date`.
-- [ ] 1.5 Point shared `sessionDeckDisplayTitle` (Companion, session list/detail,
+- [x] 1.5 Point shared `sessionDeckDisplayTitle` (Companion, session list/detail,
       session status) at stored session `title` (blank → `"—"`); update fixtures
       / tests that expect `CODE - episode`; update Companion variable label.
 

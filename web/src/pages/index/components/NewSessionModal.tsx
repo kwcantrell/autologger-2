@@ -77,11 +77,18 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
   const { mutate: createSession, isPending } = useCreateSession();
 
-  // Sync default episode from selected show
+  // Sync default episode from selected show.
+  // session-title-suffix (Unit B mechanical fix, task 1.5 report): the wire
+  // `Show.next_episode` field this read seeded is gone (server no longer
+  // emits it). Minimal fix to keep this compiling — a static '1' default,
+  // same as the prior `?? 1` fallback whenever a show carried no counter.
+  // Real Suffix-aware seeding (show `title_suffix === 'episode'` → show the
+  // field; 'date' → hide/omit it, no seeding from a counter at all) is
+  // Unit C's UI work (tasks 2.1/2.2), not touched here.
   useEffect(() => {
     if (episodeEdited) return;
     const show = shows.find((s) => s.id === showId);
-    if (show) setEpisode(String(show.next_episode ?? 1));
+    if (show) setEpisode('1');
   }, [showId, shows, episodeEdited]);
 
   const handleShowChange = (next: string) => {

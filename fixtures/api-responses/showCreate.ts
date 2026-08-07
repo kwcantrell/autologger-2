@@ -26,7 +26,7 @@ const captured = {
     "studio_id": "test-studios",
     "name": "All The Smoke",
     "show_code": "ATS",
-    "next_episode": 1,
+    "title_suffix": "date",
     "categories": [
       {
         "id": "########-####-####-####-############",

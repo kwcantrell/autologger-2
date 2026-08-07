@@ -77,7 +77,10 @@ profileRouter.put('/api/profile', async (c) => {
       const fields: Parameters<typeof catalog.shows.updateShowFields>[1] = {};
       if (ent.name != null) fields.name = ent.name.trim();
       if (ent.show_code != null) fields.show_code = ent.show_code.trim();
-      if (ent.next_episode != null) fields.next_episode = ent.next_episode;
+      // session-title-suffix (design D1/D8): legacy `next_episode` is gone
+      // from the wire schema entirely (stripped before reaching here) —
+      // there is deliberately no `ent.next_episode` mapping below.
+      if (ent.title_suffix != null) fields.title_suffix = ent.title_suffix;
       if (ent.categories != null) {
         fields.categories_json = JSON.stringify(validateCategoriesList(ent.categories));
       }

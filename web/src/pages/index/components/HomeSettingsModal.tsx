@@ -86,7 +86,13 @@ function showToShowDraft(show: Show): ShowDraft {
   return {
     name: show.name ?? '',
     show_code: show.show_code ?? '',
-    next_episode: show.next_episode ?? 1,
+    // session-title-suffix (Unit B mechanical fix, task 1.5 report): the wire
+    // `Show.next_episode` field this hydrated from is gone. Minimal fix to
+    // keep this compiling — `ShowDraft.next_episode` stays a local draft
+    // field (the "Next Ep" control still reads/writes it below) but it no
+    // longer round-trips through the server. Replacing this with the Suffix
+    // select + dropping "Next Ep" entirely is Unit C's UI work (task 2.1).
+    next_episode: 1,
     categories: (show.categories ?? []).map((c) => ({
       id: c.id,
       // `show.categories` is wire-accurate `name`-keyed (server: `showApiDict` passes

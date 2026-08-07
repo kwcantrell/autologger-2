@@ -5,7 +5,7 @@ export function variableDefinitions(): CompanionVariableDefinition[] {
     { variableId: 'timecode', name: 'Session timecode' },
     { variableId: 'take', name: 'Current take' },
     { variableId: 'session_title', name: 'Session title' },
-    { variableId: 'deck_title', name: 'Deck title (show + episode)' },
+    { variableId: 'deck_title', name: 'Deck title (session name)' },
     { variableId: 'show_name', name: 'Show name' },
     { variableId: 'show_code', name: 'Show code' },
     { variableId: 'event_count', name: 'Logged event count' },

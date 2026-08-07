@@ -143,7 +143,7 @@ const captured = {
       "studio_id": "test-studios",
       "name": "All The Smoke",
       "show_code": "ATS",
-      "next_episode": 1,
+      "title_suffix": "date",
       "categories": [
         {
           "id": "cam",
@@ -211,7 +211,7 @@ const captured = {
       "studio_id": "test-studios",
       "name": "Autolog Test Show",
       "show_code": "ATS",
-      "next_episode": 1,
+      "title_suffix": "episode",
       "categories": [
         {
           "id": "########-####-####-####-############",
@@ -279,7 +279,7 @@ const captured = {
       "studio_id": "test-studio-2",
       "name": "The Something Podcast",
       "show_code": "TSP",
-      "next_episode": 1,
+      "title_suffix": "episode",
       "categories": [
         {
           "id": "########-####-####-####-############",

@@ -154,3 +154,115 @@ describe('shows', () => {
     expect(res.status).toBe(422);
   });
 });
+
+// session-title-suffix (design D1/D7/D8, api-contract-freeze delta, task
+// 1.4/3.1): the show wire carries title_suffix and never next_episode; a
+// new show defaults to 'date'; profile show_updates round-trips
+// title_suffix; a legacy next_episode update key is ignored, not a 400 and
+// not a live counter.
+describe('session-title-suffix — show wire', () => {
+  it('POST /api/shows: new show defaults title_suffix to "date" and omits next_episode', async () => {
+    const sid = await activeStudioId();
+    const res = await app.request(
+      '/api/shows',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ studio_id: sid, name: 'New Show', show_code: 'NS' }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { show: Record<string, unknown> };
+    expect(body.show.title_suffix).toBe('date');
+    expect('next_episode' in body.show).toBe(false);
+  });
+
+  it('GET /api/shows omits next_episode and includes title_suffix for every entry', async () => {
+    const sid = await activeStudioId();
+    seedShow({ studioId: sid, name: 'Wire Show', code: 'WS' });
+    const res = await app.request(`/api/shows?studio_id=${sid}`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
+    expect(body.shows.length).toBeGreaterThan(0);
+    for (const s of body.shows) {
+      expect('next_episode' in s).toBe(false);
+      expect(['date', 'episode']).toContain(s.title_suffix);
+    }
+  });
+
+  it('GET /api/profile: every shows[] entry omits next_episode and includes title_suffix', async () => {
+    const sid = await activeStudioId();
+    seedShow({ studioId: sid, name: 'Profile Show', code: 'PW' });
+    const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
+    expect(body.shows.length).toBeGreaterThan(0);
+    for (const s of body.shows) {
+      expect('next_episode' in s).toBe(false);
+      expect(['date', 'episode']).toContain(s.title_suffix);
+    }
+  });
+
+  it('PUT /api/profile show_updates[].title_suffix round-trips through a subsequent read', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Suffix Show', code: 'SF' });
+
+    const putRes = await app.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          active_studio_id: sid,
+          show_updates: [{ show_id: showId, title_suffix: 'episode' }],
+        }),
+      },
+      { ...env },
+    );
+    expect(putRes.status).toBe(200);
+
+    const res = await app.request(`/api/shows?studio_id=${sid}`, { method: 'GET' }, { ...env });
+    const body = (await res.json()) as { shows: Array<{ id: string; title_suffix: string }> };
+    const show = body.shows.find((s) => s.id === showId);
+    expect(show?.title_suffix).toBe('episode');
+  });
+
+  it('legacy next_episode on a show_updates entry is ignored: 200, no 400, no counter written', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Legacy Show', code: 'LG' });
+    const before = env.ports.catalog.first<{ next_episode: number }>(
+      'SELECT next_episode FROM shows WHERE id = ?',
+      showId,
+    );
+
+    const putRes = await app.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          active_studio_id: sid,
+          // A stale client still sending the retired wire key — MUST NOT
+          // 400 solely because of it, and MUST NOT persist as a counter.
+          show_updates: [{ show_id: showId, next_episode: 999 }],
+        }),
+      },
+      { ...env },
+    );
+    expect(putRes.status).toBe(200);
+
+    const res = await app.request(`/api/shows?studio_id=${sid}`, { method: 'GET' }, { ...env });
+    const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
+    const show = body.shows.find((s) => s.id === showId);
+    expect(show).toBeTruthy();
+    expect('next_episode' in (show ?? {})).toBe(false);
+
+    // The soft-retained SQL column itself never moved off its pre-update value.
+    const after = env.ports.catalog.first<{ next_episode: number }>(
+      'SELECT next_episode FROM shows WHERE id = ?',
+      showId,
+    );
+    expect(after?.next_episode).toBe(before?.next_episode);
+  });
+});

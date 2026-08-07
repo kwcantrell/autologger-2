@@ -25,7 +25,7 @@ const captured = {
     {
       "id": "########-####-####-####-############",
       "title": "ATS - 2",
-      "deck_title": "ATS - 002",
+      "deck_title": "ATS - 2",
       "show_id": "########-####-####-####-############",
       "show_code": "ATS",
       "show_name": "All The Smoke",
@@ -48,7 +48,7 @@ const captured = {
     {
       "id": "########-####-####-####-############",
       "title": "ATS - 1",
-      "deck_title": "ATS - 001",
+      "deck_title": "ATS - 1",
       "show_id": "########-####-####-####-############",
       "show_code": "ATS",
       "show_name": "All The Smoke",

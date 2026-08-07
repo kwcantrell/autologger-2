@@ -147,7 +147,7 @@ function customProfileFixture(): ProfilePayload {
         studio_id: 'studio-1',
         name: 'Show',
         show_code: 'SHOW',
-        next_episode: 1,
+        title_suffix: 'date',
         categories: [
           {
             id: 'general',

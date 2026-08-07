@@ -441,15 +441,18 @@ export function suggestedShowCode(name: string): string {
 
 // ── Event enrichment + UI snapshots (ported from studio.py) ──────────────────
 
-/** session_deck_display_title — `Show Code - Episode` when a show is linked, else stored title. */
+/** session_deck_display_title — the session's stored `title`, trimmed, or
+ * `"—"` when blank (session-title-suffix design D5, gate ruling
+ * 2026-08-02): every emitter (Companion state, session list/detail, session
+ * status) SHALL show the session name, not a `{show_code} - {episode}`
+ * derivation. `showCode`/`episode` are still accepted so the three existing
+ * call sites (sessions.ts, events.ts, companion.ts) don't need to change
+ * their argument mapping — they are intentionally unused here. */
 export function sessionDeckDisplayTitle(opts: {
   showCode?: string | null;
   episode?: string | null;
   storedTitle?: string;
 }): string {
-  const sc = String(opts.showCode ?? '').trim();
-  const ep = String(opts.episode ?? '').trim();
-  if (sc) return `${sc} - ${ep || '1'}`;
   const t = String(opts.storedTitle ?? '').trim();
   return t || '—';
 }

@@ -16,7 +16,13 @@ export const showUpdateEntrySchema = z.object({
   show_id: z.string().min(1).max(120),
   name: z.string().min(1).max(200).nullish(),
   show_code: z.string().min(1).max(40).nullish(),
-  next_episode: z.number().int().min(1).max(999999).nullish(),
+  // session-title-suffix (design D1/D8, gate ruling 2026-08-02): the wire
+  // `next_episode` update key is gone — there is deliberately no field for
+  // it here. A legacy client that still sends `next_episode` is unaffected:
+  // zod's default object mode strips unrecognized keys, so the key is
+  // ignored (never reaches `profile.ts`'s field-mapping) and does NOT cause
+  // a 400 solely because it's present.
+  title_suffix: z.enum(['date', 'episode']).nullish(),
   categories: z.array(z.record(z.unknown())).nullish(),
   event_palette: z.array(z.string()).nullish(),
   event_palette_preset: z.string().max(32).nullish(),

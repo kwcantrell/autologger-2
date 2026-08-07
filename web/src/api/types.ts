@@ -93,7 +93,9 @@ export interface Show {
   studio_id: string;
   name: string;
   show_code: string;
-  next_episode: number;
+  /** session-title-suffix: per-show create-time title derivation preference.
+   * Replaces `next_episode`, which is no longer on the wire. */
+  title_suffix: 'date' | 'episode';
   categories: ShowCategory[];
   event_palette: string[];
   event_palette_preset: string;
@@ -560,7 +562,9 @@ export interface ShowUpdateEntry {
   show_id: string;
   name?: string | null;
   show_code?: string | null;
-  next_episode?: number | null;
+  /** session-title-suffix: replaces `next_episode`, which the server now
+   * ignores/strips (not persisted) rather than 400ing on it. */
+  title_suffix?: 'date' | 'episode' | null;
   categories?: ShowCategory[] | null;
   event_palette?: string[] | null;
   event_palette_preset?: string | null;

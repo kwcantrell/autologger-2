@@ -23,7 +23,7 @@ import type { Mutable } from './_mutable';
 const captured = {
   "id": "########-####-####-####-############",
   "title": "ATS - 2",
-  "deck_title": "ATS - 002",
+  "deck_title": "ATS - 2",
   "show_id": "########-####-####-####-############",
   "show_code": "ATS",
   "show_name": "All The Smoke",

@@ -8,7 +8,7 @@ describe('showApiDict', () => {
       studio_id: 'st1',
       name: 'My Show',
       show_code: 'MS',
-      next_episode: 3,
+      title_suffix: 'episode',
       categories_json: '[{"label":"Cue","type":"BUTTON","color":"#ff0000"}]',
       event_palette_json: '["#111111","#222222"]',
       event_palette_preset: 'custom',
@@ -19,7 +19,7 @@ describe('showApiDict', () => {
       studio_id: 'st1',
       name: 'My Show',
       show_code: 'MS',
-      next_episode: 3,
+      title_suffix: 'episode',
       categories: [{ label: 'Cue', type: 'BUTTON', color: '#ff0000' }],
       // normalizeEventPaletteNine pads to 9 slots from a default fill sequence
       event_palette: [
@@ -48,20 +48,20 @@ describe('showApiDict', () => {
     });
   });
 
-  it('defaults next_episode to 1 and empty palettes/categories on bad JSON', () => {
+  it('defaults title_suffix to "date" and empty palettes/categories on bad JSON', () => {
     const row = {
       id: 'sh2',
       studio_id: 'st2',
       name: 'Bare',
       show_code: 'BR',
-      next_episode: 0,
+      title_suffix: undefined,
       categories_json: 'not json',
       event_palette_json: 'not json',
       event_palette_preset: '',
       event_palette_custom_json: 'not json',
     };
     const out = showApiDict(row);
-    expect(out.next_episode).toBe(1);
+    expect(out.title_suffix).toBe('date');
     expect(out.categories).toEqual([]);
     // empty palette → full default fill sequence
     const defaultFill = [
@@ -79,6 +79,22 @@ describe('showApiDict', () => {
     // empty custom falls back to a copy of the (filled) palette
     expect(out.event_palette_custom).toEqual(defaultFill);
     expect(out.event_palette_preset).toBe('custom');
+  });
+
+  it('normalizes any non-"episode" title_suffix (case/whitespace-insensitive match) to "date"', () => {
+    const base = {
+      id: 'sh3',
+      studio_id: 'st3',
+      name: 'Weird',
+      show_code: 'WD',
+      categories_json: '[]',
+      event_palette_json: '[]',
+      event_palette_preset: 'custom',
+      event_palette_custom_json: '[]',
+    };
+    expect(showApiDict({ ...base, title_suffix: ' Episode ' }).title_suffix).toBe('episode');
+    expect(showApiDict({ ...base, title_suffix: 'garbage' }).title_suffix).toBe('date');
+    expect(showApiDict({ ...base, title_suffix: '' }).title_suffix).toBe('date');
   });
 });
 
