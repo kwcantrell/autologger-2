@@ -81,7 +81,7 @@ export function MaximizeLogStrip({
   const statusIsYtImport = displayStatus === 'Importing YouTube Audio';
   // Lock transport / marker / scrub / shortcuts while YouTube audio is importing.
   const controlsLocked = statusIsYtImport;
-  const showMicLevel = isRolling || isRecording;
+  const showMicLevel = isRecording;
 
   const liveButtons = (
     <div

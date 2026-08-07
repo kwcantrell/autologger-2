@@ -915,7 +915,7 @@
 
 /* --- Strip recording meters (moved from AppShell top-bar) ---
  * Duration: only while mic-recording (body.v4-is-recording from AudioRecorder).
- * Mic level: while rolling or recording (data-show from MaximizeLogStrip). */
+ * Mic level: only while mic-recording (data-show from MaximizeLogStrip). */
 @layer components {
   #top-bar-recording-dur,
   #top-bar-mic-level {
