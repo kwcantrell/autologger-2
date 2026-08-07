@@ -41,6 +41,15 @@ const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
 const EVENTS_PARTIAL_FAIL_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-partial-fail.mjs', import.meta.url),
 );
+// event-generate-hardening task 2.3 (gate ruling E1) — a REAL CLI turn that
+// exits cleanly (stream-json success) but never makes a genuine create_event
+// MCP round trip: the shared generic double (also used by topicGenerate.test
+// for the analogous zero-output-keeps-the-prior-set precedent), driven here
+// to prove `outcome.createdEvents === 0` at the real registration counter,
+// not merely mocked.
+const NO_TOOL_CALLS_FIXTURE = fileURLToPath(
+  new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
+);
 
 const EVENT_GENERATE_FAILURE_DETAIL = 'Event generation failed.';
 
@@ -550,28 +559,29 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     }
   });
 
-  it('regenerate deletes only prior auto rows, preserves manual rows, and returns deleted', async () => {
-    const spy = mockSuccessfulTurn();
-    try {
-      const { sessionId } = newSession();
-      seedAnchoredTranscript(sessionId);
-      seedManualSlateEvent(sessionId);
-      seedAutoSlateEvent(sessionId);
+  // event-generate-hardening task 2.3 (gate ruling E1, design D2/D4) —
+  // delete-after-success's zero-created arm: a regenerate run whose CLI turn
+  // completes cleanly but makes NO real create_event call must NOT delete —
+  // destruction requires a replacement. A REAL fixture proves
+  // `outcome.createdEvents === 0` at the actual registration counter, not a
+  // mocked outcome (mockSuccessfulTurn is reserved above for tests unrelated
+  // to the delete decision itself).
+  it('regenerate + zero-created success keeps the prior set: 200 {created:0, cap_hit:false, deleted:0}', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedManualSlateEvent(sessionId);
+    seedAutoSlateEvent(sessionId);
 
-      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
-        regenerate: true,
-      });
+    const res = await generateReq(sessionId, configuredEnv(NO_TOOL_CALLS_FIXTURE), {
+      regenerate: true,
+    });
 
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ created: 0, cap_hit: false, deleted: 1 });
-      const events = listEvents(sessionId);
-      expect(events.some((event) => event.message === 'Old generated slate')).toBe(false);
-      expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
-      expect(catalogEventCount(sessionId)).toBe(1);
-      expect(spy).toHaveBeenCalledTimes(1);
-    } finally {
-      spy.mockRestore();
-    }
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ created: 0, cap_hit: false, deleted: 0 });
+    const events = listEvents(sessionId);
+    expect(events.some((event) => event.message === 'Old generated slate')).toBe(true);
+    expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
+    expect(catalogEventCount(sessionId)).toBe(2);
   });
 
   it('mixed selection filters snapshot, prompt, and aggregate bound to the button plus one option', async () => {
@@ -773,6 +783,73 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(argv.join(' ')).not.toContain(SLATE_INSTRUCTION);
     },
   );
+
+  // event-generate-hardening task 2.3 (design D2/D3/D4, spec "Successful
+  // regenerate replaces the prior set after the run") — a REAL successful
+  // regenerate: the pre-run auto-row snapshot is deleted only AFTER success,
+  // the manual row and the run's own new rows survive, and the prompt's
+  // existing-events enumeration excluded the doomed snapshot row while still
+  // embedding the manual row as the dedup basis.
+  it(
+    'regenerate success: deletes exactly the pre-run snapshot after success, keeps manual + new ' +
+      'rows, and excludes the old auto row (but not the manual row) from the prompt',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        regenerate: true,
+      });
+
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      const manual = events.find((e) => e.message === 'Pre-existing slate');
+      expect(manual).toBeDefined();
+      const generated = events.filter((e) => e.message === 'SLATE');
+      expect(generated).toHaveLength(3);
+      expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 3 generated, old auto gone
+
+      // Prompt exclusion (D3): the doomed old-auto row never reached the
+      // model's dedup basis, but the manual row still did.
+      const stdin = recordedStdin(sessionId);
+      expect(stdin).not.toContain('Old generated slate');
+      expect(stdin).toContain('[00:00:01:00] Pre-existing slate');
+    },
+  );
+
+  // event-generate-hardening task 2.3 (design D2, spec "Failed regenerate run
+  // preserves the prior set") — a REAL failed regenerate: the CLI turn makes
+  // partial real create_event calls and then fails. The pre-run snapshot is
+  // NEVER deleted on a 502 path, and the partial inserts persist alongside it
+  // (the existing append-failure semantics, unaffected by delete-after-
+  // success).
+  it('failed regenerate preserves the prior auto row AND the partial inserts (502, no delete)', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedManualSlateEvent(sessionId);
+    seedAutoSlateEvent(sessionId);
+
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE), {
+      regenerate: true,
+    });
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({ detail: EVENT_GENERATE_FAILURE_DETAIL });
+
+    const events = listEvents(sessionId);
+    expect(events.some((e) => e.message === 'Old generated slate')).toBe(true);
+    expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+    const partial = events.filter((e) => e.message === 'SLATE');
+    expect(partial).toHaveLength(2); // EVENTS_PARTIAL_FAIL_FIXTURE's EVENT_COUNT
+    expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 1 old-auto + 2 partial
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+  });
 
   it('cap: EVENT_GENERATE_MAX_CREATED_EVENTS=2 → the third call is refused at the tool; 200 {created:2, cap_hit:true}', async () => {
     const { sessionId } = newSession();

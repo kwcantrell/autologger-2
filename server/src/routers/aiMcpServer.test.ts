@@ -1026,6 +1026,52 @@ describe('create_event — bracketing placement over a real store (3.2, spec inv
     ]);
     turn.dispose();
   });
+
+  // event-generate-hardening task 2.3 — design D3's anchor-basis exclusion:
+  // a regenerate run's pre-spawn snapshot ids must be filtered out of
+  // `timecodeWallAnchors`'s live `hub.exportEvents()` read, or the doomed old
+  // rows would steer the replacement rows' persisted wall times right up
+  // until the post-success delete removes them.
+  it('regenerateSnapshotIds excludes a doomed old-auto row from the anchor basis (D3)', async () => {
+    seedAnchors('gen-brk3');
+    const hub = registry.get('gen-brk3');
+    // A doomed old-auto anchor BETWEEN the two seeded anchors — left in,
+    // it would steer the 00:15:00:00 placement toward its own wall time
+    // instead of the clean two-anchor midpoint.
+    const { event: oldAuto } = hub.addEvent({
+      category: 'cat1',
+      message: 'Old generated slate',
+      metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
+      markedAtUtc: null,
+      ctx: CTX,
+      explicitAnchor: {
+        timecodeTotalFrames: framesAt(FPS, 0, 12, 0),
+        wallTimeUtc: '2026-01-01T10:05:00.000Z',
+      },
+    });
+
+    const turn = listener.registerTurn(
+      'gen-brk3',
+      genContext({ regenerateSnapshotIds: new Set([oldAuto.event_id]) }),
+    );
+    const res = await createEventViaMcp(turn.url, turn.token, {
+      category: 'cat1',
+      message: 'SLATE',
+      session_time: '00:15:00:00',
+    });
+    expect(res.isError).toBeFalsy();
+    const rows = listEventRows('gen-brk3');
+    const generated = rows.find((r) => r.message === 'SLATE');
+    // Same placement as the clean two-anchor bracketing test above —
+    // 2026-01-01T10:30:00.000Z, the midpoint of the UN-doomed anchors — proof
+    // the excluded old-auto row never entered the interpolation basis, even
+    // though it is still physically present in the store (delete-after-
+    // success has not run yet; this is the run's live create_event call).
+    expect(generated?.wall_time_utc).toBe('2026-01-01T10:30:00.000Z');
+    // And it's still there, undeleted — this tool call never deletes.
+    expect(rows.some((r) => r.message === 'Old generated slate')).toBe(true);
+    turn.dispose();
+  });
 });
 
 // ── get_transcript_words at generation density (task 3.3, design D5) ────────
