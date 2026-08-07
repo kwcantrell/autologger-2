@@ -34,17 +34,24 @@ export interface Component {
 export interface RelationshipEvidence {
   /** Repo-relative path to the file the evidence rule inspects. */
   file: string;
-  /** Substrings/patterns that must all appear in `file` for the relationship to hold. */
+  /** Literal substrings that must all appear in `file` for this evidence rule to hold. */
   mustContain: string[];
 }
 
-/** A declared non-import relationship between two components (design.md D3/D4). */
+/**
+ * A declared non-import relationship between two components (design.md D3/D4).
+ * `evidence` is a list — most relationships need one file, but a relationship
+ * can span more than one real call site (e.g. web→server is both a `fetch`
+ * client module and a separate WebSocket module); every entry must pass for
+ * the relationship to hold, and a failing entry names both the relationship
+ * and that entry's rule.
+ */
 export interface Relationship {
   id: string;
   from: string;
   to: string;
   label: string;
-  evidence: RelationshipEvidence;
+  evidence: RelationshipEvidence[];
   /** Name of the config gate that must be set for this relationship to activate (external nodes). */
   gated?: string;
 }
@@ -374,16 +381,227 @@ const exclusions: Exclusion[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Declared non-import relationships (task 4.1; design.md D3/D4; spec
+// "Declared non-import relationships carry mechanical evidence"). Every
+// evidence file/pattern pair below was located by reading the real call
+// site, not guessed from a filename — see task-4.1-4.2-report.md.
+// ---------------------------------------------------------------------------
+
+const relationships: Relationship[] = [
+  {
+    id: 'web-api-to-routers',
+    from: 'web-api',
+    to: 'routers',
+    label: 'HTTP fetch + WebSocket calls to the server API',
+    evidence: [
+      { file: 'web/src/api/client.ts', mustContain: ['fetch('] },
+      { file: 'web/src/api/hooks/useSessionSocket.ts', mustContain: ['new WebSocket('] },
+    ],
+  },
+  {
+    id: 'companion-api-to-routers',
+    from: 'companion-api',
+    to: 'routers',
+    label: 'HTTP fetch to the server API against a configured base URL',
+    evidence: [{ file: 'companion/src/api.ts', mustContain: ['fetch(', 'this.base'] }],
+  },
+  {
+    id: 'server-bootstrap-to-web-app',
+    from: 'server-bootstrap',
+    to: 'web-app',
+    label: 'Serves the built web SPA (web/dist) as static files',
+    evidence: [{ file: 'server/src/app.ts', mustContain: ['serveStatic'] }],
+  },
+  {
+    id: 'e2e-to-server-bootstrap',
+    from: 'e2e',
+    to: 'server-bootstrap',
+    label: "Playwright's webServer spawns the server process",
+    evidence: [{ file: 'playwright.config.ts', mustContain: ['npm run start -w server'] }],
+  },
+  {
+    id: 'e2e-to-companion-core',
+    from: 'e2e',
+    to: 'companion-core',
+    label: 'The e2e harness spawns a real headless Companion process',
+    evidence: [{ file: 'e2e/companion-harness.ts', mustContain: ['spawn(', 'COMPANION_LAUNCHER'] }],
+  },
+  {
+    id: 'e2e-to-web-app',
+    from: 'e2e',
+    to: 'web-app',
+    label:
+      'Playwright drives the SPA in-browser over the same webServer-spawned ' +
+      'server that serves web/dist statically',
+    evidence: [{ file: 'playwright.config.ts', mustContain: ['baseURL'] }],
+  },
+  {
+    id: 'node-infra-to-catalog-database',
+    from: 'node-infra',
+    to: 'catalog-database',
+    label: 'Opens and migrates the catalog SQLite file at startup',
+    evidence: [{ file: 'server/src/node/config.ts', mustContain: ['openCatalogDb', 'catalog.db'] }],
+  },
+  {
+    id: 'node-infra-to-blob-store',
+    from: 'node-infra',
+    to: 'blob-store',
+    label: 'Owns the filesystem blob store root at startup',
+    evidence: [{ file: 'server/src/node/config.ts', mustContain: ['new BlobStore', 'blobs'] }],
+  },
+  {
+    id: 'session-to-session-databases',
+    from: 'session',
+    to: 'session-databases',
+    label: 'Opens the per-session SQLite database file',
+    evidence: [{ file: 'server/src/session/SessionHub.ts', mustContain: ['new Database(dbPath)'] }],
+  },
+  {
+    id: 'node-infra-to-deepgram',
+    from: 'node-infra',
+    to: 'deepgram',
+    label: 'Sends recorded audio to DeepGram for transcription',
+    gated: 'DEEPGRAM_API_KEY',
+    evidence: [{ file: 'server/src/node/deepgram.ts', mustContain: ['fetch('] }],
+  },
+  {
+    id: 'routers-to-claude-cli',
+    from: 'routers',
+    to: 'claude-cli',
+    label: 'Spawns the claude CLI for AI chat, topics/generate, and events/generate',
+    gated: 'CLAUDE_CLI_PATH',
+    evidence: [{ file: 'server/src/routers/aiChatRunner.ts', mustContain: ['spawn(', 'cliPath'] }],
+  },
+  {
+    id: 'node-infra-to-yt-dlp',
+    from: 'node-infra',
+    to: 'yt-dlp',
+    label: 'Spawns the operator-provided yt-dlp binary to download video audio',
+    gated: 'yt-dlp binary configured or resolvable on PATH',
+    evidence: [{ file: 'server/src/node/ytdlp.ts', mustContain: ['spawn(', 'binaryPath'] }],
+  },
+  {
+    id: 'auth-to-google-jwks',
+    from: 'auth',
+    to: 'google-jwks',
+    label: "Fetches Google's JWKS to verify ID tokens",
+    gated: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (OAuth config)',
+    evidence: [{ file: 'server/src/auth/oauth_google.ts', mustContain: ['createLocalJWKSet'] }],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Capability accounting (task 4.2; design.md D3/D4/D6; spec "Baseline
+// capabilities map to components; new capabilities get pending-grace"). Every
+// one of the 17 baseline `openspec/specs/*` directories (verified live via
+// `docs:check`) is accounted for here as exactly one of component /
+// cross-cutting / process — this array IS the accounting registry the gate
+// walks. `component.capabilities` (below, via `attachCapabilities`) is
+// derived from this array, never hand-duplicated, so the two can't drift.
+// Capabilities that exist only as an active change's delta spec (not yet
+// archived to openspec/specs/, e.g. this very change's own `web-docs-site`)
+// are deliberately NOT listed here — they resolve as pending by omission
+// (model/capabilities.ts's `pendingCapabilities`).
+// ---------------------------------------------------------------------------
+
+const capabilityScopes: CapabilityScope[] = [
+  // Cross-cutting (design.md D6: "an explicit component set", no L0 tinting).
+  {
+    type: 'cross-cutting',
+    capability: 'api-contract-freeze',
+    components: ['routers', 'web-api', 'companion-api', 'contract-fixtures', 'e2e'],
+  },
+  {
+    type: 'cross-cutting',
+    capability: 'web-api-response-conformance',
+    components: ['web-api', 'web-app', 'web-admin', 'contract-fixtures'],
+  },
+  {
+    type: 'cross-cutting',
+    capability: 'web-ui-system',
+    components: ['web-shared', 'web-app', 'web-admin'],
+  },
+  {
+    type: 'cross-cutting',
+    capability: 'core-ports-architecture',
+    components: ['server-bootstrap', 'server-core', 'node-infra', 'session', 'catalog-db', 'auth'],
+  },
+  // Process (attached to no component; listed on the About page).
+  { type: 'process', capability: 'sdlc-process' },
+  // Component-scoped.
+  { type: 'component', capability: 'ai-topics-chat', components: ['routers', 'web-app'] },
+  {
+    type: 'component',
+    capability: 'ai-v2-dashboards',
+    components: ['routers', 'aiV2', 'web-app'],
+  },
+  { type: 'component', capability: 'auto-event-generation', components: ['routers', 'web-app'] },
+  {
+    type: 'component',
+    capability: 'team-management',
+    components: ['routers', 'catalog-db', 'web-app'],
+  },
+  {
+    type: 'component',
+    capability: 'topic-generation',
+    components: ['routers', 'session', 'web-app'],
+  },
+  {
+    type: 'component',
+    capability: 'transcript-generation',
+    components: ['routers', 'node-infra', 'session', 'web-app'],
+  },
+  {
+    type: 'component',
+    capability: 'web-admin-users',
+    components: ['routers', 'catalog-db', 'web-admin'],
+  },
+  { type: 'component', capability: 'web-home-launch', components: ['web-app'] },
+  { type: 'component', capability: 'web-login-experience', components: ['web-app', 'auth'] },
+  { type: 'component', capability: 'web-session-console', components: ['web-app'] },
+  { type: 'component', capability: 'web-session-routing', components: ['web-app'] },
+  {
+    type: 'component',
+    capability: 'youtube-audio-import',
+    components: ['routers', 'node-infra', 'web-app'],
+  },
+];
+
+/**
+ * Derives each component's `capabilities` field from `capabilityScopes`
+ * (`component`/`cross-cutting` entries only — `process` attaches to no
+ * component) rather than hand-listing capability names twice. Sorted for
+ * determinism.
+ */
+function attachCapabilities(components: Component[], scopes: CapabilityScope[]): Component[] {
+  const byComponent = new Map<string, string[]>();
+  for (const scope of scopes) {
+    if (scope.type === 'process') continue;
+    for (const componentName of scope.components) {
+      const list = byComponent.get(componentName) ?? [];
+      list.push(scope.capability);
+      byComponent.set(componentName, list);
+    }
+  }
+  return components.map((component) => ({
+    ...component,
+    capabilities: [...(byComponent.get(component.name) ?? [])].sort(),
+  }));
+}
+
+const allComponents: Component[] = [
+  ...serverComponents,
+  ...webComponents,
+  ...companionComponents,
+  ...otherComponents,
+  ...datastoreComponents,
+  ...externalComponents,
+];
+
 export const model: ComponentModel = {
-  components: [
-    ...serverComponents,
-    ...webComponents,
-    ...companionComponents,
-    ...otherComponents,
-    ...datastoreComponents,
-    ...externalComponents,
-  ],
-  relationships: [],
-  capabilityScopes: [],
+  components: attachCapabilities(allComponents, capabilityScopes),
+  relationships,
+  capabilityScopes,
   exclusions,
 };
