@@ -7,7 +7,7 @@ import { defineConfig } from 'vitest/config';
 // under jsdom regardless, per design.md D9).
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts', 'model/**/*.test.ts'],
     environment: 'node',
   },
 });

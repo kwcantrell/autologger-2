@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check --write src/",
+    "lint": "biome check --write src/ model/",
     "format": "biome format --write src/",
     "test": "vitest run",
     "check": "tsx scripts/check.ts"
