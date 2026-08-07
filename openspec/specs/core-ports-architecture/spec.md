@@ -10,7 +10,9 @@ PresenceRegistry); the deliberate synchronous-hub / synchronous-catalog posture
 Ports/Config split; and the auth split (authentication in middleware, authorization
 consolidated behind `requireSession`). Established by the `de-cloudflare-strong-core`
 change (archived 2026-07-14), which retired the departed Cloudflare platform's names and
-API shapes.
+API shapes. The port ledger's types now live in the standalone `@autologger/ports`
+package, with domain modules split into `@autologger/domain` and `@autologger/contract`,
+established by the `package-split-foundation` change (archived 2026-08-07).
 
 ## Requirements
 
@@ -24,7 +26,7 @@ and exempt — the "no cloud" invariant forbids the migration, so the token is d
 a legacy name rather than changed.
 
 #### Scenario: No Cloudflare nouns in the source tree
-- **WHEN** the server source is inspected for `durable`, `SessionDO`, `d1`, `SESSION_DO`, `stub` (as a DO-RPC handle), `wrangler`, `R2`, or "the Worker"/"the DO" as live references
+- **WHEN** the server source **and the workspace packages under `packages/`** are inspected for `durable`, `SessionDO`, `d1`, `SESSION_DO`, `stub` (as a DO-RPC handle), `wrangler`, `R2`, or "the Worker"/"the DO" as live references
 - **THEN** none remain except (a) historical migration docs under `docs/superpowers/` and (b) the grandfathered `r2_key` persisted column, which is annotated as a legacy schema token
 
 #### Scenario: Session directory renamed
@@ -123,8 +125,8 @@ diverge (no real-`setTimeout`-vs-fake-clock skew).
 - **THEN** the entry is treated as expired/stale without any real time passing
 
 #### Scenario: No decision-making Date.now() remains
-- **WHEN** the server source is inspected for direct `Date.now()` calls in staleness, TTL, expiry, freshness, alarm-scheduling, or live-timecode logic
-- **THEN** none remain; those paths read the injected `Clock`
+- **WHEN** the server source **and the workspace packages under `packages/`** are inspected for direct `Date.now()` calls in staleness, TTL, expiry, freshness, alarm-scheduling, or live-timecode logic
+- **THEN** none remain; those paths read the injected `Clock` (the `systemClock` implementation, which lives with the composition root, is the sole sanctioned `Date.now()` site)
 
 ### Requirement: Identity verification is a port with no hidden global state
 
@@ -181,3 +183,49 @@ seam.
 #### Scenario: Existing suites pass unchanged
 - **WHEN** the server unit and integration test suites run against the refactored core
 - **THEN** they pass without changes to expected responses, and the `503` null-adapter routes still return their clean `503`
+
+### Requirement: Port types are interfaces in a dedicated package with app-level composition
+
+The injectable port types (`Clock`, `IdentityVerifier`, `BlobStore`, `KvStore`,
+`PresenceRegistry`, `CatalogDb`) and the `Config` type SHALL live in
+`@autologger/ports` as **interfaces/types only** — the package SHALL contain no runtime
+implementations (`systemClock` lives with the composition root) and SHALL NOT import
+from `server/src`, directly or transitively. Concrete implementations SHALL declare
+conformance (`implements`) against the package interfaces from their own homes.
+
+The app-env composition (`Ports` with `sessions: SessionHubRegistry`, `Variables` with
+`catalog: Catalog`, and `AppEnv`) SHALL live in a single app-level module
+(`server/src/appEnv.ts`) that extends the package's types; that module is the only
+app-level type-composition point permitted to name the concrete `SessionHubRegistry`
+and `Catalog` types, which retain concrete typing as **named residuals** owned by the
+session-core and catalog extraction changes. The former `server/src/types.ts` barrel
+SHALL be removed with no permanent re-export shim. The per-request in-place
+`env`-mutation identity contract (`@hono/node-ws` upgrade handshake) SHALL be preserved
+by the move.
+
+#### Scenario: Ports package is interface-only and closed
+- **WHEN** `@autologger/ports` is inspected
+- **THEN** it contains no runtime implementations and no import that resolves into `server/src`, and each of the six port types is an interface or type declaration
+
+#### Scenario: God-barrel retired
+- **WHEN** the server source is searched for imports of `server/src/types`
+- **THEN** none remain, `server/src/types.ts` does not exist, and `appEnv.ts` names no concrete class other than `SessionHubRegistry` and `Catalog`
+
+#### Scenario: Implementations conform to the package interfaces
+- **WHEN** the concrete `BlobStore`, `KvStore`, `PresenceRegistry`, and `CatalogDb` classes are inspected
+- **THEN** each declares `implements` against its `@autologger/ports` interface, and `auth/identity.ts` imports the `KvStore` interface from the package (not from `node/`)
+
+#### Scenario: WebSocket upgrades still complete after the type move
+- **WHEN** a real WebSocket upgrade is driven end-to-end after the change
+- **THEN** the upgrade completes and messages are delivered, confirming the env-identity contract survived
+
+### Requirement: Pure domain modules live in the domain package
+
+`studio.ts`, `timecode.ts`, and the shared row types formerly in `db/shared.ts` SHALL
+live in `@autologger/domain`, and `schemas.ts` plus the dashboard catalog SHALL live in
+`@autologger/contract`, with all former `server/src` import paths rewritten to the
+packages and no permanent re-export shims left behind.
+
+#### Scenario: Old paths are gone
+- **WHEN** the server source is searched for imports of `../studio`, `../timecode`, `../schemas`, `./aiV2/catalog`, `../clock`, or `db/shared` relative paths
+- **THEN** none remain; consumers import `@autologger/domain`, `@autologger/contract`, and `@autologger/ports`
