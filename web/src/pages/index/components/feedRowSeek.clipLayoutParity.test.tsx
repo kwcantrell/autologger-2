@@ -240,6 +240,7 @@ function mockApi(events: LogEvent[], words: TranscriptWord[]) {
         logged_event_count: events.length,
         offset: 0,
         limit,
+        has_auto_generated: false,
       } satisfies EventsResponse;
     }
     throw new Error(`unexpected apiFetch call: ${path}`);

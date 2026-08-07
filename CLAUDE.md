@@ -158,8 +158,9 @@ decided 2026-07-14, replacing the cumulative re-read), one change in flight per 
 2026-07-14), and file-based handoffs (reports,
 diff files, progress ledger under `openspec/changes/<name>/.apply/`, git-ignored). The gated OpenSpec artifacts are the task
 briefs — dispatch prompts point at them rather than pasting context. Full protocol lives in
-`.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); re-apply that customization if
-the `openspec` CLI regenerates the skill. Process rules live **normatively in the three
+`.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); `.claude/skills/openspec-propose/SKILL.md`
+carries a matching customization (its Output step stops at the gate instead of prompting
+apply); re-apply either customization if the `openspec` CLI regenerates that skill. Process rules live **normatively in the three
 operational encodings** — this file, that skill, and `openspec/config.yaml` — with no
 parallel process rulebook (gate ruling 2026-07-14, recorded durably as the `sdlc-process`
 marker spec); process-rule changes are design-bearing, never "small, obvious fixes".

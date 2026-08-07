@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCreateSession } from '../../../api/hooks/useSessions';
 import type { ProfilePayload } from '../../../api/types';
@@ -60,7 +60,6 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
 
   const [showId, setShowId] = useState(defaultShowId || (shows[0]?.id ?? ''));
   const [episode, setEpisode] = useState('');
-  const [episodeEdited, setEpisodeEdited] = useState(false);
   const [ytUrl, setYtUrl] = useState('');
   const [useYtPublishDate, setUseYtPublishDate] = useState(false);
   const [notes, setNotes] = useState('');
@@ -73,35 +72,25 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
   // show → episode → notes → create.
   const [showYt, setShowYt] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const episodeRef = useRef<HTMLInputElement>(null);
 
   const { mutate: createSession, isPending } = useCreateSession();
 
-  // Sync default episode from selected show
-  useEffect(() => {
-    if (episodeEdited) return;
-    const show = shows.find((s) => s.id === showId);
-    if (show) setEpisode(String(show.next_episode ?? 1));
-  }, [showId, shows, episodeEdited]);
+  const selectedShow = shows.find((s) => s.id === showId);
+  // session-title-suffix (design D6/D7): the episode field only makes sense
+  // for Episode-suffix shows — Date-suffix shows derive the title server-side
+  // from the show code + UTC date, with no operator-facing episode concept.
+  const isEpisodeMode = selectedShow?.title_suffix === 'episode';
 
   const handleShowChange = (next: string) => {
     setShowId(next);
-    setEpisodeEdited(false);
-  };
-
-  // True toggle (ui-refresh): the old button always re-applied the BONUS
-  // prefix and its on/off state was unreadable; it now flips the prefix and
-  // renders pressed (aria-pressed) while active.
-  const isBonus = /^\s*BONUS\b/i.test(episode);
-  const handleBonusEpisode = () => {
-    const v = episode.trim();
-    if (isBonus) {
-      setEpisode(v.replace(/^\s*BONUS\s*/i, '').trim());
-    } else {
-      setEpisode(v ? `BONUS ${v}` : 'BONUS ');
+    const nextShow = shows.find((s) => s.id === next);
+    // Clear stale episode text when switching to a Date-suffix show — nothing
+    // seeds the field from a counter anymore, so any leftover value would be
+    // sent (harmlessly ignored) or, worse, look like it means something once
+    // the field is hidden again.
+    if (nextShow?.title_suffix !== 'episode') {
+      setEpisode('');
     }
-    setEpisodeEdited(true);
-    episodeRef.current?.focus();
   };
 
   const resolvedFps = (): number => {
@@ -120,7 +109,9 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
       showToast('Select a show.', true);
       return;
     }
-    if (!episode.trim()) {
+    // Episode is only meaningful (and required) for Episode-suffix shows; Date-suffix
+    // shows derive the title server-side and never show this field (design D6).
+    if (isEpisodeMode && !episode.trim()) {
       showToast('Enter an episode.', true);
       return;
     }
@@ -153,7 +144,9 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
     createSession(
       {
         show_id: showId,
-        episode: episode.trim(),
+        // Date mode omits episode entirely — the server derives the title from the show
+        // code + UTC date and does not fabricate an episode value client-side (design D6).
+        episode: isEpisodeMode ? episode.trim() : undefined,
         notes: notes.trim() || null,
         frame_rate,
         start_offset_frames,
@@ -229,11 +222,11 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
           />
         </label>
 
-        <div
-          className="tool-row tool-row-session-opts"
-          style={{ flexWrap: 'nowrap', alignItems: 'flex-end' }}
-        >
-          <label className="field inline" style={{ flex: '1 1 0', minWidth: 0 }}>
+        {/* session-title-suffix (design D6/spec "New Session modal respects suffix"):
+            the episode field (and the old Bonus toggle, removed entirely) only applies
+            to Episode-suffix shows. Date-suffix shows derive the title server-side. */}
+        {isEpisodeMode && (
+          <label className="field" htmlFor="ns-episode">
             <span>Episode</span>
             <input
               type="text"
@@ -241,29 +234,11 @@ export function NewSessionModal({ profile, onClose, onCreated }: Props) {
               className={clsx('profile-select', NS_INPUT_OVERRIDE)}
               maxLength={80}
               autoComplete="off"
-              ref={episodeRef}
               value={episode}
-              onChange={(e) => {
-                setEpisode(e.target.value);
-                setEpisodeEdited(true);
-              }}
+              onChange={(e) => setEpisode(e.target.value)}
             />
           </label>
-          <button
-            type="button"
-            className={clsx(
-              'btn mb-4 shrink-0 rounded-v5-sm',
-              isBonus
-                ? 'border-[rgba(56,189,248,0.5)] bg-[rgba(56,189,248,0.16)] text-[#e0f2fe]'
-                : 'border border-v5-border-strong bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.88)] hover-always:bg-[rgba(255,255,255,0.1)]',
-            )}
-            id="ns-bonus-episode"
-            aria-pressed={isBonus}
-            onClick={handleBonusEpisode}
-          >
-            Bonus
-          </button>
-        </div>
+        )}
 
         <label className="field">
           <span>Notes (optional)</span>

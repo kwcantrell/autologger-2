@@ -161,7 +161,7 @@ const captured = {
       "studio_id": "my-crew",
       "name": "All The Smoke",
       "show_code": "ATS",
-      "next_episode": 1,
+      "title_suffix": "date",
       "categories": [
         {
           "id": "cam",

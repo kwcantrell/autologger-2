@@ -21,7 +21,7 @@
 // pre-existing ai/chat route (authorized by the same delta). No other
 // route's status or shape is asserted.
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,6 +40,24 @@ const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
 );
 const EVENTS_PARTIAL_FAIL_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-partial-fail.mjs', import.meta.url),
+);
+// event-generate-hardening task 2.3 (gate ruling E1) — a REAL CLI turn that
+// exits cleanly (stream-json success) but never makes a genuine create_event
+// MCP round trip: the shared generic double (also used by topicGenerate.test
+// for the analogous zero-output-keeps-the-prior-set precedent), driven here
+// to prove `outcome.createdEvents === 0` at the real registration counter,
+// not merely mocked.
+const NO_TOOL_CALLS_FIXTURE = fileURLToPath(
+  new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
+);
+// event-generate-hardening residual closure (2026-08-07) — the paused
+// double: makes ONE real create_event call, blocks on a file signal, then
+// makes the remaining two and exits like EVENTS_SUCCESS_FIXTURE. Lets the
+// "mid-run interleaving" tests below issue a REAL HTTP request against the
+// app while a generate run is still in flight (see the fixture's own header
+// for why a file signal, not an env var).
+const EVENTS_PAUSED_FIXTURE = fileURLToPath(
+  new URL('../test/fixtures/fake-claude-events-paused.mjs', import.meta.url),
 );
 
 const EVENT_GENERATE_FAILURE_DETAIL = 'Event generation failed.';
@@ -98,6 +116,24 @@ const GEN_DROPDOWN_CATEGORIES_JSON = JSON.stringify([
   },
 ]);
 
+/** An option-only DROPDOWN at the legacy aggregate-entry boundary: Generate
+ * All counts the bearing category plus both options (3), while a custom
+ * one-option snapshot counts only that selected option (1). */
+const GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON = JSON.stringify([
+  {
+    id: 'mic',
+    name: 'Mic',
+    color: '#00ff00',
+    type: 'DROPDOWN',
+    dropdown_options: [
+      { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+      { label: 'Boom', needs_context: false, auto_instruction: 'log every boom adjustment' },
+    ],
+    on_label: '',
+    off_label: '',
+  },
+]);
+
 const seededIds: string[] = [];
 
 beforeEach(async () => {
@@ -137,8 +173,20 @@ function configuredEnv(cliPath: string, overrides: Record<string, unknown> = {})
   });
 }
 
-function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
-  return app.request(`/api/sessions/${sessionId}/events/generate`, { method: 'POST' }, envOverride);
+function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>, body?: unknown) {
+  return app.request(
+    `/api/sessions/${sessionId}/events/generate`,
+    {
+      method: 'POST',
+      ...(body === undefined
+        ? {}
+        : {
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+    },
+    envOverride,
+  );
 }
 
 /** Anchored transcript: words carrying session-time anchors around the
@@ -174,6 +222,17 @@ function seedManualSlateEvent(sessionId: string): void {
   });
 }
 
+function seedAutoSlateEvent(sessionId: string, message = 'Old generated slate'): void {
+  env.ports.sessions.get(sessionId).addEvent({
+    category: 'slate',
+    message,
+    metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
+    markedAtUtc: null,
+    ctx: { frameRate: 24, startOffsetFrames: 0 },
+    explicitAnchor: { timecodeTotalFrames: 48, wallTimeUtc: '2026-01-01T00:00:02.000Z' },
+  });
+}
+
 function listEvents(sessionId: string) {
   return env.ports.sessions.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
 }
@@ -196,6 +255,41 @@ function recordedArgv(sessionId: string): string[] {
 
 function recordedStdin(sessionId: string): string {
   return readFileSync(join(stableSessionCwd(sessionId), '.fixture-stdin.txt'), 'utf8');
+}
+
+// event-generate-hardening residual closure — EVENTS_PAUSED_FIXTURE's two
+// signal files, both inside the stable per-session cwd the test already
+// knows without any env plumbing (see the fixture's header).
+function pausedMarkerPath(sessionId: string): string {
+  return join(stableSessionCwd(sessionId), '.fixture-paused.txt');
+}
+
+function resumeSignalPath(sessionId: string): string {
+  return join(stableSessionCwd(sessionId), '.fixture-resume.txt');
+}
+
+const PAUSE_POLL_INTERVAL_MS = 20;
+const PAUSE_POLL_TIMEOUT_MS = 4000;
+
+/** Deterministic wait for the fixture's "I have paused" marker — no bare
+ * sleeps. Fails loudly (rather than hanging) if the marker never appears. */
+async function waitForFile(path: string, timeoutMs = PAUSE_POLL_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${path}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, PAUSE_POLL_INTERVAL_MS));
+  }
+}
+
+function mockSuccessfulTurn() {
+  return vi.spyOn(aiTurnModule, 'driveAiTurn').mockResolvedValueOnce({
+    ok: true,
+    claudeSessionId: 'body-test',
+    createdEvents: 0,
+    pageCoverage: { totalPages: 0, servedPages: 0 },
+  });
 }
 
 async function detailOf(res: Response): Promise<string> {
@@ -405,6 +499,247 @@ describe('events/generate — guard ladder', () => {
   });
 });
 
+describe('events/generate — optional body, regenerate, and selection', () => {
+  it('absent body remains Generate All and returns the legacy success shape', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the legacy category-plus-options bound for Generate All but counts only a custom option', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession({
+        categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
+      });
+      seedAnchoredTranscript(sessionId);
+      const boundedEnv = configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+        EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+      });
+
+      const all = await generateReq(sessionId, boundedEnv);
+      expect(all.status).toBe(400);
+      expect(await detailOf(all)).toMatch(/3 instruction-bearing entries vs max 2/i);
+      expect(spy).not.toHaveBeenCalled();
+
+      const custom = await generateReq(sessionId, boundedEnv, {
+        selection: [{ category_id: 'mic', option_label: 'Lav' }],
+      });
+      expect(custom.status, await custom.clone().text()).toBe(200);
+      expect(await custom.json()).toEqual({ created: 0, cap_hit: false });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0][0].mcpContext?.generation?.categories).toEqual([
+        {
+          id: 'mic',
+          name: 'Mic',
+          type: 'DROPDOWN',
+          color: '#00ff00',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+          ],
+        },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('treats an empty selection as Generate All for the legacy category-plus-options bound', async () => {
+    const { sessionId } = newSession({
+      categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
+    });
+    seedAnchoredTranscript(sessionId);
+
+    const res = await generateReq(
+      sessionId,
+      configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+        EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+      }),
+      { selection: [] },
+    );
+
+    expect(res.status).toBe(400);
+    expect(await detailOf(res)).toMatch(/3 instruction-bearing entries vs max 2/i);
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('{regenerate:false} preserves existing auto rows and omits deleted', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        regenerate: false,
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+        true,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // event-generate-hardening task 2.3 (gate ruling E1, design D2/D4) —
+  // delete-after-success's zero-created arm: a regenerate run whose CLI turn
+  // completes cleanly but makes NO real create_event call must NOT delete —
+  // destruction requires a replacement. A REAL fixture proves
+  // `outcome.createdEvents === 0` at the actual registration counter, not a
+  // mocked outcome (mockSuccessfulTurn is reserved above for tests unrelated
+  // to the delete decision itself).
+  it('regenerate + zero-created success keeps the prior set: 200 {created:0, cap_hit:false, deleted:0}', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedManualSlateEvent(sessionId);
+    seedAutoSlateEvent(sessionId);
+
+    const res = await generateReq(sessionId, configuredEnv(NO_TOOL_CALLS_FIXTURE), {
+      regenerate: true,
+    });
+
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ created: 0, cap_hit: false, deleted: 0 });
+    const events = listEvents(sessionId);
+    expect(events.some((event) => event.message === 'Old generated slate')).toBe(true);
+    expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
+    expect(catalogEventCount(sessionId)).toBe(2);
+  });
+
+  it('mixed selection filters snapshot, prompt, and aggregate bound to the button plus one option', async () => {
+    const spy = mockSuccessfulTurn();
+    try {
+      const { sessionId } = newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
+      seedAnchoredTranscript(sessionId);
+
+      const res = await generateReq(
+        sessionId,
+        configuredEnv(EVENTS_SUCCESS_FIXTURE, {
+          // The full snapshot has 3 entries; the mixed selection has 2.
+          EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '2',
+        }),
+        {
+          selection: [
+            { category_id: 'slate', option_label: null },
+            { category_id: 'mic', option_label: 'Lav' },
+          ],
+        },
+      );
+
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ created: 0, cap_hit: false });
+      const opts = spy.mock.calls[0][0];
+      expect(opts.mcpContext?.generation?.categories).toEqual([
+        {
+          id: 'slate',
+          name: 'SLATE',
+          type: 'BUTTON',
+          color: '#ff0000',
+          auto_instruction: SLATE_INSTRUCTION,
+          dropdown_options: [],
+        },
+        {
+          id: 'mic',
+          name: 'Mic',
+          type: 'DROPDOWN',
+          color: '#00ff00',
+          dropdown_options: [
+            { label: 'Lav', needs_context: false, auto_instruction: 'log every lav handoff' },
+          ],
+        },
+      ]);
+      expect(opts.message).toContain(SLATE_INSTRUCTION);
+      expect(opts.message).toContain('### Option "Lav"');
+      expect(opts.message).not.toContain('microphone incidents in general');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('unmatched selection returns 400 before slot acquisition and deletes nothing', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedAutoSlateEvent(sessionId);
+    const slot = aiChatTurns.tryAcquire(sessionId, 2);
+    expect(slot.ok).toBe(true);
+    try {
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        selection: [{ category_id: 'missing', option_label: null }],
+      });
+
+      expect(res.status).toBe(400);
+      expect(await detailOf(res)).toMatch(/instruction/i);
+      expect(neverSpawned(sessionId)).toBe(true);
+      expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(true);
+      expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+        true,
+      );
+    } finally {
+      if (slot.ok) slot.release();
+    }
+  });
+
+  it('regenerate plus non-empty selection returns 400 before guards and deletes nothing', async () => {
+    const { sessionId } = newSession();
+    seedAutoSlateEvent(sessionId);
+
+    const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }), {
+      regenerate: true,
+      selection: [{ category_id: 'slate', option_label: null }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+      true,
+    );
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('malformed JSON returns 400', async () => {
+    const { sessionId } = newSession();
+    const res = await app.request(
+      `/api/sessions/${sessionId}/events/generate`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{',
+      },
+      configuredEnv(EVENTS_SUCCESS_FIXTURE),
+    );
+
+    expect(res.status).toBe(400);
+    expect(neverSpawned(sessionId)).toBe(true);
+  });
+
+  it('over-bound selection (501 entries) returns 400 before any delete/spawn (D5)', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedAutoSlateEvent(sessionId);
+    const selection = Array.from({ length: 501 }, (_, i) => ({ category_id: `c${i}` }));
+
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), { selection });
+
+    expect(res.status).toBe(400);
+    expect(neverSpawned(sessionId)).toBe(true);
+    expect(listEvents(sessionId).some((event) => event.message === 'Old generated slate')).toBe(
+      true,
+    );
+  });
+});
+
 // ── Configured behavior: success / cap / failure ────────────────────────────
 
 describe('events/generate — configured behavior (real create_event MCP round trips)', () => {
@@ -483,6 +818,73 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(argv.join(' ')).not.toContain(SLATE_INSTRUCTION);
     },
   );
+
+  // event-generate-hardening task 2.3 (design D2/D3/D4, spec "Successful
+  // regenerate replaces the prior set after the run") — a REAL successful
+  // regenerate: the pre-run auto-row snapshot is deleted only AFTER success,
+  // the manual row and the run's own new rows survive, and the prompt's
+  // existing-events enumeration excluded the doomed snapshot row while still
+  // embedding the manual row as the dedup basis.
+  it(
+    'regenerate success: deletes exactly the pre-run snapshot after success, keeps manual + new ' +
+      'rows, and excludes the old auto row (but not the manual row) from the prompt',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE), {
+        regenerate: true,
+      });
+
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      const manual = events.find((e) => e.message === 'Pre-existing slate');
+      expect(manual).toBeDefined();
+      const generated = events.filter((e) => e.message === 'SLATE');
+      expect(generated).toHaveLength(3);
+      expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 3 generated, old auto gone
+
+      // Prompt exclusion (D3): the doomed old-auto row never reached the
+      // model's dedup basis, but the manual row still did.
+      const stdin = recordedStdin(sessionId);
+      expect(stdin).not.toContain('Old generated slate');
+      expect(stdin).toContain('[00:00:01:00] Pre-existing slate');
+    },
+  );
+
+  // event-generate-hardening task 2.3 (design D2, spec "Failed regenerate run
+  // preserves the prior set") — a REAL failed regenerate: the CLI turn makes
+  // partial real create_event calls and then fails. The pre-run snapshot is
+  // NEVER deleted on a 502 path, and the partial inserts persist alongside it
+  // (the existing append-failure semantics, unaffected by delete-after-
+  // success).
+  it('failed regenerate preserves the prior auto row AND the partial inserts (502, no delete)', async () => {
+    const { sessionId } = newSession();
+    seedAnchoredTranscript(sessionId);
+    seedManualSlateEvent(sessionId);
+    seedAutoSlateEvent(sessionId);
+
+    const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE), {
+      regenerate: true,
+    });
+
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({ detail: EVENT_GENERATE_FAILURE_DETAIL });
+
+    const events = listEvents(sessionId);
+    expect(events.some((e) => e.message === 'Old generated slate')).toBe(true);
+    expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+    const partial = events.filter((e) => e.message === 'SLATE');
+    expect(partial).toHaveLength(2); // EVENTS_PARTIAL_FAIL_FIXTURE's EVENT_COUNT
+    expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 1 old-auto + 2 partial
+    expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
+  });
 
   it('cap: EVENT_GENERATE_MAX_CREATED_EVENTS=2 → the third call is refused at the tool; 200 {created:2, cap_hit:true}', async () => {
     const { sessionId } = newSession();
@@ -617,6 +1019,105 @@ describe('events/generate — configured behavior (real create_event MCP round t
       } finally {
         spy.mockRestore();
       }
+    },
+  );
+});
+
+// event-generate-hardening residual closure (2026-08-07) — the two
+// delete-after-success properties that the archived change's apply-time
+// audit could only pin structurally/at the eventStore unit level, because
+// the fake-CLI harness had no way to pause a fixture subprocess mid-turn and
+// interleave a real HTTP request (events.generate.int.test.ts's original
+// header note; eventStore.test.ts's "mid-run manual delete" comment).
+// EVENTS_PAUSED_FIXTURE now supplies that pause; these tests exercise it
+// end-to-end through the real app.
+describe('events/generate — mid-run interleaving (real HTTP requests during a paused CLI turn)', () => {
+  it(
+    'mid-run GET …/events still returns the prior auto row (has_auto_generated true) while ' +
+      'paused; after resume, success deletes exactly that row',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+
+      const genPromise = generateReq(sessionId, configuredEnv(EVENTS_PAUSED_FIXTURE), {
+        regenerate: true,
+      });
+
+      await waitForFile(pausedMarkerPath(sessionId));
+
+      // Mid-run, via a REAL GET through the app (not the hub helper): the
+      // pre-run auto row is still present, and has_auto_generated still
+      // reflects it — delete-after-success means the snapshot survives until
+      // the turn actually succeeds.
+      const midRunRes = await app.request(
+        `/api/sessions/${sessionId}/events`,
+        { method: 'GET' },
+        { ...env },
+      );
+      expect(midRunRes.status).toBe(200);
+      const midRunBody = (await midRunRes.json()) as {
+        events: Array<Record<string, unknown>>;
+        has_auto_generated: boolean;
+      };
+      expect(midRunBody.has_auto_generated).toBe(true);
+      expect(midRunBody.events.some((e) => e.message === 'Old generated slate')).toBe(true);
+
+      writeFileSync(resumeSignalPath(sessionId), 'resume');
+
+      const res = await genPromise;
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 1 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+      expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
+    },
+  );
+
+  it(
+    'mid-run manual DELETE of the only snapshotted id leaves deleted:0 after resume — the run’s ' +
+      'own created rows and the manual row persist',
+    async () => {
+      const { sessionId } = newSession();
+      seedAnchoredTranscript(sessionId);
+      seedManualSlateEvent(sessionId);
+      seedAutoSlateEvent(sessionId);
+      const priorAutoId = listEvents(sessionId).find(
+        (e) => e.message === 'Old generated slate',
+      )?.event_id;
+      expect(priorAutoId).toBeDefined();
+
+      const genPromise = generateReq(sessionId, configuredEnv(EVENTS_PAUSED_FIXTURE), {
+        regenerate: true,
+      });
+
+      await waitForFile(pausedMarkerPath(sessionId));
+
+      // Mid-run, via a REAL DELETE through the app: an operator removes the
+      // ONLY snapshotted id before the post-success bulk delete runs.
+      const deleteRes = await app.request(
+        `/api/sessions/${sessionId}/events/${priorAutoId}`,
+        { method: 'DELETE' },
+        { ...env },
+      );
+      expect(deleteRes.status).toBe(200);
+
+      writeFileSync(resumeSignalPath(sessionId), 'resume');
+
+      const res = await genPromise;
+      expect(res.status, await res.clone().text()).toBe(200);
+      // deleteEventsByIds receives the pre-spawn snapshot verbatim, but the
+      // snapshotted row is already gone — nothing still present to remove —
+      // while the run's OWN 3 new rows and the manual row are untouched.
+      expect(await res.json()).toEqual({ created: 3, cap_hit: false, deleted: 0 });
+
+      const events = listEvents(sessionId);
+      expect(events.some((e) => e.message === 'Old generated slate')).toBe(false);
+      expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
+      expect(events.filter((e) => e.message === 'SLATE')).toHaveLength(3);
     },
   );
 });

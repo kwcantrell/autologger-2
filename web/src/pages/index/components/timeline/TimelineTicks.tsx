@@ -1,15 +1,13 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { fmtHmsFromSec } from '../../../../shared/utils/timecode';
 
-// --- converted class strings (were Timeline.module.css) ---
-// .timelineTicks base + `.timelineInner .timelineTicks { margin-top: 0.22rem }` +
-// `.v4TlTrackLive .timelineTicks` (font-size 0.58rem) + #v4-log-session v5 rule (Inter,
-// 0.62rem, v5 color, tabular-nums) — the #v4-log-session rule wins, so this is the
-// session-context look Timeline always renders.
-// ui-refresh: tick color was rgba(229,238,252,0.36) = 2.96:1 — time data failing
-// the app's own AA bar. 0.58 clears 4.5:1 on the timeline lane.
+// Overlay on the scrub track's bottom border (centered vertically on that edge)
+// so the strip doesn't spend a full row on tick labels. Text-shadow keeps labels
+// readable across the dark lane and the chrome below.
+// Centered on the track's bottom border; sibling of the track (not inside it)
+// so track overflow:hidden can't clip. Parent reserves 0.5rem hang-space.
 const TICKS =
-  'flex justify-between gap-[0.5rem] w-full flex-shrink-0 mt-[0.22rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-medium tracking-[0.06em] [font-variant-numeric:tabular-nums] text-[rgba(229,238,252,0.58)]';
+  'pointer-events-none absolute inset-x-0 top-full z-[7] flex w-full -translate-y-1/2 justify-between gap-[0.5rem] px-[0.35rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold leading-none tracking-[0.06em] [font-variant-numeric:tabular-nums] text-[rgba(229,238,252,0.88)] [text-shadow:0_1px_1px_rgba(2,8,23,0.95),0_0_6px_rgba(2,8,23,0.75),0_-1px_1px_rgba(2,8,23,0.55)]';
 
 declare global {
   interface Window {
@@ -34,18 +32,38 @@ function useTimelineZoom(): number {
   return useSyncExternalStore(subscribeZoom, getZoom, () => 1);
 }
 
+/** Matches repo md breakpoint (≤767px). */
+const MOBILE_MQ = '(max-width: 767.9px)';
+
+function subscribeMobile(cb: () => void): () => void {
+  const m = window.matchMedia(MOBILE_MQ);
+  m.addEventListener('change', cb);
+  return () => m.removeEventListener('change', cb);
+}
+
+function useIsMobile(): boolean {
+  return useSyncExternalStore(
+    subscribeMobile,
+    () => window.matchMedia(MOBILE_MQ).matches,
+    () => false,
+  );
+}
+
 interface Props {
   totalSec: number;
 }
 
 export function TimelineTicks({ totalSec }: Props) {
   const zoom = useTimelineZoom();
+  const isMobile = useIsMobile();
   const labels = useMemo(() => {
-    const tickCount = Math.min(29, Math.max(7, Math.round(5 + zoom * 3)));
+    const base = Math.min(29, Math.max(7, Math.round(5 + zoom * 3)));
+    // Phones: half the density so labels don't collide in the narrow scrubber.
+    const tickCount = isMobile ? Math.max(4, Math.round(base / 2)) : base;
     const span = totalSec > 0 ? totalSec : 0;
     const step = span / Math.max(1, tickCount - 1);
     return Array.from({ length: tickCount }, (_, i) => fmtHmsFromSec(Math.floor(i * step)));
-  }, [zoom, totalSec]);
+  }, [zoom, totalSec, isMobile]);
 
   return (
     <div className={TICKS} id="timeline-ticks">

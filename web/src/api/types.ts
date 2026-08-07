@@ -93,7 +93,9 @@ export interface Show {
   studio_id: string;
   name: string;
   show_code: string;
-  next_episode: number;
+  /** session-title-suffix: per-show create-time title derivation preference.
+   * Replaces `next_episode`, which is no longer on the wire. */
+  title_suffix: 'date' | 'episode';
   categories: ShowCategory[];
   event_palette: string[];
   event_palette_preset: string;
@@ -437,6 +439,13 @@ export interface EventsResponse {
   logged_event_count: number;
   offset: number;
   limit: number;
+  /**
+   * event-generate-hardening (D1) — whether any event in the WHOLE session
+   * (not just this page) carries `auto_generated === true` in its metadata.
+   * Required (not optional): an optional field would defeat the conformance
+   * check's assignability-forcing function.
+   */
+  has_auto_generated: boolean;
 }
 
 /**
@@ -449,6 +458,17 @@ export interface EventsResponse {
 export interface EventsGenerateResponse {
   created: number;
   cap_hit: boolean;
+  deleted?: number;
+}
+
+export interface EventGenerateSelection {
+  category_id: string;
+  option_label?: string | null;
+}
+
+export interface EventsGenerateBody {
+  regenerate?: boolean;
+  selection?: EventGenerateSelection[];
 }
 
 export interface ShowCategoriesResponse {
@@ -507,7 +527,10 @@ export interface NewSessionBody {
   frame_rate: number;
   start_offset_frames: number;
   show_id: string;
-  episode: string;
+  /** session-title-suffix (design D6): required only for Episode-suffix shows.
+   * Date-suffix shows omit it — the server derives the title from the show
+   * code + UTC date rather than a client-fabricated value. */
+  episode?: string | null;
   notes?: string | null;
 }
 
@@ -542,7 +565,9 @@ export interface ShowUpdateEntry {
   show_id: string;
   name?: string | null;
   show_code?: string | null;
-  next_episode?: number | null;
+  /** session-title-suffix: replaces `next_episode`, which the server now
+   * ignores/strips (not persisted) rather than 400ing on it. */
+  title_suffix?: 'date' | 'episode' | null;
   categories?: ShowCategory[] | null;
   event_palette?: string[] | null;
   event_palette_preset?: string | null;

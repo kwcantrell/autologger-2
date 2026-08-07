@@ -127,7 +127,7 @@ export function AiChat({
         <>
           <div
             ref={scrollRef}
-            className="flex flex-1 flex-col gap-2 overflow-y-auto p-4 min-h-0"
+            className="flex flex-1 flex-col gap-2 overflow-y-auto px-4 pt-2 pb-4 min-h-0"
             aria-live="polite"
             data-testid="ai-chat-transcript"
           >

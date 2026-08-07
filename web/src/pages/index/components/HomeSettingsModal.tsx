@@ -12,6 +12,7 @@ import { showToast } from '../utils/toast';
 import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
 import { FpsSelect } from './FpsSelect';
+import { feedTabButtonClassName } from './feedTabStyles';
 import { Select } from './Select';
 
 // Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width
@@ -32,18 +33,20 @@ const HS_INPUT_OVERRIDE =
 const TAB_VARS = [
   '[--v6-tab-panel-bg:linear-gradient(165deg,rgba(18,24,40,0.995)_0%,rgba(10,13,24,0.995)_100%)]',
   '[--v6-tab-panel-border:rgba(255,255,255,0.14)]',
-  '[--v6-tab-inactive-bg:linear-gradient(180deg,rgba(26,32,48,0.98)_0%,rgba(12,15,26,0.99)_100%)]',
-  '[--v6-tab-overlap:0.55rem]',
 ].join(' ');
 
-// `.section` tab-panel body (shares the panel bg/border with the active tab, radius open at
-// top-left where the tab attaches).
+// `.section` tab-panel body — z above the tablist (same stacking as feed sheets). No top
+// border: the grey seam under feed tabs is hidden by sheet overlap; settings uses the same
+// idea plus an explicit border-t-0 so a residual hairline can't show between tabs.
 const SECTION_CLASS =
-  'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-(--v6-tab-panel-border) rounded-[0_0.65rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
+  'relative z-[1] m-0 pt-4 px-[1.05rem] pb-[1.15rem] border border-t-0 border-x-(--v6-tab-panel-border) border-b-(--v6-tab-panel-border) rounded-[0_0.85rem_0.65rem_0.65rem] bg-[image:var(--v6-tab-panel-bg)] flex-[1_1_auto] min-h-0 overflow-auto [-webkit-overflow-scrolling:touch]';
 
-// `.profileShowFieldsRow .profileShowField` base + the code/next-ep/fps width variants.
+// `.profileShowFieldsRow .profileShowField` base + the code/suffix/fps width variants.
 const FIELD_BASE = 'flex-[1_1_0] min-w-[min(100%,8.5rem)] max-w-full';
-const FIELD_CODE_NEXTEP = 'flex-[0_1_5.5rem] min-w-16 max-w-[6.5rem]';
+const FIELD_CODE = 'flex-[0_1_5.5rem] min-w-16 max-w-[6.5rem]';
+// Wider than FIELD_CODE — the Suffix select's "Episode Number" option label needs more room
+// than the 3-4 char show code the field sat next to before (session-title-suffix, task 2.1).
+const FIELD_SUFFIX = 'flex-[0_1_9rem] min-w-[8rem] max-w-[11rem]';
 const FIELD_FPS = 'flex-[1_1_12rem] min-w-[min(100%,10rem)] max-w-full';
 // `.profileShowFieldsRow` container.
 const FIELDS_ROW =
@@ -67,7 +70,7 @@ interface Props {
 interface ShowDraft {
   name: string;
   show_code: string;
-  next_episode: number;
+  title_suffix: 'date' | 'episode';
   categories: EventButtonDraft[];
   event_palette: string[];
   event_palette_preset: string;
@@ -86,7 +89,10 @@ function showToShowDraft(show: Show): ShowDraft {
   return {
     name: show.name ?? '',
     show_code: show.show_code ?? '',
-    next_episode: show.next_episode ?? 1,
+    // session-title-suffix task 2.1: hydrate from the show's persisted Suffix
+    // preference. Defensive default to 'date' if a payload ever omits it —
+    // the real server always emits it (showApiDict, task 1.4).
+    title_suffix: show.title_suffix === 'episode' ? 'episode' : 'date',
     categories: (show.categories ?? []).map((c) => ({
       id: c.id,
       // `show.categories` is wire-accurate `name`-keyed (server: `showApiDict` passes
@@ -302,7 +308,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           show_id: s.id,
           name: draft.name,
           show_code: draft.show_code,
-          next_episode: draft.next_episode,
+          title_suffix: draft.title_suffix,
           categories: draft.categories.map((c) => ({
             id: c.id,
             // The update validator requires `name` (`server/src/studio.ts`
@@ -514,11 +520,16 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       {/* Tabs + content */}
       <section className={clsx('flex-[1_1_auto] min-h-0 flex flex-col overflow-hidden', TAB_VARS)}>
         <div
-          className="flex flex-row flex-nowrap items-end gap-0 mx-0 mt-0 mb-[-1px] px-[0.15rem] pt-[0.35rem] pb-0 relative z-[2] shrink-0 overflow-x-auto overflow-y-visible [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]"
+          // Same stacking/overlap as SessionWorkspace feed tabs: tablist under the panel
+          // (z-0 / z-1). -mb-2 tucks the panel under the tab bottoms. pt ≥ the active tab's
+          // cyan ::before glow (0 0 12px) so overflow-y:hidden doesn't clip it; overflow-x
+          // only on small screens (same as feed) so desktop keeps overflow-y:visible for the
+          // glow — overflow-x:auto would force overflow-y to auto and re-clip.
+          className="relative z-0 flex shrink-0 flex-row flex-nowrap items-end gap-[0.18rem] -mb-2 px-[0.15rem] pt-[14px] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]"
           role="tablist"
           aria-label="Settings sections"
         >
-          {tabs.map((tab, tabIdx) => {
+          {tabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
@@ -526,20 +537,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                 type="button"
                 role="tab"
                 id={`v6-settings-tab-${tab.id}`}
-                // `.option` base + overlapping-folder-tab look. Per-tab z-index is positional
-                // (was .option:nth-child(n)); the active tab lifts to z-20 (was z-index:20 !important).
-                // first:ml-0 replaces .option:first-child { margin-left:0 }.
-                style={{ zIndex: isActive ? 20 : tabIdx + 1 }}
-                className={clsx(
-                  // Legacy `font: inherit` also inherited the 1.45 line-height; a bare button's UA
-                  // `normal` line-height would shrink each tab box ~2.4px → leading-[inherit].
-                  // Legacy `.option:hover` (0,2,0) outranks `.optionActive` (0,1,0), so the hover
-                  // wash applies to EVERY tab incl. the active one — put it on the base, not a branch.
-                  'relative flex-[0_1_auto] min-w-[min(7.5rem,28vw)] first:!ml-0 ml-[calc(-1*var(--v6-tab-overlap))] text-center font-[inherit] leading-[inherit] text-[0.75rem] font-semibold tracking-[0.04em] uppercase rounded-t-[0.55rem] rounded-b-none border border-b-0 cursor-pointer [transition:transform_0.12s_ease,background_0.12s_ease,color_0.12s_ease,box-shadow_0.12s_ease,border-color_0.12s_ease] hover-always:bg-[linear-gradient(180deg,rgba(34,40,58,0.99)_0%,rgba(18,22,36,0.995)_100%)] hover-always:text-[rgba(229,238,252,0.88)]',
-                  isActive
-                    ? '[transform:translateY(0)] pt-[0.52rem] pb-[0.58rem] px-4 border-[rgba(56,189,248,0.45)] bg-[image:var(--v6-tab-panel-bg)] text-v5-primary [box-shadow:inset_0_1px_0_rgba(255,255,255,0.1),0_-1px_0_0_rgba(56,189,248,0.2),4px_0_14px_rgba(0,0,0,0.28)]'
-                    : '[transform:translateY(3px)] pt-[0.42rem] pb-[0.48rem] px-4 border-(--v6-tab-panel-border) bg-[image:var(--v6-tab-inactive-bg)] text-[rgba(229,238,252,0.55)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06),2px_0_6px_rgba(0,0,0,0.22)]',
-                )}
+                // Shared glass-tab chrome with Event Feed / Transcript / … (cyan top stripe,
+                // no bottom border — feedTabStyles).
+                className={feedTabButtonClassName(isActive)}
                 aria-selected={isActive}
                 aria-controls={`v6-settings-section-${tab.id}`}
                 tabIndex={isActive ? 0 : -1}
@@ -579,7 +579,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     onChange={(e) => updateShowDraft({ name: e.target.value })}
                   />
                 </label>
-                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
+                <label className={clsx('field', FIELD_CODE)}>
                   <span>Code:</span>
                   <input
                     type="text"
@@ -592,21 +592,22 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     onChange={(e) => updateShowDraft({ show_code: e.target.value.toUpperCase() })}
                   />
                 </label>
-                <label className={clsx('field', FIELD_CODE_NEXTEP)}>
-                  <span>Next Ep:</span>
-                  <input
-                    type="number"
-                    id="profile-show-next-ep"
-                    className={clsx('profile-select', HS_INPUT_OVERRIDE)}
-                    min={1}
-                    max={999999}
-                    step={1}
-                    value={currentDraft.next_episode}
-                    onChange={(e) =>
-                      updateShowDraft({
-                        next_episode: Math.max(1, Number.parseInt(e.target.value, 10) || 1),
-                      })
+                {/* session-title-suffix task 2.1: replaces the removed Next Ep counter
+                    control. Maps to the show's `title_suffix` preference, which the
+                    server uses to derive untitled-create titles (design D5-D8). */}
+                <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
+                  <span>Suffix:</span>
+                  <Select
+                    id="profile-show-suffix"
+                    ariaLabel="Suffix"
+                    value={currentDraft.title_suffix}
+                    onChange={(v) =>
+                      updateShowDraft({ title_suffix: v === 'episode' ? 'episode' : 'date' })
                     }
+                    options={[
+                      { value: 'date', label: 'Date' },
+                      { value: 'episode', label: 'Episode Number' },
+                    ]}
                   />
                 </label>
                 <label className={clsx('field', FIELD_FPS)} htmlFor="profile-default-fps">

@@ -1,11 +1,11 @@
 import clsx from 'clsx';
 import { useState } from 'react';
-import type { DropdownOption, Show, ShowDropdownOption } from '../../../api/types';
+import type { Show, ShowDropdownOption } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Popover } from '../../../shared/ui/Popover';
 import { RadioGroup } from '../../../shared/ui/RadioGroup';
-import { Tooltip } from '../../../shared/ui/Tooltip';
 import { DEFAULT_PALETTE, normalizePalette9, PALETTE_SLOT_INDICES } from '../utils/palette9';
+import { EventInstructionModal } from './EventInstructionModal';
 import { EventOptionsModal } from './EventOptionsModal';
 import { Select } from './Select';
 
@@ -14,14 +14,33 @@ import { Select } from './Select';
 // utilities they win by layer order, so they are dropped. `--ev-r/g/b` were never set at runtime,
 // so the row bg resolves to the static fallback rgb(80 90 110).
 const TH_BASE =
-  'h-6 px-[0.35rem] py-0 text-left border-0 align-middle font-semibold text-[rgba(229,238,252,0.55)] text-[0.65rem] tracking-[0.08em] uppercase bg-transparent box-border';
+  'h-6 px-[0.35rem] py-0 flex items-center text-left border-0 font-semibold text-[rgba(229,238,252,0.55)] text-[0.65rem] tracking-[0.08em] uppercase bg-transparent box-border';
 // Shared row-cell metrics. Padding-x is intentionally NOT here: colDrag/colColorCell need their
 // own tighter padding, and two competing px-[…] utilities on one element resolve by generated-CSS
 // order (not class order) — so each cell supplies its own px explicitly.
-const TD_BASE = 'h-6 min-h-0 max-h-6 py-0 text-left border-0 align-middle leading-none box-border';
-// Non-color / non-drag body cells: card tint + hover brighten (tr is a `group`) + the 0.4rem px.
+// Body cells: h-6 (1.5rem) + 1.6rem → 3.1rem. Grid items ignore align-middle — flex centers instead.
+const TD_BASE =
+  'h-[3.1rem] min-h-0 max-h-[3.1rem] py-0 flex items-center text-left border-0 leading-none box-border';
+// Non-color / non-drag body cells: card tint + hover brighten + the 0.4rem px.
+// Hover is on the cell (not tr/group) because the table uses display:contents rows.
 const TD_CARD =
-  'px-[0.4rem] bg-[rgb(80_90_110/0.16)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] group-hover:bg-[rgb(80_90_110/0.24)]';
+  'px-[0.4rem] bg-[rgb(80_90_110/0.16)] [box-shadow:inset_0_1px_0_rgba(255,255,255,0.04)] hover-always:bg-[rgb(80_90_110/0.24)]';
+// Shared compact metrics so every control fits the control band and sits on the vertical middle.
+// `.profile-select` ships `margin: 0 0 1rem` and Select defaults to `min-h-9` — both fight
+// `align-middle` unless overridden here.
+const ROW_CONTROL = '!m-0 !box-border !h-6 !max-h-6 !min-h-0 !py-0 !leading-none align-middle';
+// Event name + button type: h-6 + 0.5rem. min-w-0 so grid/minmax columns can clip cleanly.
+const ROW_FIELD =
+  '!m-0 !box-border !h-[2rem] !max-h-[2rem] !min-w-0 !max-w-full !py-0 !leading-none align-middle';
+const ROW_ICON_BTN =
+  'btn btn-icon p-0 min-w-0 w-[1.45rem] h-6 max-h-6 inline-flex items-center justify-center align-middle';
+
+// Column floors (px): name 300 + type 120 + color 55 + options 300 + auto 148 + delete 55.
+// Type floor fits "DROPDOWN" + chevron; table scrolls only below drag + these floors.
+const EV_COLS_MIN_SUM_PX = 300 + 120 + 55 + 300 + 148 + 55; // 978
+// minmax(floor, %) so type/auto never collapse under their text at mid widths.
+const EV_COL_TEMPLATE =
+  '1.85rem minmax(300px, 1fr) minmax(120px, 10%) minmax(55px, 3%) minmax(300px, 35%) minmax(148px, 8%) minmax(55px, 3%)';
 
 const BUTTON_TYPE_OPTIONS = [
   { value: 'BUTTON', label: 'BUTTON' },
@@ -125,30 +144,14 @@ const EVENT_COLOR_PRESETS: Record<string, string[]> = {
     '#cfe583',
   ],
 };
-function optionsSummary(opts: DropdownOption[]): string {
-  if (!opts.length) return '—';
-  const s = opts.map((o) => o.label).join(', ');
-  return s.length > 42 ? `${s.slice(0, 40)}…` : s;
-}
-
 function onOffSummary(onLabel: string, offLabel: string): string {
   const s = `${onLabel.trim() || 'ON'}, ${offLabel.trim() || 'OFF'}`;
   return s.length > 42 ? `${s.slice(0, 40)}…` : s;
 }
 
-// Four-point spark — the generation-instruction affordance/indicator glyph.
-const SparkIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="currentColor"
-    aria-hidden="true"
-  >
-    <path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2L12 2z" />
-  </svg>
-);
+/** Per-option chip in the Options column — width follows the label text. */
+const OPTION_BUBBLE =
+  'inline-flex w-fit max-w-full shrink-0 items-center rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.08)] px-[0.45rem] py-[0.12rem] text-[0.65rem] font-semibold leading-none tracking-[0.04em] text-[rgba(229,238,252,0.9)]';
 
 const DragGrip = () => (
   <svg
@@ -287,6 +290,9 @@ export function EventButtonsTable({
   }
 
   const editingBtn = editingOptsFor ? buttons.find((b) => b.id === editingOptsFor) : null;
+  const instructionBtn = openInstructionFor
+    ? buttons.find((b) => b.id === openInstructionFor)
+    : null;
 
   // .tableWrapReact had no rules (reserved container); the wrapper div stays class-less.
   return (
@@ -378,280 +384,316 @@ export function EventButtonsTable({
         </button>
       </div>
 
-      {/* Event buttons table */}
-      <table
-        className="w-full border-separate border-spacing-x-0 border-spacing-y-2 text-[0.75rem]"
-        aria-label="Event buttons"
-      >
-        <thead>
-          <tr className="h-6">
-            {/* th.thDrag: width 1.85rem, centered, slim padding (!px beats TH_BASE's 0.35rem). */}
-            <th className={clsx(TH_BASE, 'w-[1.85rem] !px-[0.15rem] !text-center')} scope="col">
-              <span className="sr-only">Reorder</span>
-            </th>
-            <th className={TH_BASE} scope="col">
-              Event name
-            </th>
-            <th className={TH_BASE} scope="col">
-              Button type
-            </th>
-            <th className={TH_BASE} scope="col">
-              Color
-            </th>
-            <th className={TH_BASE} scope="col">
-              Options
-            </th>
-            {/* th for the generation-instruction editor/indicator column. */}
-            <th className={clsx(TH_BASE, 'w-[2.35rem] !px-[0.15rem] !text-center')} scope="col">
-              Auto
-            </th>
-            {/* th.thActions: width 2.5rem, centered. */}
-            <th className={clsx(TH_BASE, 'w-10 !text-center')} scope="col">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {buttons.map((btn, idx) => {
-            const optsSummary =
-              btn.type === 'DROPDOWN'
-                ? optionsSummary(btn.dropdown_options)
-                : btn.type === 'ON_OFF'
-                  ? onOffSummary(btn.on_label, btn.off_label)
-                  : 'N/A';
-            const canEditOpts = btn.type === 'DROPDOWN' || btn.type === 'ON_OFF';
-            const bearing = isInstructionBearing(btn);
-
-            return (
-              <tr
-                key={btn.id}
-                className={clsx('group h-6', dragOverIdx === idx && 'opacity-[0.55]')}
-                draggable
-                onDragStart={() => setDragIdx(idx)}
-                onDragEnd={() => {
-                  setDragIdx(null);
-                  setDragOverIdx(null);
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOverIdx(idx);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleDrop(idx);
-                }}
+      {/* Event buttons table — CSS grid + minmax so column floors hold while width:100%
+          still fits when the container is ≥ sum of mins (scroll only below that). */}
+      <div className="overflow-x-auto">
+        <table
+          className="w-full gap-y-2 text-[0.75rem] [display:grid]"
+          style={{
+            minWidth: `calc(1.85rem + ${EV_COLS_MIN_SUM_PX}px)`,
+            gridTemplateColumns: EV_COL_TEMPLATE,
+          }}
+          aria-label="Event buttons"
+        >
+          <thead className="contents">
+            <tr className="contents">
+              {/* th.thDrag: centered, slim padding (!px beats TH_BASE's 0.35rem). */}
+              <th
+                className={clsx(TH_BASE, 'min-w-0 justify-center !px-[0.15rem] !text-center')}
+                scope="col"
               >
-                {/* colDrag (first child): own bg, centered, left rounding. */}
-                <td
-                  className={clsx(
-                    TD_BASE,
-                    // !text-center beats TD_BASE's text-left (same-property, CSS-order resolved).
-                    'w-[1.85rem] px-[0.1rem] !text-center bg-[rgba(255,255,255,0.04)] rounded-l-[0.65rem]',
-                  )}
+                <span className="sr-only">Reorder</span>
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0')} scope="col">
+                Event name
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0')} scope="col">
+                Button type
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0 justify-center !text-center')} scope="col">
+                Color
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0')} scope="col">
+                Options
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0 justify-end !text-right')} scope="col">
+                Auto
+              </th>
+              <th className={clsx(TH_BASE, 'min-w-0 justify-center !text-center')} scope="col">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="contents">
+            {buttons.map((btn, idx) => {
+              const canEditOpts = btn.type === 'DROPDOWN' || btn.type === 'ON_OFF';
+              const bearing = isInstructionBearing(btn);
+              // tr is display:contents — opacity must land on the cells.
+              const rowDim = dragOverIdx === idx && 'opacity-[0.55]';
+
+              return (
+                <tr
+                  key={btn.id}
+                  className="contents"
+                  draggable
+                  onDragStart={() => setDragIdx(idx)}
+                  onDragEnd={() => {
+                    setDragIdx(null);
+                    setDragOverIdx(null);
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverIdx(idx);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    handleDrop(idx);
+                  }}
                 >
-                  <button
-                    type="button"
-                    className="btn btn-icon cursor-grab text-[rgba(229,238,252,0.55)] p-0 min-w-0 w-[1.45rem] h-6 max-h-6 active:cursor-grabbing"
-                    aria-label="Drag to reorder"
-                    draggable
-                    onDragStart={(e) => {
-                      e.stopPropagation();
-                      setDragIdx(idx);
-                    }}
+                  {/* colDrag (first child): own bg, centered, left rounding. */}
+                  <td
+                    className={clsx(
+                      TD_BASE,
+                      rowDim,
+                      // !text-center beats TD_BASE's text-left (same-property, CSS-order resolved).
+                      'min-w-0 justify-center px-[0.1rem] !text-center bg-[rgba(255,255,255,0.04)] rounded-l-[0.65rem]',
+                    )}
                   >
-                    <DragGrip />
-                  </button>
-                </td>
+                    <button
+                      type="button"
+                      className={clsx(
+                        ROW_ICON_BTN,
+                        'cursor-grab text-[rgba(229,238,252,0.55)] active:cursor-grabbing',
+                      )}
+                      aria-label="Drag to reorder"
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        setDragIdx(idx);
+                      }}
+                    >
+                      <DragGrip />
+                    </button>
+                  </td>
 
-                {/* colNameWrap (2nd child): card cell, text-left, extra left padding. */}
-                {/* pl-2 (0.5rem, was td:nth-child(2)) must beat TD_CARD's px-[0.4rem] left;
+                  {/* colNameWrap (2nd child): card cell, text-left, extra left padding. */}
+                  {/* pl-2 (0.5rem, was td:nth-child(2)) must beat TD_CARD's px-[0.4rem] left;
                     same-property utilities resolve by CSS order, so force it with `!`. */}
-                <td className={clsx(TD_BASE, TD_CARD, 'text-left !pl-2')}>
-                  <input
-                    type="text"
-                    className="profile-select"
-                    value={btn.name}
-                    maxLength={200}
-                    placeholder="Event name"
-                    onChange={(e) => updateButton(btn.id, { name: e.target.value })}
-                  />
-                </td>
+                  <td className={clsx(TD_BASE, TD_CARD, rowDim, 'min-w-0 text-left !pl-2')}>
+                    <input
+                      type="text"
+                      className={clsx('profile-select', ROW_FIELD, '!w-full !px-2')}
+                      value={btn.name}
+                      maxLength={200}
+                      placeholder="Event name"
+                      onChange={(e) => updateButton(btn.id, { name: e.target.value })}
+                    />
+                  </td>
 
-                <td className={clsx(TD_BASE, TD_CARD)}>
-                  <Select
-                    ariaLabel="Button type"
-                    value={btn.type}
-                    onChange={(value) => {
-                      const t = value as EventButtonDraft['type'];
-                      const patch: Partial<EventButtonDraft> = { type: t };
-                      if (t === 'DROPDOWN' && !btn.dropdown_options.length) {
-                        patch.dropdown_options = [
-                          { label: 'Option 1', needs_context: false },
-                          { label: 'Option 2', needs_context: false },
-                        ];
-                      }
-                      if (t === 'ON_OFF') {
-                        patch.dropdown_options = [];
-                        patch.on_label = btn.on_label || 'ON';
-                        patch.off_label = btn.off_label || 'OFF';
-                        // ON_OFF buttons never carry generation instructions — a
-                        // type switch drops them from the draft (web-ui-system spec).
-                        patch.auto_instruction = '';
-                      }
-                      updateButton(btn.id, patch);
-                    }}
-                    options={BUTTON_TYPE_OPTIONS}
-                  />
-                </td>
+                  <td className={clsx(TD_BASE, TD_CARD, rowDim, 'min-w-0 overflow-hidden')}>
+                    <Select
+                      ariaLabel="Button type"
+                      value={btn.type}
+                      className={clsx(
+                        ROW_FIELD,
+                        '!w-full !gap-1 !px-1.5 !text-[0.68rem] !rounded-[0.4rem] overflow-hidden',
+                        // Radix Value is the first span — truncate so DROPDOWN/ON_OFF never spill.
+                        '[&>span:first-child]:min-w-0 [&>span:first-child]:truncate',
+                      )}
+                      onChange={(value) => {
+                        const t = value as EventButtonDraft['type'];
+                        const patch: Partial<EventButtonDraft> = { type: t };
+                        if (t === 'DROPDOWN' && !btn.dropdown_options.length) {
+                          patch.dropdown_options = [
+                            { label: 'Option 1', needs_context: false },
+                            { label: 'Option 2', needs_context: false },
+                          ];
+                        }
+                        if (t === 'ON_OFF') {
+                          patch.dropdown_options = [];
+                          patch.on_label = btn.on_label || 'ON';
+                          patch.off_label = btn.off_label || 'OFF';
+                          // ON_OFF buttons never carry generation instructions — a
+                          // type switch drops them from the draft (web-ui-system spec).
+                          patch.auto_instruction = '';
+                        }
+                        updateButton(btn.id, patch);
+                      }}
+                      options={BUTTON_TYPE_OPTIONS}
+                    />
+                  </td>
 
-                {/* colColorCell: no card tint; own metrics (p-0, centered, fixed narrow width). */}
-                <td className="h-6 min-h-0 max-h-6 leading-none box-border relative w-[2.35rem] min-w-[2rem] p-0 text-center align-middle cursor-pointer border-0 focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-1 focus-visible:z-[1]">
-                  <Popover
-                    open={openColorFor === btn.id}
-                    onOpenChange={(o) => setOpenColorFor(o ? btn.id : null)}
-                    ariaLabel="Event colors"
-                    className="grid grid-cols-[repeat(3,2.75rem)] gap-[0.4rem] p-[0.35rem]"
-                    align="start"
-                    trigger={
-                      <Tooltip content="Pick color">
-                        <button
-                          type="button"
-                          aria-label="Pick button color"
-                          style={{
-                            display: 'block',
-                            width: '1.5rem',
-                            height: '1.5rem',
-                            borderRadius: '3px',
-                            backgroundColor: btn.color,
-                            border: '1px solid rgba(0,0,0,0.2)',
-                            cursor: 'pointer',
-                            padding: 0,
-                          }}
-                        />
-                      </Tooltip>
-                    }
+                  {/* Color swatch cell — same card tint as the rest of the row. */}
+                  <td
+                    className={clsx(
+                      TD_BASE,
+                      TD_CARD,
+                      rowDim,
+                      // `!text-center` beats TD_BASE's `text-left` (utility order ≠ class order).
+                      'relative min-w-0 justify-center !px-0 !text-center cursor-pointer focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:-outline-offset-1 focus-visible:z-[1]',
+                    )}
                   >
-                    {normPalette.map((hex) => (
-                      <button
-                        key={hex}
-                        type="button"
-                        className="w-[2.75rem] h-[2.75rem] p-0 m-0 border border-[rgba(255,255,255,0.2)] rounded-[0.4rem] cursor-pointer box-border focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-1"
-                        style={{ backgroundColor: hex }}
-                        aria-label={`Color ${hex}`}
-                        onClick={() => {
-                          updateButton(btn.id, { color: hex });
-                          setOpenColorFor(null);
-                        }}
-                      />
-                    ))}
-                  </Popover>
-                </td>
-
-                {/* colOptionsWrap: card cell, text-left (.colOptionsBtn had no live rule). */}
-                <td className={clsx(TD_BASE, TD_CARD, 'text-left')}>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={!canEditOpts}
-                    onClick={() => canEditOpts && setEditingOptsFor(btn.id)}
-                  >
-                    {optsSummary}
-                  </button>
-                </td>
-
-                {/* Generation-instruction cell (auto-generate-event-logs): the compact
-                    spark trigger opens a popover editor (multi-line textarea) — same
-                    affordance pattern as the color cell. The lit trigger doubles as the
-                    instruction-bearing indicator (single definition, option-only lights
-                    it). ON_OFF rows are excluded from generation and offer no field. */}
-                <td className={clsx(TD_BASE, TD_CARD, 'w-[2.35rem] !px-[0.15rem] !text-center')}>
-                  {btn.type === 'ON_OFF' ? (
-                    <span className="text-[rgba(229,238,252,0.35)]" aria-hidden="true">
-                      —
-                    </span>
-                  ) : (
                     <Popover
-                      open={openInstructionFor === btn.id}
-                      onOpenChange={(o) => setOpenInstructionFor(o ? btn.id : null)}
-                      ariaLabel="Generation instruction editor"
-                      className="w-[min(22rem,92vw)] p-3"
-                      align="end"
-                      // Bare-button trigger (the RecentSessionsList popover pattern):
-                      // a Tooltip wrapper here would swallow the Radix trigger props
-                      // (Tooltip doesn't forward unknown props to its child).
+                      open={openColorFor === btn.id}
+                      onOpenChange={(o) => setOpenColorFor(o ? btn.id : null)}
+                      ariaLabel="Event colors"
+                      className="grid grid-cols-[repeat(3,2.75rem)] gap-[0.4rem] p-[0.35rem]"
+                      align="center"
+                      // Bare-button trigger (same as the instruction popover): a
+                      // Tooltip wrapper swallows Radix trigger props so the 3×3
+                      // palette never opens.
                       trigger={
                         <button
                           type="button"
-                          // The aria-label wins the accessible-name computation, so the
-                          // bearing state must live IN the label — a sibling sr-only
-                          // span would never be announced (color alone isn't state).
-                          aria-label={
-                            bearing
-                              ? 'Edit generation instruction (has instructions)'
-                              : 'Edit generation instruction'
-                          }
-                          title="Generation instruction"
-                          className={clsx(
-                            'btn btn-icon p-0 min-w-0 w-[1.45rem] h-6 max-h-6 [&>svg]:block [&>svg]:shrink-0',
-                            bearing ? 'text-v5-primary' : 'text-[rgba(229,238,252,0.35)]',
-                          )}
-                        >
-                          <SparkIcon />
-                        </button>
+                          aria-label="Pick button color"
+                          title="Pick color"
+                          className="inline-block h-[1.5rem] w-[1.5rem] align-middle rounded-[3px] border border-black/20 p-0 cursor-pointer"
+                          style={{ backgroundColor: btn.color }}
+                        />
                       }
                     >
-                      <label className="flex flex-col gap-[0.35rem]">
-                        <span className="text-[0.65rem] font-semibold tracking-[0.08em] uppercase text-[rgba(229,238,252,0.55)]">
-                          Generation instruction
-                        </span>
-                        <textarea
-                          className="w-full resize-y rounded-v5-sm border border-v5-border bg-transparent px-2 py-1.5 text-[0.8rem] leading-[1.4] text-v5-text [font-family:inherit] focus:border-[rgba(56,189,248,0.5)] focus:outline-none"
-                          rows={4}
-                          maxLength={2000}
-                          value={btn.auto_instruction}
-                          placeholder="e.g. Log an event each time a new slate is called"
-                          onChange={(e) =>
-                            updateButton(btn.id, { auto_instruction: e.target.value })
-                          }
+                      {normPalette.map((hex) => (
+                        <button
+                          key={hex}
+                          type="button"
+                          className="w-[2.75rem] h-[2.75rem] p-0 m-0 border border-[rgba(255,255,255,0.2)] rounded-[0.4rem] cursor-pointer box-border focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-1"
+                          style={{ backgroundColor: hex }}
+                          aria-label={`Color ${hex}`}
+                          onClick={() => {
+                            updateButton(btn.id, { color: hex });
+                            setOpenColorFor(null);
+                          }}
                         />
-                      </label>
+                      ))}
                     </Popover>
-                  )}
-                </td>
+                  </td>
 
-                {/* Delete (last child): card cell, right rounding + right padding. */}
-                <td className={clsx(TD_BASE, TD_CARD, 'rounded-r-[0.65rem] pr-[0.4rem]')}>
-                  {/* .colDelete: only the svg display:block/shrink-0 rule survived. */}
-                  <button
-                    type="button"
-                    className="btn btn-icon danger [&>svg]:block [&>svg]:shrink-0"
-                    aria-label="Remove event"
-                    onClick={() => deleteButton(btn.id)}
+                  {/* colOptionsWrap: DROPDOWN rows render one bubble per option (text-sized). */}
+                  <td className={clsx(TD_BASE, TD_CARD, rowDim, 'min-w-0 text-left')}>
+                    {btn.type === 'DROPDOWN' ? (
+                      <button
+                        type="button"
+                        aria-label="Edit dropdown options"
+                        className={clsx(
+                          'btn !m-0 !box-border !h-auto !min-h-0 !max-h-none !w-auto !max-w-full',
+                          '!border-0 !bg-transparent !p-0 !shadow-none !normal-case !tracking-normal',
+                          'inline-flex flex-wrap items-center justify-start gap-[0.3rem] align-middle',
+                          'hover-always:!bg-transparent',
+                        )}
+                        onClick={() => setEditingOptsFor(btn.id)}
+                      >
+                        {btn.dropdown_options.length ? (
+                          btn.dropdown_options.map((opt, optIdx) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: read-only positional bubbles inside one button — options have no id, labels may legitimately duplicate, and the list never reorders in place (any edit replaces the whole array).
+                            <span key={`${btn.id}-opt-${optIdx}`} className={OPTION_BUBBLE}>
+                              {opt.label.trim() || '—'}
+                            </span>
+                          ))
+                        ) : (
+                          <span className={OPTION_BUBBLE}>—</span>
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={clsx(
+                          'btn',
+                          ROW_CONTROL,
+                          '!w-auto !px-2 !text-[0.65rem] inline-flex items-center justify-center',
+                        )}
+                        disabled={!canEditOpts}
+                        onClick={() => canEditOpts && setEditingOptsFor(btn.id)}
+                      >
+                        {btn.type === 'ON_OFF' ? onOffSummary(btn.on_label, btn.off_label) : 'N/A'}
+                      </button>
+                    )}
+                  </td>
+
+                  {/* Generation-instruction cell (auto-generate-event-logs): label
+                    opens a centered modal editor. The lit trigger doubles as the
+                    instruction-bearing indicator. ON_OFF rows offer no field. */}
+                  <td
+                    className={clsx(
+                      TD_BASE,
+                      TD_CARD,
+                      rowDim,
+                      'min-w-0 justify-end overflow-hidden !px-[0.15rem] !text-right',
+                    )}
                   >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                    {btn.type === 'ON_OFF' ? (
+                      <span
+                        className="inline-block align-middle text-[rgba(229,238,252,0.35)]"
+                        aria-hidden="true"
+                      >
+                        —
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        // The aria-label wins the accessible-name computation, so the
+                        // bearing state must live IN the label — a sibling sr-only
+                        // span would never be announced (color alone isn't state).
+                        aria-label={bearing ? 'AI Rules (has instructions)' : 'AI Rules'}
+                        title="AI Rules"
+                        className={clsx(
+                          'btn !m-0 !box-border !h-[1.7rem] !max-h-[1.7rem] !min-h-0 !min-w-0 !py-0 !leading-none',
+                          '!w-full !px-1 !text-[0.55rem] !tracking-[0.04em] inline-flex items-center justify-center align-middle',
+                          'overflow-hidden',
+                          bearing ? 'text-v5-primary' : 'text-[rgba(229,238,252,0.35)]',
+                        )}
+                        onClick={() => setOpenInstructionFor(btn.id)}
+                      >
+                        <span className="min-w-0 truncate">AI Rules</span>
+                      </button>
+                    )}
+                  </td>
+
+                  {/* Delete (last child): card cell, right rounding + right padding. */}
+                  <td
+                    className={clsx(
+                      TD_BASE,
+                      TD_CARD,
+                      rowDim,
+                      'min-w-0 justify-center rounded-r-[0.65rem] pr-[0.4rem] !text-center',
+                    )}
+                  >
+                    {/* .colDelete: only the svg display:block/shrink-0 rule survived. */}
+                    <button
+                      type="button"
+                      className={clsx(
+                        ROW_ICON_BTN,
+                        'danger !flex !items-center !justify-center !gap-0 !p-0 !leading-none',
+                      )}
+                      aria-label="Remove event"
+                      onClick={() => deleteButton(btn.id)}
                     >
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      <line x1="10" y1="11" x2="10" y2="17" />
-                      <line x1="14" y1="11" x2="14" y2="17" />
-                    </svg>
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                      {/* 16px → 12.8px (−20%); block + shrink-0 so flex centering is exact. */}
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="12.8"
+                        height="12.8"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                        className="block shrink-0"
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        <line x1="10" y1="11" x2="10" y2="17" />
+                        <line x1="14" y1="11" x2="14" y2="17" />
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {editingBtn && (editingBtn.type === 'DROPDOWN' || editingBtn.type === 'ON_OFF') && (
         <EventOptionsModal
@@ -670,6 +712,18 @@ export function EventButtonsTable({
             setEditingOptsFor(null);
           }}
           onClose={() => setEditingOptsFor(null)}
+        />
+      )}
+
+      {instructionBtn && (
+        <EventInstructionModal
+          buttonName={instructionBtn.name}
+          initialInstruction={instructionBtn.auto_instruction}
+          onSave={(instruction) => {
+            updateButton(instructionBtn.id, { auto_instruction: instruction });
+            setOpenInstructionFor(null);
+          }}
+          onClose={() => setOpenInstructionFor(null)}
         />
       )}
     </div>

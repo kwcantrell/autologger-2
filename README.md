@@ -346,7 +346,22 @@ drop-frame `HH:MM:SS;FF`), then inserts through the same transactional hub path 
 log — same `event.changed` broadcast per insert, same category UI snapshots in metadata,
 same catalog live projection, so `GET /api/sessions` stays truthful.
 
-**Append-only, bounded, attributable.** A run never modifies or deletes an existing event.
+**Append-only, bounded, attributable.** A run never modifies or deletes an existing
+event, with one authorized exception (`event-generate-menu` delta, hardened by
+`event-generate-hardening`): the request accepts an optional JSON body
+`{regenerate?, selection?}` — `regenerate: true` snapshots the ids of the session's current
+`auto_generated` rows after the guard ladder and AI-slot acquire but before the CLI spawn,
+excludes that snapshot from the run's existing-events dedup basis and anchor-interpolation
+basis, and leaves the snapshotted rows readable for the whole run (including any mid-run
+`GET …/events`). The snapshot is **deleted only after the CLI turn succeeds with at least
+one created event** — transactionally, in one `event.changed` broadcast when at least one
+row was removed and none otherwise — right before the `200` response is built; a
+zero-created success or a `502` leaves the prior rows untouched, and the `200` body then
+adds `deleted: number` (`0` on zero-created success). `selection` (mutually exclusive with
+regenerate — the combo is `400`) restricts the run to the named categories/options, with
+only matching instruction-bearing entries participating (a selection that matches none is
+`400`). Malformed bodies are `400`. An empty/absent body stays exactly the prior Generate
+All behavior.
 Each run enforces a per-run created-events cap (`EVENT_GENERATE_MAX_CREATED_EVENTS`,
 default `200`): at the cap, further `create_event` calls return a tool error and the
 response reports `cap_hit: true`. Each generated row carries `auto_generated: true` plus a
@@ -535,11 +550,11 @@ was ported from: historical provenance, not a live parity claim.
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
 | `GET /api/studio` · `GET\|PUT /api/profile` · `GET\|POST /api/shows` | `routers/profile.py`, `shows.py` |
 | `GET\|POST /api/sessions` · `GET\|PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
-| `GET\|POST /api/sessions/{id}/events` · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
+| `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
-| `POST …/events/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound · **200** `{created, cap_hit}` configured success (append-only) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs) |
-| `GET\|POST …/audio/segments` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
+| `POST …/events/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
+| `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields when held (`session_id`, `session_title`, `started_at`) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |

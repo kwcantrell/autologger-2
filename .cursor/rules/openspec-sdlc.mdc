@@ -1,0 +1,18 @@
+---
+description: Route to this repo's normative OpenSpec SDLC sources; do not restate them.
+alwaysApply: true
+---
+
+This repo's process rules live only in three encodings: `CLAUDE.md`,
+`.claude/skills/openspec-apply-change/SKILL.md`, and `openspec/config.yaml`. Before any
+design-bearing work, read `CLAUDE.md` "How we work (SDLC)" in full and follow it — this
+rule is a pointer, not a substitute.
+
+Stop-conditions:
+1. `tasks.md` is provisional until the fact-check pass, adversarial panel, and human gate
+   recorded in `CLAUDE.md` "How we work (SDLC)" have run.
+2. Apply is not runnable in this environment — stop and hand the change off (see
+   `.claude/skills/openspec-apply-change/SKILL.md`).
+3. The HTTP/WS contract is frozen — read `CLAUDE.md` "Invariants" before touching any
+   router or response shape.
+4. Never create git worktrees — see `CLAUDE.md` "Conventions".

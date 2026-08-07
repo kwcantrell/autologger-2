@@ -212,3 +212,13 @@ stale pre-decision language, no disposition-vs-normative contradictions, no
 broken cross-references; cited commit hashes and load-bearing symbol/constant
 claims spot-verified against the branch; strict validation passing for all
 three changes.
+
+- **2026-08-06 — Post-gate amendment record (retroactive):** commit 845bf0b
+  (2026-08-02, large-MP3 passthrough — audio.ts byte-cap raise, sessions.ts, audioMerge
+  pass-through) changed route behavior after this change's gate with no log entry.
+  Verified 2026-08-06: its surface content reached main via the PR-3 remediation
+  (byte-cap + streaming-abort reconciled against this change's deltas there), and the
+  PR #4 branch's net observable delta vs main contains no batch-audio-import surface —
+  nothing unauthorized outstanding. The same commit also smuggled a .cursor/rules file,
+  removed by ed43b29 and re-governed by cursor-sdlc-adapters (archived 2026-08-06).
+  Residual: task 5.2 (e2e + visual) still open — run before archive.

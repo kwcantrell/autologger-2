@@ -6,28 +6,27 @@ The session workspace console: the sole owner of the workspace tab inventory/ord
 (Event Feed, Transcript, Topics, Assistant, Dashboards), plus the console-level UX around
 them — stopped-state logging visibility, the 1–9 logging hotkeys, a discoverable keyboard-
 shortcut reference, transport tooltips, truthful recording indication from two scoped
-sources, honest capability gating on generation features, the session-ID copy chip, and the
+sources, honest capability gating on generation features, and the
 feed jump column.
-
 ## Requirements
-
 ### Requirement: Workspace tab IA (single owner)
 This capability is the sole owner of the session-workspace tab inventory, order, and labels.
-The workspace SHALL present exactly five top-level tabs in one `Feed tabs` tablist, in order:
-**Event Feed, Transcript, Topics, Assistant, Dashboards**, defaulting to Event Feed.
+The workspace SHALL present exactly six top-level tabs in one `Feed tabs` tablist, in order:
+**Event Feed, Transcript, Topics, Assistant, Dashboards, Export**, defaulting to Event Feed.
 Transcript and Topics SHALL be top-level panels (not nested under an agent tab); the agent
 surfaces carry the names "Assistant" (chat) and "Dashboards" (AI v2) — the labels "AI" and
 "AI v2" SHALL NOT appear in the tab navigation (other capabilities' references to tab labels
-are non-normative and defer here). All five panels SHALL stay mounted with visibility toggled
+are non-normative and defer here). All six panels SHALL stay mounted with visibility toggled
 via the `hidden` attribute (the established mounted-hidden discipline), and the Dashboards
 panel SHALL keep `key={sessionId}` at its mount site. (The Assistant panel is deliberately
 NOT keyed by session — its cross-session conversation persistence is pre-existing behavior,
-recorded as an accepted residual in design.)
+recorded as an accepted residual in design.) The Export panel SHALL present the session's
+download actions inline (not as a dialog) and SHALL NOT depend on a Timeline Export control.
 
 #### Scenario: Tab inventory and default
 - **WHEN** a session workspace mounts
 - **THEN** the `Feed tabs` tablist contains exactly Event Feed, Transcript, Topics, Assistant,
-  Dashboards, with Event Feed selected
+  Dashboards, Export, with Event Feed selected
 
 #### Scenario: Chat survives tab switches (no unmount)
 - **WHEN** the user switches from Assistant to any other tab and back
@@ -38,6 +37,10 @@ recorded as an accepted residual in design.)
 - **WHEN** the viewport is under 768px wide
 - **THEN** the tablist scrolls horizontally with single-line tab labels (no wrapping), and
   every tab remains reachable by keyboard
+
+#### Scenario: Export tab is mounted-hidden like other feeds
+- **WHEN** the user is on Event Feed (or any non-Export tab)
+- **THEN** the Export tabpanel remains in the DOM with the `hidden` attribute set
 
 ### Requirement: Stopped-state logging visibility
 The category button strip SHALL be visible in the stop and play transport states (buttons
@@ -84,13 +87,13 @@ text-entry element (input, textarea, select, contenteditable) has focus; while a
 The workspace SHALL provide a keyboard-shortcut reference dialog listing the real shortcuts
 with their real scopes (1–9 logging while the live dock is shown; Space play/pause; arrow
 scrub 1s / Shift 10s **when the timeline playhead is focused**; +/− zoom; Esc; ?), opened by
-the `?` key and by a visible labeled control in the Session Controls panel. The `?` key guard
+the `?` key and by a visible labeled control in the fused strip's controls column. The `?` key guard
 is: not in text entry, no dialog open, no Ctrl/Meta/Alt — **Shift is permitted** (it is how
 `?` is typed on most layouts).
 
 #### Scenario: Opening the reference
 - **WHEN** the user presses `?` (Shift+/) outside text entry with no dialog open, or activates
-  the Session Controls keyboard button
+  the strip's keyboard-shortcuts button
 - **THEN** the shortcut reference dialog opens listing the shortcuts above
 
 ### Requirement: Transport tooltips
@@ -103,29 +106,32 @@ and on keyboard focus.
 
 ### Requirement: Truthful recording indication (two scoped sources)
 Recording indication SHALL be truthful per its scope, and the two indicators have different,
-deliberate sources: the shell's top-bar recording strip (pulsing dot, "Recording audio", live
-duration) reflects **this client's** recorder phase — visible only while this browser's
-microphone is actively recording (not during upload), hidden when recording stops **and when
-the recorder unmounts mid-recording** (session close/switch, route change). The Session
-Controls status line (red "Recording" with pulsing dot) reflects the **session-wide recording
-lease** (any client). The duration counter SHALL NOT be announced repeatedly by assistive
-technology (its per-second updates are excluded from the live region; only the strip's
-appearance/disappearance announces). Both pulses are static under reduced motion.
+deliberate sources: the fused strip's status area (mic level meter + live recording
+duration — the AudioRecorder targets; the retired AppShell "Recording audio" pill's
+successor) reflects **this client's** recorder phase — revealed only while this browser's
+microphone is actively recording (not during upload, not while merely rolling), hidden when
+recording stops **and when the recorder unmounts mid-recording** (session close/switch,
+route change). The strip's session status value (red "Recording") reflects the
+**session-wide recording lease** (any client). The duration counter SHALL NOT be announced
+repeatedly by assistive technology (its per-second updates are excluded from the live
+region; only the indication's appearance/disappearance announces). Pulsing indication is
+static under reduced motion.
 
-#### Scenario: Recording strip lifecycle
+#### Scenario: Recording indication lifecycle
 - **WHEN** this client starts recording, then stops
-- **THEN** the top-bar strip appears with a running duration during recording and is hidden
-  after stop
+- **THEN** the strip status area reveals the mic level meter with a running duration during
+  recording and hides them after stop
 
-#### Scenario: Unmount while recording clears the strip
+#### Scenario: Unmount while recording clears the indication
 - **WHEN** the recorder unmounts while recording (user navigates to /teams or closes the
   session)
-- **THEN** the strip is hidden (no stale "Recording audio" indicator persists)
+- **THEN** the meter and duration are hidden (no stale recording indication persists)
 
 #### Scenario: Remote client recording
 - **WHEN** another client holds the recording lease
-- **THEN** the Session Controls status shows Recording (session truth) while the top-bar strip
-  stays hidden (this client's microphone is not recording) — a deliberate divergence
+- **THEN** the strip's session status shows Recording (session truth) while this client's
+  mic-level indication stays hidden (this browser's microphone is not recording) — a
+  deliberate divergence
 
 ### Requirement: Honest capability gating on generation features
 When transcript, topic, or event generation returns HTTP 503 (feature not configured on
@@ -196,6 +202,79 @@ event-buttons table.
 - **THEN** session B's feed shows an idle AUTO GENERATE control, and returning to
   session A shows A's outcome (or idle state) without B ever displaying A's run state
 
+### Requirement: Event feed Auto Generate menu
+
+The event feed Auto Generate control SHALL be a dropdown whose trigger label is
+**Auto Generate** (or **Generating…** while a run for this session is pending).
+The menu SHALL offer:
+
+1. **Generate All** when the events list response reports
+   `has_auto_generated: false`; **Regenerate All** when it reports `true`. The
+   label SHALL derive from the server-computed `has_auto_generated` field of
+   the events list response — never from scanning loaded rows — so it stays
+   truthful for sessions whose auto rows lie beyond any client-side page or
+   the server's list clamp. Until the events list response for the session is
+   available, the first item SHALL read **Generate All** (the non-destructive
+   default; a click in that window POSTs plain generate).
+2. **Custom**, which opens a modal.
+
+Generate All SHALL POST generate with no regenerate flag and no selection.
+Regenerate All SHALL POST `{ regenerate: true }`. Existing 503 latch,
+no-instructions gate, pending/outcome session scoping, and inline error
+channels SHALL continue to apply to runs started from the menu.
+
+#### Scenario: Menu flips to Regenerate All after auto events exist
+
+- **WHEN** the session has at least one auto-generated row (reported via
+  `has_auto_generated: true`)
+- **THEN** the first menu item is labeled Regenerate All
+
+#### Scenario: Auto rows beyond the loaded page still flip the label
+
+- **WHEN** a session's only auto-generated rows lie beyond the rows the feed
+  has loaded (e.g. past the 2000-row workspace clamp)
+- **THEN** the first menu item is labeled Regenerate All, because the label
+  reads the server-computed field rather than the loaded rows
+
+#### Scenario: Loading state defaults to the non-destructive label
+
+- **WHEN** the session's events list response has not yet arrived
+- **THEN** the first menu item reads Generate All, and activating it POSTs
+  plain generate (no `regenerate` flag)
+
+#### Scenario: Custom opens modal without starting a run
+
+- **WHEN** the operator chooses Custom
+- **THEN** a selection modal opens and no generate request is sent until submit
+
+### Requirement: Custom generate modal
+
+The Custom modal SHALL list instruction-bearing buttons and, for DROPDOWN
+buttons, each option that has a non-empty `auto_instruction`, as independently
+selectable entries. Submit SHALL require at least one selected entry and SHALL
+POST generate with `selection` only (`regenerate` false/absent). Cancel SHALL
+close without generating.
+
+#### Scenario: Custom submit sends selection
+
+- **WHEN** the operator selects one button-level instruction and one option
+  instruction and submits
+- **THEN** the client POSTs generate with those two selection entries and
+  without `regenerate: true`
+
+### Requirement: Event filter checkmarks
+
+In the event feed Filter popover, each toggled-on category (and Show internal
+events when on) SHALL show a checkmark beside the label. Selected items SHALL
+NOT use the selected background/text highlight tint used elsewhere for
+`PopoverItem selected`.
+
+#### Scenario: Visible category shows checkmark
+
+- **WHEN** a show category is not hidden by the filter
+- **THEN** its filter row shows a checkmark and is not highlighted via the
+  selected tint
+
 ### Requirement: Generated events are visibly marked in the feed
 Event rows whose metadata carries `auto_generated: true` SHALL render with a compact
 visual marker (with an accessible name, e.g. "auto-generated") distinguishing them
@@ -219,21 +298,6 @@ SHALL still end with a refetch that reflects the final state.
 - **WHEN** 60 `event.changed` frames arrive within a few seconds
 - **THEN** the client issues a bounded number of coalesced refetches (not 60), and
   after the burst ends the feed reflects all 60 events
-
-### Requirement: Session-ID copy chip
-The Session Controls session-ID line SHALL be an explicit copy affordance: a button with a
-copy glyph and "Copy session ID" labeling. On activation it copies the ID to the clipboard
-and confirms via toast; when the Clipboard API is unavailable (e.g. non-secure LAN origins,
-a documented deployment mode) it SHALL report failure or fall back — never a silent no-op.
-
-#### Scenario: Copying the session ID
-- **WHEN** the user activates the session-ID chip in a secure context
-- **THEN** the session ID is written to the clipboard and a confirmation toast appears
-
-#### Scenario: Clipboard unavailable
-- **WHEN** the user activates the chip where `navigator.clipboard` is unavailable
-- **THEN** the UI reports the failure (or provides a selectable fallback) — it does not
-  silently do nothing
 
 ### Requirement: Feed jump column
 
@@ -486,14 +550,77 @@ target forward to the next playable clip, or backward to the last one.
 
 ### Requirement: Marker navigation behavior is unchanged
 
-Marker navigation's prev/next jump SHALL keep its current observable behavior: available whenever
-markers exist, **including while the session is rolling** — the not-rolling gate applies to feed
-jumps only — targeting grouped marker seconds, issuing its audio seek unconditionally without a
-clip-coverage check, and never starting playback.
+Marker navigation's prev/next jump SHALL keep its current observable behavior while the
+session is neither rolling nor recording: available whenever markers exist, targeting
+grouped marker seconds, issuing its audio seek unconditionally without a clip-coverage
+check, and never starting playback. While the session is rolling or recording, the
+maximize-log strip SHALL disable marker prev/next (this change's "Strip contents when
+rolling" scenario) — superseding the earlier including-while-rolling availability from
+feed-row-seek; the not-rolling gate on feed jumps is unchanged.
 
-#### Scenario: Marker navigation still works while rolling
+#### Scenario: Marker navigation still works while idle
 
-- **WHEN** the session is rolling and the user activates the previous- or next-marker button
-- **THEN** the marker jump performs the same scrub, scroll, and audio seek it performed before
-  this change
+- **WHEN** the session is neither rolling nor recording and the user activates the
+  previous- or next-marker button
+- **THEN** the marker jump performs the same scrub, scroll, and audio seek it performed
+  before this change
+
+#### Scenario: Marker navigation is disabled while rolling or recording
+
+- **WHEN** the session is rolling or local mic recording is active
+- **THEN** the marker prev/next controls are disabled and no scrub, scroll, or seek is
+  issued
+
+### Requirement: Sole fused transport strip
+The session workspace SHALL render one fused horizontal transport strip in place of any
+twin glass-panel deck. There SHALL NOT be a Maximize log / Default view layout toggle or a
+persisted layout preference that switches decks. Rolling and recording SHALL NOT replace
+the strip with a twin-panel layout.
+
+#### Scenario: Idle session shows the strip
+- **WHEN** a session workspace is open and the session is idle
+- **THEN** the fused strip is shown and the default twin panels are not
+
+#### Scenario: Rolling keeps the strip
+- **WHEN** the open session is rolling
+- **THEN** the fused strip remains displayed (no twin-panel deck)
+
+#### Scenario: Recording keeps the strip
+- **WHEN** the open session’s recording lease is alive
+- **THEN** the fused strip remains displayed (no twin-panel deck)
+
+### Requirement: Maximize-log fused transport strip
+The strip SHALL include a left controls column and a right timeline column. The left
+column SHALL stack: session details (show · session name; date via hover/focus tooltip;
+no session-id chip),
+session status above the timecode (while a YouTube import is pending the status value
+SHALL read `Importing YouTube Audio` instead of the transport status), the session timecode
+stacked above transport controls, marker prev/next buttons inline with transport, and a
+keyboard-shortcuts `?` control. The timeline column SHALL show a scrubber/waveform/markers
+lane **or** (while rolling/recording) a same-height category-button row, with the current
+marker readout overlaid at the top-left inset of that lane while idle/playing. While
+rolling or recording, the marker readout SHALL NOT be shown. The strip SHALL omit twin
+glass panel containers and the retired AppShell “Recording audio” pill. The
+scrubber lane height SHALL be approximately **80% of the `#timeline-clips` lane height**.
+While rolling/recording, the category-button lane SHALL size to the category-button
+height token (not clipped to the shorter scrubber lane). While local mic recording is
+active, the strip status area SHALL reveal the mic level meter and recording duration
+(AudioRecorder targets).
+
+#### Scenario: Strip contents when idle
+- **WHEN** maximize-log layout is displayed and the session is idle
+- **THEN** the operator can read session show/name/date, use marker nav, scrub the
+  timeline, read status and timecode, use transport controls, and open shortcuts from `?`
+
+#### Scenario: Strip contents when rolling
+- **WHEN** the session is rolling
+- **THEN** the scrubber lane is replaced by category log buttons at the same height,
+  status reads Rolling, the marker readout is not shown, and marker prev/next controls
+  are disabled
+
+#### Scenario: Strip contents when recording audio
+- **WHEN** local mic recording is active
+- **THEN** status reads Recording and the status row shows mic level and recording
+  duration
 </content>
+

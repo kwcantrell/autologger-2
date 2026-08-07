@@ -148,6 +148,14 @@ export interface AiGenerationRunContext {
    * transcript regeneration cannot reshuffle the paged rendering (content or
    * page boundaries) mid-run. Absent ⇒ live hub read (3.3's behavior). */
   readonly words?: readonly AiGenerationSnapshotWord[];
+  /** event-generate-hardening D3 — on regenerate, the pre-spawn snapshot's
+   * event ids (the rows delete-after-success will remove once the turn
+   * succeeds with a created event). `create_event`'s anchor computation
+   * (`timecodeWallAnchors`) filters these out of its live `hub.exportEvents()`
+   * read, so replacement rows are never positioned by rows about to be
+   * replaced. Absent on non-regenerate runs — anchor behavior there is
+   * byte-identical to today. */
+  readonly regenerateSnapshotIds?: ReadonlySet<string>;
 }
 
 /** Per-turn registration context (auto-generate-event-logs D6): the turn's
@@ -871,8 +879,17 @@ const TOOL_BUILDERS: Record<AiMcpToolName, (server: McpServer, ctx: ToolBuildCon
           // FRESH each call: events accrue during the run, and re-reading them
           // keeps generated events sorting among themselves in timecode order
           // (each insert becomes an anchor for the next, monotone-clamped).
+          // event-generate-hardening D3: on regenerate, the doomed pre-spawn
+          // snapshot rows are excluded from this basis too — otherwise they'd
+          // steer the replacement rows' persisted wall times right up until
+          // the post-success delete removes them.
           const hub = registry.get(sessionId);
-          const anchors = timecodeWallAnchors(hub.exportEvents());
+          const liveEvents = hub.exportEvents();
+          const snapshotIds = generation.regenerateSnapshotIds;
+          const anchorEvents = snapshotIds
+            ? liveEvents.filter((e) => !snapshotIds.has(e.event_id))
+            : liveEvents;
+          const anchors = timecodeWallAnchors(anchorEvents);
           const wallTimeUtc = wallTimeUtcForTimecode(totalFrames, anchors, {
             frameRate: generation.frameRate,
             startOffsetFrames: generation.startOffsetFrames,

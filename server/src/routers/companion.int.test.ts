@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
-import { seededSession, setCompanionPresence } from '../test/helpers';
+import {
+  seededSession,
+  seedSession,
+  seedShow,
+  seedStudio,
+  setCompanionPresence,
+} from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 async function state(): Promise<Record<string, unknown>> {
@@ -17,6 +23,29 @@ describe('presence + state', () => {
     expect(body.active_session_id).toBe(s);
     expect((body.session as { id: string }).id).toBe(s);
     expect(body.last_command).toBeNull();
+  });
+
+  // session-title-suffix (design D5, gate ruling 2026-08-02, task 1.5/3.1):
+  // deck_title equals the stored session title everywhere — Companion state
+  // is the third of the three frozen emitters (list/detail/status are
+  // covered in sessions.int.test.ts).
+  it('deck_title equals the stored title, not CODE - episode', async () => {
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio, code: 'HD' });
+    const s = seedSession({ showId: show, episode: '7', title: 'HD_260802' });
+    await setCompanionPresence('c1', s, { visible: true });
+    const body = await state();
+    expect((body.session as { deck_title: string }).deck_title).toBe('HD_260802');
+  });
+
+  it('deck_title falls back to "—" for a blank stored title, even with a show code present', async () => {
+    const studio = seedStudio();
+    const show = seedShow({ studioId: studio, code: 'HD' });
+    const s = seedSession({ showId: show, episode: '7', title: '' });
+    await setCompanionPresence('c1', s, { visible: true });
+    const body = await state();
+    expect((body.session as { title: string }).title).toBe('');
+    expect((body.session as { deck_title: string }).deck_title).toBe('—');
   });
 
   it('POST presence with closing:true removes it', async () => {

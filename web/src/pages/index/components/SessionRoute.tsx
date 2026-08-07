@@ -165,9 +165,16 @@ interface SessionRouteProps {
   ytImportPending?: boolean;
   /** Opens the AppShell-owned New Session modal (design D10); threaded to HomeRoute. */
   onNewSession: () => void;
+  /** Mobile: open the off-canvas nav rail from the session strip. */
+  onOpenMobileNav?: () => void;
 }
 
-export function SessionRoute({ sessionId, ytImportPending, onNewSession }: SessionRouteProps) {
+export function SessionRoute({
+  sessionId,
+  ytImportPending,
+  onNewSession,
+  onOpenMobileNav,
+}: SessionRouteProps) {
   const query = useSession(sessionId);
 
   if (!sessionId) {
@@ -180,7 +187,13 @@ export function SessionRoute({ sessionId, ytImportPending, onNewSession }: Sessi
   const resolution = query.data;
 
   if (resolution?.kind === 'found' && !resolution.session.archived) {
-    return <WorkspaceStatic sessionId={sessionId} ytImportPending={ytImportPending} />;
+    return (
+      <WorkspaceStatic
+        sessionId={sessionId}
+        ytImportPending={ytImportPending}
+        onOpenMobileNav={onOpenMobileNav}
+      />
+    );
   }
 
   if (!resolution) {

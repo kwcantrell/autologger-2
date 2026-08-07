@@ -32,13 +32,17 @@ describe('catalog studio + auth stores', () => {
 });
 
 describe('catalog session index store', () => {
-  it('createSessionIndex bumps the show next_episode', async () => {
+  // session-title-suffix (design D1, gate ruling 2026-08-02): createSessionIndex
+  // no longer bumps any per-show next_episode counter — the column is
+  // soft-retained (unused) at its create-time default, never advanced.
+  it('createSessionIndex does not bump the show next_episode', async () => {
     const cat = catalogFor();
     const studio = seedStudio();
     const show = seedShow({ studioId: studio });
+    const before = Number(cat.shows.getShowRow(show)?.next_episode ?? 0);
     seedSession({ showId: show, episode: '005' });
-    const row = cat.shows.getShowRow(show);
-    expect(Number(row?.next_episode ?? 0)).toBeGreaterThanOrEqual(5);
+    const after = Number(cat.shows.getShowRow(show)?.next_episode ?? 0);
+    expect(after).toBe(before);
   });
 
   it('getSessionStudioId resolves the owning studio', async () => {

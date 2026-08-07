@@ -31,7 +31,22 @@ function hexColorsFromJson(rawJson: unknown, maxCount = 9): string[] {
   return out;
 }
 
-/** _show_api_dict — the per-show shape the React app's api/types.ts expects. */
+/** Raw `shows.title_suffix` column value → the wire's two-value enum; anything
+ * other than exactly `'episode'` is treated as `'date'` (mirrors the same
+ * normalization the create-path router applies — session-title-suffix D7). */
+function titleSuffixApiValue(raw: unknown): 'date' | 'episode' {
+  return String(raw ?? 'date')
+    .trim()
+    .toLowerCase() === 'episode'
+    ? 'episode'
+    : 'date';
+}
+
+/** _show_api_dict — the per-show shape the React app's api/types.ts expects.
+ * session-title-suffix (design D1/D7, api-contract-freeze delta): emits
+ * `title_suffix` and OMITS `next_episode` — the column is soft-retained in
+ * SQLite but no longer a live product field (see `createShow`/
+ * `updateShowFields` below and `0005_show_title_suffix.sql`). */
 export function showApiDict(r: Row): Record<string, unknown> {
   const pal = normalizeEventPaletteNine(hexColorsFromJson(r.event_palette_json));
   const presetRaw = String(r.event_palette_preset ?? '')
@@ -45,7 +60,7 @@ export function showApiDict(r: Row): Record<string, unknown> {
     studio_id: String(r.studio_id),
     name: String(r.name),
     show_code: String(r.show_code),
-    next_episode: Number(r.next_episode) || 1,
+    title_suffix: titleSuffixApiValue(r.title_suffix),
     categories: categoriesListFromShowRow(r),
     event_palette: pal,
     event_palette_preset: preset,
@@ -115,6 +130,11 @@ export class ShowsStore {
     paletteCustomJson: string;
   }): string {
     const sid = crypto.randomUUID();
+    // next_episode is soft-retained but UNUSED as of session-title-suffix
+    // (design D1, gate ruling 2026-08-02) — left at its column default (1)
+    // and never bumped (see sessionIndexStore.ts createSessionIndex). The
+    // INSERT omits title_suffix so newly created shows pick up the column
+    // default 'date' (0005_show_title_suffix.sql, design D7).
     this.db.run(
       `INSERT INTO shows
          (id, studio_id, name, show_code, next_episode, categories_json,
@@ -138,6 +158,10 @@ export class ShowsStore {
       name?: string;
       show_code?: string;
       next_episode?: number;
+      /** session-title-suffix (design D1/D7): 'date' | 'episode'. Any other
+       * value normalizes to 'date' (matches `titleSuffixApiValue` above /
+       * the create-path router). */
+      title_suffix?: string;
       categories_json?: string;
       event_palette_json?: string;
       event_palette_preset?: string;
@@ -149,6 +173,13 @@ export class ShowsStore {
     return this.db.tx(() => {
       const row = this.getShowRow(showId);
       if (row === null) return false;
+      // fields.next_episode (below) is soft-retained but UNUSED as of
+      // session-title-suffix (design D1, gate ruling 2026-08-02) — the
+      // column stays writable here for rollback safety; product code no
+      // longer treats it as a live counter (no create-path bump; see
+      // sessionIndexStore.ts). The profile router (profile.ts) no longer
+      // reads a wire `next_episode` into this field — legacy clients that
+      // still send it are ignored/stripped at the schema boundary (D8).
       const nm = fields.name !== undefined ? fields.name.trim() : String(row.name);
       const sc =
         fields.show_code !== undefined
@@ -158,6 +189,10 @@ export class ShowsStore {
               .toUpperCase();
       const ne =
         fields.next_episode !== undefined ? fields.next_episode : Number(row.next_episode) || 1;
+      const ts =
+        fields.title_suffix !== undefined
+          ? titleSuffixApiValue(fields.title_suffix)
+          : titleSuffixApiValue(row.title_suffix);
       const cj = fields.categories_json ?? String(row.categories_json ?? '[]');
       const pj = fields.event_palette_json ?? String(row.event_palette_json ?? '[]');
       const pp =
@@ -169,12 +204,13 @@ export class ShowsStore {
       const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
       this.db.run(
         `UPDATE shows
-           SET name = ?, show_code = ?, next_episode = ?, categories_json = ?,
+           SET name = ?, show_code = ?, next_episode = ?, title_suffix = ?, categories_json = ?,
                event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?
          WHERE id = ?`,
         nm,
         sc,
         ne,
+        ts,
         cj,
         pj,
         pp,

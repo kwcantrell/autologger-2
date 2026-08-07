@@ -85,7 +85,7 @@ vi.mock('./CategoryButtonStrip', () => ({ CategoryButtonStrip: () => null }));
 vi.mock('./EventLogSheet', () => ({
   EventLogSheet: () => <div data-testid="event-log-sheet-stub" />,
 }));
-vi.mock('./ExportModal', () => ({ ExportModal: () => null }));
+vi.mock('./ExportFeed', () => ({ ExportFeed: () => null }));
 vi.mock('./MarkerNav', () => ({ MarkerNav: () => null }));
 vi.mock('./TimecodeDisplay', () => ({ TimecodeDisplay: () => null }));
 vi.mock('./Timeline', () => ({ Timeline: () => null }));
@@ -232,6 +232,7 @@ function mockApi() {
         logged_event_count: EVENTS.length,
         offset: 0,
         limit: 2000,
+        has_auto_generated: false,
       } satisfies EventsResponse;
     }
     throw new Error(`unexpected apiFetch call: ${path}`);

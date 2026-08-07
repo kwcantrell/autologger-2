@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { AiChat, type ChatMessage } from './AiChat';
+import { FEED_SHEET_CLASS } from './FeedShell';
 
 interface Props {
   sessionId: string;
@@ -27,7 +28,7 @@ export function AiPanel({ sessionId }: Props) {
   const chatAbortControllerRef = useRef<AbortController | null>(null);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className={FEED_SHEET_CLASS}>
       <AiChat
         sessionId={sessionId}
         messages={chatMessages}

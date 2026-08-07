@@ -11,25 +11,31 @@ import type { ReactNode } from 'react';
 // `.v4-log-bottom` — the wrapper (Event Feed only, via logBottomId).
 const LOG_BOTTOM = 'w-full gap-5 overflow-x-visible items-stretch';
 
-// `.v4-log-sheet` base glass card (all feeds) + the `#v4-log-session .v4-log-sheet.v5-event-feed`
-// panel overrides (EventLogSheet.module.css) and the extracted SessionWorkspace overflow rule
-// (both x-clip/y-visible and the panel's own overflow-visible resolve to a visible panel with
-// the toolbar row able to escape; kept as x-clip/y-visible + visible where they agree).
-const SHEET = clsx(
-  // base .v4-log-sheet (two blocks; glass card wins the background over the dropped #000)
-  'flex-[1_1_auto] min-w-0 flex flex-col glass-face-strong border border-solid border-v5-border rounded-v5-lg [box-shadow:var(--v5-panel-elevate)]',
-  // #v4-log-session .v4-log-sheet.v5-event-feed (panel box) + extracted SW 183 min-h-0
-  '[#v4-log-session_&]:min-h-0 [#v4-log-session_&]:items-stretch [#v4-log-session_&]:mx-4 [#v4-log-session_&]:p-6 [#v4-log-session_&]:box-border [#v4-log-session_&]:relative',
+// Shared feed-sheet chrome (hooks + open glass). Exported so Assistant /
+// Dashboards can wear the same surface as Event Feed / Transcript / Topics —
+// including the `.v5FeedTabsPanel` tab-join rules that target these classes.
+export const FEED_SHEET_CLASS = clsx(
+  'v4-log-sheet v5-event-feed',
+  // Feed-only open glass (more transparent than panel strong/regular glass).
+  'flex-[1_1_auto] min-w-0 flex flex-col glass-face-feed border border-solid border-v5-border rounded-v5-lg [box-shadow:var(--v5-panel-elevate)]',
+  // #v4-log-session .v4-log-sheet.v5-event-feed (panel box) + extracted SW 183 min-h-0.
+  '[#v4-log-session_&]:min-h-0 [#v4-log-session_&]:items-stretch [#v4-log-session_&]:mx-4 [#v4-log-session_&]:box-border [#v4-log-session_&]:relative',
   // overflow: extracted SessionWorkspace 183 (x-clip/y-visible) + EventLogSheet event-feed
   // (visible). y stays visible so panel eyebrows/toolbar escape; x clips.
   '[#v4-log-session_&]:overflow-x-clip [#v4-log-session_&]:overflow-y-visible',
 );
 
+// FeedShell content inset — top half of the former `p-6` so the header sits
+// closer to the sheet edge; horizontal/bottom stay 1.5rem.
+const SHEET_PAD = '[#v4-log-session_&]:px-6 [#v4-log-session_&]:pt-3 [#v4-log-session_&]:pb-6';
+
+const SHEET = clsx(FEED_SHEET_CLASS, SHEET_PAD);
+
 // `#v4-log-session .v4-log-sheet.v5-event-feed > .v5-event-feed-top` (EventLogSheet) +
 // extracted SessionWorkspace 192 (flex-shrink-0) + 196 (overflow-visible) + the phone-first
 // wrap (SessionWorkspace 421 / EventLogSheet 420).
 const FEED_TOP =
-  'flex flex-row items-start justify-between gap-x-5 gap-y-4 flex-[0_0_auto] shrink-0 w-full min-w-0 pb-0 box-border overflow-visible max-md:flex-wrap';
+  'flex flex-row items-start justify-between gap-x-5 gap-y-4 flex-[0_0_auto] shrink-0 w-full min-w-0 mb-2 pb-0 box-border overflow-visible max-md:flex-wrap';
 
 // `#v4-log-session .v5-event-feed-top__titles` (EventLogSheet) + extracted SW 197 (overflow-visible).
 const FEED_TITLES = 'flex-[1_1_auto] min-w-0 flex items-start overflow-visible';
@@ -61,6 +67,8 @@ interface Props {
    * engages, so on narrow viewports the row overflowed and pushed FILTER
    * off-viewport. Clamping lets the row wrap instead. */
   toolbarClassName?: string;
+  /** Extra class(es) on the title + toolbar row (`.v5-event-feed-top`). */
+  topClassName?: string;
   /** Extra modifier class appended to `.v4-log-sheet` (e.g. `"v5-transcribe-feed"`). */
   modifier?: string;
   /** When set, wraps the sheet in a `div.v4-log-bottom` with this id. */
@@ -78,17 +86,18 @@ export function FeedShell({
   toolbar,
   toolbarAriaLabel,
   toolbarClassName,
+  topClassName,
   modifier,
   logBottomId,
   sheetId,
   after,
   children,
 }: Props) {
-  const sheetCls = clsx('v4-log-sheet v5-event-feed', modifier, SHEET);
+  const sheetCls = clsx(SHEET, modifier);
 
   const sheet = (
     <div className={sheetCls} id={sheetId}>
-      <div className={clsx('v5-event-feed-top', FEED_TOP)}>
+      <div className={clsx('v5-event-feed-top', FEED_TOP, topClassName)}>
         <div className={clsx('v5-event-feed-top__titles', FEED_TITLES)}>
           <header className={clsx('v5-event-feed-head v5-panel-head__main', FEED_HEAD)}>
             <h2

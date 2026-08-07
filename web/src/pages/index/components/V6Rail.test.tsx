@@ -184,6 +184,9 @@ describe('V6Rail footer layout (collapsed overflow)', () => {
     // layout for arbitrary utilities).
     expect(footer?.className).toContain('[.v6-app--rail-collapsed_&]:flex-col');
     expect(footer?.className).toContain('max-md:[.v6-app--rail-collapsed_&]:flex-row');
+
+    // Version sits under the Teams/Settings row at the rail bottom.
+    expect(screen.getByText(/^v\d/)).toBeTruthy();
   });
 });
 

@@ -111,7 +111,14 @@ function statusFixture(): SessionStatus {
 
 function eventsFixture(): EventsResponse {
   const events = [logEventFixture()];
-  return { events, total: events.length, logged_event_count: events.length, offset: 0, limit: 200 };
+  return {
+    events,
+    total: events.length,
+    logged_event_count: events.length,
+    offset: 0,
+    limit: 200,
+    has_auto_generated: false,
+  };
 }
 
 beforeEach(() => {
@@ -120,6 +127,19 @@ beforeEach(() => {
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/show-categories')) {
       return { categories: [categoryFixture()], show_name: '', show_code: '' };
+    }
+    if (path === 'profile') {
+      return {
+        active_studio_id: '',
+        active_show_id: '',
+        active_studio: { id: '', name: '', categories: [] },
+        studios: [],
+        studio_settings: {},
+        shows: [],
+        new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
+        admin: { restart_supported: false, restart_needs_token: false },
+        auth: { logged_in: false, oauth_configured: false, user: null },
+      };
     }
     if (path.includes('/events')) return eventsFixture();
     throw new Error(`unexpected apiFetch call: ${path}`);
@@ -166,6 +186,88 @@ describe('EventLogSheet toolbar overflow clamp', () => {
   });
 });
 
+describe('EventLogSheet filter checkmarks', () => {
+  it('shows checkmarks for enabled rows without the PopoverItem selected tint', async () => {
+    renderSheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    const general = await screen.findByRole('menuitemcheckbox', { name: 'General' });
+    const internal = screen.getByRole('menuitemcheckbox', { name: 'Internal' });
+
+    expect(general.getAttribute('aria-checked')).toBe('true');
+    expect(internal.getAttribute('aria-checked')).toBe('true');
+    expect(general.querySelector('[data-testid="filter-check"]')).toBeTruthy();
+    expect(internal.querySelector('[data-testid="filter-check"]')).toBeTruthy();
+    expect(general.className).not.toContain(' bg-[rgba(56,189,248,0.14)]');
+    expect(general.className).toContain('aria-checked:!bg-transparent');
+    // Category label uses the show-category color (fixture General = #4488ff).
+    expect((general.querySelector('span.flex') as HTMLElement | null)?.style.color).toBe(
+      'rgb(68, 136, 255)',
+    );
+
+    fireEvent.click(general);
+    expect(general.getAttribute('aria-checked')).toBe('false');
+    expect(general.querySelector('[data-testid="filter-check"]')).toBeNull();
+  });
+});
+
+describe('EventLogSheet category filter', () => {
+  it('lists every show category and hides matching rows when deselected', async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return {
+          categories: [
+            categoryFixture(),
+            {
+              id: 'slate',
+              label: 'Slate',
+              color: '#112233',
+              type: 'BUTTON',
+              dropdown_options: [],
+              on_label: '',
+              off_label: '',
+            },
+          ],
+          show_name: '',
+          show_code: '',
+        };
+      }
+      if (path.includes('/events')) {
+        return {
+          events: [
+            logEventFixture(),
+            {
+              ...logEventFixture(),
+              event_id: 'ev-2',
+              category: 'slate',
+              category_label: 'Slate',
+              message: 'Mark',
+            },
+          ],
+          total: 2,
+          logged_event_count: 2,
+          offset: 0,
+          limit: 200,
+        };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+
+    renderSheet();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter' }));
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'General' })).toBeTruthy();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Slate' })).toBeTruthy();
+    expect(screen.getByText('A logged note')).toBeTruthy();
+    expect(screen.getByText('Mark')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'General' }));
+    expect(screen.queryByText('A logged note')).toBeNull();
+    expect(screen.getByText('Mark')).toBeTruthy();
+  });
+});
+
 describe('EventLogSheet batch-mode Escape (discard-confirm guard)', () => {
   it('does not re-arm the discard dialog for an Escape whose default is already prevented', async () => {
     renderSheet();
@@ -195,5 +297,122 @@ describe('EventLogSheet batch-mode Escape (discard-confirm guard)', () => {
     dispatchAlreadyConsumedEscape();
 
     expect(screen.queryByRole('heading', { name: 'Discard changes' })).toBeNull();
+  });
+});
+
+// --- Default sort: oldest-first (owner decision 2026-08-06, PR#4 review) ---
+//
+// All three feeds default to ascending time — the log reads top-down like a
+// sheet. Nothing else pins the direction (visual shots mask timestamps), so a
+// silent flip back to newest-first would ship with every gate green.
+describe('EventLogSheet default sort', () => {
+  it('defaults to Session Time ascending: oldest event renders first', async () => {
+    const older = logEventFixture();
+    const newer: LogEvent = {
+      ...logEventFixture(),
+      event_id: 'ev-2',
+      message: 'A newer note',
+      timecode: '00:00:20:00',
+      timecode_total_frames: 480,
+      wall_time_utc: '2026-07-21T00:00:20Z',
+    };
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        // Serve newest-first so the asserted order can only come from the
+        // sheet's own default sort, not the wire order.
+        return { events: [newer, older], total: 2, logged_event_count: 2, offset: 0, limit: 200 };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderSheet();
+
+    await screen.findByText('A newer note');
+    const timeHeader = screen.getByRole('columnheader', { name: 'Session Time' });
+    expect(timeHeader.getAttribute('aria-sort')).toBe('ascending');
+    const rowIds = Array.from(document.querySelectorAll('tr[data-event-id]')).map((tr) =>
+      tr.getAttribute('data-event-id'),
+    );
+    expect(rowIds.indexOf('ev-1')).toBeLessThan(rowIds.indexOf('ev-2'));
+  });
+});
+
+// --- Timeline marker reveal grows the loaded page (PR#4 review fix) ---
+//
+// Markers derive from the workspace-wide events query, but the sheet mounts
+// only its oldest `loadedLimit` (200) rows. A reveal targeting a newer event
+// used to find no row and silently do nothing. The sheet now listens for
+// REVEAL_EVENT and grows `loadedLimit` just enough to cover the target.
+describe('EventLogSheet marker reveal page growth', () => {
+  // The pagination-sentinel effect only mounts an observer when more rows
+  // exist than are loaded — the multi-page fixture below is the first test
+  // here to reach it, and jsdom has no IntersectionObserver.
+  beforeAll(() => {
+    if (typeof window.IntersectionObserver !== 'undefined') return;
+    class StubIntersectionObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.IntersectionObserver =
+      StubIntersectionObserver as unknown as typeof IntersectionObserver;
+  });
+
+  function manyEventsFixture(count: number): LogEvent[] {
+    return Array.from({ length: count }, (_, i) => ({
+      event_id: `ev-${i}`,
+      category: 'general',
+      category_label: 'General',
+      category_color: '#4488ff',
+      message: `note ${i}`,
+      timecode: '00:00:10:00',
+      timecode_total_frames: 240 + i * 24,
+      frame_rate: 24,
+      wall_time_utc: new Date(Date.UTC(2026, 6, 21, 0, 0, 10 + i)).toISOString(),
+      metadata: {},
+    }));
+  }
+
+  it('loads and renders a revealed row beyond the first 200-row page', async () => {
+    const all = manyEventsFixture(250);
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      if (path.includes('/events')) {
+        const limit = Number(new URLSearchParams(path.split('?')[1] ?? '').get('limit') ?? 200);
+        return {
+          events: all.slice(0, limit),
+          total: all.length,
+          logged_event_count: all.length,
+          offset: 0,
+          limit,
+        };
+      }
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+    renderSheet();
+
+    // First page only: the target row does not exist yet.
+    await screen.findByText('note 0');
+    expect(document.querySelector('tr[data-event-id="ev-249"]')).toBeNull();
+
+    act(() => {
+      document.body.dispatchEvent(
+        new CustomEvent('autologger:reveal-event', { detail: { eventId: 'ev-249' } }),
+      );
+    });
+
+    // The sheet grows loadedLimit to the next 200 step covering index 249 (400)
+    // and the row renders once that page resolves.
+    await screen.findByText('note 249');
+    expect(document.querySelector('tr[data-event-id="ev-249"]')).toBeTruthy();
+    expect(
+      mockedApiFetch.mock.calls.some(([p]) => typeof p === 'string' && p.includes('limit=400')),
+    ).toBe(true);
   });
 });

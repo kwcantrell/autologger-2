@@ -316,6 +316,33 @@ otherwise untouched.
 - **THEN** the callback responds `302` to `/?login_error=account_disabled` with no
   cookie, and no user row is created or modified
 
+### Requirement: Transcript generation lock status endpoint
+`GET /api/transcript-generation/status` SHALL be frozen surface with:
+
+| Condition | Response |
+|---|---|
+| No generation run in flight | `200 { "in_flight": false }` |
+| Generation run in flight | `200 { "in_flight": true, "session_id": string\|null, "session_title": string\|null, "started_at": string }` |
+
+`started_at` SHALL be ISO-8601 UTC. For a requester permitted to view the holding
+session (anonymous `user === null`, or a member of its studio — the same membership
+scope sibling routes enforce by 404), `session_id` SHALL be the holder's id and
+`session_title` SHALL be the catalog title at read time or `null` if the session row
+is absent. For a logged-in requester lacking that membership, `session_id` and
+`session_title` SHALL both be `null` — same key set, never absent keys, `in_flight`
+still `true`. The route MUST NOT mutate generation state. Auth SHALL match sibling
+transcript list routes.
+
+#### Scenario: Idle response shape
+- **WHEN** the slot is free
+- **THEN** the response is `200` with `in_flight` false
+
+#### Scenario: Busy response shape
+- **WHEN** the slot is held
+- **THEN** the response is `200` with `in_flight` true and the busy fields populated as
+  specified — identifiers for permitted requesters, `session_id`/`session_title` nulled
+  (same key set) for logged-in requesters without membership of the holding session
+
 ### Requirement: Transcript generation endpoint behavior
 `POST /api/sessions/:sessionId/transcript-words/generate` SHALL move from unconditional
 `503` to configuration-dependent behavior, which becomes frozen surface on shipping:
@@ -327,15 +354,15 @@ otherwise untouched.
 | configured, session has no audio segments | `400 {detail}` |
 | configured, segments exist but none is readable | `400 {detail}` (distinct detail) |
 | configured, provider succeeds but returns zero words | `400 {detail}` (no-speech detail); existing words preserved |
-| configured, another generation run in flight | `409 {detail}`; no provider request issued |
+| configured, another generation run in flight | `409 {detail}`; the detail names the busy session (title preferred, else id) when the requester may view it (anonymous, or a member of the holder's studio), and falls back to the identifier-free generic in-flight detail for logged-in non-members or when the holder released in the race; no provider request issued |
 | configured, request aborted before any provider call | `400 {detail}` — a distinct aborted detail, not `200`/`503`; no provider request issued |
 | configured, upstream STT failure/timeout, or a group file over the provider size limit | `502 {detail}` |
 
 Existing route semantics are otherwise unchanged: unknown session → the existing
 `requireSession` behavior; the request body remains ignored/empty. No other transcription
-surface changes — `GET/POST/PATCH/DELETE …/transcript-words`, `…/topics` CRUD,
-`…/topics/generate` (`503`), and `transcribe.csv` (`503`) keep their current frozen
-behavior.
+surface changes — `GET/POST/PATCH/DELETE …/transcript-words`, `…/topics` CRUD, and
+`transcribe.csv` (`503`) keep their current frozen behavior, except that
+`GET /api/transcript-generation/status` is an additional authorized surface (see above).
 
 #### Scenario: Unconfigured deployments are byte-for-byte unchanged
 - **WHEN** a deployment without `DEEPGRAM_API_KEY` receives `POST
@@ -347,9 +374,17 @@ behavior.
 - **THEN** the response is `200` with `{words}` whose entries match the shape of
   `GET /api/sessions/:id/transcript-words` entries
 
-#### Scenario: Concurrent run maps to 409
-- **WHEN** a generate request arrives while another run is already in flight
-- **THEN** the response is `409 {detail}` and no provider spend occurs for it
+#### Scenario: Concurrent run maps to 409 naming the holder
+- **WHEN** a generate request arrives while another run is already in flight and the
+  requester is anonymous or a member of the holder's studio
+- **THEN** the response is `409 {detail}` that identifies the busy session, and no
+  provider spend occurs for it
+
+#### Scenario: Concurrent run 409 is identifier-free for non-members
+- **WHEN** a generate request from a logged-in requester without membership of the
+  holder's studio arrives while another run is in flight
+- **THEN** the response is `409` with the generic in-flight `{detail}` naming no session,
+  and no provider spend occurs for it
 
 #### Scenario: Pre-provider-call abort maps to 400, not a new status code
 - **WHEN** the originating HTTP request is already aborted before any DeepGram request
@@ -358,9 +393,8 @@ behavior.
   all-unreadable `400` details, and no provider spend occurs
 
 #### Scenario: Sibling stubs stay frozen
-- **WHEN** a configured deployment receives `POST /api/sessions/:id/topics/generate` or
-  `GET /api/sessions/:id/transcribe.csv`
-- **THEN** both still respond with the current `503 {detail}`
+- **WHEN** a configured deployment receives `GET /api/sessions/:id/transcribe.csv`
+- **THEN** it still responds with the current `503 {detail}`
 
 ### Requirement: YouTube import endpoint behavior
 
@@ -603,4 +637,312 @@ code.
 - **WHEN** a client PUTs an event update whose category is not defined in the studio
   profile (including `internal` when the profile does not define it)
 - **THEN** the response is the existing `400`, unchanged
+
+### Requirement: Local audio import endpoint
+
+The published inventory SHALL include
+`POST /api/sessions/:sessionId/local-audio-import`. The request SHALL carry one
+audio body (raw bytes) with a non-empty Content-Type, and a positive finite
+`duration_s` query parameter not exceeding 86_400 seconds (24 hours). The
+request MAY carry an `X-Audio-Seam-Parts` header: a JSON array of
+`{ duration_s }` objects, each `duration_s` positive finite, whose sum is
+within 0.5 s of the query `duration_s`; a malformed header (non-JSON, not a
+non-empty array, non-object entries, non-positive/non-finite durations) or a
+sum mismatch SHALL be `400 { detail }`; an absent/blank header defaults to one
+part equal to `duration_s`. Accepted parts are persisted by APPENDING to any
+seam parts stored by earlier imports on the session (the persisted list
+describes the session's full audio timeline across takes, in take order).
+Success SHALL be `200 { ok: true }`. An import arriving while the session is
+actively recording SHALL be `409 { detail }`; the rolling state is checked
+before attach and re-checked after the blob put, and the post-put re-check
+rolls the attempt back. Put failures SHALL roll back the segment metadata row;
+failures after a successful put (late rolling re-check, anchor failure) SHALL
+roll back BOTH the metadata row and the stored blob (row first, blob delete
+best-effort), and SHALL NOT leave an anchored take for the failed attempt. Missing/invalid `duration_s`,
+missing/blank Content-Type, or `duration_s` above the supported maximum SHALL
+be `400 { detail }`. Bodies over `MAX_LOCAL_AUDIO_IMPORT_BYTES` (1500 MiB —
+the endpoint's own cap, deliberately higher than the 50 MB live segment
+upload cap) SHALL be `413 { detail }`, enforced identically (same `{ detail }`
+string) whether tripped by the declared Content-Length, mid-stream during the
+counted body read (chunked bodies / lying Content-Lengths never buffer past
+the cap), or the post-read backstop.
+
+#### Scenario: Inventory lists local-audio-import
+
+- **WHEN** a client calls `POST /api/sessions/:sessionId/local-audio-import` with a
+  valid audio body and `duration_s` on an existing session
+- **THEN** the call is in-contract and succeeds with `200 { ok: true }` when
+  attach+anchor succeeds
+
+#### Scenario: Missing duration is rejected
+
+- **WHEN** the request omits `duration_s` or supplies a non-positive value
+- **THEN** the response is `400 { detail }` and no audio segment is attached
+
+#### Scenario: Missing Content-Type is rejected
+
+- **WHEN** the request omits `Content-Type` or supplies a blank value
+- **THEN** the response is `400 { detail }` and no audio segment is attached
+
+#### Scenario: Oversized body is rejected
+
+- **WHEN** the declared or read body size exceeds the 1500 MiB
+  local-audio-import cap — including a chunked body with no Content-Length
+  whose stream crosses the cap mid-read
+- **THEN** the response is `413 { detail }` and no audio segment is attached
+
+#### Scenario: Malformed seam-parts header is rejected
+
+- **WHEN** the request carries an `X-Audio-Seam-Parts` header that is not a
+  non-empty JSON array of positive-finite `{ duration_s }` objects, or whose
+  durations do not sum to within 0.5 s of `duration_s`
+- **THEN** the response is `400 { detail }` and no audio segment is attached
+
+#### Scenario: Rolling session is rejected
+
+- **WHEN** the session is actively recording when the import arrives, or starts
+  recording between the blob put and the anchor
+- **THEN** the response is `409 { detail }` and the attempt leaves no segment
+  row or anchored take; the stored blob is deleted best-effort (rollback never
+  masks the original failure, and never leaves a row pointing at a missing blob)
+
+### Requirement: Show-scoped log-import job endpoints
+
+The published HTTP contract SHALL include:
+
+- `POST /api/shows/:showId/log-import` — body `{ spreadsheet_url: string }`;
+  success `200 { job_id: string }`; validation/authorization failures use
+  `{ detail }` with appropriate 4xx. Missing show AND an authenticated
+  requester without membership of the show's studio both get the uniform
+  `404 { detail: "Show not found." }` (no existence oracle). The route is
+  configuration-gated: unless `SHEETS_LOG_IMPORT_ENABLED` is `1`/`true`/`yes`
+  (trimmed, case-insensitive) it responds `503 { detail }` with detail
+  "Google Sheets log import is not configured on this deployment. Set
+  SHEETS_LOG_IMPORT_ENABLED=1 to enable it."; when configured, the shared
+  open-network refusal predicate applies next (`503 { detail }`), in the
+  youtube-import ordering (membership 404 → config gate → open-network
+  refusal → body validation).
+- `GET /api/log-import/:jobId` — success `200` with a JSON job status object
+  including at least `status` (`queued`|`running`|`completed`|`failed`),
+  `lines` (string array progress), and `error` (string or null). The route is
+  creator-scoped: unknown job ids and jobs created by a different
+  authenticated user both get the uniform
+  `404 { detail: "Log import job not found." }`. It is NOT egress-gated
+  (local in-process state only). Terminal jobs are prunable one hour after
+  finishing and the in-memory job map is capped at 200 entries (oldest
+  terminal evicted first; queued/running jobs never evicted), so a terminal
+  job's status is only promised for about an hour after it finishes.
+
+These endpoints are additive. Existing event POST/PUT shapes remain unchanged;
+imported events are created server-side by the job (not via a new public
+create-at-arbitrary-timecode client endpoint in this change).
+
+#### Scenario: POST accepts a spreadsheet URL and returns a job id
+
+- **WHEN** an authorized client POSTs a non-empty `spreadsheet_url` for an
+  existing show on a configured, non-open deployment
+- **THEN** the response is `200 { job_id }` and a subsequent GET for that id by
+  the same requester is not `404`
+
+#### Scenario: Unconfigured deployment is 503
+
+- **WHEN** `SHEETS_LOG_IMPORT_ENABLED` is unset/blank and an authorized client
+  POSTs to log-import for an existing show
+- **THEN** the response is `503 { detail }` naming `SHEETS_LOG_IMPORT_ENABLED`
+  and no job is created
+
+#### Scenario: Non-creator status read is a uniform 404
+
+- **WHEN** an authenticated user GETs a log-import job created by another user
+- **THEN** the response is `404 { detail: "Log import job not found." }`,
+  byte-identical to the unknown-id response
+
+### Requirement: events/generate optional body and deleted count
+
+`POST /api/sessions/:sessionId/events/generate` SHALL accept an optional JSON
+object body with:
+
+- `regenerate` — optional boolean (default false)
+- `selection` — optional array of objects `{ category_id: string,
+  option_label?: string | null }`, bounded: at most 500 entries,
+  `category_id` ≤ 200 characters, `option_label` ≤ 200 characters
+
+Malformed bodies SHALL yield `400`, including bound violations. Combining
+`regenerate: true` with a non-empty `selection` SHALL yield `400`. Success
+response SHALL remain JSON `{ created: number, cap_hit: boolean }` and SHALL
+include `deleted: number` when the request regenerated. When `regenerate` is
+false/absent, `deleted` MAY be omitted. The regenerate delete
+is **after-success**: prior auto rows are snapshotted by id pre-spawn, stay
+readable (and keep appearing in `GET …/events`) for the whole run, and are
+deleted in one transaction — emitting one existing `event.changed` broadcast
+when at least one row was removed, and none otherwise — only after the CLI
+turn succeeds **with at least one created event**, and before the
+`200` is built; a `502` run deletes nothing, and a successful zero-created
+regenerate deletes nothing and responds
+`200 { created: 0, cap_hit: false, deleted: 0 }`. Existing status codes and
+guard-ladder details for unconfigured / busy / no-transcript / etc. remain as
+previously frozen unless superseded by the `auto-event-generation` delta.
+
+#### Scenario: Absent body preserves Generate All
+
+- **WHEN** a client POSTs generate with an empty body
+- **THEN** behavior matches prior Generate All (no delete; full instruction set)
+  and a `200` success body includes `created` and `cap_hit`
+
+#### Scenario: Regenerate success includes deleted
+
+- **WHEN** a client POSTs `{ "regenerate": true }` and the run succeeds
+- **THEN** the `200` body includes `deleted` as a non-negative integer plus
+  `created` and `cap_hit`
+
+#### Scenario: Zero-created regenerate success deletes nothing
+
+- **WHEN** a client POSTs `{ "regenerate": true }` and the CLI turn succeeds
+  without creating any event
+- **THEN** the response is `200 { created: 0, cap_hit: false, deleted: 0 }`
+  and a subsequent `GET …/events` still returns the prior auto rows
+
+#### Scenario: Regenerate failure leaves the contract surface truthful
+
+- **WHEN** a client POSTs `{ "regenerate": true }` and the CLI turn fails
+- **THEN** the response is the fixed opaque `502 {detail}`, no `event.changed`
+  broadcasts were emitted beyond those of the run's own inserts, and a
+  subsequent `GET …/events` still returns the prior auto rows
+
+### Requirement: Events list has_auto_generated field
+
+`GET /api/sessions/:sessionId/events` SHALL include `has_auto_generated`
+(boolean) in its response envelope alongside the existing fields
+(`events`, `total`, `logged_event_count`, `offset`, `limit`). The value SHALL
+be computed over the **whole session's** events — not the returned page — and
+SHALL be true exactly when at least one event's metadata carries
+`auto_generated === true` (the same predicate the regenerate pre-spawn
+snapshot uses).
+The field is additive: no existing field's shape, order dependence, or
+semantics changes.
+
+#### Scenario: Auto rows beyond the returned page are reported
+
+- **WHEN** a session's only auto-generated events lie outside the requested
+  `limit`/`offset` window
+- **THEN** the events list response carries `has_auto_generated: true`
+
+#### Scenario: No auto rows
+
+- **WHEN** a session has no event whose metadata carries
+  `auto_generated === true`
+- **THEN** the events list response carries `has_auto_generated: false`
+
+### Requirement: Show title_suffix on show wire; next_episode omitted
+
+Every show object emitted via the shared show serializer (profile `shows[]`,
+`GET /api/shows`, and `POST /api/shows` create responses) SHALL include
+`title_suffix` as either `"date"` or `"episode"` and SHALL NOT include
+`next_episode`. Profile `show_updates[]` entries SHALL accept `title_suffix`
+with the same two values. Legacy `next_episode` keys on profile/show update
+bodies SHALL be ignored (not persisted) and SHALL NOT cause `400` solely due
+to that key. Catalog persistence SHALL store `title_suffix` on `shows`. The
+SQLite column `shows.next_episode` MAY remain for rollback safety but SHALL
+NOT be bumped on session create and SHALL NOT appear on the show wire.
+
+#### Scenario: Profile show carries title_suffix
+
+- **WHEN** a client reads profile after migration
+- **THEN** each `shows[]` entry includes `title_suffix` of `"date"` or
+  `"episode"` and omits `next_episode`
+
+#### Scenario: Shows list matches profile show shape
+
+- **WHEN** a client reads `GET /api/shows` after migration
+- **THEN** each show object includes `title_suffix` and omits `next_episode`
+
+#### Scenario: Profile update persists title_suffix
+
+- **WHEN** a client PUTs profile with `show_updates[].title_suffix` set to
+  `"episode"`
+- **THEN** a subsequent profile read returns that show with
+  `title_suffix: "episode"`
+
+#### Scenario: Legacy next_episode on update is ignored
+
+- **WHEN** a client PUTs profile with `show_updates[].next_episode` set
+- **THEN** the update succeeds without failing solely due to that key and no
+  next-episode counter is written as a live product field
+
+### Requirement: Wire deck_title equals stored session title
+
+Wherever the frozen HTTP surface emits `deck_title` for a session (including
+`GET /api/companion/state` when `session` is non-null, session list/detail
+serializers, and session status payloads that already include `deck_title`),
+`deck_title` SHALL equal the trimmed stored session `title`, or `"—"` if that
+title is blank. Field names and surrounding object shapes remain unchanged;
+only the value derivation is authorized to change from
+`{show_code} - {episode}` (when a show code is present) to the stored title.
+
+#### Scenario: Companion deck_title tracks title
+
+- **WHEN** Companion state is fetched for an active session titled `HD_260802`
+- **THEN** `session.deck_title` is `HD_260802`
+
+#### Scenario: Session list deck_title tracks title
+
+- **WHEN** a session list entry is serialized for a session titled `HD_260802`
+  with a non-blank show code
+- **THEN** that entry's `deck_title` is `HD_260802`
+
+### Requirement: Create-session optional episode under date suffix
+
+`POST /api/sessions` SHALL continue to accept an optional `title`. When `title`
+is omitted/blank and the linked show's `title_suffix` is `"date"`, `episode`
+MAY be omitted or blank and the server SHALL still create the session with a
+derived title per the `session-title-suffix` capability. When the linked show's
+`title_suffix` is `"episode"`, a blank `episode` SHALL be rejected with `400`
+unless an explicit non-blank `title` bypasses derivation. An explicit non-blank
+`title` SHALL win over derivation and SHALL be stored after the existing
+create-path trim (leading/trailing whitespace removed).
+
+#### Scenario: Date-suffix create without episode succeeds
+
+- **WHEN** a client creates a session for a date-suffix show without `title` and
+  without `episode`
+- **THEN** the response is `200` with a derived `title` and the session exists
+
+#### Scenario: Episode-suffix create without episode fails
+
+- **WHEN** a client creates a session for an episode-suffix show without a
+  non-blank `episode` and without an explicit title that bypasses derivation
+- **THEN** the response is `400 { detail }`
+
+### Requirement: Events POST strips reserved auto-generation metadata keys
+
+`POST /api/sessions/:sessionId/events` SHALL remove the keys `auto_generated`
+and `auto_generate_run_id` from client-supplied `metadata` before the event is
+stored — silently, regardless of the values sent (no error, no status-code
+change; the ignore/strip precedent), and unconditionally (the internal-category
+path included). All other metadata keys SHALL pass through unchanged — except
+the existing category-UI-snapshot keys, which the snapshot merge continues to
+overwrite exactly as today. The existing serialized-size cap applies to the
+`metadata` field as sent (pre-strip). The stripping is
+observable: subsequent reads of the created event carry metadata without the
+reserved keys. Server-side writers (the generation run's `create_event` tool,
+the sheets importer's hub write) are NOT this route and SHALL be unaffected.
+
+#### Scenario: Stamping client is stripped
+
+- **WHEN** a client POSTs an event with
+  `metadata: { auto_generated: true, auto_generate_run_id: "x", note: "keep" }`
+- **THEN** the response is the normal `200` created event whose metadata
+  contains `note` but neither reserved key, and subsequent event reads agree
+
+#### Scenario: Stripping is value-independent
+
+- **WHEN** a client POSTs an event with
+  `metadata: { auto_generated: "yes", auto_generate_run_id: 7, note: "keep" }`
+- **THEN** the stored/echoed metadata carries `note` and neither reserved key,
+  regardless of the values sent
+
+#### Scenario: Ordinary metadata unaffected
+
+- **WHEN** a client POSTs an event with metadata carrying no reserved keys
+- **THEN** the stored metadata is byte-equivalent to today's behavior
 

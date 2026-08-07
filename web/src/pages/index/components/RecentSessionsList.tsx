@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useArchiveSession,
   useDeleteSession,
@@ -33,6 +34,15 @@ const RAIL_SESSION =
 // exclusive branch), including its own heightened hover/focus-within values.
 const RAIL_SESSION_ACTIVE =
   'border-[color-mix(in_srgb,var(--v5-primary)_40%,var(--v5-border))] bg-[linear-gradient(180deg,rgba(56,189,248,0.12),rgba(15,23,42,0.35))] hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] hover-always:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))] focus-within:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] focus-within:bg-[linear-gradient(180deg,rgba(56,189,248,0.16),rgba(15,23,42,0.38))]';
+
+// Live (rolling and/or recording): a crisp 2px red outline (not a red fill/glow),
+// exclusive branch over the selected cyan tile. `!` beats base hover/focus border
+// utilities on the same element.
+const RAIL_SESSION_LIVE =
+  'border-2! border-[#ef4444]! bg-[rgba(255,255,255,0.03)] hover-always:border-[#ef4444]! hover-always:bg-[rgba(255,255,255,0.05)] focus-within:border-[#ef4444]! focus-within:bg-[rgba(255,255,255,0.05)]';
+
+// `!` beats DECK_RUNTIME's text-v5-muted (utility order is not class-list order).
+const DECK_RUNTIME_LIVE = 'text-[#ef4444]!';
 
 // Inner link fills the row; always transparent (base + the former !important
 // hover/focus neutralizer collapse to a single bg-transparent by layer order).
@@ -201,14 +211,24 @@ function SessionCardMenu({
   );
 }
 
-/** Meta row (date · event count + runtime tooltip) shared by both variants. */
-function SessionCardMetaRow({ session }: { session: Session }) {
+/** Meta row (date · event count + runtime/timecode tooltip) shared by both variants. */
+function SessionCardMetaRow({
+  session,
+  liveTimecode,
+}: {
+  session: Session;
+  /** When set, the right-hand value is the live rolling/recording timecode. */
+  liveTimecode?: string | null;
+}) {
   const { metaLine, runtime } = sessionCardMeta(session);
+  const showLive = liveTimecode != null && liveTimecode !== '';
   return (
     <div className={META_ROW}>
       <span className={CARD_META}>{metaLine}</span>
-      <Tooltip content="Total runtime">
-        <span className={clsx(DECK_RUNTIME, 'mono')}>{runtime}</span>
+      <Tooltip content={showLive ? 'Current timecode' : 'Total runtime'}>
+        <span className={clsx(DECK_RUNTIME, 'mono', showLive && DECK_RUNTIME_LIVE)}>
+          {showLive ? liveTimecode : runtime}
+        </span>
       </Tooltip>
     </div>
   );
@@ -228,6 +248,16 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
   const { mutate: archiveSession } = useArchiveSession();
   const { confirm, confirmElement } = useConfirm();
   const handleDelete = useDeleteSessionConfirm(s, confirm);
+  // Subscribe to the per-session status query only for the OPEN session — that
+  // query is shared with the workspace's own status subscription (same query
+  // key), so selecting it adds no poller beyond the workspace's. Background
+  // (non-open) cards, rolling or not, derive their live badge and timecode
+  // from the sessions-list poll's own row fields instead (`is_rolling`,
+  // `rolling_timecode`, refreshed at that poll's ~5s cadence in `HH:MM:SS`
+  // form — no frame field; see recent-sessions-single-poll).
+  const { data: status } = useSessionStatus(isActive ? s.id : null);
+  const isLive = Boolean(s.is_rolling || status?.is_rolling || status?.audio_recording_lease_alive);
+  const liveTimecode = isLive ? (status?.timecode ?? formatTimecodeHMS(s.rolling_timecode)) : null;
 
   const handleCardClick = (e: React.MouseEvent) => {
     const target = e.target as Element;
@@ -263,13 +293,15 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     });
   };
 
-  const rowClass = clsx(RAIL_SESSION, isActive && RAIL_SESSION_ACTIVE);
+  // Live red border is an exclusive branch over the selected cyan tile.
+  const rowClass = clsx(RAIL_SESSION, isLive ? RAIL_SESSION_LIVE : isActive && RAIL_SESSION_ACTIVE);
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: clickable-card convenience around real <button>s (selection also via the inner title button); a native button is impossible here due to nested interactive children
     <div
       className={rowClass}
       data-session-id={s.id}
+      data-live={isLive || undefined}
       data-menu-open={menuOpen || undefined}
       onClick={handleCardClick}
       onKeyDown={(e: React.KeyboardEvent) => {
@@ -278,6 +310,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
     >
       <div className={CARD_LINK} data-start-offset={s.start_offset_frames || 0}>
         {isActive && <output className="hidden">ACTIVE SESSION</output>}
+        {isLive && <output className="hidden">LIVE SESSION</output>}
         <div className={DECK_ROW}>
           <button
             type="button"
@@ -331,10 +364,7 @@ function SessionCard({ session: s, isActive, onSelect, onClose }: SessionCardPro
             </PopoverItem>
           </SessionCardMenu>
         </div>
-        <SessionCardMetaRow session={s} />
-        {s.is_rolling && (
-          <span className="hidden">● Rolling - {formatTimecodeHMS(s.rolling_timecode)}</span>
-        )}
+        <SessionCardMetaRow session={s} liveTimecode={liveTimecode} />
       </div>
       {editing && (
         <RenameSessionModal

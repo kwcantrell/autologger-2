@@ -5,10 +5,16 @@ import {
   useEvents,
   useGenerateEvents,
   useUpdateEvent,
+  WORKSPACE_EVENTS_LIMIT,
 } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useShowCategories } from '../../../api/hooks/useShowCategories';
-import type { LogEvent, SessionStatus } from '../../../api/types';
+import type {
+  EventGenerateSelection,
+  EventsGenerateBody,
+  LogEvent,
+  SessionStatus,
+} from '../../../api/types';
 import { showToast } from '../../../shared/components/Toast';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../../shared/ui/Popover';
@@ -16,10 +22,21 @@ import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
+import { REVEAL_EVENT } from '../utils/revealEventInFeed';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
+import { EventGenerateCustomModal } from './EventGenerateCustomModal';
 import { EventLogRow, type RowEditValues } from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
+import {
+  FeedToolbarCaption,
+  IconCheck,
+  IconClock,
+  IconFilter,
+  IconPencil,
+  IconSparkles,
+  IconX,
+} from './feedToolbarCaption';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 
@@ -132,7 +149,7 @@ function TimeDisplayDropdown({
           aria-haspopup="listbox"
           disabled={disabled}
         >
-          Time Display
+          <FeedToolbarCaption label="Time Display" icon={<IconClock />} />
         </button>
       }
     >
@@ -163,30 +180,83 @@ function TimeDisplayDropdown({
 }
 
 function FilterDropdown({
+  categories,
+  hiddenCategoryIds,
   showInternal,
   disabled,
+  onToggleCategory,
   onChange,
 }: {
+  categories: Array<{ id: string; label: string; color: string }>;
+  hiddenCategoryIds: Set<string>;
   showInternal: boolean;
   disabled: boolean;
+  onToggleCategory: (categoryId: string) => void;
   onChange: (show: boolean) => void;
 }) {
+  // Keep selected tint off; leave text color to the per-category style below.
+  const checkedClass = 'aria-checked:!bg-transparent';
+  const label = (checked: boolean, text: string, color?: string) => (
+    <span
+      className="flex items-center gap-2"
+      style={color ? { color } : { color: 'var(--color-muted)' }}
+    >
+      <span aria-hidden="true" className="inline-flex h-3 w-3 shrink-0 items-center justify-center">
+        {checked ? (
+          <svg
+            data-testid="filter-check"
+            aria-hidden="true"
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            className="text-current"
+          >
+            <path
+              d="M2.25 6.25L4.75 8.75L9.75 3.25"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : null}
+      </span>
+      {text}
+    </span>
+  );
   return (
     <Popover
       ariaLabel="Filter events"
       trigger={
         <button type="button" className={FEED_GLASS_BTN} aria-haspopup="menu" disabled={disabled}>
-          Filter
+          <FeedToolbarCaption label="Filter" icon={<IconFilter />} />
         </button>
       }
     >
+      {categories.map((category) => {
+        const checked = !hiddenCategoryIds.has(category.id);
+        return (
+          <PopoverItem
+            key={category.id}
+            role="menuitemcheckbox"
+            ariaChecked={checked}
+            selected={false}
+            className={checkedClass}
+            onClick={() => onToggleCategory(category.id)}
+          >
+            {label(checked, category.label || category.id, category.color)}
+          </PopoverItem>
+        );
+      })}
       <PopoverItem
         role="menuitemcheckbox"
         ariaChecked={showInternal}
-        selected={showInternal}
+        selected={false}
+        className={checkedClass}
         onClick={() => onChange(!showInternal)}
       >
-        Show internal events
+        {label(showInternal, 'Internal')}
       </PopoverItem>
     </Popover>
   );
@@ -220,9 +290,14 @@ export function EventLogSheet({ sessionId }: Props) {
   const loggedTotal = data?.logged_event_count ?? 0;
 
   // --- View state ---
-  const [sortState, dispatchSort] = useReducer(sortReducer, { key: 'timecode', dir: 'desc' });
+  // Default direction is oldest-first across all three feeds (owner decision
+  // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
+  const [sortState, dispatchSort] = useReducer(sortReducer, { key: 'timecode', dir: 'asc' });
   const [showInternal, setShowInternal] = useState(true);
+  const [hiddenCategoryIds, setHiddenCategoryIds] = useState<Set<string>>(new Set());
   const [viewUtc, setViewUtc] = useState(false);
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
+  const [customGenerateOpen, setCustomGenerateOpen] = useState(false);
 
   // --- Batch edit ---
   const [batchEditMode, setBatchEditMode] = useState(false);
@@ -254,9 +329,9 @@ export function EventLogSheet({ sessionId }: Props) {
   const generatePending = generateEvents.isPending && genRunIsThisSession;
   const genOutcome =
     genRunIsThisSession && !generateEvents.isPending ? generateEvents.data : undefined;
-  const handleAutoGenerate = () => {
+  const handleAutoGenerate = (body?: EventsGenerateBody) => {
     setGenRunSessionId(sessionId);
-    handleGenerate();
+    handleGenerate(body);
   };
   // No-instructions gate (spec "No instructions configured"): a DISTINCT
   // non-actionable state from the 503 latch — derived live from the
@@ -265,6 +340,16 @@ export function EventLogSheet({ sessionId }: Props) {
   // query is unresolved the control stays actionable (a click would surface
   // the server's own pre-spawn detail inline, never invent state).
   const noInstructions = categoriesData?.auto_instructions_present === false;
+  // Generate/Regenerate label source (event-generate-hardening D7): the
+  // server-computed `has_auto_generated` field of THIS sheet's own events
+  // query response — never a row-scan — so it stays truthful for auto rows
+  // beyond any client-side page or the server's list clamp. Undefined while
+  // the response is unavailable (initial load) defaults to `false`, the
+  // non-destructive Generate All label and click behavior.
+  // The workspace-wide query below remains for the timeline-reveal
+  // page-growth lookup (id→index), unrelated to this label.
+  const { data: allEventsData } = useEvents(sessionId, { limit: WORKSPACE_EVENTS_LIMIT });
+  const hasAutoGeneratedEvents = data?.has_auto_generated ?? false;
 
   // --- Feed row jump (feed-row-seek, design D5/D7): one hook call per feed,
   // its `unavailable`/`jump` handed to every row as a prop/stable callback.
@@ -284,11 +369,16 @@ export function EventLogSheet({ sessionId }: Props) {
   // every render (each keystroke in an inline edit re-sorts the whole feed);
   // keyed on its actual inputs, output unchanged.
   const sorted = useMemo(() => {
-    const filtered = showInternal
-      ? events
-      : events.filter((e) => e.category.toLowerCase() !== 'internal');
+    // Only hide rows whose category is a known show button the operator
+    // toggled off — orphan/unknown categories stay visible.
+    const knownIds = new Set(categories.map((c) => c.id));
+    const filtered = events.filter((event) => {
+      if (!showInternal && event.category.toLowerCase() === 'internal') return false;
+      if (knownIds.has(event.category) && hiddenCategoryIds.has(event.category)) return false;
+      return true;
+    });
     return doSortEvents(filtered, sortState, status);
-  }, [events, showInternal, sortState, status]);
+  }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
 
   // Mirror showInternal onto body so timeline markers can hide internal-cat markers via CSS.
   useEffect(() => {
@@ -301,6 +391,36 @@ export function EventLogSheet({ sessionId }: Props) {
       delete document.body.dataset.hideInternal;
     };
   }, [showInternal]);
+
+  // --- Timeline marker reveal (revealEventInFeed) ---
+  // A marker can target any event in the workspace-wide query, but this sheet
+  // mounts only its oldest `loadedLimit` rows — without growing the window, a
+  // reveal for a newer event finds no row and silently does nothing. Grow just
+  // enough to cover the target (the workspace-wide page is already cached
+  // above, so the wider fetch is a cache hit); SessionWorkspace's retry loop
+  // then scrolls once the row renders. Reads the event list through a ref so
+  // the listener registers once.
+  const allEventsRef = useRef(allEventsData);
+  allEventsRef.current = allEventsData;
+  useEffect(() => {
+    const onReveal = (ev: Event) => {
+      const eventId = String(
+        (ev as CustomEvent<{ eventId?: string }>).detail?.eventId ?? '',
+      ).trim();
+      if (!eventId) return;
+      const all = allEventsRef.current?.events;
+      setLoadedLimit((prev) => {
+        // Workspace-wide page not resolved yet — cover the whole marker range.
+        if (!all) return Math.max(prev, WORKSPACE_EVENTS_LIMIT);
+        const idx = all.findIndex((e) => e.event_id === eventId);
+        // idx === -1 (not a markable event) and already-loaded rows both keep prev.
+        if (idx < prev) return prev;
+        return Math.min(Math.ceil((idx + 1) / 200) * 200, WORKSPACE_EVENTS_LIMIT);
+      });
+    };
+    document.body.addEventListener(REVEAL_EVENT, onReveal);
+    return () => document.body.removeEventListener(REVEAL_EVENT, onReveal);
+  }, []);
 
   // --- Pagination sentinel ---
   const sentinelRef = useRef<HTMLTableRowElement>(null);
@@ -326,6 +446,9 @@ export function EventLogSheet({ sessionId }: Props) {
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
     setLoadedLimit(200);
+    setHiddenCategoryIds(new Set());
+    setGenerateMenuOpen(false);
+    setCustomGenerateOpen(false);
   }, [sessionId]);
 
   // --- Handlers ---
@@ -447,6 +570,44 @@ export function EventLogSheet({ sessionId }: Props) {
     dispatchSort({ type: 'SET_VIEW_UTC', utc });
   };
 
+  const handleToggleCategory = (categoryId: string) => {
+    setHiddenCategoryIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(categoryId)) next.delete(categoryId);
+      else next.add(categoryId);
+      return next;
+    });
+  };
+
+  const handleCustomGenerate = (selection: EventGenerateSelection[]) => {
+    setCustomGenerateOpen(false);
+    handleAutoGenerate({ selection });
+  };
+
+  // Generate All is append-only and fires immediately; Regenerate All runs a
+  // multi-minute CLI run and DELETES every prior auto-generated row (including
+  // operator-edited ones) only once that run succeeds — a failed run leaves
+  // them in place (event-generate-hardening D2/D6) — so it confirms through
+  // the shared themed dialog (same useConfirm channel as row delete / batch
+  // discard).
+  const handleGenerateAllClick = async () => {
+    setGenerateMenuOpen(false);
+    if (!hasAutoGeneratedEvents) {
+      handleAutoGenerate(undefined);
+      return;
+    }
+    const ok = await confirm({
+      title: 'Regenerate all auto events',
+      message:
+        'Prior auto-generated events will be replaced once this run succeeds — a failed run, or a run that finds nothing to log, leaves them in place. Any edits made to those events during the run will be lost when it succeeds. This cannot be undone.',
+      confirmLabel: 'Delete and regenerate',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+    handleAutoGenerate({ regenerate: true });
+  };
+
   // --- Column definitions (time column label/sortKey are dynamic) ---
   // Event Feed: the <th> keeps its legacy `.sheet th { text-align: center }` (FEED_TH sets
   // no text-align, so that legacy rule still applies). The visible label reads left because
@@ -454,28 +615,22 @@ export function EventLogSheet({ sessionId }: Props) {
   // auto-layout column widths, so we must NOT force `text-left` here (doing so reflows the
   // columns and narrows the table by ~3px). Transcribe/Topics DO pass `text-left` (no
   // `.sheet` context — their legacy `.feedTh` was left-aligned).
-  // `!static` carries the extracted SessionWorkspace override `.v4-log-sheet .sheet th
-  // { position: static }` — the Event Feed header is NOT sticky (unlike Transcribe/Topics).
+  // Headers use FeedTable's default sticky `FEED_TH` (same as Transcribe/Topics).
   const eventColumns: ColumnDef[] = [
-    // JUMP_COLUMN as shared across all three feeds (design D2), but its
-    // `thClassName` is overridden here to `!static` — the Event Feed's other
-    // headers all carry that override (its header row isn't sticky, unlike
-    // Transcribe/Topics) and a sticky lone column among static siblings would
-    // visibly desync on scroll. `key`/`label`/`ariaLabel` stay verbatim.
-    { ...JUMP_COLUMN, thClassName: '!static w-8' },
+    JUMP_COLUMN,
     {
       key: 'time',
       label: viewUtc ? 'World Clock' : 'Session Time',
       sortKey: viewUtc ? 'utc' : 'timecode',
-      thClassName: '!static w-[6.5rem]',
+      thClassName: 'w-[6.5rem]',
     },
     {
       key: 'category',
       label: 'Event',
       sortKey: 'category',
-      thClassName: '!static w-32',
+      thClassName: 'w-32',
     },
-    { key: 'message', label: 'Message', sortKey: 'message', thClassName: '!static min-w-48' },
+    { key: 'message', label: 'Message', sortKey: 'message', thClassName: 'min-w-48' },
   ];
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
@@ -503,16 +658,57 @@ export function EventLogSheet({ sessionId }: Props) {
       event-buttons table first.
     </>
   );
+  const generateUnavailable = genUnavailable || noInstructions;
+  const generateControl = (
+    <Popover
+      open={generateMenuOpen}
+      onOpenChange={(open) => {
+        if (!generateUnavailable && !generatePending) setGenerateMenuOpen(open);
+      }}
+      ariaLabel="Auto Generate menu"
+      trigger={
+        <button
+          type="button"
+          className={`${FEED_GLASS_BTN} aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45`}
+          disabled={generatePending}
+          aria-disabled={generateUnavailable || undefined}
+          aria-describedby={generateUnavailable ? genReasonId : undefined}
+          aria-haspopup="menu"
+          onClick={(event) => {
+            if (generateUnavailable) event.preventDefault();
+          }}
+        >
+          <FeedToolbarCaption
+            label={generatePending ? 'Generating…' : 'Auto Generate'}
+            icon={<IconSparkles />}
+          />
+        </button>
+      }
+    >
+      <PopoverItem onClick={handleGenerateAllClick}>
+        {hasAutoGeneratedEvents ? 'Regenerate All' : 'Generate All'}
+      </PopoverItem>
+      <PopoverItem
+        onClick={() => {
+          setGenerateMenuOpen(false);
+          setCustomGenerateOpen(true);
+        }}
+      >
+        Custom
+      </PopoverItem>
+    </Popover>
+  );
   const toolbar = (
     <>
       <GenerateToolbar
         genError={genRunIsThisSession ? genError : null}
-        genUnavailable={genUnavailable || noInstructions}
+        genUnavailable={generateUnavailable}
         onGenerate={handleAutoGenerate}
         generatePending={generatePending}
         reasonId={genReasonId}
         reason={genUnavailable ? genLatchedReason : genNoInstructionsReason}
         reasonVisuallyHidden={!genUnavailable}
+        generateControl={generateControl}
         outcome={
           genOutcome &&
           `Created ${genOutcome.created} event${genOutcome.created === 1 ? '' : 's'}` +
@@ -531,7 +727,7 @@ export function EventLogSheet({ sessionId }: Props) {
           }
           onClick={handleEnterBatchEdit}
         >
-          Edit
+          <FeedToolbarCaption label="Edit" icon={<IconPencil />} />
         </button>
       )}
       {batchEditMode && (
@@ -544,7 +740,7 @@ export function EventLogSheet({ sessionId }: Props) {
             disabled={batchSaving}
             onClick={() => handleSaveBatch().catch(() => {})}
           >
-            Save changes
+            <FeedToolbarCaption label="Save changes" icon={<IconCheck />} />
           </button>
           <button
             type="button"
@@ -552,23 +748,25 @@ export function EventLogSheet({ sessionId }: Props) {
             disabled={batchSaving}
             onClick={handleCancelBatch}
           >
-            Cancel
+            <FeedToolbarCaption label="Cancel" icon={<IconX />} />
           </button>
         </span>
       )}
       <TimeDisplayDropdown viewUtc={viewUtc} disabled={batchEditMode} onChange={handleSetViewUtc} />
       <FilterDropdown
+        categories={categories}
+        hiddenCategoryIds={hiddenCategoryIds}
         showInternal={showInternal}
         disabled={batchEditMode}
+        onToggleCategory={handleToggleCategory}
         onChange={setShowInternal}
       />
     </>
   );
 
-  // `sheet sheet-dense` stay as retained literal chrome hooks (chrome.css `.sheet .mono`;
-  // the SessionWorkspace `.v4-log-sheet .sheet th { position: static }` override is now
-  // carried on the <th> below). `.logSheetBatchEdit` is dropped — batch-edit cell styling
-  // moved onto EventLogRow via its `batchEdit`/`pendingDelete` props.
+  // `sheet sheet-dense` stay as retained literal chrome hooks (chrome.css `.sheet .mono`).
+  // `.logSheetBatchEdit` is dropped — batch-edit cell styling moved onto EventLogRow
+  // via its `batchEdit`/`pendingDelete` props.
   const tableClassName = 'sheet sheet-dense';
 
   return (
@@ -588,6 +786,13 @@ export function EventLogSheet({ sessionId }: Props) {
       after={
         <>
           {confirmElement}
+          {customGenerateOpen && (
+            <EventGenerateCustomModal
+              showId={status?.show_id ?? null}
+              onSubmit={handleCustomGenerate}
+              onClose={() => setCustomGenerateOpen(false)}
+            />
+          )}
           {/* `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
               matches `sr-only`; the inputs collapse to 0×0 (was the `#v4-log-session`-prefixed
               rules; that ancestor was a specificity hack). */}
@@ -642,7 +847,7 @@ export function EventLogSheet({ sessionId }: Props) {
               '— No logged items yet.'
             )
           ) : (
-            '— No rows visible.'
+            'No events logged.'
           )
         }
         colgroup={

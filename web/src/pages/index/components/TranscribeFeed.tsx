@@ -11,9 +11,9 @@ import {
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
-import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCsv';
+import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { FeedShell } from './FeedShell';
-import { type ColumnDef, FEED_GLASS_BTN, FeedTable } from './FeedTable';
+import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
 import { TranscribeRow } from './TranscribeRow';
@@ -70,7 +70,9 @@ export function TranscribeFeed({ sessionId }: Props) {
   // `useGatedGenerate` for the full rationale; the copy below tells the
   // operator to reload after configuring.
   const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generate.mutate);
-  const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'desc' });
+  // Default direction is oldest-first across all three feeds (owner decision
+  // 2026-08-06, PR#4 review) — the log reads top-down like a sheet.
+  const [sort, dispatchSort] = useReducer(sortReducer, { key: 'session_time', dir: 'asc' });
   // Reactive scroll viewport: OverlayScrollbars publishes its viewport via the
   // `scrollRef` callback below. Storing it in state (not a ref) re-renders so
   // useVirtualizer re-attaches the instant OS initializes, instead of waiting
@@ -81,17 +83,7 @@ export function TranscribeFeed({ sessionId }: Props) {
     insert.mutate({});
   }
 
-  const speakerOffset = useMemo(() => {
-    if (!words || words.length === 0) return 0;
-    const nums = words.map((w) => Number.parseInt(w.speaker, 10)).filter((n) => !Number.isNaN(n));
-    if (nums.length === 0) return 0;
-    return Math.min(...nums) === 0 ? 1 : 0;
-  }, [words]);
-
-  function handleExportCsv() {
-    if (!words || words.length === 0) return;
-    downloadTranscriptCsv(sessionId, buildTranscriptCsv(words, speakerOffset));
-  }
+  const speakerOffset = useMemo(() => speakerOffsetFromWords(words), [words]);
 
   const sortedWords = useMemo(() => {
     if (!words) return words;
@@ -150,14 +142,6 @@ export function TranscribeFeed({ sessionId }: Props) {
         onInsert={handleInsert}
         insertPending={insert.isPending}
       />
-      <button
-        type="button"
-        className={FEED_GLASS_BTN}
-        disabled={wordCount === 0}
-        onClick={handleExportCsv}
-      >
-        Export CSV
-      </button>
       {generationStatus?.in_flight === true && (
         <TranscriptGenerationLockBanner status={generationStatus} currentSessionId={sessionId} />
       )}

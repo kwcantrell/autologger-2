@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
@@ -24,6 +25,7 @@ import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { clipIndexContainingTimelineSec } from '../../../shared/utils/waveformSvg';
 import { useZoomRail } from '../hooks/useZoomRail';
 import { groupTimelineMarkers } from '../utils/markerGrouping';
+import { revealEventInFeed } from '../utils/revealEventInFeed';
 import { TimelineClips } from './timeline/TimelineClips';
 import { TimelineMarkers } from './timeline/TimelineMarkers';
 import { TimelineTicks } from './timeline/TimelineTicks';
@@ -51,116 +53,59 @@ import { TimelineWaveform } from './timeline/TimelineWaveform';
 // --v4-zoom-rail-below-extra); utilities reference them via (--name). Dynamic inline
 // styles (playhead/marker/waveform geometry, zoom rail) are untouched.
 
-// ---- Deck / meta rules (were :global(#v4-log-session ...) in SessionWorkspace.module.css) ----
-// These style Timeline-emitted DOM and move here with their target (contextual overrides
-// travel with the element that renders them). All were #v4-log-session-scoped; Timeline is
-// always inside it, so they convert as plain utilities.
-
 const TL_STACK =
   'v5-session-timeline-stack flex flex-col flex-[1_1_auto] min-h-0 w-full gap-0 box-border';
 
-// The v5-panel-head / -head__main / -head__actions / -eyebrow group is a MULTI-EMITTER
-// class family (Timeline + SessionWorkspace + FeedShell all emit it); its rules live in a
-// commented @layer components block in tailwind.css (slice 5b) so all three emitters
-// resolve from one place. Timeline keeps emitting the bare legacy class strings.
-const PANEL_HEAD = 'v5-panel-head v5-panel-head--timeline';
-const PANEL_HEAD_MAIN = 'v5-panel-head__main';
-const PANEL_HEAD_ACTIONS = 'v5-panel-head__actions';
-const PANEL_EYEBROW = 'v5-panel-eyebrow';
-
-const DECK_HEADER =
-  'v4-playback-deck-header flex flex-row items-center justify-start gap-[0.75rem] w-full min-w-0 flex-[0_0_auto]';
-const DECK_TITLE_CLUSTER =
-  'v5-deck-title-cluster flex flex-row flex-wrap items-baseline justify-start gap-[0.45rem_0.65rem] min-w-0 flex-[1_1_auto]';
-// .v4-playback-deck-title base is unstyled locally; the #v4-log-session rule is the
-// only styling and applies always here. `flex-[0_1_auto]` from the cluster child rule.
-const DECK_TITLE =
-  'v4-playback-deck-title flex-[0_1_auto] m-0 min-w-0 [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[1.35rem] font-semibold tracking-[-0.02em] leading-[1.2] text-v5-text normal-case overflow-hidden text-ellipsis whitespace-nowrap';
-const DECK_SESSION_META =
-  'v5-deck-session-meta inline-flex flex-row flex-wrap items-baseline justify-start gap-[0.35rem_0.45rem] min-w-0 flex-[0_1_auto]';
-const DECK_META_SEP = 'v5-deck-meta-sep text-white/[0.32] font-medium select-none';
-// .v4-episode.v5-studio-name-inline — the #v4-log-session .v5-studio-name-inline rule sets
-// weight 600, but the higher-specificity `#v4-log-session #studio-name.v4-episode` rule
-// overrode it to weight 400 (+ capitalize, font-variation-settings:normal). Both those source
-// rules were deleted here, so the resolved cascade (font-weight 400) is written directly.
-const STUDIO_NAME =
-  'v4-episode v5-studio-name-inline flex-[0_1_auto] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.9rem] font-normal [font-variation-settings:normal] capitalize text-v5-primary whitespace-nowrap';
-// .v4-session-date.v5-session-date-inline — the #v4-log-session .v5-session-date-inline rule.
-const SESSION_DATE =
-  'v4-session-date v5-session-date-inline flex-[0_1_auto] text-[0.72rem] font-medium tracking-[0.1em] uppercase text-v5-muted whitespace-nowrap';
-// Export button: base chrome `btn primary` stays (chrome.css legacy); the
-// #v4-log-session .v5-btn-export-log.btn.primary override becomes utilities that win by
-// layer order, plus its unguarded :hover.
-const BTN_EXPORT =
-  'btn primary v5-btn-export-log px-4 py-[0.45rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.72rem] font-semibold tracking-[0.1em] uppercase rounded-v5-sm border-[rgba(56,189,248,0.45)] bg-[rgba(56,189,248,0.22)] text-[#f0f9ff] shadow-[0_0_0_1px_rgba(56,189,248,0.12)] hover-always:bg-[rgba(56,189,248,0.3)] hover-always:border-[rgba(56,189,248,0.55)] hover-always:text-white';
-
-// ---- v4-scratch ext row / nav ----
-// .v4ExtRow base + #v4-log-session override (padding + flex-basis with --v4-ext-row-pad-y,
-// background transparent, border-bottom none). --v4-ext-row-pad-y is a local prop set here.
-const V4_EXT_ROW =
-  '[--v4-ext-row-pad-y:0.22rem] flex flex-row items-center w-full min-w-0 overflow-visible box-border py-(--v4-ext-row-pad-y) flex-[0_0_calc(var(--v4-ext-row-h)+2*var(--v4-ext-row-pad-y))] h-[calc(var(--v4-ext-row-h)+2*var(--v4-ext-row-pad-y))] min-h-[calc(var(--v4-ext-row-h)+2*var(--v4-ext-row-pad-y))] max-h-[calc(var(--v4-ext-row-h)+2*var(--v4-ext-row-pad-y))] bg-transparent border-b-0';
-
-// .v4NavArea base + #v4-log-session overrides (my 0.08rem; child of ext-row gets the
-// edge padding + flex fill). The base `margin: 0.5rem 0` is overridden to 0.08rem.
-const V4_NAV_AREA =
-  'min-w-0 grid [grid-template-columns:minmax(100px,max-content)_minmax(0,1fr)] items-center justify-items-stretch h-(--v4-nav-area-h) overflow-visible [column-gap:0] my-[0.08rem] flex-[1_1_auto] w-full max-w-full pl-(--v4-nav-edge-m) pr-(--v4-nav-edge-m) box-border';
-
-// .v4NavCat + .v4NavCatDynamic. Base bg #8a5c32 (overridden below by v5). Dynamic bg uses
-// --nav-cat-col. #v4-log-session gives radius/border/shadow, then the dynamic-specific bg.
-// The pill is always rendered dynamic here (clsx passes V4_NAV_CAT + V4_NAV_CAT_DYNAMIC),
-// so V4_NAV_CAT carries only the border WIDTH; the border COLOR + background come from the
-// dynamic branch (recipe rule 3: a state branch REPLACES, never stacks, the conflicting
-// property — otherwise generated-order would leave the base white border winning).
-const V4_NAV_CAT =
-  'w-max min-w-[100px] max-w-none justify-self-start self-stretch max-h-(--v4-nav-area-h) flex items-center justify-center px-[0.45rem] overflow-hidden box-border rounded-v5-sm border shadow-[0_2px_14px_rgba(2,8,23,0.35)]';
-// .v4NavCatDynamic under #v4-log-session (bg + border-color from --nav-cat-col):
-const V4_NAV_CAT_DYNAMIC =
-  '[background:color-mix(in_srgb,var(--nav-cat-col,#38bdf8)_38%,rgba(15,23,42,0.92))] [border-color:color-mix(in_srgb,var(--nav-cat-col,#38bdf8)_50%,transparent)]';
-// .v4NavCatTitle base (League Gothic 1.1875rem) fully overridden by #v4-log-session (Inter 0.65rem).
-const V4_NAV_CAT_TITLE =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.65rem] font-bold tracking-[0.14em] uppercase text-white/[0.92] [text-shadow:none] text-center overflow-hidden text-ellipsis whitespace-nowrap w-full';
-
-// .v4NavMsg base + #v4-log-session (radius/border/bg/padding/shadow).
-const V4_NAV_MSG =
-  'min-w-0 w-full self-stretch max-h-(--v4-nav-area-h) flex items-center justify-start overflow-hidden rounded-v5-sm border border-v5-border bg-black/[0.18] px-[0.5rem] py-0 box-border shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]';
-
-// .timelineMarkerCurrentCat + .v4NavMarkerWrap (the `.v4NavMsg .v4NavMarkerWrap...` rule
-// forces flex, no grid-columns/gap, transparent bg, no border/padding — the !important
-// flags become plain utilities that win by layer order).
-const NAV_MARKER_WRAP =
-  'flex items-stretch [grid-template-columns:unset] gap-0 [column-gap:0] [row-gap:0] w-full min-w-0 min-h-0 h-full bg-transparent border-0 p-0 text-white text-[0.72rem] leading-[1.2] whitespace-nowrap overflow-hidden text-ellipsis max-w-full';
-// .markerCurrentMsgCell base + `.v4NavMsg .markerCurrentMsgCell` override (flex-fill,
-// transparent bg, left-aligned).
+// Single marker caption chip (cat accent + label + marquee) — replaces the old
+// dual floating cat-pill + message bar above the track.
+// Always full timeline width; message marquees when it overflows the chip.
+// BG: solid 20% category accent + 80% base navy (via --nav-cat-col on the chip).
+// Body carries the full chrome border; the accent is absolutely painted over the
+// left/top/bottom strokes so ONLY its right hairline remains visible.
+const MARKER_CHIP =
+  'relative flex h-[1.7rem] min-h-[1.7rem] max-h-[1.7rem] w-full min-w-0 items-stretch overflow-hidden rounded-t-[0.45rem] rounded-b-none border-0 [--marker-chip-border:var(--v5-border)] [--marker-chip-accent-w:0.28rem] [background:color-mix(in_srgb,var(--nav-cat-col,#6b7280)_20%,rgba(11,16,30,0.82)_80%)] [transition:opacity_0.45s_ease,background_0.3s_ease]';
+const MARKER_CHIP_LIT =
+  'opacity-100 [--marker-chip-border:rgba(148,163,184,0.28)] shadow-[0_0_18px_-6px_color-mix(in_srgb,var(--nav-cat-col,#38bdf8)_45%,transparent)]';
+const MARKER_CHIP_IDLE = 'opacity-[0.52]';
+// Overpaints the body's left + TL/BL corner strokes (borders paint under
+// descendants). Right edge is the only hairline.
+const MARKER_CHIP_ACCENT =
+  'pointer-events-none absolute -inset-y-[2px] -left-[2px] z-[1] w-[calc(var(--marker-chip-accent-w)+2px)] rounded-tl-[0.45rem] rounded-tr-none rounded-b-none border-0 [box-shadow:1px_0_0_0_var(--marker-chip-border)]';
+const MARKER_CHIP_BODY =
+  'relative flex min-w-0 max-w-full flex-1 items-center gap-[0.4rem] overflow-visible rounded-t-[0.45rem] rounded-b-none border border-solid [border-color:var(--marker-chip-border)] py-0 pl-[calc(var(--marker-chip-accent-w)+0.45rem)] pr-[0.45rem] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]';
+const MARKER_CHIP_CAT =
+  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] relative z-[2] shrink-0 text-[0.62rem] font-bold leading-none tracking-[0.12em] uppercase text-white';
+const MARKER_CHIP_SEP =
+  'relative z-[2] shrink-0 self-center text-white/40 leading-none select-none';
+// Marquee cell/track/value — same overflow dance as before (imperative class toggle).
+// leading-snug keeps descenders (g/y) inside the line box so overflow-x clip doesn't
+// bite the glyph tails.
 const NAV_MSG_CELL =
-  'flex items-center min-w-0 h-full px-[0.42rem] py-[0.16rem] whitespace-nowrap overflow-hidden text-ellipsis flex-[1_1_auto] bg-transparent justify-start text-left';
-// ui-refresh: `motion-reduce:animate-none!` guards the marker-message marquee
-// (the toggled `animate-marker-msg-marquee` class below) — under reduced motion
-// the overflow message stays static and simply truncates in the wrap.
+  'relative z-[2] flex min-w-0 flex-1 items-center justify-start overflow-hidden whitespace-nowrap text-left';
 const NAV_MSG_TRACK =
-  'inline-flex items-center min-w-[max-content] translate-x-0 motion-reduce:animate-none!';
-// .v4NavMsgValue base (League Gothic) fully overridden by #v4-log-session (Inter 0.8125rem);
-// the markerCurrentMsgA/B.v4NavMsgValue color under #v4-log-session is v5-muted.
+  'inline-flex min-w-[max-content] items-center translate-x-0 motion-reduce:animate-none!';
 const NAV_MSG_VALUE =
-  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.8125rem] font-medium tracking-[0.02em] normal-case text-v5-muted [text-shadow:none] [text-indent:0.5em] overflow-hidden text-ellipsis whitespace-nowrap w-full';
-// `[display:inline]` NOT `inline`: the bare `inline` utility string collides with
-// chrome.css's legacy `.inline` class (font-size:.85rem, color:muted,
-// display:inline-flex!important), which would shrink/recolor the marquee overflow
-// segments — see chrome.css comment and the identical fix in SessionWorkspace.tsx.
+  '[font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.78rem] font-medium leading-snug tracking-[0.02em] normal-case text-white whitespace-nowrap';
+// `[display:inline]` NOT `inline` — bare `inline` collides with chrome.css `.inline`.
 const NAV_MSG_GAP = '[display:inline]';
-// .markerCurrentMsgB / .markerCurrentMsgGap2 are display:none unless the wrap has the
-// scroll class; the marquee runs on the track. Handled via clsx branches below.
+// Hang = chip height exactly — chip sits flush on the track (one joined element).
+const MARKER_CHIP_HANG = 'h-[1.7rem]';
 
 // ---- timeline row / track / shell (v4 base + #v4-log-session v5 overrides) ----
-// .v4TimelineRow base + #v4-log-session (min-height with lane-delta, height auto).
-const V4_TIMELINE_ROW =
-  'flex flex-row items-center w-full min-w-0 box-border gap-0 flex-[1_1_auto] h-auto max-h-none min-h-[calc(var(--v4-tl-row-h)+2*var(--v4-nav-grid-my,0.5rem)+var(--v5-timeline-lane-delta))]';
-// .v4TlTrack + .v4TlTrackLive (both classes on the row child). Resolved cascade under
-// #v4-log-session: the higher-specificity `.v4TimelineRow > .v4TlTrack` v5 rule (id+2class)
-// wins for flex (100 1 0 — fills the row width) and min-height; `.v4TlTrackLive` (id+1class)
-// supplies the column stack, items-stretch, overflow-visible, and the v5 gap 0.45rem. The
-// literal `v4TlTrackLive` is retained for the perf-debug @layer rules that target it.
-const V4_TL_TRACK_LIVE =
-  'v4TlTrackLive flex flex-[100_1_0] flex-col items-stretch self-center justify-center p-0 bg-transparent min-w-0 h-auto max-h-none overflow-visible gap-[0.45rem] min-h-[calc(var(--v4-tl-bar-h)+2*var(--v4-nav-grid-my,0.5rem)+var(--v5-timeline-lane-delta))]';
+// Strip scrub column: track (~80% lane) + zoom rail under it. Sized to content so
+// the transport aside cannot squeeze the zoom row under the feed.
+const V4_TIMELINE_ROW_STRIP =
+  'flex h-auto w-full min-w-0 flex-[0_0_auto] flex-row items-stretch box-border gap-0 overflow-visible';
+// Mobile ~88% lane. Desktop subtracts the chip hang so the strip band stays put.
+const TIMELINE_TRACK_STRIP_H =
+  'h-[calc(var(--v5-timeline-lane-h)*0.88)] max-h-[calc(var(--v5-timeline-lane-h)*0.88)] min-h-[calc(var(--v5-timeline-lane-h)*0.88)] md:h-[calc(var(--v5-timeline-lane-h)*0.88-1.7rem)] md:max-h-[calc(var(--v5-timeline-lane-h)*0.88-1.7rem)] md:min-h-[calc(var(--v5-timeline-lane-h)*0.88-1.7rem)]';
+// Compact zoom rail — sits under the scrubber at full width.
+const ZOOM_RAIL_STRIP =
+  'flex flex-row flex-nowrap items-center gap-[0.3rem] w-full min-w-0 relative box-border px-0 pt-0 pb-0 flex-[0_0_auto]';
+// The literal `v4TlTrackLive` class is retained for the perf-debug @layer rules that
+// target it. Tight gap under ticks so zoom sits closer to the border-centered labels.
+const V4_TL_TRACK_LIVE_STRIP =
+  'v4TlTrackLive flex h-auto w-full min-w-0 flex-[0_0_auto] flex-col items-stretch justify-start gap-[0.1rem] overflow-visible bg-transparent p-0';
 // .timelineShell base + `.v4TlTrackLive .timelineShell` base + #v4-log-session override
 // (radius/no-border/transparent/no-shadow, padding 0.35rem 0.45rem 0.3rem).
 // NOTE on padding: the source had two identical-specificity #v4-log-session shell rules —
@@ -169,17 +114,19 @@ const V4_TL_TRACK_LIVE =
 // full width, i.e. the shorthand rule does NOT win in the shipped bundle. Matching the
 // baseline (the pixel gate is ground truth), the converted shell carries no padding.
 const TIMELINE_SHELL =
-  'timelineShell relative w-full box-border flex flex-col items-stretch gap-[0.4rem] flex-[0_1_auto] min-w-0 max-w-full min-h-0 h-auto max-h-none rounded-v5-md border-0 bg-transparent shadow-none p-0 mt-0';
-// .timelineViewport base + `.v4TlTrackLive .timelineViewport` + #v4-log-session
-// (radius 0.65rem, min-height v5-timeline-lane-h, height auto, overflow-y visible).
-const TIMELINE_VIEWPORT =
-  'timeline-hide-scrollbar overflow-x-auto overflow-y-visible w-full max-w-full pb-0 flex-[0_1_auto] h-auto max-h-none min-h-(--v5-timeline-lane-h) rounded-[0.65rem]';
+  'timelineShell relative w-full box-border flex flex-col items-stretch gap-[0.3rem] flex-[0_1_auto] min-w-0 max-w-full min-h-0 h-auto max-h-none rounded-v5-md border-0 bg-transparent shadow-none p-0 mt-0';
+// overflow-y must stay non-visible when overflow-x is auto (CSS forces y→auto);
+// tick hang-space is reserved by an in-flow spacer under the track instead.
+const TIMELINE_VIEWPORT_STRIP =
+  'timeline-hide-scrollbar h-auto min-h-0 w-full max-w-full flex-[0_0_auto] overflow-x-auto overflow-y-hidden rounded-t-none rounded-b-[0.65rem] pb-0';
 // .timelineInner base + `.v4TlTrackLive .timelineInner` (min-h 0) + #v4-log-session (gap 0.32rem).
-const TIMELINE_INNER = 'flex flex-col min-w-full box-border min-h-0 gap-[0.32rem]';
-// .timelineTrack base + `.v4TlTrackLive .timelineTrack` height + #v4-log-session v5 track
-// (rounded lane, gradient bg, border, ::before shimmer, isolation). --v5-timeline-r local.
-const TIMELINE_TRACK =
-  'timelineTrack relative w-full overflow-hidden cursor-ew-resize flex-shrink-0 isolate [--v5-timeline-r:0.65rem] h-(--v5-timeline-lane-h) min-h-(--v5-timeline-lane-h) rounded-[var(--v5-timeline-r)] border border-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] [background:linear-gradient(180deg,rgba(20,28,48,0.76),rgba(8,12,22,0.62))] before:content-[""] before:absolute before:inset-0 before:rounded-[inherit] before:pointer-events-none before:z-0 before:opacity-60 before:[background-image:linear-gradient(100deg,rgba(34,138,179,0.2)_0%,rgba(29,49,61,0.3)_17%,rgba(49,94,143,0.3)_36%,rgba(29,49,61,0.3)_56%,rgba(49,94,143,0.3)_75%,rgba(34,138,179,0.2)_94%)] before:[background-size:200%_100%] before:[background-repeat:repeat-x] before:animate-v5-timeline-mock-shimmer motion-reduce:before:animate-none motion-reduce:before:[background-position:0_0]';
+const TIMELINE_INNER = 'flex flex-col min-w-full box-border min-h-0 gap-[0.25rem]';
+// Shared track chrome (lane fill + shimmer) + strip height token.
+// Square top joins flush with the marker chip; no left border (would frame the
+// accent swatch above); bottom/right keep the lane pillow.
+const TIMELINE_TRACK_CHROME =
+  'timelineTrack relative w-full overflow-hidden cursor-ew-resize flex-shrink-0 isolate [--v5-timeline-r:0.65rem] rounded-t-none rounded-b-[var(--v5-timeline-r)] border border-t-0 border-l-0 border-white/[0.055] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] [background:linear-gradient(180deg,rgba(10,14,24,0.9),rgba(4,6,12,0.82))] before:content-[""] before:absolute before:inset-0 before:rounded-[inherit] before:pointer-events-none before:z-0 before:opacity-60 before:[background-image:linear-gradient(100deg,rgba(34,138,179,0.2)_0%,rgba(29,49,61,0.3)_17%,rgba(49,94,143,0.3)_36%,rgba(29,49,61,0.3)_56%,rgba(49,94,143,0.3)_75%,rgba(34,138,179,0.2)_94%)] before:[background-size:200%_100%] before:[background-repeat:repeat-x] before:animate-v5-timeline-mock-shimmer motion-reduce:before:animate-none motion-reduce:before:[background-position:0_0]';
+const TIMELINE_TRACK_STRIP = `${TIMELINE_TRACK_CHROME} ${TIMELINE_TRACK_STRIP_H}`;
 // .timelineTrackLayers base + #v4-log-session (z-1) + ::before divider (z-3, v5 color).
 const TIMELINE_TRACK_LAYERS =
   'absolute inset-0 z-[1] rounded-[inherit] before:content-[""] before:absolute before:left-[0.4rem] before:right-[0.4rem] before:top-1/2 before:h-px before:-translate-y-1/2 before:rounded-none before:bg-[rgba(148,163,184,0.38)] before:pointer-events-none before:z-[3]';
@@ -211,17 +158,7 @@ const MARKER_TOOLTIP_MSG = 'block text-v5-text';
 const HOVER_TOOLTIP =
   'timeline-hover-tooltip fixed z-[10055] max-w-[min(72vw,280px)] px-[0.5rem] py-[0.35rem] rounded-lg border border-v5-border glass-face-aside text-v5-text text-[0.78rem] font-mono [font-variant-numeric:tabular-nums] leading-[1.35] pointer-events-none panel-elevate';
 
-// ---- readout / zoom rail (v4 base + #v4-log-session v5 overrides) ----
-// .v4ExtTimecode + .v4ExtTimecodeZoomRail + #v4-log-session (Inter, tabular-nums, 17ch).
-const EXT_TIMECODE =
-  'flex-[0_0_17ch] self-center m-0 p-0 [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] font-medium text-base leading-[1.1] whitespace-nowrap [font-variant-numeric:tabular-nums] w-[17ch] min-w-[17ch] max-w-[17ch] box-content ml-1 pr-[0.15rem] text-right overflow-hidden text-ellipsis';
-const EXT_TIMECODE_POS = 'text-[1.32rem] font-semibold tracking-[0.03em] text-v5-text';
-const EXT_TIMECODE_TOTAL =
-  'text-[0.72rem] font-medium tracking-[0.06em] text-v5-muted opacity-[0.82]';
-
-// .timelineZoomRail + .v4TimelineZoomRail + #v4-log-session (padding, align).
-const ZOOM_RAIL =
-  'flex flex-row flex-nowrap items-center gap-[0.35rem] w-full min-w-0 relative box-border px-[0.35rem] pt-[0.15rem] pb-[0.05rem]';
+// ---- zoom rail ----
 // .timelineZoomTooltip (v4 variant) + #v4-log-session (v5 glass). Positioned above rail.
 const ZOOM_TOOLTIP =
   'absolute left-1/2 bottom-[calc(100%+6px)] top-auto -translate-x-1/2 px-[0.5em] py-[0.2em] [font-family:var(--font-poppins)] text-[0.65rem] font-extrabold leading-[1.2] whitespace-nowrap z-[5] pointer-events-none rounded-[0.45rem] glass-face-strong border border-v5-border text-v5-text panel-elevate';
@@ -253,14 +190,6 @@ declare global {
   interface Window {
     AutoLogger_setManualScrubSec?: (sec: number | null) => void;
   }
-}
-
-function fmtSessionDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())}/${d.getUTCFullYear()}`;
 }
 
 /** Marker tooltip placement matches session.js's showTimelineMarkerTooltip math. */
@@ -319,8 +248,17 @@ interface Props {
   isWaveformDecoding?: boolean;
   audioPlaybackSec: number | null;
   onSeekAudio: (sec: number) => void;
-  onExport: () => void;
-  hidden?: boolean;
+  /**
+   * Session strip: timeline column with marker readout overlay; aside (via
+   * stripTrailing) holds session meta + transport to the left.
+   */
+  stripOnly?: boolean;
+  /** Leading aside (session meta / status / transport / marker buttons). */
+  stripTrailing?: ReactNode;
+  /** When set (rolling/recording), replaces the scrub lane at the same height. */
+  stripLaneSlot?: ReactNode;
+  /** Disable scrub / zoom (e.g. YouTube import in progress). */
+  controlsLocked?: boolean;
 }
 
 export function Timeline({
@@ -333,21 +271,13 @@ export function Timeline({
   isWaveformDecoding,
   audioPlaybackSec,
   onSeekAudio,
-  onExport,
-  hidden,
+  stripOnly,
+  stripTrailing,
+  stripLaneSlot,
+  controlsLocked = false,
 }: Props) {
-  const code = (status?.show_code ?? '').trim();
-  const ep = (status?.episode ?? '').trim();
-  const showName = (status?.show_name ?? '').trim();
-  const deckFallback = (status?.deck_title ?? status?.title ?? '').trim();
-
-  const titleText = code ? showName || code : deckFallback || '—';
-  const titleAttr = code || '';
-  const studioLine = code ? `Episode ${ep || '1'}` : '';
-
-  const dateText = fmtSessionDate(status?.session_created_at_utc ?? status?.now_utc);
-
-  const [manualScrubSec, setManualScrubSec] = useState<number | null>(null);
+  // Start at 0 so a freshly opened session does not jump to last session_timecode.
+  const [manualScrubSec, setManualScrubSec] = useState<number | null>(0);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [markerTip, setMarkerTip] = useState<{
     eventId: string;
@@ -392,17 +322,6 @@ export function Timeline({
   // activeSecRef for zoom scroll centering (set below after activeSec is computed)
   const activeSecRef = useRef(0);
 
-  // Reset interaction state on session switch.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on sessionId change
-  useEffect(() => {
-    setManualScrubSec(null);
-    setSelectedEventId(null);
-    setMarkerTip(null);
-    setHoverSec(null);
-    isScrubbingRef.current = false;
-    lastTrackPointerRef.current = null;
-  }, [sessionId]);
-
   // Sync writer: updates the ref synchronously for immediate reads, then queues
   // the React state update for reactivity (re-renders, deps).
   const writeManualScrubSec = useCallback((sec: number | null) => {
@@ -413,6 +332,18 @@ export function Timeline({
     selectedEventIdRef.current = id;
     setSelectedEventId(id);
   }, []);
+
+  // Reset interaction state on session switch — playhead always opens at 00:00:00.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on sessionId change
+  useEffect(() => {
+    writeManualScrubSec(0);
+    setSelectedEventId(null);
+    setMarkerTip(null);
+    setHoverSec(null);
+    isScrubbingRef.current = false;
+    lastTrackPointerRef.current = null;
+    onSeekAudio(0);
+  }, [sessionId]);
 
   // Drop selectedEventId when its event vanishes from the cache.
   useEffect(() => {
@@ -426,6 +357,13 @@ export function Timeline({
     const raw = status?.session_timecode ?? status?.timecode ?? '00:00:00';
     return Math.max(0, parseSmpteToSec(raw, sessionFrameRate(status)));
   }, [status]);
+
+  // While rolling/recording, follow live TC (clear the load/scrub pin).
+  useEffect(() => {
+    if (!(status?.is_rolling || status?.audio_recording_lease_alive)) return;
+    if (manualScrubSecRef.current == null) return;
+    writeManualScrubSec(null);
+  }, [status?.is_rolling, status?.audio_recording_lease_alive, writeManualScrubSec]);
 
   // Master playhead position. Priority: live audio playback > manual scrub > rolling timecode.
   const activeSec = useMemo(() => {
@@ -483,6 +421,21 @@ export function Timeline({
     return chosen;
   }, [events, activeSec, status]);
 
+  // Brighten chip on marker jump / playhead cross; fade when idle.
+  const markerChipKey = currentNavMarker
+    ? `${currentNavMarker.sec}\0${currentNavMarker.cat}\0${currentNavMarker.msg}`
+    : '';
+  const [markerChipLit, setMarkerChipLit] = useState(Boolean(currentNavMarker));
+  useEffect(() => {
+    if (!markerChipKey) {
+      setMarkerChipLit(false);
+      return;
+    }
+    setMarkerChipLit(true);
+    const t = window.setTimeout(() => setMarkerChipLit(false), 2400);
+    return () => window.clearTimeout(t);
+  }, [markerChipKey]);
+
   // Cumulative session-roll seconds for the right-side readout (e.g. "/ 00:12:34").
   const rollingSec = useMemo(() => {
     const raw = status?.session_timecode;
@@ -534,6 +487,7 @@ export function Timeline({
   // Keyboard scrub for the slider role: ←/→ ±1s, Shift+←/→ ±10s.
   const onTrackKeyDown = useCallback(
     (ev: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (controlsLocked) return;
       if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
       ev.preventDefault();
       const step = (ev.shiftKey ? 10 : 1) * (ev.key === 'ArrowLeft' ? -1 : 1);
@@ -541,11 +495,12 @@ export function Timeline({
       writeManualScrubSec(next);
       onSeekAudio(next);
     },
-    [totalSec, onSeekAudio, writeManualScrubSec],
+    [controlsLocked, totalSec, onSeekAudio, writeManualScrubSec],
   );
 
   const onTrackPointerDown = useCallback(
     (ev: ReactPointerEvent<HTMLDivElement>) => {
+      if (controlsLocked) return;
       if (!ev.isPrimary || ev.button !== 0) return;
       // Markers handle their own click; skip starting a scrub from a marker hit.
       if ((ev.target as Element).closest?.(markerSel)) return;
@@ -558,7 +513,7 @@ export function Timeline({
       }
       scrubAtClientX(ev.clientX);
     },
-    [scrubAtClientX],
+    [controlsLocked, scrubAtClientX],
   );
 
   const onTrackPointerMove = useCallback(
@@ -597,9 +552,16 @@ export function Timeline({
     setHoverSec(null);
   }, []);
 
-  const onTrackDoubleClick = useCallback(() => {
-    writeManualScrubSec(null);
-  }, [writeManualScrubSec]);
+  const onTrackDoubleClick = useCallback(
+    (ev: ReactMouseEvent<HTMLDivElement>) => {
+      if (controlsLocked) return;
+      // Marker dots own selection/reveal — a second click must not clear the scrub
+      // (which falls back to live TC, often 00:00:00 when stopped).
+      if ((ev.target as Element).closest?.(markerSel)) return;
+      writeManualScrubSec(null);
+    },
+    [controlsLocked, writeManualScrubSec],
+  );
 
   const onMarkersMouseOver = useCallback((ev: ReactMouseEvent<HTMLDivElement>) => {
     const el = (ev.target as Element).closest?.(markerSel) as HTMLElement | null;
@@ -633,7 +595,9 @@ export function Timeline({
       if (!el) return;
       const eventId = el.dataset.eventId;
       if (!eventId) return;
+      ev.stopPropagation();
       writeSelectedEventId(eventId);
+      revealEventInFeed(eventId);
     },
     [writeSelectedEventId],
   );
@@ -805,214 +769,283 @@ export function Timeline({
     ? String(markerTipEvent.category_color || '').trim() || '#bfc5cd'
     : '#bfc5cd';
 
-  return (
-    <div className={TL_STACK} id="v5-session-timeline-stack" hidden={hidden}>
-      <div className={PANEL_HEAD}>
-        <div className={PANEL_HEAD_MAIN}>
-          <p className={PANEL_EYEBROW}>Session Timeline</p>
-          <header className={DECK_HEADER}>
-            <div className={DECK_TITLE_CLUSTER}>
-              <h1
-                className={DECK_TITLE}
-                id="session-deck-title"
-                aria-label="Session show and episode"
-              >
-                <span id="session-title-code" className="session-title-code" title={titleAttr}>
-                  {titleText}
-                </span>
-                <span className="session-title-sep" aria-hidden={true} hidden={true}>
-                  {' - '}
-                </span>
-                <span id="session-title-ep" className="session-title-ep" hidden={true} />
-              </h1>
-              <div className={DECK_SESSION_META}>
-                <span className={STUDIO_NAME} id="studio-name" hidden={!studioLine}>
-                  {studioLine}
-                </span>
-                <span className={DECK_META_SEP} aria-hidden={true}>
-                  &middot;
-                </span>
-                <span className={SESSION_DATE} id="session-aside-date">
-                  {dateText}
-                </span>
-              </div>
-            </div>
-          </header>
-        </div>
-        <div className={PANEL_HEAD_ACTIONS}>
-          <button type="button" className={BTN_EXPORT} id="btn-export-log" onClick={onExport}>
-            Export
-          </button>
-        </div>
-      </div>
-
-      <div className={V4_EXT_ROW}>
-        <div className={V4_NAV_AREA}>
-          <div
-            className={clsx(V4_NAV_CAT, V4_NAV_CAT_DYNAMIC)}
-            id="marker-current-cat-pill"
-            style={
-              currentNavMarker ? { ['--nav-cat-col' as string]: currentNavMarker.col } : undefined
-            }
-          >
-            <span className={V4_NAV_CAT_TITLE} id="marker-current-cat-cell">
-              {currentNavMarker?.cat ?? '—'}
+  const markerReadout = (
+    <div
+      className={clsx(
+        MARKER_CHIP,
+        markerChipLit ? MARKER_CHIP_LIT : MARKER_CHIP_IDLE,
+        !currentNavMarker && 'opacity-[0.35]',
+      )}
+      id="marker-current-cat-pill"
+      style={currentNavMarker ? { ['--nav-cat-col' as string]: currentNavMarker.col } : undefined}
+      title={
+        currentNavMarker
+          ? `Current marker: ${currentNavMarker.cat} — ${currentNavMarker.msg}`
+          : 'No markers'
+      }
+    >
+      {/* Names the readout for SR users without ARIA-on-a-generic-div (a11y
+          pass): a plain div supports neither aria-label nor a role that fits
+          a passive readout, so the name is real text instead. */}
+      <span className="sr-only">Current marker: </span>
+      <span ref={navCatRef} id="marker-current-cat" className={MARKER_CHIP_BODY}>
+        <span
+          className={MARKER_CHIP_ACCENT}
+          aria-hidden={true}
+          style={
+            currentNavMarker
+              ? { backgroundColor: currentNavMarker.col }
+              : { backgroundColor: 'rgba(148,163,184,0.35)' }
+          }
+        />
+        <span className={MARKER_CHIP_CAT} id="marker-current-cat-cell">
+          {currentNavMarker?.cat ?? '—'}
+        </span>
+        <span className={MARKER_CHIP_SEP} aria-hidden={true}>
+          ·
+        </span>
+        <span ref={navMsgCellRef} className={NAV_MSG_CELL} id="marker-current-msg-cell">
+          <span ref={navMsgTrackRef} className={NAV_MSG_TRACK} id="marker-current-msg-track">
+            <span className={NAV_MSG_VALUE} id="marker-current-msg-a">
+              {currentNavMarker?.msg ?? '—'}
             </span>
-          </div>
-          <div className={V4_NAV_MSG}>
+            <span className={NAV_MSG_GAP} aria-hidden={true}>
+              {'    '}
+            </span>
             <span
-              ref={navCatRef}
-              id="marker-current-cat"
-              className={NAV_MARKER_WRAP}
-              title={
-                currentNavMarker
-                  ? `Current marker: ${currentNavMarker.cat} — ${currentNavMarker.msg}`
-                  : 'No markers'
-              }
+              ref={navMsgBRef}
+              className={clsx(NAV_MSG_VALUE, 'hidden')}
+              id="marker-current-msg-b"
             >
-              <span ref={navMsgCellRef} className={NAV_MSG_CELL} id="marker-current-msg-cell">
-                <span ref={navMsgTrackRef} className={NAV_MSG_TRACK} id="marker-current-msg-track">
-                  <span className={NAV_MSG_VALUE} id="marker-current-msg-a">
-                    {currentNavMarker?.msg ?? '—'}
-                  </span>
-                  <span className={NAV_MSG_GAP} aria-hidden={true}>
-                    {'    '}
-                  </span>
-                  <span
-                    ref={navMsgBRef}
-                    className={clsx(NAV_MSG_VALUE, 'hidden')}
-                    id="marker-current-msg-b"
-                  >
-                    {currentNavMarker?.msg ?? '—'}
-                  </span>
-                  <span ref={navMsgGap2Ref} className="hidden" aria-hidden={true}>
-                    {'    '}
-                  </span>
-                </span>
-              </span>
+              {currentNavMarker?.msg ?? '—'}
             </span>
-          </div>
-        </div>
-      </div>
+            <span ref={navMsgGap2Ref} className="hidden" aria-hidden={true}>
+              {'    '}
+            </span>
+          </span>
+        </span>
+      </span>
+    </div>
+  );
 
-      <div className={V4_TIMELINE_ROW}>
-        <div className={V4_TL_TRACK_LIVE} role="presentation">
-          <div className={TIMELINE_SHELL} id="timeline-shell">
-            <div ref={viewportRef} className={TIMELINE_VIEWPORT} id="timeline-viewport">
-              <div ref={innerRef} className={TIMELINE_INNER} id="timeline-inner">
+  return (
+    <div
+      className={clsx(
+        TL_STACK,
+        stripOnly && 'h-auto min-h-0 flex-[0_0_auto] gap-1 overflow-visible',
+      )}
+      id="v5-session-timeline-stack"
+    >
+      <div
+        className={clsx(
+          // Mobile: controls row on top, timeline full-width underneath.
+          // Desktop: controls | timeline side by side.
+          stripOnly &&
+            'flex h-auto w-full min-w-0 flex-col items-stretch gap-2 md:flex-row md:items-end md:gap-2.5',
+        )}
+      >
+        {stripOnly ? stripTrailing : null}
+        {stripOnly ? (
+          <div
+            className={clsx(
+              'relative flex w-full min-w-0 flex-col gap-0 md:flex-[1_1_0]',
+              controlsLocked && 'pointer-events-none opacity-[0.48]',
+            )}
+            aria-disabled={controlsLocked || undefined}
+          >
+            {stripLaneSlot}
+            <div
+              className={clsx(V4_TIMELINE_ROW_STRIP, stripLaneSlot != null && 'hidden')}
+              aria-hidden={stripLaneSlot != null || undefined}
+            >
+              <div className={V4_TL_TRACK_LIVE_STRIP} role="presentation">
                 <div
-                  className={TIMELINE_TRACK}
-                  id="timeline-track"
-                  role="slider"
-                  aria-label="Timeline scrubber"
-                  aria-valuemin={0}
-                  aria-valuemax={Math.round(totalSec)}
-                  aria-valuenow={Math.round(activeSec)}
-                  tabIndex={0}
-                  onPointerDown={onTrackPointerDown}
-                  onPointerMove={onTrackPointerMove}
-                  onPointerUp={onTrackPointerUp}
-                  onPointerCancel={onTrackPointerUp}
-                  onPointerLeave={onTrackPointerLeave}
-                  onDoubleClick={onTrackDoubleClick}
-                  onKeyDown={onTrackKeyDown}
+                  className={clsx(TIMELINE_SHELL, 'h-auto min-h-0 justify-start')}
+                  id="timeline-shell"
                 >
-                  <div className={TIMELINE_TRACK_LAYERS}>
-                    <TimelineClips
-                      clips={audioClips}
-                      totalSec={totalSec}
-                      activeClipIdx={activeClipIdx}
-                    />
-                    <TimelineWaveform
-                      mergedPeaks={mergedPeaks}
-                      isDecoding={isWaveformDecoding ?? false}
-                      activeSec={activeSec}
-                      totalSec={totalSec}
-                      clips={audioClips}
-                    />
+                  {/* Marker caption chip — flush on the track (joined one element). */}
+                  <div className="relative w-full min-w-0 overflow-visible">
+                    {stripLaneSlot == null ? (
+                      <div
+                        className={clsx(MARKER_CHIP_HANG, 'w-full shrink-0')}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    {stripLaneSlot == null ? (
+                      <div
+                        className={clsx(
+                          'pointer-events-none absolute inset-x-0 top-0 z-[8] flex w-full items-stretch',
+                          MARKER_CHIP_HANG,
+                        )}
+                      >
+                        <div
+                          className={clsx(
+                            'w-full min-w-0',
+                            !controlsLocked && 'pointer-events-auto',
+                          )}
+                        >
+                          {markerReadout}
+                        </div>
+                      </div>
+                    ) : null}
                     <div
-                      className={clsx(
-                        TIMELINE_HOVER_PLAYHEAD,
-                        hoverPct != null && TIMELINE_HOVER_PLAYHEAD_VISIBLE,
-                      )}
-                      id="timeline-hover-playhead"
-                      aria-hidden={true}
-                      style={hoverPct != null ? { left: `${hoverPct}%` } : undefined}
-                    />
-                    <div
-                      ref={glowRef}
-                      className={TIMELINE_MARKER_PLAYHEAD_GLOW}
-                      id="timeline-marker-playhead-glow"
-                      aria-hidden={true}
-                    />
-                    <TimelineMarkers
-                      events={events}
-                      status={status}
-                      totalSec={totalSec}
-                      selectedEventId={selectedEventId}
-                      onMouseOver={onMarkersMouseOver}
-                      onMouseMove={onMarkersMouseMove}
-                      onMouseOut={onMarkersMouseOut}
-                      onClick={onMarkersClick}
-                    />
-                    <div
-                      className={TIMELINE_PLAYHEAD}
-                      id="timeline-playhead"
-                      style={{ left: `${playheadPct}%` }}
-                    />
+                      ref={viewportRef}
+                      className={TIMELINE_VIEWPORT_STRIP}
+                      id="timeline-viewport"
+                    >
+                      <div
+                        ref={innerRef}
+                        className={clsx(TIMELINE_INNER, 'relative min-h-0 gap-0 overflow-visible')}
+                        id="timeline-inner"
+                      >
+                        {/* Track + border-centered ticks. Spacer below keeps the hanging
+                          half of the labels inside the scrollport — overflow-x:auto
+                          forces y-clip, so absolute overflow alone gets cut off. */}
+                        <div className="relative w-full overflow-visible">
+                          <div
+                            className={clsx(
+                              TIMELINE_TRACK_STRIP,
+                              controlsLocked && 'cursor-not-allowed',
+                            )}
+                            id="timeline-track"
+                            role="slider"
+                            aria-label="Timeline scrubber"
+                            aria-disabled={controlsLocked || undefined}
+                            aria-valuemin={0}
+                            aria-valuemax={Math.round(totalSec)}
+                            aria-valuenow={Math.round(activeSec)}
+                            tabIndex={stripLaneSlot != null || controlsLocked ? -1 : 0}
+                            onPointerDown={onTrackPointerDown}
+                            onPointerMove={onTrackPointerMove}
+                            onPointerUp={onTrackPointerUp}
+                            onPointerCancel={onTrackPointerUp}
+                            onPointerLeave={onTrackPointerLeave}
+                            onDoubleClick={onTrackDoubleClick}
+                            onKeyDown={onTrackKeyDown}
+                          >
+                            <div className={TIMELINE_TRACK_LAYERS}>
+                              <TimelineClips
+                                clips={audioClips}
+                                totalSec={totalSec}
+                                activeClipIdx={activeClipIdx}
+                              />
+                              <TimelineWaveform
+                                mergedPeaks={mergedPeaks}
+                                isDecoding={isWaveformDecoding ?? false}
+                                activeSec={activeSec}
+                                totalSec={totalSec}
+                                clips={audioClips}
+                              />
+                              <div
+                                className={clsx(
+                                  TIMELINE_HOVER_PLAYHEAD,
+                                  hoverPct != null && TIMELINE_HOVER_PLAYHEAD_VISIBLE,
+                                )}
+                                id="timeline-hover-playhead"
+                                aria-hidden={true}
+                                style={hoverPct != null ? { left: `${hoverPct}%` } : undefined}
+                              />
+                              <div
+                                ref={glowRef}
+                                className={TIMELINE_MARKER_PLAYHEAD_GLOW}
+                                id="timeline-marker-playhead-glow"
+                                aria-hidden={true}
+                              />
+                              <TimelineMarkers
+                                events={events}
+                                status={status}
+                                totalSec={totalSec}
+                                selectedEventId={selectedEventId}
+                                onMouseOver={onMarkersMouseOver}
+                                onMouseMove={onMarkersMouseMove}
+                                onMouseOut={onMarkersMouseOut}
+                                onClick={onMarkersClick}
+                              />
+                              <div
+                                className={TIMELINE_PLAYHEAD}
+                                id="timeline-playhead"
+                                style={{ left: `${playheadPct}%` }}
+                              />
+                            </div>
+                          </div>
+                          <TimelineTicks totalSec={totalSec} />
+                        </div>
+                        {/* Half-label hang only — keeps ticks clear of overflow clip
+                          without extra air above the zoom rail. */}
+                        <div className="h-[0.32rem] w-full shrink-0" aria-hidden="true" />
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <TimelineTicks totalSec={totalSec} />
+
+                {/* Zoom rail visible in strip mode; scrubber keeps ~80% lane height above. */}
+                <div
+                  className={clsx(ZOOM_RAIL_STRIP, stripLaneSlot != null && 'hidden')}
+                  role="toolbar"
+                  aria-label="Timeline zoom"
+                  aria-hidden={stripLaneSlot != null || undefined}
+                >
+                  <div
+                    ref={zoomTooltipRef}
+                    className={clsx(ZOOM_TOOLTIP, 'hidden')}
+                    id="timeline-zoom-tooltip"
+                    role="status"
+                    aria-live="polite"
+                  />
+                  <input
+                    ref={zoomValueRef}
+                    type="text"
+                    className={clsx(ZOOM_VALUE, 'mono', 'faint')}
+                    id="timeline-zoom-value"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Timeline zoom percent"
+                    defaultValue="100%"
+                    disabled={controlsLocked}
+                    tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
+                  />
+                  <div ref={zoomRangeRef} className={ZOOM_RANGE} id="timeline-zoom-range">
+                    <div ref={zoomBarRef} className={ZOOM_BAR} id="timeline-zoom-bar" />
+                    <button
+                      ref={zoomOutRef}
+                      type="button"
+                      className={ZOOM_HANDLE}
+                      id="timeline-zoom-out"
+                      aria-label="Reduce timeline zoom"
+                      disabled={controlsLocked}
+                      tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
+                    />
+                    <button
+                      ref={zoomInRef}
+                      type="button"
+                      className={ZOOM_HANDLE}
+                      id="timeline-zoom-in"
+                      aria-label="Increase timeline zoom"
+                      disabled={controlsLocked}
+                      tabIndex={stripLaneSlot != null || controlsLocked ? -1 : undefined}
+                    />
+                  </div>
+                  {/* Position readout only — full session TC lives in the transport aside. */}
+                  <div className="flex shrink-0 flex-row items-baseline gap-[0.15rem] whitespace-nowrap [font-variant-numeric:tabular-nums]">
+                    <span
+                      className="text-[0.85rem] font-semibold tracking-[0.02em] text-v5-text"
+                      id="timeline-readout-pos"
+                    >
+                      {fmtHmsFromSec(activeSec)}
+                    </span>
+                    <span
+                      className="text-[0.65rem] font-medium tracking-[0.04em] text-v5-muted opacity-[0.82]"
+                      id="timeline-readout-total"
+                    >
+                      {` / ${fmtHmsFromSec(rollingSec)}`}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-
-          <div className={ZOOM_RAIL} role="toolbar" aria-label="Timeline zoom">
-            <div
-              ref={zoomTooltipRef}
-              className={clsx(ZOOM_TOOLTIP, 'hidden')}
-              id="timeline-zoom-tooltip"
-              role="status"
-              aria-live="polite"
-            />
-            <input
-              ref={zoomValueRef}
-              type="text"
-              className={clsx(ZOOM_VALUE, 'mono', 'faint')}
-              id="timeline-zoom-value"
-              inputMode="decimal"
-              autoComplete="off"
-              spellCheck={false}
-              aria-label="Timeline zoom percent"
-              defaultValue="100%"
-            />
-            <div ref={zoomRangeRef} className={ZOOM_RANGE} id="timeline-zoom-range">
-              <div ref={zoomBarRef} className={ZOOM_BAR} id="timeline-zoom-bar" />
-              <button
-                ref={zoomOutRef}
-                type="button"
-                className={ZOOM_HANDLE}
-                id="timeline-zoom-out"
-                aria-label="Reduce timeline zoom"
-              />
-              <button
-                ref={zoomInRef}
-                type="button"
-                className={ZOOM_HANDLE}
-                id="timeline-zoom-in"
-                aria-label="Increase timeline zoom"
-              />
-            </div>
-            <div className={EXT_TIMECODE}>
-              <span className={EXT_TIMECODE_POS} id="timeline-readout-pos">
-                {fmtHmsFromSec(activeSec)}
-              </span>
-              <span className={EXT_TIMECODE_TOTAL} id="timeline-readout-total">
-                {` / ${fmtHmsFromSec(rollingSec)}`}
-              </span>
-            </div>
-          </div>
-        </div>
+        ) : null}
       </div>
 
       {/* Marker tooltip — React-owned, positioned in useLayoutEffect. */}

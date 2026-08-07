@@ -5,6 +5,7 @@
 import type { CatalogDb } from '../node/catalogStore';
 import type { SettingsBlob, StudioProfile } from '../studio';
 import { blobToProfile, ValidationError } from '../studio';
+import { allocateTitleForBase, dateSuffixBase, padEpisodeToken } from './sessionTitleDerivation';
 import type { Row } from './shared';
 import type { ShowsStore } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
@@ -99,24 +100,96 @@ export class SessionIndexStore {
         opts.startedAtUtc,
         opts.createdAtUtc,
       );
-      this.bumpShowNextEpisodeFromEpisodeString(opts.showId, opts.episode);
+      // session-title-suffix (design D1, gate ruling 2026-08-02): creating a
+      // session no longer bumps any per-show next-episode counter — the old
+      // `_bump_show_next_episode_from_episode_string` step is REMOVED here,
+      // not merely disabled. `shows.next_episode` is soft-retained (unused)
+      // — see the 0005 migration + showsStore.ts.
     });
     return id;
   }
 
-  /** _bump_show_next_episode_from_episode_string. */
-  bumpShowNextEpisodeFromEpisodeString(showId: string, episode: string): void {
-    const ep = (episode || '').trim().toUpperCase();
-    if (ep.startsWith('BONUS')) return;
-    const m = /^(\d+)$/.exec(ep);
-    if (!m) return;
-    const n = Number(m[1]);
-    if (n > 10000) return;
-    this.db.run(
-      'UPDATE shows SET next_episode = MAX(COALESCE(next_episode, 1), ?) WHERE id = ?',
-      n + 1,
-      showId,
-    );
+  /**
+   * session-title-suffix (design D2/D3/D4/D6, task 1.3) — the create-path
+   * title/episode derivation, run inside ONE catalog transaction so the
+   * Date-mode collision read (existing titles for the show) and the session
+   * INSERT can never observe/produce a duplicate title under concurrent
+   * same-tick creates: `CatalogDb.tx` wraps a real `better-sqlite3`
+   * transaction, and — because the whole catalog is a single synchronous,
+   * single-process SQLite handle (project invariant) — nothing else can run
+   * between the SELECT and the INSERT below regardless of how many requests
+   * are in flight. Throws `ValidationError` (mapped to `400` by the router)
+   * for the two derivation-time rejections named in the spec: a blank
+   * trimmed show code, and a blank episode under Episode-suffix derivation.
+   */
+  createSessionForShow(opts: {
+    showId: string;
+    showCode: string;
+    /** Raw `shows.title_suffix` column value; anything other than exactly
+     * `'episode'` is treated as `'date'` (the only two persisted values). */
+    titleSuffix: string;
+    /** Trimmed `title` from the request body; `''` means "not supplied". */
+    explicitTitle: string;
+    /** Trimmed `episode` from the request body; `''` means blank/omitted. */
+    rawEpisode: string;
+    frameRate: number;
+    startOffsetFrames: number;
+    notes: string;
+    startedAtUtc: string;
+    createdAtUtc: string;
+    /** The SAME create-path clock read used for startedAtUtc/createdAtUtc
+     * (design D2) — callers must not take a second clock read for this. */
+    nowMs: number;
+  }): { id: string; title: string; episode: string } {
+    return this.db.tx(() => {
+      let title: string;
+      let episode: string;
+      if (opts.explicitTitle) {
+        // An explicit non-blank title always wins over derivation (D6) —
+        // stored as-is (already trimmed by the router); episode is stored
+        // as sent, also already trimmed.
+        title = opts.explicitTitle;
+        episode = opts.rawEpisode;
+      } else {
+        const code = opts.showCode.trim();
+        if (!code) {
+          throw new ValidationError('Show code is required to derive a session title.');
+        }
+        if (opts.titleSuffix === 'episode') {
+          if (!opts.rawEpisode) {
+            throw new ValidationError(
+              'episode is required for shows using the Episode Number suffix.',
+            );
+          }
+          title = `${code}_${padEpisodeToken(opts.rawEpisode)}`;
+          episode = opts.rawEpisode;
+        } else {
+          const base = dateSuffixBase(code, opts.nowMs);
+          // Full inventory for the show, INCLUDING archived/ui_hidden rows
+          // (D3) — never SQL LIKE/GLOB (see sessionTitleDerivation.ts for
+          // why); matching happens in JS over the plain title strings.
+          const existingTitles = this.db
+            .all<Row>('SELECT title FROM sessions WHERE show_id = ?', opts.showId)
+            .map((r) => String(r.title ?? ''));
+          title = allocateTitleForBase(existingTitles, base);
+          // Under Date derivation the stored episode is ALWAYS '' — a
+          // non-blank request episode is never retained as a fake episode
+          // value (D6).
+          episode = '';
+        }
+      }
+      const id = this.createSessionIndex({
+        showId: opts.showId,
+        title,
+        frameRate: opts.frameRate,
+        startOffsetFrames: opts.startOffsetFrames,
+        episode,
+        notes: opts.notes,
+        startedAtUtc: opts.startedAtUtc,
+        createdAtUtc: opts.createdAtUtc,
+      });
+      return { id, title, episode };
+    });
   }
 
   /** update_session — title + start_offset_frames. Throws ValidationError on empty title. */

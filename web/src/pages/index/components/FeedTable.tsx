@@ -9,7 +9,8 @@ import { useCallback } from 'react';
 // `text-center` (its legacy `.sheet th` centered headers, still in @layer legacy through
 // this slice) so only one alignment utility lands on each <th> (no order collision).
 const FEED_TH =
-  'sticky top-0 z-[1] px-[0.55rem] py-[0.38rem] text-[0.84rem] font-semibold tracking-[0.05em] uppercase whitespace-nowrap bg-surface-raised [border-bottom:1px_solid_var(--border)] text-muted';
+  // Cool translucent navy (not warm --surface-raised grey) so headers match V5 glass.
+  'sticky top-0 z-[1] px-[0.55rem] py-[0.38rem] text-[0.84rem] font-semibold tracking-[0.05em] uppercase whitespace-nowrap bg-[rgba(19,27,48,0.72)] [border-bottom:1px_solid_var(--v5-line)] text-v5-muted';
 // Sort glyphs: the sorted header's button gets a ' ↑'/' ↓' `::after` (leading space
 // preserved via Tailwind's `_`→space conversion in the arbitrary content value).
 const FEED_TH_SORT_ASC = "[&_button]:after:content-['_↑'] [&_button]:after:text-v5-primary";
@@ -51,7 +52,7 @@ export const FEED_SUMMARY_TEXTAREA =
 // max-md:px-4 (ui-refresh): with five top-level tabs the toolbar trio
 // (Edit / Time Display / Filter) was clipping at the right edge on phones.
 export const FEED_GLASS_BTN =
-  'box-border px-6 max-md:px-4 py-[0.55rem] font-[family-name:"Inter",var(--font-poppins),ui-sans-serif,system-ui,sans-serif] text-[0.72rem] font-semibold tracking-[0.1em] uppercase rounded-v5-sm border border-solid border-v5-border [background:linear-gradient(165deg,rgba(255,255,255,0.08),rgba(15,23,42,0.45))] text-[rgba(248,250,252,0.92)] cursor-pointer [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06)] [transition:border-color_0.15s_ease,background_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] not-disabled:hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] not-disabled:hover-always:[background:linear-gradient(165deg,rgba(255,255,255,0.1),rgba(15,23,42,0.5))] disabled:opacity-45 disabled:cursor-not-allowed';
+  'box-border inline-flex items-center justify-center px-6 py-[0.55rem] font-[family-name:"Inter",var(--font-poppins),ui-sans-serif,system-ui,sans-serif] text-[0.72rem] font-semibold tracking-[0.1em] uppercase rounded-v5-sm border border-solid border-v5-border [background:linear-gradient(165deg,rgba(255,255,255,0.08),rgba(15,23,42,0.45))] text-[rgba(248,250,252,0.92)] cursor-pointer [box-shadow:inset_0_1px_0_rgba(255,255,255,0.06)] [transition:border-color_0.15s_ease,background_0.15s_ease,box-shadow_0.15s_ease,opacity_0.15s_ease] not-disabled:hover-always:border-[color-mix(in_srgb,var(--v5-primary)_45%,var(--v5-border))] not-disabled:hover-always:[background:linear-gradient(165deg,rgba(255,255,255,0.1),rgba(15,23,42,0.5))] disabled:opacity-45 disabled:cursor-not-allowed max-md:min-h-[2.55rem] max-md:min-w-[2.55rem] max-md:px-2.5 max-md:tracking-normal';
 /** Primary glass button — sky accent border/bg/text + exclusive hover. Layer it after
  *  FEED_GLASS_BTN; the accent utilities replace the base border/bg/text. */
 export const FEED_GLASS_BTN_PRIMARY =

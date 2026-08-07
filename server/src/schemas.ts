@@ -16,7 +16,13 @@ export const showUpdateEntrySchema = z.object({
   show_id: z.string().min(1).max(120),
   name: z.string().min(1).max(200).nullish(),
   show_code: z.string().min(1).max(40).nullish(),
-  next_episode: z.number().int().min(1).max(999999).nullish(),
+  // session-title-suffix (design D1/D8, gate ruling 2026-08-02): the wire
+  // `next_episode` update key is gone — there is deliberately no field for
+  // it here. A legacy client that still sends `next_episode` is unaffected:
+  // zod's default object mode strips unrecognized keys, so the key is
+  // ignored (never reaches `profile.ts`'s field-mapping) and does NOT cause
+  // a 400 solely because it's present.
+  title_suffix: z.enum(['date', 'episode']).nullish(),
   categories: z.array(z.record(z.unknown())).nullish(),
   event_palette: z.array(z.string()).nullish(),
   event_palette_preset: z.string().max(32).nullish(),
@@ -36,7 +42,11 @@ export const newSessionBodySchema = z.object({
   frame_rate: z.number().min(1.0).max(120.0).default(24.0),
   start_offset_frames: z.number().int().min(0).default(0),
   show_id: z.string().min(1).max(120),
-  episode: z.string().min(1).max(80),
+  // session-title-suffix (design D6): blank/omitted episode is valid at the
+  // schema level — whether it's REQUIRED depends on the linked show's
+  // title_suffix (date vs episode) and whether an explicit title bypasses
+  // derivation, both enforced by the create-path handler (400), not here.
+  episode: z.string().max(80).nullish(),
   notes: z.string().max(2000).nullish(),
 });
 export type NewSessionBody = z.infer<typeof newSessionBodySchema>;
@@ -67,6 +77,29 @@ export const eventUpdateBodySchema = z.object({
   timecode_hms: z.string().min(8).max(8),
 });
 export type EventUpdateBody = z.infer<typeof eventUpdateBodySchema>;
+
+export const eventGenerateBodySchema = z
+  .object({
+    regenerate: z.boolean().optional(),
+    // event-generate-hardening D5: DoS-hardening bounds, not semantic limits —
+    // 500 entries exceeds any realistic instruction-bearing set; category_id
+    // mirrors eventUpdateBodySchema.category's 200-char cap (ids are UUIDs);
+    // option_label mirrors the settings write path's 200-char dropdown-option
+    // cap (validateCategoriesList), so no storable label is ever excluded.
+    selection: z
+      .array(
+        z.object({
+          category_id: z.string().max(200),
+          option_label: z.string().max(200).nullable().optional(),
+        }),
+      )
+      .max(500)
+      .optional(),
+  })
+  .refine((body) => !(body.regenerate === true && (body.selection?.length ?? 0) > 0), {
+    message: 'regenerate cannot be combined with a non-empty selection',
+  });
+export type EventGenerateBody = z.infer<typeof eventGenerateBodySchema>;
 
 export const audioRecordingLeaseBodySchema = z.object({
   client_id: z.string().min(1).max(256),

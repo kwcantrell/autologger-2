@@ -130,6 +130,7 @@ function eventsFixture(events: LogEvent[]): EventsResponse {
     logged_event_count: events.length,
     offset: 0,
     limit: 200,
+    has_auto_generated: false,
   };
 }
 

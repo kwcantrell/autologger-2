@@ -100,6 +100,18 @@
     }
   }
 
+  /* YouTube import status — orange ↔ darker orange (MaximizeLogStrip). */
+  --animate-yt-import-pulse: yt-import-pulse 1.6s ease-in-out infinite;
+  @keyframes yt-import-pulse {
+    0%,
+    100% {
+      color: #fb923c;
+    }
+    50% {
+      color: #c2410c;
+    }
+  }
+
   /* Timeline nav-marker message marquee. Guarded at the consumer (Timeline's
    * NAV_MSG_TRACK carries motion-reduce:animate-none! — ui-refresh; the loop
    * was previously unguarded). */
@@ -122,6 +134,29 @@
     }
     100% {
       background-position: 200% 0;
+    }
+  }
+
+  /* Timeline marker → Event Feed row reveal flash (uniform fill; accent is first-cell only).
+   * Hold full brightness 1.25s, then fade 1.25s (same fade as before; total 2.5s). */
+  --animate-event-row-flash: event-row-flash 2.5s ease-out forwards;
+  @keyframes event-row-flash {
+    0%,
+    50% {
+      background-color: rgba(56, 189, 248, 0.16);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  --animate-event-row-flash-accent: event-row-flash-accent 2.5s ease-out forwards;
+  @keyframes event-row-flash-accent {
+    0%,
+    50% {
+      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.85);
+    }
+    100% {
+      box-shadow: inset 3px 0 0 transparent;
     }
   }
 
@@ -226,6 +261,17 @@
     linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-strong-bot));
   --v5-glass-face-aside: linear-gradient(180deg, rgba(255, 255, 255, 0.078) 0%, rgba(255, 255, 255, 0) 40%),
     linear-gradient(180deg, var(--v5-glass-strong-top), var(--v5-glass-bot));
+  /* Feed sheet: open glass so page glow/noise reads through. Top sits close to
+   * bot (subtle fade) — active tabs use --v5-glass-feed-surface-top so they
+   * bleed into the sheet with no color mismatch. */
+  --v5-glass-feed-top: rgba(16, 23, 41, 0.58);
+  --v5-glass-feed-bot: rgba(11, 16, 30, 0.48);
+  --v5-glass-feed-surface-top: color-mix(in srgb, #ffffff 4%, var(--v5-glass-feed-top));
+  --v5-glass-face-feed: linear-gradient(
+    180deg,
+    var(--v5-glass-feed-surface-top),
+    var(--v5-glass-feed-bot)
+  );
   --v5-glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.09);
   --v5-border: rgba(255, 255, 255, 0.06);
   --v5-border-strong: rgba(255, 255, 255, 0.1);
@@ -285,7 +331,7 @@
   --v4-ctrl-btn-w: 4.05959375rem;
   --v4-ctrl-btn-h: 3.81625rem;
   --v4-ctrl-btn-my: 0.80625rem;
-  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 2);
+  --v4-session-nav-btn-w: calc(var(--v4-ctrl-btn-w) * 1.4);
   --v4-session-nav-btn-h: calc(var(--v4-ctrl-btn-h) / 2);
   --v4-clock-box-h: 3.06375rem;
   --v4-clock-box-mb: 0.5375rem;
@@ -336,6 +382,9 @@
 @utility glass-face-aside {
   background: var(--v5-glass-face-aside);
 }
+@utility glass-face-feed {
+  background: var(--v5-glass-face-feed);
+}
 @utility shadow-glow-v5 {
   box-shadow: var(--v5-shadow-glow);
 }
@@ -369,6 +418,26 @@
     --v6-rail-recent-shelf-pad: 0.6rem;
     --v6-rail-recent-shelf-radius: 1rem;
     --v6-rail-recent-shelf-bg: linear-gradient(180deg, rgb(54 66 83 / 35%) 0%, rgb(26 26 43 / 50%));
+  }
+
+  /* Timeline marker click → temporary Event Feed row highlight.
+   * Same fill on every cell; left accent only on the first so column seams stay even. */
+  #v4-log-sheet tr.event-row-flash > td {
+    animation: var(--animate-event-row-flash);
+  }
+  #v4-log-sheet tr.event-row-flash > td:first-child {
+    animation:
+      var(--animate-event-row-flash),
+      var(--animate-event-row-flash-accent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #v4-log-sheet tr.event-row-flash > td {
+      animation: none;
+      background-color: rgba(56, 189, 248, 0.12);
+    }
+    #v4-log-sheet tr.event-row-flash > td:first-child {
+      box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.7);
+    }
   }
 }
 
@@ -844,68 +913,36 @@
   }
 }
 
-/* --- Top-bar recording strip reveal (ui-refresh) ---
- * Hidden unless body.v4-is-recording (toggled by AudioRecorder while the mic is
- * live). Display comes from these ancestor rules, not per-element utilities, so
- * the swap can't be beaten by the utilities layer. */
+/* --- Strip recording meters (moved from AppShell top-bar) ---
+ * Both keyed to `body.v4-is-recording` (AudioRecorder, phase === 'recording'):
+ * a LOCAL-recorder signal, per web-session-console "Truthful recording
+ * indication" — the session-wide lease must not reveal this client's meter
+ * (a remote client's recording would show an empty bar here). */
 @layer components {
-  #top-bar-recording,
-  #top-bar-recording-dur {
+  #top-bar-recording-dur,
+  #top-bar-mic-level {
     display: none;
-  }
-  body.v4-is-recording #top-bar-recording {
-    display: inline-flex;
   }
   body.v4-is-recording #top-bar-recording-dur {
     display: inline;
   }
+  body.v4-is-recording #top-bar-mic-level {
+    display: inline-flex;
+  }
 }
 
-/* --- Capture / playback panel show-hide (body[data-v4-transport] + [data-v5-live-log]) ---
- * The `.v4-log-top__capture` / `.v4-log-top__playback` base `display:none` and every
- * ancestor rule that toggles them live together here: `display` cannot be an inline
- * utility on these elements because the utilities layer would beat these ancestor
- * selectors, breaking the capture-vs-playback swap. Kept AS-WRITTEN per the plan.
- * PARITY NOTE (post-migration open question): SessionWorkspace.tsx DOES set
- * `document.body.dataset.v4Transport = effectiveTransport` on every transport change,
- * so unlike the static `"rolling"` value the audit flagged in the Python app's
- * index.html, here the attribute IS dynamic. */
+/* --- Retired twin-panel capture / playback deck swap ---
+ * Sole fused strip (`MaximizeLogStrip`) stays mounted for every transport state.
+ * Rolling/recording swaps the scrubber lane for category buttons in React
+ * (`stripLaneSlot`); do NOT hide `.v5-session-timeline-stack` on live-log.
+ * Stale `__capture` / `__playback` element classes stay display:none if any
+ * leftover DOM still emits them. */
 @layer components {
   .v4-log-top__capture {
     display: none;
   }
   .v4-log-top__playback {
     display: none;
-  }
-  body[data-v4-transport='rolling'] .v4-log-top__capture,
-  body[data-v4-transport='recording'] .v4-log-top__capture {
-    display: flex;
-  }
-  /* ui-refresh (core-loop discoverability): the capture strip is ALSO visible in
-   * the stop/play states — buttons render disabled with an inline "press Roll"
-   * hint (SessionWorkspace), so a stopped session teaches the logging loop
-   * instead of hiding it. While rolling/recording the [data-v5-live-log='1']
-   * rules below still swap the strip into the live-log dock as before. */
-  body[data-v4-transport='play'] .v4-log-top__capture,
-  body[data-v4-transport='stop'] .v4-log-top__capture {
-    display: flex;
-  }
-  body[data-v4-transport='play'] .v4-log-top__playback,
-  body[data-v4-transport='stop'] .v4-log-top__playback {
-    display: flex;
-  }
-
-  /* Live-log docked (rolling/recording): hide the empty capture card, hide the
-   * timeline stack, force-show the playback timeline panel. Dynamic attribute
-   * (SessionWorkspace.tsx:261 sets data-v5-live-log). */
-  #v4-log-session[data-v5-live-log='1'] .v5-session-timeline-stack {
-    display: none !important;
-  }
-  #v4-log-session[data-v5-live-log='1'] .v4-log-top__capture {
-    display: none !important;
-  }
-  #v4-log-session[data-v5-live-log='1'] .v4-log-top__playback.v5-session-timeline-panel {
-    display: flex !important;
   }
 }
 
@@ -960,9 +997,22 @@
  * the two top-radius overrides carry `!important` to beat it — the toggle-contract use of
  * `!` the recipe sanctions for beating a later layer. */
 @layer components {
+  /* Square TL under the first tab. No top border / top hairline / top rim so the
+   * active tab bleeds into the sheet; TR stays softly rounded. The sheet's face
+   * comes ONLY from the glass-face-feed UTILITY (utilities layer beats this
+   * components-layer rule, and its `background` shorthand would reset any
+   * `background-color` set here) — the tab↔sheet seam matches because that
+   * gradient's top stop is `--v5-glass-feed-surface-top`, the same var the
+   * active tab uses. */
   .v5FeedTabsPanel .v4-log-sheet.v5-event-feed {
-    border-top-left-radius: 0.95rem !important;
-    border-top-right-radius: 0.95rem !important;
+    border-top-left-radius: 0 !important;
+    border-top-right-radius: 0.7rem !important;
+    border-top-width: 0 !important;
+    /* Drop panel-elevate's top highlight + 1px ring (reads as a seam under the tab). */
+    box-shadow:
+      0 22px 60px rgba(2, 8, 23, 0.58),
+      0 0 128px -36px rgba(56, 189, 248, 0.14),
+      0 0 64px -28px rgba(14, 165, 233, 0.09) !important;
     position: relative;
     z-index: 1;
   }
