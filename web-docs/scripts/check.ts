@@ -8,8 +8,8 @@
 // Gate battery status:
 //   - component coverage (task 2.1/2.2)        IMPLEMENTED below
 //   - edge derivation + snapshot conformance    IMPLEMENTED below (task 3.1/3.2)
-//   - relationship evidence                     STUB — task 4.1
-//   - capability accounting                     STUB — task 4.2
+//   - relationship evidence                     IMPLEMENTED below (task 4.1)
+//   - capability accounting                     IMPLEMENTED below (task 4.2)
 //   - diagram validity (parse/structural/budget) STUB — task 6.3
 // Each stub is a clearly marked no-op that exits 0 — it must be replaced
 // with the real gate in its task, never left as a silent pass once that
@@ -17,17 +17,17 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkCapabilityAccounting, pendingCapabilities } from '../model/capabilities';
 import { model } from '../model/components';
 import { checkCoverage, isMappedOrExcluded, mappedFiles } from '../model/coverage';
 import { diffEdgeSnapshot, type EdgeSnapshot, projectComponentEdges } from '../model/edges';
+import { checkRelationshipEvidence } from '../model/relationships';
 import { extractFileImports } from '../src/lib/extractImports';
+import { listAllActiveDeltaCapabilities, listBaselineCapabilities } from '../src/lib/openspec';
 import { listTrackedFiles, repoRoot } from '../src/lib/repo';
 
 export function gatesNotYetImplementedMessage(): string {
-  return (
-    'web-docs: relationship evidence, capability accounting, and diagram validity ' +
-    'gates not yet implemented — land in later phases.'
-  );
+  return 'web-docs: diagram validity gates not yet implemented — land in a later phase.';
 }
 
 const SNAPSHOT_PATH = 'web-docs/model/edges.snapshot.json';
@@ -84,14 +84,41 @@ function runEdgeSnapshotGate(): string[] {
   return issues;
 }
 
-/** STUB — task 4.1: check each declared relationship's evidence rule against the live tree. */
-function runRelationshipEvidenceGateStub(): string[] {
-  return [];
+/** Checks each declared relationship's evidence rules against the live tree (task 4.1). */
+function runRelationshipEvidenceGate(root: string): string[] {
+  const readFile = (repoRelativePath: string): string | undefined => {
+    try {
+      return readFileSync(path.join(root, repoRelativePath), 'utf8');
+    } catch {
+      return undefined;
+    }
+  };
+  return checkRelationshipEvidence(model, readFile).map(
+    (issue) => `[relationships:${issue.kind}] ${issue.message}`,
+  );
 }
 
-/** STUB — task 4.2: account for every baseline openspec/specs/ capability. */
-function runCapabilityAccountingGateStub(): string[] {
-  return [];
+/**
+ * Accounts for every baseline openspec/specs/ capability (attached /
+ * cross-cutting / process), fails dangling model capability references, and
+ * prints (non-fatally) capabilities named only by active-change deltas —
+ * pending-grace (task 4.2).
+ */
+function runCapabilityAccountingGate(allTrackedFiles: string[]): string[] {
+  const baseline = listBaselineCapabilities(allTrackedFiles);
+  const deltas = listAllActiveDeltaCapabilities(allTrackedFiles);
+
+  const pending = pendingCapabilities(baseline, deltas);
+  if (pending.length > 0) {
+    console.log(
+      `web-docs: pending capabilities (named only by an active change's delta specs, not yet ` +
+        `in the openspec/specs/ baseline): ${pending.join(', ')}`,
+    );
+  }
+
+  return checkCapabilityAccounting(model, baseline, deltas).map(
+    (issue) => `[capabilities:${issue.kind}] ${issue.message}`,
+  );
 }
 
 /** STUB — task 6.3: jsdom-bootstrapped mermaid parse + structural checks + size budgets. */
@@ -100,14 +127,16 @@ function runDiagramValidityGateStub(): string[] {
 }
 
 export function runAllGates(): string[] {
+  const root = repoRoot();
   const trackedTsFiles = listTrackedFiles({ extensions: ['.ts', '.tsx'] });
+  const allTrackedFiles = listTrackedFiles();
   const coverageIssues = checkCoverage(trackedTsFiles, model);
 
   return [
     ...coverageIssues.map((issue) => `[coverage:${issue.kind}] ${issue.message}`),
     ...runEdgeSnapshotGate(),
-    ...runRelationshipEvidenceGateStub(),
-    ...runCapabilityAccountingGateStub(),
+    ...runRelationshipEvidenceGate(root),
+    ...runCapabilityAccountingGate(allTrackedFiles),
     ...runDiagramValidityGateStub(),
   ];
 }
