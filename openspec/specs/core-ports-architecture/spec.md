@@ -12,7 +12,11 @@ consolidated behind `requireSession`). Established by the `de-cloudflare-strong-
 change (archived 2026-07-14), which retired the departed Cloudflare platform's names and
 API shapes. The port ledger's types now live in the standalone `@autologger/ports`
 package, with domain modules split into `@autologger/domain` and `@autologger/contract`,
-established by the `package-split-foundation` change (archived 2026-08-07).
+established by the `package-split-foundation` change (archived 2026-08-07). The
+`persistence-package-extraction` change (archived 2026-08-07) established the
+`@autologger/session-core` and `@autologger/catalog` persistence facades and their
+`createCatalog` factory, and retired the former `appEnv.ts` allowance to name the
+concrete `SessionHubRegistry`/`Catalog` classes.
 
 ## Requirements
 
@@ -31,14 +35,18 @@ a legacy name rather than changed.
 
 #### Scenario: Session directory renamed
 - **WHEN** the per-session spine is located
-- **THEN** it lives under `server/src/session/` (not `durable/`) and the catalog facade is `catalog.ts` (not `d1.ts`)
+- **THEN** it lives in `@autologger/session-core` (`packages/session-core/src/`, not a `durable/` directory) and the catalog facade is `catalog.ts` in `@autologger/catalog` (not `d1.ts`)
 
 ### Requirement: Session runtime is a synchronous, substitutable port
 
 The session spine SHALL depend on a `SessionRuntime` port exposing SQL, socket fan-out,
 an alarm/scheduler, and a clock — as an **interface**, so a fake runtime can be supplied in
 tests without touching `SessionCore`. The port SHALL be synchronous so that `SessionHub`
-RPC bodies remain zero-`await`, and it SHALL abstract over embedded stores only.
+RPC bodies remain zero-`await`, and it SHALL abstract over embedded stores only. The
+port's normative home is `@autologger/session-core` (alongside `SessionCore`), not
+`@autologger/ports` — it is the session package's internal substitution seam, consumed
+by the package's stores and by test fakes, and moving it to L0 would drag
+session-internal types into the ports package for no consumer benefit.
 
 #### Scenario: Hub methods contain no awaits
 - **WHEN** any `SessionHub`/domain-store mutating or reading RPC body is inspected
@@ -68,7 +76,7 @@ methods SHALL NOT declare `async`/return promises for persistence that is synchr
 `run()` SHALL return an affected-row count (`{ changes }`) for callers that detect changes.
 
 #### Scenario: No async costume in catalog stores
-- **WHEN** the catalog stores under `server/src/db/` are inspected
+- **WHEN** the catalog stores in `@autologger/catalog` (`packages/catalog/src/`) are inspected
 - **THEN** they contain no `await` on synchronous persistence, expose `all()/run()/tx()` rather than `prepare().bind()`, and their methods are synchronous
 
 #### Scenario: Change-detecting callers still work
@@ -193,23 +201,25 @@ implementations (`systemClock` lives with the composition root) and SHALL NOT im
 from `server/src`, directly or transitively. Concrete implementations SHALL declare
 conformance (`implements`) against the package interfaces from their own homes.
 
-The app-env composition (`Ports` with `sessions: SessionHubRegistry`, `Variables` with
-`catalog: Catalog`, and `AppEnv`) SHALL live in a single app-level module
-(`server/src/appEnv.ts`) that extends the package's types; that module is the only
-app-level type-composition point permitted to name the concrete `SessionHubRegistry`
-and `Catalog` types, which retain concrete typing as **named residuals** owned by the
-session-core and catalog extraction changes. The former `server/src/types.ts` barrel
-SHALL be removed with no permanent re-export shim. The per-request in-place
-`env`-mutation identity contract (`@hono/node-ws` upgrade handshake) SHALL be preserved
-by the move.
+The app-env composition (`Ports`, `Variables`, and `AppEnv`) SHALL live in a single
+app-level module (`server/src/appEnv.ts`) that composes the packages' types. The former
+allowance for that module to name the concrete `SessionHubRegistry` and `Catalog`
+classes is **retired**: `appEnv.ts` SHALL name no concrete persistence class —
+`Ports.sessions` SHALL be typed as the session-core package's registry facade interface
+and `Variables.catalog` as the catalog package's facade interface (the server-wide
+concrete-naming and construction rules live in the "Persistence facades are consumed
+through package-exported interfaces" requirement). The former `server/src/types.ts`
+barrel SHALL remain removed with no permanent re-export shim. The per-request in-place
+`env`-mutation identity contract (`@hono/node-ws` upgrade handshake) SHALL be
+preserved.
 
 #### Scenario: Ports package is interface-only and closed
 - **WHEN** `@autologger/ports` is inspected
 - **THEN** it contains no runtime implementations and no import that resolves into `server/src`, and each of the six port types is an interface or type declaration
 
-#### Scenario: God-barrel retired
-- **WHEN** the server source is searched for imports of `server/src/types`
-- **THEN** none remain, `server/src/types.ts` does not exist, and `appEnv.ts` names no concrete class other than `SessionHubRegistry` and `Catalog`
+#### Scenario: God-barrel stays retired and the concrete-class allowance is gone
+- **WHEN** the server source is searched for imports of `server/src/types` and `appEnv.ts` is inspected
+- **THEN** no `types.ts` import remains, `server/src/types.ts` does not exist, and `appEnv.ts` names no concrete class — its persistence types are the facade interfaces exported by `@autologger/session-core` and `@autologger/catalog`
 
 #### Scenario: Implementations conform to the package interfaces
 - **WHEN** the concrete `BlobStore`, `KvStore`, `PresenceRegistry`, and `CatalogDb` classes are inspected
@@ -218,6 +228,61 @@ by the move.
 #### Scenario: WebSocket upgrades still complete after the type move
 - **WHEN** a real WebSocket upgrade is driven end-to-end after the change
 - **THEN** the upgrade completes and messages are delivered, confirming the env-identity contract survived
+
+### Requirement: Persistence facades are consumed through package-exported interfaces
+
+`@autologger/session-core` SHALL export explicit facade interfaces for the session hub
+RPC surface and the hub registry, and `@autologger/catalog` SHALL export a facade
+interface for `Catalog` and interfaces for its five stores (`shows`, `studios`, `auth`,
+`sessions`, `profile`). Facade membership is determined by consumption, not
+convenience: a public member is on a facade **iff** it is reached through
+`Ports.sessions` / `Variables.catalog` by at least one consumer outside the package
+(production call sites, plus the established integration-test paths — e.g. `evictIdle`
+via `env.ports.sessions`). The registry facade surface is exactly `get(sessionId)`
+(returning the hub facade), `evictIdle`, and `startSweeper`; coordination internals
+(`lastTouchedMs`, `close`, `hasArmedAlarm`, `socketCount` on the hub; `closeAll` and
+the hub map/sweeper internals on the registry) SHALL stay off the facades. Facade
+interface members SHALL be authored as **property-style function types**
+(`m: (args) => R`), not method syntax, so `strictFunctionTypes` checks parameters
+contravariantly and drift between class and interface fails `tsc --noEmit`.
+
+Concrete classes SHALL declare `implements` against their facade interfaces. Because
+`Catalog` is constructed **per request** (in `middleware/auth.ts`, with `init()`
+refreshing the studio registry once per request before registry reads),
+`@autologger/catalog` SHALL export a factory (`createCatalog(db: CatalogDb)` returning
+the facade type) as the sanctioned construction path outside the composition root; the
+per-request construct-then-`init()` lifecycle SHALL be preserved exactly. Outside the
+packages, production code SHALL otherwise reference the facade interfaces only: the
+composition root (`server/src/node/config.ts`) is the sole production module that
+names the concrete classes.
+
+#### Scenario: Routers and middleware see interfaces only
+- **WHEN** production modules under `server/src/` other than the composition root are searched for imports of the concrete persistence classes (`SessionHub`, `SessionHubRegistry`, `Catalog`, and the five catalog store classes) as values or types
+- **THEN** none remain — they import the package-exported facade interfaces (and `middleware/auth.ts` the `createCatalog` factory), and only `server/src/node/config.ts` names the concrete classes
+
+#### Scenario: Interface-only consumption is continuously enforced
+- **WHEN** a production file under `server/src/` other than `node/config.ts` imports one of the concrete persistence class identifiers from `@autologger/session-core` or `@autologger/catalog` (tests exempt) and the boundary repo test runs
+- **THEN** the test fails — the retirement is enforced by the repo-invariant test, not by one-time inspection
+
+#### Scenario: Per-request catalog lifecycle preserved
+- **WHEN** requests are served after the factory change
+- **THEN** each request constructs a fresh catalog facade via `createCatalog` and runs `init()` before registry reads, exactly as `new Catalog(db)` + `init()` did — request-scoped studio-registry snapshot isolation is unchanged
+
+#### Scenario: Facade conformance is compiler-checked
+- **WHEN** a concrete class member drifts from its facade signature — including a **narrowed parameter type** on a facade member
+- **THEN** `tsc --noEmit` fails: the facades' property-style function-type members are checked contravariantly under `strictFunctionTypes` (method-syntax bivariance is the reason method syntax is not used)
+
+#### Scenario: Narrowing excludes coordination internals
+- **WHEN** the hub and registry facade interfaces are inspected, and a `Ports.sessions`-typed expression references an excluded member
+- **THEN** the hub facade excludes at minimum `lastTouchedMs`, `close`, `hasArmedAlarm`, and `socketCount`, the registry facade excludes `closeAll` and internals, and the excluded-member reference fails `tsc --noEmit`
+
+#### Scenario: No passthrough on the facades
+- **WHEN** the facade interfaces' member declarations are inspected
+- **THEN** no member's declared parameter or return type names a concrete persistence class, a store class, the registry, or `better-sqlite3`'s `Database` — the facades cannot hand out concrete handles
+
+#### Scenario: Behavior reachable through the app is unchanged
+- **WHEN** the full server test suite and the frozen-surface conformance fixtures run after the interface narrowing and factory introduction
+- **THEN** they pass unchanged — no HTTP/WS-observable behavior differs
 
 ### Requirement: Pure domain modules live in the domain package
 
