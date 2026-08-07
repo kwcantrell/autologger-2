@@ -42,9 +42,9 @@ import { JUMP_COLUMN } from './JumpToTimeButton';
 //
 // Resolves an event row's timeline second from `timecode_total_frames /
 // frame_rate` DIRECTLY. Deliberately NOT `eventTimelineSec` (shared/utils/
-// audioClips.ts) ??? that helper falls back to parsing the SMPTE `timecode`
+// audioClips.ts) — that helper falls back to parsing the SMPTE `timecode`
 // string as literal seconds when the frame count is absent, which (a)
-// substitutes 0 for a missing/empty timecode (jumping the playhead to 0:00 ???
+// substitutes 0 for a missing/empty timecode (jumping the playhead to 0:00 —
 // the exact defect this rule exists to eliminate) and (b) carries the
 // non-integer-frame-rate drift `shared/utils/timelineSec.ts`'s converter was
 // built to fix. An event with no frame count is UNRESOLVABLE: no control.
@@ -56,8 +56,8 @@ export function eventRowTimelineSec(event: LogEvent): number | null {
   const sec = frames / fps;
   // Whole-branch audit fix wave, finding M6: the spec requires a row's
   // resolved second to be finite AND non-negative (`sessionTimeToTimelineSec`
-  // enforces the same `sec >= 0` floor). Not currently reachable ??? frames/fps
-  // are both guarded finite and fps > 0 above ??? but a negative
+  // enforces the same `sec >= 0` floor). Not currently reachable — frames/fps
+  // are both guarded finite and fps > 0 above — but a negative
   // `timecode_total_frames` isn't otherwise rejected, so this stays an
   // explicit invariant rather than an accident of the current data shape.
   if (!(sec >= 0)) return null;
@@ -278,7 +278,7 @@ export function EventLogSheet({ sessionId }: Props) {
   // --- Data ---
   const { data: categoriesData } = useShowCategories(sessionId);
   const [loadedLimit, setLoadedLimit] = useState(200);
-  // Fetch-once + WS-driven invalidation (event.changed) ??? no polling.
+  // Fetch-once + WS-driven invalidation (event.changed) — no polling.
   const { data, isPending } = useEvents(sessionId, { limit: loadedLimit });
 
   const categories = categoriesData?.categories ?? [];
@@ -306,17 +306,17 @@ export function EventLogSheet({ sessionId }: Props) {
 
   // --- AUTO GENERATE (auto-generate-event-logs design D9) ---
   // Same machinery as Transcribe/Topics: `useGatedGenerate` owns the 503
-  // latch (per MOUNTED panel ??? this sheet is mounted-hidden and unkeyed, so
+  // latch (per MOUNTED panel — this sheet is mounted-hidden and unkeyed, so
   // the latch deliberately persists across session switches and clears only
   // on reload) and the single inline non-503 error channel.
   const generateEvents = useGenerateEvents(sessionId);
   const { genError, genUnavailable, handleGenerate } = useGatedGenerate(generateEvents.mutate);
   // Run/outcome state is KEYED BY THE SESSION THE RUN STARTED FOR (spec
-  // "Session switch mid-run does not leak state" ??? the AiV2Panel lesson for
+  // "Session switch mid-run does not leak state" — the AiV2Panel lesson for
   // this unkeyed panel): `genRunSessionId` records the starting session, and
   // pending/outcome/error render ONLY while it matches the current
-  // `sessionId`. A mid-run switch leaves the request running (the mutation ???
-  // and the server-side run ??? always complete); the new session's control
+  // `sessionId`. A mid-run switch leaves the request running (the mutation —
+  // and the server-side run — always complete); the new session's control
   // reads idle, and returning to the starting session shows its outcome.
   // Deliberately NOT cleared by the session-change reset effect below.
   const [genRunSessionId, setGenRunSessionId] = useState<string | null>(null);
@@ -329,7 +329,7 @@ export function EventLogSheet({ sessionId }: Props) {
     handleGenerate(body);
   };
   // No-instructions gate (spec "No instructions configured"): a DISTINCT
-  // non-actionable state from the 503 latch ??? derived live from the
+  // non-actionable state from the 503 latch — derived live from the
   // show-categories query, so configuring instructions in Settings re-arms
   // the control without a reload. Only an explicit `false` gates; while the
   // query is unresolved the control stays actionable (a click would surface
@@ -341,7 +341,7 @@ export function EventLogSheet({ sessionId }: Props) {
   // its `unavailable`/`jump` handed to every row as a prop/stable callback.
   // `useTimelineSeek` reads the session-wide clip layout via
   // `AudioClipsContext` (whole-branch audit fix wave, finding C1) rather than
-  // this feed's own (differently-limited) `events` ??? no `events` arg here. ---
+  // this feed's own (differently-limited) `events` — no `events` arg here. ---
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, batchEditMode);
   const jumpReasonId = 'v5-event-feed-jump-reason';
 
@@ -464,7 +464,7 @@ export function EventLogSheet({ sessionId }: Props) {
       if (e.key !== 'Escape') return;
       // Radix's DismissableLayer (the discard-confirm dialog's own Escape
       // handling) calls preventDefault() on the Escape it consumes but does
-      // NOT stopPropagation() ??? so with the discard dialog open, the same
+      // NOT stopPropagation() — so with the discard dialog open, the same
       // Escape that just declined it would otherwise reach this listener too
       // and re-arm the dialog it was just dismissed from. Bail once something
       // upstream has already consumed the key.
@@ -567,21 +567,21 @@ export function EventLogSheet({ sessionId }: Props) {
 
   const countLabel = `${loggedTotal} Event${loggedTotal !== 1 ? 's' : ''}`;
 
-  // Shared aria-disabled toolbar fragment (the a11y rationale ??? focusable
-  // aria-disabled button + `aria-describedby` reason span ??? lives on
+  // Shared aria-disabled toolbar fragment (the a11y rationale — focusable
+  // aria-disabled button + `aria-describedby` reason span — lives on
   // GenerateToolbar). Two distinct non-actionable reasons share the one
   // reason span: the 503 latch (integration missing; reload to re-check)
   // takes precedence over the live no-instructions gate (point at Settings).
   // Presentation differs by cause: the latch keeps the always-visible span
-  // (a discovered outage), while the AT-REST no-instructions gate ??? the
-  // default state of every session ??? renders it sr-only so the toolbar shows
+  // (a discovered outage), while the AT-REST no-instructions gate — the
+  // default state of every session — renders it sr-only so the toolbar shows
   // no extra visible text (an always-visible span overflows the shared
   // FEED_TOOLBAR row; see GenerateToolbar's `reasonVisuallyHidden` doc).
   const genReasonId = 'v5-event-feed-gen-reason';
   const genLatchedReason = (
     <>
       Event generation isn&apos;t available on this server (no integration configured). Reload after
-      configuring to enable it ??? manual logging still works.
+      configuring to enable it — manual logging still works.
     </>
   );
   const genNoInstructionsReason = (
@@ -649,7 +649,7 @@ export function EventLogSheet({ sessionId }: Props) {
         outcome={
           genOutcome &&
           `Created ${genOutcome.created} event${genOutcome.created === 1 ? '' : 's'}` +
-            `${genOutcome.cap_hit ? ' ??? per-run cap reached' : ''}.`
+            `${genOutcome.cap_hit ? ' — per-run cap reached' : ''}.`
         }
       />
       {!batchEditMode && (
@@ -668,7 +668,7 @@ export function EventLogSheet({ sessionId }: Props) {
         </button>
       )}
       {batchEditMode && (
-        // `.v5EventFeedToolbarBatch` ??? its `#v4-log-session` ancestor prefix was a pure
+        // `.v5EventFeedToolbarBatch` — its `#v4-log-session` ancestor prefix was a pure
         // specificity hack; the layout applies to the span directly.
         <span className="inline-flex flex-wrap items-center gap-[0.35rem]">
           <button
@@ -713,7 +713,7 @@ export function EventLogSheet({ sessionId }: Props) {
       feedAriaLabel="Event feed"
       toolbar={toolbar}
       toolbarAriaLabel="Event feed tools"
-      // max-w-full clamps the toolbar row so its flex-wrap engages ??? with the
+      // max-w-full clamps the toolbar row so its flex-wrap engages — with the
       // AUTO GENERATE button added, the unclamped max-content row overflowed
       // 390px viewports and pushed FILTER off-viewport (see FeedShell's
       // `toolbarClassName` doc).
@@ -730,7 +730,7 @@ export function EventLogSheet({ sessionId }: Props) {
               onClose={() => setCustomGenerateOpen(false)}
             />
           )}
-          {/* `.v5FeedStateInputs` ??? the visually-hidden CSS-compat checkbox pair. The block
+          {/* `.v5FeedStateInputs` — the visually-hidden CSS-compat checkbox pair. The block
               matches `sr-only`; the inputs collapse to 0??0 (was the `#v4-log-session`-prefixed
               rules; that ancestor was a specificity hack). */}
           <div className="sr-only pointer-events-none" aria-hidden="true">
@@ -752,7 +752,7 @@ export function EventLogSheet({ sessionId }: Props) {
             />
           </div>
           {/* The ONE shared reason node every row's jump control references while
-              unavailable (design D2 gate decision) ??? never one per row. Not
+              unavailable (design D2 gate decision) — never one per row. Not
               aria-hidden: it must stay reachable via aria-describedby. */}
           {jumpUnavailable && (
             <span id={jumpReasonId} className="sr-only">
@@ -776,12 +776,12 @@ export function EventLogSheet({ sessionId }: Props) {
               // Honest-capability empty state (delta spec, MODIFIED "Honest
               // capability gating"): cause + remedy + the manual alternative.
               <>
-                No logged items yet. Event generation isn&apos;t available on this server ??? no
+                No logged items yet. Event generation isn&apos;t available on this server — no
                 integration is configured (reload after configuring). You can still log events
                 manually with the event buttons.
               </>
             ) : (
-              '??? No logged items yet.'
+              '— No logged items yet.'
             )
           ) : (
             'No events logged.'
