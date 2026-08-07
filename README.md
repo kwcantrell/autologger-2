@@ -880,3 +880,52 @@ The headless-Companion Playwright project is binary-gated and excluded from the 
 `npm run e2e` run. To run it where a Companion install is present, use
 `npm run e2e -- --project=companion --workers=1` (it must not share workers with the
 `chromium` project — resource contention makes a shared multi-worker run flaky).
+
+## Docs site (web-docs/ workspace)
+
+A fully static, offline documentation site — an npm workspace, `web-docs/` — that renders
+interactive, drill-down mermaid diagrams of the system's real architecture, derived from the
+code itself rather than authored prose. No server involvement: a build-time extraction step
+(`tsx`) reads the repo and emits a generated `atlas.json`; a Vite + React SPA renders it,
+mermaid running client-side under `securityLevel: 'strict'` (no `click` directives —
+navigation is post-render DOM handlers, so no disk-derived string can reach the anonymous
+loopback API).
+
+Three drill-down levels:
+
+- **L0** — system architecture: every component typed by kind (`runtime`/`datastore`/
+  `external`, with `tooling`/`test-harness` behind a toggle), production cross-component
+  import edges from the reviewed edge snapshot, plus declared non-import relationships
+  (web/companion → server HTTP/WS, server → web static-serve, e2e process-spawn, datastores,
+  config-gated externals) rendered distinctly.
+- **L1** — per-component page: the component's real module graph (from real imports), its
+  governing OpenSpec capabilities with requirement counts, and in-flight changes touching it.
+- **L2** — detail: catalog + session ER diagrams by live schema introspection (never DDL
+  parsing), two authored state diagrams (recording-lease lifecycle, SessionHub registry
+  lifecycle), and an in-site requirement/scenario browser parsed from the spec markdown.
+
+**Drift fails the build, not a warning.** Cross-component edges are extracted from real
+TypeScript imports at build time and diffed against a committed, reviewed
+`web-docs/model/edges.snapshot.json` — a new or vanished architectural dependency is a hard
+error until the snapshot is regenerated (one command, below) and reviewed in the same diff.
+An orphaned or double-mapped tracked file, an unevidenced declared relationship, an
+unaccounted baseline OpenSpec capability, or an invalid/empty/oversized diagram is likewise a
+hard error, never downgraded to a warning. **Relationship evidence is call-site-level** — a
+named file plus a literal rule (e.g. "the web client module has a `fetch`/WS call site"), not
+a full per-endpoint reconciliation against the Endpoints table above; the site labels it as
+such.
+
+```bash
+npm run dev -w web-docs      # dev server, loopback :5175 — regenerates atlas.json on start
+npm run build -w web-docs    # prebuild runs the full gate battery (--strict), then vite build
+npm run docs:check           # root: the same gate battery against the live tree, standalone
+npm run snapshot -w web-docs # regenerate the reviewed edge snapshot after a reviewed change
+```
+
+`atlas.json` (component graph, module graphs, mermaid sources, spec tree, overlay data) is a
+**generated, git-ignored artifact** — never hand-edited, never committed. No LLM is in the
+loop: every diagram is mechanically derived or hand-authored and mechanically validated, and
+builds are deterministic and offline (no network, no reads of git-ignored artifacts). Root
+`npm test` runs only `web-docs`' own fixture-based unit tests — the live-repo gates run in
+`npm run build -w web-docs` and `npm run docs:check`, invoked at branch completion and before
+archive (see `CLAUDE.md`'s SDLC section).

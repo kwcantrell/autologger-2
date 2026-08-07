@@ -131,13 +131,13 @@
 
 ## 8. Final gates & docs
 
-- [ ] 8.1 Full gates: root `npm run typecheck`, `npm test`, `npm run lint`,
+- [x] 8.1 Full gates: root `npm run typecheck`, `npm test`, `npm run lint`,
       `npm run build -w web-docs`, root `npm run docs:check`. **`npm run e2e` and
       `npm run e2e:visual` are both skipped — declared proportionality: task 8.2's
       `git diff --stat main` proves no `server/`, `web/`, or `companion/` source
       changed on this branch, so app behavior and visual baselines cannot legitimately
       move.**
-- [ ] 8.2 Docs + process encodings: README web-docs section (what the site shows, drift
+- [x] 8.2 Docs + process encodings: README web-docs section (what the site shows, drift
       gates, `npm run dev -w web-docs` / `build` / `docs:check`); CLAUDE.md — layout
       pointer + SDLC final-gates line (run `docs:check` at branch completion/archive;
       attach newly archived capabilities in the web-docs model in the archive commit);
