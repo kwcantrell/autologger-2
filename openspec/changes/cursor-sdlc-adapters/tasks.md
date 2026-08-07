@@ -6,7 +6,7 @@
 
 ## 1. Routed-target alignment (encoding amendment, D8)
 
-- [ ] 1.1 Customize `.claude/skills/openspec-propose/SKILL.md`: replace the Output step's
+- [x] 1.1 Customize `.claude/skills/openspec-propose/SKILL.md`: replace the Output step's
       "run apply" continuation with the gate stop (artifacts complete → tasks.md
       provisional until fact-check + panel + gate; do not suggest or run apply), matching
       the apply skill's customization pattern. Extend CLAUDE.md's re-apply-customization
