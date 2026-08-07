@@ -11,6 +11,7 @@ import {
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
+import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
@@ -82,12 +83,7 @@ export function TranscribeFeed({ sessionId }: Props) {
     insert.mutate({});
   }
 
-  const speakerOffset = useMemo(() => {
-    if (!words || words.length === 0) return 0;
-    const nums = words.map((w) => Number.parseInt(w.speaker, 10)).filter((n) => !Number.isNaN(n));
-    if (nums.length === 0) return 0;
-    return Math.min(...nums) === 0 ? 1 : 0;
-  }, [words]);
+  const speakerOffset = useMemo(() => speakerOffsetFromWords(words), [words]);
 
   const sortedWords = useMemo(() => {
     if (!words) return words;

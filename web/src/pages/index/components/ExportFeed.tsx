@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
+import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { buildTopicsCsv, downloadTopicsCsv } from '../utils/topicsCsv';
 import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCsv';
 import { FeedShell } from './FeedShell';
@@ -18,12 +19,7 @@ export function ExportFeed({ sessionId }: Props) {
   const { data: words, isPending: wordsPending } = useTranscriptWords(sessionId);
   const { data: topics, isPending: topicsPending } = useTopics(sessionId);
 
-  const speakerOffset = useMemo(() => {
-    if (!words || words.length === 0) return 0;
-    const nums = words.map((w) => Number.parseInt(w.speaker, 10)).filter((n) => !Number.isNaN(n));
-    if (nums.length === 0) return 0;
-    return Math.min(...nums) === 0 ? 1 : 0;
-  }, [words]);
+  const speakerOffset = useMemo(() => speakerOffsetFromWords(words), [words]);
 
   const wordCount = words?.length ?? 0;
   const topicCount = topics?.length ?? 0;
