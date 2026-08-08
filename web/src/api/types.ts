@@ -270,7 +270,7 @@ export interface TranscriptWord {
    * `words.map((w) => ({ ...w, session_id: sessionId }))`) but omitted from
    * this type until ai-v2-dashboards task 5.6 needed typed access for
    * client-side aggregation (`0.0` for manually-entered/anchorless words —
-   * see `server/src/aiV2/aggregates.ts`'s degenerate-timing discipline, D2a).
+   * see `packages/ai-runtime/src/aggregates.ts`'s degenerate-timing discipline, D2a).
    * Declaring it here is a type-only fix, not a wire-shape change. */
   start_sec: number;
   end_sec: number;

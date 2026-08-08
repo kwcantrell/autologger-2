@@ -75,7 +75,7 @@ export interface WorkspaceRegime {
 }
 
 /**
- * The fifteen real resolution regimes: the four application workspaces
+ * The sixteen real resolution regimes: the four application workspaces
  * (design.md D2) plus web-docs itself, `fixtures/api-responses` (audit
  * fix-now F1 — every mapped file gets extracted, per spec R4, with no silent
  * exception), the three `packages/*` L0 npm workspace packages introduced by
@@ -95,13 +95,21 @@ export interface WorkspaceRegime {
  * enrolled anyway for the identical reason: an unenrolled package's outgoing
  * edges are invisible to this extractor, so the next change that gives it
  * one gets a silently-false model with a green `docs:check` (whole-branch
- * audit fix-now, this change). A file outside every declared regime is
- * silently skipped, not an error, so an outgoing edge from an unenrolled
- * package would never surface as a violation; see extractFileImports' doc
- * comment. Workspace-tsconfig `compilerOptions` are read from each
- * workspace's real tsconfig at extraction time — never its
- * `include`/`exclude`, which only shapes each workspace's OWN build/
- * typecheck file set (and companion's excludes its own tests outright).
+ * audit fix-now, this change). `ai-runtime-package`'s fourth L2 service
+ * package, `ai-runtime`, follows the identical `log-import`/`media-import`
+ * precedent (task 1.4): enrolled at scaffold time, ahead of task 3.1's real
+ * module move, while it holds only the placeholder barrel and
+ * `fixturesDir.ts` with no outgoing cross-package edges yet — because
+ * waiting until the move lands would mean the `@autologger/domain`,
+ * `contract`, `session-core`, and `ports` edges that move introduces vanish
+ * silently the same way every prior unenrolled-package edge has. A file
+ * outside every declared regime is silently skipped, not an error, so an
+ * outgoing edge from an unenrolled package would never surface as a
+ * violation; see extractFileImports' doc comment. Workspace-tsconfig
+ * `compilerOptions` are read from each workspace's real tsconfig at
+ * extraction time — never its `include`/`exclude`, which only shapes each
+ * workspace's OWN build/typecheck file set (and companion's excludes its
+ * own tests outright).
  */
 export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
   { name: 'server', dir: 'server', tsconfigPath: 'server/tsconfig.json' },
@@ -153,6 +161,11 @@ export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
     name: 'log-import',
     dir: 'packages/log-import',
     tsconfigPath: 'packages/log-import/tsconfig.json',
+  },
+  {
+    name: 'ai-runtime',
+    dir: 'packages/ai-runtime',
+    tsconfigPath: 'packages/ai-runtime/tsconfig.json',
   },
   {
     name: 'contract-fixtures',

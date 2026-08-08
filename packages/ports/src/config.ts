@@ -91,4 +91,17 @@ export interface Config {
    * re-resolves per request. Optional so existing full-object `Config`
    * literals elsewhere (pre-dating this field) keep type-checking. */
   YTDLP_RESOLVED_PATH?: string | null;
+  /** AI v2 design-turn operator-credential fallback (ai-runtime-package task
+   * 2.5, spec "Host-environment discovery belongs to the composition root").
+   * The absolute path `prepareDesignTurnCredentials` copies from when no
+   * workspace `AI_V2_API_KEY` is configured — resolved ONCE at startup by the
+   * composition root (`join(homedir(), '.claude', '.credentials.json')` in
+   * `node/config.ts`) and passed through, never recomputed per request.
+   * Deliberately **required, with no environment override**: an override
+   * would turn this into an arbitrary-file-read primitive (the named file is
+   * copied into a subprocess's config dir), and an optional field inviting a
+   * defensive early return would silently disable the login fallback — a
+   * working design turn degrading to a scrubbed auth error with nothing to
+   * notice. Every full-object `Config` literal must supply it. */
+  AI_V2_CREDENTIAL_SOURCE_PATH: string;
 }

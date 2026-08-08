@@ -495,13 +495,15 @@ from `server/src/session|db/` and part of `server/src/node/` by `persistence-pac
 only through the packages' exported facade interfaces (`appEnv.ts` names zero concrete
 persistence classes — `server/src/node/config.ts` is the sole production module that
 constructs the concretes; `middleware/auth.ts` constructs the per-request `Catalog` via the
-package's `createCatalog` factory). Above L1 sits a flat L2 **service** layer — three more
-source-only packages (`feature-service-packages`), extracted out of `server/src/node/`'s
-feature files and the retired `server/src/logImport/`: `@autologger/transcription`,
-`@autologger/media-import`, and `@autologger/log-import`. A service package may import L0
-and L1 but never another service package; `server/src/node/` itself now holds exactly
-`config.ts`, `systemClock.ts`, and `presence.ts` — matching its documented role, and pinned
-by a recursive name check rather than left to drift again. Cross-package boundaries at every
+package's `createCatalog` factory). Above L1 sits a flat L2 **service** layer — four more
+source-only packages: three (`feature-service-packages`) extracted out of `server/src/node/`'s
+feature files and the retired `server/src/logImport/` — `@autologger/transcription`,
+`@autologger/media-import`, and `@autologger/log-import` — and a fourth (`ai-runtime-package`)
+extracted from the retired `server/src/ai-runtime/` and `server/src/aiV2/` pair —
+`@autologger/ai-runtime`. A service package may import L0 and L1 but never another service
+package; `server/src/node/` itself now holds exactly `config.ts`, `systemClock.ts`, and
+`presence.ts` — matching its documented role, and pinned by a recursive name check rather
+than left to drift again. Cross-package boundaries at every
 layer are enforced by `server/src/packageBoundaries.repo.test.ts`, not the compiler.
 
 ```
@@ -545,38 +547,6 @@ server/src/
     transcribe.ts             transcript-words + topics CRUD; generate/csv (503)
     exports.ts                export.csv / export.jsonl (← export.py)
     admin.ts                  ADMIN_TOKEN-gated users + studio-definitions admin
-  ai-runtime/               The AI runtime (router-directory-decomposition D1): MCP tool
-                             server, CLI/Agent-SDK subprocess runners, turn orchestration, and
-                             one-shot generate-turn drivers, moved out of routers/ so the
-                             directory states what it is. Hono-free and injection-fed (no
-                             `Context`, no `AppEnv` — registry/cliPath/budget/timeout arrive as
-                             constructor args); imports no route module and no `_helpers`.
-                             Boundary-enforced: packageBoundaries.repo.test.ts fails the build
-                             if a `hono`/`appEnv`/`routers/` import lands here, or if one of
-                             these basenames reappears under routers/.
-    aiMcpServer.ts            In-process, loopback-only MCP tool-server listener — registers
-                               the session-scoped toolset the CLI/Agent-SDK turn calls into
-                               (ai-topics-chat design D3)
-    aiChatRunner.ts           Claude CLI subprocess runner: locked-down argv builder + spawn
-                               (shell:false, message via stdin, never argv)
-    aiV2SdkSpawn.ts           Agent SDK subprocess runner: the one call site that reaches the
-                               Agent SDK's query() for AI v2 design turns
-    processGroupKill.ts       Shared process-group kill ladder (SIGTERM → grace → SIGKILL,
-                               group-liveness gated) used by both runners
-    aiTurnOrchestrator.ts     Shared outer turn scaffolding (timeout/abort/race/kill/finally)
-                               for both the chat and v2 design turn paths
-    aiTurn.ts                 driveAiTurn — shared no-orphan turn-run helper (acquire the MCP
-                               listener, spawn, run to outcome, always clean up); used by
-                               ai/chat and topics/generate
-    aiChatRelay.ts            JSONL→SSE stream relay: maps the CLI's stream-json stdout to the
-                               frozen delta/tool/done/error SSE vocabulary
-    aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight +
-                               process-wide concurrency ceiling (the aiChatTurns singleton)
-    aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
-                               v2 design turns, keyed and principal-bound
-    topicGenerate.ts          One-shot topics/generate turn driver (crash-safe replace-all)
-    eventGeneratePrompt.ts    events/generate's generation prompt builder: dedicated one-shot
-                               system prompt + the run-snapshot user-message builder
 
 packages/                 Source-only npm workspace packages (no build step; server's tsx and
                            the root tsc --noEmit resolve them straight from src/); boundaries
@@ -584,12 +554,12 @@ packages/                 Source-only npm workspace packages (no build step; ser
                            not the compiler. L0 (domain/contract/ports) ships no runtime
                            persistence; L1 (session-core/catalog/storage) are dependency-free
                            siblings of each other — no L1→L1 edges — each depending only on L0;
-                           L2 (transcription/media-import/log-import) are service packages that
-                           may depend on L0/L1 but never on each other — no L2→L2 edges, and no
-                           L1→L2 edges either (feature-service-packages design D1) — enforced by
-                           four checks: the direct sibling rule, a no-L1-imports-L2 rule (closes
-                           an L1-re-export launder route), transitive reachability, and a file
-                           walk widened to .mts/.cts.
+                           L2 (transcription/media-import/log-import/ai-runtime) are service
+                           packages that may depend on L0/L1 but never on each other — no L2→L2
+                           edges, and no L1→L2 edges either (feature-service-packages design D1)
+                           — enforced by four checks: the direct sibling rule, a no-L1-imports-L2
+                           rule (closes an L1-re-export launder route), transitive reachability,
+                           and a file walk widened to .mts/.cts.
   domain/src/              @autologger/domain — pure, dependency-free domain modules (L0)
     studio.ts                Studios + palette/category + event enrichment (← studio.py)
     timecode.ts              SMPTE timecode math + UTC helpers             (← models.py)
@@ -707,6 +677,67 @@ packages/                 Source-only npm workspace packages (no build step; ser
     sheetTimecode.ts         SMPTE timecode parsing for sheet rows
     syncScore.ts             Log-row-to-transcript-seam sync scoring
     index.ts                 Package barrel
+  ai-runtime/src/          @autologger/ai-runtime — the AI runtime as an L2 service package
+                           (L2; deps: domain, contract, ports, session-core;
+                           @anthropic-ai/claude-agent-sdk, @modelcontextprotocol/sdk) moved
+                           from server/src/ai-runtime/ and the retired server/src/aiV2/
+                           (ai-runtime-package task 3.1, design D1/D9): the MCP tool server,
+                           CLI/Agent-SDK subprocess runners, turn orchestration, one-shot
+                           generate-turn drivers, and the session aggregate computations the
+                           design-turn toolset exposes. Hono-free and injection-fed (no
+                           `Context`, no `AppEnv` — registry/cliPath/budget/timeout/clock
+                           arrive as constructor args); imports no route module and no
+                           `_helpers`. Boundary-enforced: packageBoundaries.repo.test.ts fails
+                           the build if a `hono`/`appEnv`/relative reach into `server/src/`
+                           lands here, or if one of these basenames reappears under routers/.
+                           Consumed through the `"./*"` subpath export
+                           (`@autologger/ai-runtime/<module>`), never a barrel re-export — four
+                           server integration suites `vi.spyOn` a module namespace, which
+                           requires both sides to resolve the identical module record (gate
+                           ruling E4).
+    aiMcpServer.ts            In-process, loopback-only MCP tool-server listener — registers
+                               the session-scoped toolset the CLI/Agent-SDK turn calls into
+                               (ai-topics-chat design D3)
+    aiChatRunner.ts           Claude CLI subprocess runner: locked-down argv builder + spawn
+                               (shell:false, message via stdin, never argv)
+    aiV2SdkSpawn.ts           Agent SDK subprocess runner: the one call site that reaches the
+                               Agent SDK's query() for AI v2 design turns
+    processGroupKill.ts       Shared process-group kill ladder (SIGTERM → grace → SIGKILL,
+                               group-liveness gated) used by both runners; clock is a required
+                               leading parameter (design D3), and the function stays total
+    aiTurnOrchestrator.ts     Shared outer turn scaffolding (timeout/abort/race/kill/finally)
+                               for both the chat and v2 design turn paths
+    aiTurn.ts                 driveAiTurn — shared no-orphan turn-run helper (acquire the MCP
+                               listener, spawn, run to outcome, always clean up); used by
+                               ai/chat and topics/generate
+    aiChatRelay.ts            JSONL→SSE stream relay: maps the CLI's stream-json stdout to the
+                               frozen delta/tool/done/error SSE vocabulary
+    aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight +
+                               process-wide concurrency ceiling (the aiChatTurns singleton)
+    aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
+                               v2 design turns, keyed and principal-bound
+    topicGenerate.ts          One-shot topics/generate turn driver (crash-safe replace-all)
+    eventGeneratePrompt.ts    events/generate's generation prompt builder: dedicated one-shot
+                               system prompt + the run-snapshot user-message builder
+    mcpTools.ts               buildAggregateMcpServer — per-turn factory for the design-turn's
+                               session-scoped aggregate MCP tools; session id is closure-bound,
+                               never a tool parameter (← former server/src/aiV2/mcpTools.ts)
+    aggregates.ts             Pure session-aggregate computations (duration, talk time,
+                               utterance/filler/question counts, topic timeline, event
+                               density/counts) over already-read hub rows; degraded timing
+                               surfaces as `available: false`, never a fabricated zero (← former
+                               server/src/aiV2/aggregates.ts)
+    fixturesDir.ts            Exports AI_RUNTIME_FIXTURES_DIR, re-exported from index.ts
+    index.ts                  Package barrel — exports ONLY AI_RUNTIME_FIXTURES_DIR, no
+                               production module re-exports; this deliberate emptiness is what
+                               makes the subpath-only consumption above structurally enforced
+                               rather than merely conventional (a barrel re-export would open a
+                               second route to the same module, undermining gate ruling E4)
+  ai-runtime/fixtures/     fake-claude.mjs (shared: three in-package tests + four app-side
+                           integration suites, one at two sites, + playwright.config.ts),
+                           fake-claude-error.mjs,
+                           fake-claude-exit-before-stdin.mjs, ai-v2-sdk-spawn-recorder.mjs —
+                           moved from server/src/test/fixtures/ (ai-runtime-package task 3.3)
 ```
 
 ## Endpoints

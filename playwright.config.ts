@@ -17,7 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // with NO real Anthropic credentials or network access anywhere in the process
 // (the fixture is a plain Node script that prints canned stream-json). This is
 // what keeps ai-chat.spec.ts's happy-path chat e2e hermetic.
-const FAKE_CLAUDE_CLI = join(here, 'server', 'src', 'test', 'fixtures', 'fake-claude.mjs');
+const FAKE_CLAUDE_CLI = join(here, 'packages', 'ai-runtime', 'fixtures', 'fake-claude.mjs');
 
 // ai-v2-dashboards (task 6.2): a protocol-faithful fake agent for the AI v2
 // design turn's Agent-SDK transport (`pathToClaudeCodeExecutable` — a

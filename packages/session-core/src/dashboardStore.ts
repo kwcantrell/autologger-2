@@ -6,8 +6,8 @@
 // one session, is deleted with it, and there is no cross-session reuse story
 // in v1.
 //
-// Every write goes through `validateDashboardConfig` (server/src/aiV2/
-// catalog.ts) — the SAME function the persistence route (task 5.2) and, in a
+// Every write goes through `validateDashboardConfig` (packages/contract/src/
+// aiV2Catalog.ts) — the SAME function the persistence route (task 5.2) and, in a
 // later unit, the design turn's `propose_dashboard` MCP tool (task 5.4) both
 // call. This module never re-derives a second validator (design D5a: "This
 // same whole-configuration validation SHALL be applied wherever a

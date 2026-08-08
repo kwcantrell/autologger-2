@@ -20,7 +20,6 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import {
   buildDesignTurnOptions,
   createDesignTurnWorkspace,
@@ -28,6 +27,7 @@ import {
   DESIGN_TURN_MCP_TOOL_TIMEOUT_MS,
   DESIGN_TURN_SYSTEM_PROMPT,
 } from './aiV2SdkSpawn';
+import { AGGREGATE_MCP_SERVER_NAME } from './mcpTools';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {

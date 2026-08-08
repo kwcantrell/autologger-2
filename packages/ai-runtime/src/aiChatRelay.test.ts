@@ -19,11 +19,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type AiChatSseEvent, relayAiChatTurn } from './aiChatRelay';
+import { AI_RUNTIME_FIXTURES_DIR } from './fixturesDir';
 
-const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+const FIXTURE_PATH = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 
 let dir: string;
 

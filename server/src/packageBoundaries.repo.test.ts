@@ -64,6 +64,68 @@ import { afterEach, describe, expect, it } from 'vitest';
 // Import-specifier extraction (dependency-free regex scan)
 // ---------------------------------------------------------------------------
 
+// --- What counts as an import/export CLAUSE (the run between the keyword and
+// `from`) -------------------------------------------------------------------
+//
+// Assembled from named fragments and shared by BOTH scanners in this file
+// (`extractImportSpecifiers` below and `IMPORT_CLAUSE_RE` further down, which
+// additionally captures the clause text). One definition, not two hand-kept-in-
+// sync copies: these two must never disagree about what a clause is, and until
+// ai-runtime-package's phase-3 fix they were two separate literals that had to
+// be edited in lockstep by hand — which is how task 3.1 got to make the same
+// mistake twice in one commit.
+//
+// Ordinary clause content: anything that is not a terminator and not a `/`.
+// `;` ends the statement. `(`, `)`, `=` and the three quote characters cannot
+// appear between the keyword and `from` in ANY legal clause, and each reliably
+// means the scan has left the clause and entered a function signature, an
+// initializer, or a string literal (`\x60` is a backtick, spelled numerically
+// so this fragment stays readable inside a template literal).
+const CLAUSE_PLAIN_CHAR_SRC = String.raw`[^;()='"\x60/]`;
+// A block comment IS legal clause content, and its body may contain every one
+// of the characters excluded above. DETERMINISTIC by construction: the body is
+// "not a `*`, or a `*` not followed by `/`", so the comment can end at exactly
+// one place — the first `*/`. A lazy `[\s\S]*?` body would instead be able to
+// end at every later `*/` too, which combined with the alternation below makes
+// the number of ways to partition a comment exponential; see the linear-time
+// mutation check on `extractImportSpecifiers`.
+const CLAUSE_BLOCK_COMMENT_SRC = String.raw`/\*(?:[^*]|\*(?!/))*\*/`;
+// A line comment is legal clause content too (a multi-line clause routinely
+// carries one). The trailing lookahead is what makes it deterministic: without
+// it, `[^\n]*` could give back characters one at a time for the plain-char
+// branch to re-consume, which is the same exponential blowup again.
+const CLAUSE_LINE_COMMENT_SRC = String.raw`//[^\n]*(?=\n|$)`;
+// A `/` that starts neither comment form. No legal clause contains one, so
+// this branch matches only malformed or unexpected input — and it is here so
+// that such input makes the scanner keep looking (and at worst over-report)
+// rather than stop dead at the slash and silently miss the import behind it.
+// It also makes the three `/` branches exhaustive: every `/` has exactly one
+// branch that can consume it, which is why the alternation is unambiguous.
+const CLAUSE_LONE_SLASH_SRC = '/(?![*/])';
+// Lazy: stop at the first `from`. Every group inside MUST stay non-capturing —
+// see the group-index warning on `IMPORT_CLAUSE_RE`, which wraps this run in
+// the one capturing group it reads as the clause.
+const CLAUSE_RUN_SRC = `(?:${CLAUSE_PLAIN_CHAR_SRC}|${CLAUSE_BLOCK_COMMENT_SRC}|${CLAUSE_LINE_COMMENT_SRC}|${CLAUSE_LONE_SLASH_SRC})*?`;
+
+/** Strips the comment forms a captured clause may legally contain, so the
+ * clause-inspecting checks below (`clauseIsWildcard`, and the `\bIdentifier\b`
+ * scans in `checkInterfaceOnlyConsumption` / `checkApiErrorHome`) read the
+ * identifiers a clause actually BINDS rather than whatever its comments happen
+ * to spell. Cuts both ways: without it `import * /* ns *\/ as x from '…'` stops
+ * looking like a wildcard clause (a real miss), and a clause fused onto a prose
+ * comment that merely mentions a concrete class name reads as a violation (a
+ * real false positive). Same two fragments the run above is built from, so the
+ * stripper can never recognise a comment shape the scanner doesn't. */
+const CLAUSE_COMMENT_RE = new RegExp(`${CLAUSE_BLOCK_COMMENT_SRC}|${CLAUSE_LINE_COMMENT_SRC}`, 'g');
+function stripClauseComments(clause: string): string {
+  return clause.replace(CLAUSE_COMMENT_RE, ' ');
+}
+
+const IMPORT_FROM_RE = new RegExp(
+  `\\b(?:import|export)\\b${CLAUSE_RUN_SRC}\\bfrom\\s*['"]([^'"]+)['"]`,
+  'g',
+);
+
 /** Every import/export/dynamic-import specifier a TS source file's text
  * names, in encounter order (duplicates included — callers care about
  * distinct violations, not distinct specifiers). Matches:
@@ -71,14 +133,45 @@ import { afterEach, describe, expect, it } from 'vitest';
  *   - `export ... from 'x'` / `export type ... from 'x'` / `export * from 'x'`
  *   - side-effect-only `import 'x'`
  *   - dynamic `import('x')`
- * Non-greedy `[^;]*?` between the keyword and `from` cannot cross a `;`, so
- * adjacent semicolon-terminated statements on one line can't bleed into each
- * other; this repo's lint config requires semicolons, so that's the only
- * shape in practice. */
+ * The clause run cannot cross a `;`, so adjacent semicolon-terminated
+ * statements on one line can't bleed into each other; this repo's lint config
+ * requires semicolons, so that's the only shape in practice.
+ *
+ * `;` alone is NOT enough, though (ai-runtime-package task 3.1). A statement
+ * like `export function f(` followed — many lines later, still with no `;` —
+ * by the WORD "from" inside a string literal (`"...derived from " + '...'`)
+ * matched as if it were an import clause, and reported the string-continuation
+ * text as an undeclared third-party specifier. This was latent all along; it
+ * surfaced the moment `mcpTools.ts` moved into a package, because
+ * `checkThirdPartySpecifiers` only walks `packages/`. `generateL0.ts` in
+ * `web-docs` carries the identical shape.
+ *
+ * That is why `CLAUSE_PLAIN_CHAR_SRC` excludes `(`, `)`, `=` and the quotes —
+ * and why the run must ALSO carry explicit comment branches. Task 3.1 shipped
+ * the exclusions alone, and a denylist of characters that "cannot appear in a
+ * legal clause" is wrong about exactly one thing: those characters appear
+ * constantly INSIDE a comment, and a comment is legal clause content. The
+ * result was total blindness — `import { x /* (see ADR-7) *\/ } from '…'`
+ * matched nothing at all, in EVERY check in this file, silently. The comment
+ * branches restore it. (An allowlist of clause characters, `[\w\s{},*]`, was
+ * rejected for the same reason and would have been wrong the same way.)
+ *
+ * What the run still cannot do, stated rather than closed:
+ *   - It is not comment- or string-aware ABOVE the keyword, so the word
+ *     `import`/`export` inside a prose comment starts a run like any other,
+ *     and a specifier quoted in prose is reported like a real one. Deliberate:
+ *     it over-reports (a red gate someone investigates) instead of
+ *     under-reporting (the failure this whole note exists about).
+ *   - A clause is matched textually, not parsed. A specifier built at runtime,
+ *     or an import written without the `from` keyword, is invisible.
+ *   - Because a run may cross comment lines, one prose comment mentioning
+ *     `export` can fuse onto the real import below it. The specifier captured
+ *     is still that import's own — the run stops at the FIRST `from` — but the
+ *     captured CLAUSE spans the comment, which is why the clause-reading
+ *     checks strip comments via `stripClauseComments`. */
 function extractImportSpecifiers(content: string): string[] {
   const specifiers: string[] = [];
-  const fromClauseRe = /\b(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/g;
-  for (const m of content.matchAll(fromClauseRe)) specifiers.push(m[1]);
+  for (const m of content.matchAll(IMPORT_FROM_RE)) specifiers.push(m[1]);
   const sideEffectRe = /^\s*import\s*['"]([^'"]+)['"]/gm;
   for (const m of content.matchAll(sideEffectRe)) specifiers.push(m[1]);
   const dynamicRe = /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g;
@@ -207,6 +300,39 @@ const ALLOWED_LAYER_EDGES = new Set<string>([
   '@autologger/log-import->@autologger/domain',
   '@autologger/log-import->@autologger/ports',
   '@autologger/log-import->@autologger/session-core',
+  // ai-runtime-package task 1.3: only the `ports` edge, added ahead of task
+  // 1.5's full membership entry (`ai-runtime -> {domain, contract,
+  // session-core, ports}`) and ahead of task 1.5 adding `ai-runtime` to
+  // `SERVICE_PACKAGES`. Unlike the transcription/log-import precedent above
+  // (whose edges all landed in one scaffold task before any module move),
+  // this package's own scaffold task (1.1) deliberately withheld every
+  // layer-graph entry as task 1.5's job — but task 1.3's `fakeClock.ts` (this
+  // task) was the first file in the package to actually import
+  // `@autologger/ports` (a type-only `Clock` import, mirroring the other
+  // four `fakeClock` copies), which `checkPackagesBoundary` flags regardless
+  // of type-only-ness. Without this single entry, task 1.3 could not leave
+  // `npm test` green — demonstrated. `ai-runtime` remaining absent from
+  // `SERVICE_PACKAGES` for one more unit does not defeat any check that
+  // exists yet: the flat-service-edge checks and the completeness assertion
+  // that would care are task 1.5/1.6's own additions (design.md's Impact
+  // section walks through exactly this intermediate state when motivating
+  // 1.6). Task 1.5 adds the other three edges plus `SERVICE_PACKAGES`
+  // membership; it must not re-add this one. Phase 5 (owner-ruled deviation,
+  // M3) deletes `fakeClock.ts` itself — it had zero readers, phase 2's tests
+  // used a local `Clock` literal and a sleep seam instead — but this edge
+  // stays: five of the package's production modules import `Clock` from
+  // `@autologger/ports` (design D3), so the edge is independently load-bearing.
+  '@autologger/ai-runtime->@autologger/ports',
+  // ai-runtime-package task 1.5: the remaining three edges the package's
+  // moving modules need (spec "Feature services are packages in a flat
+  // layer above persistence": `ai-runtime -> {domain, contract, session-core,
+  // ports}`), landed together with `ai-runtime`'s `SERVICE_PACKAGES`
+  // membership below — the two-step split (ports at 1.3, the rest here) was
+  // task 1.3's own atomicity call (design D8: an edge lands with the file
+  // that needs it), not a re-litigation of it.
+  '@autologger/ai-runtime->@autologger/domain',
+  '@autologger/ai-runtime->@autologger/contract',
+  '@autologger/ai-runtime->@autologger/session-core',
 ]);
 
 /** Bare specifiers naming an app workspace's own package.json `name` — the
@@ -540,6 +666,108 @@ describe('extractImportSpecifiers (mutation check)', () => {
     // Must not have fused the two statements into one over-long match.
     expect(specifiers.filter((s) => s === 'multi-line-mod' || s === 'next-mod')).toHaveLength(2);
   });
+
+  // ai-runtime-package task 3.1 regression: an `export function` whose
+  // parameter list and body run for many lines with no `;`, followed by the
+  // WORD "from" at the end of a string literal, used to match as an import
+  // clause and report the string-continuation text as a specifier. Latent
+  // until `mcpTools.ts` — which carries exactly this shape in an MCP tool
+  // description — moved into a package, since `checkThirdPartySpecifiers`
+  // only walks `packages/`.
+  it('does not treat the word "from" inside a string literal as an import clause', () => {
+    const content = [
+      `export function buildThing(`,
+      `  a: string,`,
+      `) {`,
+      `  const description =`,
+      `    "Per-speaker talk time and the session's total duration, derived from " +`,
+      `    'word timings.';`,
+      `  return description + a`,
+      `}`,
+      `import { real } from 'real-mod';`,
+    ].join('\n');
+    const specifiers = extractImportSpecifiers(content);
+    expect(specifiers).toEqual(['real-mod']);
+  });
+
+  // ai-runtime-package phase-3 review, finding C1. Task 3.1's fix for the
+  // regression above excluded `; ( ) = ' " \`` from the clause run — characters
+  // that cannot appear in a legal clause, but appear constantly inside a
+  // COMMENT within one, and a comment is legal clause content. Every import
+  // written that way became invisible to every check in this file at once:
+  // boundary escape, undeclared dependency, layer edge, all four service-
+  // sibling checks, third-party specifiers, AI-runtime purity, router
+  // membership, interface-only consumption, the server-manifest scan. Silent,
+  // not red. The negative control that shipped with the regression used
+  // `/* keep */` and `café` — the two shapes that happen to survive it — so it
+  // passed throughout. Each shape below carries a character the shipped run
+  // excluded, and each returned `[]` before the fix.
+  it('still sees a clause whose inline block comment carries clause-illegal characters', () => {
+    const content = [
+      `import { a /* (see ADR-7) */ } from 'paren-comment-mod';`,
+      `import { b /* don't */ } from 'apostrophe-comment-mod';`,
+      `import { c /* \`tpl\` */ } from 'backtick-comment-mod';`,
+      `import { d /* a=b */ } from 'equals-comment-mod';`,
+    ].join('\n');
+    const specifiers = extractImportSpecifiers(content);
+    expect(specifiers).toContain('paren-comment-mod');
+    expect(specifiers).toContain('apostrophe-comment-mod');
+    expect(specifiers).toContain('backtick-comment-mod');
+    expect(specifiers).toContain('equals-comment-mod');
+  });
+
+  it('still sees a multi-line clause carrying a // comment, and a non-ASCII identifier', () => {
+    const content = [
+      `import {`,
+      `  a, // (concrete) don't use — see aiV2.ts`,
+      `  b,`,
+      `} from 'line-comment-mod';`,
+      `import café from 'unicode-mod';`,
+    ].join('\n');
+    const specifiers = extractImportSpecifiers(content);
+    expect(specifiers).toContain('line-comment-mod');
+    expect(specifiers).toContain('unicode-mod');
+  });
+
+  it('still sees a clause carrying a multi-line block comment', () => {
+    const content = [
+      `import {`,
+      `  a,`,
+      `  /* spans lines`,
+      `     and holds (parens) = 'quotes' */`,
+      `  b,`,
+      `} from 'block-comment-mod';`,
+    ].join('\n');
+    expect(extractImportSpecifiers(content)).toContain('block-comment-mod');
+  });
+
+  // The comment branches must stay DETERMINISTIC — able to end in exactly one
+  // place each. The first replacement drafted for C1 used a lazy
+  // `/\*[\s\S]*?\*\/` body and a bare `//[^\n]*`; both can end in many places,
+  // so the alternation could partition a comment run exponentially many ways.
+  // It passed every case above on short inputs and then never finished
+  // scanning THIS file, or `fixtures/api-responses/_mutable.ts` (1.1 kB). A
+  // guard that hangs reports nothing, which is C1's outcome by another route,
+  // so it is worth a test rather than a comment.
+  //
+  // The shape below is the reduced form of the real trigger: a comment
+  // mentioning `import`, followed by consecutive comment lines carrying the
+  // characters the plain-character branch excludes. Growth is violent —
+  // 6 lines took 2.2 s under the lazy draft and 7 took 141 s, against ~0 ms
+  // here — so the budget is a hang detector with a ~1000x margin over the real
+  // cost, not a performance measurement.
+  it('scans a comment run that never reaches a `from` in linear time', () => {
+    const content = [
+      '// a `.json` import widens the captured literal',
+      ...Array.from(
+        { length: 6 },
+        (_, i) => `// prose (line ${i}) with \`ticks\`, 'quotes' and a .json/path`,
+      ),
+    ].join('\n');
+    const started = Date.now();
+    expect(extractImportSpecifiers(content)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
 });
 
 describe('findCycles (mutation check)', () => {
@@ -671,19 +899,29 @@ describe('L1_PACKAGES membership constant (spec: "mutation-covered against their
 // `import()`, `eval`, or code outside the walked root.
 // ---------------------------------------------------------------------------
 
-/** The three service (L2) packages named by this capability (design D1): each
+/** The four service (L2) packages named by this capability (design D1): each
  * may import L0 (`domain`/`contract`/`ports`) and L1 (`session-core`/
  * `catalog`/`storage`) but never another service package. This is a gloss on
- * three named members, not a universal quantifier over anything
- * service-shaped (spec: the AI runtime stays governed by its own,
- * already-shipped rule). Passed as a default parameter — never read as a
- * closed-over module global — by every check function below, so the
- * mutation-coverage vacuum probes (a typo'd or emptied copy) can override it
- * per call without mutating this constant in place. */
+ * four named members, not a universal quantifier over anything
+ * service-shaped. `@autologger/ai-runtime` (ai-runtime-package task 1.5) is
+ * the fourth: it additionally carries its own, already-shipped Hono-freedom
+ * rule (`checkAiRuntimePurity`, below) — membership here does not stand in
+ * for that check, the two are independent obligations over the same package.
+ * Passed as a default parameter — never read as a closed-over module global
+ * — by every check function below, so the mutation-coverage vacuum probes (a
+ * typo'd or emptied copy) can override it per call without mutating this
+ * constant in place. Completeness — every non-L0/L1 `packages/*` directory
+ * names itself here or on an explicit exemption list — is a separate
+ * assertion below (task 1.6): this constant being *wrong* (empty, typo'd) is
+ * covered by the non-empty/exists check immediately following; this constant
+ * being *incomplete* (a real package silently omitted) is what task 1.6
+ * closes, because checks (1)-(3) are evaluated against this set and cannot
+ * see their own blind spot. */
 const SERVICE_PACKAGES = new Set<string>([
   '@autologger/transcription',
   '@autologger/media-import',
   '@autologger/log-import',
+  '@autologger/ai-runtime',
 ]);
 
 /** Check (1) — the direct no-sibling rule. Built on `packageImportGraph`
@@ -786,6 +1024,78 @@ describe('SERVICE_PACKAGES membership constant (spec: "mutation-covered against 
   });
 });
 
+// ---------------------------------------------------------------------------
+// SERVICE_PACKAGES completeness (task 1.6, design D7; spec "The
+// service-package membership constant is complete" / scenario "A package
+// omitted from the membership constant is caught").
+//
+// The non-empty/exists check immediately above covers the constant being
+// WRONG (empty, or naming a package that doesn't exist). It does not cover
+// the constant being INCOMPLETE — a real `packages/*` directory silently
+// missing from it. That matters because checks (1)-(3) above are all
+// evaluated AGAINST `SERVICE_PACKAGES`: a package omitted from the set is
+// simply invisible to every one of them, so a genuine service-to-service
+// violation sourced from that package passes checks (1)-(3) and the whole
+// boundary test green, with nothing objecting. This check closes that from
+// the enumeration side rather than the import-graph side: it fires the
+// moment a directory exists and is unaccounted for, independent of whether
+// anything has imported anything yet.
+// ---------------------------------------------------------------------------
+
+/** L0 packages (design D2's layer 0): pure-foundation, never a service or L1
+ * member. Named here — rather than the completeness check inlining
+ * `'@autologger/domain'`/`'@autologger/contract'`/`'@autologger/ports'`
+ * literals — so the check's logic reads as "every packages/* directory is
+ * accounted for by ONE of four named categories," matching the spec's own
+ * phrasing, and so a future L0 addition has one constant to update instead
+ * of a literal buried inside a loop body. */
+const L0_PACKAGES = new Set<string>([
+  '@autologger/domain',
+  '@autologger/contract',
+  '@autologger/ports',
+]);
+
+/** Explicit, reviewed exemption list (spec: "in that constant or on an
+ * explicit exemption list") — never a silent filter. Empty today: every
+ * directory under `packages/` is L0, L1, or a named service. An entry here
+ * would need its own reason recorded inline, the same discipline
+ * `TEST_INFRASTRUCTURE_EXEMPTIONS` and `SERVER_SRC_LAYER_DIR_EXEMPTIONS`
+ * already follow elsewhere in this file. */
+const SERVICE_PACKAGE_EXEMPTIONS = new Set<string>();
+
+/** Every `packages/*` directory (by manifest `name`) that is not L0, not L1,
+ * not in `SERVICE_PACKAGES`, and not on the exemption list — i.e. every
+ * package `SERVICE_PACKAGES` has silently omitted. Reuses `discoverPackages`
+ * rather than a fresh directory walk; takes every category as a parameter
+ * (never a closed-over module global) so the mutation demonstration below
+ * can pass a deliberately-omitting copy of `SERVICE_PACKAGES` without
+ * mutating the shared constant in place. */
+function checkServicePackageCompleteness(
+  repoRoot: string,
+  l0: ReadonlySet<string> = L0_PACKAGES,
+  l1: ReadonlySet<string> = L1_PACKAGES,
+  servicePackages: ReadonlySet<string> = SERVICE_PACKAGES,
+  exemptions: ReadonlySet<string> = SERVICE_PACKAGE_EXEMPTIONS,
+): string[] {
+  const packagesRoot = path.join(repoRoot, 'packages');
+  const packages = discoverPackages(packagesRoot);
+  const missing: string[] = [];
+  for (const pkg of packages) {
+    if (l0.has(pkg.name)) continue;
+    if (l1.has(pkg.name)) continue;
+    if (servicePackages.has(pkg.name)) continue;
+    if (exemptions.has(pkg.name)) continue;
+    missing.push(pkg.name);
+  }
+  return missing.sort();
+}
+
+describe('SERVICE_PACKAGES completeness — real repo (task 1.6, spec "The service-package membership constant is complete")', () => {
+  it('every packages/* directory that is not L0 or L1 is named in SERVICE_PACKAGES or on the exemption list', () => {
+    expect(checkServicePackageCompleteness(REPO_ROOT)).toEqual([]);
+  });
+});
+
 // Mutation coverage for the four service-layer checks (task 2.5). These
 // invoke the SAME exported check functions and the SAME production
 // `SERVICE_PACKAGES`/`L1_PACKAGES` constants the real-repo assertions above
@@ -813,7 +1123,7 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
     if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  /** Domain/ports/session-core (L0/L1) plus all three service packages,
+  /** Domain/ports/session-core (L0/L1) plus all four service packages,
    * wired with only legal downward edges — the tree every case below starts
    * from and overrides. */
   const CLEAN_SERVICE_FILES: Record<string, string> = {
@@ -849,6 +1159,21 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
       },
     }),
     'packages/log-import/src/index.ts': `import { x } from '@autologger/domain';\nexport const l = x;\n`,
+    // ai-runtime-package task 1.5: the fourth service package, mirroring the
+    // real package.json's declared deps (domain/contract/ports/session-core)
+    // even though — like transcription/log-import above — this synthetic
+    // index.ts only exercises one of them; declaring an edge nothing imports
+    // is a manifest-honesty question this fixture isn't testing.
+    'packages/ai-runtime/package.json': JSON.stringify({
+      name: '@autologger/ai-runtime',
+      dependencies: {
+        '@autologger/domain': '*',
+        '@autologger/contract': '*',
+        '@autologger/ports': '*',
+        '@autologger/session-core': '*',
+      },
+    }),
+    'packages/ai-runtime/src/index.ts': `import { x } from '@autologger/domain';\nexport const a = x;\n`,
   };
 
   it('clean tree → zero violations on all three graph-based checks', () => {
@@ -869,6 +1194,23 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
     const graph = packageImportGraph(tmpRoot);
     expect(checkNoServiceSiblingImports(graph)).toEqual([
       '@autologger/transcription->@autologger/media-import',
+    ]);
+  });
+
+  it('DOES flag a direct service->service import sourced from the new ai-runtime member (task 1.5)', () => {
+    // Task 1.5's own gate-intent demonstration: this case is what "the four
+    // service checks with the new member present" cashes out to — proof that
+    // `ai-runtime`, once added to `SERVICE_PACKAGES`, is caught as a SOURCE
+    // of a sibling violation exactly like the three pre-existing members
+    // above, not merely present in the constant's non-emptiness check.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-direct-ai-runtime-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_SERVICE_FILES,
+      'packages/ai-runtime/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const a = x + m;\n`,
+    });
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([
+      '@autologger/ai-runtime->@autologger/media-import',
     ]);
   });
 
@@ -932,10 +1274,11 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
   });
 
   /** Overrides `domain` to import `media-import` (the laundering hop) and
-   * `log-import` to import nothing (so `log-import`'s own, separate
-   * `-> domain ->` edge in `CLEAN_SERVICE_FILES` doesn't ALSO become
-   * transitively reachable to `media-import` and produce a second,
-   * unrelated violation in these transcription-focused cases). */
+   * `log-import`/`ai-runtime` to import nothing (so their own, separate
+   * `-> domain ->` edges in `CLEAN_SERVICE_FILES` don't ALSO become
+   * transitively reachable to `media-import` and produce extra, unrelated
+   * violations in these transcription-focused cases — `ai-runtime`'s entry
+   * added task 1.5, matching the pre-existing `log-import` neutralization). */
   const TRANSITIVE_THROUGH_L0_FILES: Record<string, string> = {
     ...CLEAN_SERVICE_FILES,
     'packages/domain/package.json': JSON.stringify({
@@ -944,6 +1287,7 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
     }),
     'packages/domain/src/index.ts': `import { m } from '@autologger/media-import';\nexport const x = m;\n`,
     'packages/log-import/src/index.ts': `export const l = 1;\n`,
+    'packages/ai-runtime/src/index.ts': `export const a = 1;\n`,
   };
 
   it('DOES flag a three-package transitive chain through an L0 intermediate (transcription -> domain -> media-import)', () => {
@@ -978,18 +1322,27 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
   // L1->L2, and transitive fixtures with a corrupted constant passed
   // explicitly as the function argument (never a module-level edit).
   describe("typo'd/emptied membership constants defeat the checks (proving the constants are load-bearing)", () => {
-    // Typos the shared TARGET of all three violation scenarios below
+    // Typos the shared TARGET of all violation scenarios below
     // (`media-import` is the package every positive case reaches into —
     // directly, as an L1's import, or as the far end of a transitive chain)
     // rather than a source-side name, so one constant defeats every case:
     // a typo anywhere in the constant is a defect regardless of which
     // member it lands on, and the L1->L2 scenario in particular has no
-    // `transcription` name in play at all to typo.
-    const TYPOD_SERVICE_PACKAGES = new Set<string>([
-      '@autologger/transcription',
-      '@autologger/media-imports', // typo: trailing "s"
-      '@autologger/log-import',
-    ]);
+    // `transcription` name in play at all to typo. Derived FROM the
+    // production `SERVICE_PACKAGES` constant (task 1.5: "invoking the
+    // production check functions and production membership constants")
+    // rather than a hand-copied literal list — a hand-copied list of the
+    // pre-1.5 three members would silently under-cover the moment a fourth
+    // (`ai-runtime`) joined, exactly the staleness this file's own D7
+    // discussion warns against elsewhere. Deriving via `.map()` means this
+    // set always has one member for every real `SERVICE_PACKAGES` entry
+    // (four today, `ai-runtime` included), with only the shared target
+    // typo'd.
+    const TYPOD_SERVICE_PACKAGES = new Set<string>(
+      [...SERVICE_PACKAGES].map((name) =>
+        name === '@autologger/media-import' ? '@autologger/media-imports' : name,
+      ),
+    );
     const EMPTY_SERVICE_PACKAGES = new Set<string>();
     const EMPTY_L1_PACKAGES = new Set<string>();
 
@@ -1008,6 +1361,26 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
       writeTree(tmpRoot, {
         ...CLEAN_SERVICE_FILES,
         'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const t = x + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoServiceSiblingImports(graph, EMPTY_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it("a typo'd SERVICE_PACKAGES fails to catch a violation sourced from the new ai-runtime member (task 1.5)", () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-direct-ai-runtime-typo-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/ai-runtime/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const a = x + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoServiceSiblingImports(graph, TYPOD_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it('an empty SERVICE_PACKAGES fails to catch a violation sourced from the new ai-runtime member (task 1.5)', () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-direct-ai-runtime-empty-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/ai-runtime/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const a = x + m;\n`,
       });
       const graph = packageImportGraph(tmpRoot);
       expect(checkNoServiceSiblingImports(graph, EMPTY_SERVICE_PACKAGES)).toEqual([]);
@@ -1045,6 +1418,49 @@ describe('service-layer checks (mutation check on synthetic package trees, task 
       writeTree(tmpRoot, TRANSITIVE_THROUGH_L0_FILES);
       const graph = packageImportGraph(tmpRoot);
       expect(checkServiceTransitiveReachability(graph, EMPTY_SERVICE_PACKAGES)).toEqual([]);
+    });
+  });
+
+  // Task 1.6's own demonstration (spec scenario "A package omitted from the
+  // membership constant is caught"): a real service-to-service violation,
+  // sourced from a package that EXISTS on disk but has been omitted from
+  // `SERVICE_PACKAGES`, escapes checks (1)-(3) — because all three are
+  // evaluated against that same set — while the completeness check fires
+  // regardless, since it reasons from the filesystem rather than the import
+  // graph. Both halves are asserted together: the omission is real (checks
+  // (1)-(3) go silent) AND it is caught by something else (completeness
+  // fires), proving the constant's incompleteness is detected by a
+  // mechanism other than the checks it parameterizes.
+  describe('SERVICE_PACKAGES completeness closes the omission hole (task 1.6, spec "A package omitted from the membership constant is caught")', () => {
+    it('omitting ai-runtime from SERVICE_PACKAGES silences checks (1)-(3) on a real ai-runtime->media-import violation, but completeness still fires', () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-completeness-omission-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/ai-runtime/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const a = x + m;\n`,
+      });
+
+      // Simulate the omission by deriving a copy of SERVICE_PACKAGES with
+      // `ai-runtime` removed — never `.delete()`-ing the shared module-level
+      // Set — and passing it explicitly, matching this file's existing
+      // vacuum-probe discipline.
+      const omittingAiRuntime = new Set(
+        [...SERVICE_PACKAGES].filter((name) => name !== '@autologger/ai-runtime'),
+      );
+      const graph = packageImportGraph(tmpRoot);
+
+      // Checks (1)-(3), evaluated against the incomplete constant, are all
+      // silent on the real ai-runtime->media-import violation — `ai-runtime`
+      // simply isn't a recognized service package under this constant.
+      expect(checkNoServiceSiblingImports(graph, omittingAiRuntime)).toEqual([]);
+      expect(checkNoL1ImportsService(graph, L1_PACKAGES, omittingAiRuntime)).toEqual([]);
+      expect(checkServiceTransitiveReachability(graph, omittingAiRuntime)).toEqual([]);
+
+      // The completeness check, reasoning from the filesystem rather than
+      // the import graph, catches the omission itself — it would fire even
+      // if `packages/ai-runtime/src/index.ts` imported nothing at all.
+      expect(
+        checkServicePackageCompleteness(tmpRoot, L0_PACKAGES, L1_PACKAGES, omittingAiRuntime),
+      ).toEqual(['@autologger/ai-runtime']);
     });
   });
 });
@@ -1220,8 +1636,21 @@ const COMPOSITION_ROOT_REL = 'node/config.ts';
  * which can never equal a package name, so `specifierNamesConcretePackage`
  * would always return false and the whole check would silently pass on
  * every input. That failure mode produces no error and no red test; it was
- * only caught by writing task 4.3's mutation coverage. */
-const IMPORT_CLAUSE_RE = /\b(?:import|export)\b([^;]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+ * only caught by writing task 4.3's mutation coverage.
+ *
+ * The clause run is `CLAUSE_RUN_SRC`, the SAME source fragment
+ * `extractImportSpecifiers` is built from, rather than a second literal kept
+ * in sync by hand — this check's walked root now includes the service packages
+ * (task 3.5, design D9), so the same file is in scope for both scanners and
+ * they must not disagree about what a clause is. Sharing the fragment is what
+ * makes that structural. (They HAD disagreed: task 3.1 edited one and the
+ * phase-3 fix found both wrong in the same way.) Callers must run the captured
+ * clause through `stripClauseComments` before reading identifiers out of it —
+ * the run admits comments, and a comment binds nothing. */
+const IMPORT_CLAUSE_RE = new RegExp(
+  `\\b(?:import|export)\\b(${CLAUSE_RUN_SRC})\\bfrom\\s*['"]([^'"]+)['"]`,
+  'g',
+);
 
 /** True when a captured clause is a wildcard/namespace form against one of
  * the concrete-bearing packages (design D7) — a bare `*`, optionally preceded
@@ -1266,15 +1695,48 @@ function walkServerSrcProductionFiles(repoRoot: string): string[] {
   });
 }
 
+/** The production files this check walks (ai-runtime-package task 3.5, design
+ * D9): `server/src` PLUS every service package's own `src/`.
+ *
+ * The baseline requirement this implements is scoped "**Outside the
+ * packages**, production code SHALL otherwise reference the facade interfaces
+ * only" — which, with a `server/src`-only walk, meant a module's obligation to
+ * import `SessionHubRegistryFacade` rather than the concrete
+ * `SessionHub`/`Catalog` classes was DISCHARGED BY THE ACT OF MOVING it into a
+ * package: 13 AI-runtime modules would have left the walked root with no gate
+ * objecting. The delta widens the walked root instead of asserting the
+ * property in a new scenario with no mechanism. Derived from the production
+ * `SERVICE_PACKAGES` constant — never a hand-listed copy — so a fifth service
+ * package joins this walk by being added to that one set.
+ *
+ * Package `src/test/` subtrees are excluded for the same reason
+ * `server/src/test/` is: they hold test infrastructure (each package's
+ * `fakeClock.ts`), consumed only by test files, never by production code. */
+function walkInterfaceOnlyProductionFiles(repoRoot: string): string[] {
+  const files = walkServerSrcProductionFiles(repoRoot);
+  for (const name of SERVICE_PACKAGES) {
+    const pkgSrc = path.join(repoRoot, 'packages', name.slice('@autologger/'.length), 'src');
+    for (const file of walkProductionTsFiles(pkgSrc)) {
+      if (relOf(pkgSrc, file).startsWith('test/')) continue;
+      files.push(file);
+    }
+  }
+  return files;
+}
+
 function checkInterfaceOnlyConsumption(repoRoot: string): ConcreteImportViolation[] {
   const srcRoot = path.join(repoRoot, 'server', 'src');
   const violations: ConcreteImportViolation[] = [];
-  for (const file of walkServerSrcProductionFiles(repoRoot)) {
+  for (const file of walkInterfaceOnlyProductionFiles(repoRoot)) {
+    // `relOf` against `server/src` yields an escaping `../../packages/...`
+    // path for a service-package file, which can never equal
+    // COMPOSITION_ROOT_REL — the composition-root exemption stays scoped to
+    // the app's own `node/config.ts` and does not leak into the packages.
     const rel = relOf(srcRoot, file);
     if (rel === COMPOSITION_ROOT_REL) continue;
     const content = fs.readFileSync(file, 'utf8');
     for (const m of content.matchAll(IMPORT_CLAUSE_RE)) {
-      const clause = m[1];
+      const clause = stripClauseComments(m[1]);
       const specifier = m[2];
       if (!specifierNamesConcretePackage(specifier)) continue;
       if (clauseIsWildcard(clause)) {
@@ -1291,9 +1753,26 @@ function checkInterfaceOnlyConsumption(repoRoot: string): ConcreteImportViolatio
   return violations;
 }
 
-describe('interface-only consumption of persistence facades (task 6.1, design D3)', () => {
-  it('only node/config.ts imports the concrete persistence identifiers among server/src production files', () => {
+describe('interface-only consumption of persistence facades (task 6.1, design D3; walk widened by ai-runtime-package task 3.5, design D9)', () => {
+  it('only node/config.ts imports the concrete persistence identifiers among server/src AND service-package production files', () => {
     expect(checkInterfaceOnlyConsumption(REPO_ROOT)).toEqual([]);
+  });
+
+  // Non-vacuity for the WIDENED half specifically: the `server/src` half has
+  // always had files, so the assertion above would stay green if the service
+  // packages contributed nothing at all — which is exactly the "discharged by
+  // relocation" failure D9 exists to prevent.
+  it('the widened walk actually reaches production files inside the service packages', () => {
+    const serverOnly = new Set(walkServerSrcProductionFiles(REPO_ROOT));
+    const widened = walkInterfaceOnlyProductionFiles(REPO_ROOT);
+    const fromPackages = widened.filter((f) => !serverOnly.has(f));
+    expect(fromPackages.length).toBeGreaterThan(0);
+    for (const name of SERVICE_PACKAGES) {
+      const shortName = name.slice('@autologger/'.length);
+      expect(
+        fromPackages.some((f) => relOf(REPO_ROOT, f).startsWith(`packages/${shortName}/src/`)),
+      ).toBe(true);
+    }
   });
 });
 
@@ -1475,6 +1954,93 @@ describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/sr
       violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
     ).toBe(true);
   });
+
+  // ai-runtime-package phase-3 review, finding C1 — the two ways a comment
+  // inside a clause used to defeat THIS check specifically. The first shape
+  // was invisible to the scanner outright (the run stopped at the `(`); the
+  // second reached the scanner but not `clauseIsWildcard`, whose anchored
+  // pattern cannot match once anything sits between the keyword and the `*`.
+  // Both are why the run carries comment branches and why the captured clause
+  // is run through `stripClauseComments` before any identifier is read out.
+  it('DOES flag a named concrete import whose clause carries an inline comment', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-comment-named-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import { SessionHub /* (concrete — don't) */ } from '@autologger/session-core';",
+        'export const x = SessionHub;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some(
+        (v) => v.identifier === 'SessionHub' && v.specifier === '@autologger/session-core',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES flag a wildcard clause carrying an inline comment', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-comment-wildcard-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import * /* namespace */ as sc from '@autologger/session-core';",
+        'export const x = sc;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
+    ).toBe(true);
+  });
+
+  // ai-runtime-package task 3.5 (design D9): the widened walk fires from a
+  // PACKAGE location, not merely from `server/src`. Without this case the
+  // widening is unfalsifiable — every existing case above lives under
+  // `server/src`, so a revert to the narrow walk would leave all of them
+  // green. The tree deliberately puts a clean `server/src` beside a violating
+  // service package, so the only thing that can produce a violation here is
+  // the package half of the walk. Uses a REAL `SERVICE_PACKAGES` member name
+  // (the production constant drives the walk), so dropping that member from
+  // the constant also fails this case.
+  it('DOES flag a concrete import inside a SERVICE PACKAGE (the widened walk, design D9)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-package-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'packages/ai-runtime/src/bad.ts': [
+        "import { SessionHubRegistry } from '@autologger/session-core';",
+        'export const x = SessionHubRegistry;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some(
+        (v) =>
+          v.file === 'packages/ai-runtime/src/bad.ts' &&
+          v.identifier === 'SessionHubRegistry' &&
+          v.specifier === '@autologger/session-core',
+      ),
+    ).toBe(true);
+  });
+
+  // Negative control for the exclusion the widened walk carries: a package's
+  // own `src/test/` infrastructure is out of scope, exactly as
+  // `server/src/test/` is.
+  it("does NOT flag a service package's own src/test/ infrastructure", () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-package-test-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'packages/ai-runtime/src/test/fakeThing.ts': [
+        "import { SessionHubRegistry } from '@autologger/session-core';",
+        'export const x = SessionHubRegistry;',
+        '',
+      ].join('\n'),
+    });
+    expect(checkInterfaceOnlyConsumption(tmpRoot)).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1512,14 +2078,14 @@ describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/sr
 // persistence-package-extraction task 4.3 (design D6): `session`'s
 // production modules and unit tests moved to `@autologger/session-core` at
 // this task (mirroring the `db` prune above); its two `*.int.test.ts` files
-// (packages never import the app harness those files need) stay at
-// `server/src/session/` for now and relocate to `server/src/test/` at task
-// 4.4 — so `server/src/session/` is not yet fully empty, but it holds no
-// production files anymore, and `session` is pruned from this production-
-// import-graph list here since the directory's only remaining role is
-// int-test-only. No positive directory pin ever named `session` alone (the
-// pin below was `aiV2 -> session`, retired together with this prune — see
-// the removed assertion note below).
+// (packages never import the app harness those files need) stayed at
+// `server/src/session/` until relocating to `server/src/test/` at task 4.4,
+// which fully emptied `server/src/session/` — the directory no longer
+// exists — and `session` is pruned from this production-import-graph list
+// here since the directory's only remaining role, in the interim between
+// the two tasks, was int-test-only. No positive directory pin ever named
+// `session` alone (the pin below was `aiV2 -> session`, retired together
+// with this prune — see the removed assertion note below).
 // feature-service-packages task 5.3 (design D8): `logImport`'s six
 // production modules and four unit tests all moved to
 // `@autologger/log-import` in this one unit (mirroring the `db` prune
@@ -1530,7 +2096,21 @@ describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/sr
 // non-vacuity check (`enumeratedButEmpty`) exists to catch. No positive
 // directory pin ever named `logImport`, so nothing else needs restating
 // for this prune.
-const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'aiV2', 'ai-runtime'];
+// ai-runtime-package task 3.1/3.4 (design D1/D8/E9): `ai-runtime`'s 11
+// production modules and `aiV2`'s 2 all moved to `@autologger/ai-runtime` in
+// ONE dispatch unit — the two directories could not move separately, because
+// `aiV2SdkSpawn.ts` and two moving test files carry a VALUE import of
+// `AGGREGATE_MCP_SERVER_NAME` from `aiV2/mcpTools`, and `checkPackagesBoundary`
+// walks test files, so a split would have left three `escape` violations red
+// for a whole phase. Both directories no longer exist; both are pruned from
+// this list in that same unit (a delay is what `enumeratedButEmpty` catches),
+// and — because this enumeration is a PERMISSION LIST, so removal alone would
+// let a later change re-create either directory for the price of re-adding an
+// entry — both are additionally barred BY NAME by
+// `checkForbiddenServerSrcDirs` below. The former `routers -> ai-runtime` and
+// `ai-runtime -> aiV2` directory edges vanish with their endpoints; no
+// positive directory pin ever named either, so nothing else needs restating.
+const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers'];
 
 /** Matches `*.test.ts`, `*.int.test.ts` (both end in `.test.ts`), and the
  * widened `.mts`/`.cts` test-source shapes (`*.test.mts`, `*.test.cts`) —
@@ -1630,8 +2210,58 @@ describe('server/src directory import graph — real repo (task 6.2: former cycl
 // to silently patch over with a parallel ad hoc scan.
 // ---------------------------------------------------------------------------
 
-const AI_RUNTIME_DIR_REL = 'ai-runtime';
+/** The AI runtime's home after ai-runtime-package task 3.1: a package, not a
+ * `server/src` directory. Repo-root-relative segments so the purity check can
+ * be re-rooted for its own vacuum probe. */
+const AI_RUNTIME_PACKAGE_SRC_REL = ['packages', 'ai-runtime', 'src'] as const;
 const ROUTERS_DIR_REL = 'routers';
+
+/** Directories that SHALL NOT exist under `server/src` (ai-runtime-package
+ * task 3.4; spec scenario "The emptied directories cannot be re-created").
+ * `SERVER_SRC_LAYER_DIRS` is a permission list: pruning an entry does not
+ * forbid re-creation, it only makes a re-created directory *unenumerated* —
+ * and re-adding the entry is then the entire cost of bringing it back, with
+ * every other post-move check silent (they are scoped to
+ * `server/src/routers/`, `server/src/node/`, or the package). This by-name
+ * prohibition is the only check that objects.
+ *
+ * "SHALL cease to exist rather than remain as empty or shim-bearing" is taken
+ * at its word: mere EXISTENCE of the directory is the violation, not the
+ * presence of production files in it — an empty directory named `ai-runtime`
+ * is precisely the "vacated but not gone" state the requirement rules out,
+ * and a shim-bearing one would otherwise have to be caught file-by-file. */
+const FORBIDDEN_SERVER_SRC_DIRS = ['ai-runtime', 'aiV2'] as const;
+
+function checkForbiddenServerSrcDirs(repoRoot: string): string[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  return FORBIDDEN_SERVER_SRC_DIRS.filter((dirName) =>
+    fs.existsSync(path.join(srcRoot, dirName)),
+  ).map((dirName) => `server/src/${dirName}`);
+}
+
+describe('the emptied AI-runtime directories cannot be re-created — real repo (ai-runtime-package task 3.4, spec scenario "The emptied directories cannot be re-created")', () => {
+  it('neither server/src/ai-runtime/ nor server/src/aiV2/ exists', () => {
+    expect(checkForbiddenServerSrcDirs(REPO_ROOT)).toEqual([]);
+  });
+
+  it('the check names the directory when one is re-created (synthetic root — no fixture enters the real tree)', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'forbidden-server-dirs-'));
+    try {
+      fs.mkdirSync(path.join(tmpRoot, 'server', 'src', 'ai-runtime'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpRoot, 'server', 'src', 'ai-runtime', 'aiTurn.ts'),
+        'export const x = 1;\n',
+      );
+      fs.mkdirSync(path.join(tmpRoot, 'server', 'src', 'aiV2'), { recursive: true });
+      expect(checkForbiddenServerSrcDirs(tmpRoot)).toEqual([
+        'server/src/ai-runtime',
+        'server/src/aiV2',
+      ]);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 function isHonoSpecifier(specifier: string): boolean {
   return specifier === 'hono' || specifier.startsWith('hono/') || specifier.startsWith('@hono/');
@@ -1678,16 +2308,52 @@ interface AiRuntimePurityViolation {
   detail: string;
 }
 
+interface AiRuntimePurityResult {
+  violations: AiRuntimePurityViolation[];
+  /** How many production files the walk actually saw. Returned rather than
+   * asserted inside, so the non-vacuity property is checkable from the
+   * outside — see the vacuum probe below. */
+  walked: number;
+}
+
 /** Check (1) — runtime purity (spec scenario "AI runtime Hono-freedom is
- * continuously enforced"): no production file under `server/src/ai-runtime/`
- * may import `hono`, a `hono/*` subpath, a `@hono/*` scoped package,
- * `server/src/appEnv` by relative specifier, or anything resolving under
- * `server/src/routers/`. */
-function checkAiRuntimePurity(repoRoot: string): AiRuntimePurityViolation[] {
+ * enforced in its package home"): no production file under
+ * `@autologger/ai-runtime`'s sources may import `hono`, a `hono/*` subpath, a
+ * `@hono/*` scoped package, `server/src/appEnv` by relative specifier, or
+ * anything else resolving under `server/src/`.
+ *
+ * ai-runtime-package task 3.4 re-points this at the package. That is a BODY
+ * edit, not a constant swap: the function took only `repoRoot` and computed
+ * `srcRoot = repoRoot/server/src` before joining the runtime directory onto
+ * it. `srcRoot` survives — the appEnv and `server/src/` arms resolve their
+ * relative specifiers AGAINST the app, from wherever the walked file happens
+ * to live — but the walked root is now the package's `src/`.
+ *
+ * The `server/src/` arm is stated as the delta words it ("or any module under
+ * `server/src/`"), widened from the pre-move `server/src/routers/` scoping:
+ * from a package, a relative reach into ANY app directory is the same defect,
+ * and the narrower form would have made task 3.8's "relative reach into
+ * `server/src/`" demonstration indistinguishable from its routers-only
+ * predecessor. The routers case keeps its own detail string, since that is
+ * the specific reach the pre-move rule was written against.
+ *
+ * NOT subsumed by `checkPackagesBoundary`'s escape rule, and the honest scope
+ * note matters: now that the runtime is a package, the appEnv and
+ * `server/src/` arms ARE also covered by that rule — only the `hono`/`@hono/*`
+ * arm is strictly non-redundant, because a `hono` import inside a package that
+ * DECLARED `hono` as a dependency satisfies every boundary rule while defeating
+ * this one. All three arms are kept anyway (defense in depth on a rule whose
+ * whole point is that architecture without a mechanism goes false silently),
+ * but "its property did not change" would be an overstatement. */
+function checkAiRuntimePurity(
+  repoRoot: string,
+  runtimeDirOverride?: string,
+): AiRuntimePurityResult {
   const srcRoot = path.join(repoRoot, 'server', 'src');
-  const runtimeDir = path.join(srcRoot, AI_RUNTIME_DIR_REL);
+  const runtimeDir = runtimeDirOverride ?? path.join(repoRoot, ...AI_RUNTIME_PACKAGE_SRC_REL);
   const violations: AiRuntimePurityViolation[] = [];
-  for (const file of walkProductionTsFiles(runtimeDir)) {
+  const files = walkProductionTsFiles(runtimeDir);
+  for (const file of files) {
     const relFile = relOf(repoRoot, file);
     const content = fs.readFileSync(file, 'utf8');
     for (const specifier of extractImportSpecifiers(content)) {
@@ -1705,15 +2371,43 @@ function checkAiRuntimePurity(repoRoot: string): AiRuntimePurityViolation[] {
           specifier,
           detail: 'imports a module resolving under server/src/routers/',
         });
+      } else if (relativeSpecifierResolvesUnderDir(srcRoot, file, specifier, '.')) {
+        violations.push({
+          file: relFile,
+          specifier,
+          detail: 'imports a module resolving under server/src/',
+        });
       }
     }
   }
-  return violations;
+  return { violations, walked: files.length };
 }
 
-describe('ai-runtime Hono-freedom — real repo (task 2.5, design D6, spec scenario "AI runtime Hono-freedom is continuously enforced")', () => {
-  it('no production file under server/src/ai-runtime/ imports hono, hono/*, @hono/*, appEnv, or anything under server/src/routers/', () => {
-    expect(checkAiRuntimePurity(REPO_ROOT)).toEqual([]);
+describe('ai-runtime Hono-freedom — real repo (task 2.5, design D6; re-pointed at the package by ai-runtime-package task 3.4, spec scenario "AI runtime Hono-freedom is enforced in its package home")', () => {
+  it('no production file under packages/ai-runtime/src/ imports hono, hono/*, @hono/*, appEnv, or anything under server/src/', () => {
+    expect(checkAiRuntimePurity(REPO_ROOT).violations).toEqual([]);
+  });
+
+  // PERMANENT non-vacuity assertion (spec scenario "The Hono-freedom check
+  // cannot pass vacuously"; design D8 point 4). `walkTsFiles` swallows ENOENT
+  // and returns `[]` for a missing directory, so a mis-pointed walked root
+  // makes every assertion above pass while checking nothing — and unlike the
+  // `server/src` region this check used to live in, `packages/` has no
+  // `enumeratedButEmpty` analogue that would notice. The repo's own idiom for
+  // this is a standing assertion, not a deleted-after-the-branch canary.
+  it('the walked root actually contains production files (the assertion above is not vacuous)', () => {
+    expect(checkAiRuntimePurity(REPO_ROOT).walked).toBeGreaterThan(0);
+  });
+
+  // The vacuum probe that makes the assertion above falsifiable: point the
+  // walk at a path that does not exist and confirm it reports ZERO files
+  // rather than erroring — i.e. that a mis-pointed root really would sail
+  // through the violations assertion with nothing to say.
+  it('a walked root that does not exist yields zero files and zero violations — which is why the count is asserted', () => {
+    const missing = path.join(REPO_ROOT, 'packages', 'ai-runtime-does-not-exist', 'src');
+    const result = checkAiRuntimePurity(REPO_ROOT, missing);
+    expect(result.walked).toBe(0);
+    expect(result.violations).toEqual([]);
   });
 });
 
@@ -1749,14 +2443,21 @@ describe('routers/ HTTP-layer membership — real repo (task 2.5, design D6, spe
 });
 
 /** The moved AI-runtime cluster's basenames (this phase's move, design D2) —
- * the spec scenario's second conjunct names these 11 explicitly: "...and
+ * the spec scenario's second conjunct names these 13 explicitly: "...and
  * none of the AI runtime modules (...) is among them" [the router-membership
  * modules]. `checkRouterMembership` above only catches a reintroduced file
  * of this shape TRANSITIVELY, if it also happens to stay Hono-free — a mover
  * who (re)adds a `hono`/`appEnv` import alongside one of these basenames
  * would satisfy check (2) while still violating the named scenario. This
  * list is asserted against directly below rather than trusted to that
- * transitive coincidence. */
+ * transitive coincidence.
+ *
+ * Widened 11 -> 13 by ai-runtime-package task 3.4: `mcpTools.ts` and
+ * `aggregates.ts` moved into `@autologger/ai-runtime` from the retired
+ * `server/src/aiV2/`, and the scenario's enumeration names them alongside the
+ * original 11. Accepted residual, recorded at the gate: `aggregates.ts` is a
+ * generic-enough basename that this list now also forbids an unrelated future
+ * `server/src/routers/aggregates.ts`. */
 const AI_RUNTIME_MOVED_BASENAMES = [
   'aiMcpServer.ts',
   'aiV2SdkSpawn.ts',
@@ -1769,10 +2470,12 @@ const AI_RUNTIME_MOVED_BASENAMES = [
   'aiChatRegistry.ts',
   'eventGeneratePrompt.ts',
   'processGroupKill.ts',
+  'mcpTools.ts',
+  'aggregates.ts',
 ] as const;
 
 describe('routers/ excludes the moved AI-runtime cluster by name — real repo (task 2.5, design D6, spec scenario "Routers directory holds only HTTP-layer modules")', () => {
-  it('none of the 11 named AI runtime module basenames exists anywhere under server/src/routers/', () => {
+  it('none of the 13 named AI runtime module basenames exists anywhere under server/src/routers/', () => {
     const srcRoot = path.join(REPO_ROOT, 'server', 'src');
     const routersDir = path.join(srcRoot, ROUTERS_DIR_REL);
     const found = walkTsFiles(routersDir)
@@ -1861,13 +2564,13 @@ const API_ERROR_CLASS_DECL_RE = /\bclass\s+ApiError\b|\b(?:const|let|var)\s+ApiE
  * unreached: an aliased re-export (`export { ApiError as HttpError } from
  * './httpError'` then a routers file re-exporting `HttpError` under a
  * different local name again), and a dynamically-constructed import
- * specifier. And, same hazard class the widened `IMPORT_CLAUSE_RE`-based
- * checks in this file already document: this is a raw-text scan with no
- * comment/string stripping, so a prose comment in a routers file that
- * happens to spell `class ApiError` or `const ApiError = class` — even
- * while documenting this very rule — would red the gate on a false
- * positive. Never quote either declaration form inside a `server/src`
- * production file's comments. */
+ * specifier. And the class-declaration half is a raw-text scan with no
+ * comment or string stripping (the import half runs its clause through
+ * `stripClauseComments`; this one has no clause to strip), so a prose
+ * comment in a routers file that happens to spell `class ApiError` or
+ * `const ApiError = class` — even while documenting this very rule — would
+ * red the gate on a false positive. Never quote either declaration form
+ * inside a `server/src` production file's comments. */
 function checkApiErrorHome(repoRoot: string): ApiErrorHomeViolation[] {
   const srcRoot = path.join(repoRoot, 'server', 'src');
   const violations: ApiErrorHomeViolation[] = [];
@@ -1899,7 +2602,7 @@ function checkApiErrorHome(repoRoot: string): ApiErrorHomeViolation[] {
   for (const file of walkServerSrcProductionFiles(repoRoot)) {
     const content = fs.readFileSync(file, 'utf8');
     for (const m of content.matchAll(IMPORT_CLAUSE_RE)) {
-      const clause = m[1];
+      const clause = stripClauseComments(m[1]);
       const specifier = m[2];
       if (!/\bApiError\b/.test(clause)) continue;
       if (relativeSpecifierResolvesUnderDir(srcRoot, file, specifier, ROUTERS_DIR_REL)) {
@@ -2177,5 +2880,103 @@ describe('checkNodeDirMembership (mutation check on a synthetic server/src/node 
       'server/src/node/presence.ts',
       'server/src/node/systemClock.ts',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Server-manifest scan (task 1.7, design D7; spec "A service package
+// declares its own dependencies and owns its test fixtures" / scenario "The
+// server app declares the workspace packages it imports").
+//
+// npm workspace hoisting resolves an UNDECLARED `@autologger/*` import from
+// `server/src` just fine — nothing in the toolchain objects — so a workspace
+// package the server app imports without declaring it in `server/
+// package.json`'s own `dependencies` resolves silently instead of failing
+// loudly. The immediately-preceding change (feature-service-packages)
+// shipped exactly three such undeclared dependencies through this hole; no
+// gate caught them, and they were hand-fixed during apply. This change
+// re-exposes the same hole by hand-adding a tenth package
+// (`@autologger/ai-runtime`, task 1.1) and cannot in good conscience decline
+// to close the one hole that has already demonstrably failed.
+//
+// SCOPED TO THE `@autologger/*` DIRECTION ONLY (spec: "the third-party
+// direction remains unscanned ... records that as an open gap rather than
+// claiming a general fix"). An app module importing one of a service
+// package's THIRD-PARTY dependencies (e.g. `exceljs`) without the server
+// declaring it is deliberately NOT checked here — extending this scan to
+// that direction would make the delta's own "open gap" sentence false.
+function checkServerManifestDeclaresWorkspaceImports(repoRoot: string): string[] {
+  const serverSrcRoot = path.join(repoRoot, 'server', 'src');
+  const pkgJsonPath = path.join(repoRoot, 'server', 'package.json');
+  const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  const declared = new Set(Object.keys(pkgJson.dependencies ?? {}));
+  const missing = new Set<string>();
+  for (const file of walkProductionTsFiles(serverSrcRoot)) {
+    const content = fs.readFileSync(file, 'utf8');
+    for (const specifier of extractImportSpecifiers(content)) {
+      if (!specifier.startsWith('@autologger/')) continue;
+      const pkgName = specifier.split('/').slice(0, 2).join('/');
+      if (!declared.has(pkgName)) missing.add(pkgName);
+    }
+  }
+  return [...missing].sort();
+}
+
+describe('server/package.json declares every @autologger/* workspace package server/src imports (task 1.7, spec "The server app declares the workspace packages it imports")', () => {
+  it('every @autologger/* specifier in server/src production sources is declared in server/package.json dependencies', () => {
+    expect(checkServerManifestDeclaresWorkspaceImports(REPO_ROOT)).toEqual([]);
+  });
+});
+
+describe('checkServerManifestDeclaresWorkspaceImports (mutation check on a synthetic server tree, task 1.7)', () => {
+  let tmpRoot: string;
+
+  function writeTree(root: string, files: Record<string, string>) {
+    for (const [rel, content] of Object.entries(files)) {
+      const full = path.join(root, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+  }
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  const DECLARING_MANIFEST = JSON.stringify({
+    name: 'autologger-server',
+    dependencies: { '@autologger/domain': '*', '@autologger/ports': '*' },
+  });
+
+  it('a declared @autologger/* import produces zero violations', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'server-manifest-clean-'));
+    writeTree(tmpRoot, {
+      'server/package.json': DECLARING_MANIFEST,
+      'server/src/node/config.ts': `import { x } from '@autologger/domain';\nexport const y = x;\n`,
+    });
+    expect(checkServerManifestDeclaresWorkspaceImports(tmpRoot)).toEqual([]);
+  });
+
+  it('DOES flag a production @autologger/* import the manifest does not declare (proves the scan is not vacuous)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'server-manifest-undeclared-'));
+    writeTree(tmpRoot, {
+      'server/package.json': DECLARING_MANIFEST,
+      'server/src/node/config.ts': `import { x } from '@autologger/domain';\nimport { y } from '@autologger/session-core';\nexport const z = x;\n`,
+    });
+    expect(checkServerManifestDeclaresWorkspaceImports(tmpRoot)).toEqual([
+      '@autologger/session-core',
+    ]);
+  });
+
+  it('does NOT flag an undeclared @autologger/* import inside a *.test.ts file (production-source-only scope)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'server-manifest-test-file-'));
+    writeTree(tmpRoot, {
+      'server/package.json': DECLARING_MANIFEST,
+      'server/src/node/config.ts': `import { x } from '@autologger/domain';\nexport const y = x;\n`,
+      'server/src/node/config.test.ts': `import { z } from '@autologger/session-core';\nexport const w = z;\n`,
+    });
+    expect(checkServerManifestDeclaresWorkspaceImports(tmpRoot)).toEqual([]);
   });
 });

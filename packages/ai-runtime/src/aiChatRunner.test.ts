@@ -15,7 +15,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AiChatSseEvent } from './aiChatRelay';
 import {
@@ -27,6 +27,13 @@ import {
   spawnAiChatTurn,
   stableSessionCwd,
 } from './aiChatRunner';
+import { AI_RUNTIME_FIXTURES_DIR } from './fixturesDir';
+
+// ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
+// locally rather than importing `server/src/node/systemClock` (composition-
+// root-only by name; also avoids a new ai-runtime→node-infra edge this
+// package will not be able to keep once it moves to `packages/`).
+const systemClock: Clock = { now: () => Date.now() };
 
 // Chat's DEFAULT allowlist is pinned to the three chat tools — deliberately
 // NOT `AI_MCP_TOOL_NAMES` (auto-generate-event-logs D7): the registry now also
@@ -43,15 +50,16 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 const spawnSpy = vi.mocked(spawn);
 
-const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+const FIXTURE_PATH = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 
 /** Phase 3 fix wave (D8 critical defect): a double that exits BEFORE
  * draining stdin — every mode in `fake-claude.mjs` drains stdin first, so
  * none of them can reach the `child.stdin` EPIPE crash this fixture targets.
  * Selected directly via `cliPath` (never `FAKE_CLAUDE_MODE`, which the env
  * whitelist strips) so the real `spawnAiChatTurn` code path is exercised. */
-const EXIT_BEFORE_STDIN_FIXTURE_PATH = fileURLToPath(
-  new URL('../test/fixtures/fake-claude-exit-before-stdin.mjs', import.meta.url),
+const EXIT_BEFORE_STDIN_FIXTURE_PATH = join(
+  AI_RUNTIME_FIXTURES_DIR,
+  'fake-claude-exit-before-stdin.mjs',
 );
 
 // The fixture is a `#!/usr/bin/env node` shebang script (matching a real
@@ -387,6 +395,7 @@ describe('spawnAiChatTurn — child.stdin EPIPE does not crash the process (Phas
           child: spawned.child,
           emit: (event) => void events.push(event),
           timeoutMs: 10_000,
+          clock: systemClock,
         });
         spawned.cleanupConfig();
 
@@ -455,12 +464,28 @@ function isProcessAlive(pid: number): boolean {
 
 /** Poll until the fixture has written its pid file (proves the process
  * actually started before we try to kill it) — deterministic, not a fixed
- * sleep. */
+ * sleep.
+ *
+ * This helper polls on a REAL timer and is awaited BEFORE the code under
+ * test, which is why task 2.4 does not put `vi.useFakeTimers()` anywhere near
+ * this file: describe-scope fake timers stall this loop and hang the test
+ * before it ever reaches the ladder. The deterministic-ladder coverage lives
+ * in `processGroupKill.test.ts` instead, driven through `killProcessGroup`'s
+ * injected clock + sleep seam, which needs no timer control at all.
+ *
+ * Task 2.4 also hardened the read itself: `writeFileSync` creates the file at
+ * `open(O_CREAT)`, so `existsSync` can go true while the file is still empty.
+ * `Number('')` is `0`, and `process.kill(0, …)` addresses the CALLER'S OWN
+ * process group — a silently wrong "alive" answer. Keep polling until the
+ * file actually parses as a pid. */
 async function waitForPidFile(child: ChildProcess): Promise<number> {
   const cwd = directSpawnCwds[directSpawnCwds.length - 1];
   const path = join(cwd, '.fixture-pid.txt');
   for (let i = 0; i < 200; i++) {
-    if (existsSync(path)) return Number(readFileSync(path, 'utf8'));
+    if (existsSync(path)) {
+      const pid = Number(readFileSync(path, 'utf8').trim());
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    }
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error(`fixture never wrote a pid file for child ${child.pid}`);
@@ -472,13 +497,26 @@ afterEach(() => {
   }
 });
 
+// ai-runtime-package (task 2.4) — these five cases keep a REAL clock and the
+// ladder's REAL sleep, deliberately: they drive a live OS process group, and a
+// real process dies in real time no matter what the test does to its own
+// timers. Substituting a frozen clock here is exactly the conversion the delta
+// forbids ("a mechanical substitution of a frozen fake clock that leaves the
+// poll's real timer in place is not an acceptable conversion"); the
+// zero-real-time determinism the delta requires is proven in
+// `processGroupKill.test.ts` against a synthetic group instead.
+//
+// What DID make this block deterministic was closing a startup race in the
+// fixture, not clock control: `.fixture-pid.txt` used to be written before the
+// SIGTERM-ignore handler was installed, so the escalation case could lose the
+// photo-finish and die of SIGTERM. See `fake-claude.mjs`'s ordering note.
 describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () => {
   it('kills a hung child via SIGTERM alone when it respects the signal', async () => {
     const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'hang' });
     const pid = await waitForPidFile(child);
     expect(isProcessAlive(pid)).toBe(true);
 
-    await killAiChatProcessGroup(child, 2000);
+    await killAiChatProcessGroup(systemClock, child, 2000);
 
     expect(child.signalCode).toBe('SIGTERM');
     expect(isProcessAlive(pid)).toBe(false);
@@ -495,7 +533,7 @@ describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () =
       const pid = await waitForPidFile(child);
       expect(isProcessAlive(pid)).toBe(true);
 
-      await killAiChatProcessGroup(child, 250);
+      await killAiChatProcessGroup(systemClock, child, 250);
 
       expect(child.signalCode).toBe('SIGKILL');
       expect(isProcessAlive(pid)).toBe(false);
@@ -508,13 +546,13 @@ describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () =
     expect(child.exitCode).not.toBeNull();
 
     const start = Date.now();
-    await killAiChatProcessGroup(child, 5000); // a grace window this call must NOT wait out
+    await killAiChatProcessGroup(systemClock, child, 5000); // a grace window this call must NOT wait out
     expect(Date.now() - start).toBeLessThan(500);
   });
 
   it('is a no-op (never throws) when the child has no pid', async () => {
     await expect(
-      killAiChatProcessGroup({
+      killAiChatProcessGroup(systemClock, {
         pid: undefined,
         exitCode: null,
         signalCode: null,
@@ -559,7 +597,7 @@ describe('killAiChatProcessGroup — SIGTERM→SIGKILL ladder, no orphans', () =
         expect(child.exitCode).toBe(0);
         expect(isProcessAlive(memberPid)).toBe(true); // the would-be orphan
 
-        await killAiChatProcessGroup(child, 2000);
+        await killAiChatProcessGroup(systemClock, child, 2000);
 
         expect(isProcessAlive(memberPid)).toBe(false); // group-liveness gating killed it
       } finally {
@@ -593,7 +631,12 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
     });
     const { events, emit } = collector();
 
-    const outcome = await runAiChatTurn({ child: spawned.child, emit, timeoutMs: 10_000 });
+    const outcome = await runAiChatTurn({
+      child: spawned.child,
+      emit,
+      timeoutMs: 10_000,
+      clock: systemClock,
+    });
 
     expect(outcome).toEqual({ ok: true, claudeSessionId: 'fixture-cli-session-id' });
     expect(events.map((e) => e.event)).toEqual(['tool', 'delta', 'done']);
@@ -609,7 +652,13 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
       const pid = await waitForPidFile(child);
       const { events, emit } = collector();
 
-      const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 1000 });
+      const outcome = await runAiChatTurn({
+        child,
+        emit,
+        timeoutMs: 50,
+        killGraceMs: 1000,
+        clock: systemClock,
+      });
 
       expect(outcome).toEqual({ ok: false, detail: 'timeout' });
       expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
@@ -622,7 +671,13 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
     const pid = await waitForPidFile(child);
     const { events, emit } = collector();
 
-    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 250 });
+    const outcome = await runAiChatTurn({
+      child,
+      emit,
+      timeoutMs: 50,
+      killGraceMs: 250,
+      clock: systemClock,
+    });
 
     expect(outcome).toEqual({ ok: false, detail: 'timeout' });
     expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
@@ -642,6 +697,7 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
       timeoutMs: 10_000,
       abortSignal: controller.signal,
       killGraceMs: 1000,
+      clock: systemClock,
     });
     controller.abort(); // registered synchronously before runAiChatTurn's first await
 
@@ -668,6 +724,7 @@ describe('runAiChatTurn — race relay/timeout/abort, exactly one terminal event
         timeoutMs: 10_000,
         abortSignal: controller.signal,
         killGraceMs: 1000,
+        clock: systemClock,
       });
 
       expect(outcome).toEqual({ ok: false, detail: 'aborted' });
@@ -702,7 +759,12 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
     });
     const { events, emit } = pinCollector();
 
-    const outcome = await runAiChatTurn({ child: spawned.child, emit, timeoutMs: 10_000 });
+    const outcome = await runAiChatTurn({
+      child: spawned.child,
+      emit,
+      timeoutMs: 10_000,
+      clock: systemClock,
+    });
     spawned.cleanupConfig();
 
     expect(events).toEqual([
@@ -718,7 +780,13 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
     await waitForPidFile(child);
     const { events, emit } = pinCollector();
 
-    const outcome = await runAiChatTurn({ child, emit, timeoutMs: 50, killGraceMs: 1000 });
+    const outcome = await runAiChatTurn({
+      child,
+      emit,
+      timeoutMs: 50,
+      killGraceMs: 1000,
+      clock: systemClock,
+    });
 
     expect(events).toEqual([{ event: 'error', data: { detail: 'timeout' } }]);
     expect(outcome).toEqual({ ok: false, detail: 'timeout' });
@@ -737,6 +805,7 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
       timeoutMs: 10_000,
       abortSignal: controller.signal,
       killGraceMs: 1000,
+      clock: systemClock,
     });
 
     expect(events).toEqual([]);
@@ -750,7 +819,7 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
       const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'exit-nonzero' });
       const { events, emit } = pinCollector();
 
-      const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000 });
+      const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000, clock: systemClock });
 
       expect(events).toEqual([{ event: 'error', data: { detail: 'upstream-failed' } }]);
       expect(outcome).toEqual({ ok: false, detail: 'upstream-failed' });
@@ -765,7 +834,7 @@ describe('runAiChatTurn — full SSE frame-sequence pins (task 1.3, phase-4 gate
       const child = spawnFixtureDirect({ FAKE_CLAUDE_MODE: 'not-logged-in' });
       const { events, emit } = pinCollector();
 
-      const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000 });
+      const outcome = await runAiChatTurn({ child, emit, timeoutMs: 10_000, clock: systemClock });
 
       expect(events).toEqual([{ event: 'error', data: { detail: 'not-logged-in' } }]);
       expect(outcome).toEqual({ ok: false, detail: 'not-logged-in' });

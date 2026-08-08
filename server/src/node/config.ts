@@ -2,6 +2,7 @@
 // and Config (plain strings) the app runs on, from process env.
 
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
@@ -82,6 +83,13 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       // Resolved ONCE here at startup (design D2) — filesystem/PATH I/O has
       // no business running per request. ytDlpConfigured(env) reads this.
       YTDLP_RESOLVED_PATH: resolveYtDlpPath(procEnv),
+      // Resolved ONCE here at startup (ai-runtime-package task 2.5, spec
+      // "Host-environment discovery belongs to the composition root") —
+      // `prepareDesignTurnCredentials` receives this rather than computing it
+      // itself. Deliberately reads `homedir()` directly, with NO
+      // `procEnv`-driven override: see the Config field's own doc comment for
+      // why (ruling E6).
+      AI_V2_CREDENTIAL_SOURCE_PATH: join(homedir(), '.claude', '.credentials.json'),
     },
   };
   // Spec "Login fallback is announced, not silent" (design D9): say so once,

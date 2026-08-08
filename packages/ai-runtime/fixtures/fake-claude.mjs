@@ -45,16 +45,28 @@
 // (task 3.3) can assert the id stayed stable across two spawns.
 //
 // PID recording (task 3.4): `.fixture-pid.txt` (default; override via
-// FAKE_CLAUDE_PID_OUT) is always written FIRST, before anything else — real
+// FAKE_CLAUDE_PID_OUT) is written before any output or stdin work — real
 // proof for the no-orphan-process assertions that this specific OS process is
 // gone after the parent's kill ladder runs (`process.kill(pid, 0)` throwing
-// ESRCH once the recorded pid is confirmed dead).
+// ESRCH once the recorded pid is confirmed dead). Exactly ONE thing precedes
+// it, and deliberately: the SIGTERM-ignore handler below.
 //
 // FAKE_CLAUDE_IGNORE_SIGTERM=1 (hang mode only, task 3.4): installs a no-op
 // SIGTERM handler so the process survives SIGTERM and can ONLY be reaped by
 // SIGKILL — lets the kill-ladder tests prove the SIGKILL escalation rung
 // actually fires (uncatchable, cannot be ignored) rather than merely
 // asserting a fast, uninteresting default-SIGTERM-terminates-it path.
+//
+// ai-runtime-package (task 2.4) — that handler is installed BEFORE the pid
+// file is written, and the ordering is load-bearing, not cosmetic. The pid
+// file is the parent's "you may now kill me" signal (`waitForPidFile` in
+// `aiChatRunner.test.ts`), so a handler installed after it leaves a real
+// window in which the parent's SIGTERM arrives at a process still carrying
+// the DEFAULT disposition — the process dies of SIGTERM, the group is gone
+// before the grace deadline, the SIGKILL rung never fires, and the escalation
+// test fails with `expected 'SIGTERM' to be 'SIGKILL'`. That was a genuine,
+// reproducible flake (~3% of runs, measured over 132 runs). Installing first
+// closes the window by construction. Keep these two in this order.
 
 import { writeFileSync } from 'node:fs';
 
@@ -192,18 +204,24 @@ function emitSuccessTurn(sessionId) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const mode = process.env.FAKE_CLAUDE_MODE || 'success';
+  // FIRST — before the pid file exists, because the pid file is what tells the
+  // parent it may start signalling (see this file's header note on the
+  // ordering). Anything between these two statements is a window in which a
+  // SIGTERM meant to be ignored would instead kill this process.
+  if (mode === 'hang' && process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
+    process.on('SIGTERM', () => {}); // uncatchable SIGKILL is the only way out
+  }
   writeIfSet('FAKE_CLAUDE_PID_OUT', '.fixture-pid.txt', String(process.pid));
   writeIfSet('FAKE_CLAUDE_ARGV_OUT', '.fixture-argv.json', JSON.stringify(argv));
   writeIfSet('FAKE_CLAUDE_ENV_OUT', '.fixture-env.json', JSON.stringify(process.env));
   writeIfSet('FAKE_CLAUDE_CWD_OUT', '.fixture-cwd.txt', process.cwd());
 
-  const mode = process.env.FAKE_CLAUDE_MODE || 'success';
   const sessionId = resumeSessionId(argv) || DEFAULT_SESSION_ID;
 
   if (mode === 'hang') {
-    if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
-      process.on('SIGTERM', () => {}); // uncatchable SIGKILL is the only way out
-    }
+    // (The FAKE_CLAUDE_IGNORE_SIGTERM handler is installed at the top of
+    // main(), ahead of the pid file — see the ordering note there.)
     // Drain stdin (spec: message arrives via stdin) so the parent's
     // child.stdin.end() doesn't itself hang, then emit only the init line and
     // never exit on our own — task 3.4's guaranteed-timeout-kill test relies

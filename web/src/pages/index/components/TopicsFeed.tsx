@@ -19,7 +19,7 @@ const sortReducer = clickSortReducer<SortKey>;
 // transcript") ---
 //
 // Same predicate SHAPE as ai-v2-dashboards' `wordTimingsAreDegenerate`
-// (server/src/aiV2/aggregates.ts: `words.length > 0 && words.every(...)`),
+// (packages/ai-runtime/src/aggregates.ts: `words.length > 0 && words.every(...)`),
 // applied to `session_time` instead of the numeric `start_sec`/`end_sec`
 // fields — Topics has no numeric timing to read, only the model-authored
 // string. A transcript is "wholly anchorless" only when it has at least one

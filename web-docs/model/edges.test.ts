@@ -145,7 +145,7 @@ describe('projectComponentEdges — end-to-end fixture-tree characterization (ta
   // has three real components: compA (runtime, with a production file and a
   // *.test.ts file), compB (runtime, the shared import target), compC
   // (test-harness, a non-test-named file). This mirrors the live repo's
-  // characterization case (web → server/src/aiV2/aggregates.ts, test-only)
+  // characterization case (web → packages/ai-runtime/src/aggregates.ts, test-only)
   // by proving the SAME rule end to end through real extraction, not just
   // synthetic records.
   const FIXTURES_ROOT = fileURLToPath(

@@ -17,21 +17,26 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import type { Clock } from '@autologger/ports';
 import { SessionHubRegistry } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from './aiChatRunner';
 import { __resetAiMcpListenerForTests, AiMcpListener } from './aiMcpServer';
+import { AI_RUNTIME_FIXTURES_DIR } from './fixturesDir';
 import {
   generateTopicsTurn,
   TOPIC_GENERATE_MESSAGE,
   TOPIC_GENERATE_SYSTEM_PROMPT,
 } from './topicGenerate';
 
-const SUCCESS_FIXTURE = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
-const ERROR_FIXTURE = fileURLToPath(
-  new URL('../test/fixtures/fake-claude-error.mjs', import.meta.url),
-);
+// ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
+// locally rather than importing `server/src/node/systemClock` (composition-
+// root-only by name; also avoids a new ai-runtime→node-infra edge this
+// package will not be able to keep once it moves to `packages/`).
+const systemClock: Clock = { now: () => Date.now() };
+
+const SUCCESS_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
+const ERROR_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude-error.mjs');
 
 let dir: string;
 let registry: SessionHubRegistry;
@@ -59,6 +64,7 @@ function seedWords(words: Array<{ session_time: string; speaker: string; word: s
 describe('generateTopicsTurn', () => {
   it("succeeds on the real fixture's terminal result line", async () => {
     const outcome = await generateTopicsTurn({
+      clock: systemClock,
       registry,
       cliPath: SUCCESS_FIXTURE,
       sessionId,
@@ -82,6 +88,7 @@ describe('generateTopicsTurn', () => {
 
   it('the one-shot message reaches the CLI on stdin verbatim (never argv)', async () => {
     await generateTopicsTurn({
+      clock: systemClock,
       registry,
       cliPath: SUCCESS_FIXTURE,
       sessionId,
@@ -98,6 +105,7 @@ describe('generateTopicsTurn', () => {
 
   it('fails ({ok:false}) on a CLI-signaled error (non-zero exit, no result line)', async () => {
     const outcome = await generateTopicsTurn({
+      clock: systemClock,
       registry,
       cliPath: ERROR_FIXTURE,
       sessionId,
@@ -121,6 +129,7 @@ describe('generateTopicsTurn', () => {
       // spawn + Node startup cannot complete inside 1ms — mirroring
       // ai.int.test.ts's own guaranteed-timeout technique.
       const outcome = await generateTopicsTurn({
+        clock: systemClock,
         registry,
         cliPath: SUCCESS_FIXTURE,
         sessionId,
@@ -141,6 +150,7 @@ describe('generateTopicsTurn', () => {
       'get_transcript_words + create_topic (the D3 crash-safe-swap mechanism)',
     async () => {
       await generateTopicsTurn({
+        clock: systemClock,
         registry,
         cliPath: SUCCESS_FIXTURE,
         sessionId,
@@ -181,6 +191,7 @@ describe('generateTopicsTurn', () => {
       const spy = vi.spyOn(AiMcpListener.prototype, 'registerTurn');
       try {
         await generateTopicsTurn({
+          clock: systemClock,
           registry,
           cliPath: SUCCESS_FIXTURE,
           sessionId,
@@ -219,6 +230,7 @@ describe('generateTopicsTurn', () => {
         // replacement below — the earliest moment ANY caller could interleave
         // — already lands after the words were captured.
         const pending = generateTopicsTurn({
+          clock: systemClock,
           registry,
           cliPath: SUCCESS_FIXTURE,
           sessionId,
@@ -251,6 +263,7 @@ describe('generateTopicsTurn', () => {
       'tool — which made the real model create too few/zero topics)',
     async () => {
       await generateTopicsTurn({
+        clock: systemClock,
         registry,
         cliPath: SUCCESS_FIXTURE,
         sessionId,

@@ -60,6 +60,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Clock } from '@autologger/ports';
 import type { AiChatRelayOutcome, AiChatSseEvent } from './aiChatRelay';
 import { relayAiChatTurn } from './aiChatRelay';
 import type { AiMcpToolName } from './aiMcpServer';
@@ -329,10 +330,18 @@ export const DEFAULT_KILL_GRACE_MS = DEFAULT_PROCESS_GROUP_KILL_GRACE_MS;
  * completion `relayAiChatTurn` only resolves once the child has genuinely
  * exited, so this call is a fast confirmation, not a real kill). Resolves
  * once the process group is confirmed gone. Never throws.
+ *
+ * `clock` is required and leading (design D3, ruling E3) — see
+ * `processGroupKill.ts`'s doc comment for why an optional clock is the
+ * dangerous shape here.
  */
-export async function killAiChatProcessGroup(child: ChildProcess, graceMs?: number): Promise<void> {
+export async function killAiChatProcessGroup(
+  clock: Clock,
+  child: ChildProcess,
+  graceMs?: number,
+): Promise<void> {
   // `detached: true` in spawnAiChatTurn makes child.pid the group's pgid.
-  await killProcessGroup(child.pid, graceMs);
+  await killProcessGroup(clock, child.pid, graceMs);
 }
 
 export type AiChatTurnOutcome = AiChatRelayOutcome | { ok: false; detail: 'timeout' | 'aborted' };
@@ -353,6 +362,10 @@ export interface RunAiChatTurnOptions {
   /** Override for tests; production callers use `killAiChatProcessGroup`'s
    * own default. */
   killGraceMs?: number;
+  /** Required (design D3, ruling E3) — threaded into the kill ladder's
+   * `killAiChatProcessGroup` call below. Production callers pass
+   * `c.env.ports.clock`; never a freshly constructed clock. */
+  clock: Clock;
 }
 
 /**
@@ -390,7 +403,7 @@ export async function runAiChatTurn(opts: RunAiChatTurnOptions): Promise<AiChatT
       relay: relayAiChatTurn(opts.child, guardedEmit),
       drain: 'await-settle',
     }),
-    terminate: () => killAiChatProcessGroup(opts.child, opts.killGraceMs),
+    terminate: () => killAiChatProcessGroup(opts.clock, opts.child, opts.killGraceMs),
     scrub: (event) => event,
     timeoutMs: opts.timeoutMs,
     emit: opts.emit,

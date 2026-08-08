@@ -13,7 +13,7 @@ import { TranscriptExcerptWidget } from './TranscriptExcerptWidget';
 //
 // Components here are prop-driven (they never compute an aggregate
 // themselves — see widgetTypes.ts's module header), so these tests construct
-// the exact `{available: false, reason}` shape server/src/aiV2/aggregates.ts
+// the exact `{available: false, reason}` shape packages/ai-runtime/src/aggregates.ts
 // produces for the two real-world scenarios that collapse to it:
 //   - MANUAL fixture: a transcript entered by hand, where start_sec/end_sec
 //     are never written (schema default 0 — TranscriptStore.insertTranscriptWord

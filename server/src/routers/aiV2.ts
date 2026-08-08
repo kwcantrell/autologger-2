@@ -43,7 +43,7 @@
 // the operator's exposure").
 //
 // SPAWN BOUNDARY: no guard-rejecting path reaches attemptDesignTurnSpawn
-// (server/src/ai-runtime/aiV2SdkSpawn.ts) — the one call site that reaches the
+// (`@autologger/ai-runtime`'s `aiV2SdkSpawn.ts`) — the one call site that reaches the
 // Agent SDK's `query()` (task 0.9). It is called ONLY after every guard has
 // passed, inside the SSE stream body, strictly downstream of the slot
 // acquisition — so "no guard path spawns a subprocess" holds. The turn's
@@ -54,18 +54,12 @@
 // refines the slot-acquisition semantics; the option set, spawn override,
 // kill ladder, SSE relay, and timeout backstop live in aiV2SdkSpawn.ts.
 
-import type { AuthUser } from '@autologger/catalog';
-import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '@autologger/contract';
-import { DashboardBoundsError, DashboardValidationError } from '@autologger/session-core';
-import type { Context } from 'hono';
-import { Hono } from 'hono';
-import { streamSSE } from 'hono/streaming';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import {
   aiV2PendingQuestions,
   buildPendingQuestionOnQuestion,
   generatePendingQuestionId,
-} from '../ai-runtime/aiV2PendingQuestions';
+} from '@autologger/ai-runtime/aiV2PendingQuestions';
 import {
   attemptDesignTurnSpawn,
   buildDesignTurnCanUseTool,
@@ -74,8 +68,14 @@ import {
   createDesignTurnWorkspace,
   prepareDesignTurnCredentials,
   runDesignTurn,
-} from '../ai-runtime/aiV2SdkSpawn';
-import { buildAggregateMcpServer } from '../aiV2/mcpTools';
+} from '@autologger/ai-runtime/aiV2SdkSpawn';
+import { buildAggregateMcpServer } from '@autologger/ai-runtime/mcpTools';
+import type { AuthUser } from '@autologger/catalog';
+import { aiV2AnswerRequestSchema, aiV2DesignRequestSchema } from '@autologger/contract';
+import { DashboardBoundsError, DashboardValidationError } from '@autologger/session-core';
+import type { Context } from 'hono';
+import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatMaxConcurrent,
@@ -282,10 +282,14 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const workspace = createDesignTurnWorkspace();
-    const spawner = createDesignTurnSpawner();
+    const spawner = createDesignTurnSpawner(c.env.ports.clock);
     const abortController = new AbortController();
     try {
-      prepareDesignTurnCredentials(workspace.configDir, apiKey || undefined);
+      prepareDesignTurnCredentials(
+        workspace.configDir,
+        c.env.config.AI_V2_CREDENTIAL_SOURCE_PATH,
+        apiKey || undefined,
+      );
       const options = buildDesignTurnOptions({
         cwd: workspace.cwd,
         configDir: workspace.configDir,

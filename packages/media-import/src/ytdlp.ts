@@ -22,7 +22,7 @@
 // timeout (D5 axis 4).
 //
 // Security lockdown (design D9, modeled on `buildAiChatChildEnv` in
-// `server/src/ai-runtime/aiChatRunner.ts`): `shell: false` with a discrete argv
+// `@autologger/ai-runtime`'s `aiChatRunner.ts`): `shell: false` with a discrete argv
 // array and a `--` terminator before the positional URL (never shell- or
 // option-interpreted); `--ignore-config` + `--no-plugin-dirs` so no ambient
 // `yt-dlp` config file or plugin can inject flags (`--exec`,
@@ -113,7 +113,7 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
  * `OPTIONAL_ENV_PASSTHROUGH` — only forwarded when actually present in the
  * parent's env, never fabricated. Duplicated here (not imported) rather than
  * reused across the boundary: `buildAiChatChildEnv` lives in
- * `server/src/ai-runtime/aiChatRunner.ts`, while this module lives in the
+ * `@autologger/ai-runtime`'s `aiChatRunner.ts`, while this module lives in the
  * source-only `@autologger/media-import` package, which imports no
  * `@autologger/*` package at all (design D1 — L2 by role, not by need).
  * Importing one constant across that package boundary would pull in a
@@ -184,7 +184,7 @@ interface RunResult {
  * yt-dlp spawned) that would otherwise orphan and keep running/writing past
  * the wall-clock bound. Requires `child` to have been spawned with
  * `detached: true` (its pid IS the process-group id, mirroring
- * `killAiChatProcessGroup` in `ai-runtime/aiChatRunner.ts`). Never throws:
+ * `killAiChatProcessGroup` in `@autologger/ai-runtime`'s `aiChatRunner.ts`). Never throws:
  * `process.kill` on an already-gone group raises ESRCH — a race with the
  * child exiting on its own between the timer firing and this call — which is
  * swallowed since "already gone" is exactly the no-orphan outcome wanted. */
@@ -205,7 +205,7 @@ function killProcessGroup(child: ChildProcess): void {
  * the bound — and `timedOut: true` is reported. Spawned with `detached:
  * true` so the child is its own process-group leader; on POSIX this makes
  * `child.pid` double as the group id `killProcessGroup` signals (matching
- * `spawnAiChatTurn`'s posture in `ai-runtime/aiChatRunner.ts`) — no group is
+ * `spawnAiChatTurn`'s posture in `@autologger/ai-runtime`'s `aiChatRunner.ts`) — no group is
  * left behind on the normal (non-timeout) exit path, since nothing here ever
  * calls `unref()` and the group's last member exiting on its own reaps it.
  * Never throws: spawn failure surfaces as `exitCode: null` via the child's

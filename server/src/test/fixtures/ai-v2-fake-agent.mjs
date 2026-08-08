@@ -47,8 +47,8 @@
 //
 // Server name and widget-type/answer literals below are load-bearing wire
 // values, not decoration — they must match the real production constants
-// (`AGGREGATE_MCP_SERVER_NAME` in server/src/aiV2/mcpTools.ts, and a real
-// `WIDGET_TYPES` entry in server/src/aiV2/catalog.ts) or the real MCP
+// (`AGGREGATE_MCP_SERVER_NAME` in @autologger/ai-runtime's mcpTools.ts, and a real
+// `WIDGET_TYPES` entry in packages/contract/src/aiV2Catalog.ts) or the real MCP
 // server / `validateDashboardConfig` boundary rejects them, same as it would
 // reject a live agent's malformed call.
 //
@@ -96,7 +96,7 @@ async function runScriptedTurn() {
   });
 
   // 2. AskUserQuestion — a real `can_use_tool` control_request. Options carry
-  // real catalog widget types (server/src/aiV2/catalog.ts WIDGET_TYPES) so a
+  // real catalog widget types (packages/contract/src/aiV2Catalog.ts WIDGET_TYPES) so a
   // clicked option answers with a value the real schema accepts.
   const askInput = {
     questions: [

@@ -20,12 +20,12 @@
 // subprocess) → single-flight & process-wide concurrency (409). All error
 // bodies are the repo `{ detail }` shape; none of these steps spawns.
 
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import type { AiMcpToolName } from '@autologger/ai-runtime/aiMcpServer';
+import { driveAiTurn } from '@autologger/ai-runtime/aiTurn';
 import { chatRequestSchema } from '@autologger/contract';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import type { AiMcpToolName } from '../ai-runtime/aiMcpServer';
-import { driveAiTurn } from '../ai-runtime/aiTurn';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -156,6 +156,7 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   return streamSSE(c, async (stream) => {
     try {
       const outcome = await driveAiTurn({
+        clock: c.env.ports.clock,
         registry: c.env.ports.sessions,
         cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
         sessionId,

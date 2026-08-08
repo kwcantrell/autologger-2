@@ -36,7 +36,7 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
   CanUseTool,
@@ -49,8 +49,9 @@ import type {
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
+import type { Clock } from '@autologger/ports';
 import { runOuterAiTurn } from './aiTurnOrchestrator';
+import { AGGREGATE_MCP_SERVER_NAME } from './mcpTools';
 import { killProcessGroup } from './processGroupKill';
 
 /**
@@ -319,8 +320,14 @@ export interface DesignTurnSpawner {
  * process-group leader (`detached: true`) and exposes a group-kill `terminate`
  * — the no-orphan guarantee (spike 0.5). The SDK exposes no pid anywhere, so
  * this override is the ONLY way to obtain the pgid the ladder needs.
+ *
+ * `clock` is required and leading (design D3, ruling E3): it is captured by
+ * this closure and threaded into every `terminate()` call's kill ladder.
+ * Production callers (`routers/aiV2.ts`) pass `c.env.ports.clock`; never a
+ * freshly constructed clock. `terminate`'s own signature is unchanged — the
+ * clock is baked in at construction, not passed per-call.
  */
-export function createDesignTurnSpawner(): DesignTurnSpawner {
+export function createDesignTurnSpawner(clock: Clock): DesignTurnSpawner {
   let child: ChildProcess | null = null;
   let terminated = false;
 
@@ -338,7 +345,7 @@ export function createDesignTurnSpawner(): DesignTurnSpawner {
   const terminate = async (graceMs?: number): Promise<void> => {
     if (terminated) return;
     terminated = true;
-    await killProcessGroup(child?.pid ?? null, graceMs);
+    await killProcessGroup(clock, child?.pid ?? null, graceMs);
   };
 
   return { spawnClaudeCodeProcess, terminate, getPgid: () => child?.pid ?? null };
@@ -594,11 +601,20 @@ export function createDesignTurnWorkspace(): DesignTurnWorkspace {
  * without inheriting the rest of the operator's `~/.claude`. A no-op when a key
  * is configured (the key authenticates via `ANTHROPIC_API_KEY`) or when no
  * credential file exists (the turn then fails with a scrubbed auth error).
+ *
+ * `credentialSourcePath` is resolved ONCE by the composition root
+ * (`node/config.ts`'s `Config.AI_V2_CREDENTIAL_SOURCE_PATH`) and passed in —
+ * this function no longer discovers it itself (ai-runtime-package task 2.5,
+ * spec "Host-environment discovery belongs to the composition root"). The
+ * composition root decides *where*; this decides *what to do with it*.
  */
-export function prepareDesignTurnCredentials(configDir: string, apiKey?: string): void {
+export function prepareDesignTurnCredentials(
+  configDir: string,
+  credentialSourcePath: string,
+  apiKey?: string,
+): void {
   if (apiKey) return;
-  const source = join(homedir(), '.claude', '.credentials.json');
-  if (existsSync(source)) {
-    copyFileSync(source, join(configDir, '.credentials.json'));
+  if (existsSync(credentialSourcePath)) {
+    copyFileSync(credentialSourcePath, join(configDir, '.credentials.json'));
   }
 }

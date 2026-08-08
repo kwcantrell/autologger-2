@@ -1,16 +1,19 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
-import { __resetAiMcpListenerForTests } from '../ai-runtime/aiMcpServer';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { __resetAiMcpListenerForTests } from '@autologger/ai-runtime/aiMcpServer';
 // Namespace import so the page-coverage suite below can `vi.spyOn` the live
 // module export (see that suite's header for why a hoisted `vi.mock` cannot
 // work through the shared `app` singleton).
-import type { generateTopicsTurn } from '../ai-runtime/topicGenerate';
-import * as topicGenerateModule from '../ai-runtime/topicGenerate';
+import type { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
+import * as topicGenerateModule from '@autologger/ai-runtime/topicGenerate';
+import type { Clock } from '@autologger/ports';
+import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -98,9 +101,7 @@ describe('unavailable endpoints (503)', () => {
 // fixtures never make a real MCP round trip, which this suite also exploits
 // deliberately for the zero-topics-created case (see that test).
 describe('topics/generate — configured behavior (topic-generation)', () => {
-  const SUCCESS_STREAM_FIXTURE = fileURLToPath(
-    new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
-  );
+  const SUCCESS_STREAM_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
   const REAL_SUCCESS_FIXTURE = fileURLToPath(
     new URL('../test/fixtures/fake-claude-topics-success.mjs', import.meta.url),
   );
@@ -144,13 +145,20 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   // `deepgramConfiguredEnv` for the transcript-generation suite below; the two
   // used to share the name `configuredEnv`, the inner silently shadowing the
   // outer (code-health-tail task 5.1, finding 5.10).
-  function claudeConfiguredEnv(cliPath: string, overrides: Record<string, unknown> = {}) {
-    return envWith({
-      CLAUDE_CLI_PATH: cliPath,
-      HOST: '127.0.0.1',
-      REQUIRE_LOGIN: '0',
-      ...overrides,
-    });
+  function claudeConfiguredEnv(
+    cliPath: string,
+    overrides: Record<string, unknown> = {},
+    portOverrides: Partial<Bindings['ports']> = {},
+  ) {
+    return envWith(
+      {
+        CLAUDE_CLI_PATH: cliPath,
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        ...overrides,
+      },
+      portOverrides,
+    );
   }
 
   function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>) {
@@ -406,6 +414,40 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     },
   );
 
+  it(
+    "generateTopicsTurn receives the REQUEST's own injected c.env.ports.clock (phase-2 finding " +
+      '2) — a freshly constructed clock at the transcribe.ts call site would fail this: ' +
+      'swapping `c.env.ports.clock` for `{ now: () => Date.now() }` leaves every other test in ' +
+      'this suite green, so only a test that pins the exact injected object closes the seam. ' +
+      'The injected clock advances real time (not a frozen constant) — phase-2 fix2 re-review, ' +
+      "finding B: this same clock also reaches the AI runtime's `finally`-block process-group " +
+      'kill ladder, and a never-advancing deadline read there would make the SIGKILL rung ' +
+      'unreachable. The object-identity assertion below is what actually pins the seam, so the ' +
+      'frozen constant was a redundant, hazardous second pin and is dropped.',
+    async () => {
+      const injected: Clock = { now: () => Date.now() };
+      const spy = vi.spyOn(topicGenerateModule, 'generateTopicsTurn');
+      try {
+        const s = newSession();
+        seedTranscript(s);
+        // SUCCESS_STREAM_FIXTURE never makes a real MCP call (see the
+        // zero-topics-created test above), so this always resolves 502 —
+        // irrelevant here; the assertion is on what reached the spy.
+        const res = await generateReq(
+          s,
+          claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE, {}, { clock: injected }),
+        );
+        await res.text();
+        expect(spy).toHaveBeenCalledTimes(1);
+        // The very object the request carried reached generateTopicsTurn, not
+        // a copy that happens to agree.
+        expect(spy.mock.calls[0][0].clock).toBe(injected);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
   it('transcribe.csv stays frozen 503 even on a fully configured deployment', async () => {
     const s = newSession();
     const res = await app.request(
@@ -441,7 +483,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
 // which pages the transcript to its last page for real.
 describe('topics/generate — page-coverage gate on the crash-safe swap', () => {
   const FAILURE_DETAIL = 'Topic generation failed.';
-  const CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+  const CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 
   let spy: ReturnType<typeof vi.spyOn> | null = null;
 

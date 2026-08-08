@@ -29,6 +29,7 @@
 // `AiChatTurnOutcome`, never a stream (there is no SSE surface on
 // `topics/generate` — design D2).
 
+import type { Clock } from '@autologger/ports';
 import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiGenerationSnapshotWord } from './aiMcpServer';
 import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
@@ -69,6 +70,12 @@ export const TOPIC_GENERATE_SYSTEM_PROMPT =
 const TOPIC_GENERATE_ALLOWED_TOOLS = ['get_transcript_words', 'create_topic'] as const;
 
 export interface GenerateTopicsTurnOptions {
+  /** Required (design D3, ruling E3) — forwarded to `driveAiTurn`, which
+   * threads it into the kill ladder. Production callers (`routers/
+   * transcribe.ts`) pass `c.env.ports.clock`; never a freshly constructed
+   * clock. This is the non-obvious router site: `topics/generate` reaches
+   * the ladder through this in-package intermediary, not directly. */
+  clock: Clock;
   registry: SessionHubRegistryFacade;
   /** `CLAUDE_CLI_PATH`, already trimmed. */
   cliPath: string;
@@ -106,6 +113,7 @@ export async function generateTopicsTurn(
       speaker: String(w.speaker ?? ''),
     }));
   return driveAiTurn({
+    clock: opts.clock,
     registry: opts.registry,
     cliPath: opts.cliPath,
     sessionId: opts.sessionId,

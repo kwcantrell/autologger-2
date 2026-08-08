@@ -6,7 +6,7 @@
 // widgets' data in the web, from the session data the existing
 // `useTranscriptWords`/`useTopics`/`useEvents` hooks already fetch for other
 // tabs — no new HTTP route. This module mirrors the PURE, dependency-free
-// computations in `server/src/aiV2/aggregates.ts` field-for-field (same
+// computations in `packages/ai-runtime/src/aggregates.ts` field-for-field (same
 // function names, same constants, same degenerate-timing detection, same
 // `available`/`reason`/null discipline) rather than re-deriving the logic —
 // see this directory's `clientAggregates.pinning.test.ts`, which imports the

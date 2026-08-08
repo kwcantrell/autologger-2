@@ -63,6 +63,7 @@ const openNetworkBase = (): Config => ({
   AI_V2_API_KEY: '',
   AI_V2_MAX_BUDGET_USD: '',
   YTDLP_RESOLVED_PATH: null,
+  AI_V2_CREDENTIAL_SOURCE_PATH: '',
 });
 
 describe('env flag parsing', () => {

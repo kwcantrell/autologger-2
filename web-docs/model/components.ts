@@ -160,16 +160,20 @@ const serverComponents: Component[] = [
   ),
   runtimeComponent(
     'ai-runtime',
-    'The AI runtime (router-directory-decomposition D1/D6), split out of `routers/`: the ' +
-      'MCP tool server, the Claude-CLI and Agent-SDK subprocess runners and their ' +
-      'process-group kill ladder, the turn orchestrator and relay, the shared per-session ' +
-      'AI turn registry, the one-shot turn drivers backing topics/generate and ' +
-      'events/generate, and the generation prompt builder. Hono-free and injection-fed — ' +
-      'takes the session registry and hub facades from `@autologger/session-core`, plus ' +
-      'CLI path and budget/timeout values, as plain parameters; imports no `hono`, no ' +
-      '`appEnv`, and nothing under `server/src/routers/` (enforced by the boundary repo ' +
-      'test).',
-    ['server/src/ai-runtime/**'],
+    '`@autologger/ai-runtime` (ai-runtime-package D1): the AI runtime as an L2 service ' +
+      'package — the MCP tool servers, the Claude-CLI and Agent-SDK subprocess runners and ' +
+      'their process-group kill ladder, the turn orchestrator and relay, the shared ' +
+      'per-session AI turn registry, the one-shot turn drivers backing topics/generate and ' +
+      'events/generate, the generation prompt builder, and the session aggregate ' +
+      'computations the design-turn toolset exposes (the former `server/src/aiV2/` pair, ' +
+      'whose component this move deletes). Hono-free and injection-fed — takes the session ' +
+      'registry and hub facades from `@autologger/session-core`, plus CLI path, budget, ' +
+      'timeout, clock, and credential-source values, as plain parameters; imports no ' +
+      '`hono`, no `appEnv`, and nothing under `server/src/` (enforced by the boundary repo ' +
+      'test, whose walked root moved with the code). Admitted to the service layer because ' +
+      'L2 is the only legal placement — five of its modules import ' +
+      '`@autologger/session-core`, which forbids L0, and the L1-sibling rule forbids L1.',
+    ['packages/ai-runtime/src/**'],
   ),
   runtimeComponent(
     'node-infra',
@@ -194,12 +198,16 @@ const serverComponents: Component[] = [
     'Google ID-token identity verification (JWKS-backed) and the OAuth login flow.',
     ['server/src/auth/**'],
   ),
-  runtimeComponent(
-    'aiV2',
-    'AI dashboards v2 domain: catalog of widget/dashboard types, aggregate computation, ' +
-      'and MCP tool definitions consumed by the AI chat CLI/MCP machinery.',
-    ['server/src/aiV2/**'],
-  ),
+  // The `aiV2` component is DELETED, not emptied (ai-runtime-package task 3.6;
+  // spec scenario "A component whose subject moves is deleted, not emptied").
+  // Its two remaining modules — `aggregates.ts` and `mcpTools.ts` — moved into
+  // `@autologger/ai-runtime` and are covered by that component's package glob
+  // above. Clearing its globs instead would leave it rendering, nameable as a
+  // capability scope and a relationship endpoint, and would additionally
+  // DEFEAT `checkCapabilityAccounting`'s dangling-component check, which fires
+  // only when a scope names a component that does not exist — the bypass this
+  // change's gate ruling E1 demonstrated when it dropped the proposed
+  // empty-component check.
   runtimeComponent('middleware', 'Hono middleware: auth context and IP allowlisting.', [
     'server/src/middleware/**',
   ]),
@@ -649,8 +657,13 @@ const relationships: Relationship[] = [
     to: 'claude-cli',
     label: 'Spawns the claude CLI for AI chat, topics/generate, and events/generate',
     gated: 'CLAUDE_CLI_PATH',
+    // ai-runtime-package task 3.6: the evidence file moves with the module
+    // into `@autologger/ai-runtime`. The `from` endpoint is UNCHANGED here —
+    // unlike the transcription/media-import renames above, the component that
+    // spawns the CLI kept both its id and its identity across this move; only
+    // its glob narrowed from `server/src/ai-runtime/**` to the package.
     evidence: [
-      { file: 'server/src/ai-runtime/aiChatRunner.ts', mustContain: ['spawn(', 'cliPath'] },
+      { file: 'packages/ai-runtime/src/aiChatRunner.ts', mustContain: ['spawn(', 'cliPath'] },
     ],
   },
   {
@@ -767,7 +780,10 @@ const capabilityScopes: CapabilityScope[] = [
     capability: 'ai-v2-dashboards',
     // router-directory-decomposition: aiV2.ts (routers) drives the design
     // turn via aiV2SdkSpawn/aiV2PendingQuestions/aiChatRegistry (ai-runtime).
-    components: ['routers', 'ai-runtime', 'aiV2', 'web-app'],
+    // ai-runtime-package task 3.6: the `aiV2` component is dropped from this
+    // scope because the component itself is deleted — its `aggregates.ts` and
+    // `mcpTools.ts` moved into `@autologger/ai-runtime`, already named here.
+    components: ['routers', 'ai-runtime', 'web-app'],
   },
   {
     type: 'component',

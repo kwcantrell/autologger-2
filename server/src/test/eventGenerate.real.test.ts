@@ -28,21 +28,28 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseTimecodeString, toTotalFrames } from '@autologger/domain';
-import { SessionHubRegistry } from '@autologger/session-core';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { stableSessionCwd } from './aiChatRunner';
+import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import {
   __resetAiMcpListenerForTests,
   type AiGenerationRunContext,
   type AiMcpToolName,
-} from './aiMcpServer';
-import { driveAiTurn } from './aiTurn';
+} from '@autologger/ai-runtime/aiMcpServer';
+import { driveAiTurn } from '@autologger/ai-runtime/aiTurn';
 import {
   buildEventGenerateMessage,
   EVENT_GENERATE_SYSTEM_PROMPT,
   type EventGenerateExistingEvent,
-} from './eventGeneratePrompt';
+} from '@autologger/ai-runtime/eventGeneratePrompt';
+import { parseTimecodeString, toTotalFrames } from '@autologger/domain';
+import type { Clock } from '@autologger/ports';
+import { SessionHubRegistry } from '@autologger/session-core';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+// ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
+// locally rather than importing `server/src/node/systemClock` (composition-
+// root-only by name; also avoids a new ai-runtime→node-infra edge this
+// package will not be able to keep once it moves to `packages/`).
+const systemClock: Clock = { now: () => Date.now() };
 
 function resolveClaude(): string | null {
   const candidate = (process.env.CLAUDE_CLI_PATH || '').trim() || 'claude';
@@ -232,6 +239,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
 
   async function runGenerate(generation: AiGenerationRunContext) {
     return driveAiTurn({
+      clock: systemClock,
       registry,
       cliPath: cliPath as string,
       sessionId,

@@ -53,18 +53,19 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { Config } from '@autologger/ports';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
-import { AiMcpListener, getAiMcpListener } from '../ai-runtime/aiMcpServer';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { AiMcpListener, getAiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
 // Namespace import (not the named `driveAiTurn` ai.ts itself uses) so the
 // test below can `vi.spyOn` the module's live export — asserting what ai.ts
 // passes IN, distinct from the wire string aiChatRunner.ts eventually
 // produces (which is identical whether ai.ts passes the tools explicitly or
 // omits and falls back to the runner's own default; see that test's comment).
-import * as aiTurnModule from '../ai-runtime/aiTurn';
+import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
+import type { Clock, Config } from '@autologger/ports';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Bindings } from '../appEnv';
 import { aiChatOpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
 import {
@@ -87,7 +88,7 @@ const spawnSpy = vi.mocked(spawn);
 
 const J = { 'content-type': 'application/json' };
 const CLI = '/fake/claude'; // never invoked in guard-rejection cases.
-const FIXTURE_CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+const FIXTURE_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 
 /** Real proof a turn's argv reached the CLI (independent of the non-functional
  * `spawnSpy` — see the SPAWN OBSERVATION note): the fixture always records its
@@ -166,14 +167,23 @@ function seededSession(): string {
 
 /** Configured + loopback-bound: every gate passes, so requests reach body/
  * single-flight checks (and, when valid, the real turn runner). */
-function loopbackEnv(overrides: Record<string, unknown> = {}) {
-  return envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0', ...overrides });
+function loopbackEnv(
+  overrides: Record<string, unknown> = {},
+  portOverrides: Partial<Bindings['ports']> = {},
+) {
+  return envWith(
+    { CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0', ...overrides },
+    portOverrides,
+  );
 }
 
 /** Same as `loopbackEnv`, but CLAUDE_CLI_PATH points at the real hermetic
  * fake-claude fixture — the only env that actually completes a turn. */
-function fixtureEnv(overrides: Record<string, unknown> = {}) {
-  return loopbackEnv({ CLAUDE_CLI_PATH: FIXTURE_CLI, ...overrides });
+function fixtureEnv(
+  overrides: Record<string, unknown> = {},
+  portOverrides: Partial<Bindings['ports']> = {},
+) {
+  return loopbackEnv({ CLAUDE_CLI_PATH: FIXTURE_CLI, ...overrides }, portOverrides);
 }
 
 function post(
@@ -314,6 +324,7 @@ describe('ai/chat — open-network refusal (503)', () => {
       AI_V2_ENABLED: '',
       AI_V2_API_KEY: '',
       AI_V2_MAX_BUDGET_USD: '',
+      AI_V2_CREDENTIAL_SOURCE_PATH: '',
     };
     // anonymous + non-loopback + no allowlist → refused
     expect(aiChatOpenNetworkRefused(base)).toBe(true);
@@ -395,6 +406,35 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
         await res.text(); // drain the SSE stream so the turn completes
         expect(spy).toHaveBeenCalledTimes(1);
         expect(spy.mock.calls[0][0].allowedTools).toEqual(AI_CHAT_ALLOWED_TOOLS);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it(
+    "driveAiTurn receives the REQUEST's own injected c.env.ports.clock (phase-2 finding 2) — " +
+      'a freshly constructed clock at the ai.ts call site would fail this: swapping ' +
+      '`c.env.ports.clock` for `{ now: () => Date.now() }` leaves every other test in this ' +
+      'suite green, so only a test that pins the exact injected object closes the seam. The ' +
+      'injected clock advances real time (not a frozen constant) — phase-2 fix2 re-review, ' +
+      "finding B: this same clock also reaches driveAiTurn's `finally`-block process-group kill " +
+      'ladder (`killAiChatProcessGroup` → `waitUntilGroupGone`), and a never-advancing deadline ' +
+      'read there would make the SIGKILL rung unreachable. The object-identity assertion below ' +
+      'is what actually pins the seam — a locally constructed clock cannot satisfy it no matter ' +
+      'what value it returns — so the frozen constant was redundant and is dropped rather than ' +
+      'kept as a second, hazardous pin.',
+    async () => {
+      const injected: Clock = { now: () => Date.now() };
+      const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
+      try {
+        const s = seededSession();
+        const res = await post(s, { message: 'hi' }, fixtureEnv({}, { clock: injected }));
+        expect(res.status).toBe(200);
+        await res.text(); // drain the SSE stream so the turn completes
+        expect(spy).toHaveBeenCalledTimes(1);
+        // The very object the request carried reached driveAiTurn, not a copy.
+        expect(spy.mock.calls[0][0].clock).toBe(injected);
       } finally {
         spy.mockRestore();
       }

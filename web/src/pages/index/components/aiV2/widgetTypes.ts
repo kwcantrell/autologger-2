@@ -7,7 +7,7 @@
 //   - packages/contract/src/aiV2Catalog.ts -> WIDGET_TYPES / WidgetType /
 //                                      WidgetLayout / INTERACTION_KINDS /
 //                                      DashboardInteraction
-//   - server/src/aiV2/aggregates.ts -> the `*AggregateData` interfaces below
+//   - packages/ai-runtime/src/aggregates.ts -> the `*AggregateData` interfaces below
 //     (field-for-field matches of computeSessionDuration/computeTalkTimeBySpeaker/
 //     computeUtteranceStats/computeFillerStats/computeTopicTimeline/
 //     computeEventCounts/computeEventDensity's return shapes)
@@ -78,7 +78,7 @@ export interface DashboardConfig {
   interactions: DashboardInteraction[];
 }
 
-// -- aggregate data shapes (mirrors server/src/aiV2/aggregates.ts) --------------
+// -- aggregate data shapes (mirrors packages/ai-runtime/src/aggregates.ts) --------------
 
 export interface SessionDurationData {
   available: boolean;
@@ -88,7 +88,7 @@ export interface SessionDurationData {
 
 export interface SpeakerTalkTimeSlice {
   /** Diarization index as stored (a string), e.g. "0", "1" — NOT a resolved
-   * display name (server/src/aiV2/aggregates.ts D2a note; name resolution is
+   * display name (packages/ai-runtime/src/aggregates.ts D2a note; name resolution is
    * deferred, tasks.md 0b.3). Components format this as honest "Speaker N"
    * text, never a fabricated name. */
   speaker: string;

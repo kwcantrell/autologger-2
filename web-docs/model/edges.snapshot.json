@@ -1,11 +1,6 @@
 [
   {
     "from": "ai-runtime",
-    "to": "aiV2",
-    "kind": "production"
-  },
-  {
-    "from": "ai-runtime",
     "to": "contract",
     "kind": "production"
   },
@@ -17,30 +12,10 @@
   {
     "from": "ai-runtime",
     "to": "ports",
-    "kind": "test"
+    "kind": "production"
   },
   {
     "from": "ai-runtime",
-    "to": "server-core",
-    "kind": "test"
-  },
-  {
-    "from": "ai-runtime",
-    "to": "session-core",
-    "kind": "production"
-  },
-  {
-    "from": "aiV2",
-    "to": "contract",
-    "kind": "production"
-  },
-  {
-    "from": "aiV2",
-    "to": "domain",
-    "kind": "production"
-  },
-  {
-    "from": "aiV2",
     "to": "session-core",
     "kind": "production"
   },
@@ -176,11 +151,6 @@
   },
   {
     "from": "routers",
-    "to": "aiV2",
-    "kind": "production"
-  },
-  {
-    "from": "routers",
     "to": "auth",
     "kind": "production"
   },
@@ -296,12 +266,22 @@
   },
   {
     "from": "server-test-harness",
+    "to": "ai-runtime",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
     "to": "auth",
     "kind": "test"
   },
   {
     "from": "server-test-harness",
     "to": "catalog",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "domain",
     "kind": "test"
   },
   {
@@ -322,6 +302,11 @@
   {
     "from": "server-test-harness",
     "to": "server-core",
+    "kind": "test"
+  },
+  {
+    "from": "server-test-harness",
+    "to": "session-core",
     "kind": "test"
   },
   {
@@ -401,7 +386,7 @@
   },
   {
     "from": "web-app",
-    "to": "aiV2",
+    "to": "ai-runtime",
     "kind": "test"
   },
   {

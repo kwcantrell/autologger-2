@@ -13,11 +13,11 @@ import { createSession } from './createSession';
 // level, exercised here end-to-end through the actual DOM/React client
 // (web/src/pages/index/components/AiChat.tsx's `parseSseFrames` reader loop).
 //
-// Hermetic: CLAUDE_CLI_PATH points at server/src/test/fixtures/fake-claude.mjs
+// Hermetic: CLAUDE_CLI_PATH points at packages/ai-runtime/fixtures/fake-claude.mjs
 // (design D10) — a plain Node script that prints canned output. No real
 // Anthropic credentials or network egress anywhere in this test.
 //
-// The fixture's "success" mode (server/src/test/fixtures/fake-claude.mjs)
+// The fixture's "success" mode (packages/ai-runtime/fixtures/fake-claude.mjs)
 // emits a `create_topic` tool_use with summary "Fixture topic", then the
 // assistant text "Created a fixture topic." — this test asserts on both
 // exact strings plus the tool-activity chip, which is the observable proof

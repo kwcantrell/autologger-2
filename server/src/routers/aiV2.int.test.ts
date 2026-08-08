@@ -17,9 +17,9 @@
 // (and the allowed-path case below asserts it WAS called, exactly once).
 //
 // What makes the spy observe aiV2.ts's call at all: this test file's own
-// `import * as aiV2SdkSpawnModule from '../ai-runtime/aiV2SdkSpawn'` and
-// aiV2.ts's `import { attemptDesignTurnSpawn } from '../ai-runtime/
-// aiV2SdkSpawn'` resolve the identical specifier to the identical module —
+// `import * as aiV2SdkSpawnModule from '@autologger/ai-runtime/aiV2SdkSpawn'` and
+// aiV2.ts's `import { attemptDesignTurnSpawn } from '@autologger/
+// ai-runtime/aiV2SdkSpawn'` resolve the identical specifier to the identical module —
 // one file, one entry in the module loader's cache — and Vitest's SSR/ESM
 // transform compiles named-import usages as property reads off that shared
 // namespace object rather than capturing a private local binding, so
@@ -31,20 +31,24 @@
 // already lives in aiV2SdkSpawn.test.ts (task 0.9) and is intentionally not
 // re-run here to keep this suite hermetic and fast.
 
-import { fileURLToPath } from 'node:url';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   McpSdkServerConfigWithInstance,
   Query,
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { Config } from '@autologger/ports';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { aiV2PendingQuestions } from '@autologger/ai-runtime/aiV2PendingQuestions';
+import * as aiV2SdkSpawnModule from '@autologger/ai-runtime/aiV2SdkSpawn';
+import { AGGREGATE_MCP_SERVER_NAME } from '@autologger/ai-runtime/mcpTools';
+import type { Clock, Config } from '@autologger/ports';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import { aiV2PendingQuestions } from '../ai-runtime/aiV2PendingQuestions';
-import * as aiV2SdkSpawnModule from '../ai-runtime/aiV2SdkSpawn';
-import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
+import type { Bindings } from '../appEnv';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
 import {
@@ -61,9 +65,38 @@ const J = { 'content-type': 'application/json' };
 // The real hermetic fake-claude fixture (ai-topics-chat) — used ONLY by
 // task 2.7's cross-route tests below, to make a genuine live AI-chat turn
 // (not a direct registry poke) hold the shared slot open.
-const FIXTURE_CLI = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url));
+const FIXTURE_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 
 const spawnSpy = vi.spyOn(aiV2SdkSpawnModule, 'attemptDesignTurnSpawn');
+// task 2.1 characterization — a PASS-THROUGH spy (no `.mockImplementation`,
+// so `vi.spyOn`'s default behavior of calling the real function is kept):
+// observes the `configDir` the router passes to `prepareDesignTurnCredentials`
+// without altering what it does. Reached via the SAME module-identity
+// mechanism the doc comment above establishes for `spawnSpy`.
+const credentialsSpy = vi.spyOn(aiV2SdkSpawnModule, 'prepareDesignTurnCredentials');
+// ai-runtime-package task 2.4 — another PASS-THROUGH spy, same module-identity
+// mechanism: it observes the `Clock` the router hands the AI runtime. Without
+// it the Clock threaded through in task 2.2 is unobservable — swapping
+// `c.env.ports.clock` for a freshly constructed clock left all 67 tests in
+// this file green, i.e. nothing here could tell a satisfied seam from a
+// defeated one.
+const spawnerSpy = vi.spyOn(aiV2SdkSpawnModule, 'createDesignTurnSpawner');
+
+/** Poll until `predicate` is true or `timeoutMs` elapses. The router's setup
+ * work (`createDesignTurnWorkspace` → `prepareDesignTurnCredentials` →
+ * `buildDesignTurnOptions` → `attemptDesignTurnSpawn`) runs synchronously
+ * with no `await` in between, so from an external poller's perspective it is
+ * only ever observable as "hasn't started" or "fully done" — this just waits
+ * out the first case. */
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor: condition never became true');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 /** A hermetic stand-in for the SDK `Query`: yields one success `result` and
  * ends, so a turn on the allowed path completes WITHOUT spawning a real
@@ -92,6 +125,8 @@ beforeEach(() => {
   aiV2PendingQuestions.reset();
   spawnSpy.mockReset();
   spawnSpy.mockImplementation(() => fakeDesignQuery() as unknown as Query);
+  credentialsSpy.mockClear();
+  spawnerSpy.mockClear();
 });
 afterEach(() => {
   aiChatTurns.reset();
@@ -100,14 +135,20 @@ afterEach(() => {
 
 /** Configured + loopback-bound + no key: every 503 gate passes (the login
  * fallback is permitted on loopback), so requests reach body/slot checks. */
-function loopbackEnv(overrides: Record<string, unknown> = {}) {
-  return envWith({
-    AI_V2_ENABLED: '1',
-    HOST: '127.0.0.1',
-    REQUIRE_LOGIN: '0',
-    AI_V2_API_KEY: '',
-    ...overrides,
-  });
+function loopbackEnv(
+  overrides: Record<string, unknown> = {},
+  portOverrides: Partial<Bindings['ports']> = {},
+) {
+  return envWith(
+    {
+      AI_V2_ENABLED: '1',
+      HOST: '127.0.0.1',
+      REQUIRE_LOGIN: '0',
+      AI_V2_API_KEY: '',
+      ...overrides,
+    },
+    portOverrides,
+  );
 }
 
 function post(
@@ -274,6 +315,7 @@ describe('ai/v2/design — open-network refusal (503)', () => {
       AI_V2_ENABLED: '1',
       AI_V2_API_KEY: 'k',
       AI_V2_MAX_BUDGET_USD: '',
+      AI_V2_CREDENTIAL_SOURCE_PATH: '',
     };
     expect(aiV2OpenNetworkRefused(base)).toBe(true);
     expect(aiV2OpenNetworkRefused({ ...base, HOST: '' })).toBe(true); // unset ⇒ 0.0.0.0
@@ -356,6 +398,7 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
       AI_V2_ENABLED: '1',
       AI_V2_API_KEY: '',
       AI_V2_MAX_BUDGET_USD: '',
+      AI_V2_CREDENTIAL_SOURCE_PATH: '',
     };
     // Non-loopback, no key, REQUIRE_LOGIN=1, allowlist set — every knob that
     // lifts aiV2OpenNetworkRefused is present, yet credentials still refuse.
@@ -599,6 +642,193 @@ describe('ai/v2/design — no guard path spawns (spec "Design turn contract")', 
     // construction — this test is the tripwire for when tasks 2.3-2.8 wire
     // one in.)
     expect(spawnSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ai-runtime-package (task 2.1) — `prepareDesignTurnCredentials` (design D9's
+// login fallback) has ZERO test coverage anywhere else in the repo today.
+// Characterized HERE, through the real route, rather than by calling the
+// function directly: task 2.5 moved the credential-source path off
+// `homedir()` and onto a required `Config` field (design D4/spec "Host-
+// environment discovery"), resolved once by `createBindings` and read at
+// `routers/aiV2.ts`'s call site as `c.env.config.AI_V2_CREDENTIAL_SOURCE_PATH`.
+// A unit-level test that constructs its own `configDir`/`apiKey` arguments
+// would keep passing even if that field were made optional and silently
+// defaulted to `undefined` — the exact silent regression this
+// characterization exists to catch. Only a test that goes through the real
+// Config-reading call site can see that.
+//
+// Per-test fixtures now override `AI_V2_CREDENTIAL_SOURCE_PATH` directly via
+// `envWith`'s config arm (`loopbackEnv({ AI_V2_CREDENTIAL_SOURCE_PATH: ... })`)
+// rather than mutating `process.env.HOME`: since task 2.5, the path is
+// resolved ONCE by `createBindings` in this file's own `beforeEach`
+// (`resetTestEnv`, in `test/harness.ts`) — before any `it()` body runs — so
+// setting `HOME` inside a test body no longer has any effect on it. Nothing
+// here ever touches a real home directory; `test/harness.ts`'s own
+// `resetTestEnv` separately makes the file's base config hermetic for every
+// OTHER test in this suite that doesn't override the field.
+//
+// The turn's `configDir` is discovered by observing the ALREADY-PASS-THROUGH
+// `credentialsSpy` (declared above, alongside `spawnSpy`) rather than by
+// guessing the `mkdtemp` prefix — it changes nothing about what the router
+// does, only records what it was called with. `hangingDesignQuery` (task
+// 2.7's own fixture, reused here) keeps the turn's workspace alive long
+// enough to inspect before the orchestrator's `onFinally` cleanup deletes it;
+// every test still drains the response afterward so cleanup runs for real
+// and no temp directory is leaked across tests.
+describe('ai/v2/design — operator credential seeding through the router (design D9 login fallback, task 2.1 characterization)', () => {
+  let fakeHomeDir: string | undefined;
+
+  /** Builds a fake `~/.claude/.credentials.json` under a fresh temp dir and
+   * returns its path, for use as an `AI_V2_CREDENTIAL_SOURCE_PATH` override —
+   * never as `process.env.HOME` (see the describe-block comment above for
+   * why that stopped working once task 2.5 landed). */
+  function fakeCredentialSourcePath(withCredentialsFile: boolean): string {
+    fakeHomeDir = mkdtempSync(join(tmpdir(), 'autologger-fake-home-'));
+    const claudeDir = join(fakeHomeDir, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    const credPath = join(claudeDir, '.credentials.json');
+    if (withCredentialsFile) {
+      writeFileSync(credPath, JSON.stringify({ marker: 'task-2.1-characterization' }));
+    }
+    return credPath;
+  }
+
+  afterEach(() => {
+    if (fakeHomeDir) rmSync(fakeHomeDir, { recursive: true, force: true });
+    fakeHomeDir = undefined;
+  });
+
+  it('no workspace API key + an operator credential file present at the resolved path -> the file is copied into the turn isolated config dir', async () => {
+    const credentialSourcePath = fakeCredentialSourcePath(true);
+    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+    const s = seededSession().sessionId;
+    // AI_CHAT_TIMEOUT_SEC short-circuits the (hanging) turn quickly so the
+    // `finally` drain below doesn't wait out the real default timeout.
+    const res = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({
+        AI_V2_API_KEY: '',
+        AI_CHAT_TIMEOUT_SEC: '0.2',
+        AI_V2_CREDENTIAL_SOURCE_PATH: credentialSourcePath,
+      }),
+    );
+    expect(res.status).toBe(200);
+    try {
+      await waitFor(() => credentialsSpy.mock.calls.length > 0);
+      const [configDir, sourcePathArg, apiKeyArg] = credentialsSpy.mock.calls[0] as [
+        string,
+        string,
+        string | undefined,
+      ];
+      expect(sourcePathArg).toBe(credentialSourcePath);
+      expect(apiKeyArg).toBeUndefined();
+      const copied = join(configDir, '.credentials.json');
+      expect(existsSync(copied)).toBe(true);
+      expect(JSON.parse(readFileSync(copied, 'utf8'))).toEqual({
+        marker: 'task-2.1-characterization',
+      });
+    } finally {
+      await res.text(); // drain so the turn's own `finally` cleanup runs
+    }
+  });
+
+  it('a configured API key -> nothing is copied, even though an operator credential file exists', async () => {
+    const credentialSourcePath = fakeCredentialSourcePath(true);
+    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+    const s = seededSession().sessionId;
+    const res = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({
+        AI_V2_API_KEY: 'workspace-key',
+        AI_CHAT_TIMEOUT_SEC: '0.2',
+        AI_V2_CREDENTIAL_SOURCE_PATH: credentialSourcePath,
+      }),
+    );
+    expect(res.status).toBe(200);
+    try {
+      await waitFor(() => credentialsSpy.mock.calls.length > 0);
+      const [configDir, , apiKeyArg] = credentialsSpy.mock.calls[0] as [
+        string,
+        string,
+        string | undefined,
+      ];
+      expect(apiKeyArg).toBe('workspace-key');
+      expect(existsSync(join(configDir, '.credentials.json'))).toBe(false);
+    } finally {
+      await res.text();
+    }
+  });
+
+  it('no operator credential file present -> no throw, and the turn proceeds exactly as it does today', async () => {
+    const credentialSourcePath = fakeCredentialSourcePath(false);
+    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+    const s = seededSession().sessionId;
+    const res = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({
+        AI_V2_API_KEY: '',
+        AI_CHAT_TIMEOUT_SEC: '0.2',
+        AI_V2_CREDENTIAL_SOURCE_PATH: credentialSourcePath,
+      }),
+    );
+    expect(res.status).toBe(200);
+    try {
+      await waitFor(() => credentialsSpy.mock.calls.length > 0);
+      const [configDir] = credentialsSpy.mock.calls[0] as [string, string, string | undefined];
+      expect(existsSync(join(configDir, '.credentials.json'))).toBe(false);
+      // The property this case pins: execution reached all the way to
+      // `attemptDesignTurnSpawn` (below) — a throw inside
+      // `prepareDesignTurnCredentials` would have pre-empted that call
+      // entirely, diverting to the router's scrubbed-error `catch` instead.
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await res.text();
+    }
+  });
+});
+
+// ── ai-runtime-package task 2.4 — the injected Clock is behaviourally observable ──
+//
+// Task 2.2 threaded `c.env.ports.clock` into the AI runtime at four router
+// call sites and verified them by reading the code. Task 2.2's own honest
+// seam demonstration then showed the verification had no teeth: replacing
+// `c.env.ports.clock` with `{ now: () => Date.now() }` at the site below left
+// every test in this file passing, because `createBindings` hardwires the real
+// `systemClock` and the harness had no way to override it. `envWith`'s second
+// argument (task 2.4) closes that, and this case is the consumer that makes
+// the closure count.
+
+describe("ai/v2/design — the route hands the AI runtime the REQUEST's own injected Clock (task 2.4)", () => {
+  it('createDesignTurnSpawner receives env.ports.clock itself — a freshly constructed clock fails this', async () => {
+    // Deliberately frozen and far from real wall time: a fresh
+    // `{ now: () => Date.now() }` cannot produce this value, so the assertion
+    // below is behavioural rather than a mere object-identity check.
+    const FROZEN_MS = 1_700_000_000_000;
+    const injected: Clock = { now: () => FROZEN_MS };
+    spawnSpy.mockImplementationOnce(() => hangingDesignQuery() as unknown as Query);
+    const s = seededSession().sessionId;
+    const res = await post(
+      s,
+      { message: 'hi' },
+      // AI_CHAT_TIMEOUT_SEC keeps the hanging turn short, as in the
+      // credential cases above.
+      loopbackEnv({ AI_CHAT_TIMEOUT_SEC: '0.2' }, { clock: injected }),
+    );
+    expect(res.status).toBe(200);
+    try {
+      await waitFor(() => spawnerSpy.mock.calls.length > 0);
+      const [passed] = spawnerSpy.mock.calls[0] as [Clock];
+      expect(passed.now()).toBe(FROZEN_MS);
+      // …and it is the very object the request carried, not a copy that
+      // happens to agree.
+      expect(passed).toBe(injected);
+    } finally {
+      await res.text(); // drain so the turn's own `finally` cleanup runs
+    }
   });
 });
 

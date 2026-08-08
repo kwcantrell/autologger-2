@@ -12,8 +12,8 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import type { SDKMessage, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import type { Clock } from '@autologger/ports';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import {
   buildDesignTurnCanUseTool,
   createDesignTurnSpawner,
@@ -22,8 +22,15 @@ import {
   killDesignTurnProcessGroup,
   runDesignTurn,
 } from './aiV2SdkSpawn';
+import { AGGREGATE_MCP_SERVER_NAME } from './mcpTools';
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+// ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
+// locally rather than importing `server/src/node/systemClock` (composition-
+// root-only by name; also avoids a new ai-runtime→node-infra edge this
+// package will not be able to keep once it moves to `packages/`).
+const systemClock: Clock = { now: () => Date.now() };
 
 async function* fromMessages(messages: SDKMessage[]): AsyncGenerator<SDKMessage> {
   for (const m of messages) yield m;
@@ -360,7 +367,7 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
     );
 
     expect(designTurnGroupAlive(pgid)).toBe(true);
-    await killDesignTurnProcessGroup(pgid, 150);
+    await killDesignTurnProcessGroup(systemClock, pgid, 150);
 
     const signal = await withTimeout(exitSignal, 5000, 'SIGTERM-ignoring child never exited');
     expect(signal).toBe('SIGKILL'); // SIGTERM was ignored → the SIGKILL rung fired
@@ -376,13 +383,13 @@ describe('runDesignTurn — pending-question abandonment (task 3.3)', () => {
       child.once('exit', (_c, s) => res(s)),
     );
 
-    await killDesignTurnProcessGroup(pgid, 3000);
+    await killDesignTurnProcessGroup(systemClock, pgid, 3000);
     const signal = await withTimeout(exitSignal, 5000, 'child never exited');
     expect(signal).toBe('SIGTERM');
   });
 
   it('createDesignTurnSpawner.terminate kills the detached group it spawned (end-to-end, no orphan)', async () => {
-    const spawner = createDesignTurnSpawner();
+    const spawner = createDesignTurnSpawner(systemClock);
     const proc = spawner.spawnClaudeCodeProcess({
       command: process.execPath,
       args: ['-e', IGNORE_SIGTERM],

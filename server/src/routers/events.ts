@@ -3,6 +3,19 @@
 // projection onto the catalog sessions row, and enriches events in the router
 // layer using the show profile (keeping show logic out of the hub).
 
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import type {
+  AiGenerationRunContext,
+  AiGenerationSnapshotCategory,
+  AiGenerationSnapshotOption,
+  AiMcpToolName,
+} from '@autologger/ai-runtime/aiMcpServer';
+import { driveAiTurn } from '@autologger/ai-runtime/aiTurn';
+import {
+  buildEventGenerateMessage,
+  EVENT_GENERATE_SYSTEM_PROMPT,
+  type EventGenerateExistingEvent,
+} from '@autologger/ai-runtime/eventGeneratePrompt';
 import { showCategoriesApiShape } from '@autologger/catalog';
 import {
   audioRecordingLeaseBodySchema,
@@ -27,19 +40,6 @@ import {
   stripCategoryUiSnapshots,
 } from '@autologger/domain';
 import { Hono } from 'hono';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import type {
-  AiGenerationRunContext,
-  AiGenerationSnapshotCategory,
-  AiGenerationSnapshotOption,
-  AiMcpToolName,
-} from '../ai-runtime/aiMcpServer';
-import { driveAiTurn } from '../ai-runtime/aiTurn';
-import {
-  buildEventGenerateMessage,
-  EVENT_GENERATE_SYSTEM_PROMPT,
-  type EventGenerateExistingEvent,
-} from '../ai-runtime/eventGeneratePrompt';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -568,6 +568,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     });
 
     const outcome = await driveAiTurn({
+      clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
       cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,

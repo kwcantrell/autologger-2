@@ -7,6 +7,9 @@
 // legacy transcribe.csv download remains intentionally unavailable on this
 // deployment and always returns 503.
 
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { allTranscriptPagesServed } from '@autologger/ai-runtime/aiMcpServer';
+import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import {
   topicCreateSchema,
   topicUpdateSchema,
@@ -25,9 +28,6 @@ import {
 } from '@autologger/transcription';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import { allTranscriptPagesServed } from '../ai-runtime/aiMcpServer';
-import { generateTopicsTurn } from '../ai-runtime/topicGenerate';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -269,6 +269,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     );
 
     const outcome = await generateTopicsTurn({
+      clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
       cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,

@@ -1,7 +1,7 @@
 // ai-v2-dashboards — simple stat-tile catalog widgets (task 4.3): one
 // component each for session_duration, utterance_counts, question_counts,
 // filler_counts, event_density. Each takes exactly its aggregate's shape
-// (server/src/aiV2/aggregates.ts) as `data` and renders `UnavailableState`
+// (packages/ai-runtime/src/aggregates.ts) as `data` and renders `UnavailableState`
 // whenever `available` is false — NEVER a zero in its place (task 4.7).
 
 import type { ReactNode } from 'react';

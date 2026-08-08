@@ -1,15 +1,15 @@
 // ai-v2-dashboards — pinning test (task 5.6; design D11's option (c)): proves
 // `clientAggregates.ts` (this workspace's hand-mirrored copy) produces
-// BYTE-IDENTICAL output to the REAL `server/src/aiV2/aggregates.ts` functions
+// BYTE-IDENTICAL output to the REAL `packages/ai-runtime/src/aggregates.ts` functions
 // on the same fixtures, so the two cannot silently diverge into "two
 // implementations of the same aggregation logic" — the exact failure mode
 // design D11 warns against.
 //
 // This is a TEST-ONLY cross-workspace import (dynamic, not a static import
 // site any bundler ever sees in production code — `clientAggregates.ts`'s own
-// header explains why the shipped web bundle does not import server/src
-// directly). If a future change edits server/src/aiV2/aggregates.ts without
-// updating this file's mirror, this test fails loudly instead of the two
+// header explains why the shipped web bundle does not import the package
+// graph directly). If a future change edits packages/ai-runtime/src/aggregates.ts
+// without updating this file's mirror, this test fails loudly instead of the two
 // quietly drifting apart.
 
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ import * as clientAggregates from './clientAggregates';
 
 // Vitest/esbuild resolve this relative path at test-run time only; nothing
 // under web/src ever imports server/src at runtime or in the built bundle.
-const serverAggregates = await import('../../../../../../server/src/aiV2/aggregates.ts');
+const serverAggregates = await import('../../../../../../packages/ai-runtime/src/aggregates.ts');
 
 // Full server-shape fixtures (every field the REAL server types require) —
 // deliberately not the minimal `clientAggregates.ts` input shapes, so the
@@ -111,7 +111,7 @@ function event(category: string, event_id: string) {
 
 const EVENTS = [event('marker', 'e1'), event('marker', 'e2'), event('note', 'e3')];
 
-describe('clientAggregates pinned against the real server/src/aiV2/aggregates.ts', () => {
+describe('clientAggregates pinned against the real packages/ai-runtime/src/aggregates.ts', () => {
   it('computeSessionDuration matches on timed, degenerate, and empty fixtures', () => {
     for (const words of [TIMED_WORDS, DEGENERATE_WORDS, EMPTY_WORDS]) {
       expect(clientAggregates.computeSessionDuration(words)).toEqual(

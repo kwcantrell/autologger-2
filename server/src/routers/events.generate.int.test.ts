@@ -24,14 +24,20 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
+import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { __resetAiMcpListenerForTests } from '@autologger/ai-runtime/aiMcpServer';
+import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
+import {
+  EVENT_GENERATE_SYSTEM_PROMPT,
+  INSTRUCTION_OPEN,
+} from '@autologger/ai-runtime/eventGeneratePrompt';
 import { SessionIndexStore } from '@autologger/catalog';
 import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '@autologger/domain';
+import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
-import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
-import { __resetAiMcpListenerForTests } from '../ai-runtime/aiMcpServer';
-import * as aiTurnModule from '../ai-runtime/aiTurn';
-import { EVENT_GENERATE_SYSTEM_PROMPT, INSTRUCTION_OPEN } from '../ai-runtime/eventGeneratePrompt';
+import type { Bindings } from '../appEnv';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
 
@@ -47,9 +53,7 @@ const EVENTS_PARTIAL_FAIL_FIXTURE = fileURLToPath(
 // for the analogous zero-output-keeps-the-prior-set precedent), driven here
 // to prove `outcome.createdEvents === 0` at the real registration counter,
 // not merely mocked.
-const NO_TOOL_CALLS_FIXTURE = fileURLToPath(
-  new URL('../test/fixtures/fake-claude.mjs', import.meta.url),
-);
+const NO_TOOL_CALLS_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 // event-generate-hardening residual closure (2026-08-07) — the paused
 // double: makes ONE real create_event call, blocks on a file signal, then
 // makes the remaining two and exits like EVENTS_SUCCESS_FIXTURE. Lets the
@@ -164,13 +168,20 @@ function newSession(opts: { categoriesJson?: string } = {}): {
 }
 
 /** Loopback + configured env: every gate passes up to the seeded state. */
-function configuredEnv(cliPath: string, overrides: Record<string, unknown> = {}) {
-  return envWith({
-    CLAUDE_CLI_PATH: cliPath,
-    HOST: '127.0.0.1',
-    REQUIRE_LOGIN: '0',
-    ...overrides,
-  });
+function configuredEnv(
+  cliPath: string,
+  overrides: Record<string, unknown> = {},
+  portOverrides: Partial<Bindings['ports']> = {},
+) {
+  return envWith(
+    {
+      CLAUDE_CLI_PATH: cliPath,
+      HOST: '127.0.0.1',
+      REQUIRE_LOGIN: '0',
+      ...overrides,
+    },
+    portOverrides,
+  );
 }
 
 function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>, body?: unknown) {
@@ -948,15 +959,30 @@ describe('events/generate — configured behavior (real create_event MCP round t
           startedAtUtc,
           sessionId,
         );
+        // phase-2 finding 2: a freshly constructed clock at this driveAiTurn
+        // call site would leave the whole suite green (see the ai.int.test.ts
+        // sibling pin's header for the demonstrated mutation) — only pinning
+        // the exact injected object closes the seam. The clock advances real
+        // time rather than freezing (phase-2 fix2 re-review, finding B): this
+        // same clock also reaches driveAiTurn's `finally`-block kill ladder,
+        // and a never-advancing deadline there would make the SIGKILL rung
+        // unreachable — the object-identity assertion below is what actually
+        // pins the seam, so a frozen constant was a redundant, hazardous
+        // second pin.
+        const injected: Clock = { now: () => Date.now() };
         const res = await generateReq(
           sessionId,
           // NON-default budget/timeout overrides: the assertions below can
           // only pass through the task-4.1 accessors reading THIS request's
           // config — hardcoded chat-scale (or generate-default) values go red.
-          configuredEnv(EVENTS_SUCCESS_FIXTURE, {
-            EVENT_GENERATE_MAX_BUDGET_USD: '3.25',
-            EVENT_GENERATE_TIMEOUT_SEC: '77',
-          }),
+          configuredEnv(
+            EVENTS_SUCCESS_FIXTURE,
+            {
+              EVENT_GENERATE_MAX_BUDGET_USD: '3.25',
+              EVENT_GENERATE_TIMEOUT_SEC: '77',
+            },
+            { clock: injected },
+          ),
         );
         expect(res.status).toBe(200);
         expect(spy).toHaveBeenCalledTimes(1);
@@ -966,6 +992,10 @@ describe('events/generate — configured behavior (real create_event MCP round t
         // eventGenerateMaxBudgetUsd and eventGenerateTimeoutSec * 1000.
         expect(opts.maxBudgetUsd).toBe(3.25);
         expect(opts.timeoutMs).toBe(77 * 1000);
+
+        // The REQUEST's own injected clock reached driveAiTurn — the very
+        // object, not a copy that happens to agree.
+        expect(opts.clock).toBe(injected);
 
         // NO abortSignal wired — the spec's always-completes property.
         expect(opts.abortSignal).toBeUndefined();

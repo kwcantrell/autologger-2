@@ -24,6 +24,7 @@
 // exception" pins this for `ai/chat` via a real, hermetic `mkdirSync` EEXIST
 // failure).
 
+import type { Clock } from '@autologger/ports';
 import type { SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiChatSseEvent } from './aiChatRelay';
 import {
@@ -47,6 +48,10 @@ import {
 const NO_PAGE_COVERAGE: AiMcpPageCoverage = { totalPages: 0, servedPages: 0 };
 
 export interface DriveAiTurnOptions {
+  /** Required (design D3, ruling E3) — threaded into the kill ladder via
+   * `killAiChatProcessGroup` in this function's `finally`. Production
+   * callers pass `c.env.ports.clock`; never a freshly constructed clock. */
+  clock: Clock;
   /** The process-wide session registry — resolves the MCP listener singleton. */
   registry: SessionHubRegistryFacade;
   /** `CLAUDE_CLI_PATH`, already trimmed. */
@@ -146,6 +151,7 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<DriveAiTurn
       emit: opts.emit,
       timeoutMs: opts.timeoutMs,
       abortSignal: opts.abortSignal,
+      clock: opts.clock,
     });
     // Read the counters BEFORE the finally's dispose runs (they would read
     // correctly after dispose too — they live on closures the registration
@@ -177,7 +183,7 @@ export async function driveAiTurn(opts: DriveAiTurnOptions): Promise<DriveAiTurn
     // returning — leaving `spawned` null — is not reachable to kill here; in
     // practice the only post-fork work is guarded stdin writes, so it does not
     // orphan.)
-    if (spawned) await killAiChatProcessGroup(spawned.child);
+    if (spawned) await killAiChatProcessGroup(opts.clock, spawned.child);
     mcpTurn?.dispose();
     spawned?.cleanupConfig();
   }
