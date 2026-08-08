@@ -95,7 +95,7 @@ export const OUTPUT_TEMPLATE = 'audio.%(ext)s';
 const PRODUCED_FILE_PREFIX = 'audio.';
 
 /** Design D3: the supported-container set, matching `AudioStore`'s own
- * extension→mime mapping (`server/src/session/audioStore.ts`) so a
+ * extension→mime mapping (`packages/session-core/src/audioStore.ts`) so a
  * downstream player/waveform/transcription consumer that already handles
  * the recorder's own containers can consume an imported one identically. A
  * produced extension outside this map throws `YtDlpError` — NEVER a
@@ -112,12 +112,15 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
  * PATH (design D9), mirrored verbatim from `buildAiChatChildEnv`'s
  * `OPTIONAL_ENV_PASSTHROUGH` — only forwarded when actually present in the
  * parent's env, never fabricated. Duplicated here (not imported) rather than
- * reused across the node/ai-runtime layering split (`server/src/node/` is
- * lower-level, Node-platform infrastructure; `server/src/ai-runtime/` is the
- * sibling layer housing CLI/SDK turn orchestration, not infrastructure
- * `node/` depends on — importing one constant across that boundary would
- * create a cross-layer dependency for no reason the duplication doesn't
- * already serve just as well). */
+ * reused across the boundary: `buildAiChatChildEnv` lives in
+ * `server/src/ai-runtime/aiChatRunner.ts`, while this module lives in the
+ * source-only `@autologger/media-import` package, which imports no
+ * `@autologger/*` package at all (design D1 — L2 by role, not by need).
+ * Importing one constant across that package boundary would pull in a
+ * dependency this package has no other reason to carry — reusing across a
+ * genuine package boundary is a stronger reason to duplicate than the
+ * in-workspace layering split this comment used to describe, not a weaker
+ * one. */
 const OPTIONAL_ENV_PASSTHROUGH = [
   'HTTP_PROXY',
   'HTTPS_PROXY',

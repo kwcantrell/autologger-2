@@ -75,17 +75,33 @@ export interface WorkspaceRegime {
 }
 
 /**
- * The twelve real resolution regimes: the four application workspaces
+ * The fifteen real resolution regimes: the four application workspaces
  * (design.md D2) plus web-docs itself, `fixtures/api-responses` (audit
  * fix-now F1 — every mapped file gets extracted, per spec R4, with no silent
  * exception), the three `packages/*` L0 npm workspace packages introduced by
- * package-split-foundation (`domain`, `contract`, `ports`), and
+ * package-split-foundation (`domain`, `contract`, `ports`),
  * `persistence-package-extraction`'s three L1 packages (`storage`, task 2.2;
- * `catalog`, task 3.2/3.3; `session-core`, task 4.3). Workspace-tsconfig
- * `compilerOptions` are read from each workspace's real tsconfig at
- * extraction time — never its `include`/`exclude`, which only shapes each
- * workspace's OWN build/typecheck file set (and companion's excludes its own
- * tests outright).
+ * `catalog`, task 3.2/3.3; `session-core`, task 4.3), and
+ * `feature-service-packages`'s three L2 service packages: `transcription`
+ * (task 4.1 — the first L2 service package with a real outgoing
+ * cross-package import), `media-import` (task 3.1), and `log-import`
+ * (enrolled by the phase-4 fix wave, ahead of task 5.5's real move: the
+ * package held only a placeholder with no outgoing cross-package edges at
+ * that point, but leaving it unenrolled until phase 5 would have meant every
+ * edge that move introduced — into `@autologger/domain`, `ports`,
+ * `session-core`, and `transcription` — vanished silently the same way
+ * `transcription` itself did before task 4.1 added its own regime).
+ * `media-import` has zero outgoing workspace imports today too, but is
+ * enrolled anyway for the identical reason: an unenrolled package's outgoing
+ * edges are invisible to this extractor, so the next change that gives it
+ * one gets a silently-false model with a green `docs:check` (whole-branch
+ * audit fix-now, this change). A file outside every declared regime is
+ * silently skipped, not an error, so an outgoing edge from an unenrolled
+ * package would never surface as a violation; see extractFileImports' doc
+ * comment. Workspace-tsconfig `compilerOptions` are read from each
+ * workspace's real tsconfig at extraction time — never its
+ * `include`/`exclude`, which only shapes each workspace's OWN build/
+ * typecheck file set (and companion's excludes its own tests outright).
  */
 export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
   { name: 'server', dir: 'server', tsconfigPath: 'server/tsconfig.json' },
@@ -122,6 +138,21 @@ export const WORKSPACE_REGIMES: readonly WorkspaceRegime[] = [
     name: 'session-core',
     dir: 'packages/session-core',
     tsconfigPath: 'packages/session-core/tsconfig.json',
+  },
+  {
+    name: 'transcription',
+    dir: 'packages/transcription',
+    tsconfigPath: 'packages/transcription/tsconfig.json',
+  },
+  {
+    name: 'media-import',
+    dir: 'packages/media-import',
+    tsconfigPath: 'packages/media-import/tsconfig.json',
+  },
+  {
+    name: 'log-import',
+    dir: 'packages/log-import',
+    tsconfigPath: 'packages/log-import/tsconfig.json',
   },
   {
     name: 'contract-fixtures',

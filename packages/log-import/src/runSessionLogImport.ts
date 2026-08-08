@@ -1,8 +1,5 @@
 import type { CategoryRecord } from '@autologger/domain';
-import type { Config } from '@autologger/ports';
 import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
-import type { Bindings } from '../appEnv';
-import { generateTranscriptWords, TranscriptGenerateError } from '../node/generateTranscript';
 import { mapLogCategory } from './categoryMatch';
 import type { ParsedLogRow } from './sheetsFetch';
 import { secondsToTotalFrames } from './sheetTimecode';
@@ -14,6 +11,8 @@ export interface SessionLogImportResult {
   lines: string[];
 }
 
+/** Consumed by `routers/logImport.ts`'s `ensureTimedTranscript` coordinator
+ * (feature-service-packages D2) — no caller remains in this module. */
 export function timedTranscriptTokens(hub: SessionHubFacade): TranscriptToken[] {
   const words = hub.listTranscriptWords();
   const out: TranscriptToken[] = [];
@@ -37,69 +36,6 @@ function seamPartsForSession(hub: SessionHubFacade): { duration_s: number }[] {
     if (Number.isFinite(ms) && ms > 0) return [{ duration_s: ms / 1000 }];
   }
   throw new Error('Session is missing stitch seam metadata; re-import audio with seam parts.');
-}
-
-/** Ensure timed transcript words exist; generate via DeepGram when missing. */
-export async function ensureTimedTranscript(input: {
-  sessionId: string;
-  getHub: () => SessionHubFacade;
-  config: Config;
-  audio: Bindings['ports']['audio'];
-  ctx: TimecodeCtx;
-  onProgress: (line: string) => void;
-}): Promise<TranscriptToken[]> {
-  let tokens = timedTranscriptTokens(input.getHub());
-  if (tokens.length > 0) {
-    input.onProgress(`Transcript already present (${tokens.length} timed words).`);
-    return tokens;
-  }
-
-  input.onProgress('Generating transcript (DeepGram)…');
-  const attempt = async (): Promise<TranscriptToken[]> => {
-    const words = await generateTranscriptWords({
-      config: input.config,
-      audio: input.audio,
-      getHub: input.getHub,
-      ctx: input.ctx,
-      sessionId: input.sessionId,
-    });
-    const next = timedTranscriptTokens(input.getHub());
-    if (next.length === 0) {
-      throw new Error(
-        `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
-      );
-    }
-    return next;
-  };
-
-  try {
-    tokens = await attempt();
-    input.onProgress(`Transcript ready (${tokens.length} timed words).`);
-    return tokens;
-  } catch (err) {
-    const isUpstream =
-      err instanceof TranscriptGenerateError &&
-      (err.code === 'upstream' || err.code === 'in_flight');
-    if (isUpstream) {
-      input.onProgress(`Transcript generation failed (${err.message}); retrying once…`);
-      // Brief pause: clears in-flight slot races and transient DeepGram blips.
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        tokens = await attempt();
-        input.onProgress(`Transcript ready after retry (${tokens.length} timed words).`);
-        return tokens;
-      } catch (retryErr) {
-        if (retryErr instanceof TranscriptGenerateError) {
-          throw new Error(`Transcript generation failed: ${retryErr.message}`);
-        }
-        throw retryErr;
-      }
-    }
-    if (err instanceof TranscriptGenerateError) {
-      throw new Error(`Transcript generation failed: ${err.message}`);
-    }
-    throw err;
-  }
 }
 
 /** Import parsed log rows into a session event feed (sync + create-at-frames). */

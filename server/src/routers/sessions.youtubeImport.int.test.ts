@@ -2,7 +2,7 @@
 // over POST /api/sessions/:sessionId/youtube-import's full status matrix
 // (api-contract-freeze delta "YouTube import endpoint behavior" +
 // youtube-audio-import spec), using the hermetic fake-yt-dlp fixture
-// (`server/src/test/fixtures/fake-ytdlp.mjs`, Phase 3) exec'd through a REAL
+// (`packages/media-import/fixtures/fake-ytdlp.mjs`, Phase 3) exec'd through a REAL
 // launcher binary. No real network, no real yt-dlp anywhere in this suite.
 //
 // Never `vi.mock('node:child_process')`: `ai.int.test.ts`'s "SPAWN
@@ -35,18 +35,21 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  MEDIA_IMPORT_FIXTURES_DIR,
+  YOUTUBE_IMPORT_MAX_CONCURRENT,
+  YOUTUBE_IMPORT_TMP_PREFIX,
+  youtubeImportGuard,
+} from '@autologger/media-import';
+import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
-import { recordingStartAnchors } from '../node/transcriptRemap';
-import { YOUTUBE_IMPORT_MAX_CONCURRENT, youtubeImportGuard } from '../node/youtubeImportGuard';
-import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { app, env, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
 
-const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-ytdlp.mjs', import.meta.url));
+const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own
 // module-private constants (not exported) so these tests assert the EXACT
@@ -454,6 +457,48 @@ describe('post-validation failures — 502, audio unchanged (matrix: download-fa
 
     const after = await listSegmentsRaw(session, testEnv);
     expect(after).toBe(before); // byte-for-byte unchanged — no orphan row, not merely "no playable segment"
+  });
+});
+
+// ── Task 3.3: cross-package `instanceof` pin (design D6, spec "Every newly
+// cross-boundary error class is pinned") ────────────────────────────────────
+//
+// `YtDlpError` is now defined in `@autologger/media-import`; `routers/
+// sessions.ts:570` still matches it with `instanceof YtDlpError` to decide
+// between the class's own (safe, non-sensitive) `.message` and a generic
+// fallback detail. That branch is sound only because the workspace resolves
+// `@autologger/media-import` to a single copy of the module — cross-realm
+// `instanceof` on a dual-loaded class silently fails, which is exactly the
+// failure mode a unit test that imports `YtDlpError` and throws it directly
+// cannot exercise (it never crosses the package boundary the router does at
+// runtime). This drives the real app end to end — real launcher subprocess
+// → real `fetchYoutubeAudio` in the package → real router `catch` — so the
+// router's own `instanceof` actually runs, following `routers/
+// flows.int.test.ts`'s "416 for a suffix Range against a zero-byte blob"
+// shape (a real cross-package `InvalidRangeError` pinned through the app,
+// not a unit-level throw).
+describe('cross-package instanceof pin: YtDlpError -> 502 {detail} through the real app (task 3.3, design D6)', () => {
+  it('a YtDlpError thrown inside @autologger/media-import matches instanceof YtDlpError in routers/sessions.ts and produces the exact frozen detail', async () => {
+    const session = seededSession().sessionId;
+    // mode "live" throws exactly one YtDlpError message inside the
+    // package's probe step — an exact (not regex/substring) match on
+    // {detail} proves the router's `instanceof YtDlpError` branch produced
+    // this body from the class's own `.message`, not the generic
+    // post-validation fallback ('Failed to import audio from YouTube.')
+    // that would surface if the `instanceof` check silently failed to
+    // match across the package boundary.
+    const { binaryPath } = freshBinary({ mode: 'live' });
+    const testEnv = configuredEnv(binaryPath);
+
+    const before = await listSegmentsRaw(session, testEnv);
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      detail: 'This video is a live stream, which is not supported.',
+    });
+
+    const after = await listSegmentsRaw(session, testEnv);
+    expect(after).toBe(before); // no orphan row — byte-for-byte unchanged listing
   });
 });
 
@@ -873,8 +918,8 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
   // resolution is the substitute"), this test instead asserts the exact
   // function transcript generation calls to resolve a segment's anchor,
   // fed the REAL events the import created through the real HTTP route —
-  // the same production seam (server/src/node/transcriptRemap.ts), not a
-  // reimplementation of its logic.
+  // the same production seam (`@autologger/transcription`'s
+  // transcriptRemap.ts), not a reimplementation of its logic.
   it('recordingStartAnchors resolves the imported take: recordingOrdinal=1, anchorSeconds=0 at position 0', async () => {
     const session = seededSession().sessionId;
     const testEnv = configuredEnv(freshBinary().binaryPath);

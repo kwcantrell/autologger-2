@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { clearLogImportJobs } from '@autologger/log-import';
+import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clearLogImportJobs } from '../logImport/jobStore';
 import { app, env, envWith } from '../test/harness';
 import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
 
@@ -314,4 +317,162 @@ describe('log-import job HTTP surface', () => {
     const res = await app.request(`/api/log-import/${job_id}`, {}, env);
     expect(res.status).toBe(200);
   });
+});
+
+// ── Cross-package `instanceof` pin: TranscriptGenerateError arriving with
+// D2's relocated `ensureTimedTranscript` coordinator (feature-service-
+// packages task 5.1, design D2/D6) ──────────────────────────────────────
+//
+// `TranscriptGenerateError` is defined in `@autologger/transcription`;
+// `routers/logImport.ts`'s `ensureTimedTranscript` (relocated verbatim from
+// `logImport/runSessionLogImport.ts`) matches it with `instanceof` at THREE
+// sites: the initial upstream/in_flight retry check, the retry-failure
+// wrap, and the final non-retry wrap. This is a DIFFERENT route from
+// `transcribe.int.test.ts`'s existing pin (task 4.5) — same class, a
+// different newly-created cross-package boundary — so design D6's "every
+// newly cross-boundary class gets a pin, not just the first one" requires
+// its own coverage here, not reuse of transcribe's.
+//
+// The log-import route reports failure asynchronously — job `lines`/`error`
+// via GET poll, never a direct response status — so unlike
+// transcribe.int.test.ts's 502/409 assertions, the pin here asserts the
+// exact wrapped text `ensureTimedTranscript` produces from the real
+// error's `.message`. Both tests drive a real request -> real
+// `generateTranscriptWords()` inside the package -> a real thrown
+// `TranscriptGenerateError` -> the router's own `instanceof` sites,
+// following `routers/flows.int.test.ts`'s "real cross-package error class,
+// not a unit-level throw" shape (task 3.3/4.5's precedent).
+describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTranscript (task 5.1, design D2/D6)', () => {
+  function deepgramConfiguredEnv(overrides: Record<string, unknown> = {}) {
+    return envWith({
+      SHEETS_LOG_IMPORT_ENABLED: '1',
+      HOST: '127.0.0.1',
+      DEEPGRAM_API_KEY: 'test-deepgram-key',
+      DEEPGRAM_MODEL: 'nova-3',
+      ...overrides,
+    });
+  }
+
+  async function xlsxBytes(
+    title: string,
+    row: { timecode: string; message: string; type: string },
+  ) {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(title);
+    ws.getCell('A7').value = row.timecode;
+    ws.getCell('B7').value = row.message;
+    ws.getCell('C7').value = row.type;
+    return new Uint8Array(await wb.xlsx.writeBuffer());
+  }
+
+  /** Long budget: the "upstream" case's real 2000ms retry pause (no fake
+   * timers at the integration tier — real elapsed time, matching task
+   * 1.1's unit-tier pin using fake timers for the SAME sleep) must fit
+   * inside the poll window. */
+  async function pollJob(
+    jobId: string,
+  ): Promise<{ status: string; lines: string[]; error: string | null }> {
+    let body: { status: string; lines: string[]; error: string | null } | null = null;
+    for (let i = 0; i < 200; i++) {
+      const get = await app.request(`/api/log-import/${jobId}`, {}, env);
+      expect(get.status).toBe(200);
+      body = (await get.json()) as { status: string; lines: string[]; error: string | null };
+      if (body.status === 'failed' || body.status === 'completed') return body;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`job did not finish, last status=${body?.status}`);
+  }
+
+  it(
+    'a "no_audio" TranscriptGenerateError (non-retryable) matches the FINAL catch\'s instanceof ' +
+      '-> exact frozen-wrapped job line, no DeepGram call made',
+    async () => {
+      const studio = seedStudio();
+      const show = seedShow({ studioId: studio });
+      const title = 'No Audio Session';
+      seedSession({ showId: show, title });
+      const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url.includes('deepgram.com')) {
+            throw new Error('unexpected DeepGram call: session has no audio segments');
+          }
+          return new Response(xlsx, { status: 200 });
+        }),
+      );
+
+      const post = await postImport(show, deepgramConfiguredEnv());
+      expect(post.status).toBe(200);
+      const { job_id } = (await post.json()) as { job_id: string };
+
+      const body = await pollJob(job_id);
+      expect(body.status).toBe('failed');
+      expect(body.error).toBe('All matched sessions failed to import.');
+      // Exact (not substring) match on the coordinator's own wrap of the
+      // real TranscriptGenerateError's `.message` — proves the FINAL
+      // `instanceof TranscriptGenerateError` branch (no retry: 'no_audio'
+      // is neither 'upstream' nor 'in_flight') matched the real thrown
+      // instance.
+      expect(body.lines).toContain(
+        `Failed “${title}”: Transcript generation failed: This session has no recorded audio to transcribe.`,
+      );
+    },
+  );
+
+  it(
+    'an "upstream" TranscriptGenerateError retries once, hitting BOTH the retry-check and ' +
+      'retry-failure instanceof sites -> exact frozen-wrapped job lines, DeepGram called twice',
+    async () => {
+      const studio = seedStudio();
+      const show = seedShow({ studioId: studio });
+      const title = 'Upstream Retry Session';
+      const session = seedSession({ showId: show, title });
+
+      const seg1 = readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm'));
+      const uploadRes = await app.request(
+        `/api/sessions/${session}/audio/segments`,
+        { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: seg1 },
+        env,
+      );
+      expect(uploadRes.status).toBe(200);
+
+      const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+      let deepgramCalls = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+          const url = String(input);
+          if (url.includes('deepgram.com')) {
+            deepgramCalls += 1;
+            return new Response('server error', { status: 500 });
+          }
+          return new Response(xlsx, { status: 200 });
+        }),
+      );
+
+      const post = await postImport(show, deepgramConfiguredEnv());
+      expect(post.status).toBe(200);
+      const { job_id } = (await post.json()) as { job_id: string };
+
+      const body = await pollJob(job_id);
+      // The retry actually ran a second real provider call, not merely the
+      // first — proves the FIRST `instanceof` site's `isUpstream` check
+      // matched the real thrown instance and engaged the retry branch.
+      expect(deepgramCalls).toBe(2);
+      expect(body.status).toBe('failed');
+      expect(body.error).toBe('All matched sessions failed to import.');
+      expect(body.lines).toContain(
+        `  ${title}: Transcript generation failed (DeepGram transcription failed or timed out.); retrying once…`,
+      );
+      // Exact match on the coordinator's wrap of the RETRY attempt's real
+      // TranscriptGenerateError — proves the SECOND `instanceof` site (the
+      // retry-failure catch) also matched.
+      expect(body.lines).toContain(
+        `Failed “${title}”: Transcript generation failed: DeepGram transcription failed or timed out.`,
+      );
+    },
+  );
 });

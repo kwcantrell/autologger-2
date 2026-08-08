@@ -5,18 +5,18 @@
 // better-sqlite3 connection (same file the running server holds open at
 // DATA_DIR/catalog.db — server/src/node/config.ts) and writes a user row +
 // hashed login-session KV row, mirroring the real shapes byte-for-byte:
-//   - user row shape:        authCreateUserGoogle (server/src/db/authStore.ts)
+//   - user row shape:        authCreateUserGoogle (packages/catalog/src/authStore.ts)
 //   - prefs row shape:       authSeedPrefsFromGlobals (same file)
 //   - membership row shape:  authAddMembershipWithRole (same file)
 //   - KV session row shape:  createLoginSession (server/src/auth/identity.ts)
 //     — session:<sha256hex(rawToken)> -> userId, expires_at in epoch ms
-//     (server/src/node/kvStore.ts KvStore.put)
+//     (packages/storage/src/kvStore.ts KvStore.put)
 // A Playwright BrowserContext then gets the raw token injected as the login
 // cookie (name/flags mirrored from the OAuth callback's setCookie() call in
 // server/src/routers/auth.ts) via `injectSessionCookie`.
 //
 // WAL concurrency (empirically verified): the server opens catalog.db with
-// `journal_mode = WAL` + `busy_timeout = 5000` (server/src/node/migrate.ts
+// `journal_mode = WAL` + `busy_timeout = 5000` (packages/storage/src/migrate.ts
 // openCatalogDb) and keeps ONE connection open for its whole lifetime. A
 // second short-lived connection from the test process, opened with the same
 // two pragmas, writes + commits + closes well inside that 5s budget; WAL

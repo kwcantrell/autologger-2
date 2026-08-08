@@ -1,5 +1,6 @@
 // Unit tests for the mediabunny packet-copy concat pipeline. Fixtures are
-// tiny ffmpeg-generated files committed under src/test/fixtures/audio/:
+// tiny ffmpeg-generated files committed under this package's fixtures/audio/
+// (see TRANSCRIPTION_FIXTURES_DIR, ./fixturesDir.ts):
 //
 //   seg1.webm / seg2.webm   — Opus/WebM, 48kHz mono (0.6s + 0.4s)
 //   seg5-opus.ogg           — Opus/Ogg,  48kHz mono (0.5s) — same params as
@@ -19,8 +20,9 @@ import { join } from 'node:path';
 import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mergeAudioSegments } from './audioMerge';
+import { TRANSCRIPTION_FIXTURES_DIR } from './fixturesDir';
 
-const fixtures = join(import.meta.dirname, '..', 'test', 'fixtures', 'audio');
+const fixtures = join(TRANSCRIPTION_FIXTURES_DIR, 'audio');
 const seg1 = join(fixtures, 'seg1.webm');
 const seg2 = join(fixtures, 'seg2.webm');
 const segOgg = join(fixtures, 'seg5-opus.ogg');

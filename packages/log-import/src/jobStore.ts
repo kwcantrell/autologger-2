@@ -1,3 +1,5 @@
+import type { Clock } from '@autologger/ports';
+
 export interface LogImportJob {
   id: string;
   status: 'queued' | 'running' | 'completed' | 'failed';
@@ -55,8 +57,8 @@ function pruneJobs(nowMs: number): void {
   }
 }
 
-export function createLogImportJob(createdByUserId: string | null): LogImportJob {
-  const now = Date.now();
+export function createLogImportJob(clock: Clock, createdByUserId: string | null): LogImportJob {
+  const now = clock.now();
   pruneJobs(now);
   const id = crypto.randomUUID();
   const job: LogImportJob = {
@@ -72,8 +74,8 @@ export function createLogImportJob(createdByUserId: string | null): LogImportJob
   return job;
 }
 
-export function getLogImportJob(id: string): LogImportJob | null {
-  pruneJobs(Date.now());
+export function getLogImportJob(clock: Clock, id: string): LogImportJob | null {
+  pruneJobs(clock.now());
   return jobsMap().get(id) ?? null;
 }
 
@@ -84,6 +86,7 @@ export function appendLogImportLine(id: string, line: string): void {
 }
 
 export function setLogImportStatus(
+  clock: Clock,
   id: string,
   status: LogImportJob['status'],
   error: string | null = null,
@@ -91,7 +94,7 @@ export function setLogImportStatus(
   const job = jobsMap().get(id);
   if (!job) return;
   job.status = status;
-  job.finishedAtMs = status === 'completed' || status === 'failed' ? Date.now() : null;
+  job.finishedAtMs = status === 'completed' || status === 'failed' ? clock.now() : null;
   if (error !== null) job.error = error;
 }
 

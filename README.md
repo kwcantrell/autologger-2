@@ -495,7 +495,14 @@ from `server/src/session|db/` and part of `server/src/node/` by `persistence-pac
 only through the packages' exported facade interfaces (`appEnv.ts` names zero concrete
 persistence classes — `server/src/node/config.ts` is the sole production module that
 constructs the concretes; `middleware/auth.ts` constructs the per-request `Catalog` via the
-package's `createCatalog` factory).
+package's `createCatalog` factory). Above L1 sits a flat L2 **service** layer — three more
+source-only packages (`feature-service-packages`), extracted out of `server/src/node/`'s
+feature files and the retired `server/src/logImport/`: `@autologger/transcription`,
+`@autologger/media-import`, and `@autologger/log-import`. A service package may import L0
+and L1 but never another service package; `server/src/node/` itself now holds exactly
+`config.ts`, `systemClock.ts`, and `presence.ts` — matching its documented role, and pinned
+by a recursive name check rather than left to drift again. Cross-package boundaries at every
+layer are enforced by `server/src/packageBoundaries.repo.test.ts`, not the compiler.
 
 ```
 server/src/
@@ -576,7 +583,13 @@ packages/                 Source-only npm workspace packages (no build step; ser
                            between them are enforced by server/src/packageBoundaries.repo.test.ts,
                            not the compiler. L0 (domain/contract/ports) ships no runtime
                            persistence; L1 (session-core/catalog/storage) are dependency-free
-                           siblings of each other — no L1→L1 edges — each depending only on L0.
+                           siblings of each other — no L1→L1 edges — each depending only on L0;
+                           L2 (transcription/media-import/log-import) are service packages that
+                           may depend on L0/L1 but never on each other — no L2→L2 edges, and no
+                           L1→L2 edges either (feature-service-packages design D1) — enforced by
+                           four checks: the direct sibling rule, a no-L1-imports-L2 rule (closes
+                           an L1-re-export launder route), transitive reachability, and a file
+                           walk widened to .mts/.cts.
   domain/src/              @autologger/domain — pure, dependency-free domain modules (L0)
     studio.ts                Studios + palette/category + event enrichment (← studio.py)
     timecode.ts              SMPTE timecode math + UTC helpers             (← models.py)
@@ -641,6 +654,59 @@ packages/                 Source-only npm workspace packages (no build step; ser
     blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
                              guard; exports InvalidRangeError, mapped to 416 by instanceof at
                              app.ts and routers/audio.ts
+  transcription/src/      @autologger/transcription — DeepGram transcription (L2; deps:
+                           domain, ports, session-core — never contract) moved from
+                           server/src/node/ (feature-service-packages task 4.1)
+    deepgram.ts              DeepGram provider HTTP client (undici)
+    audioMerge.ts            mediabunny packet-copy concat of recorded audio segments
+    transcriptRemap.ts       Timeline remap of words + enrichment onto the session's SMPTE
+                             timeline
+    transcriptGenerationLock.ts  Process-wide generation lock (singleton); its tryAcquire
+                             Date.now() default formats the frozen GET
+                             /api/transcript-generation/status started_at field — nothing
+                             branches, expires, orders, or persists on the value, but it is
+                             contract-bearing, so it stays a display timestamp, not a Clock read
+    generateTranscript.ts    Orchestrating entry point both the HTTP generate route and
+                             log-import's ensureTimedTranscript coordinator call; imports
+                             BlobStore directly from @autologger/ports (no appEnv/Bindings escape)
+    deepgramConfig.ts        deepgramConfigured/deepgramModel, moved out of server/src/env.ts
+                             (design D5 — the package reads its own config predicates)
+    index.ts                 Package barrel; exports TRANSCRIPTION_FIXTURES_DIR
+  transcription/fixtures/  audio/ (10 files) + deepgram-enrichment-response.json, moved from
+                             server/src/test/fixtures/ (design D4)
+  media-import/src/       @autologger/media-import — YouTube audio import (L2; imports no
+                           workspace package at all, by role rather than by need) moved from
+                           server/src/node/ (feature-service-packages task 3.1)
+    ytdlp.ts                 yt-dlp spawn + lockdown + bounds; exports YtDlpError, matched by
+                             instanceof at routers/sessions.ts
+    youtubeImportGuard.ts    Per-session + global concurrency guard (singleton)
+    youtubeImportScratch.ts  Startup sweep of stale per-request temp dirs
+    index.ts                 Package barrel; exports MEDIA_IMPORT_FIXTURES_DIR
+  media-import/fixtures/   fake-ytdlp.mjs, moved from server/src/test/fixtures/ (design D4).
+                             resolveYtDlpPath deliberately stays in server/src/env.ts (gate
+                             ruling E2) — PATH-probing at boot is composition-root work, not a
+                             service's
+  log-import/src/         @autologger/log-import — Google Sheets batch log-import domain logic
+                           (L2; deps: domain, ports, session-core; exceljs declared here AND by
+                           server/package.json — gate ruling E1, since
+                           routers/logImport.int.test.ts imports it directly and stays in the
+                           app) moved from server/src/logImport/ (feature-service-packages
+                           task 5.3)
+    categoryMatch.ts         Fuzzy category-name matching
+    jobStore.ts              In-memory job-status store; Clock-parameterized (design D3) —
+                             createLogImportJob/getLogImportJob/setLogImportStatus take a Clock,
+                             appendLogImportLine/clearLogImportJobs don't read time
+    runSessionLogImport.ts   Sync scoring + event creation against one matched session — the
+                             service proper, taking `transcript` pre-resolved. Its
+                             ensureTimedTranscript coordinator (the one production edge into
+                             transcription) relocated to routers/logImport.ts instead (design
+                             D2 — a non-Hono routers/coordinators/*.ts module would fail the
+                             router-membership check, so the coordinator landed inside the
+                             already-Hono-importing router file instead)
+    sheetsFetch.ts           Public workbook fetch + row parse, via exceljs
+    sheetTimecode.ts         SMPTE timecode parsing for sheet rows
+    syncScore.ts             Log-row-to-transcript-seam sync scoring
+    index.ts                 Package barrel
 ```
 
 ## Endpoints

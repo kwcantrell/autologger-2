@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TRANSCRIPTION_FIXTURES_DIR, transcriptGenerationLock } from '@autologger/transcription';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
 import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
@@ -10,7 +11,6 @@ import { __resetAiMcpListenerForTests } from '../ai-runtime/aiMcpServer';
 // work through the shared `app` singleton).
 import type { generateTopicsTurn } from '../ai-runtime/topicGenerate';
 import * as topicGenerateModule from '../ai-runtime/topicGenerate';
-import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
@@ -642,7 +642,7 @@ describe('topics CRUD', () => {
 
 // ── Transcript generation (deepgram-transcription) ──────────────────────────
 
-const FIXTURES = join(import.meta.dirname, '..', 'test', 'fixtures', 'audio');
+const FIXTURES = join(TRANSCRIPTION_FIXTURES_DIR, 'audio');
 const SEG1 = join(FIXTURES, 'seg1.webm');
 const CORRUPT = join(FIXTURES, 'seg-corrupt.bin');
 
@@ -953,14 +953,79 @@ describe('transcript generation', () => {
     expect(words.map((w) => w.word)).toEqual(['existing']);
   });
 
+  // ── Task 4.5: cross-package `instanceof` pin (design D6, spec "Every
+  // newly cross-boundary error class is pinned") ──────────────────────────
+  //
+  // `TranscriptGenerateError` is now defined in `@autologger/transcription`;
+  // `routers/transcribe.ts:59` (`mapGenerateError`) and `:157` (the
+  // in-flight cross-tenant redaction check) both still match it with
+  // `instanceof`. That branch is sound only because the workspace resolves
+  // `@autologger/transcription` to a single copy of the module —
+  // cross-realm `instanceof` on a dual-loaded class silently fails, which is
+  // exactly the failure mode a unit test that imports
+  // `TranscriptGenerateError` and throws it directly cannot exercise (it
+  // never crosses the package boundary the router does at runtime). Both
+  // tests below drive the real app end to end — real mocked-`fetch`
+  // DeepGram failure / real process-wide lock contention -> real
+  // `TranscriptGenerateError` thrown inside the package -> real router
+  // `catch` — so the router's own `instanceof` sites actually run, following
+  // `routers/flows.int.test.ts`'s "416 for a suffix Range against a
+  // zero-byte blob" shape (a real cross-package `InvalidRangeError` pinned
+  // through the app, not a unit-level throw).
+  describe('cross-package instanceof pin: TranscriptGenerateError -> {502,409} through the real app (task 4.5, design D6)', () => {
+    it('an "upstream" TranscriptGenerateError matches :157 (false) then :59 (true) -> exact frozen 502 {detail}', async () => {
+      const s = seededSession().sessionId;
+      await uploadSegment(s, SEG1);
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response('server error', { status: 500 })),
+      );
+
+      const res = await generate(s);
+      expect(res.status).toBe(502);
+      // Exact (not regex/substring) match on the package's own
+      // UPSTREAM_FAILURE_DETAIL constant: proves this body came from the
+      // router's `instanceof TranscriptGenerateError` branch at :59, not
+      // some other 502-producing path.
+      expect(await res.json()).toEqual({ detail: 'DeepGram transcription failed or timed out.' });
+    });
+
+    it('an "in_flight" TranscriptGenerateError matches :157 (true) then, for a visible holder, falls through to :59 (true) -> exact frozen 409 {detail}', async () => {
+      const holderStudio = seedStudio();
+      const holderShow = seedShow({ studioId: holderStudio });
+      const holderSession = seedSession({ showId: holderShow, title: 'Instanceof Pin Holder' });
+      expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
+
+      const myStudio = seedStudio();
+      const myShow = seedShow({ studioId: myStudio });
+      const mySession = seedSession({ showId: myShow });
+      const cookie = await loginCookie(seedUser({ studios: [myStudio, holderStudio] }));
+
+      const res = await generate(
+        mySession,
+        { headers: { Cookie: cookie } },
+        deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+      );
+      expect(res.status).toBe(409);
+      // Exact match on the package's `generationInFlightDetail(...)` output
+      // (deterministic: fixed lock timestamp + seeded holder title) proves
+      // the redacted-vs-visible branch at :157 matched the real thrown
+      // instance, then `mapGenerateError`'s own `instanceof` at :59 mapped
+      // `code: 'in_flight'` to 409 using the class's own `.message`.
+      expect(await res.json()).toEqual({
+        detail:
+          'A transcript generation run is already in progress for session "Instanceof Pin Holder" ' +
+          '(started 2023-11-14T22:13:20.000Z); try again once it completes.',
+      });
+    });
+  });
+
   // ── Enrichment persistence (persist-deepgram-enrichment, task 4.1) ──────
 
   function deepgramEnrichmentFixture(): unknown {
     return JSON.parse(
-      readFileSync(
-        join(import.meta.dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
-        'utf8',
-      ),
+      readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'deepgram-enrichment-response.json'), 'utf8'),
     );
   }
 

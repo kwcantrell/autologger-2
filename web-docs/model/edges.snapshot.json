@@ -101,17 +101,7 @@
   },
   {
     "from": "log-import",
-    "to": "node-infra",
-    "kind": "production"
-  },
-  {
-    "from": "log-import",
     "to": "ports",
-    "kind": "production"
-  },
-  {
-    "from": "log-import",
-    "to": "server-core",
     "kind": "production"
   },
   {
@@ -151,7 +141,7 @@
   },
   {
     "from": "node-infra",
-    "to": "domain",
+    "to": "media-import",
     "kind": "production"
   },
   {
@@ -216,8 +206,13 @@
   },
   {
     "from": "routers",
-    "to": "node-infra",
+    "to": "media-import",
     "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "node-infra",
+    "kind": "test"
   },
   {
     "from": "routers",
@@ -247,6 +242,11 @@
   {
     "from": "routers",
     "to": "storage",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
+    "to": "transcription",
     "kind": "production"
   },
   {
@@ -347,6 +347,21 @@
   {
     "from": "storage",
     "to": "ports",
+    "kind": "production"
+  },
+  {
+    "from": "transcription",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "transcription",
+    "to": "ports",
+    "kind": "production"
+  },
+  {
+    "from": "transcription",
+    "to": "session-core",
     "kind": "production"
   },
   {

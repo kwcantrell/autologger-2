@@ -60,10 +60,16 @@ export type { TranscriptWord } from './transcriptStore';
  * interfaces"). Membership is consumption-based, not the full public class
  * surface: every member here is reached, in `server/src`, through
  * `getSessionHub(...)`/`c.env.ports.sessions.get(...)` by at least one
- * production router, `aiV2/`, or `logImport/` call site, or by an
- * established integration-test path via `env.ports.sessions.get(...)`
- * (enumerated exhaustively against live `server/src` call sites — see
- * `.apply/task-5.1-5.2-report.md`). Excluded (design D3 minimum, plus two
+ * production router or `aiV2/` call site — including `routers/logImport.ts`
+ * (feature-service-packages task 5.1; `server/src/logImport/` no longer
+ * exists), which passes the resulting `SessionHubFacade` on by injection into
+ * `@autologger/log-import`'s `runSessionLogImport`/`timedTranscriptTokens` —
+ * or by an established integration-test path via
+ * `env.ports.sessions.get(...)` (enumerated exhaustively against live
+ * `server/src` call sites — see `.apply/task-5.1-5.2-report.md`). A service
+ * package receiving this facade by injection, as `@autologger/log-import`
+ * does, carries no import edge of its own (feature-service-packages design
+ * D1's stated residual). Excluded (design D3 minimum, plus two
  * more found by the same audit): `lastTouchedMs`, `close`, `hasArmedAlarm`,
  * `socketCount` (coordination internals only the registry touches), and
  * `presence`/`listDashboards`/`stopTakeWithDuration` (public on the class,

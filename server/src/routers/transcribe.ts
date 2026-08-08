@@ -13,6 +13,16 @@ import {
   transcriptWordCreateSchema,
   transcriptWordUpdateSchema,
 } from '@autologger/contract';
+import {
+  DEEPGRAM_MAX_GROUP_BYTES,
+  deepgramConfigured,
+  exceedsGroupSizeLimit,
+  GENERATION_IN_FLIGHT_DETAIL,
+  generateTranscriptWords,
+  TRANSCRIPT_UNAVAILABLE,
+  TranscriptGenerateError,
+  transcriptGenerationLock,
+} from '@autologger/transcription';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
@@ -23,20 +33,10 @@ import {
   aiChatConfigured,
   aiChatMaxConcurrent,
   aiChatOpenNetworkRefused,
-  deepgramConfigured,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import {
-  DEEPGRAM_MAX_GROUP_BYTES,
-  exceedsGroupSizeLimit,
-  GENERATION_IN_FLIGHT_DETAIL,
-  generateTranscriptWords,
-  TRANSCRIPT_UNAVAILABLE,
-  TranscriptGenerateError,
-} from '../node/generateTranscript';
-import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();

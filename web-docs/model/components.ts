@@ -173,11 +173,21 @@ const serverComponents: Component[] = [
   ),
   runtimeComponent(
     'node-infra',
-    'Node-specific infrastructure: config wiring/composition root, the blob store, ' +
-      'kv-on-sqlite, presence, the migrator, DeepGram transcript generation + its ' +
-      'process-global lock, YouTube audio import (yt-dlp) + its guard/scratch handling, ' +
-      'and audio-segment merge.',
-    ['server/src/node/**'],
+    'Node-specific infrastructure: only the composition root (config wiring), the system ' +
+      'clock, and presence remain — matching CLAUDE.md’s documented role for this ' +
+      'directory. DeepGram transcription + audio-segment merge left this component for ' +
+      '`@autologger/transcription`, and YouTube audio import (yt-dlp) + its guard/scratch ' +
+      'handling left for `@autologger/media-import`, in this change’s phases 4 and 3 ' +
+      'respectively (feature-service-packages tasks 4.1/3.1) — the transcription and ' +
+      'audio-import features that had accreted here, together outweighing the composition ' +
+      'root by an order of magnitude, are both gone.',
+    [
+      'server/src/node/config.ts',
+      'server/src/node/config.test.ts',
+      'server/src/node/presence.ts',
+      'server/src/node/presence.test.ts',
+      'server/src/node/systemClock.ts',
+    ],
   ),
   runtimeComponent(
     'auth',
@@ -189,12 +199,6 @@ const serverComponents: Component[] = [
     'AI dashboards v2 domain: catalog of widget/dashboard types, aggregate computation, ' +
       'and MCP tool definitions consumed by the AI chat CLI/MCP machinery.',
     ['server/src/aiV2/**'],
-  ),
-  runtimeComponent(
-    'log-import',
-    'Batch log-import domain logic: category matching, job store, Google Sheets fetch, ' +
-      'sheet timecode parsing, sync scoring, and running an import against a session.',
-    ['server/src/logImport/**'],
   ),
   runtimeComponent('middleware', 'Hono middleware: auth context and IP allowlisting.', [
     'server/src/middleware/**',
@@ -302,6 +306,50 @@ const packageComponents: Component[] = [
       'web-docs/diagrams/session-hub-registry.mmd',
     ].sort(),
   },
+  runtimeComponent(
+    'log-import',
+    '`@autologger/log-import` (feature-service-packages task 5.3): the L2 service-package ' +
+      'home for Google Sheets batch log-import domain logic — `categoryMatch.ts` (fuzzy ' +
+      'category-name matching), `jobStore.ts` (the in-memory job-status store, ' +
+      'Clock-parameterized since task 5.2), `runSessionLogImport.ts` (sync scoring + event ' +
+      'creation against one matched session), `sheetsFetch.ts` (public workbook fetch + row ' +
+      'parse, via `exceljs`), `sheetTimecode.ts` (SMPTE timecode parsing for sheet rows), ' +
+      '`syncScore.ts` (log-row-to-transcript-seam sync scoring) — moved verbatim out of ' +
+      '`server/src/logImport/`, plus the package barrel (`index.ts`). The router-level ' +
+      'coordinator (`ensureTimedTranscript`) stays in `routers/logImport.ts` (task 5.1 — a ' +
+      'Hono-importing module can’t live in this package). Depends on `domain`, `ports`, and ' +
+      '`session-core`; `exceljs` is declared here **and** by `server/package.json` (gate ' +
+      'ruling E1 — `routers/logImport.int.test.ts` imports it directly and stays in the app).',
+    ['packages/log-import/src/**'],
+  ),
+  runtimeComponent(
+    'media-import',
+    '`@autologger/media-import` (feature-service-packages task 3.1): the L2 service-package ' +
+      'home for YouTube audio import — `ytdlp.ts` (the yt-dlp spawn + lockdown + bounds ' +
+      'module), `youtubeImportGuard.ts` (per-session + global concurrency guard), ' +
+      '`youtubeImportScratch.ts` (startup sweep of stale per-request temp dirs) — moved ' +
+      'verbatim out of `server/src/node/`, plus the package barrel (`index.ts`, exporting ' +
+      '`MEDIA_IMPORT_FIXTURES_DIR`) and its own fixtures (`fake-ytdlp.mjs`). Imports no ' +
+      'workspace package at all (Node stdlib only), by role rather than by need — ' +
+      '`resolveYtDlpPath` deliberately stays in `server/src/env.ts` (gate ruling E2).',
+    ['packages/media-import/src/**'],
+  ),
+  runtimeComponent(
+    'transcription',
+    '`@autologger/transcription` (feature-service-packages task 4.1): the L2 service-package ' +
+      'home for DeepGram transcription — `deepgram.ts` (the provider HTTP client), ' +
+      '`audioMerge.ts` (mediabunny packet-copy concat of recorded audio segments), ' +
+      '`transcriptRemap.ts` (timeline remap of words + enrichment onto the session’s SMPTE ' +
+      'timeline), `transcriptGenerationLock.ts` (the process-wide generation lock), ' +
+      '`generateTranscript.ts` (the orchestrating entry point both the HTTP generate route ' +
+      'and sheets-log-import’s ensure-timed-transcript coordinator call), and ' +
+      '`deepgramConfig.ts` (`deepgramConfigured`/`deepgramModel`, moved out of ' +
+      '`server/src/env.ts` — design D5) — moved verbatim out of `server/src/node/`, plus the ' +
+      'package barrel (`index.ts`, exporting `TRANSCRIPTION_FIXTURES_DIR`) and its own ' +
+      'fixtures (`audio/`, `deepgram-enrichment-response.json`). Depends on `domain`, ' +
+      '`ports`, and `session-core` (never `contract`, which no file here imports).',
+    ['packages/transcription/src/**'],
+  ),
 ];
 
 const webComponents: Component[] = [
@@ -576,12 +624,19 @@ const relationships: Relationship[] = [
     ],
   },
   {
-    id: 'node-infra-to-deepgram',
-    from: 'node-infra',
+    // Renamed from `node-infra-to-deepgram` (feature-service-packages task
+    // 4.9): the DeepGram client moved to `@autologger/transcription` in
+    // task 4.1, so the component that actually sends the request is
+    // `transcription`, not the composition root — `checkRelationshipEvidence`
+    // never checks that the evidence file belongs to the `from` component,
+    // so re-anchoring the evidence path alone would pass green while this
+    // relationship kept asserting `node-infra` talks to DeepGram.
+    id: 'transcription-to-deepgram',
+    from: 'transcription',
     to: 'deepgram',
     label: 'Sends recorded audio to DeepGram for transcription',
     gated: 'DEEPGRAM_API_KEY',
-    evidence: [{ file: 'server/src/node/deepgram.ts', mustContain: ['fetch('] }],
+    evidence: [{ file: 'packages/transcription/src/deepgram.ts', mustContain: ['fetch('] }],
   },
   {
     // Renamed from `routers-to-claude-cli` (router-directory-decomposition
@@ -599,12 +654,23 @@ const relationships: Relationship[] = [
     ],
   },
   {
-    id: 'node-infra-to-yt-dlp',
-    from: 'node-infra',
+    // Renamed from `node-infra-to-yt-dlp` (feature-service-packages task 3.4):
+    // the yt-dlp spawn moved to @autologger/media-import in task 3.1, and the
+    // `from` endpoint moves with it — checkRelationshipEvidence only verifies
+    // the evidence file exists and contains the literals, never that it
+    // belongs to the `from` component, so re-anchoring the evidence alone
+    // would have left the model asserting the composition root spawns
+    // yt-dlp. The id appeared only here (and in the git-ignored generated
+    // atlas) — no nav-id or authored diagram referenced the old id — so the
+    // rename is pure.
+    id: 'media-import-to-yt-dlp',
+    from: 'media-import',
     to: 'yt-dlp',
     label: 'Spawns the operator-provided yt-dlp binary to download video audio',
     gated: 'yt-dlp binary configured or resolvable on PATH',
-    evidence: [{ file: 'server/src/node/ytdlp.ts', mustContain: ['spawn(', 'binaryPath'] }],
+    evidence: [
+      { file: 'packages/media-import/src/ytdlp.ts', mustContain: ['spawn(', 'binaryPath'] },
+    ],
   },
   {
     id: 'auth-to-google-jwks',
@@ -718,10 +784,10 @@ const capabilityScopes: CapabilityScope[] = [
     // progress UI are web-app (BatchImportModal, pages/index/batchImport/**).
     // The server side is the local-audio-import HTTP surface (routers) plus
     // the seam-parts/audio-take persistence it drives on the session spine
-    // (session-core: audioSeamParts.ts, audioStore.ts). node-infra's
+    // (session-core: audioSeamParts.ts, audioStore.ts). transcription's
     // transcript machinery is reused unmodified (spec: "remains
     // transcribable via the existing generate route") rather than extended
-    // for this capability, so node-infra is deliberately NOT listed here —
+    // for this capability, so transcription is deliberately NOT listed here —
     // that reuse is transcript-generation's scope, not batch-audio-import's.
     components: ['routers', 'session-core', 'web-app'],
   },
@@ -741,11 +807,23 @@ const capabilityScopes: CapabilityScope[] = [
     capability: 'sheets-log-import',
     // log-import: the domain logic (categoryMatch, jobStore, sheetsFetch,
     // sheetTimecode, syncScore, runSessionLogImport). routers: logImport.ts.
-    // node-infra: reuses the existing DeepGram generate path when a matched
-    // session has no timed transcript yet (spec "Transcript required before
-    // sync"). web-app: BatchImportModal's Import Logs control +
+    // web-app: BatchImportModal's Import Logs control +
     // batchImport/logImportClient.ts.
-    components: ['routers', 'log-import', 'node-infra', 'web-app'],
+    //
+    // transcription (feature-service-packages task 4.9, phase-3 fix-wave
+    // Pattern decision 2) is deliberately NOT listed: routers/logImport.ts's
+    // ensureTimedTranscript coordinator (relocated there from
+    // runSessionLogImport.ts by task 5.1) reuses the existing DeepGram
+    // generate path unmodified when a matched session has no timed
+    // transcript yet (spec "Transcript required before sync") rather than
+    // extending it for this capability — the same reused-machinery case
+    // batch-audio-import's scope already omits transcription for. A
+    // capabilityScope names the components that IMPLEMENT a capability's
+    // requirements, never one that merely supplies machinery the capability
+    // reuses unmodified, so the prior node-infra entry (with the same
+    // "reuses the existing DeepGram generate path" comment) is dropped here
+    // rather than re-pointed to transcription.
+    components: ['routers', 'log-import', 'web-app'],
   },
   {
     type: 'component',
@@ -762,7 +840,13 @@ const capabilityScopes: CapabilityScope[] = [
   {
     type: 'component',
     capability: 'transcript-generation',
-    components: ['routers', 'node-infra', 'session-core', 'web-app'],
+    // feature-service-packages task 4.9: DeepGram transcription moved to
+    // @autologger/transcription in task 4.1, so the implementing component
+    // is transcription, not node-infra — capabilities.ts only checks the
+    // named component exists, never that it contains the implementing code,
+    // so this must be corrected by hand (same class of drift task 3.4 fixed
+    // for youtube-audio-import).
+    components: ['routers', 'transcription', 'session-core', 'web-app'],
   },
   {
     type: 'component',
@@ -787,7 +871,20 @@ const capabilityScopes: CapabilityScope[] = [
   {
     type: 'component',
     capability: 'youtube-audio-import',
-    components: ['routers', 'node-infra', 'web-app'],
+    // feature-service-packages task 3.4: the yt-dlp spawn + guard/scratch
+    // handling moved to @autologger/media-import in task 3.1, so the
+    // implementing component is media-import, not node-infra —
+    // capabilities.ts only checks the named component exists, never that it
+    // contains the implementing code, so this must be corrected by hand.
+    // node-infra is deliberately NOT re-added alongside it even though
+    // `server/src/node/config.ts` still boot-wires `YTDLP_RESOLVED_PATH` at
+    // startup: boot-wiring is hosting, not implementing, the same
+    // distinction `batch-audio-import`'s scope below draws for its own
+    // node-infra omission (that entry's reused-machinery case; this one's
+    // reused-host case) — a capabilityScope names the components that
+    // implement the capability, not every component that merely wires or
+    // hosts it.
+    components: ['routers', 'media-import', 'web-app'],
   },
 ];
 

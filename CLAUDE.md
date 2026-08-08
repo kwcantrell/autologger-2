@@ -95,29 +95,41 @@ routers/` holds HTTP-layer route modules only; the AI runtime (MCP tool server, 
 and Agent-SDK subprocess runners, turn orchestration, one-shot generate-turn drivers) has its
 own home at `server/src/ai-runtime/`, Hono-free and injection-fed, split out of `routers/` by
 `router-directory-decomposition`; the app-level `ApiError` class lives at `server/src/
-httpError.ts`, outside both directories. Node-specific infrastructure that stays in the server
-(composition-root wiring, `systemClock`, presence) lives in `server/src/node/`. Persistence
-itself lives in three source-only **L1** sibling packages under `packages/` (extracted from
+httpError.ts`, outside both directories. `server/src/node/` now holds exactly the three files
+its documented role has always claimed — `config.ts` (composition-root wiring), `systemClock.ts`,
+and `presence.ts` — membership pinned by name and test-enforced (`feature-service-packages`),
+not merely documented; `server/src/logImport/` no longer exists. Persistence itself lives in
+three source-only **L1** sibling packages under `packages/` (extracted from
 `server/src/session/` and `server/src/db/` and part of `server/src/node/` by
 `persistence-package-extraction`, siblings of each other — no L1→L1 edges):
 `@autologger/session-core` (the live per-session spine — `SessionHub.ts` + domain stores),
 `@autologger/catalog` (the catalog query layer — `catalog.ts` + five stores + migrations
 `.sql`, no `better-sqlite3` dependency — it speaks the `CatalogDb` port), and
 `@autologger/storage` (the SQLite/filesystem adapters — blob store, kv store, `CatalogDb`
-implementation, the directory-generic migrator). Three source-only **L0** packages sit
-beneath them: `@autologger/domain` (`studio.ts`, `timecode.ts`, `dbShared.ts` — pure,
-dependency-free), `@autologger/contract` (`schemas.ts`, `aiV2Catalog.ts`; `zod` declared as a
-peerDependency), and `@autologger/ports` (interface-only port types + `Config` — no runtime
-implementations). Each L1 package exports **facade interfaces** (property-style function-type
-members, so drift is compiler-checked) instead of its concrete classes;
-`server/src/appEnv.ts` composes the app-level `AppEnv` (`Ports`/`Variables`) over those
-facade interfaces and **names zero concrete persistence classes** — `server/src/node/
-config.ts` (the composition root) is the sole production module that still constructs the
-concretes, and `middleware/auth.ts` constructs the per-request `Catalog` via
-`@autologger/catalog`'s exported `createCatalog` factory (lifecycle unchanged). Cross-package
-import boundaries — including the L1-sibling and facade-only-consumer rules above, and the
-`routers/`↔`ai-runtime/` directory-role split — are enforced by a repo test
-(`server/src/packageBoundaries.repo.test.ts`), not the compiler.
+implementation, the directory-generic migrator). Three source-only **L2** service packages
+sit above L1 (extracted from `server/src/node/`'s remaining feature files and the retired
+`server/src/logImport/` by `feature-service-packages`, siblings of each other — no L2→L2
+edges, and a service package may import L0/L1 but never another service package):
+`@autologger/transcription` (DeepGram transcription), `@autologger/media-import` (YouTube
+audio import — imports no workspace package at all, by role rather than by need), and
+`@autologger/log-import` (Sheets log import; its cross-service coordinator,
+`ensureTimedTranscript`, moved into `routers/logImport.ts` rather than the package, per the
+router-membership rule below). The flat sibling rule is enforced by four checks in
+`packageBoundaries.repo.test.ts`: the direct no-sibling rule, a no-L1-imports-L2 rule (closes
+a launder route through an L1 re-export), transitive reachability, and a file walk widened to
+`.mts`/`.cts`. Three source-only **L0** packages sit beneath L1: `@autologger/domain`
+(`studio.ts`, `timecode.ts`, `dbShared.ts` — pure, dependency-free), `@autologger/contract`
+(`schemas.ts`, `aiV2Catalog.ts`; `zod` declared as a peerDependency), and `@autologger/ports`
+(interface-only port types + `Config` — no runtime implementations). Each L1 package exports
+**facade interfaces** (property-style function-type members, so drift is compiler-checked)
+instead of its concrete classes; `server/src/appEnv.ts` composes the app-level `AppEnv`
+(`Ports`/`Variables`) over those facade interfaces and **names zero concrete persistence
+classes** — `server/src/node/config.ts` (the composition root) is the sole production module
+that still constructs the concretes, and `middleware/auth.ts` constructs the per-request
+`Catalog` via `@autologger/catalog`'s exported `createCatalog` factory (lifecycle unchanged).
+Cross-package import boundaries — including the L1-sibling, L2-sibling, and
+facade-only-consumer rules above, and the `routers/`↔`ai-runtime/` directory-role split — are
+enforced by a repo test (`server/src/packageBoundaries.repo.test.ts`), not the compiler.
 Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. The generated
 architecture atlas + docs SPA (component model, edge extraction, drift gates, mermaid site)
 live in `web-docs/` — see README's web-docs section. Full annotated tree + the normative

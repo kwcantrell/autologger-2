@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { type DeepgramSentimentSegment, type DeepgramWord, extractEnrichment } from './deepgram';
+import { TRANSCRIPTION_FIXTURES_DIR } from './fixturesDir';
 import {
   type EnrichmentGroup,
   type GroupWords,
@@ -21,10 +22,7 @@ import {
 // 89 words / 3 paragraphs / 3 sentiment segments (word spans 0-48, 49-61,
 // 62-88) — same fixture `extractEnrichment`'s own tests replay.
 const enrichmentFixture = JSON.parse(
-  readFileSync(
-    join(__dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
-    'utf8',
-  ),
+  readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'deepgram-enrichment-response.json'), 'utf8'),
 );
 
 function word(w: string, start: number, end: number, speaker = 0): DeepgramWord {

@@ -13,15 +13,13 @@ import {
   PROVIDER_TIMEOUT_MS,
   transcribeGroup,
 } from './deepgram';
+import { TRANSCRIPTION_FIXTURES_DIR } from './fixturesDir';
 
 // Real captured DeepGram response (design D7: record-once, replay-always).
 // 89 words / 3 paragraphs / 3 sentiment segments (word spans 0-48, 49-61,
 // 62-88), one neutral session average (average is NOT extracted — D8).
 const enrichmentFixture = JSON.parse(
-  readFileSync(
-    join(__dirname, '..', 'test', 'fixtures', 'deepgram-enrichment-response.json'),
-    'utf8',
-  ),
+  readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'deepgram-enrichment-response.json'), 'utf8'),
 );
 
 function deepgramResponse(words: unknown[]) {

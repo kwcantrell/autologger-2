@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
+import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
 import { applyMigrations, BlobStore, CatalogDb, KvStore, openCatalogDb } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
@@ -11,7 +12,6 @@ import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
-import { sweepStaleYoutubeImportTempDirs } from './youtubeImportScratch';
 
 export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;

@@ -90,6 +90,18 @@ function extractImportSpecifiers(content: string): string[] {
 // Filesystem walk
 // ---------------------------------------------------------------------------
 
+// `.mts`/`.cts` are equally valid TypeScript module sources — invisible to a
+// package `tsconfig`'s glob-less `include` and to the architecture atlas the
+// same way — and a walk matching only `.ts` does not see them (design D1
+// check 4, task 2.3; spec scenario "Non-`.ts` TypeScript sources cannot evade
+// the walk"). Widened here rather than in a second walker because
+// `walkTsFiles` is the primitive `checkPackagesBoundary`, `packageImportGraph`,
+// `checkThirdPartySpecifiers`, `checkInterfaceOnlyConsumption`,
+// `serverSrcDirectoryImportGraph`, `checkAiRuntimePurity`, and
+// `checkRouterMembership` all call — widening it once here covers every one
+// of them, rather than requiring each to be told separately.
+const TS_SOURCE_EXTENSION_RE = /\.(?:ts|mts|cts)$/;
+
 function walkTsFiles(dir: string, out: string[] = []): string[] {
   let entries: fs.Dirent[];
   try {
@@ -102,7 +114,7 @@ function walkTsFiles(dir: string, out: string[] = []): string[] {
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules') continue;
       walkTsFiles(path.join(dir, entry.name), out);
-    } else if (entry.name.endsWith('.ts')) {
+    } else if (TS_SOURCE_EXTENSION_RE.test(entry.name)) {
       out.push(path.join(dir, entry.name));
     }
   }
@@ -182,6 +194,19 @@ const ALLOWED_LAYER_EDGES = new Set<string>([
   '@autologger/session-core->@autologger/domain',
   '@autologger/session-core->@autologger/contract',
   '@autologger/session-core->@autologger/ports',
+  // feature-service-packages task 2.3 (design D1): the two service packages
+  // that import anything, ahead of their module moves (2.1's placeholder
+  // already declares these in each package.json) so the gate is green from
+  // the first real file each move lands rather than red until the last one.
+  // `media-import` needs no entry — it imports no workspace package at all —
+  // and NEITHER service package imports `contract`: adding an edge no file
+  // actually has would itself be a defect (D1), so this set stays exact.
+  '@autologger/transcription->@autologger/domain',
+  '@autologger/transcription->@autologger/ports',
+  '@autologger/transcription->@autologger/session-core',
+  '@autologger/log-import->@autologger/domain',
+  '@autologger/log-import->@autologger/ports',
+  '@autologger/log-import->@autologger/session-core',
 ]);
 
 /** Bare specifiers naming an app workspace's own package.json `name` — the
@@ -203,8 +228,18 @@ interface BoundaryViolation {
 
 /** The full boundary scan over `packagesRoot`'s packages, parameterized over
  * `repoRoot` so it runs identically against a synthetic tmp tree (mutation
- * checks below) and the real repo (the actual guard). */
-function checkPackagesBoundary(repoRoot: string): BoundaryViolation[] {
+ * checks below) and the real repo (the actual guard). `allowedEdges` defaults
+ * to the production `ALLOWED_LAYER_EDGES` constant but is a plain function
+ * argument, never a module-level mutation — a synthetic case that needs a
+ * *different* allowed-edge set (task 2.5's "same import with its entry added
+ * to `ALLOWED_LAYER_EDGES` is still flagged [by the independent sibling
+ * check]") passes its own `Set` in rather than `.add()`ing onto the shared
+ * one, so a mid-test throw in one case can't leak a mutated constant into a
+ * later, unrelated case. */
+function checkPackagesBoundary(
+  repoRoot: string,
+  allowedEdges: ReadonlySet<string> = ALLOWED_LAYER_EDGES,
+): BoundaryViolation[] {
   const packagesRoot = path.join(repoRoot, 'packages');
   const packages = discoverPackages(packagesRoot);
   const violations: BoundaryViolation[] = [];
@@ -227,12 +262,12 @@ function checkPackagesBoundary(repoRoot: string): BoundaryViolation[] {
             });
           }
           const edge = `${pkg.name}->${targetName}`;
-          if (!ALLOWED_LAYER_EDGES.has(edge)) {
+          if (!allowedEdges.has(edge)) {
             violations.push({
               file: relFile,
               specifier,
               kind: 'disallowed-layer-edge',
-              detail: `disallowed layer edge ${edge} (allowed: ${[...ALLOWED_LAYER_EDGES].join(', ')})`,
+              detail: `disallowed layer edge ${edge} (allowed: ${[...allowedEdges].join(', ')})`,
             });
           }
         } else if (specifier.startsWith('.')) {
@@ -588,6 +623,432 @@ describe('L1 packages are siblings — no L1 package imports another L1 package 
   });
 });
 
+// Sanity assertion mirroring the `SERVICE_PACKAGES membership constant`
+// block below — the no-L1->L1-sibling check above, and `checkNoL1ImportsService`
+// (which takes `L1_PACKAGES` as its default second argument), both depend on
+// this constant actually naming real packages; without this it could go
+// empty or typo'd and every check built on it would pass vacuously.
+describe('L1_PACKAGES membership constant (spec: "mutation-covered against their own constants")', () => {
+  it('is non-empty and every member names a package that exists under packages/', () => {
+    expect(L1_PACKAGES.size).toBeGreaterThan(0);
+    for (const name of L1_PACKAGES) {
+      expect(name.startsWith('@autologger/')).toBe(true);
+      const shortName = name.slice('@autologger/'.length);
+      expect(fs.existsSync(path.join(REPO_ROOT, 'packages', shortName, 'package.json'))).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service-package (L2) layer checks — feature-service-packages tasks 2.3/2.5,
+// design D1, spec "package-architecture" requirement "Feature services are
+// packages in a flat layer above persistence".
+//
+// The panel BUILT AND RAN two bypasses against a single direct-edge check
+// (design D1, "observed, not theorized"), and a post-gate delta-spec review
+// separately found a third gap by reasoning about the scenario's wording
+// (since executed by this phase's reviewer):
+//   - adding one `ALLOWED_LAYER_EDGES` entry defeated a direct-edge check
+//     that consulted that set;
+//   - adding a `session-core -> media-import` entry and re-exporting through
+//     `session-core` laundered a service-to-service dependency past a
+//     direct-sibling check with the full boundary test green — closed by
+//     check (2) below;
+//   - the post-gate delta-spec review found the transitive-reachability
+//     scenario as originally drafted could not distinguish its check's
+//     presence from its absence — every chain it described was already
+//     caught by check (1) or check (2). Narrowed to require an L0
+//     intermediate (`transcription -> domain -> media-import`), the only
+//     route check (3), genuine transitive reachability, below, uniquely
+//     closes — a route this phase's reviewer has since executed for real.
+// Hence FOUR checks, not one, matching the spec's four enforcement clauses.
+//
+// STATED RESIDUAL (design D1, spec "Stated residual bypasses" — not claimed
+// to be closed by any of the below): these are textual scans over import
+// syntax. A service that receives another service's function as an
+// INJECTED PARAMETER has no import edge and is not caught. Neither is a
+// dependency reached through `createRequire`, a non-literal dynamic
+// `import()`, `eval`, or code outside the walked root.
+// ---------------------------------------------------------------------------
+
+/** The three service (L2) packages named by this capability (design D1): each
+ * may import L0 (`domain`/`contract`/`ports`) and L1 (`session-core`/
+ * `catalog`/`storage`) but never another service package. This is a gloss on
+ * three named members, not a universal quantifier over anything
+ * service-shaped (spec: the AI runtime stays governed by its own,
+ * already-shipped rule). Passed as a default parameter — never read as a
+ * closed-over module global — by every check function below, so the
+ * mutation-coverage vacuum probes (a typo'd or emptied copy) can override it
+ * per call without mutating this constant in place. */
+const SERVICE_PACKAGES = new Set<string>([
+  '@autologger/transcription',
+  '@autologger/media-import',
+  '@autologger/log-import',
+]);
+
+/** Check (1) — the direct no-sibling rule. Built on `packageImportGraph`
+ * (which records only edges the source actually imports, never consulting
+ * `ALLOWED_LAYER_EDGES`) and, like `L1_PACKAGES`'s check above, takes no
+ * `ALLOWED_LAYER_EDGES`/`allowedEdges` parameter at all — there is
+ * structurally nothing here an edge-set entry could satisfy. Mirrors the
+ * L1_PACKAGES construction immediately above rather than reusing
+ * `checkPackagesBoundary`'s edge-set-consulting logic. */
+function checkNoServiceSiblingImports(
+  graph: Map<string, Set<string>>,
+  servicePackages: ReadonlySet<string> = SERVICE_PACKAGES,
+): string[] {
+  const violations: string[] = [];
+  for (const [from, targets] of graph) {
+    if (!servicePackages.has(from)) continue;
+    for (const to of targets) {
+      if (servicePackages.has(to)) violations.push(`${from}->${to}`);
+    }
+  }
+  return violations;
+}
+
+/** Check (2) — no L1 persistence package imports a service package. This is
+ * the check that closes the laundering-through-a-persistence-package bypass
+ * the panel ran against check (1) alone: a single `ALLOWED_LAYER_EDGES` entry
+ * plus a re-export through an L1 package moved a service-to-service
+ * dependency past the direct-sibling check with the full boundary test
+ * green. Independent of `ALLOWED_LAYER_EDGES` for the same reason as (1). */
+function checkNoL1ImportsService(
+  graph: Map<string, Set<string>>,
+  l1Packages: ReadonlySet<string> = L1_PACKAGES,
+  servicePackages: ReadonlySet<string> = SERVICE_PACKAGES,
+): string[] {
+  const violations: string[] = [];
+  for (const [from, targets] of graph) {
+    if (!l1Packages.has(from)) continue;
+    for (const to of targets) {
+      if (servicePackages.has(to)) violations.push(`${from}->${to}`);
+    }
+  }
+  return violations;
+}
+
+/** Check (3) — transitive reachability between service packages through ANY
+ * chain of workspace-package imports, not merely a direct edge. This is what
+ * closes the route neither (1) nor (2) sees: laundering through an L0
+ * package (`transcription -> domain -> media-import`) — an L1 intermediate
+ * would already be caught by check (2), so only an L0 intermediate proves
+ * this check's presence rather than (2)'s. Traverses the FULL inter-package
+ * graph (every package, not just services or L1s), since the laundering hop
+ * can be any layer. */
+function checkServiceTransitiveReachability(
+  graph: Map<string, Set<string>>,
+  servicePackages: ReadonlySet<string> = SERVICE_PACKAGES,
+): string[] {
+  const violations: string[] = [];
+  for (const start of servicePackages) {
+    if (!graph.has(start)) continue;
+    const seen = new Set<string>();
+    const stack = [...(graph.get(start) ?? [])];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (node === undefined || seen.has(node)) continue;
+      seen.add(node);
+      if (node !== start && servicePackages.has(node)) {
+        violations.push(`${start}~>${node}`);
+      }
+      for (const next of graph.get(node) ?? []) stack.push(next);
+    }
+  }
+  return violations;
+}
+
+describe('Service packages are a flat sibling layer — real repo (task 2.3, design D1)', () => {
+  it('no service package imports another service package, directly', () => {
+    const graph = packageImportGraph(REPO_ROOT);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([]);
+  });
+
+  it('no L1 persistence package imports a service package', () => {
+    const graph = packageImportGraph(REPO_ROOT);
+    expect(checkNoL1ImportsService(graph)).toEqual([]);
+  });
+
+  it('no service package is transitively reachable from another through any chain of workspace-package imports', () => {
+    const graph = packageImportGraph(REPO_ROOT);
+    expect(checkServiceTransitiveReachability(graph)).toEqual([]);
+  });
+});
+
+describe('SERVICE_PACKAGES membership constant (spec: "mutation-covered against their own constants")', () => {
+  it('is non-empty and every member names a package that exists under packages/', () => {
+    expect(SERVICE_PACKAGES.size).toBeGreaterThan(0);
+    for (const name of SERVICE_PACKAGES) {
+      expect(name.startsWith('@autologger/')).toBe(true);
+      const shortName = name.slice('@autologger/'.length);
+      expect(fs.existsSync(path.join(REPO_ROOT, 'packages', shortName, 'package.json'))).toBe(true);
+    }
+  });
+});
+
+// Mutation coverage for the four service-layer checks (task 2.5). These
+// invoke the SAME exported check functions and the SAME production
+// `SERVICE_PACKAGES`/`L1_PACKAGES` constants the real-repo assertions above
+// use — a synthetic tree built from invented package names, or a locally
+// re-derived sibling set, would pass this coverage whether or not the
+// shipped checks work; that vacuum is exactly what the typo'd/emptied cases
+// at the bottom of this block exist to rule out. Every tree uses the real
+// `@autologger/*` names so the production constants' `.has()` calls actually
+// match. `packageImportGraph` (not `checkPackagesBoundary`) supplies the
+// graph for checks (1)-(3), matching how the real-repo assertions above call
+// them; `checkPackagesBoundary` itself is exercised directly only for the
+// allowed-edge-independence case, which needs its `allowedEdges` parameter.
+describe('service-layer checks (mutation check on synthetic package trees, task 2.5)', () => {
+  let tmpRoot: string;
+
+  function writeTree(root: string, files: Record<string, string>) {
+    for (const [rel, content] of Object.entries(files)) {
+      const full = path.join(root, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+  }
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  /** Domain/ports/session-core (L0/L1) plus all three service packages,
+   * wired with only legal downward edges — the tree every case below starts
+   * from and overrides. */
+  const CLEAN_SERVICE_FILES: Record<string, string> = {
+    'packages/domain/package.json': JSON.stringify({ name: '@autologger/domain' }),
+    'packages/domain/src/index.ts': `export const x = 1;\n`,
+    'packages/ports/package.json': JSON.stringify({
+      name: '@autologger/ports',
+      dependencies: { '@autologger/domain': '*' },
+    }),
+    'packages/ports/src/index.ts': `import { x } from '@autologger/domain';\nexport const y = x;\n`,
+    'packages/session-core/package.json': JSON.stringify({
+      name: '@autologger/session-core',
+      dependencies: { '@autologger/domain': '*', '@autologger/ports': '*' },
+    }),
+    'packages/session-core/src/index.ts': `import { x } from '@autologger/domain';\nimport { y } from '@autologger/ports';\nexport const z = x + y;\n`,
+    'packages/transcription/package.json': JSON.stringify({
+      name: '@autologger/transcription',
+      dependencies: {
+        '@autologger/domain': '*',
+        '@autologger/ports': '*',
+        '@autologger/session-core': '*',
+      },
+    }),
+    'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nexport const t = x;\n`,
+    'packages/media-import/package.json': JSON.stringify({ name: '@autologger/media-import' }),
+    'packages/media-import/src/index.ts': `export const m = 1;\n`,
+    'packages/log-import/package.json': JSON.stringify({
+      name: '@autologger/log-import',
+      dependencies: {
+        '@autologger/domain': '*',
+        '@autologger/ports': '*',
+        '@autologger/session-core': '*',
+      },
+    }),
+    'packages/log-import/src/index.ts': `import { x } from '@autologger/domain';\nexport const l = x;\n`,
+  };
+
+  it('clean tree → zero violations on all three graph-based checks', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-clean-'));
+    writeTree(tmpRoot, CLEAN_SERVICE_FILES);
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([]);
+    expect(checkNoL1ImportsService(graph)).toEqual([]);
+    expect(checkServiceTransitiveReachability(graph)).toEqual([]);
+  });
+
+  it('DOES flag a direct service->service import', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-direct-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_SERVICE_FILES,
+      'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const t = x + m;\n`,
+    });
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([
+      '@autologger/transcription->@autologger/media-import',
+    ]);
+  });
+
+  it('the same service->service import is STILL flagged once its entry is added to ALLOWED_LAYER_EDGES (independence from that set)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-independence-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_SERVICE_FILES,
+      'packages/transcription/package.json': JSON.stringify({
+        name: '@autologger/transcription',
+        dependencies: {
+          '@autologger/domain': '*',
+          '@autologger/ports': '*',
+          '@autologger/session-core': '*',
+          '@autologger/media-import': '*',
+        },
+      }),
+      'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const t = x + m;\n`,
+    });
+    const forbiddenEdge = '@autologger/transcription->@autologger/media-import';
+
+    // Pre-entry: checkPackagesBoundary's OWN edge-set-consulting check fails
+    // on this edge too (unsurprising — it isn't in ALLOWED_LAYER_EDGES yet).
+    const preEntryViolations = checkPackagesBoundary(tmpRoot, ALLOWED_LAYER_EDGES);
+    expect(
+      preEntryViolations.some(
+        (v) => v.kind === 'disallowed-layer-edge' && v.detail.includes(forbiddenEdge),
+      ),
+    ).toBe(true);
+
+    // Post-entry: add the edge to a LOCAL copy (never `.add()` onto the
+    // shared module-level Set — task 2.5) and pass it as a function
+    // argument. checkPackagesBoundary's own check now falls silent for this
+    // edge...
+    const edgesWithEntry = new Set([...ALLOWED_LAYER_EDGES, forbiddenEdge]);
+    const postEntryViolations = checkPackagesBoundary(tmpRoot, edgesWithEntry);
+    expect(
+      postEntryViolations.some(
+        (v) => v.kind === 'disallowed-layer-edge' && v.detail.includes(forbiddenEdge),
+      ),
+    ).toBe(false);
+
+    // ...but the independent sibling check does not consult that set at all
+    // (it has no such parameter) and still fails.
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([forbiddenEdge]);
+  });
+
+  it('DOES flag an L1->L2 import (session-core importing media-import)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-l1-to-l2-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_SERVICE_FILES,
+      'packages/session-core/src/index.ts': `import { x } from '@autologger/domain';\nimport { y } from '@autologger/ports';\nimport { m } from '@autologger/media-import';\nexport const z = x + y + m;\n`,
+    });
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoL1ImportsService(graph)).toEqual([
+      '@autologger/session-core->@autologger/media-import',
+    ]);
+    // And this laundering route is NOT what the direct-sibling check exists
+    // to catch — no service package imports another service package here.
+    expect(checkNoServiceSiblingImports(graph)).toEqual([]);
+  });
+
+  /** Overrides `domain` to import `media-import` (the laundering hop) and
+   * `log-import` to import nothing (so `log-import`'s own, separate
+   * `-> domain ->` edge in `CLEAN_SERVICE_FILES` doesn't ALSO become
+   * transitively reachable to `media-import` and produce a second,
+   * unrelated violation in these transcription-focused cases). */
+  const TRANSITIVE_THROUGH_L0_FILES: Record<string, string> = {
+    ...CLEAN_SERVICE_FILES,
+    'packages/domain/package.json': JSON.stringify({
+      name: '@autologger/domain',
+      dependencies: { '@autologger/media-import': '*' },
+    }),
+    'packages/domain/src/index.ts': `import { m } from '@autologger/media-import';\nexport const x = m;\n`,
+    'packages/log-import/src/index.ts': `export const l = 1;\n`,
+  };
+
+  it('DOES flag a three-package transitive chain through an L0 intermediate (transcription -> domain -> media-import)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-transitive-'));
+    writeTree(tmpRoot, TRANSITIVE_THROUGH_L0_FILES);
+    const graph = packageImportGraph(tmpRoot);
+    // Neither check (1) nor check (2) sees this route: the intermediate hop
+    // (`domain`) is L0, not a service and not L1.
+    expect(checkNoServiceSiblingImports(graph)).toEqual([]);
+    expect(checkNoL1ImportsService(graph)).toEqual([]);
+    // Only genuine transitive reachability catches it.
+    expect(checkServiceTransitiveReachability(graph)).toEqual([
+      '@autologger/transcription~>@autologger/media-import',
+    ]);
+  });
+
+  it('DOES flag a .mts file importing a sibling service package', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-mts-'));
+    writeTree(tmpRoot, {
+      ...CLEAN_SERVICE_FILES,
+      'packages/transcription/src/extra.mts': `import { m } from '@autologger/media-import';\nexport const e = m;\n`,
+    });
+    const graph = packageImportGraph(tmpRoot);
+    expect(checkNoServiceSiblingImports(graph)).toEqual([
+      '@autologger/transcription->@autologger/media-import',
+    ]);
+  });
+
+  // Vacuum probes (task 2.5): a typo'd or emptied membership constant must
+  // make the POSITIVE-violation cases above FAIL, not silently pass, or the
+  // mutation coverage is testing nothing. Re-run the direct-sibling,
+  // L1->L2, and transitive fixtures with a corrupted constant passed
+  // explicitly as the function argument (never a module-level edit).
+  describe("typo'd/emptied membership constants defeat the checks (proving the constants are load-bearing)", () => {
+    // Typos the shared TARGET of all three violation scenarios below
+    // (`media-import` is the package every positive case reaches into —
+    // directly, as an L1's import, or as the far end of a transitive chain)
+    // rather than a source-side name, so one constant defeats every case:
+    // a typo anywhere in the constant is a defect regardless of which
+    // member it lands on, and the L1->L2 scenario in particular has no
+    // `transcription` name in play at all to typo.
+    const TYPOD_SERVICE_PACKAGES = new Set<string>([
+      '@autologger/transcription',
+      '@autologger/media-imports', // typo: trailing "s"
+      '@autologger/log-import',
+    ]);
+    const EMPTY_SERVICE_PACKAGES = new Set<string>();
+    const EMPTY_L1_PACKAGES = new Set<string>();
+
+    it("a typo'd SERVICE_PACKAGES fails to catch the direct service->service violation", () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-direct-typo-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const t = x + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoServiceSiblingImports(graph, TYPOD_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it('an empty SERVICE_PACKAGES fails to catch the direct service->service violation', () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-direct-empty-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/transcription/src/index.ts': `import { x } from '@autologger/domain';\nimport { m } from '@autologger/media-import';\nexport const t = x + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoServiceSiblingImports(graph, EMPTY_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it("a typo'd SERVICE_PACKAGES fails to catch the L1->L2 violation", () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-l1l2-typo-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/session-core/src/index.ts': `import { x } from '@autologger/domain';\nimport { y } from '@autologger/ports';\nimport { m } from '@autologger/media-import';\nexport const z = x + y + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoL1ImportsService(graph, L1_PACKAGES, TYPOD_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it('an empty L1_PACKAGES fails to catch the L1->L2 violation', () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-l1l2-empty-'));
+      writeTree(tmpRoot, {
+        ...CLEAN_SERVICE_FILES,
+        'packages/session-core/src/index.ts': `import { x } from '@autologger/domain';\nimport { y } from '@autologger/ports';\nimport { m } from '@autologger/media-import';\nexport const z = x + y + m;\n`,
+      });
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkNoL1ImportsService(graph, EMPTY_L1_PACKAGES, SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it("a typo'd SERVICE_PACKAGES fails to catch the transitive-through-L0 violation", () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-transitive-typo-'));
+      writeTree(tmpRoot, TRANSITIVE_THROUGH_L0_FILES);
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkServiceTransitiveReachability(graph, TYPOD_SERVICE_PACKAGES)).toEqual([]);
+    });
+
+    it('an empty SERVICE_PACKAGES fails to catch the transitive-through-L0 violation', () => {
+      tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-layer-vacuum-transitive-empty-'));
+      writeTree(tmpRoot, TRANSITIVE_THROUGH_L0_FILES);
+      const graph = packageImportGraph(tmpRoot);
+      expect(checkServiceTransitiveReachability(graph, EMPTY_SERVICE_PACKAGES)).toEqual([]);
+    });
+  });
+});
+
 // Third-party bare-specifier vs manifest check, over PRODUCTION source only
 // (design D6, spec scenario "Boundary test fails on an undeclared third-party
 // specifier"). Every third-party bare specifier a package's production
@@ -610,15 +1071,28 @@ const NODE_BUILTIN_PREFIX = 'node:';
 
 /** Reviewed, explicit per-package test-infrastructure exemption list (design
  * D6: "named in a per-package list inside the boundary test — reviewed, not
- * improvised"). Both listed files import `vitest` (a devDependency) and are
+ * improvised"). Each listed file imports `vitest` (a devDependency) and is
  * non-exported test infrastructure consumed only by that package's own unit
  * tests, never by production modules (see each file's own header comment for
  * the duplicate-per-package provenance decided at tasks 2.4/4.3). Paths are
  * package-relative. `@autologger/catalog` has no test-infrastructure files
- * outside `*.test.ts`, so it has no entry here. */
+ * outside `*.test.ts`, so it has no entry here.
+ *
+ * `@autologger/log-import`'s entry (feature-service-packages task 2.4) was
+ * landed ahead of the file it governs — the one deliberate exception to that
+ * change's atomicity rule (design D8), because the boundary-test delta
+ * belongs with the check that would otherwise flag it, not with the module
+ * move. At task 2.4, `packages/log-import/src/test/fakeClock.ts` did not
+ * exist yet — phase 5 moved the package's modules (and this file) in;
+ * `checkThirdPartySpecifiers` below walks every production `.ts` file under a
+ * package's `src/` the moment the package (already scaffolded at task 2.1)
+ * has one, so an unexempted `fakeClock.ts` landing in phase 5 would have been
+ * red on arrival without this entry already in place. The file now exists,
+ * duplicate-per-package per the final policy (task 2.4/4.3). */
 const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
   '@autologger/storage': ['src/test/fakeClock.ts'],
   '@autologger/session-core': ['src/test/fakeClock.ts', 'src/test/fakeCore.ts'],
+  '@autologger/log-import': ['src/test/fakeClock.ts'],
 };
 
 interface ThirdPartyViolation {
@@ -1046,20 +1520,30 @@ describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/sr
 // int-test-only. No positive directory pin ever named `session` alone (the
 // pin below was `aiV2 -> session`, retired together with this prune — see
 // the removed assertion note below).
-const SERVER_SRC_LAYER_DIRS = [
-  'node',
-  'auth',
-  'middleware',
-  'routers',
-  'aiV2',
-  'logImport',
-  'ai-runtime',
-];
+// feature-service-packages task 5.3 (design D8): `logImport`'s six
+// production modules and four unit tests all moved to
+// `@autologger/log-import` in this one unit (mirroring the `db` prune
+// above — no test files stayed behind, unlike `session`'s partial prune),
+// which fully emptied `server/src/logImport/`; the directory itself no
+// longer exists. `logImport` is pruned from this list in the same unit
+// that empties it — a delay here is exactly what the change's own
+// non-vacuity check (`enumeratedButEmpty`) exists to catch. No positive
+// directory pin ever named `logImport`, so nothing else needs restating
+// for this prune.
+const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'aiV2', 'ai-runtime'];
 
-/** Production-only `.ts` files under `dir` (excludes `*.test.ts` and
- * `*.int.test.ts` — both end in `.test.ts`). */
+/** Matches `*.test.ts`, `*.int.test.ts` (both end in `.test.ts`), and the
+ * widened `.mts`/`.cts` test-source shapes (`*.test.mts`, `*.test.cts`) —
+ * `walkTsFiles`'s `TS_SOURCE_EXTENSION_RE` widening (task 2.3) means a
+ * `.test.mts`/`.test.cts` file is now visible to the walk it feeds, so this
+ * filter has to recognise those extensions too or such a file would count as
+ * production source instead of being excluded like its `.ts` counterpart. */
+const PRODUCTION_TEST_FILE_RE = /\.test\.(?:ts|mts|cts)$/;
+
+/** Production-only TypeScript-source files under `dir` (excludes
+ * `*.test.ts`/`*.int.test.ts`/`*.test.mts`/`*.test.cts`). */
 function walkProductionTsFiles(dir: string): string[] {
-  return walkTsFiles(dir).filter((f) => !f.endsWith('.test.ts'));
+  return walkTsFiles(dir).filter((f) => !PRODUCTION_TEST_FILE_RE.test(f));
 }
 
 /** Builds the directory-level import graph over `server/src`'s layering
@@ -1501,5 +1985,197 @@ describe('server/src layering enumeration is complete and non-vacuous — real r
   it('every directory enumerated in SERVER_SRC_LAYER_DIRS contains at least one production file', () => {
     const { enumeratedButEmpty } = checkServerSrcLayerDirEnumeration(REPO_ROOT);
     expect(enumeratedButEmpty).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// server/src/node/ membership (feature-service-packages task 2.6, design D8's
+// companion rule; spec "package-architecture" requirement "The server app's
+// module directories have declared, test-enforced roles", scenario "The
+// composition-root directory holds only the composition root"): the fourth
+// rule that requirement names, alongside the routers-HTTP-only,
+// ai-runtime-Hono-free, and ApiError-home checks above. `server/src/node/`'s
+// documented role — composition-root wiring, the system clock, and presence —
+// went false once already (design.md Context: 11 production files, 2011 LOC,
+// most of it a transcription feature and a media-import feature) because
+// nothing checked it. This check pins the role by name, and RECURSIVELY: the
+// post-gate delta-spec review found "directly under" escapable, because a
+// feature accumulating one directory deeper
+// (`server/src/node/<feature>/`) is invisible to both this file's
+// top-level-only `SERVER_SRC_LAYER_DIRS` enumeration and to the AI-runtime
+// cluster's flat `path.basename` check above — the identical drift this
+// check exists to prevent could recur with every other gate green. Hence
+// "anywhere under", not "directly under".
+// ---------------------------------------------------------------------------
+
+const NODE_DIR_REL = 'node';
+
+/** The composition root's exact production membership (spec scenario "The
+ * composition-root directory holds only the composition root"): once
+ * feature-service-packages phase 4 completes, `server/src/node/` SHALL hold
+ * exactly these three files — nothing else, at any depth. Named for what it
+ * actually holds — `node/`-RELATIVE PATHS, compared via `relOf`, never a bare
+ * basename — because a name like "allowed basenames" would invite a future
+ * editor to add a bare basename for a nested file and silently widen the
+ * rule this constant exists to keep narrow. */
+const NODE_DIR_ALLOWED_RELATIVE_PATHS = new Set<string>([
+  'config.ts',
+  'systemClock.ts',
+  'presence.ts',
+]);
+
+/** Recursively walks `server/src/node/` (via `walkProductionTsFiles`, which
+ * already recurses) and flags any production file whose path **relative to
+ * `node/` itself** is not one of the three allowed relative paths.
+ *
+ * Relative-to-`node/` — not relative-to-repo-root, and deliberately not
+ * `path.basename` — is the load-bearing choice: a file at
+ * `node/transcription/deepgram.ts` has a `node/`-relative path of
+ * `transcription/deepgram.ts`, which equals no entry in
+ * `NODE_DIR_ALLOWED_RELATIVE_PATHS` regardless of what the file's own
+ * basename is. A `path.basename`-only check (the AI-runtime cluster's
+ * flat-list shape, reused unchanged, would have been the wrong tool here)
+ * would have accepted `node/transcription/config.ts` as "just config.ts" —
+ * exactly the false negative the spec scenario calls out by name ("a
+ * subdirectory is itself a violation, not an exemption"). Takes
+ * `allowedRelativePaths` as a function argument, never a closed-over module
+ * global, matching this file's existing discipline for
+ * `SERVICE_PACKAGES`/`L1_PACKAGES` above, so a vacuum-probe case can pass a
+ * corrupted copy without mutating the shared constant. */
+function checkNodeDirMembership(
+  repoRoot: string,
+  allowedRelativePaths: ReadonlySet<string> = NODE_DIR_ALLOWED_RELATIVE_PATHS,
+): string[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  const nodeDir = path.join(srcRoot, NODE_DIR_REL);
+  const violations: string[] = [];
+  for (const file of walkProductionTsFiles(nodeDir)) {
+    const relToNodeDir = relOf(nodeDir, file);
+    if (!allowedRelativePaths.has(relToNodeDir)) {
+      violations.push(relOf(repoRoot, file));
+    }
+  }
+  return violations;
+}
+
+describe('server/src/node/ holds only the composition root — real repo (task 2.6, design D8, spec scenario "The composition-root directory holds only the composition root")', () => {
+  // ENABLED by feature-service-packages task 4.1 (folded into the same unit
+  // as task 4.8's verification, since 4.1's own move is what satisfies the
+  // precondition below — see task-4a-report.md). server/src/node/ now holds
+  // exactly config.ts, systemClock.ts, presence.ts (and their tests):
+  // deepgram.ts, audioMerge.ts, transcriptRemap.ts,
+  // transcriptGenerationLock.ts, generateTranscript.ts moved to
+  // @autologger/transcription in this same commit, and ytdlp.ts,
+  // youtubeImportGuard.ts, youtubeImportScratch.ts already moved to
+  // @autologger/media-import at phase 3. The `it.skip` this comment used to
+  // gate (task tasks.md 4.8: "enable the task-2.6 membership check if it was
+  // landed disabled") is now a plain `it` — flipped here rather than at 4.8
+  // because leaving it disabled past this point is exactly the "an
+  // un-re-enabled skip is worse than no check at all" failure this
+  // requirement's own history warns about. The always-on canary the phase-2
+  // fix wave added specifically to fail the moment this directory actually
+  // emptied out (so the skip could not outlive phase 4 unnoticed) fired as
+  // designed once this move landed, and task 4.8's verification (see
+  // task-4d-report.md) confirmed both that the canary had fired and that the
+  // check above is non-vacuous — flat and nested violations are each
+  // independently flagged — before deleting the now-purposeless canary.
+  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts, or presence.ts', () => {
+    expect(checkNodeDirMembership(REPO_ROOT)).toEqual([]);
+  });
+});
+
+// Mutation coverage (task 2.6) — runs now and unconditionally, since it
+// exercises the exported check function and constant directly against a
+// synthetic tree and does not depend on the real repo's current, mid-
+// migration contents.
+describe('checkNodeDirMembership (mutation check on a synthetic server/src/node tree, task 2.6)', () => {
+  let tmpRoot: string;
+
+  function writeTree(root: string, files: Record<string, string>) {
+    for (const [rel, content] of Object.entries(files)) {
+      const full = path.join(root, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+  }
+
+  const THREE_ALLOWED_FILES: Record<string, string> = {
+    'server/src/node/config.ts': `export const marker = true;\n`,
+    'server/src/node/systemClock.ts': `export const marker = true;\n`,
+    'server/src/node/presence.ts': `export const marker = true;\n`,
+  };
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('a tree with exactly the three allowed files produces zero violations', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-clean-'));
+    writeTree(tmpRoot, THREE_ALLOWED_FILES);
+    expect(checkNodeDirMembership(tmpRoot)).toEqual([]);
+  });
+
+  it('test files alongside the three allowed files do not count against membership', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-tests-exempt-'));
+    writeTree(tmpRoot, {
+      ...THREE_ALLOWED_FILES,
+      'server/src/node/config.test.ts': `export const marker = true;\n`,
+      'server/src/node/presence.test.ts': `export const marker = true;\n`,
+    });
+    expect(checkNodeDirMembership(tmpRoot)).toEqual([]);
+  });
+
+  it('DOES flag a fourth, FLAT file directly under server/src/node/', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-flat-violation-'));
+    writeTree(tmpRoot, {
+      ...THREE_ALLOWED_FILES,
+      'server/src/node/deepgram.ts': `export const x = 1;\n`,
+    });
+    expect(checkNodeDirMembership(tmpRoot)).toEqual(['server/src/node/deepgram.ts']);
+  });
+
+  it('DOES flag a file accumulating in a NESTED subdirectory under server/src/node/ — the property this check exists for', () => {
+    // The spec scenario names this case explicitly: "a subdirectory is
+    // itself a violation, not an exemption." This is also the case a flat
+    // top-level-only enumeration (SERVER_SRC_LAYER_DIRS above) and a
+    // `path.basename`-only check (the AI-runtime cluster's shape) would both
+    // miss — the identical drift this requirement's own history records
+    // recurring unchecked.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-nested-violation-'));
+    writeTree(tmpRoot, {
+      ...THREE_ALLOWED_FILES,
+      'server/src/node/transcription/deepgram.ts': `export const x = 1;\n`,
+    });
+    const violations = checkNodeDirMembership(tmpRoot);
+    expect(violations).toEqual(['server/src/node/transcription/deepgram.ts']);
+  });
+
+  it('a nested file that happens to share an allowed basename is STILL flagged (path, not basename, is what is checked)', () => {
+    // Proves the check compares the node/-relative PATH, not
+    // `path.basename` — a file at node/transcription/config.ts is not "just
+    // config.ts" relocated; it is a fourth, disallowed path.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-nested-shadow-'));
+    writeTree(tmpRoot, {
+      ...THREE_ALLOWED_FILES,
+      'server/src/node/transcription/config.ts': `export const x = 1;\n`,
+    });
+    const violations = checkNodeDirMembership(tmpRoot);
+    expect(violations).toEqual(['server/src/node/transcription/config.ts']);
+  });
+
+  // Vacuum probe: an emptied allowed-basenames set, passed as the function
+  // argument (never `.add()`/`.clear()`-ed onto the shared module-level
+  // constant), must make even the CLEAN case fail, or the constant is not
+  // load-bearing. Matches this file's existing discipline for
+  // SERVICE_PACKAGES/L1_PACKAGES above.
+  it('an emptied allowed-basenames set flags even the three legitimate files (the constant is load-bearing)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-membership-vacuum-'));
+    writeTree(tmpRoot, THREE_ALLOWED_FILES);
+    const violations = checkNodeDirMembership(tmpRoot, new Set<string>());
+    expect(violations.sort()).toEqual([
+      'server/src/node/config.ts',
+      'server/src/node/presence.ts',
+      'server/src/node/systemClock.ts',
+    ]);
   });
 });

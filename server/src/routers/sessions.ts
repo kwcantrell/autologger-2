@@ -29,6 +29,12 @@ import {
   ValidationError,
 } from '@autologger/domain';
 import {
+  fetchYoutubeAudio,
+  YOUTUBE_IMPORT_TMP_PREFIX,
+  YtDlpError,
+  youtubeImportGuard,
+} from '@autologger/media-import';
+import {
   AUDIO_SEAM_PARTS_HEADER,
   type AudioSeamPart,
   parseAudioSeamPartsHeader,
@@ -38,9 +44,6 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { youtubeImportGuard } from '../node/youtubeImportGuard';
-import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
-import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
 import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 

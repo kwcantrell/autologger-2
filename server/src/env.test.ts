@@ -9,8 +9,6 @@ import {
   aiChatOpenNetworkRefused,
   aiV2OpenNetworkRefused,
   cookieSecureForRequest,
-  deepgramConfigured,
-  deepgramModel,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
@@ -132,18 +130,14 @@ describe('env flag parsing', () => {
     });
   });
 
-  it('deepgramConfigured is true only when DEEPGRAM_API_KEY is set to a non-blank value', () => {
-    expect(deepgramConfigured(E({}))).toBe(false);
-    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: '' }))).toBe(false);
-    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: '   ' }))).toBe(false);
-    expect(deepgramConfigured(E({ DEEPGRAM_API_KEY: 'dg-key' }))).toBe(true);
-  });
-
-  it('deepgramModel defaults to nova-3 and is overridable via DEEPGRAM_MODEL', () => {
-    expect(deepgramModel(E({}))).toBe('nova-3');
-    expect(deepgramModel(E({ DEEPGRAM_MODEL: '' }))).toBe('nova-3');
-    expect(deepgramModel(E({ DEEPGRAM_MODEL: 'nova-2' }))).toBe('nova-2');
-  });
+  // deepgramConfigured/deepgramModel cases moved out with the functions
+  // themselves (feature-service-packages task 4.1, design D5): they live in
+  // @autologger/transcription now. This deletion is NOT task 4.3's "move
+  // into the transcription package's own suite" — it is the minimal edit
+  // needed to keep this file compiling once the functions left env.ts; task
+  // 4.3 landed the package's own equivalent coverage at
+  // packages/transcription/src/deepgramConfig.test.ts (commit 2edd977),
+  // carrying both cases over verbatim.
 });
 
 describe('topic generation config (design D6: dedicated budget/timeout, higher than the AI chat)', () => {

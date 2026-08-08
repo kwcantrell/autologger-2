@@ -1,17 +1,22 @@
 import type { CategoryRecord } from '@autologger/domain';
-import { Hono } from 'hono';
-import { z } from 'zod';
-import type { AppEnv } from '../appEnv';
-import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
-import { ApiError } from '../httpError';
 import {
   appendLogImportLine,
   createLogImportJob,
+  fetchPublicWorkbookSheets,
   getLogImportJob,
+  runSessionLogImport,
   setLogImportStatus,
-} from '../logImport/jobStore';
-import { ensureTimedTranscript, runSessionLogImport } from '../logImport/runSessionLogImport';
-import { fetchPublicWorkbookSheets } from '../logImport/sheetsFetch';
+  type TranscriptToken,
+  timedTranscriptTokens,
+} from '@autologger/log-import';
+import type { Config } from '@autologger/ports';
+import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
+import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/transcription';
+import { Hono } from 'hono';
+import { z } from 'zod';
+import type { AppEnv, Bindings } from '../appEnv';
+import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
+import { ApiError } from '../httpError';
 import { timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
@@ -35,6 +40,75 @@ function categoriesFromShowRow(row: { categories_json?: unknown }): CategoryReco
     return parsed as CategoryRecord[];
   } catch {
     return [];
+  }
+}
+
+// Relocated verbatim from `logImport/runSessionLogImport.ts`
+// (feature-service-packages D2): this module already imports `hono` and
+// holds `env.config`/`env.ports.audio`/`getHub`/`ctx`/`onProgress` at its
+// call site, so the coordinator lands here rather than in a non-Hono
+// `routers/coordinators/*.ts` module, which the router-membership check
+// (router-directory-decomposition) would reject.
+/** Ensure timed transcript words exist; generate via DeepGram when missing. */
+export async function ensureTimedTranscript(input: {
+  sessionId: string;
+  getHub: () => SessionHubFacade;
+  config: Config;
+  audio: Bindings['ports']['audio'];
+  ctx: TimecodeCtx;
+  onProgress: (line: string) => void;
+}): Promise<TranscriptToken[]> {
+  let tokens = timedTranscriptTokens(input.getHub());
+  if (tokens.length > 0) {
+    input.onProgress(`Transcript already present (${tokens.length} timed words).`);
+    return tokens;
+  }
+
+  input.onProgress('Generating transcript (DeepGram)…');
+  const attempt = async (): Promise<TranscriptToken[]> => {
+    const words = await generateTranscriptWords({
+      config: input.config,
+      audio: input.audio,
+      getHub: input.getHub,
+      ctx: input.ctx,
+      sessionId: input.sessionId,
+    });
+    const next = timedTranscriptTokens(input.getHub());
+    if (next.length === 0) {
+      throw new Error(
+        `Transcript generation finished (${words.length} words) but none have usable timing for sync.`,
+      );
+    }
+    return next;
+  };
+
+  try {
+    tokens = await attempt();
+    input.onProgress(`Transcript ready (${tokens.length} timed words).`);
+    return tokens;
+  } catch (err) {
+    const isUpstream =
+      err instanceof TranscriptGenerateError &&
+      (err.code === 'upstream' || err.code === 'in_flight');
+    if (isUpstream) {
+      input.onProgress(`Transcript generation failed (${err.message}); retrying once…`);
+      // Brief pause: clears in-flight slot races and transient DeepGram blips.
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        tokens = await attempt();
+        input.onProgress(`Transcript ready after retry (${tokens.length} timed words).`);
+        return tokens;
+      } catch (retryErr) {
+        if (retryErr instanceof TranscriptGenerateError) {
+          throw new Error(`Transcript generation failed: ${retryErr.message}`);
+        }
+        throw retryErr;
+      }
+    }
+    if (err instanceof TranscriptGenerateError) {
+      throw new Error(`Transcript generation failed: ${err.message}`);
+    }
+    throw err;
   }
 }
 
@@ -78,13 +152,13 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) throw new ApiError(400, 'spreadsheet_url is required.');
 
-  const job = createLogImportJob(user?.id ?? null);
+  const job = createLogImportJob(c.env.ports.clock, user?.id ?? null);
   const env = c.env;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
 
   void (async () => {
-    setLogImportStatus(job.id, 'running');
+    setLogImportStatus(env.ports.clock, job.id, 'running');
     try {
       appendLogImportLine(job.id, 'Fetching spreadsheet…');
       const sheets = await fetchPublicWorkbookSheets(spreadsheetUrl);
@@ -148,20 +222,26 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         `Done. ${sessionsOk} session(s) imported, ${sessionsFailed} failed.`,
       );
       if (sessionsFailed > 0 && sessionsOk === 0) {
-        setLogImportStatus(job.id, 'failed', 'All matched sessions failed to import.');
+        setLogImportStatus(
+          env.ports.clock,
+          job.id,
+          'failed',
+          'All matched sessions failed to import.',
+        );
       } else if (sessionsFailed > 0) {
         setLogImportStatus(
+          env.ports.clock,
           job.id,
           'completed',
           `${sessionsFailed} session(s) failed; see progress lines.`,
         );
       } else {
-        setLogImportStatus(job.id, 'completed');
+        setLogImportStatus(env.ports.clock, job.id, 'completed');
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       appendLogImportLine(job.id, `Failed: ${detail}`);
-      setLogImportStatus(job.id, 'failed', detail);
+      setLogImportStatus(env.ports.clock, job.id, 'failed', detail);
     }
   })();
 
@@ -170,7 +250,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
 
 logImportRouter.get('/api/log-import/:jobId', (c) => {
   const user = c.get('user');
-  const job = getLogImportJob(c.req.param('jobId'));
+  const job = getLogImportJob(c.env.ports.clock, c.req.param('jobId'));
   // Creator scope: an authenticated requester who didn't create the job gets
   // the SAME 404 as an unknown id — no existence oracle. Anonymous requesters
   // (REQUIRE_LOGIN=0 dev mode, or API-token auth) pass, mirroring the

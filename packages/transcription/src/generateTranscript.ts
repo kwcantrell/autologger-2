@@ -3,13 +3,12 @@
 
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Config } from '@autologger/ports';
+import type { BlobStore, Config } from '@autologger/ports';
 import type { SessionHubFacade, TimecodeCtx, TranscriptWord } from '@autologger/session-core';
-import type { Bindings } from '../appEnv';
-import { deepgramConfigured, deepgramModel } from '../env';
 import { mergeAudioSegments } from './audioMerge';
 import type { TranscribeGroupResult } from './deepgram';
 import { DeepgramUpstreamError, transcribeGroup } from './deepgram';
+import { deepgramConfigured, deepgramModel } from './deepgramConfig';
 import { generationInFlightDetail, transcriptGenerationLock } from './transcriptGenerationLock';
 import type { EnrichmentGroup, SegmentAnchorInfo } from './transcriptRemap';
 import {
@@ -63,7 +62,7 @@ export function isTranscriptGenerationInFlight(): boolean {
 
 export interface GenerateTranscriptDeps {
   config: Config;
-  audio: Bindings['ports']['audio'];
+  audio: BlobStore;
   getHub: () => SessionHubFacade;
   ctx: TimecodeCtx;
   sessionId: string;

@@ -73,19 +73,6 @@ export function adminTokenConfigured(env: Config): boolean {
   return Boolean((env.ADMIN_TOKEN || '').trim());
 }
 
-/** Gate: transcript generation runs only when a DeepGram key is configured;
- * unset/blank keeps the endpoint's frozen 503 (design D7, spec
- * "Configuration-gated generation"). */
-export function deepgramConfigured(env: Config): boolean {
-  return Boolean((env.DEEPGRAM_API_KEY || '').trim());
-}
-
-/** DeepGram model, defaulting to `nova-3` (gate decision 6), overridable via
- * `DEEPGRAM_MODEL`. */
-export function deepgramModel(env: Config): string {
-  return (env.DEEPGRAM_MODEL || '').trim() || 'nova-3';
-}
-
 // ── Shared: open-network refusal ────────────────────────────────────────────
 // Every outbound, spend-something-per-request feature (AI chat, AI v2,
 // YouTube import, Sheets log import) refuses to serve when auth is open on a

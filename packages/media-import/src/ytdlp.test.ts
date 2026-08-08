@@ -16,8 +16,8 @@ import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MEDIA_IMPORT_FIXTURES_DIR } from './fixturesDir';
 import {
   AUDIO_FORMAT_SELECTOR,
   buildYtDlpChildEnv,
@@ -33,7 +33,12 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 const spawnSpy = vi.mocked(spawn);
 
-const FIXTURE_PATH = fileURLToPath(new URL('../test/fixtures/fake-ytdlp.mjs', import.meta.url));
+// Fix wave (Phase 3 review Minor 2): was a package-local relative
+// `fileURLToPath(new URL('../fixtures/fake-ytdlp.mjs', import.meta.url))`
+// literal — a second expression of "the fixtures directory" alongside the
+// app-side integration test's `MEDIA_IMPORT_FIXTURES_DIR`. Now both readers
+// resolve through the one exported constant (see `fixturesDir.ts`).
+const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
 /** A URL that is SIMULTANEOUSLY a leading-`-` string (would be parsed as a
  * flag by an option parser) and laced with shell metacharacters (would be

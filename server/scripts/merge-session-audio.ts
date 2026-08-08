@@ -6,13 +6,13 @@
 // Reads segment order from the session DB (DATA_DIR/sessions/<id>.db), maps
 // each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies each
 // codec-family run into its own container (Opus->WebM, AAC->MP4, PCM->WAVE)
-// via src/node/audioMerge.ts. Read-only over server state; the merged files
+// via @autologger/transcription's audioMerge.ts. Read-only over server state; the merged files
 // are written outside the blob store.
 
+import { mergeAudioSegments } from '@autologger/transcription';
 import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { mergeAudioSegments } from '../src/node/audioMerge';
 
 function fail(msg: string): never {
   console.error(`error: ${msg}`);
