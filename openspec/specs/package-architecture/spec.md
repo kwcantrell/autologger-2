@@ -71,10 +71,17 @@ declares an edge only when an import needs it.
 Internal packages SHALL export TypeScript source directly (`"exports"` pointing at
 `./src/*.ts`) with no build step required to run, test, or typecheck the repository, and
 no committed build artifacts. Every package SHALL be covered by the root typecheck
-command (per-project `tsc --noEmit`), the root test command (explicitly enumerated
-vitest projects — the server's two-tier unit/integration project setup, including its
-integration `setupFiles`, SHALL be preserved verbatim), and the root lint command
+command (per-project `tsc --noEmit`), the root test command, and the root lint command
 (`biome.json` includes `packages/**`).
+
+The mechanism differs between the app and the packages, and SHALL be described accurately
+because a change that wires a new package into the wrong one fails **silently**: the
+server's own coverage is explicitly enumerated vitest projects — its two-tier
+unit/integration project setup, including its integration `setupFiles`, SHALL be preserved
+verbatim, and package projects SHALL NOT be added to it — while each package's coverage is
+an entry in the **root manifest's** chained `test` and `typecheck` commands invoking that
+workspace. A package absent from those chains is never tested and never typechecked while
+every gate reports green.
 
 #### Scenario: No build artifacts
 - **WHEN** the repository is inspected after `npm run typecheck` and `npm test`
@@ -83,6 +90,10 @@ integration `setupFiles`, SHALL be preserved verbatim), and the root lint comman
 #### Scenario: Package tests provably execute
 - **WHEN** a deliberately failing test is placed in each package (and in the server's unit and integration tiers) during test-wiring implementation
 - **THEN** the root test command fails for each, proving no project is silently skipped; the check is recorded in the apply ledger
+
+#### Scenario: A newly added package joins both root chains
+- **WHEN** a change adds a package and the root manifest's `test` and `typecheck` chains are inspected
+- **THEN** the package appears in both, proven by a deliberately failing test **and** a deliberate type error each failing the corresponding root command — a passing root run is not evidence the package ran
 
 #### Scenario: Integration tier keeps its setup
 - **WHEN** the server's `*.int.test.ts` suite runs under the new test wiring
@@ -122,15 +133,24 @@ devDependency declaration dedupes to the same resolved copy).
 ### Requirement: Every process-wide singleton has exactly one package home
 
 Each process-wide mutable singleton (among them the AI chat turn registry, the MCP
-listener singleton, the transcript-generation lock, the YouTube import guard, and the
-DeepGram shared dispatcher) SHALL be owned by exactly one module in exactly one package
-or app, and SHALL NOT be duplicated or re-homed such that two module instances could
-coexist in one process. A package move that touches a singleton's module SHALL preserve
-single-instance semantics.
+listener singleton, the transcript-generation lock, the YouTube import guard, the DeepGram
+shared dispatcher, and the log-import job store) SHALL be owned by exactly one module in
+exactly one package or app, and SHALL NOT be duplicated or re-homed such that two module
+instances could coexist in one process. A package move that touches a singleton's module
+SHALL preserve single-instance semantics.
+
+Where a singleton's single-instance identity is established by a key on `globalThis` rather
+than by module identity alone — because the module must survive development-time module
+re-evaluation — that mechanism SHALL be preserved verbatim across a package move, and SHALL
+NOT be replaced by a module-local binding.
 
 #### Scenario: Singleton modules resolve uniquely
 - **WHEN** the module graph of a running server is inspected for the singleton-bearing modules
 - **THEN** each loads exactly once, from exactly one package or app location
+
+#### Scenario: A relocated singleton keeps its identity mechanism
+- **WHEN** a singleton whose identity depends on a `globalThis` key moves into a package, and a job is created through one import path and read back through another after the module is re-evaluated
+- **THEN** the same instance is observed, and the key and its rationale are unchanged by the move
 
 ### Requirement: The contract package is the single home of wire schemas and dashboard validation
 
@@ -175,6 +195,139 @@ unchanged by the move.
 - **WHEN** the server starts against a `DATA_DIR` whose catalog was migrated before the extraction
 - **THEN** no migration re-applies and startup proceeds normally
 
+### Requirement: Feature services are packages in a flat layer above persistence
+
+`@autologger/transcription` (DeepGram transcription), `@autologger/media-import` (YouTube
+audio import), and `@autologger/log-import` (Sheets log import) SHALL be source-only
+workspace packages forming a **flat layer above the persistence packages**. Each of these
+**service packages** MAY import the L0 packages (`@autologger/domain`,
+`@autologger/contract`, `@autologger/ports`) and the L1 persistence packages
+(`@autologger/session-core`, `@autologger/catalog`, `@autologger/storage`), and SHALL NOT
+import another service package.
+
+The layer is characterized, not merely enumerated: a service package owns a coherent
+feature the app composes, and takes its collaborators — persistence facades, configuration
+values, blob storage — **by injection** rather than reading the host environment or the
+app's composition root. This characterization is a **gloss on the three named members**, not
+a universally quantified obligation: it does not require any other module that resembles a
+service to become a package. In particular the AI runtime, which a separate requirement in
+this capability places at `server/src/ai-runtime/` under exactly such an injection rule,
+remains where that requirement puts it until a change moves it.
+
+**Enforcement.** All of the following SHALL be checked by the boundary repo test:
+
+1. **No service package imports another service package** — checked independently of the
+   declared allowed-edge set, so adding a service-to-service entry to that set does not by
+   itself permit the import.
+2. **No L1 persistence package imports a service package.** Without this, a single
+   allowed-edge entry plus a re-export through an L1 package launders a service-to-service
+   dependency past check (1) with every gate green.
+3. **No service package is reachable from another service package** through any chain of
+   workspace-package imports, not merely a direct edge.
+4. **Every TypeScript source file under a package's `src/` is walked.** A check whose file
+   walk matches only `.ts` does not see `.mts` or `.cts`, which are equally valid module
+   sources and are invisible to the package `tsconfig` include and to the architecture
+   model as well — so an unwalked extension is a cheaper escape than any of the recorded
+   dynamic-resolution ones.
+
+**Stated residual bypasses.** These checks are textual scans over source, and the property
+they enforce is "no plain import-syntax path between service packages," not "no possible
+runtime dependency." A service that receives another service's function **as an injected
+parameter** has no import edge at all and is not caught by any of them; neither is a
+dependency reached through `createRequire`, a non-literal dynamic `import()`, `eval`, or
+code outside the walked root. These are recorded as limits, not as work items — closing
+them requires a real parser or a runtime trace.
+
+After the extraction, `server/src/logImport/` SHALL cease to exist rather than remain as an
+empty or shim-bearing directory.
+
+#### Scenario: Service packages reach only downward
+
+- **WHEN** the boundary repo test builds the inter-package import graph
+- **THEN** every **workspace-package** import specifier from a service package resolves to an L0 or L1 package, and the test fails on any specifier that resolves to another service package (third-party and `node:` specifiers are governed by the manifest-declaration rule instead, not by this one)
+
+#### Scenario: The no-sibling rule does not depend on the allowed-edge set
+
+- **WHEN** a service package imports another service package, **and** the corresponding entry has been added to the declared allowed-edge set
+- **THEN** the boundary repo test still fails, because the no-sibling check does not consult that set — demonstrated once during implementation against a deliberate violation, with both the pre-entry and post-entry failures recorded in the apply ledger
+
+#### Scenario: A service dependency laundered through a persistence package is caught
+
+- **WHEN** an L1 persistence package imports a service package, or a service package is reachable from another service package through a chain of workspace-package imports rather than a direct edge
+- **THEN** the boundary repo test fails, and the transitive case is demonstrated against a chain whose intermediate hop is an **L0** package — a route neither the direct-sibling check nor the no-L1→L2 check flags, so only the reachability check can fail it, and a demonstration using an L1 intermediate would not distinguish the reachability check's presence from its absence
+
+#### Scenario: The service-package checks are mutation-covered against their own constants
+
+- **WHEN** the service-layer checks are exercised on synthetic trees
+- **THEN** the synthetic cases invoke the same exported check functions and the same production membership constant the real-repo assertions use — so a typo'd, renamed, or emptied membership constant fails the mutation cases rather than silently passing them — and the test additionally asserts that the membership constant is non-empty and that every member names a package present under `packages/`
+
+#### Scenario: Non-`.ts` TypeScript sources cannot evade the walk
+
+- **WHEN** a package's `src/` contains a `.mts` or `.cts` module that imports a sibling service package or an undeclared third-party package
+- **THEN** the boundary repo test fails, rather than skipping the file because its extension did not match
+
+#### Scenario: The architecture model attributes each service to its own component
+
+- **WHEN** the architecture model is inspected after the extraction
+- **THEN** a distinct component covers each service package's sources; no component retains a glob matching zero files; every declared relationship whose evidence resolves to a file inside a service package names **that service's component as its `from` endpoint** rather than the composition root; and every capability-to-component mapping that named the composition root for a moved feature names the service's component instead. **None of these four properties is machine-checked** — the coverage gate implements only orphan, overlap, and bare-root-glob detection (no empty-component check, no duplicate-id check, and no distinctness check: one component globbing all three packages would pass), the relationship-evidence gate verifies only that an evidence file exists and contains given literals, and the capability mapping is checked only for component existence. All four are verified by review at the change that moves the code
+
+### Requirement: A service package declares its own dependencies and owns its test fixtures
+
+A third-party dependency **whose only importer anywhere in the repository is** a single
+service package SHALL be declared by that package and SHALL NOT remain declared by the
+server app — so which feature may reach the network, spawn a process, or parse a workbook is
+recorded in a manifest rather than in a convention. A third-party dependency that a service
+package imports **and that the app also imports**, including from the app's own tests, SHALL
+be declared by both: removing a declaration while an import remains would leave that import
+resolving only through workspace hoisting — the precise failure the package boundary rules
+exist to prevent. The antecedent is repository-wide importer count, never service count: a
+dependency imported by exactly one service **and** by an app test satisfies the second rule,
+not the first.
+
+The confinement this achieves is **declaration-side only**, and in **both** directions of the
+server/package boundary. The boundary repo test verifies that a *package* declares what it
+imports; it does not scan the server app's sources against `server/package.json` — neither
+for a third-party specifier the server imports without declaring, nor for a workspace
+(`@autologger/*`) package the server imports without declaring. Both classes resolve silently
+through npm's root-level workspace hoisting rather than failing loudly, and this change
+shipped an instance of the second class (three `@autologger/*` service-package imports the
+server used but had not declared, hand-fixed during apply) that no gate caught. Nothing
+therefore prevents a future app module from importing a service's third-party dependency, or
+a service package itself, without a manifest declaration, and this change does not claim
+otherwise.
+
+Where a package move newly causes an error class **owned by a package** to be matched with
+`instanceof` in the app, **each** such class SHALL be pinned by an integration test
+exercised through the real app rather than by a unit-level import — not only the first one
+found.
+
+Test fixtures used by a service's tests SHALL move with that service and be addressed
+through a path constant the package exports, so a fixture consumed on both sides of the
+boundary exists in exactly one copy and the app's tests depend on the package rather than
+the reverse. Where a consumer cannot import that constant — a script run outside the
+TypeScript toolchain — the exception SHALL be named and the consumer verified by execution,
+because no repository gate covers it.
+
+#### Scenario: A dependency imported by one service is declared by that service alone
+
+- **WHEN** the workspace manifests are inspected after an extraction
+- **THEN** each third-party dependency whose only importer in the whole repository is one service package is declared by that package and no longer by the server app; each dependency the app also imports — from its sources **or its tests** — remains declared by the app as well; and every relocated dependency resolves to exactly one installed copy, verified by parsing `npm ls --json` rather than by reading its exit code
+
+#### Scenario: Every newly cross-boundary error class is pinned
+
+- **WHEN** a change moves modules whose error classes the app matches with `instanceof`
+- **THEN** every such class has an integration test driving the real app to throw it and asserting the frozen status code and `{detail}` body
+
+#### Scenario: A shared fixture exists in one copy
+
+- **WHEN** a fixture is read by a test inside a service package and by an integration test that stays in the server app
+- **THEN** both resolve to the same file through the package's exported path constant, no copy of it remains under the app's fixture tree, and neither test reaches into the other workspace by a relative path
+
+#### Scenario: A fixture consumer outside the toolchain is named and executed
+
+- **WHEN** a script that no gate covers — outside the TypeScript `include`, outside the lint scope, and not a component member — addresses a moved fixture by path literal
+- **THEN** it is named as an exception in the change, its paths are updated, and it is verified by running it far enough to prove every path resolves
+
 ### Requirement: The server app's module directories have declared, test-enforced roles
 
 The `server/src` app is decomposed into role-named directories, and a module's directory
@@ -197,7 +350,22 @@ response) SHALL live at app level (`server/src/httpError.ts`), not inside
 `server/src/routers/`, so the composition root's error mapper does not import upward into
 the router layer.
 
-These three rules SHALL be enforced by the boundary repo test, not by one-time
+`server/src/node/` SHALL hold **only** the composition root and the Node-specific adapters
+it constructs — configuration wiring, the system clock, and presence. Feature
+implementations SHALL NOT live there. This directory's role was documented and then went
+false, accreting a transcription feature and an audio-import feature that together
+outweighed the composition root by an order of magnitude, because nothing checked it;
+membership is therefore pinned by name, as the router directory's is.
+
+Cross-feature coordination — a code path that drives one feature and then another — SHALL
+live in the app rather than inside a service package. Where such coordination is
+asynchronous and belongs to a request, the router-membership rule above means it lives in
+a Hono-importing module. This rule is enforced **only insofar as the coupling takes the form
+of an import edge**: coordination that receives the other feature's function as an injected
+parameter has no import specifier and no scan detects it.
+
+The routers-membership, AI-runtime, `ApiError`-home, and `server/src/node/`-membership rules
+SHALL be enforced by the boundary repo test, not by one-time
 inspection. An architectural rule that no mechanism checks regresses silently; this
 capability's own history records a directory-layer enumeration being hand-pruned because
 nothing failed when it went stale.
@@ -228,6 +396,11 @@ to their former home, and SHALL NOT change any observable HTTP/WS behavior.
 - **WHEN** the boundary repo test inspects `server/src/httpError.ts`, `server/src/app.ts`, the modules that throw `ApiError`, and every production module under `server/src/routers/`
 - **THEN** it fails if `server/src/httpError.ts` does not declare a class named `ApiError`, or if any production file under `server/src/routers/` declares a class named `ApiError`, or if any `ApiError` import specifier from a `server/src` production file resolves into `server/src/routers/`
 
+#### Scenario: The composition-root directory holds only the composition root
+
+- **WHEN** the boundary repo test inspects the production modules **anywhere under** `server/src/node/`, recursively
+- **THEN** it fails if any file other than the composition-root wiring, the system clock, and presence is present — a subdirectory is itself a violation, not an exemption, because the layering enumeration compares only top-level directories and would not see a feature accumulating at `server/src/node/<feature>/`
+
 #### Scenario: The layering enumeration matches the filesystem and is non-vacuous
 
 - **WHEN** the boundary repo test compares its server-directory layering enumeration against the directories actually present under `server/src`
@@ -245,8 +418,8 @@ to their former home, and SHALL NOT change any observable HTTP/WS behavior.
 
 #### Scenario: The branch diff over routers is import-only
 
-- **WHEN** the branch diff over `server/src/routers/` is inspected
-- **THEN** the only changed lines in route modules are import specifiers, the `ApiError`/`TimecodeCtx` consolidation edits, and the authorized stale-path comment re-points that follow the AI-runtime move (a prose comment's path reference updated to its new location) — no handler body, route registration, status code, or response construction is modified
+- **WHEN** the branch diff over `server/src/routers/` is inspected on a change that moves modules under this requirement
+- **THEN** the only changed lines in route modules are import specifiers, the `ApiError`/`TimecodeCtx` consolidation edits, the authorized stale-path comment re-points that follow a module move (a prose comment's path reference updated to its new location), and any cross-feature coordination relocation plus port threading that the change's own delta explicitly authorizes — no handler body, route registration, status code, or response construction is modified except as so authorized
 
 #### Scenario: The move leaves no shim and no behavior change
 
