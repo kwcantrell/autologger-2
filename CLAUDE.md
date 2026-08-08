@@ -54,7 +54,9 @@ npm run build && npm run start                 # production: server serves web/d
 npm run typecheck                              # server + web + e2e
 npm test                                       # server vitest (unit + integration)
 npm run e2e                                    # Playwright smoke (hermetic server on :8791)
-npm run lint                                   # biome: web src/, e2e/, playwright.config.ts, companion/src, server/src
+npm run lint                                   # biome, REPORT-ONLY: web/src, web-docs (src/model/scripts),
+                                               #   e2e/, playwright.config.ts, companion/src, server/src, packages/
+npm run lint:fix                               # same paths, with --write (never run this as a gate)
 ```
 
 - Two vitest tiers (`test.projects` in `server/vitest.config.ts`): **unit** (`*.test.ts`, node, no bindings) and

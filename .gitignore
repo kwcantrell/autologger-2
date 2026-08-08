@@ -42,3 +42,6 @@ playwright-report/
 # rather than the pattern above.
 !web-docs/src/lib/__fixtures__/extract-imports/workspace-pkg/node_modules/
 !web-docs/src/lib/__fixtures__/extract-imports/workspace-pkg/node_modules/**
+
+# TypeScript incremental build info (composite tsconfig.node.json projects)
+*.tsbuildinfo

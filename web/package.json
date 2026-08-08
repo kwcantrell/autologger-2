@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check --write src/",
+    "lint": "biome check --error-on-warnings src/",
+    "lint:fix": "biome check --write src/",
     "format": "biome format --write src/",
     "test": "vitest run"
   },

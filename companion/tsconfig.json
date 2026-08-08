@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noImplicitOverride": true,
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
