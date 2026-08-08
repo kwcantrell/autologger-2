@@ -43,7 +43,7 @@
 // the operator's exposure").
 //
 // SPAWN BOUNDARY: no guard-rejecting path reaches attemptDesignTurnSpawn
-// (server/src/routers/aiV2SdkSpawn.ts) — the one call site that reaches the
+// (server/src/ai-runtime/aiV2SdkSpawn.ts) — the one call site that reaches the
 // Agent SDK's `query()` (task 0.9). It is called ONLY after every guard has
 // passed, inside the SSE stream body, strictly downstream of the slot
 // acquisition — so "no guard path spawns a subprocess" holds. The turn's
@@ -60,6 +60,21 @@ import { DashboardBoundsError, DashboardValidationError } from '@autologger/sess
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import {
+  aiV2PendingQuestions,
+  buildPendingQuestionOnQuestion,
+  generatePendingQuestionId,
+} from '../ai-runtime/aiV2PendingQuestions';
+import {
+  attemptDesignTurnSpawn,
+  buildDesignTurnCanUseTool,
+  buildDesignTurnOptions,
+  createDesignTurnSpawner,
+  createDesignTurnWorkspace,
+  prepareDesignTurnCredentials,
+  runDesignTurn,
+} from '../ai-runtime/aiV2SdkSpawn';
 import { buildAggregateMcpServer } from '../aiV2/mcpTools';
 import type { AppEnv } from '../appEnv';
 import {
@@ -71,22 +86,8 @@ import {
   aiV2MaxBudgetUsd,
   aiV2OpenNetworkRefused,
 } from '../env';
-import { ApiError, getSessionHub, requireSession } from './_helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import {
-  aiV2PendingQuestions,
-  buildPendingQuestionOnQuestion,
-  generatePendingQuestionId,
-} from './aiV2PendingQuestions';
-import {
-  attemptDesignTurnSpawn,
-  buildDesignTurnCanUseTool,
-  buildDesignTurnOptions,
-  createDesignTurnSpawner,
-  createDesignTurnWorkspace,
-  prepareDesignTurnCredentials,
-  runDesignTurn,
-} from './aiV2SdkSpawn';
+import { ApiError } from '../httpError';
+import { getSessionHub, requireSession } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 

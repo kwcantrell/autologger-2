@@ -23,6 +23,9 @@
 import { chatRequestSchema } from '@autologger/contract';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import type { AiMcpToolName } from '../ai-runtime/aiMcpServer';
+import { driveAiTurn } from '../ai-runtime/aiTurn';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -31,10 +34,8 @@ import {
   aiChatOpenNetworkRefused,
   aiChatTimeoutSec,
 } from '../env';
-import { ApiError, requireSession } from './_helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import type { AiMcpToolName } from './aiMcpServer';
-import { driveAiTurn } from './aiTurn';
+import { ApiError } from '../httpError';
+import { requireSession } from './_helpers';
 
 export const aiRouter = new Hono<AppEnv>();
 

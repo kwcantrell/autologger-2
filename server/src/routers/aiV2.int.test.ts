@@ -1,23 +1,33 @@
 // ai-v2-dashboards — POST /api/sessions/:sessionId/ai/v2/design route shell
-// (tasks 2.1/2.2). Locks the guard ORDER and the "spawns nothing" property,
-// mirroring ai.int.test.ts's structure for the sibling ai-topics-chat route:
+// (tasks 2.1/2.2). Locks the guard ORDER and the "spawns nothing on a
+// guard-rejected path" property, mirroring ai.int.test.ts's structure for
+// the sibling ai-topics-chat route:
 //   auth (401) → session resolution/scoping (404) → config / open-network /
 //   agent-credentials gate (503) → body validation (422/400) → turn slot
 //   (409, shared with the AI chat's OWN registry by design).
 //
-// This unit's route stops BEFORE the SDK is ever touched (see aiV2.ts's
-// module doc — "SPAWN BOUNDARY"): there is no call to attemptDesignTurnSpawn
-// anywhere in aiV2.ts today, so unlike ai.int.test.ts's
+// aiV2.ts DOES call attemptDesignTurnSpawn (see its own "SPAWN BOUNDARY"
+// module doc) — but only after every guard above has passed, strictly
+// downstream of slot acquisition. So unlike ai.int.test.ts's
 // vi.mock('node:child_process') (documented there as VACUOUS through the
 // shared `app` singleton), a `vi.spyOn` on the REAL, unmocked
-// `attemptDesignTurnSpawn` export is NOT vacuous here: nothing in the `app`
-// import graph touches `aiV2SdkSpawn.ts` before this test file's own import
-// does, so the spy observes the function's actual (currently zero) call
-// count rather than racing an eagerly-bound module-level reference. This is
-// the real "no guard path spawns" proof for THIS unit; once tasks 2.3-2.8
-// wire the router to actually call attemptDesignTurnSpawn on the allowed
-// path, this same spy remains meaningful for the guard-rejection cases (it
-// still must show zero calls there), while the "allowed" positive control
+// `attemptDesignTurnSpawn` export is a live, non-vacuous check here: the
+// guard-rejection cases below assert the spy saw zero calls, which is only
+// meaningful because the function genuinely CAN be reached from this route
+// (and the allowed-path case below asserts it WAS called, exactly once).
+//
+// What makes the spy observe aiV2.ts's call at all: this test file's own
+// `import * as aiV2SdkSpawnModule from '../ai-runtime/aiV2SdkSpawn'` and
+// aiV2.ts's `import { attemptDesignTurnSpawn } from '../ai-runtime/
+// aiV2SdkSpawn'` resolve the identical specifier to the identical module —
+// one file, one entry in the module loader's cache — and Vitest's SSR/ESM
+// transform compiles named-import usages as property reads off that shared
+// namespace object rather than capturing a private local binding, so
+// `vi.spyOn`'s mutation of the property is visible at every call site that
+// resolves to the same module, independent of which import — this file's
+// own, or the one reached transitively through `app` — happens to evaluate
+// first. This is the real "no guard-rejected path spawns" proof for THIS
+// unit; the "allowed" positive control's own hermetic spawn-argv assertion
 // already lives in aiV2SdkSpawn.test.ts (task 0.9) and is intentionally not
 // re-run here to keep this suite hermetic and fast.
 
@@ -31,6 +41,9 @@ import type { Config } from '@autologger/ports';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { aiV2PendingQuestions } from '../ai-runtime/aiV2PendingQuestions';
+import * as aiV2SdkSpawnModule from '../ai-runtime/aiV2SdkSpawn';
 import { AGGREGATE_MCP_SERVER_NAME } from '../aiV2/mcpTools';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
@@ -43,9 +56,6 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import { aiV2PendingQuestions } from './aiV2PendingQuestions';
-import * as aiV2SdkSpawnModule from './aiV2SdkSpawn';
 
 const J = { 'content-type': 'application/json' };
 // The real hermetic fake-claude fixture (ai-topics-chat) — used ONLY by

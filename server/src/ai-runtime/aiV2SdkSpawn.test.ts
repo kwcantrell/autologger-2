@@ -18,7 +18,7 @@
 // registry, with no timing dependency on `app`'s eager build.
 //
 // Two controls, per task 0.9:
-//   - POSITIVE: `attemptDesignTurnSpawn` (server/src/routers/aiV2SdkSpawn.ts
+//   - POSITIVE: `attemptDesignTurnSpawn` (server/src/ai-runtime/aiV2SdkSpawn.ts
 //     — the one call site reaching the SDK's `query()`) is invoked directly.
 //     The recorder file gains exactly one line. This proves the seam can
 //     DETECT a spawn, not merely that spawning never happens.

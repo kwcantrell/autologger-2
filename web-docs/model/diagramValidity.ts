@@ -39,16 +39,22 @@ export interface DiagramBudget {
 }
 
 // Budgets, chosen with headroom over live-tree sizes measured 2026-08-07
-// (task-6.3-report.md quotes the measurement method and exact numbers).
-// L0 full variant: 30 nodes / 79 edges+relationships. L1 max (routers
-// component, `withTests` variant — server/src/routers/ is a genuinely flat
-// directory with no subdirectory structure, so generateL1's grouping cannot
-// collapse it; task-6.1-6.2-report.md flagged this exact case as untested
-// against the live tree): 64 nodes / 82 edges. ER: catalog 9 tables / 3 FKs,
-// session 9 tables / 0 FKs. Authored: ~3 states / 6-8 transitions each.
-// These are hard failures (design.md D4 invariant: no per-diagram exemption,
-// no warning downgrade) — headroom exists so ordinary growth doesn't red the
-// build, not so the budget stops meaning anything.
+// (task-6.3-report.md quotes the measurement method for the original
+// numbers this budget was set against). L0 full variant: 30 nodes / 79
+// edges+relationships. L1 max by NODE count (routers component, `withTests`
+// variant — server/src/routers/ is a genuinely flat directory with no
+// subdirectory structure, so generateL1's grouping cannot collapse it):
+// re-measured 2026-08-07 after `router-directory-decomposition` moved the
+// AI runtime out of `routers/` into its own `server/src/ai-runtime/`
+// component (task 2.9) at 43 nodes / 20 edges — down from the pre-move
+// 64 nodes / 82 edges task-6.1-6.2-report.md flagged as untested against
+// the live tree. Edge count is no longer routers' own high-water mark: L1
+// max by EDGE count is now session-core's `withTests` variant at 26 nodes /
+// 60 edges. ER: catalog 9 tables / 3 FKs, session 9 tables / 0 FKs.
+// Authored: ~3 states / 6-8 transitions each. These are hard failures
+// (design.md D4 invariant: no per-diagram exemption, no warning downgrade)
+// — headroom exists so ordinary growth doesn't red the build, not so the
+// budget stops meaning anything.
 export const L0_DIAGRAM_BUDGET: DiagramBudget = { maxNodes: 60, maxEdges: 160 };
 export const L1_DIAGRAM_BUDGET: DiagramBudget = { maxNodes: 100, maxEdges: 150 };
 export const ER_DIAGRAM_BUDGET: DiagramBudget = { maxNodes: 30, maxEdges: 20 };

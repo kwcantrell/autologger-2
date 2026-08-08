@@ -2,6 +2,14 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
+import { __resetAiMcpListenerForTests } from '../ai-runtime/aiMcpServer';
+// Namespace import so the page-coverage suite below can `vi.spyOn` the live
+// module export (see that suite's header for why a hoisted `vi.mock` cannot
+// work through the shared `app` singleton).
+import type { generateTopicsTurn } from '../ai-runtime/topicGenerate';
+import * as topicGenerateModule from '../ai-runtime/topicGenerate';
 import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
 import { app, env, envWith } from '../test/harness';
 import {
@@ -13,14 +21,6 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import { stableSessionCwd } from './aiChatRunner';
-import { __resetAiMcpListenerForTests } from './aiMcpServer';
-// Namespace import so the page-coverage suite below can `vi.spyOn` the live
-// module export (see that suite's header for why a hoisted `vi.mock` cannot
-// work through the shared `app` singleton).
-import type { generateTopicsTurn } from './topicGenerate';
-import * as topicGenerateModule from './topicGenerate';
 
 const J = { 'content-type': 'application/json' };
 

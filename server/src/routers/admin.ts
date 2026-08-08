@@ -8,7 +8,7 @@ import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { requestHasValidAdminToken } from '../auth/identity';
 import { adminTokenConfigured } from '../env';
-import { ApiError } from './_helpers';
+import { ApiError } from '../httpError';
 
 export const adminRouter = new Hono<AppEnv>();
 

@@ -136,8 +136,11 @@ const serverComponents: Component[] = [
   runtimeComponent(
     'server-bootstrap',
     'Composition root: Hono app wiring (middleware chain, router mounts, static serving) ' +
-      'and the Node process entry (env → bindings → app → listen).',
-    ['server/src/app.ts', 'server/src/main.ts'],
+      'and the Node process entry (env → bindings → app → listen). Also carries ' +
+      '`httpError.ts` (router-directory-decomposition D3): the `ApiError` class, app-level ' +
+      'plumbing mapped to a JSON response by the `onError` handler here and thrown by ' +
+      'every router — root-level, not a `routers/` layer member.',
+    ['server/src/app.ts', 'server/src/main.ts', 'server/src/httpError.ts'],
   ),
   runtimeComponent(
     'server-core',
@@ -154,6 +157,19 @@ const serverComponents: Component[] = [
       'surface (sessions, events, audio, transcribe, ai/aiV2, admin, auth, teams, shows, ' +
       'exports, companion, logImport, flows, static serving).',
     ['server/src/routers/**'],
+  ),
+  runtimeComponent(
+    'ai-runtime',
+    'The AI runtime (router-directory-decomposition D1/D6), split out of `routers/`: the ' +
+      'MCP tool server, the Claude-CLI and Agent-SDK subprocess runners and their ' +
+      'process-group kill ladder, the turn orchestrator and relay, the shared per-session ' +
+      'AI turn registry, the one-shot turn drivers backing topics/generate and ' +
+      'events/generate, and the generation prompt builder. Hono-free and injection-fed — ' +
+      'takes the session registry and hub facades from `@autologger/session-core`, plus ' +
+      'CLI path and budget/timeout values, as plain parameters; imports no `hono`, no ' +
+      '`appEnv`, and nothing under `server/src/routers/` (enforced by the boundary repo ' +
+      'test).',
+    ['server/src/ai-runtime/**'],
   ),
   runtimeComponent(
     'node-infra',
@@ -568,12 +584,19 @@ const relationships: Relationship[] = [
     evidence: [{ file: 'server/src/node/deepgram.ts', mustContain: ['fetch('] }],
   },
   {
-    id: 'routers-to-claude-cli',
-    from: 'routers',
+    // Renamed from `routers-to-claude-cli` (router-directory-decomposition
+    // D8): the CLI spawn lives in the AI runtime, not the router layer. The
+    // id appeared only here and in the git-ignored generated atlas — no
+    // nav-id or authored diagram referenced the old id — so the rename is
+    // pure, no other file needs updating.
+    id: 'ai-runtime-to-claude-cli',
+    from: 'ai-runtime',
     to: 'claude-cli',
     label: 'Spawns the claude CLI for AI chat, topics/generate, and events/generate',
     gated: 'CLAUDE_CLI_PATH',
-    evidence: [{ file: 'server/src/routers/aiChatRunner.ts', mustContain: ['spawn(', 'cliPath'] }],
+    evidence: [
+      { file: 'server/src/ai-runtime/aiChatRunner.ts', mustContain: ['spawn(', 'cliPath'] },
+    ],
   },
   {
     id: 'node-infra-to-yt-dlp',
@@ -665,13 +688,29 @@ const capabilityScopes: CapabilityScope[] = [
   // runtime feature owned by any component.
   { type: 'process', capability: 'cursor-agent-adapters' },
   // Component-scoped.
-  { type: 'component', capability: 'ai-topics-chat', components: ['routers', 'web-app'] },
+  {
+    type: 'component',
+    capability: 'ai-topics-chat',
+    // router-directory-decomposition: the chat HTTP/WS surface is routers
+    // (ai.ts); driving the CLI turn (aiChatRunner/aiTurn/aiChatRegistry/
+    // aiMcpServer) is ai-runtime — this capability genuinely spans both.
+    components: ['routers', 'ai-runtime', 'web-app'],
+  },
   {
     type: 'component',
     capability: 'ai-v2-dashboards',
-    components: ['routers', 'aiV2', 'web-app'],
+    // router-directory-decomposition: aiV2.ts (routers) drives the design
+    // turn via aiV2SdkSpawn/aiV2PendingQuestions/aiChatRegistry (ai-runtime).
+    components: ['routers', 'ai-runtime', 'aiV2', 'web-app'],
   },
-  { type: 'component', capability: 'auto-event-generation', components: ['routers', 'web-app'] },
+  {
+    type: 'component',
+    capability: 'auto-event-generation',
+    // router-directory-decomposition: events.ts (routers) drives the
+    // orchestrator turn via aiTurn/aiMcpServer/eventGeneratePrompt
+    // (ai-runtime).
+    components: ['routers', 'ai-runtime', 'web-app'],
+  },
   {
     type: 'component',
     capability: 'batch-audio-import',
@@ -716,7 +755,9 @@ const capabilityScopes: CapabilityScope[] = [
   {
     type: 'component',
     capability: 'topic-generation',
-    components: ['routers', 'session-core', 'web-app'],
+    // router-directory-decomposition: transcribe.ts's topics/generate route
+    // (routers) drives the one-shot turn via topicGenerate.ts (ai-runtime).
+    components: ['routers', 'ai-runtime', 'session-core', 'web-app'],
   },
   {
     type: 'component',

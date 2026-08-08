@@ -15,6 +15,9 @@ import {
 } from '@autologger/contract';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { allTranscriptPagesServed } from '../ai-runtime/aiMcpServer';
+import { generateTopicsTurn } from '../ai-runtime/topicGenerate';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -24,6 +27,7 @@ import {
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
 } from '../env';
+import { ApiError } from '../httpError';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
   exceedsGroupSizeLimit,
@@ -33,10 +37,7 @@ import {
   TranscriptGenerateError,
 } from '../node/generateTranscript';
 import { transcriptGenerationLock } from '../node/transcriptGenerationLock';
-import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import { allTranscriptPagesServed } from './aiMcpServer';
-import { generateTopicsTurn } from './topicGenerate';
+import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 

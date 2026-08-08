@@ -27,13 +27,13 @@ import { fileURLToPath } from 'node:url';
 import { SessionIndexStore } from '@autologger/catalog';
 import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '@autologger/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
+import { __resetAiMcpListenerForTests } from '../ai-runtime/aiMcpServer';
+import * as aiTurnModule from '../ai-runtime/aiTurn';
+import { EVENT_GENERATE_SYSTEM_PROMPT, INSTRUCTION_OPEN } from '../ai-runtime/eventGeneratePrompt';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import { stableSessionCwd } from './aiChatRunner';
-import { __resetAiMcpListenerForTests } from './aiMcpServer';
-import * as aiTurnModule from './aiTurn';
-import { EVENT_GENERATE_SYSTEM_PROMPT, INSTRUCTION_OPEN } from './eventGeneratePrompt';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
   new URL('../test/fixtures/fake-claude-events-success.mjs', import.meta.url),

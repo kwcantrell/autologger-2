@@ -21,7 +21,7 @@ import { BUILTIN_STUDIO_ORDER, normalizeEmail, ValidationError } from '@autologg
 import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
-import { ApiError } from './_helpers';
+import { ApiError } from '../httpError';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422
  * convention) for this family's body validation — "validation errors 400" on

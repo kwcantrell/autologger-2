@@ -2,25 +2,10 @@
 // per-session hub resolution, timecode context, and marked-at parsing.
 
 import type { Row } from '@autologger/catalog';
-import type { SessionHubFacade } from '@autologger/session-core';
+import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
-
-/** Maps to an HTTP response in app.onError — mirrors FastAPI's HTTPException. */
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly detail: string,
-  ) {
-    super(detail);
-    this.name = 'ApiError';
-  }
-}
-
-export interface TimecodeCtx {
-  frameRate: number;
-  startOffsetFrames: number;
-}
+import { ApiError } from '../httpError';
 
 export function timecodeCtx(row: Row): TimecodeCtx {
   return {

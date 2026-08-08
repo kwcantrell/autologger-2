@@ -189,7 +189,7 @@ export type AiV2DesignRequest = z.infer<typeof aiV2DesignRequestSchema>;
 //     agent-authored display text.
 //   - `kind: 'text'` is the free-text fallback the user typed instead.
 // `turnId`/`requestId` are the ≥128-bit CSPRNG ids minted server-side
-// (server/src/routers/aiV2PendingQuestions.ts) and echoed back by the client
+// (server/src/ai-runtime/aiV2PendingQuestions.ts) and echoed back by the client
 // verbatim; the bound is generous (they're hex strings) but finite so a
 // malformed body fails schema validation rather than reaching the registry.
 export const aiV2QuestionAnswerItemSchema = z.discriminatedUnion('kind', [

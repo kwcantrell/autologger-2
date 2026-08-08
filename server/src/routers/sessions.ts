@@ -37,10 +37,11 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
+import { ApiError } from '../httpError';
 import { youtubeImportGuard } from '../node/youtubeImportGuard';
 import { YOUTUBE_IMPORT_TMP_PREFIX } from '../node/youtubeImportScratch';
 import { fetchYoutubeAudio, YtDlpError } from '../node/ytdlp';
-import { ApiError, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();

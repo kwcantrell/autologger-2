@@ -692,6 +692,13 @@ describe('packages/* third-party bare specifiers are declared in the manifest (t
 // `AuthStoreFacade`, `ShowsStoreFacade`, `StudioRegistryFacade`,
 // `SessionIndexStoreFacade`, `ProfileAssemblerFacade`); likewise
 // `createCatalog`/`CatalogDb` don't match `\bCatalog\b` for the same reason.
+// This argument is about which identifiers appear IN a matched clause, a
+// dimension orthogonal to which specifier string routed the clause to
+// identifier-matching in the first place (design D7's prefix match on
+// `CONCRETE_PACKAGE_SPECIFIERS`) — prefix-matching the specifier does not
+// change how the clause's own text is scanned, so the argument still holds
+// unchanged once subpath specifiers are also routed into this same
+// identifier check.
 const CONCRETE_PERSISTENCE_IDENTIFIERS = [
   'SessionHub',
   'SessionHubRegistry',
@@ -708,16 +715,67 @@ const CONCRETE_PACKAGE_SPECIFIERS = new Set<string>([
   '@autologger/catalog',
 ]);
 
+/** True when `specifier` names one of the concrete-bearing packages, either
+ * as its bare specifier or through a subpath (design D7): every package
+ * manifest declares a `./*` export map entry pointing at `./src/*.ts`, so
+ * `@autologger/session-core/SessionHub` genuinely resolves and reaches the
+ * concrete class same as the bare specifier — an exact-match `Set.has` check
+ * lets that subpath slip past unflagged. */
+function specifierNamesConcretePackage(specifier: string): boolean {
+  for (const pkg of CONCRETE_PACKAGE_SPECIFIERS) {
+    if (specifier === pkg || specifier.startsWith(`${pkg}/`)) return true;
+  }
+  return false;
+}
+
 const COMPOSITION_ROOT_REL = 'node/config.ts';
 
-/** Captures an `import`'s clause text (between `import` and `from`) alongside
- * its specifier — a superset of `extractImportSpecifiers`'s `fromClauseRe`
- * (which discards the clause), needed here because the violation is about
- * WHICH identifiers a clause names, not just which module it names. */
-const IMPORT_CLAUSE_RE = /\bimport\b([^;]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+/** Captures an `import`/`export` clause's text (between the keyword and
+ * `from`) alongside its specifier — a superset of `extractImportSpecifiers`'s
+ * `fromClauseRe` (which discards the clause), needed here because the
+ * violation is about WHICH identifiers a clause names, not just which module
+ * it names. Widened from `\bimport\b` to `\b(?:import|export)\b` (design D7)
+ * so a re-export clause is scanned too, not only an import clause — a bare
+ * `import`-only match let a module re-export a concrete identifier from one
+ * of the packages above without ever writing an import clause itself.
+ *
+ * The keyword alternation MUST stay non-capturing (`(?:...)`): a capturing
+ * form shifts every later group index by one, so the code below that reads
+ * group 1 as the clause and group 2 as the specifier would instead read the
+ * matched keyword as the clause and the clause text as the "specifier" —
+ * which can never equal a package name, so `specifierNamesConcretePackage`
+ * would always return false and the whole check would silently pass on
+ * every input. That failure mode produces no error and no red test; it was
+ * only caught by writing task 4.3's mutation coverage. */
+const IMPORT_CLAUSE_RE = /\b(?:import|export)\b([^;]*?)\bfrom\s*['"]([^'"]+)['"]/g;
+
+/** True when a captured clause is a wildcard/namespace form against one of
+ * the concrete-bearing packages (design D7) — a bare `*`, optionally preceded
+ * by a `type` keyword and optionally followed by an `as <name>` binding, with
+ * no other named identifiers in the clause. This form is rejected outright
+ * rather than identifier-matched: a namespace binding never spells the
+ * concrete class's name in the clause itself (the class is reached as a
+ * property access on the bound identifier, e.g. `binding.SessionHub`), so the
+ * per-identifier word-boundary scan below cannot see it — and both packages'
+ * barrels re-export the concrete classes as ordinary values, so any namespace
+ * or full re-export clause against them reaches every concrete class
+ * transitively. The leading `(?:type\s+)?` is load-bearing, not cosmetic: a
+ * whole-branch audit found `import type * as sc from '...'` and `export type
+ * * from '...'` both defeated the original type-blind pattern — the `type`
+ * keyword sat between the anchor and the `*`, so `^\s*\*` never matched. Both
+ * forms still reach every concrete class transitively (a type-only namespace
+ * import still names the class as a type, which this check's own composition
+ * root exemption and the facade-suffix argument above are silent on — the
+ * check treats "reaches the identifier at all" as the property to reject, not
+ * "reaches it as a value"). */
+function clauseIsWildcard(clause: string): boolean {
+  return /^\s*(?:type\s+)?\*(?:\s+as\s+\w+)?\s*$/.test(clause);
+}
 
 interface ConcreteImportViolation {
   file: string;
+  /** The matched concrete identifier name, or `'*'` for a wildcard/namespace
+   * clause rejected without needing to see a named identifier. */
   identifier: string;
   specifier: string;
 }
@@ -744,7 +802,11 @@ function checkInterfaceOnlyConsumption(repoRoot: string): ConcreteImportViolatio
     for (const m of content.matchAll(IMPORT_CLAUSE_RE)) {
       const clause = m[1];
       const specifier = m[2];
-      if (!CONCRETE_PACKAGE_SPECIFIERS.has(specifier)) continue;
+      if (!specifierNamesConcretePackage(specifier)) continue;
+      if (clauseIsWildcard(clause)) {
+        violations.push({ file: relOf(repoRoot, file), identifier: '*', specifier });
+        continue;
+      }
       for (const identifier of CONCRETE_PERSISTENCE_IDENTIFIERS) {
         if (new RegExp(`\\b${identifier}\\b`).test(clause)) {
           violations.push({ file: relOf(repoRoot, file), identifier, specifier });
@@ -758,6 +820,186 @@ function checkInterfaceOnlyConsumption(repoRoot: string): ConcreteImportViolatio
 describe('interface-only consumption of persistence facades (task 6.1, design D3)', () => {
   it('only node/config.ts imports the concrete persistence identifiers among server/src production files', () => {
     expect(checkInterfaceOnlyConsumption(REPO_ROOT)).toEqual([]);
+  });
+});
+
+// Mutation coverage for checkInterfaceOnlyConsumption (task 4.3, design D7):
+// the check above had, until this phase, exactly one assertion and it ran
+// only against the live tree — a refactor that made the check vacuous (see
+// the non-capturing-group note on IMPORT_CLAUSE_RE above) would still pass
+// that assertion, since the live tree happens to hold zero violations either
+// way. These synthetic trees exercise the function's `repoRoot` parameter
+// directly, so no permanent violation fixture enters the real tree; cleaned
+// up per-test via `afterEach`, same idiom `checkPackagesBoundary`'s
+// synthetic-tree describe block above uses.
+describe('checkInterfaceOnlyConsumption (mutation check on a synthetic server/src tree)', () => {
+  let tmpRoot: string;
+
+  function writeTree(root: string, files: Record<string, string>) {
+    for (const [rel, content] of Object.entries(files)) {
+      const full = path.join(root, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+  }
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('a tree with no persistence-package imports at all produces zero violations', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-clean-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/sessions.ts': `export const anotherMarker = 1;\n`,
+    });
+    expect(checkInterfaceOnlyConsumption(tmpRoot)).toEqual([]);
+  });
+
+  it('negative controls do not fire: a facade import, an `export type` clause, and the composition root importing concretes legitimately', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-negative-'));
+    writeTree(tmpRoot, {
+      // Composition root: the one production file allowed to name a
+      // concrete identifier directly.
+      'server/src/node/config.ts': [
+        "import { SessionHubRegistry } from '@autologger/session-core';",
+        'export const registry = SessionHubRegistry;',
+        '',
+      ].join('\n'),
+      // Facade import elsewhere: the `Facade`-suffixed identifier abuts the
+      // bare concrete name with no word boundary between them, so the
+      // per-identifier scan must not trip on it.
+      'server/src/routers/facadeConsumer.ts': [
+        "import type { SessionHubRegistryFacade } from '@autologger/session-core';",
+        'export const useIt = (f: SessionHubRegistryFacade) => f;',
+        '',
+      ].join('\n'),
+      // A type-only re-export clause naming something other than a concrete
+      // identifier: exercises the widened keyword alternation on a benign
+      // re-export, distinct from the facade-import case above.
+      'server/src/routers/typeReExport.ts': [
+        "export type { SomeUnrelatedType } from '@autologger/session-core';",
+        '',
+      ].join('\n'),
+    });
+    expect(checkInterfaceOnlyConsumption(tmpRoot)).toEqual([]);
+  });
+
+  it('DOES flag a bare concrete import outside the composition root', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-bare-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import { SessionHubRegistry } from '@autologger/session-core';",
+        'export const x = SessionHubRegistry;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some(
+        (v) => v.identifier === 'SessionHubRegistry' && v.specifier === '@autologger/session-core',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES flag a deep-subpath concrete import (specifier prefix match closes the exact-match hole)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-subpath-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import { SessionHub } from '@autologger/session-core/SessionHub';",
+        'export const x = SessionHub;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some(
+        (v) =>
+          v.identifier === 'SessionHub' && v.specifier === '@autologger/session-core/SessionHub',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES flag a re-export clause naming a concrete identifier (widened keyword alternation closes the re-export hole)', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-reexport-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "export { SessionHub } from '@autologger/session-core';",
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some(
+        (v) => v.identifier === 'SessionHub' && v.specifier === '@autologger/session-core',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES flag a namespace import wildcard clause (`import * as` binding) against a concrete-bearing package', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-wildcard-import-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import * as sc from '@autologger/session-core';",
+        'export const x = sc;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
+    ).toBe(true);
+  });
+
+  it('DOES flag a wildcard re-export clause (`export *`) against a concrete-bearing package', () => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-wildcard-export-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': ["export * from '@autologger/session-core';", ''].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
+    ).toBe(true);
+  });
+
+  it('DOES flag a type-only namespace import wildcard clause (`import type * as`) against a concrete-bearing package', () => {
+    // Whole-branch audit finding: the original clauseIsWildcard anchor
+    // (`^\s*\*...`) never matched once a `type` keyword sat between the
+    // anchor and the `*`, so this exact shape passed unflagged before the
+    // fix.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-wildcard-type-import-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': [
+        "import type * as sc from '@autologger/session-core';",
+        'export type UseIt = sc.SessionHub;',
+        '',
+      ].join('\n'),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
+    ).toBe(true);
+  });
+
+  it('DOES flag a type-only wildcard re-export clause (`export type *`) against a concrete-bearing package', () => {
+    // Same finding as above, re-export shape.
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'iface-only-wildcard-type-export-'));
+    writeTree(tmpRoot, {
+      'server/src/node/config.ts': `export const marker = true;\n`,
+      'server/src/routers/bad.ts': ["export type * from '@autologger/session-core';", ''].join(
+        '\n',
+      ),
+    });
+    const violations = checkInterfaceOnlyConsumption(tmpRoot);
+    expect(
+      violations.some((v) => v.identifier === '*' && v.specifier === '@autologger/session-core'),
+    ).toBe(true);
   });
 });
 
@@ -804,7 +1046,15 @@ describe('interface-only consumption of persistence facades (task 6.1, design D3
 // int-test-only. No positive directory pin ever named `session` alone (the
 // pin below was `aiV2 -> session`, retired together with this prune — see
 // the removed assertion note below).
-const SERVER_SRC_LAYER_DIRS = ['node', 'auth', 'middleware', 'routers', 'aiV2', 'logImport'];
+const SERVER_SRC_LAYER_DIRS = [
+  'node',
+  'auth',
+  'middleware',
+  'routers',
+  'aiV2',
+  'logImport',
+  'ai-runtime',
+];
 
 /** Production-only `.ts` files under `dir` (excludes `*.test.ts` and
  * `*.int.test.ts` — both end in `.test.ts`). */
@@ -867,5 +1117,389 @@ describe('server/src directory import graph — real repo (task 6.2: former cycl
     // auth` is unaffected by 4.3 and is the sole surviving positive directory
     // pin this guard restates.
     expect(graph.get('node')?.has('auth')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 2.5 — the three layering-enforcement checks (design D6; spec
+// "package-architecture" requirement "The server app's module directories
+// have declared, test-enforced roles"): the panel's most convergent finding
+// was that the draft declared `routers/` HTTP-only and the AI runtime
+// Hono-free while shipping no mechanism. All three reuse
+// `walkProductionTsFiles`/`extractImportSpecifiers`/`relOf` above rather than
+// deriving a parallel walker. Negative-case coverage for checks (1) and (2)
+// is a one-time, working-tree-only demonstration recorded in
+// `.apply/ledger.md` (task 2.6), matching this file's existing discipline
+// (see the file-header note): a repo-invariant guard doesn't ship permanent
+// fixtures proving its own violations.
+//
+// RESIDUAL BYPASSES (design D6, matching D7's stated-not-closed posture):
+// like every check in this file, these are textual scans over import/export
+// specifiers, not a real parser or a runtime trace. A module that obtains a
+// forbidden dependency dynamically at runtime rather than through ordinary
+// static import syntax, that evaluates code built from a string at runtime,
+// or that reaches the forbidden dependency indirectly by importing a third,
+// otherwise-innocuous-looking module which itself holds that dependency, is
+// invisible to a specifier-text scan. This was demonstrated during the
+// phase-2 review (recorded in `.apply/ledger.md`) and is a known, accepted
+// limit of this style of guard, not something a future edit here should try
+// to silently patch over with a parallel ad hoc scan.
+// ---------------------------------------------------------------------------
+
+const AI_RUNTIME_DIR_REL = 'ai-runtime';
+const ROUTERS_DIR_REL = 'routers';
+
+function isHonoSpecifier(specifier: string): boolean {
+  return specifier === 'hono' || specifier.startsWith('hono/') || specifier.startsWith('@hono/');
+}
+
+/** True when a relative `specifier`, resolved from `fromFile`, lands under
+ * `server/src/<targetDirRel>/` — same extensionless-resolution fallback
+ * `serverSrcDirectoryImportGraph` above uses (append `.ts` when the
+ * extensionless path doesn't exist). Non-relative specifiers never match. */
+function relativeSpecifierResolvesUnderDir(
+  srcRoot: string,
+  fromFile: string,
+  specifier: string,
+  targetDirRel: string,
+): boolean {
+  if (!specifier.startsWith('.')) return false;
+  let resolved = path.resolve(path.dirname(fromFile), specifier);
+  if (!fs.existsSync(resolved) && fs.existsSync(`${resolved}.ts`)) {
+    resolved = `${resolved}.ts`;
+  }
+  const targetDir = path.join(srcRoot, targetDirRel);
+  return resolved === targetDir || resolved.startsWith(targetDir + path.sep);
+}
+
+/** True when a relative `specifier`, resolved from `fromFile`, names
+ * `server/src/appEnv.ts` itself (the file, not merely something under a
+ * directory of that name — `appEnv.ts` is a root-level file). */
+function relativeSpecifierResolvesToAppEnv(
+  srcRoot: string,
+  fromFile: string,
+  specifier: string,
+): boolean {
+  if (!specifier.startsWith('.')) return false;
+  let resolved = path.resolve(path.dirname(fromFile), specifier);
+  if (!fs.existsSync(resolved) && fs.existsSync(`${resolved}.ts`)) {
+    resolved = `${resolved}.ts`;
+  }
+  return resolved === path.join(srcRoot, 'appEnv.ts');
+}
+
+interface AiRuntimePurityViolation {
+  file: string;
+  specifier: string;
+  detail: string;
+}
+
+/** Check (1) — runtime purity (spec scenario "AI runtime Hono-freedom is
+ * continuously enforced"): no production file under `server/src/ai-runtime/`
+ * may import `hono`, a `hono/*` subpath, a `@hono/*` scoped package,
+ * `server/src/appEnv` by relative specifier, or anything resolving under
+ * `server/src/routers/`. */
+function checkAiRuntimePurity(repoRoot: string): AiRuntimePurityViolation[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  const runtimeDir = path.join(srcRoot, AI_RUNTIME_DIR_REL);
+  const violations: AiRuntimePurityViolation[] = [];
+  for (const file of walkProductionTsFiles(runtimeDir)) {
+    const relFile = relOf(repoRoot, file);
+    const content = fs.readFileSync(file, 'utf8');
+    for (const specifier of extractImportSpecifiers(content)) {
+      if (isHonoSpecifier(specifier)) {
+        violations.push({ file: relFile, specifier, detail: `imports ${specifier}` });
+      } else if (relativeSpecifierResolvesToAppEnv(srcRoot, file, specifier)) {
+        violations.push({
+          file: relFile,
+          specifier,
+          detail: 'imports server/src/appEnv by relative specifier',
+        });
+      } else if (relativeSpecifierResolvesUnderDir(srcRoot, file, specifier, ROUTERS_DIR_REL)) {
+        violations.push({
+          file: relFile,
+          specifier,
+          detail: 'imports a module resolving under server/src/routers/',
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+describe('ai-runtime Hono-freedom — real repo (task 2.5, design D6, spec scenario "AI runtime Hono-freedom is continuously enforced")', () => {
+  it('no production file under server/src/ai-runtime/ imports hono, hono/*, @hono/*, appEnv, or anything under server/src/routers/', () => {
+    expect(checkAiRuntimePurity(REPO_ROOT)).toEqual([]);
+  });
+});
+
+/** Check (2) — router membership (spec scenario "Routers directory holds
+ * only HTTP-layer modules"): every production module ANYWHERE under
+ * `server/src/routers/` — recursively, not just its direct children — must
+ * import `hono`/`hono/*`/`@hono/*` or `appEnv`. `walkProductionTsFiles`
+ * already recurses, so this walks every subdirectory too; there are none
+ * today, but a file placed one directory deeper (e.g.
+ * `server/src/routers/sub/whatever.ts`) is still attributed to `routers` by
+ * both `serverSrcDirectoryImportGraph` above and the atlas's
+ * `server/src/routers/**` glob, so this check must see it too — a
+ * direct-children-only filter would make the check blind to exactly the
+ * non-HTTP cluster this phase exists to foreclose, one directory deeper. */
+function checkRouterMembership(repoRoot: string): string[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  const routersDir = path.join(srcRoot, ROUTERS_DIR_REL);
+  const violations: string[] = [];
+  for (const file of walkProductionTsFiles(routersDir)) {
+    const content = fs.readFileSync(file, 'utf8');
+    const specifiers = extractImportSpecifiers(content);
+    const hasHono = specifiers.some(isHonoSpecifier);
+    const hasAppEnv = specifiers.some((s) => relativeSpecifierResolvesToAppEnv(srcRoot, file, s));
+    if (!hasHono && !hasAppEnv) violations.push(relOf(repoRoot, file));
+  }
+  return violations;
+}
+
+describe('routers/ HTTP-layer membership — real repo (task 2.5, design D6, spec scenario "Routers directory holds only HTTP-layer modules")', () => {
+  it('every production module anywhere under server/src/routers/ imports hono/hono-subpath/@hono-subpath or appEnv', () => {
+    expect(checkRouterMembership(REPO_ROOT)).toEqual([]);
+  });
+});
+
+/** The moved AI-runtime cluster's basenames (this phase's move, design D2) —
+ * the spec scenario's second conjunct names these 11 explicitly: "...and
+ * none of the AI runtime modules (...) is among them" [the router-membership
+ * modules]. `checkRouterMembership` above only catches a reintroduced file
+ * of this shape TRANSITIVELY, if it also happens to stay Hono-free — a mover
+ * who (re)adds a `hono`/`appEnv` import alongside one of these basenames
+ * would satisfy check (2) while still violating the named scenario. This
+ * list is asserted against directly below rather than trusted to that
+ * transitive coincidence. */
+const AI_RUNTIME_MOVED_BASENAMES = [
+  'aiMcpServer.ts',
+  'aiV2SdkSpawn.ts',
+  'aiChatRunner.ts',
+  'aiV2PendingQuestions.ts',
+  'aiTurnOrchestrator.ts',
+  'aiTurn.ts',
+  'aiChatRelay.ts',
+  'topicGenerate.ts',
+  'aiChatRegistry.ts',
+  'eventGeneratePrompt.ts',
+  'processGroupKill.ts',
+] as const;
+
+describe('routers/ excludes the moved AI-runtime cluster by name — real repo (task 2.5, design D6, spec scenario "Routers directory holds only HTTP-layer modules")', () => {
+  it('none of the 11 named AI runtime module basenames exists anywhere under server/src/routers/', () => {
+    const srcRoot = path.join(REPO_ROOT, 'server', 'src');
+    const routersDir = path.join(srcRoot, ROUTERS_DIR_REL);
+    const found = walkTsFiles(routersDir)
+      .map((f) => path.basename(f))
+      .filter((name) => (AI_RUNTIME_MOVED_BASENAMES as readonly string[]).includes(name));
+    expect(found).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ApiError-at-app-level enforcement (design D3; spec "package-architecture"
+// requirement "The server app's module directories have declared,
+// test-enforced roles" — the third of its three rules: "the composition
+// root's error mapper does not import upward into the router layer"). Landed
+// by a whole-branch-audit fix wave: the spec claimed all three rules "SHALL
+// be enforced by the boundary repo test, not by one-time inspection," but
+// only rules (a) routers-HTTP-only and (b) ai-runtime-home/Hono-freedom had
+// checks — this class had none, so a future PR could reintroduce `ApiError`
+// inside `server/src/routers/` (or re-import it from there) with every gate
+// green. Reuses `IMPORT_CLAUSE_RE` (the interface-only check's clause+
+// specifier extractor, above) and `relativeSpecifierResolvesUnderDir` (the
+// ai-runtime purity check's resolver, below) rather than deriving new
+// primitives — same "extend, never fork" discipline as every other check in
+// this file. A second fix wave (final review of this branch) closed a
+// vacuity gap the first wave left open: the original check only asserted
+// the two negative halves, so a synthetic tree where `ApiError` didn't
+// exist anywhere passed cleanly even though the requirement's positive
+// clause ("SHALL live at app level") was unmet. `checkApiErrorHome` below
+// now also asserts `server/src/httpError.ts` declares the class.
+// ---------------------------------------------------------------------------
+
+interface ApiErrorHomeViolation {
+  file: string;
+  kind: 'declared-in-routers' | 'import-resolves-into-routers' | 'not-declared-at-app-level';
+  detail: string;
+}
+
+const HTTP_ERROR_FILE_REL = 'httpError.ts';
+
+/** Matches either shape the spec scenario's "declares a class named
+ * ApiError" covers: the ordinary `class ApiError` declaration, or a class
+ * expression assigned directly to that name (`const`/`let`/`var ApiError =
+ * class ...`) — the shape a contributor reaches for when a factory or a
+ * mixin-style base feels more idiomatic than `class ApiError extends Error`.
+ * This is also the regex the positive app-level check below reuses to
+ * confirm `httpError.ts` itself declares the class, so widening it here
+ * strengthens both the positive and the negative assertions identically.
+ * Still textual, not a parser: an aliased declaration assigned under a
+ * different local name and re-exported as `ApiError`, or a declaration
+ * built through a factory function, is invisible to it — see the residual
+ * note on `checkApiErrorHome` below for the full bypass list this check
+ * accepts rather than closes. */
+const API_ERROR_CLASS_DECL_RE = /\bclass\s+ApiError\b|\b(?:const|let|var)\s+ApiError\s*=\s*class\b/;
+
+/** Three checks over `server/src`: (1) `server/src/httpError.ts` exists and
+ * declares a class named `ApiError` — the requirement's positive half
+ * ("SHALL live at app level"), without which a synthetic tree where
+ * `ApiError` doesn't exist anywhere would pass the two negative checks
+ * below vacuously, the same non-vacuity failure mode the layering
+ * enumeration (D6 check 3) exists to foreclose; (2) no production file
+ * under `server/src/routers/` declares a class named `ApiError` — the class
+ * must not be reintroduced at its old home; (3) no `server/src` production
+ * file's `ApiError` import specifier resolves into `server/src/routers/` —
+ * the composition root's error mapper, and every router that throws it,
+ * must import from app level, never from the router layer they themselves
+ * live in. All three are textual scans, same limits as every other check in
+ * this file (no real parser, no runtime trace).
+ *
+ * RESIDUAL BYPASSES, stated rather than closed (matching D6/D7's posture):
+ * a two-step launder — a `routers/` file re-exports `ApiError` under its own
+ * name, and a second file reaches the class through a namespace import of
+ * that re-exporting module (`import * as helpers from './routers/_helpers';
+ * helpers.ApiError`) — defeats both the class-declaration scan (the class
+ * is declared once, at app level, satisfying check 1) and the import-clause
+ * scan (the clause names no `ApiError` identifier, only the namespace
+ * binding). The sibling `checkInterfaceOnlyConsumption` (D7) closes the
+ * analogous hole by rejecting wildcard/namespace clauses against its
+ * concrete-bearing packages outright — that treatment is deliberately NOT
+ * applied here: `checkInterfaceOnlyConsumption` targets two specific
+ * packages that legitimate code has no reason to namespace-import at all,
+ * while a namespace import of an ordinary `server/src` module such as
+ * `./routers/_helpers` is plausibly legitimate code in this repo (no
+ * concrete-bearing-package restriction exists over `server/src` files
+ * generally), so rejecting every namespace import into `routers/` risks a
+ * false positive on honest code rather than closing a real gap. Also
+ * unreached: an aliased re-export (`export { ApiError as HttpError } from
+ * './httpError'` then a routers file re-exporting `HttpError` under a
+ * different local name again), and a dynamically-constructed import
+ * specifier. And, same hazard class the widened `IMPORT_CLAUSE_RE`-based
+ * checks in this file already document: this is a raw-text scan with no
+ * comment/string stripping, so a prose comment in a routers file that
+ * happens to spell `class ApiError` or `const ApiError = class` — even
+ * while documenting this very rule — would red the gate on a false
+ * positive. Never quote either declaration form inside a `server/src`
+ * production file's comments. */
+function checkApiErrorHome(repoRoot: string): ApiErrorHomeViolation[] {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  const violations: ApiErrorHomeViolation[] = [];
+
+  const httpErrorFile = path.join(srcRoot, HTTP_ERROR_FILE_REL);
+  const httpErrorContent = fs.existsSync(httpErrorFile)
+    ? fs.readFileSync(httpErrorFile, 'utf8')
+    : '';
+  if (!API_ERROR_CLASS_DECL_RE.test(httpErrorContent)) {
+    violations.push({
+      file: relOf(repoRoot, httpErrorFile),
+      kind: 'not-declared-at-app-level',
+      detail: 'server/src/httpError.ts does not declare a class named ApiError',
+    });
+  }
+
+  const routersDir = path.join(srcRoot, ROUTERS_DIR_REL);
+  for (const file of walkProductionTsFiles(routersDir)) {
+    const content = fs.readFileSync(file, 'utf8');
+    if (API_ERROR_CLASS_DECL_RE.test(content)) {
+      violations.push({
+        file: relOf(repoRoot, file),
+        kind: 'declared-in-routers',
+        detail: 'declares a class named ApiError under server/src/routers/',
+      });
+    }
+  }
+
+  for (const file of walkServerSrcProductionFiles(repoRoot)) {
+    const content = fs.readFileSync(file, 'utf8');
+    for (const m of content.matchAll(IMPORT_CLAUSE_RE)) {
+      const clause = m[1];
+      const specifier = m[2];
+      if (!/\bApiError\b/.test(clause)) continue;
+      if (relativeSpecifierResolvesUnderDir(srcRoot, file, specifier, ROUTERS_DIR_REL)) {
+        violations.push({
+          file: relOf(repoRoot, file),
+          kind: 'import-resolves-into-routers',
+          detail: `imports ApiError from a specifier resolving under server/src/routers/: ${specifier}`,
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+describe('ApiError lives at app level, not in routers/ — real repo (design D3, spec scenario "The error mapper does not import upward into routers")', () => {
+  it('server/src/httpError.ts declares ApiError, no production file under server/src/routers/ declares ApiError, and no ApiError import resolves into server/src/routers/', () => {
+    expect(checkApiErrorHome(REPO_ROOT)).toEqual([]);
+  });
+});
+
+/** Directories legitimately excluded from the `SERVER_SRC_LAYER_DIRS`
+ * completeness comparison despite containing production `.ts` files by
+ * `walkProductionTsFiles`'s filter (files not ending `.test.ts`) — named and
+ * reviewed, per the spec scenario's "or named on an explicit exemption
+ * list". `test/` holds test infrastructure (`harness.ts`, `apiFixtures.ts`,
+ * `setup.int.ts`, ...) consumed only by test files, never by app production
+ * code; the directory-import-graph section's own header comment above
+ * records the same reasoning for why it (and root-level files) are not
+ * graph nodes — composition-root/test-infra, not a layering directory.
+ * Root-level files such as `app.ts`/`appEnv.ts`/`env.ts`/`main.ts` never
+ * enter this comparison at all: they are direct children of `server/src`,
+ * not directories, so they can't be "a directory containing production
+ * files" in the first place — no exemption entry is needed for them. */
+const SERVER_SRC_LAYER_DIR_EXEMPTIONS = new Set<string>(['test']);
+
+interface LayerDirEnumerationResult {
+  /** Directories under `server/src` holding production files that are
+   * neither enumerated in `SERVER_SRC_LAYER_DIRS` nor on the exemption
+   * list — the "new/renamed directory silently invisible" hole. */
+  unenumeratedNonExempt: string[];
+  /** Directories enumerated in `SERVER_SRC_LAYER_DIRS` that hold zero
+   * production files — the "renamed/emptied directory passes vacuously"
+   * hole `walkTsFiles`'s missing-directory swallow creates. */
+  enumeratedButEmpty: string[];
+}
+
+/** Check (3) — enumeration completeness and non-vacuity (spec scenario "The
+ * layering enumeration matches the filesystem and is non-vacuous"). */
+function checkServerSrcLayerDirEnumeration(repoRoot: string): LayerDirEnumerationResult {
+  const srcRoot = path.join(repoRoot, 'server', 'src');
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(srcRoot, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  const topLevelDirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+
+  const unenumeratedNonExempt: string[] = [];
+  for (const dirName of topLevelDirs) {
+    if (SERVER_SRC_LAYER_DIR_EXEMPTIONS.has(dirName)) continue;
+    if (SERVER_SRC_LAYER_DIRS.includes(dirName)) continue;
+    const hasProduction = walkProductionTsFiles(path.join(srcRoot, dirName)).length > 0;
+    if (hasProduction) unenumeratedNonExempt.push(dirName);
+  }
+
+  const enumeratedButEmpty: string[] = [];
+  for (const dirName of SERVER_SRC_LAYER_DIRS) {
+    const hasProduction = walkProductionTsFiles(path.join(srcRoot, dirName)).length > 0;
+    if (!hasProduction) enumeratedButEmpty.push(dirName);
+  }
+
+  return { unenumeratedNonExempt, enumeratedButEmpty };
+}
+
+describe('server/src layering enumeration is complete and non-vacuous — real repo (task 2.5, design D6, spec scenario "The layering enumeration matches the filesystem and is non-vacuous")', () => {
+  it('every server/src directory holding production files is enumerated in SERVER_SRC_LAYER_DIRS or named on the exemption list', () => {
+    const { unenumeratedNonExempt } = checkServerSrcLayerDirEnumeration(REPO_ROOT);
+    expect(unenumeratedNonExempt).toEqual([]);
+  });
+
+  it('every directory enumerated in SERVER_SRC_LAYER_DIRS contains at least one production file', () => {
+    const { enumeratedButEmpty } = checkServerSrcLayerDirEnumeration(REPO_ROOT);
+    expect(enumeratedButEmpty).toEqual([]);
   });
 });

@@ -9,7 +9,8 @@ import type { AudioSegmentMeta } from '@autologger/session-core';
 import { InvalidRangeError } from '@autologger/storage';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { ApiError, getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
+import { ApiError } from '../httpError';
+import { getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
 export const audioRouter = new Hono<AppEnv>();
 

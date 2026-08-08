@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError } from './_helpers';
+import { ApiError } from '../httpError';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
   enforceGroupSizeLimit,

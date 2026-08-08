@@ -20,7 +20,7 @@
 // TIME, inside the handler body, and never holds the handle across an
 // `await` — the idle-eviction sweeper can close a hub between calls on a
 // long-running turn. This mirrors the identical invariant already shipped
-// in `../routers/aiMcpServer.ts` (`buildSessionMcpServer`) for the AI chat's
+// in `../ai-runtime/aiMcpServer.ts` (`buildSessionMcpServer`) for the AI chat's
 // loopback MCP tools; the SDK's in-process `createSdkMcpServer` is a
 // different transport (no HTTP hop, no bearer token) but the same hub-
 // resolution discipline applies because the SAME idle-eviction sweeper can

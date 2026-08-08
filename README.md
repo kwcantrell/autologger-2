@@ -506,6 +506,10 @@ server/src/
                           types Ports.sessions/Variables.catalog with the session-core/catalog
                           packages' facade interfaces and names ZERO concrete persistence class
                           (port interfaces + Config live in packages/ports)
+  httpError.ts           ApiError — app-level HTTP error class (status + detail), thrown by
+                          every router and mapped to `{detail}` by app.onError; lives at app
+                          root rather than under routers/ because it is composition-root/
+                          app-shell plumbing, not a layer (router-directory-decomposition D3)
   node/
     config.ts            Composition root: Ports + Config from process env (DATA_DIR layout,
                           wiring) — the sole production module naming the concrete
@@ -522,7 +526,8 @@ server/src/
                              constructs the per-request Catalog via @autologger/catalog's createCatalog
     ipAllowlist.ts           CIDR allowlist on client IP                   (← app.py ip_allowlist_middleware)
   routers/
-    _helpers.ts              ApiError, session access gate, hub lookup, marked-at parsing
+    _helpers.ts              session access gate, hub lookup, timecode context, marked-at
+                              parsing (ApiError moved to httpError.ts at app root)
     auth.ts                  /auth/google/start|callback, /auth/logout
     profile.ts               GET /api/studio, GET|PUT /api/profile
     shows.ts                 GET|POST /api/shows
@@ -533,6 +538,38 @@ server/src/
     transcribe.ts             transcript-words + topics CRUD; generate/csv (503)
     exports.ts                export.csv / export.jsonl (← export.py)
     admin.ts                  ADMIN_TOKEN-gated users + studio-definitions admin
+  ai-runtime/               The AI runtime (router-directory-decomposition D1): MCP tool
+                             server, CLI/Agent-SDK subprocess runners, turn orchestration, and
+                             one-shot generate-turn drivers, moved out of routers/ so the
+                             directory states what it is. Hono-free and injection-fed (no
+                             `Context`, no `AppEnv` — registry/cliPath/budget/timeout arrive as
+                             constructor args); imports no route module and no `_helpers`.
+                             Boundary-enforced: packageBoundaries.repo.test.ts fails the build
+                             if a `hono`/`appEnv`/`routers/` import lands here, or if one of
+                             these basenames reappears under routers/.
+    aiMcpServer.ts            In-process, loopback-only MCP tool-server listener — registers
+                               the session-scoped toolset the CLI/Agent-SDK turn calls into
+                               (ai-topics-chat design D3)
+    aiChatRunner.ts           Claude CLI subprocess runner: locked-down argv builder + spawn
+                               (shell:false, message via stdin, never argv)
+    aiV2SdkSpawn.ts           Agent SDK subprocess runner: the one call site that reaches the
+                               Agent SDK's query() for AI v2 design turns
+    processGroupKill.ts       Shared process-group kill ladder (SIGTERM → grace → SIGKILL,
+                               group-liveness gated) used by both runners
+    aiTurnOrchestrator.ts     Shared outer turn scaffolding (timeout/abort/race/kill/finally)
+                               for both the chat and v2 design turn paths
+    aiTurn.ts                 driveAiTurn — shared no-orphan turn-run helper (acquire the MCP
+                               listener, spawn, run to outcome, always clean up); used by
+                               ai/chat and topics/generate
+    aiChatRelay.ts            JSONL→SSE stream relay: maps the CLI's stream-json stdout to the
+                               frozen delta/tool/done/error SSE vocabulary
+    aiChatRegistry.ts         Shared per-session AI turn registry: per-session single-flight +
+                               process-wide concurrency ceiling (the aiChatTurns singleton)
+    aiV2PendingQuestions.ts   Pending-question registry for the AskUserQuestion round trip on
+                               v2 design turns, keyed and principal-bound
+    topicGenerate.ts          One-shot topics/generate turn driver (crash-safe replace-all)
+    eventGeneratePrompt.ts    events/generate's generation prompt builder: dedicated one-shot
+                               system prompt + the run-snapshot user-message builder
 
 packages/                 Source-only npm workspace packages (no build step; server's tsx and
                            the root tsc --noEmit resolve them straight from src/); boundaries

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../appEnv';
 import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
+import { ApiError } from '../httpError';
 import {
   appendLogImportLine,
   createLogImportJob,
@@ -11,7 +12,7 @@ import {
 } from '../logImport/jobStore';
 import { ensureTimedTranscript, runSessionLogImport } from '../logImport/runSessionLogImport';
 import { fetchPublicWorkbookSheets } from '../logImport/sheetsFetch';
-import { ApiError, timecodeCtx } from './_helpers';
+import { timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
 

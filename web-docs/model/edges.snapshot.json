@@ -1,5 +1,35 @@
 [
   {
+    "from": "ai-runtime",
+    "to": "aiV2",
+    "kind": "production"
+  },
+  {
+    "from": "ai-runtime",
+    "to": "contract",
+    "kind": "production"
+  },
+  {
+    "from": "ai-runtime",
+    "to": "domain",
+    "kind": "production"
+  },
+  {
+    "from": "ai-runtime",
+    "to": "ports",
+    "kind": "test"
+  },
+  {
+    "from": "ai-runtime",
+    "to": "server-core",
+    "kind": "test"
+  },
+  {
+    "from": "ai-runtime",
+    "to": "session-core",
+    "kind": "production"
+  },
+  {
     "from": "aiV2",
     "to": "contract",
     "kind": "production"
@@ -151,6 +181,11 @@
   },
   {
     "from": "routers",
+    "to": "ai-runtime",
+    "kind": "production"
+  },
+  {
+    "from": "routers",
     "to": "aiV2",
     "kind": "production"
   },
@@ -192,7 +227,7 @@
   {
     "from": "routers",
     "to": "server-bootstrap",
-    "kind": "test"
+    "kind": "production"
   },
   {
     "from": "routers",

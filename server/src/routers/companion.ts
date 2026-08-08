@@ -22,7 +22,8 @@ import {
 import type { PresenceRegistry } from '@autologger/ports';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { ApiError, getSessionHub, timecodeCtx } from './_helpers';
+import { ApiError } from '../httpError';
+import { getSessionHub, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 

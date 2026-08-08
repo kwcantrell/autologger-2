@@ -22,7 +22,7 @@
 // timeout (D5 axis 4).
 //
 // Security lockdown (design D9, modeled on `buildAiChatChildEnv` in
-// `server/src/routers/aiChatRunner.ts`): `shell: false` with a discrete argv
+// `server/src/ai-runtime/aiChatRunner.ts`): `shell: false` with a discrete argv
 // array and a `--` terminator before the positional URL (never shell- or
 // option-interpreted); `--ignore-config` + `--no-plugin-dirs` so no ambient
 // `yt-dlp` config file or plugin can inject flags (`--exec`,
@@ -112,8 +112,12 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
  * PATH (design D9), mirrored verbatim from `buildAiChatChildEnv`'s
  * `OPTIONAL_ENV_PASSTHROUGH` — only forwarded when actually present in the
  * parent's env, never fabricated. Duplicated here (not imported) rather than
- * reused across the node/routers layering split (`server/src/node/` is
- * lower-level infrastructure; `routers/aiChatRunner.ts` is router-layer). */
+ * reused across the node/ai-runtime layering split (`server/src/node/` is
+ * lower-level, Node-platform infrastructure; `server/src/ai-runtime/` is the
+ * sibling layer housing CLI/SDK turn orchestration, not infrastructure
+ * `node/` depends on — importing one constant across that boundary would
+ * create a cross-layer dependency for no reason the duplication doesn't
+ * already serve just as well). */
 const OPTIONAL_ENV_PASSTHROUGH = [
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -177,7 +181,7 @@ interface RunResult {
  * yt-dlp spawned) that would otherwise orphan and keep running/writing past
  * the wall-clock bound. Requires `child` to have been spawned with
  * `detached: true` (its pid IS the process-group id, mirroring
- * `killAiChatProcessGroup` in `routers/aiChatRunner.ts`). Never throws:
+ * `killAiChatProcessGroup` in `ai-runtime/aiChatRunner.ts`). Never throws:
  * `process.kill` on an already-gone group raises ESRCH — a race with the
  * child exiting on its own between the timer firing and this call — which is
  * swallowed since "already gone" is exactly the no-orphan outcome wanted. */
@@ -198,7 +202,7 @@ function killProcessGroup(child: ChildProcess): void {
  * the bound — and `timedOut: true` is reported. Spawned with `detached:
  * true` so the child is its own process-group leader; on POSIX this makes
  * `child.pid` double as the group id `killProcessGroup` signals (matching
- * `spawnAiChatTurn`'s posture in `routers/aiChatRunner.ts`) — no group is
+ * `spawnAiChatTurn`'s posture in `ai-runtime/aiChatRunner.ts`) — no group is
  * left behind on the normal (non-timeout) exit path, since nothing here ever
  * calls `unref()` and the group's last member exiting on its own reaps it.
  * Never throws: spawn failure surfaces as `exitCode: null` via the child's

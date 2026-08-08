@@ -56,6 +56,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Config } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import { stableSessionCwd } from '../ai-runtime/aiChatRunner';
+import { AiMcpListener, getAiMcpListener } from '../ai-runtime/aiMcpServer';
+// Namespace import (not the named `driveAiTurn` ai.ts itself uses) so the
+// test below can `vi.spyOn` the module's live export — asserting what ai.ts
+// passes IN, distinct from the wire string aiChatRunner.ts eventually
+// produces (which is identical whether ai.ts passes the tools explicitly or
+// omits and falls back to the runner's own default; see that test's comment).
+import * as aiTurnModule from '../ai-runtime/aiTurn';
 import { aiChatOpenNetworkRefused } from '../env';
 import { app, env, envWith } from '../test/harness';
 import {
@@ -66,15 +75,6 @@ import {
   seedUser,
 } from '../test/helpers';
 import { __resetAiChatIssuedSessionIdsForTests, AI_CHAT_ALLOWED_TOOLS } from './ai';
-import { aiChatTurns } from './aiChatRegistry';
-import { stableSessionCwd } from './aiChatRunner';
-import { AiMcpListener, getAiMcpListener } from './aiMcpServer';
-// Namespace import (not the named `driveAiTurn` ai.ts itself uses) so the
-// test below can `vi.spyOn` the module's live export — asserting what ai.ts
-// passes IN, distinct from the wire string aiChatRunner.ts eventually
-// produces (which is identical whether ai.ts passes the tools explicitly or
-// omits and falls back to the runner's own default; see that test's comment).
-import * as aiTurnModule from './aiTurn';
 
 // Kept for the pre-existing guard-rejection assertions (see the SPAWN
 // OBSERVATION note above) — harmless, but not load-bearing through this

@@ -90,8 +90,12 @@ npm run lint                                   # biome: web src/, e2e/, playwrig
 ## Source layout
 
 Server code keeps the module-for-module layout it inherited from its Python origin under
-`server/src/`; files ported from Python note their origin in a header comment. Router files
-live in `server/src/routers/`; Node-specific infrastructure that stays in the server
+`server/src/`; files ported from Python note their origin in a header comment. `server/src/
+routers/` holds HTTP-layer route modules only; the AI runtime (MCP tool server, Claude-CLI
+and Agent-SDK subprocess runners, turn orchestration, one-shot generate-turn drivers) has its
+own home at `server/src/ai-runtime/`, Hono-free and injection-fed, split out of `routers/` by
+`router-directory-decomposition`; the app-level `ApiError` class lives at `server/src/
+httpError.ts`, outside both directories. Node-specific infrastructure that stays in the server
 (composition-root wiring, `systemClock`, presence) lives in `server/src/node/`. Persistence
 itself lives in three source-only **L1** sibling packages under `packages/` (extracted from
 `server/src/session/` and `server/src/db/` and part of `server/src/node/` by
@@ -111,8 +115,9 @@ facade interfaces and **names zero concrete persistence classes** — `server/sr
 config.ts` (the composition root) is the sole production module that still constructs the
 concretes, and `middleware/auth.ts` constructs the per-request `Catalog` via
 `@autologger/catalog`'s exported `createCatalog` factory (lifecycle unchanged). Cross-package
-import boundaries — including the L1-sibling and facade-only-consumer rules above — are
-enforced by a repo test (`server/src/packageBoundaries.repo.test.ts`), not the compiler.
+import boundaries — including the L1-sibling and facade-only-consumer rules above, and the
+`routers/`↔`ai-runtime/` directory-role split — are enforced by a repo test
+(`server/src/packageBoundaries.repo.test.ts`), not the compiler.
 Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. The generated
 architecture atlas + docs SPA (component model, edge extraction, drift gates, mermaid site)
 live in `web-docs/` — see README's web-docs section. Full annotated tree + the normative

@@ -27,6 +27,19 @@ import {
   stripCategoryUiSnapshots,
 } from '@autologger/domain';
 import { Hono } from 'hono';
+import { aiChatTurns } from '../ai-runtime/aiChatRegistry';
+import type {
+  AiGenerationRunContext,
+  AiGenerationSnapshotCategory,
+  AiGenerationSnapshotOption,
+  AiMcpToolName,
+} from '../ai-runtime/aiMcpServer';
+import { driveAiTurn } from '../ai-runtime/aiTurn';
+import {
+  buildEventGenerateMessage,
+  EVENT_GENERATE_SYSTEM_PROMPT,
+  type EventGenerateExistingEvent,
+} from '../ai-runtime/eventGeneratePrompt';
 import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
@@ -38,26 +51,8 @@ import {
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
 } from '../env';
-import {
-  ApiError,
-  getSessionHub,
-  parseOptionalMarkedAt,
-  requireSession,
-  timecodeCtx,
-} from './_helpers';
-import { aiChatTurns } from './aiChatRegistry';
-import type {
-  AiGenerationRunContext,
-  AiGenerationSnapshotCategory,
-  AiGenerationSnapshotOption,
-  AiMcpToolName,
-} from './aiMcpServer';
-import { driveAiTurn } from './aiTurn';
-import {
-  buildEventGenerateMessage,
-  EVENT_GENERATE_SYSTEM_PROMPT,
-  type EventGenerateExistingEvent,
-} from './eventGeneratePrompt';
+import { ApiError } from '../httpError';
+import { getSessionHub, parseOptionalMarkedAt, requireSession, timecodeCtx } from './_helpers';
 
 export const eventsRouter = new Hono<AppEnv>();
 
