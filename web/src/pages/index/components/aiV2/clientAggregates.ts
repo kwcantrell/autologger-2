@@ -14,20 +14,39 @@
 // and asserts byte-identical output against these on shared fixtures, so the
 // two cannot silently diverge.
 //
-// Why mirror rather than import the server module into the shipped web
-// bundle (design D11 offers both as options): `aggregates.ts` itself is
-// pure (zero runtime imports, `import type` only), but its declared
-// PARAMETER types are re-exported from `server/src/session/transcriptStore.ts`
-// / `topicStore.ts` / `server/src/studio.ts`, which are NOT dependency-free —
-// pulling the module into web's `tsc`/Vite graph as production code would
-// pull those in for type resolution too, and widgetTypes.ts (this same
-// directory, Phase 4) already established the precedent of hand-mirroring
-// this exact module pair (`catalog.ts`/`aggregates.ts`) for the documented
-// reason that web and server "ship as independent deployables" — importing
-// server/src into the web production bundle, and loosening Vite's dev-server
-// `server.fs.allow` to permit it, is a larger, riskier build-config change
-// than this task's scope warrants. The pinning test gives the "provably in
-// sync" guarantee option (c) requires without that risk.
+// Why mirror rather than import the package module into the shipped web
+// bundle (design D11 offers both as options): there is no technical
+// constraint here at all -- this is a POLICY choice, full stop. The rule is
+// `web-package-boundary` (`web/src/webBoundaries.repo.test.ts`): this repo
+// rules flatly that `web/` does not depend on the `packages/` graph, because
+// `web/` and the server ship as INDEPENDENT DEPLOYABLES, and this mirror
+// implements that rule for the one computation both sides need. That is the
+// entire justification; nothing about whether a given import would resolve,
+// typecheck, or bundle cleanly is relevant to it, and no such claim is made
+// here.
+//
+// This comment previously carried THREE successive technical justifications
+// for the same conclusion -- Vite's `server.fs.allow`, "would pull the
+// dependency into type resolution," and a `better-sqlite3`-peerDependency
+// parenthetical -- and all three were independently measured and refuted
+// (phase-1 fix-wave review Finding 7; the fix-wave re-review, Obligation 6).
+// None is repeated or replaced here, including with an equivalent claim
+// about some OTHER technical mechanism: the recurring defect was reaching
+// for a technical reason at all when the true reason was always the rule
+// above. widgetTypes.ts (this same directory, Phase 4) already established
+// the precedent of hand-mirroring this exact module pair
+// (`catalog.ts`/`aggregates.ts`) for that same policy reason. The pinning
+// test gives the "provably in sync" guarantee option (c) requires without
+// crossing the boundary in production code.
+//
+// This mirror is PERMANENT POLICY, not provisional work pending some future
+// refactor: `web-package-boundary` (see `web/src/webBoundaries.repo.test.ts`)
+// rules flatly that no production file under web/src may import from
+// `packages/` at all — by relative path or by `@autologger/*` specifier, at
+// any layer — and it exempts exactly this directory's pinning test's
+// cross-workspace import as the mechanism that keeps this mirror honest. A
+// future reader finding this duplication has found settled policy, not an
+// open question.
 //
 // `transcript_excerpt` has NO server `aggregates.ts` counterpart to mirror —
 // mcpTools.ts computes it ad hoc as an offset/limit-bounded raw word page,

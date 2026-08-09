@@ -92,12 +92,69 @@ import { afterEach, describe, expect, it } from 'vitest';
 // node at all) -- B4's dynamic-`import()` gap is unchanged and still
 // disclosed below; this rebuild did not touch it and does not claim to.
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
-const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
+// PHASE-1 FIX WAVE (web-package-boundary review, Finding 3/F4): narrowed from
+// {node_modules, dist, build, coverage, .git}. `dist`/`build`/`coverage` are
+// legitimate skips at a REPO ROOT walk (generated output sitting next to
+// source), but this walk only ever starts at `web/src` (or a synthetic test
+// root shaped like it) -- nothing under `web/src` is EVER a build artifact,
+// so skipping directories with those names there was pure blindness: the
+// review planted `web/src/shared/build/a22.ts` importing `@autologger/domain`
+// and every one of the four checks in this file stayed silently green.
+// `node_modules` and `.git` are kept, but the ORIGINAL stated rationale for
+// `node_modules` was wrong and is corrected here (final fix wave, N3): the
+// prior comment claimed a directory named `node_modules` is "third-party
+// code this policy does not govern." That is true of the REAL root
+// `node_modules` (walking it would explode into thousands of unrelated
+// files, and the `node_modules/@autologger/*` REACH into `packages/` is
+// caught separately, by resolving the specifier string against
+// `PACKAGES_ESCAPE_RE` below, not by scanning inside `node_modules` itself)
+// -- but it is simply FALSE of a directory that happens to be named
+// `node_modules` while living UNDER `web/src`. Nothing under `web/src` is
+// ever a real package-manager install; a hand-planted `web/src/shared/
+// node_modules/evil.ts` is ordinary first-party source wearing a name this
+// skip-list treats as a magic signal, and it is never walked or scanned as
+// a result. This is a disclosed, unfixed gap (N3; see the final-fix-wave
+// describe block below and the spec delta's threat model) inherited from
+// this skip-list's `queryKeyFactories.repo.test.ts` precedent, not a
+// deliberate, sound exclusion the way the real-root case is. `.git` is kept
+// because it never contains source and walking it risks touching
+// object-store internals -- that rationale is unaffected.
+const EXCLUDED_DIR_NAMES = new Set(['node_modules', '.git']);
 
 type Zone = 'pages' | 'api' | 'shared';
 const ZONE_RANK: Record<Zone, number> = { pages: 0, api: 1, shared: 2 };
 
-function walk(dir: string, out: string[] = []): string[] {
+/** PHASE-1 FIX WAVE (Finding 4/F5): a symlinked directory under `web/src` is
+ * now FOLLOWED rather than silently skipped. The prior code gated recursion
+ * on `entry.isDirectory()`, which `fs.Dirent` always reports `false` for a
+ * symlink (`isSymbolicLink()` is what's true) -- so a planted
+ * `web/src/shared/attackz/symdir -> <scratch dir>` containing an offending
+ * import was invisible to every check. Decision: follow, not merely
+ * disclose -- this guard exists specifically to stop code from reaching
+ * `packages/`, and a symlink is exactly the kind of on-disk indirection an
+ * evasion would use, so leaving it unguarded was a live hole, not a
+ * theoretical one. Cycle safety: each directory's REALPATH (post
+ * symlink-resolution) is recorded in `seenRealDirs` before recursing, so a
+ * symlink pointing at an ancestor (or at itself) is visited at most once
+ * per walk rather than looping forever. A broken symlink (realpath/stat
+ * throws) is skipped, matching the pre-existing `readdirSync` failure
+ * mode below.
+ *
+ * CORRECTION (final fix wave, N4 -- the fix-wave re-review disproved the
+ * prior version of this comment): a symlinked FILE is indeed WALKED and
+ * SCANNED (`entry.isDirectory()` is false for it, so it falls through to
+ * the extension check, same as before this change) -- but "scanned" is not
+ * "caught". A symlinked file whose target lives under `packages/` is real
+ * package source physically reachable from `web/src`, yet its own internal
+ * relative imports resolve relative to the SYMLINK's location, not the
+ * target's real location -- so they look like ordinary web/src-internal
+ * paths to every check in this file, and nothing fires. This is a
+ * disclosed, unfixed gap (N4; see the final-fix-wave describe block below
+ * and the spec delta's threat model), not a closed one. The prior claim
+ * that symlinked files "were already handled correctly ... and remain so"
+ * was false and is retracted here.
+ */
+function walk(dir: string, out: string[] = [], seenRealDirs: Set<string> = new Set()): string[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -107,8 +164,24 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of entries) {
     if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      walk(full, out);
+    let isDir = entry.isDirectory();
+    if (entry.isSymbolicLink()) {
+      try {
+        isDir = fs.statSync(full).isDirectory(); // follows the link
+      } catch {
+        continue; // broken symlink
+      }
+    }
+    if (isDir) {
+      let real: string;
+      try {
+        real = fs.realpathSync(full);
+      } catch {
+        continue;
+      }
+      if (seenRealDirs.has(real)) continue; // cycle guard
+      seenRealDirs.add(real);
+      walk(full, out, seenRealDirs);
     } else if (CODE_EXTENSIONS.has(path.extname(entry.name))) {
       out.push(full);
     }
@@ -116,9 +189,21 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Any filename containing `.test.` is a test file (`.test.ts`, `.test.tsx`, `.int.test.ts`, ...). */
+/** PHASE-1 FIX WAVE (Finding 5/F6): anchored to a filename SUFFIX rather than
+ * a substring. The prior `.includes('.test.')` check exempted anything
+ * merely CONTAINING that token anywhere in its basename --
+ * `a7_bridge.test.shim.ts` read as a test file, was never scanned by any
+ * rule here, yet vitest's own `*.test.ts` glob does not collect it either
+ * (the file doesn't END in `.test.ts`), so it was live, importable,
+ * ungoverned production code wearing a test name. The suffix regex mirrors
+ * this project's actual test-file convention (`.test.ts` / `.test.tsx` /
+ * `.int.test.ts` / ... -- always a TRAILING `.test.<ext>`) and still exempts
+ * every real test file, including `clientAggregates.pinning.test.ts` (ends
+ * `.test.ts`) and `api/types.conformance.test.ts` (ends `.test.ts`).
+ */
+const TEST_FILE_SUFFIX_RE = /\.test\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 function isProductionFile(relPath: string): boolean {
-  return !path.basename(relPath).includes('.test.');
+  return !TEST_FILE_SUFFIX_RE.test(path.basename(relPath));
 }
 
 /** First path segment relative to web/src, if it is one of the three governed zones. */
@@ -263,14 +348,93 @@ function parseImportEdges(rel: string, content: string): ImportEdge[] {
   return edges;
 }
 
-/** Resolves an import specifier to a path relative to web/src, or null if not web/src-internal. */
+interface DynamicImportEdge {
+  line: number;
+  specifier: string;
+  raw: string;
+}
+
+/** Walks `sf`'s AST for every dynamic `import(...)` call expression whose
+ * first argument is string-literal-LIKE (`ts.isStringLiteralLike`, so a
+ * no-substitution template-literal dynamic import -- ``import(`../foo`)`` --
+ * is caught identically to `import('../foo')`, matching how the static-edge
+ * walk above already treats the two forms as equivalent). A `CallExpression`
+ * is a dynamic import iff its callee is the bare `import` keyword
+ * (`node.expression.kind === ts.SyntaxKind.ImportKeyword`) -- this is
+ * `web-docs/src/lib/extractImports.ts`'s own `walkSourceFile` check (its
+ * `CallExpression`/`ImportKeyword` branch), reused here rather than
+ * reinvented, per the standing "in-repo precedent beats invention" rule.
+ *
+ * A non-literal first argument (a bare variable, a template literal WITH a
+ * substitution, a concatenation, a function call) cannot be resolved
+ * statically and is deliberately NOT guessed at -- silently skipped, same
+ * as `extractImports.ts` treats it as a distinct `DynamicImportWarning`
+ * rather than a resolved edge. This is a disclosed residual (task-1-2
+ * report, "Dynamic-import hole" section): a determined evasion can still
+ * hide a `packages/`-bound dynamic import behind a non-literal argument.
+ *
+ * Also deliberately NOT matched: `import(...)` used in TYPE position
+ * (`typeof import('x')` / a direct `import('x').Member` type reference) --
+ * a distinct AST node kind, `ts.ImportTypeNode`, not a `CallExpression` at
+ * all, and not what the task that added this function named ("import(...)
+ * call expressions"). `extractImports.ts` resolves that shape too, as a
+ * SEPARATE branch of its own walk (`ts.isImportTypeNode`) -- this function
+ * deliberately does not adopt that second branch; see the same report
+ * section for why that is disclosed as a second residual rather than
+ * silently left uncovered.
+ *
+ * Scope: this function feeds ONLY the cross-workspace-package
+ * (`packages/`-escape) check below. The pre-existing `parseImportEdges` --
+ * which feeds the layering/admin-index-cross/transitive-reachability checks
+ * -- is intentionally untouched and still does not resolve any dynamic
+ * form at all (its own doc comment and the `dynamic import() is NOT
+ * matched` unit test below both still describe current, accurate
+ * behavior); widening those OTHER rules to dynamic imports was not asked
+ * for by the task that added this function and is out of scope here.
+ */
+function parseDynamicImportEdges(rel: string, content: string): DynamicImportEdge[] {
+  const sf = parseFile(rel, content);
+  const edges: DynamicImportEdge[] = [];
+
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const arg = node.arguments[0];
+      if (arg && ts.isStringLiteralLike(arg)) {
+        const line = lineAt(sf, node.getStart(sf));
+        edges.push({ line, specifier: arg.text, raw: textOfLine(content, line) });
+      }
+      // else: non-literal argument -- cannot resolve statically, not guessed at (disclosed residual above).
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sf);
+
+  return edges;
+}
+
+/** Resolves an import specifier to a path relative to web/src, or null if not web/src-internal.
+ *
+ * PHASE-1 FIX WAVE (Finding 1/F1, CRITICAL): the alias branch now normalizes
+ * too. It previously returned `specifier.slice(2)` UN-normalized, so
+ * `@/shared/../../../packages/domain/src/index` resolved to the literal
+ * string `shared/../../../packages/domain/src/index` -- which does not
+ * start with `../`, so `PACKAGES_ESCAPE_RE` never matched it even though the
+ * path genuinely escapes into `packages/`. Demonstrated to bundle: `vite
+ * build` emitted `validateEventPalette` (an identifier that exists nowhere
+ * in `web/src`) into the shipped chunk while this guard reported zero
+ * violations. The SAME bug independently mis-zoned the pre-existing
+ * layering/admin-index-cross checks (`zoneOf('shared/../pages/index/...')`
+ * read as `'shared'` instead of `'pages'`) -- so this one-line fix repairs
+ * both the new cross-workspace rule and the two rules it shares
+ * `resolveTargetRel` with.
+ */
 function resolveTargetRel(importerRel: string, specifier: string): string | null {
   if (
     specifier.startsWith('@/api/') ||
     specifier.startsWith('@/shared/') ||
     specifier.startsWith('@/pages/')
   ) {
-    return specifier.slice(2); // strip leading "@/"
+    return path.posix.normalize(specifier.slice(2)); // strip leading "@/", then normalize (closes F1/F2)
   }
   if (specifier.startsWith('.')) {
     const importerDir = path.posix.dirname(importerRel);
@@ -279,23 +443,160 @@ function resolveTargetRel(importerRel: string, specifier: string): string | null
   return null; // bare package specifier (react, clsx, ...) -- not web/src-internal
 }
 
+// --- Cross-workspace package-boundary guard (web-package-boundary, tasks
+// 1.1/1.2; spec "Production web code does not reach the package graph") ---
+//
+// No production file under web/src SHALL import from packages/, by relative
+// path OR by `@autologger/*` bare specifier, at any layer. Unlike the
+// pages/api/shared layering rule above, this carve-out-free: it applies to
+// EVERY production file regardless of zone (there is no "packages" zone to
+// gate on), and it is NOT relaxed for type-only imports -- the spec scenario
+// has no value/type-only qualifier, so a `import type` from packages/ is
+// still a reach into the package graph this rule forbids.
+//
+// Reuses existing machinery rather than adding a second resolution path:
+// `resolveTargetRel` already normalizes a relative specifier to a path
+// relative to web/src even when that path escapes web/src entirely (it has
+// no "stays inside root" guard) -- so a relative import that reaches
+// packages/ (which sits two directory levels above web/src: src -> web ->
+// repo root -> packages) normalizes to a string starting with one or more
+// `../` segments followed by `packages`, regardless of how deeply nested the
+// importing file is. `isAutologgerBareSpecifier` covers the other form: a
+// bare `@autologger/*` specifier, which `resolveTargetRel` already treats as
+// "not web/src-internal" (returns null) and is checked directly against the
+// raw specifier instead.
+//
+// Also checked against a literal-argument dynamic `import(...)` call (see
+// `parseDynamicImportEdges` above): the original static-only implementation
+// left `import('../../../../packages/domain/src/index')` completely
+// unreached (a demonstrated hole -- planting exactly that call in a
+// production file passed both this guard and `tsc --noEmit -p web`), since
+// dynamic import is a `CallExpression`, never an `ImportDeclaration`/
+// `ExportDeclaration` node the original walk matched. The rule applied to a
+// resolved dynamic edge is identical to a static one -- same
+// `packagesEscapeTarget` call, same `cross-workspace-package` violation kind
+// -- because the requirement ("production web code does not reach the
+// package graph") does not distinguish import syntax; only the SPECIFIER
+// matters. Non-literal dynamic-import arguments remain a disclosed residual
+// (see `parseDynamicImportEdges`'s doc comment).
+// PHASE-1 FIX WAVE (Findings 2 and 6 / F3 and F7): generalized from
+// `^(?:\.\.\/)+packages(\/|$)`, which only matched a normalized target that
+// lands on `packages` IMMEDIATELY after the leading `../` run. Two
+// demonstrated evasions of that narrower form:
+//  - F3: `../../../../node_modules/@autologger/domain/src/index` normalizes
+//    to `(../)+node_modules/@autologger/...` -- the root workspace symlinks
+//    (`node_modules/@autologger/domain -> ../../packages/domain`, verified)
+//    make this resolve and bundle identically to a `packages/` path, but the
+//    old regex never looked for `node_modules/@autologger` at all.
+//  - F7: `../../../../../<repo-dir-name>/packages/domain/src/index` (an
+//    out-and-back traversal above the repo root and back down through
+//    whatever the checkout directory happens to be named) normalizes to
+//    `(../)+<repo-dir-name>/packages/...` -- one intermediate segment
+//    between the `../` run and `packages`, which the old anchor rejected.
+// The new pattern allows any number of intermediate `segment/` hops between
+// the leading `../` run and the forbidden target segment
+// (`packages` or `node_modules/@autologger`), which closes F7 GENERICALLY
+// (it does not depend on knowing the checkout is named `autologger-2`;
+// verified against both the synthetic general form and the literal
+// real-repo reproduction -- see the phase-1 fix-wave report) as well as F3.
+// No new false-positive surface: every existing conforming target this
+// guard resolves stays INSIDE web/src (never starts with `../` at all), so
+// only genuine escapes can match either the old or the new pattern.
+const PACKAGES_ESCAPE_RE = /^(?:\.\.\/)+(?:[^/]+\/)*(?:packages|node_modules\/@autologger)(\/|$)/;
+
+function isAutologgerBareSpecifier(specifier: string): boolean {
+  return specifier === '@autologger' || specifier.startsWith('@autologger/');
+}
+
+/** Returns the offending target (the raw `@autologger/*` specifier, or the
+ * path-relative-to-web/src that escapes into packages/) if `specifier`
+ * reaches the package graph from `importerRel`, else null. */
+function packagesEscapeTarget(importerRel: string, specifier: string): string | null {
+  if (isAutologgerBareSpecifier(specifier)) return specifier;
+  const targetRel = resolveTargetRel(importerRel, specifier);
+  if (targetRel !== null && PACKAGES_ESCAPE_RE.test(targetRel)) return targetRel;
+  return null;
+}
+
+// --- Final fix wave (N1): a production file SHALL NOT import a test file
+// ---
+//
+// Threat model (see the spec delta's "no exhaustiveness" note): this guard
+// has been defeated seven times, and the owner ruled the arms race over --
+// fix the one finding that is independently a defect (a production file
+// importing a *.test.ts file) and disclose the rest rather than chase every
+// remaining shape. This is deliberately NOT a transitive
+// package-reachability check -- it does not ask "does the imported test
+// file itself reach packages/?" (that is the analysis the owner ruled out).
+// It is the narrow, honest rule stated flatly: no production file under
+// web/src imports a test file, full stop, regardless of what that test file
+// does or does not import. A production->test edge is a defect in its own
+// right (the imported file is invisible to vitest's `*.test.ts` collection
+// glob, so it ships as ordinary bundled code while living under a name that
+// says "not shipped") -- this rule closes that edge directly rather than
+// asking what lies beyond it.
+//
+// `TEST_TARGET_RE` matches both the common extension-less specifier form
+// (`./leakN1.test`, the form TS module resolution expects) and an explicit
+// extension (`./leakN1.test.ts`), so either spelling of "imports a file
+// named *.test[.ext]" is caught the same way `isProductionFile` recognizes
+// the SAME suffix on the importer's own name.
+const TEST_TARGET_RE = /\.test(\.(ts|tsx|mts|cts|js|jsx|mjs|cjs))?$/;
+
+/** Returns the resolved target if `specifier` (from production file
+ * `importerRel`) points at a test file, else null. Only a DIRECT edge is
+ * checked -- what the test file itself imports is out of scope by design. */
+function testFileImportTarget(importerRel: string, specifier: string): string | null {
+  const targetRel = resolveTargetRel(importerRel, specifier);
+  if (targetRel !== null && TEST_TARGET_RE.test(path.posix.basename(targetRel))) return targetRel;
+  return null;
+}
+
 interface Violation {
   file: string;
   line: number;
-  kind: 'layering' | 'admin-index-cross';
+  kind: 'layering' | 'admin-index-cross' | 'cross-workspace-package' | 'production-imports-test';
   from: string;
   to: string;
   specifier: string;
   text: string;
 }
 
-/** Per-file scan: layering + admin-users/index violations for one production file. */
+/** Per-file scan: cross-workspace-package (every production file, any zone or
+ * none) + layering/admin-users-index (zoned files only) violations for one
+ * production file. */
 function scanFileForViolations(rel: string, content: string): Violation[] {
   const sourceZone = zoneOf(rel);
-  if (!sourceZone) return [];
   const violations: Violation[] = [];
 
   for (const edge of parseImportEdges(rel, content)) {
+    const packagesTarget = packagesEscapeTarget(rel, edge.specifier);
+    if (packagesTarget !== null) {
+      violations.push({
+        file: rel,
+        line: edge.line,
+        kind: 'cross-workspace-package',
+        from: rel,
+        to: packagesTarget,
+        specifier: edge.specifier,
+        text: edge.raw,
+      });
+    }
+
+    const testTarget = testFileImportTarget(rel, edge.specifier);
+    if (testTarget !== null) {
+      violations.push({
+        file: rel,
+        line: edge.line,
+        kind: 'production-imports-test',
+        from: rel,
+        to: testTarget,
+        specifier: edge.specifier,
+        text: edge.raw,
+      });
+    }
+
+    if (!sourceZone) continue;
     const targetRel = resolveTargetRel(rel, edge.specifier);
     if (targetRel === null) continue;
     const targetZone = zoneOf(targetRel);
@@ -333,10 +634,49 @@ function scanFileForViolations(rel: string, content: string): Violation[] {
     }
   }
 
+  // Dynamic `import(...)` calls with a literal specifier are checked against
+  // the SAME packages-escape rule as static edges above -- and only that
+  // rule (layering/admin-index-cross stay static-edge-only; see
+  // `parseDynamicImportEdges`'s doc comment for why).
+  for (const dyn of parseDynamicImportEdges(rel, content)) {
+    const packagesTarget = packagesEscapeTarget(rel, dyn.specifier);
+    if (packagesTarget !== null) {
+      violations.push({
+        file: rel,
+        line: dyn.line,
+        kind: 'cross-workspace-package',
+        from: rel,
+        to: packagesTarget,
+        specifier: dyn.specifier,
+        text: dyn.raw,
+      });
+    }
+
+    const testTarget = testFileImportTarget(rel, dyn.specifier);
+    if (testTarget !== null) {
+      violations.push({
+        file: rel,
+        line: dyn.line,
+        kind: 'production-imports-test',
+        from: rel,
+        to: testTarget,
+        specifier: dyn.specifier,
+        text: dyn.raw,
+      });
+    }
+  }
+
   return violations;
 }
 
-/** Full-tree scan: production files under the three governed zones only. */
+/** Full-tree scan: every production file under `root`. The three governed
+ * zones (pages/api/shared) are where layering/admin-index violations can
+ * occur (`scanFileForViolations` no-ops those checks for an unzoned file),
+ * but the cross-workspace-package check (web-package-boundary) applies to
+ * every production file regardless of zone -- so this walk is no longer
+ * zone-gated, and `filesExamined` now counts (and the existing
+ * non-zero-files assertion below now proves) that the packages-check's walk
+ * reaches real files too, not just the zoned ones. */
 function scanTree(root: string): { violations: Violation[]; filesExamined: number } {
   const files = walk(root);
   let filesExamined = 0;
@@ -344,7 +684,6 @@ function scanTree(root: string): { violations: Violation[]; filesExamined: numbe
   for (const file of files) {
     const rel = path.relative(root, file).split(path.sep).join('/');
     if (!isProductionFile(rel)) continue;
-    if (!zoneOf(rel)) continue;
     filesExamined++;
     violations.push(...scanFileForViolations(rel, fs.readFileSync(file, 'utf8')));
   }
@@ -472,6 +811,46 @@ describe('detection predicate (mutation check — proves each piece fires)', () 
     expect(edges).toEqual([]);
   });
 
+  it('parseDynamicImportEdges: a literal-string dynamic import() is matched', () => {
+    const edges = parseDynamicImportEdges(
+      'fixture.ts',
+      `async function f() { return await import('../index/AppShell'); }`,
+    );
+    expect(edges).toMatchObject([{ specifier: '../index/AppShell' }]);
+  });
+
+  it('parseDynamicImportEdges: a no-substitution template-literal dynamic import() is matched identically', () => {
+    const edges = parseDynamicImportEdges(
+      'fixture.ts',
+      'async function f() { return await import(`../index/AppShell`); }',
+    );
+    expect(edges).toMatchObject([{ specifier: '../index/AppShell' }]);
+  });
+
+  it('parseDynamicImportEdges: a non-literal (variable) argument is NOT matched (disclosed residual)', () => {
+    const edges = parseDynamicImportEdges(
+      'fixture.ts',
+      `async function f(spec: string) { return await import(spec); }`,
+    );
+    expect(edges).toEqual([]);
+  });
+
+  it('parseDynamicImportEdges: a template literal WITH a substitution is NOT matched (disclosed residual)', () => {
+    const edges = parseDynamicImportEdges(
+      'fixture.ts',
+      `async function f(sub: string) { return await import(\`../\${sub}/AppShell\`); }`,
+    );
+    expect(edges).toEqual([]);
+  });
+
+  it('parseDynamicImportEdges: a type-position `typeof import(...)` reference is NOT matched (disclosed residual, distinct AST kind from CallExpression)', () => {
+    const edges = parseDynamicImportEdges(
+      'fixture.ts',
+      `type X = typeof import('../../../../packages/domain/src/index');`,
+    );
+    expect(edges).toEqual([]);
+  });
+
   it('resolveTargetRel: relative specifier resolves against the importer directory', () => {
     expect(resolveTargetRel('shared/utils/recording.ts', '../../api/types')).toBe('api/types');
   });
@@ -540,6 +919,69 @@ describe('detection predicate (mutation check — proves each piece fires)', () 
     expect(scanFileForViolations('pages/index/components/A.tsx', valueImport('B', './B'))).toEqual(
       [],
     );
+  });
+
+  it('packagesEscapeTarget: a relative import that normalizes to escape web/src into packages/ is detected', () => {
+    // 'shared/stray.ts' -> importerDir 'shared' (depth 1); 3 `../` cancels the
+    // 1 real segment and leaves 2 escaping `../`, landing on `packages/...`.
+    expect(packagesEscapeTarget('shared/stray.ts', '../../../packages/domain/src/index')).toBe(
+      '../../packages/domain/src/index',
+    );
+  });
+
+  it('packagesEscapeTarget: an @autologger/* bare specifier is detected regardless of importer location', () => {
+    expect(packagesEscapeTarget('pages/index/main.tsx', '@autologger/domain')).toBe(
+      '@autologger/domain',
+    );
+    expect(packagesEscapeTarget('shared/foo.ts', '@autologger/ai-runtime')).toBe(
+      '@autologger/ai-runtime',
+    );
+  });
+
+  it('packagesEscapeTarget: an ordinary internal relative import is NOT flagged', () => {
+    expect(packagesEscapeTarget('pages/index/main.tsx', '../../api/bar')).toBeNull();
+  });
+
+  it('packagesEscapeTarget: an ordinary third-party bare specifier is NOT flagged', () => {
+    expect(packagesEscapeTarget('pages/index/main.tsx', 'react')).toBeNull();
+    expect(packagesEscapeTarget('shared/foo.ts', '@testing-library/react')).toBeNull();
+  });
+
+  it('scanFileForViolations: flags a cross-workspace-package import even when type-only (no carve-out, unlike layering)', () => {
+    const v = scanFileForViolations(
+      'shared/foo.ts',
+      typeImport('DomainType', '../../packages/domain/src/index'),
+    );
+    expect(v.some((viol) => viol.kind === 'cross-workspace-package')).toBe(true);
+  });
+
+  it('scanFileForViolations: flags a DYNAMIC cross-workspace-package import (relative path) -- closes the demonstrated hole', () => {
+    const v = scanFileForViolations(
+      'shared/foo.ts',
+      `async function f() { return await import('../../packages/domain/src/index'); }`,
+    );
+    expect(v).toMatchObject([
+      { kind: 'cross-workspace-package', to: '../packages/domain/src/index' },
+    ]);
+  });
+
+  it('scanFileForViolations: flags a DYNAMIC cross-workspace-package import (@autologger/* bare specifier)', () => {
+    const v = scanFileForViolations(
+      'shared/foo.ts',
+      `async function f() { return await import('@autologger/domain'); }`,
+    );
+    expect(v).toMatchObject([{ kind: 'cross-workspace-package', to: '@autologger/domain' }]);
+  });
+
+  it('scanFileForViolations: does NOT flag a dynamic import whose target is a non-literal expression, even one that would otherwise resolve into packages/ (disclosed residual)', () => {
+    const v = scanFileForViolations(
+      'shared/foo.ts',
+      [
+        "const pkgPath = '../../packages/domain/src/index';",
+        'async function f() { return await import(pkgPath); }',
+      ].join('\n'),
+    );
+    expect(v).toEqual([]);
   });
 });
 
@@ -640,6 +1082,472 @@ describe('scanTree — end-to-end mutation check on a real filesystem walk', () 
     expect(violations.some((v) => v.file === 'shared/attackN12.ts' && v.kind === 'layering')).toBe(
       true,
     );
+  });
+});
+
+describe('cross-workspace-package guard — end-to-end mutation check (web-package-boundary)', () => {
+  let tmpRoot: string;
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function freshRoot(prefix: string): string {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'index'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'api'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'shared'), { recursive: true });
+    return tmpRoot;
+  }
+
+  it('DOES fire on a production relative import that escapes web/src into packages/', () => {
+    const root = freshRoot('web-boundaries-pkg-relative-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'stray.ts'),
+      valueImport('foo', '../../../packages/domain/src/index'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some((v) => v.kind === 'cross-workspace-package' && v.file === 'shared/stray.ts'),
+    ).toBe(true);
+  });
+
+  it('DOES fire on a production @autologger/* bare-specifier import', () => {
+    const root = freshRoot('web-boundaries-pkg-bare-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayBare.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/strayBare.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES fire on, and COUNT, a production file outside the three governed zones (proves the walk widened, not just a new zone-scoped check)', () => {
+    const root = freshRoot('web-boundaries-pkg-unzoned-');
+    fs.mkdirSync(path.join(root, 'types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'types', 'ambient.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(1);
+    expect(
+      violations.some((v) => v.kind === 'cross-workspace-package' && v.file === 'types/ambient.ts'),
+    ).toBe(true);
+  });
+
+  it('does NOT fire on a conforming tree (internal imports + an ordinary third-party bare specifier)', () => {
+    const root = freshRoot('web-boundaries-pkg-clean-');
+    fs.writeFileSync(
+      path.join(root, 'pages', 'index', 'main.tsx'),
+      [valueImport('bar', '../../api/bar'), valueImport('clsx', 'clsx')].join('\n'),
+    );
+    fs.writeFileSync(path.join(root, 'api', 'bar.ts'), valueImport('baz', '../shared/baz'));
+    fs.writeFileSync(path.join(root, 'shared', 'baz.ts'), 'export const baz = 1;\n');
+    const { violations } = scanTree(root);
+    expect(violations.filter((v) => v.kind === 'cross-workspace-package')).toEqual([]);
+  });
+
+  it('a test file crossing into packages/ is not scanned (mirrors the pinning test exemption)', () => {
+    const root = freshRoot('web-boundaries-pkg-testfile-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayBare.pinning.test.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(0);
+    expect(violations).toEqual([]);
+  });
+
+  // --- Dynamic-import hole (task-1-2 report addendum) --------------------
+  // Same shape of mutation pair as the static-import cases above, extended
+  // to a literal-argument `import(...)` call -- this is the exact form
+  // demonstrated to evade the original static-only walk while still passing
+  // `tsc --noEmit -p web`.
+
+  it('DOES fire on a DYNAMIC production relative import that escapes web/src into packages/ (closes the demonstrated hole)', () => {
+    const root = freshRoot('web-boundaries-pkg-dynamic-relative-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayDynamic.ts'),
+      `export async function sneak() { return await import('../../packages/domain/src/index'); }\n`,
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/strayDynamic.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('DOES fire on a DYNAMIC production @autologger/* bare-specifier import', () => {
+    const root = freshRoot('web-boundaries-pkg-dynamic-bare-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayDynamicBare.ts'),
+      `export async function sneak() { return await import('@autologger/domain'); }\n`,
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/strayDynamicBare.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('a test file crossing into packages/ via a DYNAMIC import is not scanned (mirrors clientAggregates.pinning.test.ts)', () => {
+    const root = freshRoot('web-boundaries-pkg-dynamic-testfile-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayDynamic.pinning.test.ts'),
+      `export async function sneak() { return await import('@autologger/domain'); }\n`,
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(0);
+    expect(violations).toEqual([]);
+  });
+
+  it('does NOT fire on a DYNAMIC import whose target is a non-literal expression, even one pointed at packages/ (disclosed residual -- proves current, deliberate behavior rather than an accident)', () => {
+    const root = freshRoot('web-boundaries-pkg-dynamic-nonliteral-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'strayNonLiteral.ts'),
+      [
+        "const pkgPath = '../../packages/domain/src/index';",
+        'export async function sneak() { return await import(pkgPath); }',
+      ].join('\n'),
+    );
+    const { violations } = scanTree(root);
+    expect(violations.filter((v) => v.kind === 'cross-workspace-package')).toEqual([]);
+  });
+});
+
+describe('phase-1 fix wave regression tests (web-package-boundary review — findings F1-F7)', () => {
+  let tmpRoot: string;
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function freshRoot(prefix: string): string {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'index'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'admin-users'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'api'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'shared'), { recursive: true });
+    return tmpRoot;
+  }
+
+  it('F1: DOES fire on an alias-plus-".." escape (`@/shared/../../../packages/domain/src/index`) that bundled real package code while un-normalized', () => {
+    const root = freshRoot('web-boundaries-f1-alias-escape-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'attackF1.ts'),
+      valueImport('foo', '@/shared/../../../packages/domain/src/index'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/attackF1.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('F2: the same alias-plus-".." shape no longer mis-zones the admin-index-cross rule', () => {
+    const root = freshRoot('web-boundaries-f2-alias-mismzone-');
+    fs.writeFileSync(
+      path.join(root, 'pages', 'admin-users', 'attackF2.ts'),
+      valueImport('AppShell', '@/shared/../pages/index/AppShell'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'admin-index-cross' && v.file === 'pages/admin-users/attackF2.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('F3: DOES fire on an explicit relative path through `node_modules/@autologger/*` (the workspace symlink target)', () => {
+    const root = freshRoot('web-boundaries-f3-node-modules-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'attackF3.ts'),
+      valueImport('foo', '../../../../node_modules/@autologger/domain/src/index'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/attackF3.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('F4: a production file under a directory named `build` inside web/src is now walked and scanned', () => {
+    const root = freshRoot('web-boundaries-f4-build-dir-');
+    fs.mkdirSync(path.join(root, 'shared', 'build'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'shared', 'build', 'attackF4.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBeGreaterThan(0);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/build/attackF4.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('F4: `dist` and `coverage` directories under web/src are likewise walked (not just `build`)', () => {
+    const root = freshRoot('web-boundaries-f4-dist-coverage-');
+    fs.mkdirSync(path.join(root, 'shared', 'dist'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'shared', 'coverage'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'shared', 'dist', 'a.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    fs.writeFileSync(
+      path.join(root, 'shared', 'coverage', 'b.ts'),
+      valueImport('foo', '@autologger/ai-runtime'),
+    );
+    const { violations } = scanTree(root);
+    const files = violations.filter((v) => v.kind === 'cross-workspace-package').map((v) => v.file);
+    expect(files).toContain('shared/dist/a.ts');
+    expect(files).toContain('shared/coverage/b.ts');
+  });
+
+  it('F5: a symlinked directory under web/src is now followed, not silently skipped', () => {
+    const root = freshRoot('web-boundaries-f5-symlink-');
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'web-boundaries-f5-target-'));
+    fs.writeFileSync(path.join(target, 'attackF5.ts'), valueImport('foo', '@autologger/domain'));
+    fs.symlinkSync(target, path.join(root, 'shared', 'symdir'), 'dir');
+    try {
+      const { violations } = scanTree(root);
+      expect(
+        violations.some(
+          (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/symdir/attackF5.ts',
+        ),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('F5: a symlink cycle (directory linking back to an ancestor) does not hang the walk', () => {
+    const root = freshRoot('web-boundaries-f5-cycle-');
+    fs.symlinkSync(root, path.join(root, 'shared', 'loopback'), 'dir');
+    expect(() => scanTree(root)).not.toThrow();
+  });
+
+  it("F6: a `*.test.shim.ts` production file (not matched by vitest's `*.test.ts` glob) is no longer exempted by the substring test-file check", () => {
+    const root = freshRoot('web-boundaries-f6-test-shim-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'attackF6.test.shim.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/attackF6.test.shim.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('F6: a genuine `*.test.ts` file stays exempt (the suffix anchor does not over-tighten)', () => {
+    const root = freshRoot('web-boundaries-f6-real-test-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'attackF6Control.test.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(0);
+    expect(violations).toEqual([]);
+  });
+
+  it('F7: DOES fire on an out-and-back relative escape that revisits `packages/` through an intermediate directory segment (generalized, not tied to a specific checkout name)', () => {
+    const root = freshRoot('web-boundaries-f7-out-and-back-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'attackF7.ts'),
+      valueImport('foo', '../../../some-checkout-dir/packages/domain/src/index'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'cross-workspace-package' && v.file === 'shared/attackF7.ts',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('final fix wave (N1 — fixed): a production file SHALL NOT import a test file', () => {
+  let tmpRoot: string;
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function freshRoot(prefix: string): string {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'index'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'api'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'shared'), { recursive: true });
+    return tmpRoot;
+  }
+
+  it("N1: DOES fire when a production file imports a genuine `*.test.ts` file (production-imports-test) -- the fix-wave re-review's F6-transitive-shape survivor, now closed directly rather than by chasing what the test file itself imports", () => {
+    const root = freshRoot('web-boundaries-n1-prod-imports-test-');
+    // The genuine test file itself reaches into packages/ (matching the
+    // re-review's exact attack shape) -- irrelevant to THIS check, which
+    // fires on the production->test EDGE alone, not on what lies beyond it.
+    fs.writeFileSync(
+      path.join(root, 'shared', 'leakN1.test.ts'),
+      valueImport('probe', '@autologger/domain'),
+    );
+    fs.writeFileSync(
+      path.join(root, 'shared', 'consumerN1.ts'),
+      `export { probe } from './leakN1.test';\n`,
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) =>
+          v.kind === 'production-imports-test' &&
+          v.file === 'shared/consumerN1.ts' &&
+          v.to === 'shared/leakN1.test',
+      ),
+    ).toBe(true);
+  });
+
+  it("N1: fires identically for a DYNAMIC production->test edge (`import('./x.test')`)", () => {
+    const root = freshRoot('web-boundaries-n1-dynamic-');
+    fs.writeFileSync(path.join(root, 'shared', 'leakN1Dyn.test.ts'), 'export const probe = 1;\n');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'consumerN1Dyn.ts'),
+      `export async function f() { return await import('./leakN1Dyn.test'); }\n`,
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'production-imports-test' && v.file === 'shared/consumerN1Dyn.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('N1: an explicit-extension target (`./leakN1.test.ts`) is caught identically to the extension-less form', () => {
+    const root = freshRoot('web-boundaries-n1-explicit-ext-');
+    fs.writeFileSync(path.join(root, 'shared', 'leakN1Ext.test.ts'), 'export const probe = 1;\n');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'consumerN1Ext.ts'),
+      valueImport('probe', './leakN1Ext.test.ts'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'production-imports-test' && v.file === 'shared/consumerN1Ext.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT fire on an ordinary production->production edge (control)', () => {
+    const root = freshRoot('web-boundaries-n1-control-');
+    fs.writeFileSync(path.join(root, 'shared', 'ok.ts'), 'export const ok = 1;\n');
+    fs.writeFileSync(path.join(root, 'shared', 'consumerOk.ts'), valueImport('ok', './ok'));
+    const { violations } = scanTree(root);
+    expect(violations.filter((v) => v.kind === 'production-imports-test')).toEqual([]);
+  });
+
+  it('does NOT flag the test file itself for its own (permitted) cross-workspace import -- only the production importer is examined', () => {
+    // Mirrors the real clientAggregates.pinning.test.ts shape: the test file
+    // is exempt from scanning entirely (isProductionFile), so it produces no
+    // `production-imports-test` violation for its OWN import of a package.
+    const root = freshRoot('web-boundaries-n1-testfile-exempt-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'pin.pinning.test.ts'),
+      valueImport('probe', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(0);
+    expect(violations).toEqual([]);
+  });
+});
+
+describe('final fix wave — disclosed, unfixed gaps (N2-N4; owner ruling: fix N1 only)', () => {
+  let tmpRoot: string;
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function freshRoot(prefix: string): string {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'index'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'api'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'shared'), { recursive: true });
+    return tmpRoot;
+  }
+
+  it('N2 (disclosed, NOT fixed): `import.meta.glob(...)` eager-globbing a packages/ path is invisible to the guard', () => {
+    // Vite resolves and bundles `import.meta.glob`'s literal glob argument at
+    // build time, exactly like a static `import` or a literal dynamic
+    // `import(...)` -- but it is neither an ImportDeclaration/
+    // ExportDeclaration (parseImportEdges) nor a `CallExpression` whose
+    // callee is the bare `import` keyword (parseDynamicImportEdges checks
+    // `node.expression.kind === ts.SyntaxKind.ImportKeyword`; here the
+    // callee is a PropertyAccessExpression on `import.meta`, a distinct AST
+    // shape). Neither walk matches it, so this is a real, undetected build-
+    // time bundling primitive. Disclosed in the spec delta's threat model;
+    // not fixed by this wave.
+    const root = freshRoot('web-boundaries-n2-glob-');
+    fs.writeFileSync(
+      path.join(root, 'shared', 'globLeak.ts'),
+      `export const modules = import.meta.glob('../../../packages/domain/src/studio.ts', { eager: true });\n`,
+    );
+    const { violations } = scanTree(root);
+    expect(violations.filter((v) => v.kind === 'cross-workspace-package')).toEqual([]);
+  });
+
+  it('N3 (disclosed, NOT fixed): a directory literally named `node_modules` UNDER web/src is never walked, even though it is first-party code', () => {
+    // EXCLUDED_DIR_NAMES keeps `node_modules` skipped -- inherited from
+    // queryKeyFactories.repo.test.ts's own root-level skip-list precedent --
+    // on the stated rationale "third-party code this policy does not
+    // govern." That rationale is WRONG for this shape: a directory named
+    // `node_modules` planted directly under `web/src` (not a real package
+    // manager install; nothing under `web/src` ever is) is ordinary,
+    // first-party, hand-authored source that merely carries a name the walk
+    // treats as a magic skip signal. The walk excludes it anyway, so a file
+    // planted here that reaches packages/ is never examined by any of this
+    // file's four checks. Disclosed, not fixed.
+    const root = freshRoot('web-boundaries-n3-node-modules-dir-');
+    fs.mkdirSync(path.join(root, 'shared', 'node_modules'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'shared', 'node_modules', 'evilN3.ts'),
+      valueImport('foo', '@autologger/domain'),
+    );
+    const { violations, filesExamined } = scanTree(root);
+    expect(filesExamined).toBe(0);
+    expect(violations).toEqual([]);
+  });
+
+  it('N4 (disclosed, NOT fixed): a symlinked FILE pointing into packages/ is scanned but not flagged, because its OWN internal imports look web/src-relative from where the symlink sits', () => {
+    // walk()'s doc comment previously claimed symlinked files "were already
+    // handled correctly ... and remain so." That is only half true: a
+    // symlinked file IS walked and scanned (unlike a symlinked directory,
+    // which F5 fixed) -- but scanning it does not help, because the
+    // package-internal relative imports INSIDE the linked-to file resolve
+    // relative to the symlink's own location under web/src, not to its real
+    // location under packages/. The file's content is genuine package
+    // source living inside web/src by construction, and nothing about that
+    // is visible to a specifier-string check. Disclosed, not fixed.
+    const root = freshRoot('web-boundaries-n4-symlink-file-');
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'web-boundaries-n4-target-'));
+    const targetFile = path.join(target, 'packageSource.ts');
+    fs.writeFileSync(targetFile, 'export const foo = 1;\n');
+    fs.symlinkSync(targetFile, path.join(root, 'shared', 'leakN4.ts'));
+    fs.writeFileSync(path.join(root, 'shared', 'consumerN4.ts'), valueImport('foo', './leakN4'));
+    try {
+      const { violations } = scanTree(root);
+      expect(violations.filter((v) => v.kind === 'cross-workspace-package')).toEqual([]);
+    } finally {
+      fs.rmSync(target, { recursive: true, force: true });
+    }
   });
 });
 
@@ -890,6 +1798,26 @@ describe('web/src pages -> api -> shared layering + admin-users/index independen
   it('contains ZERO layering or admin-users/index violations', () => {
     const { violations } = scanTree(WEB_SRC);
     expect(violations).toEqual([]);
+  });
+
+  it('contains ZERO cross-workspace-package violations (web-package-boundary: no production web/src file reaches packages/)', () => {
+    const { violations } = scanTree(WEB_SRC);
+    expect(violations.filter((v) => v.kind === 'cross-workspace-package')).toEqual([]);
+  });
+
+  it('contains ZERO production-imports-test violations (final fix wave, N1: no production file imports a test file)', () => {
+    const { violations } = scanTree(WEB_SRC);
+    expect(violations.filter((v) => v.kind === 'production-imports-test')).toEqual([]);
+  });
+
+  it("the pinning test's dynamic cross-workspace import stays permitted (test files are exempt from the walk entirely)", () => {
+    const rel = 'pages/index/components/aiV2/clientAggregates.pinning.test.ts';
+    const content = fs.readFileSync(path.join(WEB_SRC, rel), 'utf8');
+    expect(content).toContain(
+      "await import('../../../../../../packages/ai-runtime/src/aggregates.ts')",
+    );
+    // isProductionFile is what the walk actually relies on to skip it.
+    expect(isProductionFile(rel)).toBe(false);
   });
 
   it('the three live shared -> api type-only edges specifically produce no violation', () => {
