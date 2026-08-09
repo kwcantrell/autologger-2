@@ -227,6 +227,14 @@ artifacts at once, and OpenSpec treats a change as apply-ready the moment `tasks
 pass: run the panel on `proposal.md` + `spec.md` + `design.md`, gate it, fold the rulings
 back across **all four** artifacts (tasks included), run the consistency read, *then*
 `opsx:apply`. (`openspec/changes/de-cloudflare-strong-core` is the reference example.)
+Before drafting `proposal.md`'s Why, the orchestrator measures the request's stated premises
+against the tree — bounded to **the nouns the framing names and any inherited deferral
+pointer the framing relies on**, the two closed sets that make the check falsifiable rather
+than an unbounded "check the request against the repo" — and records a `Current state,
+measured on <branch> @ <sha>` block in the design. Any contradiction routes to the human as a
+numbered decision carrying at least two priced options. This is cost, not correctness
+(decided 2026-08-09): the panel already catches six of seven false framings; measuring here
+makes them cheap to catch, not newly caught.
 
 ### Adversarial review of the spec
 
@@ -238,8 +246,11 @@ spec makes a *perfect* plan build the wrong thing.
 **Before the panel, run a light-tier fact-check pass** (decided 2026-07-14): a mechanical
 fetch-and-compare reviewer verifies the *stated* checkable claims in
 `proposal.md`/`spec.md`/`design.md` against the live repo (symbol existence, caller
-counts, wire shapes, "X is dead/unused" claims, file inventories), recording per-claim
-method and evidence. An adequate method (decided 2026-07-27): however claims are
+counts, wire shapes, "X is dead/unused" claims, file inventories, **precedent citations** —
+a claim that X is precedent for Y requires showing X is live and load-bearing, **capability
+or coverage claims** — what a guard catches is checkable, and **characterizations relayed
+from subagents**; any count entering an artifact carries its derivation inline), recording
+per-claim method and evidence. An adequate method (decided 2026-07-27): however claims are
 enumerated, each states the **property to verify**, never a line to confirm — the pass
 answers the property, not the pointer; and CONFIRMED stays reserved for mechanically
 checkable facts, which for a claim about what a *function does* means reading the whole
