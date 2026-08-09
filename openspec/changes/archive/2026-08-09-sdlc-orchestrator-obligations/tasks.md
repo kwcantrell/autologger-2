@@ -22,7 +22,7 @@ line only and verifies the skill still loads.
 Both land in `CLAUDE.md` deliberately: it is the only encoding that auto-loads for every agent
 including subagents (design D1). Do not move either to a capability spec or to a skill.
 
-- [ ] 1.1 **Premise-checking at propose time.** Extend the existing `opsx:propose` ordering
+- [x] 1.1 **Premise-checking at propose time.** Extend the existing `opsx:propose` ordering
       paragraph (locate by its "do not skip the gate" sentence). The orchestrator, before drafting
       `proposal.md`'s Why, measures the request's stated premises against the tree — **bounded to
       the nouns the framing names and any inherited deferral pointer it relies on** — records a
@@ -32,7 +32,7 @@ including subagents (design D1). Do not move either to a capability spec or to a
       an unbounded "check the request against the repo".
       State the justification as **cost, not correctness** (design D2) — the panel catches six of
       seven false framings; this makes them cheap, not caught.
-- [ ] 1.2 **Widen the fact-check enumeration.** Locate the existing list by its "symbol existence,
+- [x] 1.2 **Widen the fact-check enumeration.** Locate the existing list by its "symbol existence,
       caller counts, wire shapes" wording. Add three classes: **precedent citations** (a claim that
       X is precedent for Y requires showing X is live and load-bearing), **capability or coverage
       claims** (what a guard catches is checkable), and **characterizations relayed from subagents**.
@@ -42,7 +42,7 @@ including subagents (design D1). Do not move either to a capability spec or to a
 
 ## 2. The propose skill — the deletion
 
-- [ ] 2.1 Delete `openspec-propose/SKILL.md`'s guidance line instructing to **"prefer making
+- [x] 2.1 Delete `openspec-propose/SKILL.md`'s guidance line instructing to **"prefer making
       reasonable decisions to keep momentum"** (locate by that phrase; it currently sits in the
       Guardrails list). It instructs the opposite of purpose clause 3 at the exact moment that
       clause governs.
@@ -54,16 +54,16 @@ including subagents (design D1). Do not move either to a capability spec or to a
 
 ## 3. Verification
 
-- [ ] 3.1 Run all four root gates and record **actual output, not a claim**: `npm run typecheck`,
+- [x] 3.1 Run all four root gates and record **actual output, not a claim**: `npm run typecheck`,
       `npm test`, `npm run lint`, `npm run docs:check`. State explicitly that `npm run e2e` and
       `npm run e2e:visual` were skipped, and why.
-- [ ] 3.2 **Verify this change against its own new rules** — it introduces them, so it is the first
+- [x] 3.2 **Verify this change against its own new rules** — it introduces them, so it is the first
       subject:
       - Does the change's own design carry a `Current state` block with branch and SHA (1.1)?
       - Does every count in its artifacts carry its derivation (1.2)?
       A change introducing obligations it does not itself meet is the defect class this whole line
       of work exists to catch.
-- [ ] 3.3 `openspec validate sdlc-orchestrator-obligations --strict`.
-- [ ] 3.4 Confirm the diff is **documentation only**: `git diff --name-only` lists only `CLAUDE.md`,
+- [x] 3.3 `openspec validate sdlc-orchestrator-obligations --strict`.
+- [x] 3.4 Confirm the diff is **documentation only**: `git diff --name-only` lists only `CLAUDE.md`,
       `.claude/skills/openspec-propose/SKILL.md`, and this change's artifacts. Any other path is a
       finding, not a convenience.
