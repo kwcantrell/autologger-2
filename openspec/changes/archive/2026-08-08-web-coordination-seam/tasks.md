@@ -172,5 +172,5 @@ a green pass.
       `npm run lint`, `npm run docs:check` — **with all new files staged first.**
 - [x] 7.3 `npm run e2e` (chromium + login-gate) and `npm run e2e:visual`. Baselines were last regenerated 2026-08-07 (`d23e8b9`) and this change alters no UI, so any visual diff is branch-induced signal and
       must be explained, not re-blessed.
-- [ ] 7.4 Attach the new `web-coordination-seam` capability in `web-docs/model/components.ts` at
+- [x] 7.4 Attach the new `web-coordination-seam` capability in `web-docs/model/components.ts` at
       archive, per CLAUDE.md — an unaccounted baseline capability is a hard `docs:check` failure.

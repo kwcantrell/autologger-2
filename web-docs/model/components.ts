@@ -895,6 +895,18 @@ const capabilityScopes: CapabilityScope[] = [
   },
   { type: 'component', capability: 'web-home-launch', components: ['web-app'] },
   { type: 'component', capability: 'web-login-experience', components: ['web-app', 'auth'] },
+  {
+    type: 'component',
+    capability: 'web-coordination-seam',
+    // The registry (web-app: web/src/pages/index/coordination/registry.ts)
+    // plus its owners/consumers, all under web/src/pages/index/. The two
+    // repo-wide enforcement checks (windowCoordinationBan.repo.test.ts,
+    // webBoundaries.repo.test.ts) already live in web-test-harness's glob,
+    // alongside this capability's own header comments there. Boot wiring
+    // and reused machinery are deliberately excluded, per the
+    // batch-audio-import precedent above.
+    components: ['web-app', 'web-test-harness'],
+  },
   { type: 'component', capability: 'web-session-console', components: ['web-app'] },
   { type: 'component', capability: 'web-session-routing', components: ['web-app'] },
   {
