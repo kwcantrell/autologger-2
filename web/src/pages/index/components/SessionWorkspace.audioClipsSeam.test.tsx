@@ -11,6 +11,7 @@ import type {
   TranscriptWord,
 } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
+import { register } from '../coordination/registry';
 import { SessionWorkspace } from './SessionWorkspace';
 
 // --- IMPORTANT-1 fix (feed-row-seek fix wave 2): the C1 fix's structural
@@ -29,8 +30,8 @@ import { SessionWorkspace } from './SessionWorkspace';
 // This file renders the REAL `SessionWorkspace` (not a mirror), with the
 // REAL `AudioClipsProvider` → `useAudioClips` → `AudioClipsContext` →
 // `useTimelineSeek` → `TranscribeFeed` chain unmocked, and asserts a covered
-// row's jump control ends up calling the real
-// `window.AutoLogger_seekAudioAndPlay` global with the resolved second.
+// row's jump control ends up calling the real `seekAudioAndPlay`
+// coordination handle with the resolved second.
 // Everything ELSE (AudioRecorder, Timeline, MarkerNav, TransportControls,
 // CategoryButtonStrip, EventLogSheet, TopicsFeed, AiPanel, AiV2Panel, the
 // socket/companion/waveform/gate hooks) is mocked away — irrelevant to this
@@ -265,15 +266,18 @@ function renderWorkspace() {
 }
 
 describe('SessionWorkspace real audio-clips seam (feed-row-seek fix wave 2, IMPORTANT-1)', () => {
-  it('a covered Transcript row jump calls window.AutoLogger_seekAudioAndPlay with the resolved second', async () => {
+  it('a covered Transcript row jump calls the seekAudioAndPlay handle with the resolved second', async () => {
     renderWorkspace();
 
-    // `SessionWorkspace`'s own effect assigns the real
-    // `window.AutoLogger_seekAudioAndPlay` wrapper on mount; replace it AFTER
-    // mount with a spy so we can observe `useTimelineSeek`'s call to it
-    // without needing a real `AudioPlayer` ref target.
+    // `SessionWorkspace`'s own effect registers the real `seekAudioAndPlay`
+    // handler on mount; replace it AFTER mount with a spy so we can observe
+    // `useTimelineSeek`'s call to it without needing a real `AudioPlayer` ref
+    // target. `register` replaces whatever handler is currently registered,
+    // regardless of identity — this is the register-after-mount pattern
+    // web-coordination-seam's D3 depends on `web/src/test/setup.ts` resetting
+    // after every test.
     const seekAndPlay = vi.fn();
-    window.AutoLogger_seekAudioAndPlay = seekAndPlay;
+    register('seekAudioAndPlay', seekAndPlay);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
 

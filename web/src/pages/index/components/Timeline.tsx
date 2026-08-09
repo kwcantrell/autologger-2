@@ -23,9 +23,11 @@ import {
 import { fmtHmsFromSec } from '../../../shared/utils/timecode';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { clipIndexContainingTimelineSec } from '../../../shared/utils/waveformSvg';
+import { register, unregister } from '../coordination/registry';
 import { useZoomRail } from '../hooks/useZoomRail';
 import { groupTimelineMarkers } from '../utils/markerGrouping';
 import { revealEventInFeed } from '../utils/revealEventInFeed';
+import { TIMELINE_SEC_EVENT } from '../utils/timelineSecEvent';
 import { TimelineClips } from './timeline/TimelineClips';
 import { TimelineMarkers } from './timeline/TimelineMarkers';
 import { TimelineTicks } from './timeline/TimelineTicks';
@@ -185,12 +187,6 @@ const ZOOM_BAR =
 // bg fills under the 45%-cyan border, keeping the ring dim instead of letting the bar show).
 const ZOOM_HANDLE =
   'absolute top-1/2 left-0 [transform:translate3d(-50%,-50%,0)] w-[calc(var(--v4-zoom-handle-w)*1.2)] h-[calc(var(--v4-zoom-handle-h)*1.2)] min-w-[calc(var(--v4-zoom-handle-w)*1.2)] min-h-[calc(var(--v4-zoom-handle-h)*1.2)] p-0 m-0 rounded-full box-border z-[2] flex-shrink-0 [touch-action:none] cursor-grab appearance-none block text-transparent text-[0px] leading-none active:cursor-grabbing bg-[rgba(15,23,42,0.95)] border-2 border-[rgba(56,189,248,0.45)] hover-always:border-[#11141b] hover-always:bg-white active:border-[#11141b] active:bg-white [&::-moz-focus-inner]:border-0 [&::-moz-focus-inner]:p-0';
-
-declare global {
-  interface Window {
-    AutoLogger_setManualScrubSec?: (sec: number | null) => void;
-  }
-}
 
 /** Marker tooltip placement matches session.js's showTimelineMarkerTooltip math. */
 function placeTooltip(
@@ -448,16 +444,16 @@ export function Timeline({
   // Notify MarkerNav (and any other listener) about playhead changes.
   useEffect(() => {
     document.body.dispatchEvent(
-      new CustomEvent('autologger:timeline-sec', { detail: { sec: activeSec } }),
+      new CustomEvent(TIMELINE_SEC_EVENT, { detail: { sec: activeSec } }),
     );
   }, [activeSec]);
 
-  // Expose the scrub writer as a window global so timelineJump/useTimelineSeek
-  // can drive the playhead without prop threading.
+  // Expose the scrub writer through the coordination registry so
+  // timelineJump/useTimelineSeek can drive the playhead without prop threading.
   useEffect(() => {
-    window.AutoLogger_setManualScrubSec = writeManualScrubSec;
+    register('setManualScrubSec', writeManualScrubSec);
     return () => {
-      window.AutoLogger_setManualScrubSec = undefined;
+      unregister('setManualScrubSec', writeManualScrubSec);
     };
   }, [writeManualScrubSec]);
 

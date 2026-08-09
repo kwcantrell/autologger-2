@@ -402,6 +402,19 @@ const webComponents: Component[] = [
       'web/src/noAgentAuthoredMarkup.repo.test.ts',
       'web/src/queryKeyFactories.repo.test.ts',
       'web/src/apiResponseShapes.repo.test.ts',
+      // windowCoordinationBan.repo.test.ts (web-coordination-seam, task 5.1)
+      // is the same shape again: a root-level `*.repo.test.ts` walking
+      // web/src from disk to assert a whole-tree property (no `declare
+      // global` block anywhere, no write to a non-builtin global-object
+      // property) rather than one module's behavior.
+      'web/src/windowCoordinationBan.repo.test.ts',
+      // webBoundaries.repo.test.ts (web-coordination-seam, task 5.3; gate
+      // ruling E5) is the same shape again: a root-level `*.repo.test.ts`
+      // walking web/src from disk to assert a whole-tree property (pages ->
+      // api -> shared value-import layering is one-way, and
+      // pages/admin-users <-/-> pages/index in either direction) rather than
+      // one module's behavior.
+      'web/src/webBoundaries.repo.test.ts',
       // cursorAdapters.repo.test.ts (cursor-agent-adapters) is the same shape
       // as the three repo-wide policy tests above — a root-level
       // `*.repo.test.ts` walking the whole repo tree from disk to assert a

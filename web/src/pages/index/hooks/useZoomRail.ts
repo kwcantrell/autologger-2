@@ -4,15 +4,9 @@
 import { type RefObject, useEffect, useRef } from 'react';
 import { toast } from '../../../shared/components/Toast';
 import { isTypingTarget } from '../components/ShortcutsDialog';
+import { register, unregister } from '../coordination/registry';
+import { TIMELINE_ZOOM_EVENT } from '../utils/timelineZoomEvent';
 
-declare global {
-  interface Window {
-    AutoLogger_getTimelineZoom?: () => number;
-    AutoLogger_scrollTimelineToSec?: (sec: number, totalSec?: number) => void;
-  }
-}
-
-const TIMELINE_ZOOM_EVENT = 'autologger:timeline-zoom-changed';
 const TIMELINE_ZOOM_MIN = 1;
 const TIMELINE_ZOOM_ABS_MAX = 25;
 const TIMELINE_ZOOM_KEY_FACT = 1.25;
@@ -696,15 +690,16 @@ export function useZoomRail(
 
   // ---------- effects ----------
 
-  // Publish window globals for in-app consumers (TimelineTicks reads the zoom;
-  // timelineJump/useTimelineSeek drive the scroll).
+  // Publish coordination handles for in-app consumers (TimelineTicks reads the
+  // zoom; timelineJump/useTimelineSeek drive the scroll).
   useEffect(() => {
-    window.AutoLogger_getTimelineZoom = () => zoomRef.current;
-    window.AutoLogger_scrollTimelineToSec = (sec: number, totalSec?: number) =>
-      scrollToSec.current(sec, totalSec);
+    const getZoom = () => zoomRef.current;
+    const scroll = (sec: number, totalSec?: number) => scrollToSec.current(sec, totalSec);
+    register('getTimelineZoom', getZoom);
+    register('scrollTimelineToSec', scroll);
     return () => {
-      window.AutoLogger_getTimelineZoom = undefined;
-      window.AutoLogger_scrollTimelineToSec = undefined;
+      unregister('getTimelineZoom', getZoom);
+      unregister('scrollTimelineToSec', scroll);
     };
   }, []);
 

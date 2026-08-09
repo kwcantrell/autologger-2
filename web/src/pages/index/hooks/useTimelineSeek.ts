@@ -2,23 +2,8 @@ import { useCallback } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { normalizeTargetSec, resolvePlayPosition } from '../components/AudioPlayer';
+import { scrollTimelineToSec, seekAudioAndPlay, setManualScrubSec } from '../coordination/registry';
 import { useAudioClipsContext } from './AudioClipsContext';
-
-/**
- * Published by `SessionWorkspace` → `AudioPlayer` (feed-row-seek phase 4,
- * design D1; landed) — the play-capable counterpart to the existing
- * `AutoLogger_seekAudio` (non-playing; declared in AppShell.tsx and used by
- * marker navigation only). TypeScript merges `declare global` blocks across
- * files, same pattern as the other AutoLogger_* globals.
- *
- * Every call is optional-chained: while SessionWorkspace is unmounted this is
- * a silent no-op, never a throw.
- */
-declare global {
-  interface Window {
-    AutoLogger_seekAudioAndPlay?: (sec: number) => void;
-  }
-}
 
 export interface UseTimelineSeekResult {
   /**
@@ -47,9 +32,9 @@ export interface UseTimelineSeekResult {
    *
    * Gated: a no-op (no scrub, no scroll, no audio, no playback) while
    * `unavailable` is true. When available, it always moves the playhead and
-   * scrolls the timeline to `sec`; it additionally starts playback via
-   * `AutoLogger_seekAudioAndPlay` ONLY when a playable clip actually covers
-   * `sec` (design D6) — never the non-playing `AutoLogger_seekAudio`, which
+   * scrolls the timeline to `sec`; it additionally starts playback via the
+   * `seekAudioAndPlay` handle ONLY when a playable clip actually covers
+   * `sec` (design D6) — never the non-playing `seekAudio` handle, which
    * belongs to marker navigation (design D1, D8). An uncovered target still
    * moves the playhead but issues no audio call of either kind, because
    * `AudioPlayer.seekToTimelineSec`'s `resolvePlayPosition` does not no-op on
@@ -89,9 +74,9 @@ function isCoveredByPlayableClip(sec: number, clips: readonly AudioClipLite[]): 
  *
  * Deliberately NOT layered on top of `timelineJump` (`jumpTimelineToSec`):
  * that module always issues all three calls, including the non-playing
- * `AutoLogger_seekAudio`, which neither branch here wants — the covered path
- * needs the play-capable global instead, and the uncovered path needs no
- * audio call at all. The scrub + scroll globals are therefore invoked
+ * `seekAudio` handle, which neither branch here wants — the covered path
+ * needs the play-capable handle instead, and the uncovered path needs no
+ * audio call at all. The scrub + scroll handles are therefore invoked
  * directly; `timelineJump` remains the ungated, uncoverage-checked,
  * non-playing bundle reserved for marker navigation (design D8).
  */
@@ -109,10 +94,10 @@ export function useTimelineSeek(sessionId: string, batchEditMode: boolean): UseT
   const jump = useCallback(
     (sec: number) => {
       if (!available) return;
-      window.AutoLogger_setManualScrubSec?.(sec);
-      window.AutoLogger_scrollTimelineToSec?.(sec);
+      setManualScrubSec(sec);
+      scrollTimelineToSec(sec);
       if (isCoveredByPlayableClip(sec, clips)) {
-        window.AutoLogger_seekAudioAndPlay?.(sec);
+        seekAudioAndPlay(sec);
       }
     },
     [available, clips],

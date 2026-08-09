@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
+import { register } from './coordination/registry';
 import { navigate, setNavigationImplForTesting } from './navigation';
 import {
   getOriginatedSessionId,
@@ -131,12 +132,16 @@ let stop: ReturnType<typeof vi.fn<() => void>>;
 
 beforeEach(() => {
   stop = vi.fn();
-  window.AutoLogger_stopTransportIfNeeded = stop;
+  // Stands in for SessionWorkspace's registration (mocked out via
+  // SessionRoute above) — this file exercises departureWatcher.ts's firing
+  // logic against a stub owner, not SessionWorkspace's real one. No manual
+  // unregister/reset needed: web/src/test/setup.ts's registry `reset()`
+  // afterEach (web-coordination-seam D3) clears it after every test.
+  register('stopTransportIfNeeded', stop);
 });
 
 afterEach(() => {
   setNavigationImplForTesting(null);
-  window.AutoLogger_stopTransportIfNeeded = undefined;
   window.history.replaceState(null, '', '/');
   resetOriginationForTesting();
   vi.clearAllMocks();
@@ -246,7 +251,7 @@ describe('Originator-scoped transport stop on route departure (design D4)', () =
     expect(workspaceSessionId()).toBe('sess-1');
 
     // Mounting alone (StrictMode double-renders/double-invokes effects here —
-    // renderStrict wraps in <StrictMode>) must never call the stop global:
+    // renderStrict wraps in <StrictMode>) must never call the stop handle:
     // the watcher is subscription-based (navigate()/popstate), not
     // effect-based, so nothing about mounting can trigger it.
     expect(stop).not.toHaveBeenCalled();

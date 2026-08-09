@@ -6,6 +6,7 @@ import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
 import { renderStrict } from '../../test/renderStrict';
 import { AppShell } from './AppShell';
+import { register } from './coordination/registry';
 import { navigate, setNavigationImplForTesting } from './navigation';
 import { markOriginated, resetOriginationForTesting } from './transportOrigination';
 
@@ -163,7 +164,6 @@ beforeEach(() => {
 
 afterEach(() => {
   setNavigationImplForTesting(null);
-  window.AutoLogger_stopTransportIfNeeded = undefined;
   window.history.replaceState(null, '', '/');
   resetOriginationForTesting();
   vi.clearAllMocks();
@@ -207,7 +207,7 @@ describe('AppShell routing (URL-addressed session state)', () => {
 
   it('closing pushes / , unmounts the workspace, and stops the transport this client originated (design D4 — full origination matrix in departureWatcher.test.tsx)', () => {
     const stop = vi.fn();
-    window.AutoLogger_stopTransportIfNeeded = stop;
+    register('stopTransportIfNeeded', stop);
     const { memory } = renderShell('/sessions/sess-1');
     expect(workspaceSessionId()).toBe('sess-1');
     markOriginated('sess-1');
@@ -250,7 +250,7 @@ describe('AppShell routing (URL-addressed session state)', () => {
 
   it('the studio-switch save path navigates to / like the close control, stopping an originated roll', () => {
     const stop = vi.fn();
-    window.AutoLogger_stopTransportIfNeeded = stop;
+    register('stopTransportIfNeeded', stop);
     const { memory } = renderShell('/sessions/sess-1');
     markOriginated('sess-1');
 
@@ -347,6 +347,15 @@ describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)',
     expect(screen.getByRole('dialog')).not.toBeNull();
   });
 
+  it('closes via its own onClose control, wired straight through AppShell to handleCloseSettings (web-coordination-seam D4: replaces the retired AutoLogger_closeSettingsModal global)', () => {
+    renderShell('/');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('an open modal survives a route change (browser Back between / and /teams)', async () => {
     window.history.replaceState(null, '', '/');
     renderStrict(<AppShell />);
@@ -395,5 +404,32 @@ describe('AppShell legacy spine retirement', () => {
     expect('sessionId' in document.body.dataset).toBe(false);
     expect('V3_selectSession' in window).toBe(false);
     expect('V3_closeSession' in window).toBe(false);
+  });
+
+  // --- web-coordination-seam task 5.2 (spec "Enforcement checks are proven
+  // non-vacuous": "A negative runtime assertion ... SHALL be made in a
+  // context where that handle's owning component actually mounts") ---
+  //
+  // `AppShell` is the real, unmocked SUT in every test in this file — unlike
+  // `SessionRoute` and `HomeSettingsModal`, which ARE module-mocked here
+  // (design D8's counter-example) and so cannot host a meaningful assertion
+  // for handles either of THEM owns (seekAudio, stopTransportIfNeeded, ...).
+  // These three globals were different: `AppShell.tsx`'s own mount-once boot
+  // effect (see its header comment) installed all three directly, so
+  // `AppShell` mounting here — which it always does — is the correct place.
+  // Exercises the exact interactions that used to route through them: open
+  // + close the settings modal (`AutoLogger_closeSettingsModal`) and select a
+  // session (`Home_reloadSessionList` / `Home_clearSessionList` fired on the
+  // session-list refetch path).
+  it('defines no AutoLogger_closeSettingsModal / Home_reloadSessionList / Home_clearSessionList globals (web-coordination-seam D4)', () => {
+    renderShell();
+
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+    fireEvent.click(screen.getByTestId('rail-select-s1'));
+
+    expect('AutoLogger_closeSettingsModal' in window).toBe(false);
+    expect('Home_reloadSessionList' in window).toBe(false);
+    expect('Home_clearSessionList' in window).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { useEvents } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
+import { register } from '../coordination/registry';
 import { MarkerNav } from './MarkerNav';
 
 // --- MarkerNav characterization (feed-row-seek task 1.1, re-pinned by maximize-log-view) ---
@@ -15,8 +16,8 @@ import { MarkerNav } from './MarkerNav';
 // scenario "Strip contents when rolling": marker prev/next controls are
 // disabled). This test now pins the CURRENT behavior:
 //
-//   1. each button issues AutoLogger_setManualScrubSec, AutoLogger_scrollTimelineToSec,
-//      and AutoLogger_seekAudio, in that order, all with the SAME grouped-marker second
+//   1. each button issues the setManualScrubSec, scrollTimelineToSec, and
+//      seekAudio handles, in that order, all with the SAME grouped-marker second
 //   2. it is disabled while rolling or while the recording lease is alive
 //      (maximize-log-view; supersedes the feed-row-seek "ungated while rolling" pin)
 //   3. the audio seek is issued unconditionally, with no clip-coverage check
@@ -122,10 +123,10 @@ beforeEach(() => {
   // Play-capable path (feed-row-seek, phase 4) — MarkerNav must never call this;
   // see "issues the audio seek unconditionally ... and never starts playback" below.
   seekAndPlayMock = vi.fn();
-  window.AutoLogger_setManualScrubSec = scrubMock;
-  window.AutoLogger_scrollTimelineToSec = scrollMock;
-  window.AutoLogger_seekAudio = seekMock;
-  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
+  register('setManualScrubSec', scrubMock);
+  register('scrollTimelineToSec', scrollMock);
+  register('seekAudio', seekMock);
+  register('seekAudioAndPlay', seekAndPlayMock);
 });
 
 describe('MarkerNav prev/next jump (characterization baseline)', () => {
@@ -135,9 +136,9 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
 
     screen.getByRole('button', { name: 'Next marker' }).click();
 
-    // Same second to all three globals.
+    // Same second to all three handles.
     expect(scrubMock).toHaveBeenCalledWith(20);
-    expect(scrollMock).toHaveBeenCalledWith(20);
+    expect(scrollMock).toHaveBeenCalledWith(20, undefined);
     expect(seekMock).toHaveBeenCalledWith(20);
 
     // In order: scrub, then scroll, then audio seek.
@@ -153,7 +154,7 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
     screen.getByRole('button', { name: 'Previous marker' }).click();
 
     expect(scrubMock).toHaveBeenCalledWith(10);
-    expect(scrollMock).toHaveBeenCalledWith(10);
+    expect(scrollMock).toHaveBeenCalledWith(10, undefined);
     expect(seekMock).toHaveBeenCalledWith(10);
 
     const order = [scrubMock, scrollMock, seekMock].map((m) => m.mock.invocationCallOrder[0]);
@@ -198,7 +199,7 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
     screen.getByRole('button', { name: 'Previous marker' }).click();
     expect(seekMock).toHaveBeenCalledTimes(2);
 
-    // "Never starts playback": the only audio-facing call is AutoLogger_seekAudio,
+    // "Never starts playback": the only audio-facing call is the seekAudio handle,
     // and every call carries just the target second — the same single-argument,
     // non-playing signature AudioPlayer.seekToTimelineSec exposes today.
     for (const call of seekMock.mock.calls) {
@@ -207,7 +208,7 @@ describe('MarkerNav prev/next jump (characterization baseline)', () => {
 
     // Direct assertion (feed-row-seek phase 4 strengthened this beyond the
     // call-arity proxy above, now that a playback-capable path actually
-    // exists): MarkerNav must never reach the play-capable global at all.
+    // exists): MarkerNav must never reach the play-capable handle at all.
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 

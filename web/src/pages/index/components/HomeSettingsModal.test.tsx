@@ -299,6 +299,29 @@ describe('HomeSettingsModal studio-switch save branch', () => {
   });
 });
 
+// --- Session-list refetch on save (web-coordination-seam, tasks 3.1/3.2) ---
+//
+// Before this change, the `['sessions']` invalidation on a successful save ran through
+// `window.Home_reloadSessionList` — a global only `AppShell`'s mount-once effect ever
+// assigned. `AppShell` never mounts in this file (the profile/react-query/chrome
+// boundary above is module-mocked), so that global is never defined here and the
+// invocation is a silent no-op — this test is necessarily RED against pre-inline code.
+// Pinned to the shared query client (the mechanism that survives the handle's removal),
+// not to the retired global.
+describe('HomeSettingsModal session-list refetch on save', () => {
+  it('invalidates the sessions query on a successful save', async () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['sessions'] }),
+    );
+  });
+});
+
 // --- Derived dirty tracking (ui-refresh D11) ---
 //
 // Save is disabled + labeled "Saved" until form state diverges from the initialized

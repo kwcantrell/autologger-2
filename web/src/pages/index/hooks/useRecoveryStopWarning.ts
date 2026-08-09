@@ -3,12 +3,7 @@ import { apiFetch } from '../../../api/client';
 import { useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { findOrphanRecording, type OrphanRecording } from '../../../shared/utils/recording';
-
-declare global {
-  interface Window {
-    AutoLogger_invalidateEvents?: () => void;
-  }
-}
+import { invalidateEvents } from '../coordination/registry';
 
 /**
  * A pending recovery-stop decision, exposed so the caller can render it through the
@@ -88,7 +83,7 @@ export function useRecoveryStopWarning(
       })
       .finally(() => {
         inFlightRef.current = false;
-        window.AutoLogger_invalidateEvents?.();
+        invalidateEvents();
       });
   };
 

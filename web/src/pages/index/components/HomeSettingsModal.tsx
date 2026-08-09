@@ -376,7 +376,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       if (activeStudioId !== prevStudioId) {
         onCloseSession();
       }
-      window.Home_reloadSessionList?.();
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: sessionStatusKeys.all() });
       // A now-working save can rename/delete categories; without this, an open session's

@@ -1,25 +1,25 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { register, unregister } from '../coordination/registry';
 import { jumpTimelineToSec } from './timelineJump';
 
 // --- timelineJump (feed-row-seek, task 3.1) ---
 //
-// The ONE typed place the three global names — AutoLogger_setManualScrubSec,
-// AutoLogger_scrollTimelineToSec, AutoLogger_seekAudio — live. It is deliberately
+// The ONE typed place the three coordination handles — setManualScrubSec,
+// scrollTimelineToSec, seekAudio — live. It is deliberately
 // dumb (design D8): no gate, no clip-coverage check, no playback. MarkerNav
 // (phase 10) will be refactored onto this exact module with no behavior change,
 // so anything added here beyond the three calls would silently regress marker
 // navigation, which is normative in the spec ("Marker navigation behavior is
 // unchanged") and pinned by MarkerNav.test.tsx.
+//
+// Registrations are driven through the coordination registry rather than
+// `window`; the shared web test setup resets the registry after every test
+// (web-coordination-seam D3), so no manual teardown is needed here.
 
 let scrubMock: ReturnType<typeof vi.fn<(sec: number | null) => void>>;
 let scrollMock: ReturnType<typeof vi.fn<(sec: number, totalSec?: number) => void>>;
 let seekMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
 let seekAndPlayMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
-
-const originalScrub = window.AutoLogger_setManualScrubSec;
-const originalScroll = window.AutoLogger_scrollTimelineToSec;
-const originalSeek = window.AutoLogger_seekAudio;
-const originalSeekAndPlay = window.AutoLogger_seekAudioAndPlay;
 
 beforeEach(() => {
   scrubMock = vi.fn();
@@ -29,17 +29,10 @@ beforeEach(() => {
   // call this; see "never starts playback" below (quality fix wave, FIX 5,
   // mirroring MarkerNav.test.tsx's identical strengthening).
   seekAndPlayMock = vi.fn();
-  window.AutoLogger_setManualScrubSec = scrubMock;
-  window.AutoLogger_scrollTimelineToSec = scrollMock;
-  window.AutoLogger_seekAudio = seekMock;
-  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
-});
-
-afterEach(() => {
-  window.AutoLogger_setManualScrubSec = originalScrub;
-  window.AutoLogger_scrollTimelineToSec = originalScroll;
-  window.AutoLogger_seekAudio = originalSeek;
-  window.AutoLogger_seekAudioAndPlay = originalSeekAndPlay;
+  register('setManualScrubSec', scrubMock);
+  register('scrollTimelineToSec', scrollMock);
+  register('seekAudio', seekMock);
+  register('seekAudioAndPlay', seekAndPlayMock);
 });
 
 describe('jumpTimelineToSec', () => {
@@ -47,7 +40,7 @@ describe('jumpTimelineToSec', () => {
     jumpTimelineToSec(42);
 
     expect(scrubMock).toHaveBeenCalledWith(42);
-    expect(scrollMock).toHaveBeenCalledWith(42);
+    expect(scrollMock).toHaveBeenCalledWith(42, undefined);
     expect(seekMock).toHaveBeenCalledWith(42);
 
     const order = [scrubMock, scrollMock, seekMock].map((m) => m.mock.invocationCallOrder[0]);
@@ -55,16 +48,16 @@ describe('jumpTimelineToSec', () => {
     expect(order[1]).toBeLessThan(order[2]);
   });
 
-  it('no-ops without throwing when all three globals are undefined', () => {
-    window.AutoLogger_setManualScrubSec = undefined;
-    window.AutoLogger_scrollTimelineToSec = undefined;
-    window.AutoLogger_seekAudio = undefined;
+  it('no-ops without throwing when no owner is registered for all three handles', () => {
+    unregister('setManualScrubSec', scrubMock);
+    unregister('scrollTimelineToSec', scrollMock);
+    unregister('seekAudio', seekMock);
 
     expect(() => jumpTimelineToSec(10)).not.toThrow();
   });
 
-  it('no-ops without throwing when only some globals are undefined', () => {
-    window.AutoLogger_scrollTimelineToSec = undefined;
+  it('no-ops without throwing when only some handles have no registered owner', () => {
+    unregister('scrollTimelineToSec', scrollMock);
 
     expect(() => jumpTimelineToSec(10)).not.toThrow();
     expect(scrubMock).toHaveBeenCalledWith(10);
@@ -81,14 +74,14 @@ describe('jumpTimelineToSec', () => {
 
   it('does not check clip coverage — it issues the audio seek unconditionally', () => {
     // No useAudioClips or clip-coverage concept is imported or referenced; every
-    // call reaches AutoLogger_seekAudio regardless of target.
+    // call reaches the seekAudio handle regardless of target.
     jumpTimelineToSec(999999);
     expect(seekMock).toHaveBeenCalledWith(999999);
   });
 
   it('never starts playback — the seek call carries only the target second', () => {
     jumpTimelineToSec(7);
-    // A playback-capable path would need a second argument or a distinct global;
+    // A playback-capable path would need a second argument or a distinct handle;
     // this module exposes neither. Every call is the same single-argument,
     // non-playing signature AudioPlayer.seekToTimelineSec exposes today.
     for (const call of seekMock.mock.calls) {
@@ -96,11 +89,11 @@ describe('jumpTimelineToSec', () => {
     }
 
     // Direct assertion (quality fix wave, FIX 5): the arity check above is a
-    // proxy that an implementation calling BOTH AutoLogger_seekAudio AND
-    // window.AutoLogger_seekAudioAndPlay?.(sec) would pass unchanged, since
-    // no spy was installed for that global and the optional chain silently
-    // no-ops. MarkerNav.test.tsx closed this exact hole for MarkerNav; this
-    // mirrors it for jumpTimelineToSec.
+    // proxy that an implementation calling BOTH the seekAudio handle AND the
+    // seekAudioAndPlay handle would pass unchanged, since no spy was
+    // registered for that handle and an unregistered invoke silently no-ops.
+    // MarkerNav.test.tsx closed this exact hole for MarkerNav; this mirrors
+    // it for jumpTimelineToSec.
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 });

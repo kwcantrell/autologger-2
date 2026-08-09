@@ -6,6 +6,7 @@ import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../..
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 import { renderStrict } from '../../../test/renderStrict';
+import { register } from '../coordination/registry';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
 import { EventLogSheet, eventRowTimelineSec } from './EventLogSheet';
 
@@ -164,10 +165,10 @@ beforeEach(() => {
   scrubMock = vi.fn();
   scrollMock = vi.fn();
   seekAndPlayMock = vi.fn();
-  window.AutoLogger_setManualScrubSec = scrubMock;
-  window.AutoLogger_scrollTimelineToSec = scrollMock;
-  window.AutoLogger_seekAudio = vi.fn();
-  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
+  register('setManualScrubSec', scrubMock);
+  register('scrollTimelineToSec', scrollMock);
+  register('seekAudio', vi.fn());
+  register('seekAudioAndPlay', seekAndPlayMock);
 });
 
 function renderSheet(clips: AudioClipLite[] = []) {
@@ -242,7 +243,7 @@ describe('EventLogSheet — jump column', () => {
     fireEvent.click(btn);
 
     expect(scrubMock).toHaveBeenCalledWith(10);
-    expect(scrollMock).toHaveBeenCalledWith(10);
+    expect(scrollMock).toHaveBeenCalledWith(10, undefined);
     expect(seekAndPlayMock).toHaveBeenCalledWith(10);
   });
 

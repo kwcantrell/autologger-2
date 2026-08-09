@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
+import { register } from '../coordination/registry';
 import { handleWrapperNavigation } from '../departureWatcher';
 import { getOriginatedSessionId, resetOriginationForTesting } from '../transportOrigination';
 import { TransportControls } from './TransportControls';
@@ -62,12 +63,10 @@ beforeEach(() => {
         }),
     ),
   };
-  window.AutoLogger_stopTransportIfNeeded = undefined;
 });
 
 afterEach(() => {
   resetOriginationForTesting();
-  window.AutoLogger_stopTransportIfNeeded = undefined;
   vi.clearAllMocks();
 });
 
@@ -101,12 +100,12 @@ describe('TransportControls origination guard (async-gap race)', () => {
     expect(getOriginatedSessionId()).toBeNull();
 
     // A later, unrelated departure (sess-2 rolling via another client; this
-    // client never originated it) must not fire the stop global — a
+    // client never originated it) must not fire the stop handle — a
     // pre-fix build would have left the stale sess-1 flag armed, which
     // satisfies the watcher's "target isn't the flagged id" check on this
     // departure and fires it regardless of which session is really rolling.
     const stop = vi.fn();
-    window.AutoLogger_stopTransportIfNeeded = stop;
+    register('stopTransportIfNeeded', stop);
     handleWrapperNavigation('/');
     expect(stop).not.toHaveBeenCalled();
   });

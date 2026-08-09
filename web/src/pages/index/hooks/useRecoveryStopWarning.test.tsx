@@ -6,6 +6,7 @@ import { apiFetch } from '../../../api/client';
 import { eventsKeys } from '../../../api/hooks/useEvents';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
+import { isRegistered, register } from '../coordination/registry';
 import { useRecoveryStopWarning } from './useRecoveryStopWarning';
 
 // --- useRecoveryStopWarning (ui-refresh, task 2.3; D13 panel-pinned semantics) ---
@@ -130,7 +131,6 @@ beforeEach(() => {
     if (path.includes('/events')) return eventsFixture(state.events);
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
-  window.AutoLogger_invalidateEvents = undefined;
 });
 
 afterEach(() => {
@@ -330,5 +330,85 @@ describe('useRecoveryStopWarning (themed, race-safe orphan-recovery dialog)', ()
 
     await waitFor(() => expect(result.current).toBeNull());
     expect(postCalls).toHaveLength(0);
+  });
+
+  // --- Coordination registry (web-coordination-seam D10) ---
+  //
+  // invalidateEvents is resolved from the registry AT CALL TIME, inside
+  // onAccept's post-request `.finally()` — not captured up front. These two
+  // tests pin the scenario "Event invalidation still fires after a synthetic
+  // stop" through the registry seam itself (never `window`, never asserting
+  // on the mechanism under replacement): an owner registered before the
+  // click SHALL be invoked once the stop request settles, and — per D10's
+  // "if no owner is registered at that moment, the invocation is a silent
+  // no-op" — accepting with no owner registered must not disrupt the
+  // request/dismiss flow or throw.
+
+  it('invalidateEvents registered through the registry fires once the recovery-stop request completes', async () => {
+    const handler = vi.fn();
+    register('invalidateEvents', handler);
+
+    setSessionState(SESSION_ID, [orphanStartEvent()], statusFixture());
+    const client = makeClient();
+
+    const { result } = renderHook(() => useRecoveryStopWarning(SESSION_ID, false), {
+      wrapper: wrapperFor(client),
+    });
+
+    await waitFor(() => expect(result.current).not.toBeNull());
+
+    act(() => {
+      result.current?.onAccept();
+    });
+
+    await waitFor(() => expect(postCalls).toHaveLength(1));
+    // The registered handler is invoked from onAccept's `.finally()`, after
+    // the synthetic-stop POST settles — not before, and not skipped.
+    await waitFor(() => expect(handler).toHaveBeenCalledOnce());
+  });
+
+  it('accepting with no invalidateEvents owner registered is a silent no-op: no throw, request still completes', async () => {
+    expect(isRegistered('invalidateEvents')).toBe(false);
+
+    // onAccept's post-request invalidateEvents() call happens inside a
+    // detached `.finally()` that nothing in the component awaits, so a
+    // regression that makes an unowned invoke throw would surface as an
+    // unhandled rejection rather than a synchronous exception this test's
+    // own call stack would catch. Capture that channel directly (a Node
+    // runtime signal, not the AutoLogger window mechanism under replacement)
+    // so "does not throw" is actually pinned rather than merely unobserved.
+    const rejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      setSessionState(SESSION_ID, [orphanStartEvent()], statusFixture());
+      const client = makeClient();
+
+      const { result } = renderHook(() => useRecoveryStopWarning(SESSION_ID, false), {
+        wrapper: wrapperFor(client),
+      });
+
+      await waitFor(() => expect(result.current).not.toBeNull());
+
+      act(() => {
+        result.current?.onAccept();
+      });
+
+      // With no owner registered, the call-time lookup in `.finally()` finds
+      // nothing and silently no-ops (D10) — the request still completes and
+      // the dialog still dismisses; an unregistered invalidateEvents does
+      // not throw out of the promise chain or leave anything pending.
+      await waitFor(() => expect(postCalls).toHaveLength(1));
+      await waitFor(() => expect(result.current).toBeNull());
+      // Flush the microtask/macrotask queue so a rejection queued by
+      // `.finally()` has had a chance to surface before asserting on it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rejections).toEqual([]);
+      expect(isRegistered('invalidateEvents')).toBe(false);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });

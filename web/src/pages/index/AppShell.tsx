@@ -19,17 +19,6 @@ import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
 import 'overlayscrollbars/overlayscrollbars.css';
 
-declare global {
-  interface Window {
-    AutoLogger_closeSettingsModal?: () => void;
-    Home_reloadSessionList?: () => void;
-    Home_clearSessionList?: () => void;
-    AutoLogger_invalidateEvents?: () => void;
-    AutoLogger_seekAudio?: (sec: number) => void;
-    AutoLogger_stopTransportIfNeeded?: () => void;
-  }
-}
-
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session
   // workspace; anything else — `/` or an unmatched path (e.g. the raw dev
@@ -87,17 +76,13 @@ export function AppShell() {
     if (!activeSessionId) document.title = 'AutoLogger';
   }, [activeSessionId]);
 
-  // Set up window globals and one-time boot tasks — runs once on mount
+  // One-time boot tasks — runs once on mount. (Formerly also installed the
+  // `AutoLogger_closeSettingsModal` / `Home_reloadSessionList` /
+  // `Home_clearSessionList` window globals — retired by web-coordination-seam:
+  // the first duplicated the `onClose` prop already threaded to
+  // `HomeSettingsModal`, the second is now inlined there via the shared query
+  // client, and the third was an identical duplicate of the second.)
   useEffect(() => {
-    const refetchSessions = () => queryClient.invalidateQueries({ queryKey: ['sessions'] });
-
-    window.AutoLogger_closeSettingsModal = () => {
-      setShowSettings(false);
-    };
-
-    window.Home_reloadSessionList = refetchSessions;
-    window.Home_clearSessionList = refetchSessions;
-
     // Handle data-v6-modal-dismiss clicks (replaces v3.js listener)
     const handleModalDismiss = (e: MouseEvent) => {
       const target = e.target as Element;
@@ -118,7 +103,7 @@ export function AppShell() {
     initPerfDebugUI();
 
     return () => document.removeEventListener('click', handleModalDismiss);
-  }, [queryClient]);
+  }, []);
 
   const handleSelectSession = useCallback(
     (sid: string, ytUrl?: string, useYtPublishDate?: boolean) => {
@@ -147,10 +132,10 @@ export function AppShell() {
     // without one (the settings modal's studio-switch branch) can't stack
     // duplicate `/` entries (design D3). The `navigate()` call itself is what
     // stops the roll — the originator-scoped departure watcher (design D4)
-    // hangs off the navigation wrapper and fires
-    // `window.AutoLogger_stopTransportIfNeeded` iff this client originated
-    // it; closing a roll started by another client no longer stops it (the
-    // accepted behavior change from the gate — see design D4).
+    // hangs off the navigation wrapper and invokes the `stopTransportIfNeeded`
+    // coordination handle iff this client originated it; closing a roll
+    // started by another client no longer stops it (the accepted behavior
+    // change from the gate — see design D4).
     if (activeSessionId) navigate('/');
     queryClient.invalidateQueries({ queryKey: ['sessions'] });
   }, [activeSessionId, queryClient]);

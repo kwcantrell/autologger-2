@@ -11,6 +11,7 @@ import { showToast } from '../../../shared/components/Toast';
 import { useDebugTransportOverride } from '../../../shared/hooks/useDebugTransportOverride';
 import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
+import { register, unregister } from '../coordination/registry';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
 import { useAudioClips } from '../hooks/useAudioClips';
 import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
@@ -32,12 +33,6 @@ import { isTypingTarget, ShortcutsDialog } from './ShortcutsDialog';
 import { TopicsFeed } from './TopicsFeed';
 import { TranscribeFeed } from './TranscribeFeed';
 import { getTransportState } from './TransportControls';
-
-declare global {
-  interface Window {
-    AutoLogger_stopTransportIfNeeded?: () => void;
-  }
-}
 
 // Feed tab inventory — one source for the tablist buttons AND the tabpanel
 // wrappers below (code-health-tail 4.8). `label` doubles as each panel's
@@ -234,41 +229,51 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
 
   // Expose seek so timeline scrub and marker jumps drive the React audio player.
   useEffect(() => {
-    window.AutoLogger_seekAudio = (sec: number) => {
+    const handler = (sec: number) => {
       audioPlayerRef.current?.seekToTimelineSec(sec);
     };
+    register('seekAudio', handler);
     return () => {
-      window.AutoLogger_seekAudio = undefined;
+      unregister('seekAudio', handler);
     };
   }, []);
 
   // Play-capable counterpart for feed row jumps (feed-row-seek design D1, D8): unlike
-  // AutoLogger_seekAudio above (non-playing; MarkerNav's path), this always ends up
+  // seekAudio above (non-playing; MarkerNav's path), this always ends up
   // playing — starting playback on a paused player, continuing on a playing one. The
   // useTimelineSeek hook is the only intended caller; MarkerNav must keep using the
-  // non-playing global.
+  // non-playing handle.
   useEffect(() => {
-    window.AutoLogger_seekAudioAndPlay = (sec: number) => {
+    const handler = (sec: number) => {
       audioPlayerRef.current?.seekToTimelineSecAndPlay(sec);
     };
+    register('seekAudioAndPlay', handler);
     return () => {
-      window.AutoLogger_seekAudioAndPlay = undefined;
+      unregister('seekAudioAndPlay', handler);
     };
   }, []);
 
-  // Expose transport-stop for AppShell to call (fire-and-forget) before closing a session.
+  // Own the stopTransportIfNeeded handle (web-coordination-seam D1/D3):
+  // departureWatcher.ts invokes it synchronously, outside React, before this
+  // client's navigation away from a session it originated the roll for takes
+  // effect. Ineligible here (no session / lease held elsewhere / not
+  // rolling) means this run never registers a handler, so the unregister
+  // call below is identity-scoped and a no-op — the registry provides no
+  // unconditional clear, so an ineligible run can never clobber a different
+  // owner's registration (design D3).
   useEffect(() => {
-    if (!sessionId || blocksMedia || !isRolling) {
-      window.AutoLogger_stopTransportIfNeeded = undefined;
-      return;
-    }
-    window.AutoLogger_stopTransportIfNeeded = () => {
+    const handler = () => {
       apiFetch(`sessions/${encodeURIComponent(sessionId)}/transport/stop`, {
         method: 'POST',
       }).catch(() => {});
     };
+    if (!sessionId || blocksMedia || !isRolling) {
+      unregister('stopTransportIfNeeded', handler);
+      return;
+    }
+    register('stopTransportIfNeeded', handler);
     return () => {
-      window.AutoLogger_stopTransportIfNeeded = undefined;
+      unregister('stopTransportIfNeeded', handler);
     };
   }, [sessionId, isRolling, blocksMedia]);
 
@@ -278,11 +283,12 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
 
   // Allow external callers (e.g., recovery-stop flow) to force a refetch of events.
   useEffect(() => {
-    window.AutoLogger_invalidateEvents = () => {
+    const handler = () => {
       if (sessionId) qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
     };
+    register('invalidateEvents', handler);
     return () => {
-      window.AutoLogger_invalidateEvents = undefined;
+      unregister('invalidateEvents', handler);
     };
   }, [sessionId, qc]);
 

@@ -6,6 +6,7 @@ import type { LogEvent } from '../../../api/types';
 import { parseSmpteToSec, sessionFrameRate } from '../../../shared/utils/audioClips';
 import { groupTimelineMarkers, type TimelineMarkerGroup } from '../utils/markerGrouping';
 import { jumpTimelineToSec } from '../utils/timelineJump';
+import { TIMELINE_SEC_EVENT } from '../utils/timelineSecEvent';
 
 // Match compact transport tiles (same size + chrome as stop/roll/mic).
 const NAV_BTN =
@@ -50,8 +51,6 @@ function neighborEvents(
   }
   return { prevEvent: prev, nextEvent: next };
 }
-
-const TIMELINE_SEC_EVENT = 'autologger:timeline-sec';
 
 interface Props {
   sessionId: string;

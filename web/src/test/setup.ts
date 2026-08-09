@@ -1,5 +1,6 @@
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
+import { reset as resetCoordinationRegistry } from '../pages/index/coordination/registry';
 
 // jsdom has no matchMedia; the shared `useIsMobile` breakpoint hook (Dialog,
 // AppShell, ShortcutsDialog) calls it on mount. A minimal never-matches stub
@@ -56,4 +57,15 @@ if (typeof window !== 'undefined' && !window.localStorage) {
 // the same file — any multi-test/multi-render file in the tier hits this.
 afterEach(() => {
   cleanup();
+});
+
+// Load-bearing, not hygiene (web-coordination-seam D3): the coordination
+// registry's teardown is identity-scoped — a stub a test registers AFTER its
+// owner has mounted is not the identity that owner unregisters on unmount,
+// so without an explicit reset it survives into the next test.
+// `SessionWorkspace.audioClipsSeam.test.tsx` uses exactly that
+// register-after-mount pattern, with a comment noting the ordering is
+// deliberate.
+afterEach(() => {
+  resetCoordinationRegistry();
 });

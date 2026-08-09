@@ -431,6 +431,11 @@
   },
   {
     "from": "web-test-harness",
+    "to": "web-app",
+    "kind": "test"
+  },
+  {
+    "from": "web-test-harness",
     "to": "web-shared",
     "kind": "test"
   }

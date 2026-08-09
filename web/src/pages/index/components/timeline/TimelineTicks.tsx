@@ -1,5 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { fmtHmsFromSec } from '../../../../shared/utils/timecode';
+import { getTimelineZoom } from '../../coordination/registry';
+import { TIMELINE_ZOOM_EVENT } from '../../utils/timelineZoomEvent';
 
 // Overlay on the scrub track's bottom border (centered vertically on that edge)
 // so the strip doesn't spend a full row on tick labels. Text-shadow keeps labels
@@ -9,17 +11,8 @@ import { fmtHmsFromSec } from '../../../../shared/utils/timecode';
 const TICKS =
   'pointer-events-none absolute inset-x-0 top-full z-[7] flex w-full -translate-y-1/2 justify-between gap-[0.5rem] px-[0.35rem] [font-family:"Inter",var(--font-poppins),system-ui,sans-serif] text-[0.62rem] font-semibold leading-none tracking-[0.06em] [font-variant-numeric:tabular-nums] text-[rgba(229,238,252,0.88)] [text-shadow:0_1px_1px_rgba(2,8,23,0.95),0_0_6px_rgba(2,8,23,0.75),0_-1px_1px_rgba(2,8,23,0.55)]';
 
-declare global {
-  interface Window {
-    AutoLogger_getTimelineZoom?: () => number;
-  }
-}
-
-/** Custom event session.js dispatches whenever timelineZoom mutates. */
-const TIMELINE_ZOOM_EVENT = 'autologger:timeline-zoom-changed';
-
 function getZoom(): number {
-  const z = window.AutoLogger_getTimelineZoom?.();
+  const z = getTimelineZoom();
   return Number.isFinite(z) && (z as number) > 0 ? (z as number) : 1;
 }
 

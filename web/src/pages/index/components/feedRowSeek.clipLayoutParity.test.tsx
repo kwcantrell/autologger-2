@@ -12,6 +12,7 @@ import type {
   TranscriptWord,
 } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
+import { register } from '../coordination/registry';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
 import { useAudioClips } from '../hooks/useAudioClips';
 import { TranscribeFeed } from './TranscribeFeed';
@@ -247,13 +248,18 @@ function mockApi(events: LogEvent[], words: TranscriptWord[]) {
   });
 }
 
+let scrubMock: ReturnType<typeof vi.fn<(sec: number | null) => void>>;
+let seekAndPlayMock: ReturnType<typeof vi.fn<(sec: number) => void>>;
+
 beforeEach(() => {
   mockedApiFetch.mockReset();
   vi.clearAllMocks();
-  window.AutoLogger_setManualScrubSec = vi.fn();
-  window.AutoLogger_scrollTimelineToSec = vi.fn();
-  window.AutoLogger_seekAudio = vi.fn();
-  window.AutoLogger_seekAudioAndPlay = vi.fn();
+  scrubMock = vi.fn();
+  seekAndPlayMock = vi.fn();
+  register('setManualScrubSec', scrubMock);
+  register('scrollTimelineToSec', vi.fn());
+  register('seekAudio', vi.fn());
+  register('seekAudioAndPlay', seekAndPlayMock);
   // `useAudioClips`'s disk-sync effect uses raw `fetch`, not `apiFetch` — stub
   // it so that POST doesn't hit a real network call in jsdom.
   vi.stubGlobal(
@@ -302,8 +308,8 @@ describe('feed jump coverage matches the player layout across a >200-event sessi
     const btn = await screen.findByRole('button', { name: /Jump to/ });
     fireEvent.click(btn);
 
-    expect(window.AutoLogger_setManualScrubSec).toHaveBeenCalledWith(100);
-    expect(window.AutoLogger_seekAudioAndPlay).not.toHaveBeenCalled();
+    expect(scrubMock).toHaveBeenCalledWith(100);
+    expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 
   it('a row resolving inside the SECOND recording (whose pairing events sit beyond a 200-row page) IS reported covered', async () => {
@@ -317,6 +323,6 @@ describe('feed jump coverage matches the player layout across a >200-event sessi
     const btn = await screen.findByRole('button', { name: /Jump to/ });
     fireEvent.click(btn);
 
-    expect(window.AutoLogger_seekAudioAndPlay).toHaveBeenCalledWith(3650);
+    expect(seekAndPlayMock).toHaveBeenCalledWith(3650);
   });
 });

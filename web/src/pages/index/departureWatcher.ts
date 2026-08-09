@@ -7,9 +7,10 @@
 // underlying impl) plus a raw `popstate` listener — NEVER wouter's route hook
 // (design D1/D4: wouter is render-side only; its hooks fire during render,
 // too late to guarantee the stop call lands before `SessionWorkspace`'s
-// effects clear or redefine `window.AutoLogger_stopTransportIfNeeded` for the
-// incoming route). Both subscriptions fire synchronously, pre-render/
-// pre-commit — that ordering is the whole point of D4, not an accident:
+// effects clear or re-register the `stopTransportIfNeeded` coordination
+// handle for the incoming route). Both subscriptions fire synchronously,
+// pre-render/pre-commit — that ordering is the whole point of D4, not an
+// accident:
 //   click handler -> navigate() -> handleWrapperNavigation() [stop fires] ->
 //   impl() [history mutates / location state updates] -> React re-renders
 //   (async/batched) -> SessionWorkspace's effects run post-commit.
@@ -20,11 +21,17 @@
 // departure is simply "the target is not that id's route" — passive viewers
 // never have the flag set, so they never fire, by construction.
 //
-// Not an unmount/effect cleanup: cleanups run child-first (the global would
-// already be cleared by the time a parent's cleanup ran) and StrictMode
+// Not an unmount/effect cleanup: cleanups run child-first (the handle would
+// already be unregistered by the time a parent's cleanup ran) and StrictMode
 // double-invokes them in dev (which would spuriously stop a remotely-rolling
-// session on mount). This module never touches React lifecycles at all.
+// session on mount). This module never touches React lifecycles at all —
+// which is also why it reaches the coordination registry (web-coordination-
+// seam D1) directly rather than through a hook: the registry's invoke
+// functions resolve the current handler at call time and are plain
+// synchronous functions, reachable from module scope with no React provider
+// in the call path.
 
+import { stopTransportIfNeeded } from './coordination/registry';
 import { clearOrigination, getOriginatedSessionId } from './transportOrigination';
 
 /** Extracts and decodes the `:id` segment from a `/sessions/:id` path, or
@@ -54,7 +61,7 @@ function departsOriginatedSession(nextPath: string): boolean {
 }
 
 function fireStopAndClear(): void {
-  window.AutoLogger_stopTransportIfNeeded?.();
+  stopTransportIfNeeded();
   clearOrigination();
 }
 

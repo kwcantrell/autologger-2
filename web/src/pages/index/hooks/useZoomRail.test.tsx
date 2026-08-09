@@ -2,6 +2,7 @@ import { fireEvent } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { renderStrict } from '../../../test/renderStrict';
+import { getTimelineZoom, isRegistered } from '../coordination/registry';
 import { useZoomRail, type ZoomRailRefs } from './useZoomRail';
 
 // --- useZoomRail +/- guard set (ui-refresh, task 4.4) ---
@@ -12,7 +13,7 @@ import { useZoomRail, type ZoomRailRefs } from './useZoomRail';
 // called `preventDefault()` on the keydown. Exercised through a minimal
 // mounted probe (jsdom has no real timeline layout, but the hook's geometry
 // helpers all fall back safely with zero-size elements) reading the
-// `window.AutoLogger_getTimelineZoom()` global the hook publishes.
+// `getTimelineZoom()` coordination handle the hook publishes.
 
 function Harness({ sessionId = 'sess-zoom-1' }: { sessionId?: string }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -53,7 +54,7 @@ function Harness({ sessionId = 'sess-zoom-1' }: { sessionId?: string }) {
 }
 
 function getZoom(): number {
-  return window.AutoLogger_getTimelineZoom?.() ?? 1;
+  return getTimelineZoom() ?? 1;
 }
 
 // jsdom has no ResizeObserver; the hook observes the viewport + zoom-range
@@ -104,5 +105,37 @@ describe('useZoomRail global +/- handler', () => {
     } finally {
       document.removeEventListener('keydown', swallow);
     }
+  });
+
+  // --- web-coordination-seam task 5.2 (spec "Enforcement checks are proven
+  // non-vacuous") --- `Harness` above mounts the real `useZoomRail` hook —
+  // the actual owner of BOTH `getTimelineZoom` and `scrollTimelineToSec`,
+  // registered together from the same effect (`useZoomRail.ts`) — so a
+  // regression that reintroduced either as a `window.AutoLogger_*` write
+  // would be observable right here.
+  it('defines neither getTimelineZoom nor scrollTimelineToSec on window after mount', () => {
+    renderStrict(<Harness />);
+    expect('AutoLogger_getTimelineZoom' in window).toBe(false);
+    expect('AutoLogger_scrollTimelineToSec' in window).toBe(false);
+  });
+
+  // --- Whole-branch audit finding Important-2 ---
+  //
+  // `useZoomRail` registers BOTH `getTimelineZoom` and `scrollTimelineToSec`
+  // from the same effect and unregisters both in its cleanup. Identity-scoped
+  // teardown (registry.ts, design D3) means each `unregister` call only
+  // releases its handle if it hands back the SAME closure reference that was
+  // registered. Mirrors `SessionWorkspace.coordinationHandles.test.tsx`'s
+  // "unmounting releases the seekAudio handle" — the class of coverage phase
+  // 2 added for `SessionWorkspace` but never reached this owner.
+  it('unmounting releases both getTimelineZoom and scrollTimelineToSec handles', () => {
+    const { unmount } = renderStrict(<Harness />);
+    expect(isRegistered('getTimelineZoom')).toBe(true);
+    expect(isRegistered('scrollTimelineToSec')).toBe(true);
+
+    unmount();
+
+    expect(isRegistered('getTimelineZoom')).toBe(false);
+    expect(isRegistered('scrollTimelineToSec')).toBe(false);
   });
 });

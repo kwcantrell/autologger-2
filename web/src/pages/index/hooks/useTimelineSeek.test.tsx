@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
+import { register, unregister } from '../coordination/registry';
 import { AudioClipsProvider } from './AudioClipsContext';
 import { useTimelineSeek } from './useTimelineSeek';
 
@@ -59,10 +60,10 @@ beforeEach(() => {
   scrollMock = vi.fn();
   seekMock = vi.fn();
   seekAndPlayMock = vi.fn();
-  window.AutoLogger_setManualScrubSec = scrubMock;
-  window.AutoLogger_scrollTimelineToSec = scrollMock;
-  window.AutoLogger_seekAudio = seekMock;
-  window.AutoLogger_seekAudioAndPlay = seekAndPlayMock;
+  register('setManualScrubSec', scrubMock);
+  register('scrollTimelineToSec', scrollMock);
+  register('seekAudio', seekMock);
+  register('seekAudioAndPlay', seekAndPlayMock);
   // Default: loaded, not rolling. Individual tests override.
   mockedUseSessionStatus.mockReturnValue(statusResult({ is_rolling: false }));
 });
@@ -135,7 +136,7 @@ describe('useTimelineSeek — jump behavior', () => {
     result.current.jump(50);
 
     expect(scrubMock).toHaveBeenCalledWith(50);
-    expect(scrollMock).toHaveBeenCalledWith(50);
+    expect(scrollMock).toHaveBeenCalledWith(50, undefined);
     expect(seekMock).not.toHaveBeenCalled();
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
@@ -148,7 +149,7 @@ describe('useTimelineSeek — jump behavior', () => {
     result.current.jump(15);
 
     expect(scrubMock).toHaveBeenCalledWith(15);
-    expect(scrollMock).toHaveBeenCalledWith(15);
+    expect(scrollMock).toHaveBeenCalledWith(15, undefined);
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 
@@ -162,7 +163,7 @@ describe('useTimelineSeek — jump behavior', () => {
     expect(seekAndPlayMock).not.toHaveBeenCalled();
   });
 
-  it('covered target: issues the jump and starts playback via AutoLogger_seekAudioAndPlay', () => {
+  it('covered target: issues the jump and starts playback via the seekAudioAndPlay handle', () => {
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, false), {
       wrapper: withClips([COVERING_CLIP]),
     });
@@ -170,15 +171,15 @@ describe('useTimelineSeek — jump behavior', () => {
     result.current.jump(15);
 
     expect(scrubMock).toHaveBeenCalledWith(15);
-    expect(scrollMock).toHaveBeenCalledWith(15);
+    expect(scrollMock).toHaveBeenCalledWith(15, undefined);
     expect(seekAndPlayMock).toHaveBeenCalledWith(15);
-    // The non-playing global belongs to marker navigation only — the feed
+    // The non-playing handle belongs to marker navigation only — the feed
     // jump must never call it (design D1's implementation note).
     expect(seekMock).not.toHaveBeenCalled();
   });
 
-  it('jump is a no-op (never throws) when the play-capable global is not yet published', () => {
-    window.AutoLogger_seekAudioAndPlay = undefined;
+  it('jump is a no-op (never throws) when the play-capable handle is not yet registered', () => {
+    unregister('seekAudioAndPlay', seekAndPlayMock);
     const { result } = renderHook(() => useTimelineSeek(SESSION_ID, false), {
       wrapper: withClips([COVERING_CLIP]),
     });
