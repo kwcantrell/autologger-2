@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateLoginReturnPath } from './loginReturnPath';
+import { isShellSegments, validateLoginReturnPath } from './loginReturnPath';
 
 // The recipe (design D6 / spec web-login-experience) is order-sensitive:
 // syntactic rejects (string shape, `\`, control chars) run BEFORE the URL
@@ -219,6 +219,100 @@ describe('validateLoginReturnPath', () => {
 
     it('data: URI bypass attempt', () => {
       expect(validateLoginReturnPath('data:text/html,<script>alert(1)</script>')).toBeNull();
+    });
+  });
+});
+
+// `isShellSegments` has a DIFFERENT DOMAIN from `isRouterKnownPathname`/
+// `validateLoginReturnPath` above (design D3, nextjs-frontend-migration): it
+// validates the DECODED segment list Next's optional catch-all
+// (`[[...path]]`) receives — `string[] | undefined` — not a raw pathname
+// string. The shell set INCLUDES the `/` route (`undefined`/`[]`), unlike
+// the deep-link set above, which deliberately excludes it.
+describe('isShellSegments', () => {
+  describe('accepts', () => {
+    it('undefined (the `/` route with no catch-all match at all)', () => {
+      expect(isShellSegments(undefined)).toBe(true);
+    });
+
+    it('an empty list (the `/` route)', () => {
+      expect(isShellSegments([])).toBe(true);
+    });
+
+    it("['sessions', <id>] — a bare session id segment", () => {
+      expect(isShellSegments(['sessions', 'abc'])).toBe(true);
+    });
+
+    it("['sessions', <id>] — an id containing URL-safe punctuation", () => {
+      expect(isShellSegments(['sessions', 'abc-123_def'])).toBe(true);
+    });
+
+    it("['teams'] — the teams shell route", () => {
+      expect(isShellSegments(['teams'])).toBe(true);
+    });
+
+    it(
+      "['sessions', 'a/b'] — a DECODED id segment MAY itself contain '/' and " +
+        'still counts as ONE segment',
+      () => {
+        // Raw-vs-decoded distinction (spec: web-frontend-platform "Shell
+        // routing from the shared route definition"): Next decodes each RAW
+        // path segment independently, so a request for `/sessions/a%2Fb`
+        // (one raw segment, percent-encoded) hands the catch-all the decoded
+        // list ['sessions', 'a/b'] — two LIST entries, the second one
+        // *containing* a literal '/' character. That is a single id segment
+        // and MUST be accepted (matches pre-change behavior: the shell is
+        // served). Do not re-split this value — see the reject case for
+        // `/sessions/a/b` (three raw segments) just below, which is a
+        // genuinely different, and rejected, shape.
+        expect(isShellSegments(['sessions', 'a/b'])).toBe(true);
+      },
+    );
+  });
+
+  describe('rejects: nested / empty shapes', () => {
+    it("['sessions'] — missing id segment", () => {
+      expect(isShellSegments(['sessions'])).toBe(false);
+    });
+
+    it("['sessions', ''] — empty id segment (trailing-slash shape)", () => {
+      expect(isShellSegments(['sessions', ''])).toBe(false);
+    });
+
+    it(
+      "['sessions', 'a', 'b'] — three DECODED segments (raw `/sessions/a/b`) " +
+        'is nested, not one id segment with a literal slash',
+      () => {
+        // Contrast with the accepted ['sessions', 'a/b'] case above: this is
+        // what a request for the UNENCODED `/sessions/a/b` decodes to — three
+        // raw segments, three list entries — and stays 404, matching
+        // pre-change behavior.
+        expect(isShellSegments(['sessions', 'a', 'b'])).toBe(false);
+      },
+    );
+
+    it("['teams', ''] — trailing slash under /teams", () => {
+      expect(isShellSegments(['teams', ''])).toBe(false);
+    });
+
+    it("['teams', 'x'] — a segment under /teams is not the teams shell route", () => {
+      expect(isShellSegments(['teams', 'x'])).toBe(false);
+    });
+
+    it("['admin', 'users'] — a concrete route, not the catch-all's business", () => {
+      expect(isShellSegments(['admin', 'users'])).toBe(false);
+    });
+
+    it("[''] — a single empty segment", () => {
+      expect(isShellSegments([''])).toBe(false);
+    });
+
+    it("['foo'] — an unknown single segment", () => {
+      expect(isShellSegments(['foo'])).toBe(false);
+    });
+
+    it("['sessions', 'abc', 'extra'] — three segments with a valid-looking prefix", () => {
+      expect(isShellSegments(['sessions', 'abc', 'extra'])).toBe(false);
     });
   });
 });

@@ -27,7 +27,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       `skipTrailingSlashRedirect: true`; set `NEXT_TELEMETRY_DISABLED=1` in the
       dev/build/start scripts; add `.next/` to `.gitignore`; accept and commit Next's
       managed tsconfig edits and `next-env.d.ts`.
-- [ ] 2.2 Add the segment-shape helper to the shared route-definition module
+- [x] 2.2 Add the segment-shape helper to the shared route-definition module
       (`web/src/shared/utils/loginReturnPath.ts`, alongside `isRouterKnownPathname`)
       with unit tests: `[]`, `['sessions', <non-empty>]`, `['teams']` accepted; nested/
       empty shapes rejected; percent-encoding semantics documented in the tests.
