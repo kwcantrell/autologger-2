@@ -218,6 +218,45 @@ function pagesSubAreaOf(relPath: string): string | null {
   return parts[0] === 'pages' ? (parts[1] ?? null) : null;
 }
 
+// --- `app/`-layer guard (nextjs-frontend-migration, task 2.5; design D2,
+// "one layering rule is added: `app/` may import `pages`/`api`/`shared`;
+// nothing imports `app/`") ---
+//
+// Deliberately implemented as TWO separate, narrow checks rather than
+// folding `app` into the existing `Zone`/`ZONE_RANK` chain: (1) that chain's
+// type-only-upward carve-out exists for a documented reason specific to the
+// three original zones (three live `shared -> api` `import type` edges that
+// erase at compile time) and this rule has no equivalent carve-out in its
+// own spec wording ("nothing imports `app`", unqualified) -- reusing the
+// chain would silently import a carve-out this rule was never given; (2)
+// keeping the two independent means neither can regress the other's
+// existing test coverage (`Keep every other rule intact`, task 2.5).
+//
+// True iff `relPath`'s first path segment is `app` -- the Next App Router
+// tree (`web/src/app/**`). Never gated on `isProductionFile`; callers that
+// need the production-only scope already apply that filter upstream
+// (`scanTree`), matching every other zone helper in this file.
+function isUnderApp(relPath: string): boolean {
+  return relPath.split('/')[0] === 'app';
+}
+
+/** `app/<group>/...` -> `<group>` (the literal second path segment, e.g. the
+ * route-group folder name INCLUDING PARENS -- `(index)`, `(admin)` -- or,
+ * for a file with no group, whatever that second segment literally is, e.g.
+ * `not-found.tsx` for the root `app/not-found.tsx`), for the two-root-layout
+ * entry-bundle-isolation carve-out (design D4: `(index)/layout.tsx` and
+ * `(admin)/layout.tsx` are the two Next entries, replacing the retired
+ * `main.tsx`/`index.html` pair the admin-users/index rule above was
+ * originally scoped to). Null outside `app/` or when there is no second
+ * segment at all (a bare `app/<file>` one level deep). The cross-check
+ * below only fires when both sides equal exactly `(index)` or `(admin)`, so
+ * a non-group value like `not-found.tsx` never matches either literal and
+ * is harmlessly inert here -- it belongs to neither group by construction. */
+function appGroupOf(relPath: string): string | null {
+  const parts = relPath.split('/');
+  return parts[0] === 'app' ? (parts[1] ?? null) : null;
+}
+
 interface ImportEdge {
   line: number;
   specifier: string;
@@ -555,16 +594,76 @@ function testFileImportTarget(importerRel: string, specifier: string): string | 
 interface Violation {
   file: string;
   line: number;
-  kind: 'layering' | 'admin-index-cross' | 'cross-workspace-package' | 'production-imports-test';
+  kind:
+    | 'layering'
+    | 'admin-index-cross'
+    | 'cross-workspace-package'
+    | 'production-imports-test'
+    | 'app-entry-cross'
+    | 'app-layer-inbound';
   from: string;
   to: string;
   specifier: string;
   text: string;
 }
 
+/** Checks a single resolved edge (already known to be web/src-internal)
+ * against the two `app/`-layer rules (task 2.5): entry-bundle isolation
+ * between the `(index)` and `(admin)` route groups, and "nothing outside
+ * `app/` imports from `app/`". Shared between the static and dynamic-import
+ * scan loops below so the two rules apply identically to both edge shapes
+ * (an app-boundary evasion via a literal dynamic `import()` is exactly as
+ * live a concern here as it was for the packages-escape guard). Unlike the
+ * `layering` rule, NEITHER check carves out type-only edges -- the app-layer
+ * rule's own spec wording is unqualified ("nothing imports `app`"), and a
+ * type-only import crossing the `(index)`/`(admin)` boundary is exactly the
+ * shape the admin-index-cross rule above already flags regardless of
+ * type-only-ness, for the same reason (it still names a real dependency
+ * between the two entries, evaluated or not). */
+function appLayerViolations(
+  rel: string,
+  targetRel: string,
+  edge: { line: number; specifier: string; raw: string },
+): Violation[] {
+  const violations: Violation[] = [];
+
+  const fromGroup = appGroupOf(rel);
+  const toGroup = appGroupOf(targetRel);
+  if (fromGroup !== null && toGroup !== null) {
+    const crossesAppEntries =
+      (fromGroup === '(index)' && toGroup === '(admin)') ||
+      (fromGroup === '(admin)' && toGroup === '(index)');
+    if (crossesAppEntries) {
+      violations.push({
+        file: rel,
+        line: edge.line,
+        kind: 'app-entry-cross',
+        from: `app/${fromGroup}`,
+        to: `app/${toGroup}`,
+        specifier: edge.specifier,
+        text: edge.raw,
+      });
+    }
+  }
+
+  if (!isUnderApp(rel) && isUnderApp(targetRel)) {
+    violations.push({
+      file: rel,
+      line: edge.line,
+      kind: 'app-layer-inbound',
+      from: rel,
+      to: targetRel,
+      specifier: edge.specifier,
+      text: edge.raw,
+    });
+  }
+
+  return violations;
+}
+
 /** Per-file scan: cross-workspace-package (every production file, any zone or
- * none) + layering/admin-users-index (zoned files only) violations for one
- * production file. */
+ * none) + layering/admin-users-index (zoned files only) + app-layer (task
+ * 2.5, any file) violations for one production file. */
 function scanFileForViolations(rel: string, content: string): Violation[] {
   const sourceZone = zoneOf(rel);
   const violations: Violation[] = [];
@@ -594,6 +693,11 @@ function scanFileForViolations(rel: string, content: string): Violation[] {
         specifier: edge.specifier,
         text: edge.raw,
       });
+    }
+
+    const appTargetRel = resolveTargetRel(rel, edge.specifier);
+    if (appTargetRel !== null) {
+      violations.push(...appLayerViolations(rel, appTargetRel, edge));
     }
 
     if (!sourceZone) continue;
@@ -635,9 +739,9 @@ function scanFileForViolations(rel: string, content: string): Violation[] {
   }
 
   // Dynamic `import(...)` calls with a literal specifier are checked against
-  // the SAME packages-escape rule as static edges above -- and only that
-  // rule (layering/admin-index-cross stay static-edge-only; see
-  // `parseDynamicImportEdges`'s doc comment for why).
+  // the SAME packages-escape and app-layer rules as static edges above --
+  // and only those rules (layering/admin-index-cross stay static-edge-only;
+  // see `parseDynamicImportEdges`'s doc comment for why).
   for (const dyn of parseDynamicImportEdges(rel, content)) {
     const packagesTarget = packagesEscapeTarget(rel, dyn.specifier);
     if (packagesTarget !== null) {
@@ -663,6 +767,11 @@ function scanFileForViolations(rel: string, content: string): Violation[] {
         specifier: dyn.specifier,
         text: dyn.raw,
       });
+    }
+
+    const dynAppTargetRel = resolveTargetRel(rel, dyn.specifier);
+    if (dynAppTargetRel !== null) {
+      violations.push(...appLayerViolations(rel, dynAppTargetRel, dyn));
     }
   }
 
@@ -921,6 +1030,97 @@ describe('detection predicate (mutation check — proves each piece fires)', () 
     );
   });
 
+  // --- app/-layer guard (task 2.5) ---------------------------------------
+
+  it('appGroupOf: classifies the two route groups by their literal folder name; null outside app/', () => {
+    expect(appGroupOf('app/(index)/layout.tsx')).toBe('(index)');
+    expect(appGroupOf('app/(admin)/admin/users/page.tsx')).toBe('(admin)');
+    expect(appGroupOf('pages/index/main.tsx')).toBeNull();
+  });
+
+  it('appGroupOf: the root not-found (no route group) resolves to its own filename, which matches neither group literal and is harmlessly inert for the cross-check', () => {
+    expect(appGroupOf('app/not-found.tsx')).toBe('not-found.tsx');
+  });
+
+  it('isUnderApp: true only for a path whose first segment is app', () => {
+    expect(isUnderApp('app/(index)/layout.tsx')).toBe(true);
+    expect(isUnderApp('pages/index/main.tsx')).toBe(false);
+  });
+
+  it('flags an (admin) file importing an (index) file, and the reverse, regardless of type-only (entry-bundle isolation, task 2.5)', () => {
+    const adminToIndex = scanFileForViolations(
+      'app/(admin)/AdminIsland.tsx',
+      valueImport('IndexIsland', '../(index)/IndexIsland'),
+    );
+    expect(adminToIndex.some((v) => v.kind === 'app-entry-cross')).toBe(true);
+
+    const indexToAdminTypeOnly = scanFileForViolations(
+      'app/(index)/IndexIsland.tsx',
+      typeImport('AdminIsland', '../(admin)/AdminIsland'),
+    );
+    expect(indexToAdminTypeOnly.some((v) => v.kind === 'app-entry-cross')).toBe(true);
+  });
+
+  it('does NOT flag an intra-group app/ import ((index) -> (index), or (admin) -> (admin))', () => {
+    const v = scanFileForViolations(
+      'app/(index)/[[...path]]/page.tsx',
+      valueImport('IndexIsland', '../IndexIsland'),
+    );
+    expect(v.filter((viol) => viol.kind === 'app-entry-cross')).toEqual([]);
+  });
+
+  it('flags any file outside app/ importing from app/ (value or type-only — the rule is unqualified)', () => {
+    const value = scanFileForViolations(
+      'pages/index/AppShell.tsx',
+      valueImport('IndexIsland', '../../app/(index)/IndexIsland'),
+    );
+    expect(value.some((v) => v.kind === 'app-layer-inbound')).toBe(true);
+
+    const typeOnly = scanFileForViolations(
+      'shared/foo.ts',
+      typeImport('IndexIslandProps', '../app/(index)/IndexIsland'),
+    );
+    expect(typeOnly.some((v) => v.kind === 'app-layer-inbound')).toBe(true);
+  });
+
+  it('does NOT flag app/ importing pages/api/shared (the permitted direction)', () => {
+    const v = scanFileForViolations(
+      'app/(index)/IndexIsland.tsx',
+      [
+        valueImport('IndexRoot', '../../pages/index/IndexRoot'),
+        valueImport('bar', '../../api/bar'),
+        valueImport('baz', '../../shared/baz'),
+      ].join('\n'),
+    );
+    expect(v.filter((viol) => viol.kind === 'app-layer-inbound')).toEqual([]);
+  });
+
+  it('does NOT flag a nested-page same-group import (real shape: admin/users/page.tsx -> (admin)/AdminIsland.tsx)', () => {
+    const v = scanFileForViolations(
+      'app/(admin)/admin/users/page.tsx',
+      valueImport('AdminIsland', '../../AdminIsland'),
+    );
+    expect(v.filter((viol) => viol.kind === 'app-entry-cross' || viol.kind === 'app-layer-inbound')).toEqual(
+      [],
+    );
+  });
+
+  it('flags a DYNAMIC import from outside app/ reaching into app/ (app-layer-inbound, mirrors the packages-escape dynamic-import coverage)', () => {
+    const v = scanFileForViolations(
+      'pages/index/AppShell.tsx',
+      `async function f() { return await import('../../app/(index)/IndexIsland'); }`,
+    );
+    expect(v).toMatchObject([{ kind: 'app-layer-inbound', to: 'app/(index)/IndexIsland' }]);
+  });
+
+  it('flags a DYNAMIC (admin) -> (index) app-entry-cross edge identically to a static one', () => {
+    const v = scanFileForViolations(
+      'app/(admin)/AdminIsland.tsx',
+      `async function f() { return await import('../(index)/IndexIsland'); }`,
+    );
+    expect(v).toMatchObject([{ kind: 'app-entry-cross', from: 'app/(admin)', to: 'app/(index)' }]);
+  });
+
   it('packagesEscapeTarget: a relative import that normalizes to escape web/src into packages/ is detected', () => {
     // 'shared/stray.ts' -> importerDir 'shared' (depth 1); 3 `../` cancels the
     // 1 real segment and leaves 2 escaping `../`, landing on `packages/...`.
@@ -1082,6 +1282,98 @@ describe('scanTree — end-to-end mutation check on a real filesystem walk', () 
     expect(violations.some((v) => v.file === 'shared/attackN12.ts' && v.kind === 'layering')).toBe(
       true,
     );
+  });
+});
+
+describe('app/-layer guard — end-to-end mutation check on a real filesystem walk (task 2.5)', () => {
+  let tmpRoot: string;
+
+  afterEach(() => {
+    if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function freshRoot(prefix: string): string {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.mkdirSync(path.join(tmpRoot, 'app', '(index)'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'app', '(admin)'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'pages', 'index'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'api'), { recursive: true });
+    fs.mkdirSync(path.join(tmpRoot, 'shared'), { recursive: true });
+    return tmpRoot;
+  }
+
+  it('DOES fire on an (index) file importing an (admin) file (proves the entry-bundle-isolation guard is not vacuous)', () => {
+    const root = freshRoot('web-boundaries-app-entry-cross-');
+    fs.writeFileSync(
+      path.join(root, 'app', '(admin)', 'AdminIsland.tsx'),
+      'export const AdminIsland = 1;\n',
+    );
+    fs.writeFileSync(
+      path.join(root, 'app', '(index)', 'attack.tsx'),
+      valueImport('AdminIsland', '../(admin)/AdminIsland'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some((v) => v.kind === 'app-entry-cross' && v.file === 'app/(index)/attack.tsx'),
+    ).toBe(true);
+  });
+
+  it('DOES fire on a production file outside app/ importing from app/ (proves the app-layer guard is not vacuous)', () => {
+    const root = freshRoot('web-boundaries-app-layer-inbound-');
+    fs.writeFileSync(
+      path.join(root, 'app', '(index)', 'IndexIsland.tsx'),
+      'export const IndexIsland = 1;\n',
+    );
+    fs.writeFileSync(
+      path.join(root, 'pages', 'index', 'attackReachesApp.ts'),
+      valueImport('IndexIsland', '../../app/(index)/IndexIsland'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.kind === 'app-layer-inbound' && v.file === 'pages/index/attackReachesApp.ts',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT fire on a conforming tree (app/ importing pages/api/shared downward, no cross-group edge)', () => {
+    const root = freshRoot('web-boundaries-app-layer-clean-');
+    fs.writeFileSync(
+      path.join(root, 'pages', 'index', 'IndexRoot.ts'),
+      'export const IndexRoot = 1;\n',
+    );
+    fs.writeFileSync(path.join(root, 'api', 'bar.ts'), 'export const bar = 1;\n');
+    fs.writeFileSync(path.join(root, 'shared', 'baz.ts'), 'export const baz = 1;\n');
+    fs.writeFileSync(
+      path.join(root, 'app', '(index)', 'IndexIsland.tsx'),
+      [
+        valueImport('IndexRoot', '../../pages/index/IndexRoot'),
+        valueImport('bar', '../../api/bar'),
+        valueImport('baz', '../../shared/baz'),
+      ].join('\n'),
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.filter((v) => v.kind === 'app-entry-cross' || v.kind === 'app-layer-inbound'),
+    ).toEqual([]);
+  });
+
+  it('N12 regression: a same-line leading block comment does not hide a live app-layer-inbound import from the real filesystem walk', () => {
+    const root = freshRoot('web-boundaries-n12-app-layer-');
+    fs.writeFileSync(
+      path.join(root, 'app', '(index)', 'IndexIsland.tsx'),
+      'export const IndexIsland = 1;\n',
+    );
+    fs.writeFileSync(
+      path.join(root, 'pages', 'index', 'attackN12App.ts'),
+      `/* eslint-disable-next-line */ ${valueImport('IndexIsland', '../../app/(index)/IndexIsland')}`,
+    );
+    const { violations } = scanTree(root);
+    expect(
+      violations.some(
+        (v) => v.file === 'pages/index/attackN12App.ts' && v.kind === 'app-layer-inbound',
+      ),
+    ).toBe(true);
   });
 });
 
@@ -1808,6 +2100,23 @@ describe('web/src pages -> api -> shared layering + admin-users/index independen
   it('contains ZERO production-imports-test violations (final fix wave, N1: no production file imports a test file)', () => {
     const { violations } = scanTree(WEB_SRC);
     expect(violations.filter((v) => v.kind === 'production-imports-test')).toEqual([]);
+  });
+
+  it('contains ZERO app-entry-cross violations ((index) and (admin) route groups stay mutually isolated, task 2.5)', () => {
+    const { violations } = scanTree(WEB_SRC);
+    expect(violations.filter((v) => v.kind === 'app-entry-cross')).toEqual([]);
+  });
+
+  it('contains ZERO app-layer-inbound violations (nothing outside app/ imports from app/, task 2.5)', () => {
+    const { violations } = scanTree(WEB_SRC);
+    expect(violations.filter((v) => v.kind === 'app-layer-inbound')).toEqual([]);
+  });
+
+  it('the real app/ tree is walked and its client islands legitimately import pages/ downward (proves the walk reaches app/ and the permitted direction is not accidentally flagged)', () => {
+    const rel = 'app/(index)/IndexIsland.tsx';
+    const content = fs.readFileSync(path.join(WEB_SRC, rel), 'utf8');
+    expect(content).toContain("import('@/pages/index/IndexRoot')");
+    expect(scanFileForViolations(rel, content)).toEqual([]);
   });
 
   it("the pinning test's dynamic cross-workspace import stays permitted (test files are exempt from the walk entirely)", () => {
