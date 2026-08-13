@@ -124,6 +124,18 @@ export function wireApp(
     const path = c.req.path;
     if (path !== '/' && path.endsWith('/')) return c.notFound();
 
+    // `/api/*` and `/auth/*` never reach the frontend bridge (spec "API
+    // routes never reach the frontend bridge") — mounted routes under those
+    // prefixes are matched above and never fall through to this catch-all,
+    // but an UNMATCHED path under either prefix (e.g. a typo'd endpoint)
+    // would otherwise still hit this `app.get('*')` and get answered by
+    // Next's not-found document instead of Hono's own 404. Guard explicitly
+    // so the closed API/auth surface never leaks a frontend-authored
+    // response, matching pre-change `serveStatic` behavior.
+    if (path === '/api' || path === '/auth' || path.startsWith('/api/') || path.startsWith('/auth/')) {
+      return c.notFound();
+    }
+
     // Absent frontend (HTTP-test callers, or a deliberately API-only boot)
     // → Hono's own 404, same as an asset miss (spec "API-only fallback
     // mode").

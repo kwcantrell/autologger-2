@@ -215,11 +215,15 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     closeServer = close;
 
     const s = seededSession().sessionId;
-    // The Hono-side allowlist middleware runs BEFORE requireSession's 200, so
-    // a blocked client is rejected with a 403 handshake close, not silently
-    // hung — connecting rejects rather than opening, proving the dispatcher
-    // routed it into the Hono path at all (a destroyed raw socket would look
-    // the same as a routing failure otherwise).
-    await expect(connectSessionWs(port, s)).rejects.toBeTruthy();
+    // A dispatcher-level destroy() and Hono's own 403 handshake close look
+    // identical to a WebSocket client (both surface as a rejected `open`),
+    // so asserting only `rejects` can't distinguish "routed into the Hono
+    // path and rejected there" from "never reached Hono at all". Read the
+    // raw response bytes instead: an HTTP/1.1 403 status line proves the
+    // dispatcher handed this /api upgrade to the Hono path (captured
+    // upgrade handler → allowlist middleware), which then declined it —
+    // not a dispatcher-level socket destroy.
+    const data = await rawUpgradeProbe(port, `/api/sessions/${s}/ws`);
+    expect(data.startsWith('HTTP/1.1 403')).toBe(true);
   });
 });

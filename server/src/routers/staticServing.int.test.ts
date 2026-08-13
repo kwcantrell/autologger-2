@@ -74,6 +74,15 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     expect(stub.handle).not.toHaveBeenCalled();
   });
 
+  it.each(['/api/definitely-not-a-route', '/auth/nope', '/api', '/auth'])(
+    'unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")',
+    async (path) => {
+      const res = await app.request(path, {}, envWithIO());
+      expect(res.status).toBe(404);
+      expect(stub.handle).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['/', '/sessions/abc-123', '/teams', '/admin/users', '/sessions/a%2Fb', '/static/logo.png'])(
     'bridges GET %s to the frontend',
     async (path) => {
