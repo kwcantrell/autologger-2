@@ -3,7 +3,7 @@
 // explicitly delegates to the first X-Forwarded-For hop. Empty IP_ALLOWLIST ⇒ disabled.
 
 import type { Context, MiddlewareHandler } from 'hono';
-import type { AppEnv } from '../appEnv';
+import type { AppEnv, Config } from '../appEnv';
 import { trustProxyEnabled } from '../env';
 
 interface Net {
@@ -152,13 +152,29 @@ export function ipInAllowlist(addr: string, nets: Net[]): boolean {
 }
 
 /** Client IP on Node: the socket address, unless TRUST_PROXY explicitly
- * delegates to the first X-Forwarded-For hop. CF header trust is gone. */
-function effectiveClientIp(c: Context<AppEnv>): string {
-  if (trustProxyEnabled(c.env.config)) {
-    const xff = c.req.header('x-forwarded-for');
+ * delegates to the first X-Forwarded-For hop. CF header trust is gone. Takes
+ * the already-extracted inputs (not a Hono `Context`) so the raw-socket
+ * WebSocket-upgrade dispatcher (`server/src/upgradeDispatch.ts`,
+ * nextjs-frontend-migration task 3.3) can share this exact TRUST_PROXY
+ * decision — it has no Hono `Context`, only the raw `IncomingMessage`. */
+function effectiveClientIpFrom(input: {
+  config: Config;
+  remoteAddress?: string;
+  forwardedForHeader?: string | null;
+}): string {
+  if (trustProxyEnabled(input.config)) {
+    const xff = input.forwardedForHeader;
     if (xff) return xff.split(',')[0].trim();
   }
-  return c.env.incoming?.socket?.remoteAddress ?? '';
+  return input.remoteAddress ?? '';
+}
+
+function effectiveClientIp(c: Context<AppEnv>): string {
+  return effectiveClientIpFrom({
+    config: c.env.config,
+    remoteAddress: c.env.incoming?.socket?.remoteAddress,
+    forwardedForHeader: c.req.header('x-forwarded-for'),
+  });
 }
 
 // Parse once per distinct IP_ALLOWLIST string (env is injected per-request, so we
@@ -170,6 +186,28 @@ function netsForEnv(raw: string): Net[] | null {
   const nets = parseIpAllowlist(raw); // throws on bad config → 500 via onError
   cache = { raw, nets };
   return nets;
+}
+
+/** The exact IP-allowlist decision `ipAllowlistMiddleware` applies to HTTP
+ * requests, exported for the raw-socket WebSocket-upgrade dispatcher
+ * (nextjs-frontend-migration, design D1 "Upgrade dispatch"; spec "WebSocket
+ * upgrade dispatch") — upgrade dispatch runs at the raw `server.on('upgrade')`
+ * level, outside Hono's middleware chain, so there is no `Context` to read.
+ * Reuses `netsForEnv`'s cache and `effectiveClientIpFrom`'s TRUST_PROXY
+ * semantics verbatim: no allowlist configured ⇒ allowed (same "disabled ⇒
+ * open" semantics as the middleware, not a loopback special-case — loopback
+ * addresses are matched like any other address once an allowlist is
+ * configured). Throws on a malformed `IP_ALLOWLIST` value, exactly like the
+ * middleware's own parse (callers decide how to treat that — see
+ * `upgradeDispatch.ts`). */
+export function isClientIpAllowed(input: {
+  config: Config;
+  remoteAddress?: string;
+  forwardedForHeader?: string | null;
+}): boolean {
+  const nets = netsForEnv(input.config.IP_ALLOWLIST ?? '');
+  if (nets === null) return true;
+  return ipInAllowlist(effectiveClientIpFrom(input), nets);
 }
 
 /** Hono middleware; registered first so it runs outermost. */

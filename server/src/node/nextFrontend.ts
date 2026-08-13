@@ -92,11 +92,27 @@ const nodeRequire = createRequire(import.meta.url);
 let cachedRealFactory: NextFactory | undefined;
 function loadRealNextFactory(): NextFactory {
   if (!cachedRealFactory) {
-    // `next`'s CJS module exports `{ NextServer, default: createServer }`
-    // (verified against node_modules/next/dist/server/next.js) — `require`
-    // returns that raw exports object, not the default export unwrapped.
-    const mod = nodeRequire('next') as { default: NextFactory };
-    cachedRealFactory = mod.default;
+    // Bug found + fixed in task 3.3 (nextjs-frontend-migration), while
+    // booting a real `next` package for this migration's required
+    // post-`prepare()` global-`fetch` verification: the task 3.1 comment
+    // this replaced claimed `next`'s CJS module exports `{ NextServer,
+    // default: createServer }`, citing the `.d.ts`'s `export default`
+    // syntax — but that TS declaration shape describes how an ESM
+    // `import`/esModuleInterop-compiled consumer SEES the module, not what
+    // the actual runtime `module.exports` value is. `next`'s real CJS
+    // runtime (verified against the installed next@15.5.23
+    // `dist/server/next.js`) does `module.exports = createServer` — a bare
+    // function, no `NextServer` property, no `.default` wrapper. A raw
+    // `require()` via `createRequire` (no esModuleInterop synthesis — that
+    // only happens for `import`/TS-compiled ESM) therefore returns the
+    // factory function itself. This was unreachable in task 3.1's own unit
+    // tests (which always inject a fake `nextFactory`, per design, and never
+    // exercise this real-package path) and broke every real Next boot
+    // (`TypeError: factory is not a function`) until caught here. Handle
+    // both shapes defensively — in case some other resolution path DOES
+    // synthesize `.default` — rather than assuming either unconditionally.
+    const mod = nodeRequire('next') as NextFactory | { default: NextFactory };
+    cachedRealFactory = typeof mod === 'function' ? mod : mod.default;
   }
   return cachedRealFactory;
 }
