@@ -225,10 +225,14 @@ describe('validateLoginReturnPath', () => {
 
 // `isShellSegments` has a DIFFERENT DOMAIN from `isRouterKnownPathname`/
 // `validateLoginReturnPath` above (design D3, nextjs-frontend-migration): it
-// validates the DECODED segment list Next's optional catch-all
-// (`[[...path]]`) receives — `string[] | undefined` — not a raw pathname
-// string. The shell set INCLUDES the `/` route (`undefined`/`[]`), unlike
-// the deep-link set above, which deliberately excludes it.
+// validates the segment list Next's optional catch-all (`[[...path]]`)
+// receives — `string[] | undefined` — not a raw pathname string. The shell
+// set INCLUDES the `/` route (`undefined`/`[]`), unlike the deep-link set
+// above, which deliberately excludes it. Encoding-agnostic: measured on
+// Next 15.5.23 (task 2.3/2.6), segments arrive still percent-ENCODED, not
+// decoded, so these tests exercise both a plain segment and a literal
+// percent-encoded one — the property under test is "one raw path segment =
+// one list entry", never "decode-and-re-split", regardless of encoding.
 describe('isShellSegments', () => {
   describe('accepts', () => {
     it('undefined (the `/` route with no catch-all match at all)', () => {
@@ -252,20 +256,32 @@ describe('isShellSegments', () => {
     });
 
     it(
-      "['sessions', 'a/b'] — a DECODED id segment MAY itself contain '/' and " +
-        'still counts as ONE segment',
+      "['sessions', 'a/b'] — an id segment MAY itself contain '/' (if the " +
+        'framework ever decodes it) and still counts as ONE segment',
       () => {
-        // Raw-vs-decoded distinction (spec: web-frontend-platform "Shell
-        // routing from the shared route definition"): Next decodes each RAW
-        // path segment independently, so a request for `/sessions/a%2Fb`
-        // (one raw segment, percent-encoded) hands the catch-all the decoded
-        // list ['sessions', 'a/b'] — two LIST entries, the second one
-        // *containing* a literal '/' character. That is a single id segment
-        // and MUST be accepted (matches pre-change behavior: the shell is
-        // served). Do not re-split this value — see the reject case for
-        // `/sessions/a/b` (three raw segments) just below, which is a
-        // genuinely different, and rejected, shape.
+        // Content-agnostic acceptance (spec: web-frontend-platform "Shell
+        // routing from the shared route definition"): whatever encoding Next
+        // hands this function, one raw path segment is one LIST entry. This
+        // case covers a hypothetical decoded entry containing a literal '/'
+        // character — it's still a single id segment and MUST be accepted
+        // (matches pre-change behavior: the shell is served). Do not
+        // re-split this value — see the reject case for `/sessions/a/b`
+        // (three list entries) just below, which is a genuinely different,
+        // and rejected, shape.
         expect(isShellSegments(['sessions', 'a/b'])).toBe(true);
+      },
+    );
+
+    it(
+      "['sessions', 'a%2Fb'] — the actual measured shape on Next 15.5.23: a single " +
+        'id segment arrives still percent-ENCODED, not decoded',
+      () => {
+        // Measured, not assumed (task 2.3/2.6): `/sessions/a%2Fb` (one raw
+        // path segment) arrives here as ['sessions', 'a%2Fb'] — the '%2F' is
+        // NOT decoded back into '/'. Same property as the case above (one
+        // raw segment = one list entry, content never inspected), exercised
+        // against the real encoding this framework version actually uses.
+        expect(isShellSegments(['sessions', 'a%2Fb'])).toBe(true);
       },
     );
   });
@@ -280,13 +296,14 @@ describe('isShellSegments', () => {
     });
 
     it(
-      "['sessions', 'a', 'b'] — three DECODED segments (raw `/sessions/a/b`) " +
+      "['sessions', 'a', 'b'] — three list entries (raw `/sessions/a/b`) " +
         'is nested, not one id segment with a literal slash',
       () => {
         // Contrast with the accepted ['sessions', 'a/b'] case above: this is
-        // what a request for the UNENCODED `/sessions/a/b` decodes to — three
-        // raw segments, three list entries — and stays 404, matching
-        // pre-change behavior.
+        // the list shape a request for `/sessions/a/b` (two raw path
+        // separators) produces — three list entries — and stays 404,
+        // matching pre-change behavior, regardless of how any one entry is
+        // encoded.
         expect(isShellSegments(['sessions', 'a', 'b'])).toBe(false);
       },
     );

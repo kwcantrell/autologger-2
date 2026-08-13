@@ -21,7 +21,7 @@ import { useLoginReturnConsume } from './useLoginReturnConsume';
 // (nextjs-frontend-migration, task 2.3; design D5) -- centralizing both CSS
 // imports in the layout (not a leaf component) pins App Router's otherwise-
 // unspecified cascade order (`tailwind.css` before `overlayscrollbars.css`).
-// See `web/src/app/(index)/layout.tsx` / `(admin)/layout.tsx`.
+// See `web/src/app/(index)/layout.page.tsx` / `(admin)/layout.page.tsx`.
 
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session

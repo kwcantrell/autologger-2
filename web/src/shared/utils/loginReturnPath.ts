@@ -56,8 +56,8 @@ export function isRouterKnownPathname(pathname: string): boolean {
 
 /**
  * True iff `segments` is a shape Next's shell catch-all
- * (`app/(index)/[[...path]]/page.tsx`) should serve — `undefined`/`[]` (the
- * `/` route), `['sessions', <one non-empty segment>]`, or `['teams']`
+ * (`app/(index)/[[...path]]/page.page.tsx`) should serve — `undefined`/`[]`
+ * (the `/` route), `['sessions', <one non-empty segment>]`, or `['teams']`
  * (design D3, `nextjs-frontend-migration`).
  *
  * **This predicate has a DIFFERENT DOMAIN from `isRouterKnownPathname` above
@@ -65,22 +65,24 @@ export function isRouterKnownPathname(pathname: string): boolean {
  * `isRouterKnownPathname` validates a raw pathname STRING for the
  * deep-link set (post-login stash write, return-path validator above) and
  * deliberately EXCLUDES `/` — there is no deep-link stash value for "no
- * session selected". This function instead validates the DECODED SEGMENT
- * LIST Next's optional catch-all hands the shell router (the shell set),
- * and it INCLUDES the `/` route.
+ * session selected". This function instead validates the SEGMENT LIST
+ * Next's optional catch-all hands the shell router (the shell set), and it
+ * INCLUDES the `/` route.
  *
- * Do not derive this from `SESSIONS_ROUTE_RE`: that regex's `[^/]+` matches
- * one RAW pathname segment and would wrongly reject a decoded id segment
- * that itself contains `/`. Next decodes each RAW path segment
- * independently, so a request for `/sessions/a%2Fb` (one raw,
- * percent-encoded segment) arrives here as `['sessions', 'a/b']` — two LIST
- * entries, the second one *containing* a literal `/` — and that MUST be
- * accepted as a single id segment (matches pre-change behavior: the shell
- * is served, `200`). Contrast a request for the unencoded `/sessions/a/b`,
- * which decodes to three raw segments — `['sessions', 'a', 'b']` — a
- * genuinely nested, unmatched shape that stays `404`. This function
- * therefore checks list SHAPE and non-emptiness only; it never re-splits or
- * re-joins an already-decoded segment.
+ * **Encoding-agnostic by design — do not assume either encoding.** Measured
+ * on Next 15.5.23 (task 2.3/2.6): catch-all params arrive still
+ * percent-ENCODED, not decoded — a request for `/sessions/a%2Fb` (one raw
+ * path segment) arrives here as `['sessions', 'a%2Fb']`. The load-bearing
+ * property, true regardless of what a future Next version decodes, is that
+ * one RAW path segment becomes exactly one LIST entry — this function must
+ * never decode-and-re-split (or re-join) an entry to look for a `/` inside
+ * it. Do not derive this from `SESSIONS_ROUTE_RE`: that regex's `[^/]+`
+ * matches one raw pathname segment string-wise and is the wrong tool once
+ * Next has already split the path into a list. Contrast a request for
+ * `/sessions/a/b` (two raw path separators), which arrives as three LIST
+ * entries — `['sessions', 'a', 'b']` — a genuinely nested, unmatched shape
+ * that stays `404`. This function therefore checks list SHAPE and
+ * non-emptiness only; it never inspects an entry's content.
  */
 export function isShellSegments(segments: readonly string[] | undefined): boolean {
   if (segments === undefined || segments.length === 0) return true;
