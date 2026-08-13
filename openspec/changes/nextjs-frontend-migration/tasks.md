@@ -112,7 +112,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
 
 ## 4. Auth, deep-link, and visual verification (CONTRACT-ADJACENT — risk-tier review)
 
-- [ ] 4.1 Run and, where the serving change shifted behavior, update the e2e specs
+- [x] 4.1 Run and, where the serving change shifted behavior, update the e2e specs
       covering: login-gate cookie flow + return-path stash, unknown-session-serves-shell
       (`/sessions/does-not-exist-xyz`), `/sessions/a/b` → 404, `/sessions/a%2Fb` →
       200 shell, `/teams/` → 404 (no redirect), `/teams`, `/admin/users`,
@@ -121,7 +121,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       {existing, deleted, foreign-team, random} session states for the same id. Also
       assert `GET /_next/image?url=/static/logo-autologger-app.png&w=64&q=75` is never
       an optimized image (optimizer disabled — spec scenario).
-- [ ] 4.2 Run both visual suites (`visual-desktop`, `visual-mobile`). Target zero
+- [x] 4.2 Run both visual suites (`visual-desktop`, `visual-mobile`). Target zero
       diffs; if any appear, inspect each and re-bless baselines deliberately in this
       branch's diff (never defer drift), recording the inspection outcome in the phase
       report.
