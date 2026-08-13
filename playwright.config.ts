@@ -48,7 +48,11 @@ export default defineConfig({
       url: 'http://127.0.0.1:8791/api/profile',
       // Never adopt a leftover orphan started with different env.
       reuseExistingServer: false,
-      timeout: 30_000,
+      // 3x the pre-Next 30s budget (nextjs-frontend-migration, task 3.4): `npm run
+      // start -w server` now also runs Next's prod `prepare()` (route-manifest load
+      // + first-request compile bookkeeping) before the server starts listening,
+      // on top of the existing catalog/session-store boot work.
+      timeout: 90_000,
       env: {
         PORT: '8791',
         HOST: '127.0.0.1',
@@ -100,7 +104,11 @@ export default defineConfig({
       command: `node -e "require('node:fs').rmSync(process.env.DATA_DIR,{recursive:true,force:true})" && npm run start -w server`,
       url: 'http://127.0.0.1:8792/api/profile',
       reuseExistingServer: false,
-      timeout: 30_000,
+      // 3x the pre-Next 30s budget (nextjs-frontend-migration, task 3.4): `npm run
+      // start -w server` now also runs Next's prod `prepare()` (route-manifest load
+      // + first-request compile bookkeeping) before the server starts listening,
+      // on top of the existing catalog/session-store boot work.
+      timeout: 90_000,
       env: {
         PORT: '8792',
         HOST: '127.0.0.1',

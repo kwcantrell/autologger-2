@@ -15,7 +15,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,magenta --kill-others-on-fail \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev": "npm run dev -w server",
     "teardown": "node scripts/teardown.mjs",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
@@ -32,7 +32,6 @@
     "@biomejs/biome": "^2.0.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
-    "concurrently": "^9.1.0",
     "typescript": "^5.7.2"
   },
   "overrides": {

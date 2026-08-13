@@ -8,5 +8,5 @@
     "composite": true,
     "strict": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "next.config.ts"]
+  "include": ["vitest.config.ts", "next.config.ts"]
 }

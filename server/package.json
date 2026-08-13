@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "sh -c 'HOST=${HOST:-127.0.0.1} NEXT_TELEMETRY_DISABLED=1 tsx watch --env-file-if-exists=.env src/main.ts'",
-    "start": "NEXT_TELEMETRY_DISABLED=1 tsx --env-file-if-exists=.env src/main.ts",
+    "start": "NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:real": "RUN_REAL_AI_TESTS=1 vitest run real.test",

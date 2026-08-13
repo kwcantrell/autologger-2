@@ -73,7 +73,14 @@ describe('createNextFrontend — corrupt-build reject path (prod, web/.next pres
     await expect(
       createNextFrontend({ dev: false, dir: d, nextFactory: factory as unknown as NextFactory }),
     ).rejects.toThrow('corrupt build manifest');
-    expect(factory).toHaveBeenCalledWith({ dev: false, dir: d });
+    // `httpServer` is always passed (drive-by fix, task 3.4) — see
+    // nextFrontend.ts's `noOpUpgradeServer` doc comment for why: without it,
+    // Next's own `getRequestHandler()` wrapper self-attaches a SECOND
+    // 'upgrade' listener onto the real server on its first invocation,
+    // which mishandles `/api/*` WebSocket upgrades.
+    expect(factory).toHaveBeenCalledWith(
+      expect.objectContaining({ dev: false, dir: d, httpServer: expect.anything() }),
+    );
     expect(fakeApp.getRequestHandler).not.toHaveBeenCalled();
   });
 });
@@ -109,6 +116,43 @@ describe('createNextFrontend — happy path wiring (fake factory, prepare() reso
 
     await frontend?.close();
     expect(fakeApp.close).toHaveBeenCalled();
+  });
+});
+
+describe('httpServer stub — neutralizes NextCustomServer self-attach (drive-by fix, task 3.4)', () => {
+  it('passes an inert httpServer stub to the factory so Next cannot self-attach an upgrade listener to the real server', async () => {
+    // Regression coverage for the bug documented on `noOpUpgradeServer` in
+    // nextFrontend.ts: real `next`'s `getRequestHandler()` wrapper calls
+    // `this.options.httpServer.on('upgrade', ...)` (falling back to
+    // `req.socket.server` — the REAL server — only when `httpServer` is
+    // absent) the first time any request is served. Without this stub,
+    // that self-attached listener races `upgradeDispatch.ts`'s own
+    // dispatcher on every subsequent WS upgrade — including `/api/*`
+    // session sockets — because Next's catch-all route matches ANY
+    // unmatched path and ends the socket. Asserting the stub's shape here
+    // (present, has a callable `.on()`, and calling it is a genuine no-op)
+    // is the closest unit-level proxy for "Next cannot reach our real
+    // server" without booting real Next.
+    const d = freshDir();
+    mkdirSync(join(d, '.next'));
+    const fakeApp = {
+      prepare: vi.fn().mockResolvedValue(undefined),
+      getRequestHandler: vi.fn().mockReturnValue(vi.fn()),
+      getUpgradeHandler: vi.fn().mockReturnValue(vi.fn()),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const factory = vi.fn().mockReturnValue(fakeApp);
+    await createNextFrontend({ dev: true, dir: d, nextFactory: factory as unknown as NextFactory });
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    const passedOpts = factory.mock.calls[0][0] as { httpServer?: { on?: unknown } };
+    expect(passedOpts.httpServer).toBeDefined();
+    expect(typeof passedOpts.httpServer?.on).toBe('function');
+    // Calling `.on()` the way NextCustomServer#setupWebSocketHandler does
+    // must be a genuine no-op — no throw, no observable side effect.
+    expect(() =>
+      (passedOpts.httpServer as { on(e: string, l: () => void): void }).on('upgrade', () => {}),
+    ).not.toThrow();
   });
 });
 

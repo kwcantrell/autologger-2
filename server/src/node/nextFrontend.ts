@@ -51,7 +51,65 @@ export interface NextAppLike {
   close(): Promise<void>;
 }
 
-export type NextFactory = (opts: { dev: boolean; dir: string }) => NextAppLike;
+export type NextFactory = (opts: {
+  dev: boolean;
+  dir: string;
+  /** See `noOpUpgradeServer` below — always passed by `createNextFrontend`. */
+  httpServer?: unknown;
+}) => NextAppLike;
+
+/** A no-op stand-in for Next's `options.httpServer` constructor option
+ * (drive-by fix, task 3.4's phase-gate e2e run — nextjs-frontend-migration).
+ *
+ * Symptom: every REAL browser WebSocket to `/api/sessions/:id/ws` failed
+ * immediately with close code 1006 ("Live updates unavailable") once the
+ * server ran with `NODE_ENV=production` (the correct prod posture — see
+ * `server/package.json`'s `start` script, fixed alongside this). A raw `ws`
+ * package script hitting the same URL in isolation usually succeeded, which
+ * masked the bug in task 3.1-3.3's manual real-server probes.
+ *
+ * Root cause, traced via the real `next@15.5.23` CJS source
+ * (`next/dist/server/next.js`, `NextCustomServer`): `getRequestHandler()`
+ * returns a wrapper that, on its FIRST invocation, calls
+ * `setupWebSocketHandler(this.options.httpServer, req)` as an undocumented
+ * side effect. That method does `customServer.on('upgrade', (req, socket,
+ * head) => this.upgradeHandler(req, socket, head))` — registering NEXT'S
+ * OWN 'upgrade' listener — falling back to `req.socket.server` (the REAL
+ * raw `http.Server` `main.ts`'s `installUpgradeDispatcher` already owns
+ * exclusively) whenever `options.httpServer` is absent, which it always was
+ * here. Since `frontend.handle()` (this module's HTTP bridge) calls exactly
+ * that wrapper for every non-API GET the Hono catch-all forwards, the very
+ * first shell/asset request served after boot silently attaches a SECOND,
+ * independent 'upgrade' listener to the shared server. From then on, every
+ * upgrade event fires BOTH listeners: ours (which correctly routes `/api/*`
+ * to the captured Hono handler) AND Next's own
+ * (`next/dist/server/lib/router-server.js`'s `upgradeHandler`), which knows
+ * nothing about our `/api` convention — it resolves the request against
+ * NEXT'S OWN route table, where the catch-all shell route (`app/(index)/
+ * [[...path]]/page.page.tsx`) matches literally any unmatched path,
+ * including `/api/sessions/:id/ws`. A truthy `matchedOutput` makes Next's
+ * handler call `socket.end()` on OUR socket mid-handshake, racing the Hono
+ * upgrade replay already in flight; `ws`'s own `completeUpgrade()` then
+ * finds the now-non-writable socket and self-destroys it — the observed
+ * 1006. This has nothing to do with `dev`/prod routing decisions in
+ * `upgradeDispatch.ts`, which never calls `frontend.upgradeHandler` for an
+ * `/api/*` path; Next attaches its interfering listener entirely on its
+ * own, independently of anything this codebase's dispatcher decides.
+ *
+ * Fix: pass a stub here so Next's self-attach lands on this inert object
+ * instead of falling back to the real server — the exact same "capture a
+ * would-be listener on a throwaway object instead of letting it land on the
+ * real server" technique `upgradeDispatch.ts`'s `captureHonoUpgradeHandler`
+ * already uses for Hono's own would-be listener (same problem shape, two
+ * independent libraries that both assume they may freely self-attach). */
+interface NoOpUpgradeServer {
+  on(event: string, listener: (...args: unknown[]) => void): void;
+}
+const noOpUpgradeServer: NoOpUpgradeServer = {
+  on() {
+    // Deliberately inert — see the doc comment above.
+  },
+};
 
 export interface NextFrontend {
   /** Answers one HTTP request over the raw Node req/res pair — the bridge's
@@ -126,7 +184,11 @@ export async function createNextFrontend(
 ): Promise<NextFrontend | null> {
   if (isApiOnly(opts)) return null;
   const factory = opts.nextFactory ?? loadRealNextFactory();
-  const app: NextAppLike = factory({ dev: opts.dev, dir: opts.dir });
+  const app: NextAppLike = factory({
+    dev: opts.dev,
+    dir: opts.dir,
+    httpServer: noOpUpgradeServer,
+  });
   await app.prepare(); // rejection propagates — fail the boot loudly (see header)
   const requestHandler = app.getRequestHandler();
   const upgradeHandler = app.getUpgradeHandler();
