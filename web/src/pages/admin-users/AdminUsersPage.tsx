@@ -2,12 +2,14 @@ import clsx from 'clsx';
 import { useCallback, useState } from 'react';
 import { apiFetch } from '../../api/client';
 import type { AdminDataResponse, AdminStudio, AdminUser } from '../../api/types';
-import logoUrl from '../../assets/logos/logo-autologger-transparent.png';
+import logoAsset from '../../assets/logos/logo-autologger-transparent.png';
 import { showToast, Toast } from '../../shared/components/Toast';
 import { useConfirm } from '../../shared/ui/ConfirmDialog';
 import { Popover, PopoverItem } from '../../shared/ui/Popover';
+import { assetSrc } from '../../shared/utils/assetSrc';
 
 const TOKEN_KEY = 'autologger_admin_token';
+const logoUrl = assetSrc(logoAsset);
 
 /** apiFetch plus the admin bearer token; apiFetch supplies the default
  * Content-Type and detail-extraction/error behavior. */
