@@ -2715,16 +2715,21 @@ const NODE_DIR_REL = 'node';
 
 /** The composition root's exact production membership (spec scenario "The
  * composition-root directory holds only the composition root"): once
- * feature-service-packages phase 4 completes, `server/src/node/` SHALL hold
- * exactly these three files — nothing else, at any depth. Named for what it
- * actually holds — `node/`-RELATIVE PATHS, compared via `relOf`, never a bare
- * basename — because a name like "allowed basenames" would invite a future
- * editor to add a bare basename for a nested file and silently widen the
- * rule this constant exists to keep narrow. */
+ * feature-service-packages phase 4 completed, `server/src/node/` held
+ * exactly three files (config.ts, systemClock.ts, presence.ts) — nothing
+ * else, at any depth. `nextjs-frontend-migration` task 3.1 adds a fourth:
+ * `nextFrontend.ts` joins in the same composition-root wiring role (design
+ * D1 — it wraps the `next` package the way config.ts wraps SQLite/blob
+ * construction). Named for what it actually holds — `node/`-RELATIVE PATHS,
+ * compared via `relOf`, never a bare basename — because a name like "allowed
+ * basenames" would invite a future editor to add a bare basename for a
+ * nested file and silently widen the rule this constant exists to keep
+ * narrow. */
 const NODE_DIR_ALLOWED_RELATIVE_PATHS = new Set<string>([
   'config.ts',
   'systemClock.ts',
   'presence.ts',
+  'nextFrontend.ts',
 ]);
 
 /** Recursively walks `server/src/node/` (via `walkProductionTsFiles`, which
@@ -2782,7 +2787,7 @@ describe('server/src/node/ holds only the composition root — real repo (task 2
   // task-4d-report.md) confirmed both that the canary had fired and that the
   // check above is non-vacuous — flat and nested violations are each
   // independently flagged — before deleting the now-purposeless canary.
-  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts, or presence.ts', () => {
+  it('every production file anywhere under server/src/node/ is config.ts, systemClock.ts, presence.ts, or nextFrontend.ts', () => {
     expect(checkNodeDirMembership(REPO_ROOT)).toEqual([]);
   });
 });
