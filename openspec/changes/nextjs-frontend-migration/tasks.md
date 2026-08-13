@@ -65,13 +65,13 @@ frozen-contract surface and get risk-tier per-phase reviews.
 
 ## 3. Server integration + cutover (CONTRACT SURFACE — risk-tier review over this phase's cumulative diff)
 
-- [ ] 3.1 Add `server/src/node/nextFrontend.ts` (wraps `next({ dev, dir })`/`prepare()`;
+- [x] 3.1 Add `server/src/node/nextFrontend.ts` (wraps `next({ dev, dir })`/`prepare()`;
       exposes `{ requestHandler, upgradeHandler, close }`; returns `null` when
       `web/.next` missing in prod; a `prepare()` rejection with a build directory
       present rethrows — fail the boot loudly, never silently degrade to API-only) and
       update the name-pinned `server/src/node/` membership test. Unit-test both the
       missing-build fallback and the corrupt-build reject path.
-- [ ] 3.2 Replace the static block in `server/src/app.ts` (locate by content:
+- [x] 3.2 Replace the static block in `server/src/app.ts` (locate by content:
       `serveHtml` + the four HTML routes + `serveStatic` catch-all) with the
       **GET-only** `frontend.handle(...)` bridge returning `RESPONSE_ALREADY_SENT`
       (import from `@hono/node-server/utils/response`). Guards (panel 2026-08-13):
