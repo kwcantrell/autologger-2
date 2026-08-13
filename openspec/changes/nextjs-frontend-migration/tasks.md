@@ -7,12 +7,12 @@ frozen-contract surface and get risk-tier per-phase reviews.
 
 ## 1. Entry refactor (Vite still ships; pure refactor, no contract surface)
 
-- [ ] 1.1 Extract the provider trees from `web/src/pages/index/main.tsx` and
+- [x] 1.1 Extract the provider trees from `web/src/pages/index/main.tsx` and
       `web/src/pages/admin-users/main.tsx` into `IndexRoot.tsx` / `AdminRoot.tsx`
       components (admin keeps `<StrictMode>` as a subtree wrapper); the `main.tsx`
       entries become thin `createRoot(...).render(<XRoot/>)` shims. Existing web vitest
       suite + `npm run typecheck` green.
-- [ ] 1.2 Make the asset-import call sites bundler-agnostic: the 2 png / 1 webm imports
+- [x] 1.2 Make the asset-import call sites bundler-agnostic: the 2 png / 1 webm imports
       (`LoginPage.tsx`, `AdminUsersPage.tsx`,
       `web/src/shared/utils/loadingVideo.ts`) consume a `.src`-shaped module type;
       update `web/src/types/assets.d.ts` accordingly. Vite build still green
