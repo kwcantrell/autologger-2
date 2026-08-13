@@ -2,12 +2,10 @@
 // serving. Ported from src/autologger/web/app.py. The caller supplies
 // upgradeWebSocket (from @hono/node-ws in main.ts; a 426 stub in HTTP tests).
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { ValidationError } from '@autologger/domain';
 import { InvalidRangeError } from '@autologger/storage';
-import { serveStatic } from '@hono/node-server/serve-static';
-import type { Context, Hono } from 'hono';
+import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
+import type { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
 import type { AppEnv, Bindings } from './appEnv';
@@ -30,13 +28,25 @@ import { showsRouter } from './routers/shows';
 import { teamsRouter } from './routers/teams';
 import { transcribeRouter } from './routers/transcribe';
 
+/** The Next.js frontend bridge (nextjs-frontend-migration, design D1) — the
+ * minimal seam app.ts's catch-all consumes: given the raw Node req/res pair
+ * for a request that matched no mounted route, `handle` answers it in full
+ * (by the time the returned promise settles, the response has been fully
+ * written). Implemented by `server/src/node/nextFrontend.ts`; kept
+ * structural here (not imported from that module) so `wireApp`'s HTTP-test
+ * callers can inject a stub with no dependency on the real Next wrapper. */
+export interface FrontendBridge {
+  handle(
+    incoming: import('node:http').IncomingMessage,
+    outgoing: import('node:http').ServerResponse,
+  ): Promise<void>;
+}
+
 export function wireApp(
   app: Hono<AppEnv>,
   upgradeWebSocket: UpgradeWebSocket,
-  opts: { publicDir?: string; bindings?: Bindings } = {},
+  opts: { frontend?: FrontendBridge; bindings?: Bindings } = {},
 ): Hono<AppEnv> {
-  const publicDir = opts.publicDir ?? './public';
-
   // Bindings injection must happen HERE, not in a serve() fetch wrapper:
   // @hono/node-ws routes WebSocket upgrades through app.request() directly,
   // bypassing any wrapper. Mutate c.env IN PLACE — do not reassign the
@@ -94,36 +104,56 @@ export function wireApp(
   app.route('/', exportsRouter);
   app.route('/', adminRouter);
 
-  // Static hosting: explicit page routes (the SPA client-side router owns
-  // rendering under `/`, `/sessions/:id`, and `/teams`; this block only
-  // decides which HTML shell to serve) + a catch-all for hashed /assets/*
-  // and /static/*.
-  // publicDir is the web/ workspace's Vite build output, passed by main.ts
-  // (tests pass a fixture dir).
-  async function serveHtml(c: Context<AppEnv>, assetPath: string) {
-    let html: string;
-    try {
-      html = await readFile(join(publicDir, assetPath), 'utf-8');
-    } catch {
-      return c.notFound();
-    }
-    return c.html(html);
-  }
+  // Frontend bridge (nextjs-frontend-migration, design D1 "Custom-server
+  // shape"; spec "Next.js frontend served through the Hono bridge"): every
+  // GET request that matched no API/auth route above falls through to Next
+  // (shell HTML, `/_next/static/*`, `public/`-served files, the not-found
+  // document — see design D6's closed path-family list). Mounted GET-only —
+  // Hono answers HEAD through the GET handler, same as today — so non-GET
+  // unmatched requests keep 404ing from Hono exactly as `serveStatic` used
+  // to leave them (spec "Non-GET unmatched requests keep the server's
+  // 404"). Runs after ipAllowlist/authContext above, so page/asset requests
+  // keep exactly the middleware coverage they have today.
+  app.get('*', async (c) => {
+    // Trailing-slash paths (except `/` itself) are never bridged — owner
+    // ruling 2026-08-13 (apply-time amendment, task 2.3 measurement): Next
+    // 15.5.23 normalizes trailing slashes for catch-all route matching
+    // regardless of `skipTrailingSlashRedirect`, so this is enforced here,
+    // in front of the framework, to keep the pinned `404` (spec "Trailing
+    // slash stays 404").
+    const path = c.req.path;
+    if (path !== '/' && path.endsWith('/')) return c.notFound();
 
-  app.get('/', (c) => serveHtml(c, 'src/pages/index/index.html'));
-  // Session deep-link route (api-contract-freeze delta, session-deep-links
-  // change): `:id` matches exactly one path segment, so `/sessions` (no id)
-  // and `/sessions/a/b` (nested segments) fall through to the static
-  // catch-all below and keep 404ing. Serves the shell unconditionally on
-  // session existence/authorization — no existence oracle at the HTML layer.
-  app.get('/sessions/:id', (c) => serveHtml(c, 'src/pages/index/index.html'));
-  // Teams management route (api-contract-freeze delta, teams-self-serve
-  // change; design D6 — one of the three sanctioned lockstep mirrors of the
-  // router-known route table): unconditional on auth, no cookies — the
-  // login gate renders client-side, same as `/` and `/sessions/:id`.
-  app.get('/teams', (c) => serveHtml(c, 'src/pages/index/index.html'));
-  app.get('/admin/users', (c) => serveHtml(c, 'src/pages/admin-users/index.html'));
-  app.get('*', serveStatic({ root: publicDir }));
+    // Absent frontend (HTTP-test callers, or a deliberately API-only boot)
+    // → Hono's own 404, same as an asset miss (spec "API-only fallback
+    // mode").
+    if (!opts.frontend) return c.notFound();
+
+    // Absent `outgoing` (the @hono/node-ws upgrade replay, and plain
+    // `app.request()` tests, construct envs with no writable raw response —
+    // design D1 "Bridge guards") → Hono's own 404 rather than invoking the
+    // frontend (spec "Bridge without a writable response object"). Checked
+    // BEFORE calling handle(), never after.
+    const { incoming, outgoing } = c.env;
+    if (!incoming || !outgoing) return c.notFound();
+
+    try {
+      await opts.frontend.handle(incoming, outgoing);
+    } catch (err) {
+      // The frontend already owns writing this response. If it started
+      // (headers sent) before rejecting, composing a second response via
+      // Hono's onError would corrupt the connection — log and return the
+      // sentinel instead. Only rethrow when nothing has been written yet,
+      // so onError's normal 500 path still applies (design D1 "Bridge
+      // guards" (c)).
+      if (outgoing.headersSent) {
+        console.error('frontend bridge: handle() rejected after headers were sent', err);
+        return RESPONSE_ALREADY_SENT;
+      }
+      throw err;
+    }
+    return RESPONSE_ALREADY_SENT;
+  });
 
   return app;
 }

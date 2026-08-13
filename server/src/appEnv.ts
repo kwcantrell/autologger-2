@@ -35,6 +35,12 @@ export interface Bindings {
   config: Config;
   /** Injected per-request by @hono/node-server; absent in app.request() tests. */
   incoming?: import('node:http').IncomingMessage;
+  /** Injected per-request by @hono/node-server; absent in app.request() tests
+   * AND in the @hono/node-ws upgrade replay (nextjs-frontend-migration,
+   * design D1 "Bridge guards") — the frontend bridge in app.ts falls back to
+   * Hono's own 404 rather than invoking the frontend when this is absent,
+   * since there is no writable response object to hand it. */
+  outgoing?: import('node:http').ServerResponse;
 }
 
 export interface Variables {

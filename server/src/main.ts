@@ -43,7 +43,15 @@ const app = new Hono<AppEnv>();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 // Bindings ride in via wireApp's injection middleware — NOT a fetch wrapper —
 // because @hono/node-ws upgrades bypass serve()'s fetch entirely.
-wireApp(app, upgradeWebSocket, { bindings, publicDir: webDist });
+// TODO(nextjs-frontend-migration task 3.3): construct and pass `frontend`
+// (server/src/node/nextFrontend.ts) here, gate `serve()` on its prepare()
+// having resolved, and install the upgrade dispatcher. Deliberately not done
+// in this unit (task 3.1+3.2) — the `webDist`/`existsSync` check above is
+// the pre-existing Vite-path warning, left as-is so main.ts keeps compiling
+// and behaving exactly as before until 3.3 rewires it; `publicDir` was
+// removed from wireApp's opts (design D6, serveStatic deleted), so it is no
+// longer passed here.
+wireApp(app, upgradeWebSocket, { bindings });
 bindings.ports.sessions.startSweeper();
 
 const server = serve({ fetch: app.fetch, port, hostname }, (info) =>

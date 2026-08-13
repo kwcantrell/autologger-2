@@ -1,129 +1,215 @@
-// Serving contract for the built SPA (spec stage 3): HTML verbatim (no
-// serve-time rewrite-token substitution), assets + /static served, API never
-// shadowed.
-// Uses a fixture dist in a temp dir — `npm test` stays independent of a real
-// Vite build (the e2e tier covers that).
+// Dispatch-contract tests for the Next.js frontend bridge (design D1,
+// nextjs-frontend-migration; spec "Next.js frontend served through the Hono
+// bridge"). Rewritten from the old fixture-`web/dist` assertions (D7): the
+// bridge is a new seam, and this file characterizes ITS dispatch decisions
+// — which requests reach `frontend.handle()` and which 404 from Hono without
+// ever touching it — against a stub `{ handle }`, not against real
+// Next-rendered shell content (that's the e2e tier's job, per design D7).
+//
+// The stub satisfies the declared seam property (`.apply/ledger.md` phase-3
+// section): "after `handle` resolves, the response has been fully written
+// by the frontend" — it writes a canned response onto the fake `outgoing`
+// object it's handed before resolving, exactly as the real Next wrapper
+// (`server/src/node/nextFrontend.ts`) must.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import type { ServerResponse } from 'node:http';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { wireApp } from '../app';
-import type { AppEnv } from '../appEnv';
+import type { AppEnv, Bindings } from '../appEnv';
 import { env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 
 const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
   c.text('WebSocket unavailable in HTTP tests', 426)) as unknown as UpgradeWebSocket;
 
-const dist = mkdtempSync(join(tmpdir(), 'autologger-dist-'));
-mkdirSync(join(dist, 'src/pages/index'), { recursive: true });
-mkdirSync(join(dist, 'src/pages/admin-users'), { recursive: true });
-mkdirSync(join(dist, 'assets'), { recursive: true });
-mkdirSync(join(dist, 'static'), { recursive: true });
-// The rewrite token is assembled by concatenation so the CONTIGUOUS string
-// never appears in this source file — the spec's DoD grep over the repo must
-// stay clean. The *served fixture* still contains the real token, which is
-// what makes the verbatim assertion fail while serveHtml still rewrites.
-const REWRITE_TOKEN = ['__API_', 'ROOT__'].join('');
-writeFileSync(
-  join(dist, 'src/pages/index/index.html'),
-  `<!DOCTYPE html><html><body>index page ${REWRITE_TOKEN} stays verbatim</body></html>`,
-);
-writeFileSync(
-  join(dist, 'src/pages/admin-users/index.html'),
-  '<!DOCTYPE html><html><body>admin page</body></html>',
-);
-writeFileSync(join(dist, 'assets/app-abc123.js'), 'console.log("bundle");');
-writeFileSync(join(dist, 'static/logo.png'), 'png-bytes');
+/** A fake `ServerResponse`: enough surface for the bridge's own guard logic
+ * (`headersSent`) plus a place for the stub frontend to write its canned
+ * response. Not a real Node `ServerResponse` — the bridge treats `outgoing`
+ * as opaque and just forwards it to `frontend.handle()`. */
+function fakeOutgoing(): ServerResponse & { writeHead: ReturnType<typeof vi.fn> } {
+  return {
+    headersSent: false,
+    writeHead: vi.fn(),
+    end: vi.fn(),
+  } as unknown as ServerResponse & { writeHead: ReturnType<typeof vi.fn> };
+}
 
-const app = wireApp(new Hono<AppEnv>(), upgradeStub, { publicDir: dist });
-
-afterAll(() => rmSync(dist, { recursive: true, force: true }));
-
-describe('static serving (fixture dist)', () => {
-  it('serves / verbatim — no serve-time rewrite of the old token', async () => {
-    const res = await app.request('/', {}, env);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain(`${REWRITE_TOKEN} stays verbatim`);
+/** Records every call and, by default, fully answers the response before
+ * resolving (the declared seam property) — matching what a real frontend
+ * provider must do. `behavior` lets individual tests swap in a rejecting
+ * implementation for the handle()-rejection coverage below. */
+function createStubFrontend(
+  behavior: (outgoing: ServerResponse) => void | Promise<void> = (outgoing) => {
+    (outgoing as unknown as { writeHead(...a: unknown[]): void }).writeHead(200, {
+      'content-type': 'text/html',
+    });
+    (outgoing as unknown as { headersSent: boolean }).headersSent = true;
+    (outgoing as unknown as { end(...a: unknown[]): void }).end('<html>stub shell</html>');
+  },
+) {
+  const handle = vi.fn(async (_incoming: unknown, outgoing: ServerResponse) => {
+    await behavior(outgoing);
   });
+  return { handle };
+}
 
-  it('serves /admin/users HTML', async () => {
-    const res = await app.request('/admin/users', {}, env);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain('admin page');
-  });
+/** Env carrying a real `incoming`/`outgoing` pair, as the bridge sees for a
+ * genuine HTTP request. */
+function envWithIO(outgoing: ServerResponse = fakeOutgoing()): Bindings {
+  return { ...env, incoming: {} as Bindings['incoming'], outgoing } as unknown as Bindings;
+}
 
-  it('serves hashed /assets/* and /static/* files', async () => {
-    const js = await app.request('/assets/app-abc123.js', {}, env);
-    expect(js.status).toBe(200);
-    expect(await js.text()).toContain('bundle');
-    const png = await app.request('/static/logo.png', {}, env);
-    expect(png.status).toBe(200);
-  });
+describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next.js frontend served through the Hono bridge")', () => {
+  const stub = createStubFrontend();
+  const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
 
-  it('never shadows API routes with the static catch-all', async () => {
-    const res = await app.request('/api/profile', {}, env);
+  afterEach(() => stub.handle.mockClear());
+
+  it('never bridges API routes', async () => {
+    const res = await app.request('/api/profile', {}, envWithIO());
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type') ?? '').toContain('application/json');
+    expect(stub.handle).not.toHaveBeenCalled();
   });
 
-  it('404s unknown paths', async () => {
-    const res = await app.request('/definitely-not-a-page', {}, env);
-    expect(res.status).toBe(404);
-  });
-});
+  it.each(['/', '/sessions/abc-123', '/teams', '/admin/users', '/sessions/a%2Fb', '/static/logo.png'])(
+    'bridges GET %s to the frontend',
+    async (path) => {
+      const res = await app.request(path, {}, envWithIO());
+      expect(stub.handle).toHaveBeenCalledTimes(1);
+      // RESPONSE_ALREADY_SENT carries this header (@hono/node-server/utils/response) —
+      // its presence is the observable signal that the bridge, not Hono's
+      // own 404, answered the dispatch (the wire-level bytes of the stub's
+      // canned write are a Node-socket side effect this Fetch Response
+      // can't see; the e2e tier covers real shell content).
+      expect(res.headers.get('x-hono-already-sent')).toBe('true');
+    },
+  );
 
-describe('GET /sessions/:id — deep-link HTML route (session-deep-links delta)', () => {
-  it('serves the shell for an arbitrary id, anonymous client, no Set-Cookie', async () => {
-    const home = await app.request('/', {}, env);
-    const deepLink = await app.request('/sessions/abc-123', {}, env);
-    expect(deepLink.status).toBe(200);
-    expect(deepLink.headers.get('set-cookie')).toBeNull();
-    expect(await deepLink.text()).toBe(await home.text());
-  });
-
-  it('real vs. nonexistent id responses are byte-identical (no existence oracle)', async () => {
+  it('real vs. nonexistent session id both bridge (dispatch never depends on session/catalog data)', async () => {
     const studio = seedStudio();
     const show = seedShow({ studioId: studio });
     const sessionId = seedSession({ showId: show });
 
-    const real = await app.request(`/sessions/${sessionId}`, {}, env);
-    const fake = await app.request('/sessions/definitely-does-not-exist', {}, env);
-    expect(real.status).toBe(200);
-    expect(fake.status).toBe(200);
-    expect(await real.text()).toBe(await fake.text());
+    await app.request(`/sessions/${sessionId}`, {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    stub.handle.mockClear();
+
+    await app.request('/sessions/definitely-does-not-exist', {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
   });
 
-  it('GET /sessions (no id) still 404s — no asset matches', async () => {
-    const res = await app.request('/sessions', {}, env);
+  it('POST /sessions/abc 404s from Hono without invoking the bridge (non-GET stays off the bridge)', async () => {
+    const res = await app.request('/sessions/abc', { method: 'POST' }, envWithIO());
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+
+  it.each(['/teams/', '/sessions/abc/', '/admin/users/'])(
+    'trailing slash %s 404s without invoking the bridge',
+    async (path) => {
+      const res = await app.request(path, {}, envWithIO());
+      expect(res.status).toBe(404);
+      expect(stub.handle).not.toHaveBeenCalled();
+    },
+  );
+
+  it('GET / (root) is not treated as a trailing-slash path', async () => {
+    const res = await app.request('/', {}, envWithIO());
+    expect(res.headers.get('x-hono-already-sent')).toBe('true');
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+  });
+
+  it('absent outgoing (plain app.request() env) 404s without invoking the bridge', async () => {
+    // `env` from the harness carries no incoming/outgoing — the exact shape
+    // a plain app.request() test constructs (spec "Bridge without a
+    // writable response object").
+    const res = await app.request('/', {}, env);
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+
+  it('absent outgoing with incoming present (the @hono/node-ws upgrade replay shape) 404s without invoking the bridge', async () => {
+    const replayEnv = { ...env, incoming: {} as Bindings['incoming'] } as unknown as Bindings;
+    const res = await app.request('/', {}, replayEnv);
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+});
+
+describe('frontend bridge dispatch — frontend absent (API-only / plain HTTP tests)', () => {
+  const app = wireApp(new Hono<AppEnv>(), upgradeStub, {});
+
+  it('404s unmatched GET paths with no frontend configured', async () => {
+    const res = await app.request('/', {}, envWithIO());
     expect(res.status).toBe(404);
   });
 
-  it('GET /sessions/a/b (nested segments) still 404s — no asset matches', async () => {
-    const res = await app.request('/sessions/a/b', {}, env);
-    expect(res.status).toBe(404);
-  });
-
-  it('percent-encoded slash /sessions/a%2Fb is one raw segment — serves the shell, not 404', async () => {
-    const res = await app.request('/sessions/a%2Fb', {}, env);
+  it('still serves API routes normally', async () => {
+    const res = await app.request('/api/profile', {}, envWithIO());
     expect(res.status).toBe(200);
   });
 });
 
-describe('GET /teams — team management HTML route (teams-self-serve delta)', () => {
-  it('serves the shell for an anonymous client, no Set-Cookie', async () => {
-    const home = await app.request('/', {}, env);
-    const teams = await app.request('/teams', {}, env);
-    expect(teams.status).toBe(200);
-    expect(teams.headers.get('set-cookie')).toBeNull();
-    expect(await teams.text()).toBe(await home.text());
+describe('frontend bridge — handle() rejection handling (design D1 "Bridge guards" (c))', () => {
+  it('logs and returns the sentinel when headers were already sent before rejecting', async () => {
+    const stub = createStubFrontend(async (outgoing) => {
+      (outgoing as unknown as { headersSent: boolean }).headersSent = true;
+      throw new Error('boom after headers');
+    });
+    const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await app.request('/', {}, envWithIO());
+      expect(res.headers.get('x-hono-already-sent')).toBe('true');
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
-  it('GET /teams/x (a segment below /teams) still 404s — no asset matches', async () => {
-    const res = await app.request('/teams/x', {}, env);
-    expect(res.status).toBe(404);
+  it('rethrows (producing the normal 500 via onError) when no headers were sent yet', async () => {
+    const stub = createStubFrontend(async () => {
+      throw new Error('boom before headers');
+    });
+    const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await app.request('/', {}, envWithIO());
+      expect(res.status).toBe(500);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+});
+
+describe('frontend bridge — IP allowlist covers page requests before the bridge runs (spec "Page requests pass through server middleware")', () => {
+  const stub = createStubFrontend();
+  const app = wireApp(new Hono<AppEnv>(), upgradeStub, { frontend: stub });
+
+  afterEach(() => stub.handle.mockClear());
+
+  it('rejects a non-allowlisted client requesting / before invoking the bridge', async () => {
+    const blockedEnv = {
+      ...envWithIO(),
+      config: { ...env.config, IP_ALLOWLIST: '203.0.113.0/24' },
+      incoming: { socket: { remoteAddress: '198.51.100.1' } },
+    } as unknown as Bindings;
+    const res = await app.request('/', {}, blockedEnv);
+    expect(res.status).toBe(403);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
+
+  it('admits an allowlisted client through to the bridge', async () => {
+    const allowedEnv = {
+      ...envWithIO(),
+      config: { ...env.config, IP_ALLOWLIST: '203.0.113.0/24' },
+      incoming: { socket: { remoteAddress: '203.0.113.7' } },
+    } as unknown as Bindings;
+    const res = await app.request('/', {}, allowedEnv);
+    expect(res.headers.get('x-hono-already-sent')).toBe('true');
+    expect(stub.handle).toHaveBeenCalledTimes(1);
   });
 });
