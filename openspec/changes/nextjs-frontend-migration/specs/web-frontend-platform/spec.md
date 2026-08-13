@@ -108,9 +108,9 @@ SHALL fail the boot loudly — it SHALL NOT silently degrade to API-only mode.
 ### Requirement: Shell routing from the shared route definition
 Next SHALL serve the index shell for exactly the router-known paths — `/`,
 `/sessions/:id` (one non-empty raw segment), `/teams` — via a catch-all that validates
-the **decoded segment list** the framework provides (the framework decodes each raw
-path segment independently; a decoded segment MAY therefore contain `/` and still
-counts as one segment — the validator SHALL NOT re-split decoded values), and the admin
+the segment list the framework provides, treating each raw path segment as exactly one
+entry regardless of any percent-encoded separators it carries — the validator SHALL NOT
+decode-and-re-split segment values — and the admin
 shell at `/admin/users` via a concrete route. The accepted segment shapes SHALL derive
 from the shared route-definition module (`web/src/shared/utils/loginReturnPath.ts`) via
 a segment-shape helper added alongside `isRouterKnownPathname`. The module holds two
@@ -119,7 +119,9 @@ consumed by the stash write and return-path validator, and the shell segment-sha
 helper (includes `/`) consumed by the catch-all — and they SHALL NOT be merged. Any
 other path SHALL yield `404`; trailing-slash variants of router-known paths (e.g.
 `/teams/`) SHALL NOT be redirected to their canonical form and SHALL yield `404`,
-matching pre-change behavior. Shell responses SHALL set no cookies and read no cookies;
+matching pre-change behavior (enforced at the serving layer in front of the framework:
+paths ending in `/`, other than `/` itself, are answered `404` by the server and never
+reach the framework). Shell responses SHALL set no cookies and read no cookies;
 for a fixed deployment and fixed request headers, the response SHALL NOT vary with
 session/team existence, deletion state, or requester authorization, and SHALL embed no
 session-derived or catalog-derived data. Shell routes SHALL be dynamically rendered

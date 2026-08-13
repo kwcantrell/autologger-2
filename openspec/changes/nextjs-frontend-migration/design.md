@@ -145,7 +145,13 @@ that adds the file.
 Keep the workspace, guard tests, and `@/api|@/shared|@/pages` aliases (Next reads
 tsconfig `paths` natively). Add `web/src/app/**`, `web/next.config.ts`,
 `web/postcss.config.mjs`, a standalone `web/vitest.config.ts`, `next-env.d.ts`; accept
-and commit Next's managed tsconfig edits. Delete `web/vite.config.ts`, both `index.html`s,
+and commit Next's managed tsconfig edits. **Apply-time deviations (task 2.3, recorded
+2026-08-13):** (1) Next's legacy Pages Router detection unconditionally claims
+`web/src/pages/` — the App Router special files therefore use
+`pageExtensions: ['page.tsx', 'page.ts']` and carry a `.page.` suffix
+(`layout.page.tsx`, `page.page.tsx`, …), leaving the existing `pages/` tree invisible
+to Next's router; (2) Next has no default loader for `.webm`, so `next.config.ts`
+adds a webpack `asset/resource` rule for it. Delete `web/vite.config.ts`, both `index.html`s,
 both `main.tsx` entries. `webBoundaries.repo.test.ts` scans `web/src` from disk so
 `app/` enters its scope automatically; its entry-bundle-isolation rules are rewritten
 from `main.tsx`/`index.html` to the `app/` entry files, and one layering rule is added:
@@ -176,13 +182,17 @@ encoded-slash and trailing-slash behaviors below, (d) no runtime writes appear u
 
 - `web/src/app/(index)/[[...path]]/page.tsx` — optional catch-all validating the
   **decoded segment list** Next hands it: `[]`, `['sessions', <one non-empty segment>]`,
-  or `['teams']`; anything else calls `notFound()`. **Panel-corrected wording
-  (2026-08-13):** Next decodes params per raw segment, so `/sessions/a%2Fb` arrives as
-  `['sessions', 'a/b']` — two segments, the second *containing* a literal `/`. A decoded
-  segment MAY contain `/` and still counts as one segment; the validator checks list
-  shape and non-emptiness, never re-splits decoded values (deriving naively from
-  `SESSIONS_ROUTE_RE`'s `[^/]+` would wrongly 404 the encoded form and break the frozen
-  scenario). `/sessions/a/b` arrives as 3 segments → 404, matching today. The accepted
+  or `['teams']`; anything else calls `notFound()`. **Panel-corrected, then
+  measurement-corrected wording (2026-08-13):** the load-bearing property is that one
+  raw path segment arrives as exactly one params entry and the validator never
+  decodes-and-re-splits. (Apply-time measurement on Next 15.5.23, task 2.3: params
+  arrive with segments still percent-ENCODED — `/sessions/a%2Fb` →
+  `['sessions', 'a%2Fb']` — not decoded as the panel-era wording assumed. The outcome
+  is identical either way: two entries → shell; `isShellSegments` checks shape and
+  non-emptiness only. Deriving naively from `SESSIONS_ROUTE_RE`'s `[^/]+` against a
+  decoded value would have wrongly 404'd the encoded form — the never-re-split rule
+  stands regardless of encoding.) `/sessions/a/b` arrives as 3 entries → 404, matching
+  today. The accepted
   shapes derive from the shared route-definition module (`loginReturnPath.ts`): a
   segment-shape helper is added alongside `isRouterKnownPathname` so the stash write,
   the return-path validator, and the Next catch-all consume one definition (AppShell's
@@ -199,11 +209,18 @@ encoded-slash and trailing-slash behaviors below, (d) no runtime writes appear u
   opening unbounded attacker-driven disk growth on an unauthenticated route, and adding
   `x-nextjs-cache` header variance. `force-dynamic` keeps `web/.next` read-only at
   runtime (asserted by a task) and is cheap for a static client-island shell.
-- **Trailing slash (panel decision 2026-08-13):** Next's default 308-redirects
-  `/teams/` → `/teams`; today `/teams/` 404s. `next.config.ts` sets
-  `skipTrailingSlashRedirect: true` so trailing-slash paths reach the catch-all
-  unnormalized, fail the segment-shape validation (`['teams', '']`), and keep 404ing —
-  pinned by a spec scenario and verified in the spike.
+- **Trailing slash (panel decision 2026-08-13; mechanism corrected by apply-time
+  measurement + owner ruling, 2026-08-13):** today `/teams/` 404s and the delta pins
+  that. Measured on Next 15.5.23 (task 2.3's live smoke test): `skipTrailingSlashRedirect:
+  true` suppresses only the 308 — the catch-all still normalizes the trailing slash for
+  route matching, so `/teams/` reached the shell (200). The original design assumption
+  (`['teams', '']` failing shape validation) does not hold. **Enforcement therefore
+  lives in the Hono bridge** (task 3.2): any path ending in `/` except `/` itself gets
+  Hono's 404 and is never bridged — a route-table-free rule that exactly reproduces
+  today's `serveStatic` behavior (no asset path ends in `/`). The pinned 404 status is
+  unchanged; its body is Hono's 404, which the delta leaves unpinned.
+  `skipTrailingSlashRedirect: true` stays in `next.config.ts` as defense-in-depth
+  (trailing-slash paths never reach Next through the bridge, so no 308 can leak).
 - `web/src/app/(admin)/admin/users/page.tsx` — concrete route (static segments win over
   the catch-all); root `not-found.tsx`.
 - Shell pages are static client-island wrappers: they read no cookies, set none —
@@ -521,3 +538,19 @@ explicitly. Accepted as residual: the label collision between this change's gate
 ruling E1 (2026-08-13) and the prior `cursor-agent-adapters` baseline's "gate ruling
 E1 (2026-08-06)" quoted inside the MODIFIED requirement — dates disambiguate, and
 editing inherited baseline text would add archive-sync noise.
+
+**2026-08-13 — Apply-time amendment (task 2.3 measurements + owner ruling).** Live
+smoke testing on the pinned Next 15.5.23 falsified two design-mechanism claims (both
+flagged by the implementer, neither silently worked around): (1) trailing-slash
+normalization — `skipTrailingSlashRedirect` suppresses only the 308; `/teams/` matched
+the catch-all and served the shell. Escalated to the owner as a frozen-surface concern
+per protocol; **ruling: enforce the pinned 404 in the Hono bridge** (route-table-free
+trailing-slash rule, task 3.2), keeping the authorized delta's observable outcome
+unchanged. D3, the platform spec's shell-routing requirement, the freeze delta's
+404-body parenthetical, and tasks 3.2/2.6(d) amended accordingly. (2) catch-all params
+arrive percent-encoded, not decoded — outcomes unchanged (`isShellSegments` is
+shape-only); D3 and the platform spec reworded to the encoding-agnostic
+never-re-split property. Also recorded in D2: two undocumented build blockers fixed
+in-unit (`web/src/pages/` collides with Next's legacy Pages Router detection →
+`pageExtensions` + `.page.` suffixes; no default `.webm` loader → webpack
+`asset/resource` rule).

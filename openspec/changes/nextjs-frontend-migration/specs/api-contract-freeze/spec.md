@@ -46,8 +46,9 @@ assert `404` for the encoded form.)
 - **WHEN** `GET /sessions`, `GET /sessions/a/b`, or `GET /teams/` (or any other path
   outside the endpoint inventory, including trailing-slash variants) is requested and
   no static asset matches
-- **THEN** the response status remains `404` with no redirect (the 404 body is the
-  frontend framework's not-found document; only the status is pinned)
+- **THEN** the response status remains `404` with no redirect (the 404 body is
+  unpinned — the frontend framework's not-found document or the server's own 404,
+  depending on which layer answers; only the status is pinned)
 
 #### Scenario: Stray-path upgrade disposition
 - **WHEN** a WebSocket upgrade is attempted in production on a path outside `/api/`

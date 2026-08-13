@@ -31,7 +31,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       (`web/src/shared/utils/loginReturnPath.ts`, alongside `isRouterKnownPathname`)
       with unit tests: `[]`, `['sessions', <non-empty>]`, `['teams']` accepted; nested/
       empty shapes rejected; percent-encoding semantics documented in the tests.
-- [ ] 2.3 Build the `app/` tree: `(index)/layout.tsx` (+ body attrs, metadata, CSS
+- [x] 2.3 Build the `app/` tree: `(index)/layout.tsx` (+ body attrs, metadata, CSS
       imports in pinned order: `tailwind.css` then `overlayscrollbars.css`),
       `(index)/[[...path]]/page.tsx` (validates via 2.2's helper, `notFound()`
       otherwise, renders the static skeleton + `ssr: false` island wrapper for
@@ -42,7 +42,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       the web suite runs without `vite.config.ts`; repoint `web/tsconfig.node.json`
       includes. Gate: web vitest green under the new config while `vite.config.ts`
       still exists.
-- [ ] 2.5 Update `web/src/webBoundaries.repo.test.ts`: entry-bundle-isolation rules
+- [x] 2.5 Update `web/src/webBoundaries.repo.test.ts`: entry-bundle-isolation rules
       rewritten from `main.tsx`/`index.html` to the `app/` entry files; add the
       `app/`-layer rule (`app` may import `pages`/`api`/`shared`; nothing imports
       `app`).
@@ -52,8 +52,11 @@ frozen-contract surface and get risk-tier per-phase reviews.
       `/`, `/sessions/:id`, `/teams` triggers no RSC refetch and no island remount;
       (b) browser Back/Forward preserves departure-watcher ordering (Next's patched
       history + popstate listener double-handling); (c) `/sessions/a%2Fb` reaches the
-      catch-all as two decoded segments and serves the shell; (d) with
-      `skipTrailingSlashRedirect: true`, `/teams/` yields 404 with no redirect;
+      catch-all as two segment entries and serves the shell; (d) RESOLVED BY
+      MEASUREMENT (task 2.3 smoke test + owner ruling 2026-08-13): Next normalizes
+      trailing slashes for catch-all matching regardless of
+      `skipTrailingSlashRedirect` — enforcement moved to the Hono bridge (task 3.2);
+      the spike records the measurement citation, no re-verification needed;
       (e) with `force-dynamic`, repeated shell requests write nothing under
       `web/.next`; (f) `viewport`-exported theme color emits the expected
       `<meta name="theme-color">`. Any failure returns the design to the gate before
@@ -75,11 +78,15 @@ frozen-contract surface and get risk-tier per-phase reviews.
       absent `frontend` → Hono 404; absent `c.env.outgoing` (upgrade replay,
       `app.request()` tests) → Hono 404, and `Bindings` gains an explicit `outgoing?`;
       `frontend.handle()` rejections are caught in the bridge — rethrow only if no
-      headers were sent, else log and return the sentinel. Rewrite
+      headers were sent, else log and return the sentinel; trailing-slash paths
+      (ending in `/`, except `/` itself) get Hono's 404 and are never bridged (owner
+      ruling 2026-08-13 — Next 15.5.23 normalizes trailing slashes for catch-all
+      matching regardless of `skipTrailingSlashRedirect`). Rewrite
       `server/src/routers/staticServing.int.test.ts` as dispatch-contract tests against
       a stub frontend (API routes never bridge; `/`, `/sessions/:id`, `/teams`,
       `/admin/users`, asset paths do; `POST /sessions/abc` 404s without invoking the
-      bridge; absent-`outgoing` envs 404; IP allowlist covers page requests) — the
+      bridge; absent-`outgoing` envs 404; `GET /teams/` and other trailing-slash
+      paths 404 without invoking the bridge; IP allowlist covers page requests) — the
       bridge is a new seam and gets this characterization coverage in the same task.
 - [ ] 3.3 Wire `server/src/main.ts`: instantiate `nextFrontend` and only call `serve()`
       after `prepare()` resolves (or API-only is decided); install the path-dispatching
