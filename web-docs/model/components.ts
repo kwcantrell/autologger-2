@@ -822,6 +822,21 @@ const capabilityScopes: CapabilityScope[] = [
   },
   {
     type: 'component',
+    capability: 'live-recording-chunks',
+    // The chunk-rollover recorder, single-flight upload pipeline, rescue
+    // banner, and multi-chunk clip layout all live under web/src (web-app:
+    // AudioRecorder.tsx, chunkUploadQueue.ts, ChunkRescueBanner.tsx,
+    // chunkLeaveWarning.ts, shared/utils/audioClips.ts). The server side is
+    // reused unmodified hosting (the existing segment upload/list endpoints
+    // and lease routes) — hosting is not implementing, per the
+    // youtube-audio-import entry's reused-host distinction, so routers is
+    // deliberately NOT listed. The D9 import-anchor wall-time threading in
+    // session-core serves transcript-generation's placement identity, not
+    // this capability's requirements, and is scoped there.
+    components: ['web-app'],
+  },
+  {
+    type: 'component',
     capability: 'session-title-suffix',
     // catalog: showsStore.ts/sessionIndexStore.ts persistence + the
     // migration (persistence-package-extraction: moved out of server/src/db/
