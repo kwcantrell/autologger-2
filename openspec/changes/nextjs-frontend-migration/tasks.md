@@ -46,7 +46,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       rewritten from `main.tsx`/`index.html` to the `app/` entry files; add the
       `app/`-layer rule (`app` may import `pages`/`api`/`shared`; nothing imports
       `app`).
-- [ ] 2.6 **Framework-behavior spike (gates phase 3 — panel decision 2026-08-13).**
+- [x] 2.6 **Framework-behavior spike (gates phase 3 — panel decision 2026-08-13).**
       Against the phase-2 scaffold (Vite path still authoritative), verify and record
       in the `.apply/` ledger, pinning the Next version: (a) wouter `pushState` across
       `/`, `/sessions/:id`, `/teams` triggers no RSC refetch and no island remount;
