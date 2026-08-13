@@ -81,6 +81,7 @@ vi.mock('./AiV2Panel', () => ({ AiV2Panel: () => null }));
 vi.mock('./AudioPlayer', () => ({ AudioPlayer: () => null }));
 vi.mock('./AudioRecorder', () => ({ AudioRecorder: () => null }));
 vi.mock('./AudioSaveOverlay', () => ({ AudioSaveOverlay: () => null }));
+vi.mock('./ChunkRescueBanner', () => ({ ChunkRescueBanner: () => null }));
 vi.mock('./CategoryButtonStrip', () => ({ CategoryButtonStrip: () => null }));
 vi.mock('./EventLogSheet', () => ({
   EventLogSheet: () => <div data-testid="event-log-sheet-stub" />,

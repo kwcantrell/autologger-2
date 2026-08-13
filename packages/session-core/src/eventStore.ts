@@ -48,6 +48,22 @@ export class EventStore {
      * identical to the manual path. When absent, behavior is byte-identical
      * to the manual path (pinned in eventStore.test.ts). */
     explicitAnchor?: { timecodeTotalFrames: number; wallTimeUtc: string };
+    /** chunked-live-recording D9 — decouples the STORED wall time from the
+     * wall time used to derive the timecode. Only consulted in the
+     * non-`explicitAnchor` branch: `markMs` (from `markedAtUtc` or a fresh
+     * `now()`) still drives `timecodeForMark`'s transport-position derivation
+     * exactly as before (the event anchors at the session's transport
+     * position AT CALL TIME, per the `youtube-audio-import` spec's
+     * `timecode_total_frames` pin), but when present this value is stored as
+     * the event's `wall_time_utc` instead of `isoZ(new Date(markMs))`. Used
+     * ONLY by `SessionHub.anchorImportedTake` to stamp the synthesized
+     * `Recording N Started` event with the take's own `startedAtUtc` (the
+     * value already stored on the segment) rather than the moment
+     * `anchorImportedTake` happens to run — making the transcript-anchor
+     * delta-0 identity (E-A) hold by construction for future imports, same as
+     * the live recorder. Every other caller omits this (default undefined),
+     * preserving existing wall-time-equals-mark-time behavior. */
+    storedWallTimeUtc?: string;
     /** youtube-audio-import Phase-9 fix-wave (finding 1); rationale updated by
      * code-health-consolidation D1: transaction/broadcast ATOMICITY is now owned
      * by the post-commit broadcast queue (`SessionHub.inTxn` +
@@ -78,7 +94,7 @@ export class EventStore {
       const tc = timecodeForMark(input.ctx.frameRate, input.ctx.startOffsetFrames, tr, wallMs);
       totalFrames = toTotalFrames(tc);
       frameRate = tc.frame_rate;
-      wallIso = isoZ(new Date(wallMs));
+      wallIso = input.storedWallTimeUtc ?? isoZ(new Date(wallMs));
     }
     const id = crypto.randomUUID();
     const metaJson = input.metadataJson || '{}';

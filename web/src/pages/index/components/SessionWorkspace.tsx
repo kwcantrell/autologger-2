@@ -25,6 +25,7 @@ import { AudioPlayer } from './AudioPlayer';
 import type { AudioRecorderHandle } from './AudioRecorder';
 import { AudioRecorder } from './AudioRecorder';
 import { AudioSaveOverlay } from './AudioSaveOverlay';
+import { ChunkRescueBanner } from './ChunkRescueBanner';
 import { EventLogSheet } from './EventLogSheet';
 import { ExportFeed } from './ExportFeed';
 import { feedTabButtonClassName } from './feedTabStyles';
@@ -358,6 +359,14 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
             <AudioSaveOverlay isUploading={isUploadingAudio} />
           </>
         )}
+        {/* Chunk rescue surface (chunked-live-recording task 5.1, design D6):
+          deliberately OUTSIDE the `sessionId &&` gate above and rendered
+          unconditionally — the module-owned chunk upload queue it reads
+          survives `AudioRecorder` unmount and session switches, so a
+          straggler chunk from a session this workspace just navigated away
+          from must still be rescuable. Reads the queue itself; renders
+          nothing when the queue is empty. */}
+        <ChunkRescueBanner />
 
         <div
           id="v3-session-loading"

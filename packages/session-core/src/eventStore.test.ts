@@ -440,6 +440,62 @@ describe('addEvent over a real core', () => {
     });
   });
 
+  // chunked-live-recording D9 — storedWallTimeUtc decouples the STORED wall
+  // time from the wall time timecodeForMark derives the timecode from: the
+  // timecode still anchors at the rolling transport's position at now()
+  // (unaffected — proves the youtube-audio-import spec's
+  // `timecode_total_frames` pin survives), but the stored wall_time_utc is
+  // the caller's override, not isoZ(new Date(markMs)).
+  describe('storedWallTimeUtc override (design D9)', () => {
+    it('stores the override as wall_time_utc while timecode still derives from now() via the rolling transport', () => {
+      const { core, broadcasts } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'internal',
+        message: 'Recording 1 Started',
+        metadataJson: '{}',
+        markedAtUtc: null,
+        ctx,
+        storedWallTimeUtc: '2020-01-01T00:00:00.000Z', // an unrelated, much-earlier wall time
+      });
+      // Same timecode as the "manual path" now()-derived pin above (100
+      // offset + 50 elapsed + trunc(5s * 24fps) = 270) — storedWallTimeUtc
+      // does NOT perturb the transport-position derivation.
+      expect(out.event.timecode_total_frames).toBe(270);
+      expect(out.event.frame_rate).toBe(24);
+      // But the STORED wall time is the override, not isoZ(now()).
+      expect(out.event.wall_time_utc).toBe('2020-01-01T00:00:00.000Z');
+      expect(broadcasts).toEqual([{ type: 'event.changed', revision: 1 }]);
+      const r = core.first('SELECT wall_time_utc FROM events WHERE id = ?', out.event.event_id);
+      expect(r).toEqual({ wall_time_utc: '2020-01-01T00:00:00.000Z' });
+    });
+
+    it('is ignored when explicitAnchor is present (explicitAnchor owns wall time in that branch)', () => {
+      const { core } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'generated',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx,
+        explicitAnchor: { timecodeTotalFrames: 5, wallTimeUtc: '2026-06-25T00:00:05.000Z' },
+        storedWallTimeUtc: '2020-01-01T00:00:00.000Z', // must be ignored
+      });
+      expect(out.event.wall_time_utc).toBe('2026-06-25T00:00:05.000Z');
+    });
+
+    it('omitted falls back to isoZ(new Date(markMs)) — byte-identical to the pre-D9 manual path', () => {
+      const { core } = rollingFixture();
+      const out = new EventStore(core).addEvent({
+        category: 'note',
+        message: 'hi',
+        metadataJson: '',
+        markedAtUtc: null,
+        ctx,
+      });
+      expect(out.event.wall_time_utc).toBe('1970-01-01T00:16:40.000Z'); // same as the manual-path pin above
+    });
+  });
+
   describe('explicit anchor (design D4)', () => {
     it('stores the given frames + wall time verbatim, bypassing the transport derivation', () => {
       const { core, broadcasts } = rollingFixture();

@@ -423,6 +423,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
       recordingOrdinal,
       durationS,
       ctx,
+      startedAtUtc,
     });
     getSessionHub(c, sessionId).appendAudioSeamParts(seamParts);
   } catch (err) {
@@ -545,6 +546,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
         recordingOrdinal,
         durationS: fetched.duration,
         ctx,
+        startedAtUtc,
       });
     } catch (err) {
       getSessionHub(c, sessionId).deleteAudioSegment(seg.id);

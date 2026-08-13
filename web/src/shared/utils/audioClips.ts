@@ -163,41 +163,158 @@ export function buildRecordingIntervalsFromInternalEvents(
 }
 
 interface GreedyMatchResult {
-  pairs: { segIdx: number; iv: RecordingInterval }[];
+  /** One entry per matched chunk group: its interval plus its member segment indices
+   *  (sorted by segment `ordinal` — capture order — ascending; lowest-ordinal member first). */
+  groupPairs: { memberIdx: number[]; iv: RecordingInterval }[];
   placeholders: RecordingInterval[];
   unmatchedSegIdx: number[];
 }
 
+/** Chunk group: segments sharing a `recording_ordinal` (null ordinals are singletons). */
+interface ChunkGroup {
+  ordinal: number | null;
+  /** Segment indices, sorted by segment `ordinal` (capture order) ascending. */
+  memberIdx: number[];
+}
+
 /**
- * Assign each segment file to the closest unused recording interval by wall clock
- * (chronological segments). Remaining intervals become placeholders (no matching file).
- * Unmatched segments are chained at the end.
+ * Group segments sharing a non-null `recording_ordinal` into chunk groups (D4). When an
+ * ordinal has multiple same-N interval cycles (`cycleStartMs`, sorted ascending), each
+ * member is assigned to the cycle whose start event's wall time most nearly precedes the
+ * member's `started_at_utc` (falls back to the earliest cycle when no cycle precedes it,
+ * or the member's wall time is unparseable). Null-ordinal segments stay singleton groups
+ * in their original order, unaffected by this function.
+ */
+function groupSegmentsByRecordingOrdinal(
+  audioSegments: AudioSegment[],
+  cycleStartMsByOrdinal: Map<number, number[]>,
+): ChunkGroup[] {
+  const groups: ChunkGroup[] = [];
+  const byOrdinalAndCycle = new Map<string, ChunkGroup>();
+
+  const indicesInCaptureOrder = audioSegments
+    .map((_, index) => index)
+    .sort((a, b) => audioSegments[a].ordinal - audioSegments[b].ordinal);
+
+  for (const index of indicesInCaptureOrder) {
+    const s = audioSegments[index];
+    if (s.recording_ordinal == null) {
+      groups.push({ ordinal: null, memberIdx: [index] });
+      continue;
+    }
+    const ordinal = s.recording_ordinal;
+    const cycles = cycleStartMsByOrdinal.get(ordinal) ?? [];
+    let cycleKey = 0;
+    if (cycles.length > 1) {
+      const segWallMs = wallTimeMs(s.started_at_utc);
+      let bestIdx = 0;
+      let bestPreceding = Number.NEGATIVE_INFINITY;
+      let hasPreceding = false;
+      for (let c = 0; c < cycles.length; c += 1) {
+        if (segWallMs != null && cycles[c] <= segWallMs && cycles[c] > bestPreceding) {
+          bestPreceding = cycles[c];
+          bestIdx = c;
+          hasPreceding = true;
+        }
+      }
+      cycleKey = hasPreceding ? bestIdx : 0;
+    }
+    const key = `${ordinal}:${cycleKey}`;
+    const existing = byOrdinalAndCycle.get(key);
+    if (existing) {
+      existing.memberIdx.push(index);
+    } else {
+      const g: ChunkGroup = { ordinal, memberIdx: [index] };
+      byOrdinalAndCycle.set(key, g);
+      groups.push(g);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Assign each chunk group to the closest unused recording interval by wall clock.
+ * Non-null-ordinal groups target the interval(s) sharing their ordinal directly (D4: a
+ * group never scatters across, or steals, another recording's interval); when an ordinal
+ * has no paired interval at all (crash), the group falls through to the unmatched/chained
+ * fallback below, same as today. Null-ordinal groups (singletons) use the pre-existing
+ * wall-clock-nearest matching against whatever intervals remain. Remaining intervals
+ * become placeholders (no matching file); remaining groups' members are chained at the end.
  */
 function matchAudioSegmentsToIntervalsGreedy(
   audioSegments: AudioSegment[],
   intervals: RecordingInterval[],
 ): GreedyMatchResult {
-  const segMeta = audioSegments.map((s, index) => ({
-    index,
-    wallMs: wallTimeMs(s.started_at_utc),
-  }));
-  const segOrder = [...segMeta].sort((a, b) => {
-    if (a.wallMs != null && b.wallMs != null && a.wallMs !== b.wallMs) return a.wallMs - b.wallMs;
-    if (a.wallMs != null && b.wallMs == null) return -1;
-    if (a.wallMs == null && b.wallMs != null) return 1;
-    return a.index - b.index;
-  });
+  const cycleStartMsByOrdinal = new Map<number, number[]>();
+  for (const iv of intervals) {
+    if (iv.ordinal == null) continue;
+    const wm = wallTimeMs(iv.startEv.wall_time_utc);
+    const arr = cycleStartMsByOrdinal.get(iv.ordinal) ?? [];
+    arr.push(wm ?? Number.NEGATIVE_INFINITY);
+    cycleStartMsByOrdinal.set(iv.ordinal, arr);
+  }
+  for (const arr of cycleStartMsByOrdinal.values()) arr.sort((a, b) => a - b);
+
+  const groups = groupSegmentsByRecordingOrdinal(audioSegments, cycleStartMsByOrdinal);
 
   const ivMeta = intervals.map((iv, k) => ({
     iv,
     k,
     wallMs: wallTimeMs(iv.startEv.wall_time_utc),
   }));
+  const ivByOrdinalSorted = new Map<number, typeof ivMeta>();
+  for (const im of ivMeta) {
+    if (im.iv.ordinal == null) continue;
+    const arr = ivByOrdinalSorted.get(im.iv.ordinal) ?? [];
+    arr.push(im);
+    ivByOrdinalSorted.set(im.iv.ordinal, arr);
+  }
+  for (const arr of ivByOrdinalSorted.values()) {
+    arr.sort(
+      (a, b) => (a.wallMs ?? Number.NEGATIVE_INFINITY) - (b.wallMs ?? Number.NEGATIVE_INFINITY),
+    );
+  }
+  const ivOrdinalCursor = new Map<number, number>();
 
   const usedIv = new Set<number>();
-  const pairs: { segIdx: number; iv: RecordingInterval }[] = [];
+  const groupPairs: { memberIdx: number[]; iv: RecordingInterval }[] = [];
+  const unresolvedGroups: ChunkGroup[] = [];
 
-  for (const sm of segOrder) {
+  for (const g of groups) {
+    if (g.ordinal == null) {
+      unresolvedGroups.push(g);
+      continue;
+    }
+    const candidates = ivByOrdinalSorted.get(g.ordinal);
+    const cursor = ivOrdinalCursor.get(g.ordinal) ?? 0;
+    const im = candidates?.[cursor];
+    if (im) {
+      ivOrdinalCursor.set(g.ordinal, cursor + 1);
+      usedIv.add(im.k);
+      groupPairs.push({ memberIdx: g.memberIdx, iv: im.iv });
+    } else {
+      unresolvedGroups.push(g);
+    }
+  }
+
+  // Null-ordinal (singleton) groups: pre-existing wall-clock-nearest matching against
+  // whatever intervals a non-null group didn't already claim.
+  const singletonMeta = unresolvedGroups
+    .filter((g) => g.ordinal == null)
+    .map((g) => ({
+      g,
+      index: g.memberIdx[0],
+      wallMs: wallTimeMs(audioSegments[g.memberIdx[0]].started_at_utc),
+    }));
+  const singletonOrder = [...singletonMeta].sort((a, b) => {
+    if (a.wallMs != null && b.wallMs != null && a.wallMs !== b.wallMs) return a.wallMs - b.wallMs;
+    if (a.wallMs != null && b.wallMs == null) return -1;
+    if (a.wallMs == null && b.wallMs != null) return 1;
+    return a.index - b.index;
+  });
+
+  const matchedSingletonIdx = new Set<number>();
+  for (const sm of singletonOrder) {
     let bestK = -1;
     let bestD = Number.POSITIVE_INFINITY;
     for (const im of ivMeta) {
@@ -212,34 +329,122 @@ function matchAudioSegmentsToIntervalsGreedy(
     if (bestK >= 0 && bestD !== Number.POSITIVE_INFINITY) {
       usedIv.add(bestK);
       const im = ivMeta.find((x) => x.k === bestK);
-      if (im) pairs.push({ segIdx: sm.index, iv: im.iv });
+      if (im) {
+        groupPairs.push({ memberIdx: [sm.index], iv: im.iv });
+        matchedSingletonIdx.add(sm.index);
+      }
     }
   }
 
-  let matchedSeg = new Set(pairs.map((p) => p.segIdx));
-  let unmatchedSegIdx = segMeta.map((s) => s.index).filter((idx) => !matchedSeg.has(idx));
+  const stillUnresolved = unresolvedGroups.filter(
+    (g) => g.ordinal != null || !matchedSingletonIdx.has(g.memberIdx[0]),
+  );
+  let unmatchedSegIdx = stillUnresolved.flatMap((g) => g.memberIdx);
 
   /*
-   * Segments with no started_at_utc never get a wall match; their log interval becomes a red
-   * placeholder while the real file is chained at the end of the timeline. Pair remaining segments
-   * to remaining intervals in chronological order (n-th segment file ↔ n-th unused recording block).
+   * Segments with no wall match (no started_at_utc, or an ordinal whose recording never
+   * paired an interval) never get placed above; their log interval becomes a red
+   * placeholder while the real file is chained at the end of the timeline. Pair remaining
+   * groups to remaining intervals in chronological order (n-th group ↔ n-th unused
+   * recording block) — a whole group locks to one interval, never splitting across.
    */
   const unusedIvSorted = ivMeta
     .filter((im) => !usedIv.has(im.k))
     .sort((a, b) => a.iv.startSec - b.iv.startSec || a.k - b.k);
-  const unmatchedSorted = [...unmatchedSegIdx].sort((a, b) => a - b);
-  const nLock = Math.min(unmatchedSorted.length, unusedIvSorted.length);
+  const unmatchedGroupsSorted = [...stillUnresolved].sort(
+    (a, b) => a.memberIdx[0] - b.memberIdx[0],
+  );
+  const nLock = Math.min(unmatchedGroupsSorted.length, unusedIvSorted.length);
   for (let u = 0; u < nLock; u += 1) {
     const im = unusedIvSorted[u];
     usedIv.add(im.k);
-    pairs.push({ segIdx: unmatchedSorted[u], iv: im.iv });
+    groupPairs.push({ memberIdx: unmatchedGroupsSorted[u].memberIdx, iv: im.iv });
   }
 
   const placeholders = ivMeta.filter((im) => !usedIv.has(im.k)).map((im) => im.iv);
-  matchedSeg = new Set(pairs.map((p) => p.segIdx));
-  unmatchedSegIdx = segMeta.map((s) => s.index).filter((idx) => !matchedSeg.has(idx));
+  const matchedSeg = new Set(groupPairs.flatMap((p) => p.memberIdx));
+  unmatchedSegIdx = audioSegments.map((_, idx) => idx).filter((idx) => !matchedSeg.has(idx));
 
-  return { pairs, placeholders, unmatchedSegIdx };
+  return { groupPairs, placeholders, unmatchedSegIdx };
+}
+
+/**
+ * Place a chunk group's members within a matched interval (D4 / gate ruling E-A):
+ * member position = `interval start + max(0, (started_at_utc(member) - wall_time_utc(
+ * interval's start event)) / 1000)`. Fallbacks preserve pre-change behavior exactly:
+ * unparseable event wall time -> the base (lowest-ordinal member) sits at the interval
+ * start and follow-ons derive from the base's own `started_at_utc`; a member with
+ * unparseable `started_at_utc` sits at the interval start if it is a singleton group,
+ * otherwise it is left unplaced (falls through to the chain-at-end fallback).
+ *
+ * Each placed member's clip extends to the next placed member's position (the last to
+ * `max(interval end, its own position + probed-or-fallback duration)`), so the interval
+ * stays covered from the first surviving chunk by construction — a probe failure
+ * (reflected only in `duration`, kept separate from the clip span) never uncovers the
+ * interval — while a genuinely longer probed duration (paused-transport recordings, or a
+ * last chunk whose own audio runs past the interval end) still gets its full width,
+ * restoring pre-change over-run behavior.
+ */
+function placeChunkGroupWithinInterval(
+  memberIdx: number[],
+  iv: RecordingInterval,
+  audioSegments: AudioSegment[],
+  segmentDurations: (number | null)[],
+): { placed: AudioClipLite[]; unplacedIdx: number[] } {
+  const startSec = safeTimelineSec(iv.startSec, 0);
+  const endSec = Math.max(safeTimelineSec(iv.endSec, startSec), startSec + 0.05);
+  const eventWallMs = wallTimeMs(iv.startEv.wall_time_utc);
+  const isSingleton = memberIdx.length === 1;
+  const baseIdx = memberIdx[0];
+  const baseWallMs = wallTimeMs(audioSegments[baseIdx].started_at_utc);
+
+  const positioned: { idx: number; pos: number }[] = [];
+  const unplacedIdx: number[] = [];
+
+  for (const idx of memberIdx) {
+    const memberWallMs = wallTimeMs(audioSegments[idx].started_at_utc);
+    if (memberWallMs == null) {
+      if (isSingleton) {
+        positioned.push({ idx, pos: startSec });
+      } else {
+        unplacedIdx.push(idx);
+      }
+      continue;
+    }
+    if (eventWallMs != null) {
+      positioned.push({ idx, pos: startSec + Math.max(0, (memberWallMs - eventWallMs) / 1000) });
+    } else if (idx === baseIdx) {
+      positioned.push({ idx, pos: startSec });
+    } else if (baseWallMs != null) {
+      positioned.push({ idx, pos: startSec + Math.max(0, (memberWallMs - baseWallMs) / 1000) });
+    } else {
+      positioned.push({ idx, pos: startSec });
+    }
+  }
+
+  positioned.sort((a, b) => a.pos - b.pos || a.idx - b.idx);
+
+  const placed: AudioClipLite[] = [];
+  for (let i = 0; i < positioned.length; i += 1) {
+    const { idx, pos } = positioned[i];
+    const clipStart = Math.max(startSec, pos);
+    const dRaw = Number(segmentDurations[idx]);
+    const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
+    const clipEnd =
+      i + 1 < positioned.length
+        ? Math.max(clipStart, positioned[i + 1].pos)
+        : Math.max(endSec, pos + d);
+    placed.push({
+      segmentId: audioSegments[idx].id,
+      url: audioSegments[idx].url,
+      startSec: clipStart,
+      endSec: Math.max(clipEnd, clipStart + 0.05),
+      duration: d,
+      missingAudio: false,
+    });
+  }
+
+  return { placed, unplacedIdx };
 }
 
 function rebuildAudioClipsLegacyOrdinalAndChain(
@@ -276,24 +481,31 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
   }
   const recordingOrdinals = [...startEventByOrd.keys()].sort((a, b) => a - b);
 
-  const nSeg = audioSegments.length;
-  const assignedOrd: (number | null)[] = new Array(nSeg).fill(null);
+  // Group segments sharing a `recording_ordinal` into chunk groups (D4) so the whole
+  // group competes for its ordinal's start event ONCE, instead of each member competing
+  // separately (which would strand every member past the first behind the chain-at-end
+  // fallback). The legacy path never sees multiple same-N cycles (parseable `Recording N`
+  // events would have produced non-empty `intervals` and routed away from this path), so
+  // grouping needs no cycle-adjacency split here -- one group per non-null ordinal.
+  const groups = groupSegmentsByRecordingOrdinal(audioSegments, new Map());
+
+  const assignedOrd = new Map<ChunkGroup, number>();
   const usedOrd = new Set<number>();
 
-  for (let i = 0; i < nSeg; i += 1) {
-    const raw = audioSegments[i].recording_ordinal;
+  for (const g of groups) {
+    const raw = g.ordinal;
     if (raw == null) continue;
     const n = Math.floor(Number(raw));
     if (!Number.isFinite(n) || n < 1) continue;
     if (!startEventByOrd.has(n) || usedOrd.has(n)) continue;
-    assignedOrd[i] = n;
+    assignedOrd.set(g, n);
     usedOrd.add(n);
   }
 
   const wallMatchMaxMs = 10 * 60 * 1000;
-  for (let i = 0; i < nSeg; i += 1) {
-    if (assignedOrd[i] != null) continue;
-    const segStart = wallTimeMs(audioSegments[i].started_at_utc);
+  for (const g of groups) {
+    if (assignedOrd.has(g)) continue;
+    const segStart = wallTimeMs(audioSegments[g.memberIdx[0]].started_at_utc);
     if (segStart == null) continue;
     let bestN: number | null = null;
     let bestD = Number.POSITIVE_INFINITY;
@@ -309,66 +521,120 @@ function rebuildAudioClipsLegacyOrdinalAndChain(
       }
     }
     if (bestN != null && bestD <= wallMatchMaxMs) {
-      assignedOrd[i] = bestN;
+      assignedOrd.set(g, bestN);
       usedOrd.add(bestN);
     }
   }
 
-  const stillIdx: number[] = [];
-  for (let i = 0; i < nSeg; i += 1) if (assignedOrd[i] == null) stillIdx.push(i);
+  const stillGroups = groups.filter((g) => !assignedOrd.has(g));
   const freeOrds = recordingOrdinals.filter((n) => !usedOrd.has(n));
-  for (let k = 0; k < stillIdx.length && k < freeOrds.length; k += 1) {
-    assignedOrd[stillIdx[k]] = freeOrds[k];
+  for (let k = 0; k < stillGroups.length && k < freeOrds.length; k += 1) {
+    assignedOrd.set(stillGroups[k], freeOrds[k]);
     usedOrd.add(freeOrds[k]);
   }
 
   const out: AudioClipLite[] = [];
-  for (let i = 0; i < nSeg; i += 1) {
-    const dRaw = Number(segmentDurations[i]);
-    /* Probe can fail (codec, CORS, corrupt); still show a clip so the file isn't dropped. */
-    const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
-    const n = assignedOrd[i];
-    let startSec: number;
-    let endSec: number;
+  for (const g of groups) {
+    const n = assignedOrd.get(g);
     if (n != null && startEventByOrd.has(n)) {
-      const ev = startEventByOrd.get(n);
-      if (!ev) {
-        startSec = out.length ? out[out.length - 1].endSec : 0;
-        endSec = startSec + d;
-      } else {
-        startSec = eventTimelineSec(ev, status);
-        if (!(startSec >= 0)) {
+      const startEv = startEventByOrd.get(n);
+      if (!startEv) continue; // unreachable (guarded by has() above); satisfies TS narrowing
+      const stopSec = stopSecByOrd.get(n);
+      const startSec = eventTimelineSec(startEv, status);
+      const iv: RecordingInterval = {
+        ordinal: n,
+        startEv,
+        stopEv: startEv,
+        startSec: startSec >= 0 ? startSec : out.length ? out[out.length - 1].endSec : 0,
+        endSec: stopSec != null ? stopSec : Number.NaN,
+      };
+      const fallbackEnd = out.length ? out[out.length - 1].endSec : 0;
+      if (!(iv.endSec >= iv.startSec)) {
+        // No paired stop event: each member falls back to start + its own duration,
+        // chained onto its predecessor within the group (mirrors the pre-group per-segment
+        // `startSec + d` fallback).
+        let cursor = iv.startSec;
+        for (const idx of g.memberIdx) {
+          const dRaw = Number(segmentDurations[idx]);
+          const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
+          const startSecMember = out.length ? Math.max(cursor, fallbackEnd) : cursor;
+          const endSecMember = Math.max(startSecMember + d, startSecMember + 0.05);
+          cursor = endSecMember;
+          out.push({
+            segmentId: audioSegments[idx].id,
+            url: audioSegments[idx].url,
+            startSec: startSecMember,
+            endSec: endSecMember,
+            duration: d,
+            missingAudio: false,
+          });
+        }
+        continue;
+      }
+      const { placed, unplacedIdx } = placeChunkGroupWithinInterval(
+        g.memberIdx,
+        iv,
+        audioSegments,
+        segmentDurations,
+      );
+      out.push(...placed);
+      for (const idx of unplacedIdx) {
+        const dRaw = Number(segmentDurations[idx]);
+        const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
+        const startSecMember = out.length ? out[out.length - 1].endSec : 0;
+        const endSecMember = Math.max(startSecMember + d, startSecMember + 0.05);
+        out.push({
+          segmentId: audioSegments[idx].id,
+          url: audioSegments[idx].url,
+          startSec: startSecMember,
+          endSec: endSecMember,
+          duration: d,
+          missingAudio: false,
+        });
+      }
+      continue;
+    }
+    /* Unresolved group (no ordinal assignment) -- the group's base index-pairs against
+     * sorted start/stop events by its ABSOLUTE segment position (upload order ≈ log
+     * order), exactly as the pre-group per-segment fallback did (preserves index-pairing
+     * bit-identically for the common singleton case). Any additional group members (a
+     * same-ordinal group whose ordinal never appeared as a `Recording N` event at all --
+     * no index-pairing slot existed for these before grouping either) chain at the end. */
+    for (let m = 0; m < g.memberIdx.length; m += 1) {
+      const idx = g.memberIdx[m];
+      const dRaw = Number(segmentDurations[idx]);
+      const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
+      let startSec: number;
+      let endSec: number;
+      if (m === 0) {
+        const se = startEvents[idx];
+        const te = stopEvents[idx];
+        if (se) {
+          const s = eventTimelineSec(se, status);
+          startSec = s >= 0 ? s : out.length ? out[out.length - 1].endSec : 0;
+        } else {
           startSec = out.length ? out[out.length - 1].endSec : 0;
         }
-        const stopSec = stopSecByOrd.get(n);
-        endSec = stopSec != null ? Math.max(startSec, stopSec) : startSec + d;
-      }
-    } else {
-      /* i-th segment ↔ i-th start/stop in sorted internal lists (upload order ≈ log order). */
-      const se = startEvents[i];
-      const te = stopEvents[i];
-      if (se) {
-        const s = eventTimelineSec(se, status);
-        startSec = s >= 0 ? s : out.length ? out[out.length - 1].endSec : 0;
+        if (te) {
+          const st = eventTimelineSec(te, status);
+          endSec = st >= 0 ? Math.max(startSec, st) : startSec + d;
+        } else {
+          endSec = startSec + d;
+        }
       } else {
         startSec = out.length ? out[out.length - 1].endSec : 0;
-      }
-      if (te) {
-        const st = eventTimelineSec(te, status);
-        endSec = st >= 0 ? Math.max(startSec, st) : startSec + d;
-      } else {
         endSec = startSec + d;
       }
+      endSec = Math.max(endSec, startSec + 0.05);
+      out.push({
+        segmentId: audioSegments[idx].id,
+        url: audioSegments[idx].url,
+        startSec,
+        endSec,
+        duration: d,
+        missingAudio: false,
+      });
     }
-    endSec = Math.max(endSec, startSec + 0.05);
-    out.push({
-      segmentId: audioSegments[i].id,
-      url: audioSegments[i].url,
-      startSec,
-      endSec,
-      duration: d,
-      missingAudio: false,
-    });
   }
   return out;
 }
@@ -387,30 +653,23 @@ export function rebuildAudioClips(
     return rebuildAudioClipsLegacyOrdinalAndChain(audioSegments, segmentDurations, events, status);
   }
 
-  const { pairs, placeholders, unmatchedSegIdx } = matchAudioSegmentsToIntervalsGreedy(
+  const { groupPairs, placeholders, unmatchedSegIdx } = matchAudioSegmentsToIntervalsGreedy(
     audioSegments,
     intervals,
   );
 
   const out: AudioClipLite[] = [];
+  const chainIdx = [...unmatchedSegIdx];
 
-  for (const p of pairs) {
-    const i = p.segIdx;
-    const iv = p.iv;
-    const dRaw = Number(segmentDurations[i]);
-    const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
-    const startSec = safeTimelineSec(iv.startSec, 0);
-    let endSec = safeTimelineSec(iv.endSec, startSec);
-    if (endSec < startSec) endSec = startSec + 0.05;
-    endSec = Math.max(endSec, startSec + d, startSec + 0.05);
-    out.push({
-      segmentId: audioSegments[i].id,
-      url: audioSegments[i].url,
-      startSec,
-      endSec,
-      duration: d,
-      missingAudio: false,
-    });
+  for (const p of groupPairs) {
+    const { placed, unplacedIdx } = placeChunkGroupWithinInterval(
+      p.memberIdx,
+      p.iv,
+      audioSegments,
+      segmentDurations,
+    );
+    out.push(...placed);
+    chainIdx.push(...unplacedIdx);
   }
 
   for (const iv of placeholders) {
@@ -427,7 +686,7 @@ export function rebuildAudioClips(
   }
 
   let chainEnd = out.reduce((m, c) => Math.max(m, safeTimelineSec(c.endSec, 0)), 0);
-  for (const i of [...unmatchedSegIdx].sort((a, b) => a - b)) {
+  for (const i of [...chainIdx].sort((a, b) => a - b)) {
     const dRaw = Number(segmentDurations[i]);
     const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 1;
     const startSec = chainEnd;

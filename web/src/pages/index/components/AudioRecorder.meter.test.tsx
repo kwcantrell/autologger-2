@@ -1,6 +1,8 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render } from '@testing-library/react';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetChunkUploadQueueForTesting } from '../utils/chunkUploadQueue';
 import type { AudioRecorderHandle } from './AudioRecorder';
 import { AudioRecorder } from './AudioRecorder';
 
@@ -17,15 +19,18 @@ import { AudioRecorder } from './AudioRecorder';
 vi.mock('../../../api/hooks/useAudio', () => {
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => ({})) });
   return {
+    // NOT the real key literal — the factory module is its single owner
+    // (queryKeyFactories.repo.test.ts); tests only need a stable mock key.
+    audioSegmentsKeys: { bySession: (id: string | null) => ['audio-segments-mock', id] as const },
     useAudioSegments: () => ({ data: { segments: [] } }),
     useClaimAudioLease: mutation,
     useHeartbeatAudioLease: mutation,
     useReleaseAudioLease: mutation,
-    useUploadAudioSegment: mutation,
-    useUploadWaveform: mutation,
   };
 });
 vi.mock('../../../api/hooks/useEvents', () => ({
+  WORKSPACE_EVENTS_LIMIT: 2000,
+  useEvents: () => ({ data: { events: [] } }),
   useLogEvent: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => ({})) }),
 }));
 vi.mock('../../../shared/components/Toast', () => ({ showToast: vi.fn() }));
@@ -78,6 +83,9 @@ beforeEach(() => {
   analyserByte = 128;
   FakeAudioContext.instances = [];
   rafQueue = [];
+  // The chunk upload queue is a module-scope singleton whose deps are
+  // consulted on first acquire — reset so each test's render builds it fresh.
+  resetChunkUploadQueueForTesting();
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   vi.stubGlobal('AudioContext', FakeAudioContext);
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
@@ -107,7 +115,14 @@ afterEach(() => {
 
 async function startRecording() {
   const ref = createRef<AudioRecorderHandle>();
-  const view = render(<AudioRecorder ref={ref} sessionId="sess-rec-1" />);
+  // AudioRecorder reads useQueryClient() for the chunk pipeline's cache
+  // invalidation — a provider is required even with the API hooks mocked.
+  const queryClient = new QueryClient();
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <AudioRecorder ref={ref} sessionId="sess-rec-1" />
+    </QueryClientProvider>,
+  );
   await act(async () => {
     await ref.current?.toggle();
   });

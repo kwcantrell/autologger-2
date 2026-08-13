@@ -60,6 +60,7 @@ vi.mock('./AudioRecorder', () => ({
   AudioRecorder: () => null,
 }));
 vi.mock('./AudioSaveOverlay', () => ({ AudioSaveOverlay: () => null }));
+vi.mock('./ChunkRescueBanner', () => ({ ChunkRescueBanner: () => null }));
 vi.mock('./CategoryButtonStrip', () => ({
   CategoryButtonStrip: () => <div data-testid="category-strip-stub" />,
 }));

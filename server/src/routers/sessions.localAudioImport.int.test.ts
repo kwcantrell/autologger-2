@@ -2,9 +2,10 @@
 // over POST /api/sessions/:sessionId/local-audio-import (design D2/D11,
 // batch-audio-import spec "Local audio import HTTP surface").
 
+import type { Clock } from '@autologger/ports';
 import { describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { app, env } from '../test/harness';
+import { app, env, envWith } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
@@ -88,6 +89,7 @@ interface HttpEvent {
   category: string;
   timecode_total_frames: number | null;
   frame_rate: number | null;
+  wall_time_utc: string;
 }
 
 async function listEvents(
@@ -524,5 +526,55 @@ describe('POST /api/sessions/:sessionId/local-audio-import — repeated imports 
     expect(segs.segments).toHaveLength(2);
     expect(segs.segments.map((s) => s.recording_ordinal).sort()).toEqual([1, 2]);
     expect(await listBlobKeys(session)).toHaveLength(2);
+  });
+});
+
+// ── chunked-live-recording task 3.0 (design D9) — import-anchor identity ───
+// `anchorImportedTake` now threads the segment's own `startedAtUtc` into the
+// `Recording N Started` event's wall time instead of a fresh `Clock.now()`
+// read at RPC time, so the E-A transcript-anchor delta-0 identity
+// (segment.started_at_utc === Started-event.wall_time_utc) holds by
+// construction for future imports — see U3-halt-report.md and design D9.
+describe('POST /api/sessions/:sessionId/local-audio-import — D9 import-anchor wall-time identity', () => {
+  it('the Recording N Started event wall time equals the segment started_at_utc even when the blob put takes real (fake-clock) wall-clock time', async () => {
+    const session = await seededSession();
+    // Manual-advance clock (not `makeFakeClock`'s vitest-timer-coupled
+    // variant — no `vi.useFakeTimers()` is active in this suite, and `tick`
+    // only needs to move `now()`, not vitest's timer queue).
+    let nowMs = 1_750_000_000_000;
+    const clock: Clock = { now: () => nowMs };
+
+    // Advance the clock DURING the blob put — simulating the real gap the
+    // halt report measured between the segment's started_at_utc capture
+    // (before the put) and the pre-D9 fresh-now() Started-event stamp (after
+    // the put + rolling recheck). Before D9 this would have produced a
+    // structurally nonzero delta; after D9 the identity must hold exactly
+    // regardless of how long the put takes.
+    const putSpy = vi.spyOn(env.ports.audio, 'put').mockImplementationOnce(async (...args) => {
+      nowMs += 5_000; // 5s "upload" gap
+      return env.ports.audio.put(...args);
+    });
+    try {
+      const res = await postLocalImport(
+        session,
+        { durationS: '10', contentType: 'audio/wav' },
+        envWith({}, { clock }),
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      putSpy.mockRestore();
+    }
+
+    const segs = await listSegments(session, env);
+    expect(segs.segments).toHaveLength(1);
+    const seg = segs.segments[0] as { started_at_utc: string | null };
+    expect(seg.started_at_utc).not.toBeNull();
+
+    const { events } = await listEvents(session, env);
+    const started = events.find((e) => e.message === 'Recording 1 Started');
+    expect(started).toBeDefined();
+    // The identity pin (E-A delta-0 by construction): same stored value on
+    // both sides, not merely "both non-null".
+    expect(started?.wall_time_utc).toBe(seg.started_at_utc);
   });
 });

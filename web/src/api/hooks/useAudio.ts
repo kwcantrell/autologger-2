@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
 import type {
   AudioRecordingLeaseBody,
-  AudioSegment,
   AudioSegmentsResponse,
   AudioSegmentWaveformBody,
   OkResponse,
@@ -83,31 +82,7 @@ export function useUploadWaveform(sessionId: string) {
   });
 }
 
-export function useUploadAudioSegment(sessionId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      blob,
-      startedAtUtc,
-      endedAtUtc,
-      ordinal,
-    }: {
-      blob: Blob;
-      startedAtUtc: string;
-      endedAtUtc: string;
-      ordinal: number;
-    }) => {
-      const params = new URLSearchParams({
-        started_at_utc: startedAtUtc,
-        ended_at_utc: endedAtUtc,
-        recording_ordinal: String(ordinal),
-      });
-      return apiFetch<AudioSegment>(`sessions/${sessionId}/audio/segments?${params.toString()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': blob.type || 'audio/webm' },
-        body: blob,
-      });
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) }),
-  });
-}
+// The live-recorder segment upload moved into the chunk upload pipeline
+// (chunked-live-recording task 4.2): AudioRecorder.tsx builds the POST
+// `…/audio/segments` request in its queue deps, binding each chunk's
+// sessionId at recording start rather than a hook's render-time prop.

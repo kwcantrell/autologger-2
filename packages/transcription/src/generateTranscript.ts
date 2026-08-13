@@ -157,6 +157,12 @@ export async function generateTranscriptWords(
       path: inputPaths[i],
       ordinal: s.ordinal,
       recordingOrdinal: s.recording_ordinal,
+      // chunked-live-recording task 3.1 (design D5) — threaded from
+      // AudioSegmentMeta.started_at_utc for task 3.2's per-member
+      // event-wall-time anchor derivation; resolveAnchors (transcriptRemap.ts)
+      // consumes it as of task 3.2 to compute each member's anchor as
+      // `A + max(0, (startedAtUtc - eventWallTimeUtc) / 1000)`.
+      startedAtUtc: s.started_at_utc,
     }));
     const remappedWords = remapTranscriptWords(
       enrichmentGroups,

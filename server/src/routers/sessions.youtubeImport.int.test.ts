@@ -41,6 +41,7 @@ import {
   YOUTUBE_IMPORT_TMP_PREFIX,
   youtubeImportGuard,
 } from '@autologger/media-import';
+import type { Clock } from '@autologger/ports';
 import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
@@ -615,6 +616,7 @@ interface HttpEvent {
   category: string;
   timecode_total_frames: number | null;
   frame_rate: number | null;
+  wall_time_utc: string;
 }
 
 async function listEventsRaw(sessionId: string, bindings: Bindings): Promise<string> {
@@ -927,9 +929,20 @@ describe('task 9.5 — anchor-resolution end-to-end (recordingStartAnchors)', ()
     const res = await postImport(session, VALID_BODY, testEnv);
     expect(res.status).toBe(200);
 
+    const segs = await listSegments(session, testEnv);
+    const seg = segs.segments[0] as { started_at_utc: string | null };
+
     const { events } = await listEvents(session, testEnv);
     const anchors = recordingStartAnchors(events);
-    expect(anchors).toContainEqual({ recordingOrdinal: 1, anchorSeconds: 0 });
+    // chunked-live-recording task 3.1 (design D5) added `eventWallTimeUtc` to
+    // RecordingStartAnchor — was an incidental omission under the pre-3.1
+    // shape, not a pinned absence; per D9 it now equals the segment's own
+    // `started_at_utc` (the threaded import-anchor identity).
+    expect(anchors).toContainEqual({
+      recordingOrdinal: 1,
+      anchorSeconds: 0,
+      eventWallTimeUtc: seg.started_at_utc,
+    });
   });
 });
 
@@ -984,5 +997,86 @@ describe('task 9.6 — no backfill: a pre-existing anchorless segment is untouch
     expect(reread?.recording_ordinal).toBeNull();
     expect(reread?.started_at_utc).toBeNull();
     expect(reread?.ended_at_utc).toBeNull();
+  });
+});
+
+// ── chunked-live-recording task 3.0 (design D9) — import-anchor identity ───
+// `anchorImportedTake` now threads the segment's own `startedAtUtc` into the
+// `Recording N Started` event's wall time instead of a fresh `Clock.now()`
+// read at RPC time, so the E-A transcript-anchor delta-0 identity
+// (segment.started_at_utc === Started-event.wall_time_utc) holds by
+// construction for future imports — see .apply/u3-halt-report.md and design
+// D9. This suite's real subprocess spawn + `readFile` + rolling recheck
+// already introduce genuine wall-clock elapsed time between the segment's
+// `startedAtUtc` capture (before the fetch) and where `anchorImportedTake`
+// used to stamp a fresh `now()` (after it) — exactly the gap the halt report
+// measured — so this is a real-clock regression pin, not merely a
+// fake-clock unit fact.
+describe('POST /api/sessions/:sessionId/youtube-import — D9 import-anchor wall-time identity', () => {
+  it('the Recording N Started event wall time equals the segment started_at_utc across the real fetch+put gap', async () => {
+    const session = seededSession().sessionId;
+    const { binaryPath } = freshBinary();
+    const testEnv = configuredEnv(binaryPath);
+
+    const res = await postImport(session, VALID_BODY, testEnv);
+    expect(res.status).toBe(200);
+
+    const segs = await listSegments(session, testEnv);
+    expect(segs.segments).toHaveLength(1);
+    const seg = segs.segments[0] as { started_at_utc: string | null };
+    expect(seg.started_at_utc).not.toBeNull();
+
+    const { events } = await listEvents(session, testEnv);
+    const started = events.find((e) => e.message === 'Recording 1 Started');
+    expect(started).toBeDefined();
+    // The identity pin (E-A delta-0 by construction): same stored value on
+    // both sides, not merely "both non-null" — proves the Started event's
+    // wall time is the THREADED segment startedAtUtc, not an independent
+    // post-fetch now() read (which would differ by the real fetch+put gap).
+    expect(started?.wall_time_utc).toBe(seg.started_at_utc);
+  });
+
+  it('holds even with an injected wall-clock gap between the segment capture and the anchor RPC (deterministic fake-clock variant)', async () => {
+    const session = seededSession().sessionId;
+    const { binaryPath } = freshBinary();
+    let nowMs = 1_750_000_000_000;
+    const clock: Clock = { now: () => nowMs };
+
+    // Advance the clock while the (fake) audio bytes are read from disk —
+    // the real gap this composite spans is fetch+put; this simulates a
+    // larger one deterministically, same rationale as the local-import D9
+    // test's put-time clock advance.
+    const putSpy = vi.spyOn(env.ports.audio, 'put').mockImplementationOnce(async (...args) => {
+      nowMs += 7_000; // 7s gap
+      return env.ports.audio.put(...args);
+    });
+    try {
+      const res = await postImport(
+        session,
+        VALID_BODY,
+        envWith(
+          {
+            YTDLP_RESOLVED_PATH: binaryPath,
+            HOST: '127.0.0.1',
+            REQUIRE_LOGIN: '0',
+            IP_ALLOWLIST: '',
+          },
+          { clock },
+        ),
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      putSpy.mockRestore();
+    }
+
+    const segs = await listSegments(session, env);
+    expect(segs.segments).toHaveLength(1);
+    const seg = segs.segments[0] as { started_at_utc: string | null };
+    expect(seg.started_at_utc).not.toBeNull();
+
+    const { events } = await listEvents(session, env);
+    const started = events.find((e) => e.message === 'Recording 1 Started');
+    expect(started).toBeDefined();
+    expect(started?.wall_time_utc).toBe(seg.started_at_utc);
   });
 });

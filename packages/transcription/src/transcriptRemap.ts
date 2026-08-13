@@ -5,14 +5,35 @@
 // hub RPC (task 4.2).
 //
 // A word's timeline position = anchor(segment) + (wordTime - segmentGroupOffset).
-// anchor(segment) resolves via a 3-step chain:
-//   1. ordinal match — the segment's `recording_ordinal` ↔ a `Recording N
-//      Started` internal event parsed for the same N.
-//   2. index pairing — the i-th still-unmatched segment (segment-ordinal
-//      order) ↔ the i-th still-unmatched anchor event (time/ordinal order).
-//   3. anchorless — no anchor; the segment's words are still stored, with
-//      empty `session_time` and zeroed `start_sec`/`end_sec` (matching manual
-//      inserts).
+// anchor(segment) resolves via a chunk-group chain (chunked-live-recording
+// design D5 / spec "Timeline remapping of word timestamps"):
+//   0. grouping — segments sharing a `recording_ordinal` form a chunk group
+//      (null-ordinal segments are singleton groups); when multiple
+//      `Recording N Started` anchors share an ordinal (a same-N re-run), the
+//      group's segments split into per-cycle groups by pairing each segment
+//      with the same-N anchor whose event wall time most nearly PRECEDES the
+//      segment's `started_at_utc`, FIFO per ordinal. Each (sub)group's base
+//      is its lowest-ordinal member.
+//   1. ordinal match — a group's base ↔ the `Recording N Started` event
+//      matched by the group's `recording_ordinal` (its resolved same-N
+//      cycle, if split). Only bases claim step-1 anchors; bases are visited
+//      in segment-ordinal order, one anchor per base.
+//   2. index pairing — the i-th still-unmatched BASE (ordinal order) ↔ the
+//      i-th still-unmatched anchor event (time/ordinal order). Non-base
+//      members never participate.
+//   3. anchorless — no anchor for the whole group; every member's words are
+//      still stored, with empty `session_time` and zeroed `start_sec`/
+//      `end_sec` (matching manual inserts).
+//
+// Given a group's resolved anchor `A` (event `E`), every member's own anchor
+// is event-wall-time derived: `A + max(0, (started_at_utc(member) -
+// wall_time_utc(E)) / 1000)` when both timestamps parse — so a member's
+// placement never depends on which sibling chunks survived. Fallbacks
+// preserve pre-change behavior exactly: unparseable event wall time -> the
+// base anchors at `A` and non-base members derive from the base's
+// `started_at_utc` instead; a member with unparseable `started_at_utc`
+// anchors at `A` if it is its group's only member (the legacy single-segment
+// shape), anchorless otherwise.
 //
 // Anchor seconds come from the start event's own stored
 // `timecode_total_frames / frame_rate` (frame arithmetic) — never by
@@ -30,12 +51,26 @@ export interface AnchorCandidateEvent {
   message: string;
   timecode_total_frames: number | null;
   frame_rate: number | null;
+  /** chunked-live-recording task 3.1 (design D5) — the event's own stored
+   * wall time, threaded through for the group-splitting / per-member
+   * event-wall-time derivation `resolveAnchors` will gain in task 3.2.
+   * Unused by `recordingStartAnchors` itself today; carried onto
+   * `RecordingStartAnchor.eventWallTimeUtc` below. Optional so existing
+   * callers passing the narrower pre-3.1 shape keep typechecking. */
+  wall_time_utc?: string;
 }
 
 export interface RecordingStartAnchor {
   recordingOrdinal: number;
   /** Session-timeline seconds: `timecode_total_frames / frame_rate`. */
   anchorSeconds: number;
+  /** chunked-live-recording task 3.1 (design D5) — the anchor event's own
+   * `wall_time_utc`, carried through for task 3.2's per-member
+   * event-wall-time derivation and same-N cycle-splitting. `null` when the
+   * source event carried no `wall_time_utc` (structurally shouldn't happen —
+   * every stored event has one — but kept nullable rather than assumed, same
+   * posture as the frame fields above). */
+  eventWallTimeUtc: string | null;
 }
 
 const RECORDING_STARTED_RE = /^Recording (\d+) Started$/;
@@ -57,6 +92,7 @@ export function recordingStartAnchors(events: AnchorCandidateEvent[]): Recording
     anchors.push({
       recordingOrdinal: Number(m[1]),
       anchorSeconds: Number(totalFrames) / frameRate,
+      eventWallTimeUtc: e.wall_time_utc ?? null,
     });
   }
   return anchors;
@@ -74,6 +110,18 @@ export interface SegmentAnchorInfo {
   /** `session_audio_segments.recording_ordinal`; `null` for legacy segments
    * with no recorded ordinal. */
   recordingOrdinal: number | null;
+  /** chunked-live-recording task 3.1 (design D5) — the segment's own
+   * `started_at_utc`, threaded through for task 3.2's per-member
+   * event-wall-time derivation `A + max(0, (startedAtUtc - eventWallTimeUtc)
+   * / 1000)`. `null`/absent for legacy/sync-from-disk segments with no
+   * recorded wall time (the existing anchorless fallback) and for existing
+   * test literals predating this field. Optional (not required) so this
+   * task's typecheck-only change doesn't force an edit onto every pre-3.1
+   * `SegmentAnchorInfo` object literal — `resolveAnchors` doesn't read it
+   * yet (task 3.2 is the first consumer), and a missing key is
+   * indistinguishable from `startedAtUtc: null` to every current caller.
+   * Real callers (`generateTranscript.ts`) always set it explicitly. */
+  startedAtUtc?: string | null;
 }
 
 export interface GroupWords {
@@ -404,8 +452,109 @@ function resolveGroupInterval(
   };
 }
 
-/** The 3-step anchor chain, returning a `path -> anchorSeconds` map covering
- * only segments that resolved an anchor. */
+/** One chunk group after grouping + same-N cycle-splitting: `base` is the
+ * lowest-ordinal member, `members` is every member (base included) in
+ * segment-ordinal order. `pairedAnchorIndex` is set only when same-N
+ * cycle-splitting picked a *specific* anchor (its index into the `anchors`
+ * array passed to `resolveAnchors`) for this group — step 1 must claim
+ * exactly that anchor rather than re-deriving one from ordinal/time order,
+ * since a cycle's base ordinal and its paired anchor's time order aren't
+ * guaranteed to co-vary (e.g. a discarded first chunk in one cycle). `null`
+ * for ordinals with a single (or no) same-N anchor, where step 1's normal
+ * "next unused anchor for this ordinal" lookup is unambiguous. */
+interface ChunkGroup {
+  base: SegmentAnchorInfo;
+  members: SegmentAnchorInfo[];
+  pairedAnchorIndex: number | null;
+}
+
+/** Group segments by `recordingOrdinal` (null -> singleton group each); when
+ * more than one anchor shares an ordinal (a same-N re-run), split that
+ * ordinal's segments into per-cycle groups by pairing each segment with the
+ * same-N anchor whose event wall time most nearly PRECEDES the segment's
+ * `started_at_utc`, FIFO per ordinal — mirroring the FIFO tie-break the rest
+ * of the chain (step 1/2) already uses elsewhere. A segment with no
+ * parseable `started_at_utc`, or when no candidate anchor precedes it, falls
+ * back to the earliest not-yet-claimed same-N anchor (FIFO) so every segment
+ * still lands in *some* same-N cycle group rather than being dropped from
+ * grouping entirely — anchor resolution proper (steps 1-3) still runs on
+ * whatever cycle group it landed in, so a genuinely unresolvable case surfaces
+ * as anchorless there, not silently here. */
+function buildChunkGroups(
+  segmentInfo: SegmentAnchorInfo[],
+  anchors: RecordingStartAnchor[],
+): ChunkGroup[] {
+  const byOrdinal = new Map<number | null, SegmentAnchorInfo[]>();
+  for (const seg of segmentInfo) {
+    const list = byOrdinal.get(seg.recordingOrdinal) ?? [];
+    list.push(seg);
+    byOrdinal.set(seg.recordingOrdinal, list);
+  }
+
+  // Anchor indices (into the original `anchors` array) grouped by ordinal,
+  // each sorted by event wall time (unparseable sorts first via NaN's
+  // Array.sort behavior — irrelevant here since FIFO fallback handles it).
+  const anchorIndicesByOrdinal = new Map<number, number[]>();
+  anchors.forEach((a, i) => {
+    const list = anchorIndicesByOrdinal.get(a.recordingOrdinal) ?? [];
+    list.push(i);
+    anchorIndicesByOrdinal.set(a.recordingOrdinal, list);
+  });
+  for (const list of anchorIndicesByOrdinal.values()) {
+    list.sort(
+      (i, j) => Date.parse(anchors[i].eventWallTimeUtc ?? '') - Date.parse(anchors[j].eventWallTimeUtc ?? ''),
+    );
+  }
+
+  const groups: ChunkGroup[] = [];
+  for (const [ordinal, members] of byOrdinal) {
+    members.sort((a, b) => a.ordinal - b.ordinal);
+    if (ordinal === null) {
+      // Every null-ordinal segment is its own singleton group.
+      for (const seg of members) groups.push({ base: seg, members: [seg], pairedAnchorIndex: null });
+      continue;
+    }
+    const candidateIdx = anchorIndicesByOrdinal.get(ordinal) ?? [];
+    if (candidateIdx.length <= 1) {
+      // No same-N split possible/needed — one chunk group for the ordinal;
+      // step 1 resolves its anchor the normal (unambiguous) way.
+      groups.push({ base: members[0], members, pairedAnchorIndex: null });
+      continue;
+    }
+    // Same-N re-run: split members across cycles keyed by nearest-preceding
+    // anchor wall time, FIFO per ordinal.
+    const cycles: SegmentAnchorInfo[][] = candidateIdx.map(() => []);
+    for (const seg of members) {
+      const segMs = seg.startedAtUtc ? Date.parse(seg.startedAtUtc) : NaN;
+      let chosen = -1;
+      if (Number.isFinite(segMs)) {
+        // Nearest-preceding: last candidate anchor whose wall time <= seg's.
+        for (let i = 0; i < candidateIdx.length; i += 1) {
+          const eventMs = Date.parse(anchors[candidateIdx[i]].eventWallTimeUtc ?? '');
+          if (Number.isFinite(eventMs) && eventMs <= segMs) chosen = i;
+        }
+      }
+      if (chosen === -1) {
+        // No parseable timestamp, or none precedes: FIFO to the earliest
+        // cycle that hasn't claimed a member yet, else the first cycle.
+        chosen = cycles.findIndex((c) => c.length === 0);
+        if (chosen === -1) chosen = 0;
+      }
+      cycles[chosen].push(seg);
+    }
+    cycles.forEach((cycleMembers, i) => {
+      if (cycleMembers.length === 0) return;
+      cycleMembers.sort((a, b) => a.ordinal - b.ordinal);
+      groups.push({ base: cycleMembers[0], members: cycleMembers, pairedAnchorIndex: candidateIdx[i] });
+    });
+  }
+  return groups;
+}
+
+/** The chunk-group anchor chain (design D5 / spec "Timeline remapping of
+ * word timestamps"), returning a `path -> anchorSeconds` map covering every
+ * member (base and non-base) whose group resolved an anchor and whose own
+ * event-wall-time derivation succeeded. */
 function resolveAnchors(
   segmentInfo: SegmentAnchorInfo[],
   anchors: RecordingStartAnchor[],
@@ -413,9 +562,12 @@ function resolveAnchors(
   const result = new Map<string, number>();
   const anchorUsed = anchors.map(() => false);
 
+  const groups = buildChunkGroups(segmentInfo, anchors);
+
   // Anchor indices grouped by recording ordinal, each group sorted by
-  // anchorSeconds — deterministic pick order if more than one anchor shares
-  // an ordinal (a rare same-N re-run).
+  // anchorSeconds — deterministic pick order for step 1's un-split-ordinal
+  // case (an ordinal with zero or one same-N anchor; same-N-split groups use
+  // `pairedAnchorIndex` above instead).
   const indicesByOrdinal = new Map<number, number[]>();
   anchors.forEach((a, i) => {
     const list = indicesByOrdinal.get(a.recordingOrdinal) ?? [];
@@ -426,24 +578,41 @@ function resolveAnchors(
     list.sort((i, j) => anchors[i].anchorSeconds - anchors[j].anchorSeconds);
   }
 
-  // Step 1: ordinal match, segments visited in segment-ordinal order so that
-  // ties (multiple segments sharing a recording_ordinal) claim anchors
-  // deterministically and any leftovers fall through to step 2.
-  const sortedSegments = [...segmentInfo].sort((a, b) => a.ordinal - b.ordinal);
-  const unmatchedSegments: SegmentAnchorInfo[] = [];
-  for (const seg of sortedSegments) {
-    const candidates =
-      seg.recordingOrdinal !== null ? (indicesByOrdinal.get(seg.recordingOrdinal) ?? []) : [];
-    const idx = candidates.find((i) => !anchorUsed[i]);
+  // Step 1: ordinal match, BASES visited in segment-ordinal order so that
+  // ties (multiple groups sharing a recording_ordinal, i.e. same-N cycles)
+  // claim anchors deterministically and any leftovers fall through to step 2.
+  // Non-base members never claim a step-1 anchor. A group with a
+  // `pairedAnchorIndex` (same-N cycle-split already chose its specific
+  // anchor by nearest-preceding wall time) claims exactly that anchor —
+  // the generic "next unused anchor for this ordinal" lookup is only used
+  // for un-split ordinals, since a cycle's base ordinal and its anchor's
+  // time order aren't guaranteed to co-vary (e.g. a discarded first chunk).
+  const sortedGroups = [...groups].sort((a, b) => a.base.ordinal - b.base.ordinal);
+  const unmatchedGroups: ChunkGroup[] = [];
+  const resolved = new Map<ChunkGroup, { anchorSeconds: number; eventWallTimeUtc: string | null }>();
+  for (const group of sortedGroups) {
+    const seg = group.base;
+    let idx: number | undefined;
+    if (group.pairedAnchorIndex !== null) {
+      idx = anchorUsed[group.pairedAnchorIndex] ? undefined : group.pairedAnchorIndex;
+    } else {
+      const candidates =
+        seg.recordingOrdinal !== null ? (indicesByOrdinal.get(seg.recordingOrdinal) ?? []) : [];
+      idx = candidates.find((i) => !anchorUsed[i]);
+    }
     if (idx !== undefined) {
       anchorUsed[idx] = true;
-      result.set(seg.path, anchors[idx].anchorSeconds);
+      resolved.set(group, {
+        anchorSeconds: anchors[idx].anchorSeconds,
+        eventWallTimeUtc: anchors[idx].eventWallTimeUtc,
+      });
     } else {
-      unmatchedSegments.push(seg);
+      unmatchedGroups.push(group);
     }
   }
 
-  // Step 2: index pairing among what's left, in ordinal/time order.
+  // Step 2: index pairing among remaining unmatched BASES and unused
+  // anchors, in ordinal/time order. Non-base members never index-pair.
   const remainingAnchorIdx = anchors
     .map((_, i) => i)
     .filter((i) => !anchorUsed[i])
@@ -452,11 +621,60 @@ function resolveAnchors(
         anchors[i].anchorSeconds - anchors[j].anchorSeconds ||
         anchors[i].recordingOrdinal - anchors[j].recordingOrdinal,
     );
-  const pairCount = Math.min(unmatchedSegments.length, remainingAnchorIdx.length);
+  const pairCount = Math.min(unmatchedGroups.length, remainingAnchorIdx.length);
   for (let k = 0; k < pairCount; k += 1) {
-    result.set(unmatchedSegments[k].path, anchors[remainingAnchorIdx[k]].anchorSeconds);
+    const idx = remainingAnchorIdx[k];
+    resolved.set(unmatchedGroups[k], {
+      anchorSeconds: anchors[idx].anchorSeconds,
+      eventWallTimeUtc: anchors[idx].eventWallTimeUtc,
+    });
   }
 
-  // Step 3: anything left is anchorless — simply absent from `result`.
+  // Step 3: any group left unresolved is anchorless — every member absent
+  // from `result`.
+
+  // Per-member event-wall-time derivation against each group's resolved
+  // anchor (or nothing, for anchorless groups).
+  for (const group of groups) {
+    const anchor = resolved.get(group);
+    if (!anchor) continue; // whole group anchorless
+    const { anchorSeconds: A, eventWallTimeUtc } = anchor;
+    const eventMs = eventWallTimeUtc ? Date.parse(eventWallTimeUtc) : NaN;
+    const eventWallTimeParses = Number.isFinite(eventMs);
+    const baseStartedMs = group.base.startedAtUtc ? Date.parse(group.base.startedAtUtc) : NaN;
+
+    for (const member of group.members) {
+      const isBase = member === group.base;
+      const memberStartedMs = member.startedAtUtc ? Date.parse(member.startedAtUtc) : NaN;
+      const memberStartedParses = Number.isFinite(memberStartedMs);
+
+      if (eventWallTimeParses && memberStartedParses) {
+        result.set(member.path, A + Math.max(0, (memberStartedMs - eventMs) / 1000));
+        continue;
+      }
+
+      if (!eventWallTimeParses) {
+        // Fallback: unparseable event wall time -> base at A, non-base
+        // derives from the base's own started_at_utc.
+        if (isBase) {
+          result.set(member.path, A);
+        } else if (memberStartedParses && Number.isFinite(baseStartedMs)) {
+          result.set(member.path, A + Math.max(0, (memberStartedMs - baseStartedMs) / 1000));
+        }
+        // else: base's own started_at_utc unparseable too -> member stays
+        // anchorless (falls through, nothing set).
+        continue;
+      }
+
+      // eventWallTimeParses but this member's own started_at_utc doesn't:
+      // singleton group -> A (legacy single-segment shape); otherwise
+      // anchorless.
+      if (group.members.length === 1) {
+        result.set(member.path, A);
+      }
+      // else: anchorless — nothing set.
+    }
+  }
+
   return result;
 }

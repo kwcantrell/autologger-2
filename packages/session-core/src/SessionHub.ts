@@ -10,7 +10,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { EventRpc } from '@autologger/domain';
+import { type EventRpc, isoZ, parseUtcMs } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
 import Database from 'better-sqlite3';
 import {
@@ -150,6 +150,13 @@ export interface SessionHubFacade {
     recordingOrdinal: number;
     durationS: number;
     ctx: TimecodeCtx;
+    /** chunked-live-recording D9 — the take's segment `started_at_utc`
+     * (already computed by the router before this call). Stamps the
+     * synthesized `Recording N Started` event's wall time WITHOUT touching
+     * its timecode anchoring (still the transport position at call time, per
+     * the `youtube-audio-import` spec). Optional for callers that predate D9;
+     * omitted falls back to the pre-D9 fresh-`now()` wall time. */
+    startedAtUtc?: string;
   }) => { started: EventRpc; stopped: EventRpc; projection: SessionProjection };
   createAnchoredEvent: (input: {
     category: string;
@@ -483,7 +490,27 @@ export class SessionHub implements SessionHubFacade {
    * published two. So the flags suppress the intermediate store-level frames, and
    * the composite broadcasts ONCE, here, after `inTxn` returns successfully —
    * outside any transaction, hence an immediate send, never reached on a throw. */
-  anchorImportedTake(input: { recordingOrdinal: number; durationS: number; ctx: TimecodeCtx }) {
+  anchorImportedTake(input: {
+    recordingOrdinal: number;
+    durationS: number;
+    ctx: TimecodeCtx;
+    startedAtUtc?: string;
+  }) {
+    // chunked-live-recording D9 — when the caller threads the take's own
+    // `startedAtUtc` (the value already stored on the segment), the Stopped
+    // event's wall time is derived coherently from it as
+    // `startedAtUtc + durationS` rather than a second independent fresh
+    // `now()` read: `buildRecordingIntervalsFromInternalEvents` (web) sorts
+    // Started/Stopped purely by wall time to pair intervals, and the interval
+    // ordering invariant (Started wall < Stopped wall) must hold for a
+    // same-take pair regardless of how long the anchor RPC itself takes to
+    // run (blob put + rolling recheck can take real wall-clock time). The
+    // Stopped event's wall time is NOT consumed by the E-A delta formula
+    // (only the Started anchor's wall time is — resolveAnchors/D5) — this is
+    // purely an ordering/coherence choice, not an identity requirement.
+    const stoppedAtUtc = input.startedAtUtc
+      ? isoZ(new Date(parseUtcMs(input.startedAtUtc) + input.durationS * 1000))
+      : undefined;
     const { started, stopped, projection } = this.inTxn(() => {
       const { event: started } = this.events.addEvent({
         category: 'internal',
@@ -492,6 +519,7 @@ export class SessionHub implements SessionHubFacade {
         markedAtUtc: null,
         ctx: input.ctx,
         suppressBroadcast: true,
+        storedWallTimeUtc: input.startedAtUtc,
       });
       this.transport.stopTakeWithDuration({
         durationS: input.durationS,
@@ -505,6 +533,7 @@ export class SessionHub implements SessionHubFacade {
         markedAtUtc: null,
         ctx: input.ctx,
         suppressBroadcast: true,
+        storedWallTimeUtc: stoppedAtUtc,
       });
       return { started, stopped, projection };
     });
