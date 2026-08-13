@@ -20,7 +20,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
 
 ## 2. Next scaffold in parallel (Vite path still authoritative; no contract surface)
 
-- [ ] 2.1 Add `next` to `web/` and `server/` package.json; add
+- [x] 2.1 Add `next` to `web/` and `server/` package.json; add
       `@tailwindcss/postcss` + `web/postcss.config.mjs`; add `web/next.config.ts` with
       the panel-decided contents: `reactStrictMode: false`,
       `images: { unoptimized: true }`, `poweredByHeader: false`,
@@ -38,7 +38,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       `IndexRoot`), `(admin)/layout.tsx` + `(admin)/admin/users/page.tsx` (`ssr: false`
       island for `AdminRoot`), root `not-found.tsx`. Remove the AppShell-level
       overlayscrollbars import.
-- [ ] 2.4 Add standalone `web/vitest.config.ts` (react plugin, jsdom, `@/` aliases) so
+- [x] 2.4 Add standalone `web/vitest.config.ts` (react plugin, jsdom, `@/` aliases) so
       the web suite runs without `vite.config.ts`; repoint `web/tsconfig.node.json`
       includes. Gate: web vitest green under the new config while `vite.config.ts`
       still exists.
