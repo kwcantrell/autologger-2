@@ -88,7 +88,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       bridge; absent-`outgoing` envs 404; `GET /teams/` and other trailing-slash
       paths 404 without invoking the bridge; IP allowlist covers page requests) — the
       bridge is a new seam and gets this characterization coverage in the same task.
-- [ ] 3.3 Wire `server/src/main.ts`: instantiate `nextFrontend` and only call `serve()`
+- [x] 3.3 Wire `server/src/main.ts`: instantiate `nextFrontend` and only call `serve()`
       after `prepare()` resolves (or API-only is decided); install the path-dispatching
       `server.on('upgrade')` (capture Hono's upgrade handler via a stub `{on()}` server
       passed to `injectWebSocket`; `/api/*` → Hono; otherwise apply the IP-allowlist
