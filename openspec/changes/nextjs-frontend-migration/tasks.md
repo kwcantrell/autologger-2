@@ -100,7 +100,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       global-`fetch`-dependent flow (JWKS verify path, stubbed upstream) works after
       `prepare()` (global-object patching check; `overrideGlobalObjects: false` is the
       fallback lever); non-allowlisted non-`/api` upgrade is destroyed.
-- [ ] 3.4 Cut over the scripts and delete the Vite path: root `dev` →
+- [x] 3.4 Cut over the scripts and delete the Vite path: root `dev` →
       `npm run dev -w server`; root/e2e `build` steps → `next build`; delete
       `web/vite.config.ts` (including `sessionDeepLinkDevShell`), both `index.html`s,
       both `main.tsx` shims, and `web`'s `"dev": "vite"` script; drop
