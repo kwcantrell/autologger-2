@@ -17,7 +17,11 @@ import { V6Rail } from './components/V6Rail';
 import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
-import 'overlayscrollbars/overlayscrollbars.css';
+// overlayscrollbars.css import moved to the Next app/ route-group layouts
+// (nextjs-frontend-migration, task 2.3; design D5) -- centralizing both CSS
+// imports in the layout (not a leaf component) pins App Router's otherwise-
+// unspecified cascade order (`tailwind.css` before `overlayscrollbars.css`).
+// See `web/src/app/(index)/layout.tsx` / `(admin)/layout.tsx`.
 
 export function AppShell() {
   // Active session is URL-derived (design D2): `/sessions/:id` is the session
