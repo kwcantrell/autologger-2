@@ -1,4 +1,5 @@
-import { Select, type SelectOption } from './Select';
+import { LazySelect } from './LazySelect';
+import type { SelectOption } from './Select';
 
 const FPS_PRESETS: SelectOption[] = [
   { value: '23.976', label: '23.976 (2398/100)' },
@@ -32,7 +33,7 @@ interface FpsSelectProps {
 
 export function FpsSelect({ value, onChange, id, className }: FpsSelectProps) {
   return (
-    <Select
+    <LazySelect
       id={id}
       className={className}
       ariaLabel="Frame rate"
