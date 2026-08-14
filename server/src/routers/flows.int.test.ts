@@ -70,7 +70,21 @@ describe('audio flow (blob-store round-trip)', () => {
       { ...env },
     );
     expect(sync.status).toBe(200);
-    const { segments } = (await sync.json()) as { segments: Array<{ url: string }> };
+    // The sync response carries counts only — segment metadata (urls included)
+    // comes from the segments list route.
+    expect(await sync.json()).toEqual({
+      inserted: 1,
+      updated: 0,
+      scanned: 1,
+      has_audio: true,
+    });
+    const list = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'GET' },
+      { ...env },
+    );
+    expect(list.status).toBe(200);
+    const { segments } = (await list.json()) as { segments: Array<{ url: string }> };
     expect(segments).toHaveLength(1);
     const res = await app.request(
       segments[0].url,

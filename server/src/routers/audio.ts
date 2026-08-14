@@ -167,13 +167,11 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
 
   const hub = getSessionHub(c, sessionId);
   const out = hub.syncAudioFromBlobs(known);
-  const segs = hub.listAudioSegments();
   return c.json({
     inserted: out.inserted,
     updated: 0,
     scanned: known.length,
-    segments: segs.map((s) => segmentApiDict(sessionId, s)),
-    has_audio: segs.length > 0,
+    has_audio: hub.listAudioSegments().length > 0,
   });
 });
 
