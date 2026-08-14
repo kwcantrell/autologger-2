@@ -82,7 +82,15 @@ paths under `/api/` go to Hono's upgrade handler — captured by passing `inject
 a stub `{ on(event, handler) }` object instead of the real server (verified: the
 installed `@hono/node-ws` 1.3.1 `injectWebSocket` registers exactly one
 `server.on('upgrade', …)` listener and touches no other server property) — everything
-else goes to `nextApp.getUpgradeHandler()` in dev and is destroyed in prod. **Panel
+else goes to Next's dev upgrade handler in dev and is destroyed in prod.
+**Apply-time correction (task 4.3 fix, 2026-08-13):** the dev handler is the
+`upgradeHandler` property GETTER on the Next custom-server object (router-server's
+real dispatcher → `hotReloader.onHMR`), NOT the `getUpgradeHandler()` method — that
+method resolves to render-server `handleUpgrade()`, a documented no-op in next
+15.5.23 that silently drops sockets mid-handshake (this broke dev HMR until
+root-caused; pinned by a unit test). Next's `blockCrossSite` runs on HMR upgrades —
+warn-only while `allowedDevOrigins` is unset; if a future Next blocks by default,
+add `allowedDevOrigins: ['127.0.0.1']` to `web/next.config.ts`. **Panel
 fixes (2026-08-13):** (a) non-`/api` upgrades are admitted to Next's handler only when
 the socket's remote address passes the same IP-allowlist decision applied to HTTP
 requests — upgrade dispatch happens at the raw server level, outside Hono's middleware,
