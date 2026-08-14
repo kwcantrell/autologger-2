@@ -301,24 +301,32 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
     };
   }, [sessionId, qc]);
 
-  // One panel per feed tab, keyed to FEED_TABS (code-health-tail 4.8). All
-  // six render every pass — the wrapper map below hides, never unmounts.
-  const feedPanels: Record<FeedTabId, ReactNode> = {
-    events: <EventLogSheet sessionId={sessionId} />,
-    transcript: <TranscribeFeed sessionId={sessionId} />,
-    topics: <TopicsFeed sessionId={sessionId} />,
-    assistant: <AiPanel sessionId={sessionId} />,
-    // `key={sessionId}` (whole-branch audit fix wave, Fix 1): forces a remount
-    // on SESSION change only — orthogonal to the tab-mount discipline below,
-    // which never remounts on a tab switch. Without it, `useSession`'s
-    // `staleTime: Infinity` lets navigating between two already-cached
-    // sessions update this `sessionId` prop without remounting, leaking
-    // `editingDashboard`/`proposedDashboard`/`proposedDashboardTurnId`/
-    // `messages`/`pendingQuestion` from the prior session (a not-yet-Kept
-    // proposal from session A could be Kept onto session B).
-    dashboards: <AiV2Panel key={sessionId} sessionId={sessionId} />,
-    export: <ExportFeed sessionId={sessionId} />,
-  };
+  // One panel per feed tab, keyed to FEED_TABS (code-health-tail 4.8). All six
+  // stay MOUNTED (the wrapper map below hides, never unmounts) but no longer
+  // re-render every pass: each panel is `memo`'d on its only prop, `sessionId`,
+  // and this map is memoized on the same key — so the ~60/s playback tick that
+  // re-renders this component stops cascading into the feeds. Keep the element
+  // set free of per-render props (fresh literals / inline handlers) or both
+  // halves of that isolation are lost.
+  const feedPanels: Record<FeedTabId, ReactNode> = useMemo(
+    () => ({
+      events: <EventLogSheet sessionId={sessionId} />,
+      transcript: <TranscribeFeed sessionId={sessionId} />,
+      topics: <TopicsFeed sessionId={sessionId} />,
+      assistant: <AiPanel sessionId={sessionId} />,
+      // `key={sessionId}` (whole-branch audit fix wave, Fix 1): forces a remount
+      // on SESSION change only — orthogonal to the tab-mount discipline below,
+      // which never remounts on a tab switch. Without it, `useSession`'s
+      // `staleTime: Infinity` lets navigating between two already-cached
+      // sessions update this `sessionId` prop without remounting, leaking
+      // `editingDashboard`/`proposedDashboard`/`proposedDashboardTurnId`/
+      // `messages`/`pendingQuestion` from the prior session (a not-yet-Kept
+      // proposal from session A could be Kept onto session B).
+      dashboards: <AiV2Panel key={sessionId} sessionId={sessionId} />,
+      export: <ExportFeed sessionId={sessionId} />,
+    }),
+    [sessionId],
+  );
 
   return (
     // AudioClipsProvider (whole-branch audit fix wave, finding C1/I3): the ONE
@@ -485,7 +493,8 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
                     </div>
                   </div>
                   {/* All six top-level panels stay mounted (hidden via the
-                    `hidden` attribute), not conditionally rendered: switching
+                    `hidden` attribute) — memoized above, so mounted no longer
+                    means re-rendered — not conditionally rendered: switching
                     tabs must not unmount AiPanel's hoisted chat state/stream
                     or AiV2Panel's hoisted design-turn state/stream (design
                     D9; ai-v2-dashboards spec "AI v2 tab in the session

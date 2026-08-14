@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useReducer, useState } from 'react';
+import { memo, useCallback, useMemo, useReducer, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useTranscriptGenerationStatus } from '../../../api/hooks/useTranscriptGenerationStatus';
 import {
@@ -50,7 +50,11 @@ interface Props {
   sessionId: string;
 }
 
-export function TranscribeFeed({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props) {
   const { data: words, isLoading } = useTranscriptWords(sessionId);
   const { data: generationStatus } = useTranscriptGenerationStatus();
   const generate = useGenerateTranscript(sessionId);
@@ -229,4 +233,4 @@ export function TranscribeFeed({ sessionId }: Props) {
       </FeedTable>
     </FeedShell>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
@@ -14,7 +14,11 @@ interface Props {
 
 const EXPORT_BTN = 'btn primary inline-flex items-center justify-center gap-2 text-center';
 
-export function ExportFeed({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const ExportFeed = memo(function ExportFeed({ sessionId }: Props) {
   const base = `${API_ROOT}/sessions/${sessionId}`;
   const { data: words, isPending: wordsPending } = useTranscriptWords(sessionId);
   const { data: topics, isPending: topicsPending } = useTopics(sessionId);
@@ -80,4 +84,4 @@ export function ExportFeed({ sessionId }: Props) {
       </div>
     </FeedShell>
   );
-}
+});
