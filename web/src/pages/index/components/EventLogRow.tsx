@@ -93,6 +93,44 @@ export interface RowEditValues {
   wall_time_utc: string;
 }
 
+/** One row's in-progress INLINE (rolling) edit, as raw input text.
+ *
+ *  Every field is exactly what sits in the corresponding control, so a
+ *  restored draft is keystroke-identical to what was typed — including
+ *  `wall_text`, which is the displayed `YY-MM-DD HH:MM:SS` form and NOT the
+ *  ISO string `RowEditValues.wall_time_utc` carries (a half-typed date has no
+ *  ISO form at all). Fields are optional: only the controls the operator
+ *  actually touched are recorded. */
+export interface InlineDraft {
+  category?: string;
+  message?: string;
+  timecode_hms?: string;
+  wall_text?: string;
+}
+
+/** Parent-owned storage for inline-edit drafts, keyed by event id.
+ *
+ *  Inline-edit controls are UNCONTROLLED (`defaultValue` + refs), so the draft
+ *  used to live only in the DOM — and the feed is virtualized, so the <tr>
+ *  unmounts as soon as it scrolls past the overscan (or a reveal calls
+ *  `scrollToIndex` elsewhere in the list), taking the draft with it.
+ *  `EventLogSheet` owns the store so a draft outlives its row's DOM node; the
+ *  row writes through on every keystroke and reads it back when it remounts.
+ *
+ *  Deliberately a mutable store behind stable callbacks rather than
+ *  `useState` (the shape `batchEdits` uses): nothing RENDERS from a draft
+ *  except the `defaultValue` of a freshly mounted input, so keystrokes must
+ *  not re-render the sheet and every mounted row with it — inline edit is
+ *  live exactly while timecode is rolling, the render-budget-critical state.
+ *  Batch edit is unaffected either way: its drafts are already parent-owned
+ *  (`batchValues`) and its inputs are controlled. */
+export interface InlineDraftStore {
+  read: (eventId: string) => InlineDraft | undefined;
+  /** Merges `patch` into whatever this row already has recorded. */
+  write: (eventId: string, patch: InlineDraft) => void;
+  clear: (eventId: string) => void;
+}
+
 interface Props {
   event: LogEvent;
   categories: Category[];
@@ -116,6 +154,9 @@ interface Props {
   /** id of the ONE reason node `EventLogSheet` renders while unavailable — every
    *  row passes the same id (design D2 gate decision). */
   jumpReasonId?: string;
+  /** `EventLogSheet`'s inline-draft store (see `InlineDraftStore`) — one
+   *  identity for the whole feed, stable for the sheet's lifetime. */
+  inlineDrafts: InlineDraftStore;
   onInlineSave: (event: LogEvent, values: RowEditValues) => void;
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
@@ -140,6 +181,7 @@ export function EventLogRow({
   onJump,
   jumpUnavailable,
   jumpReasonId,
+  inlineDrafts,
   onInlineSave,
   onBatchChange,
   onDelete,
@@ -147,6 +189,18 @@ export function EventLogRow({
 }: Props) {
   const isAuto = isAutomaticLogEvent(event);
   const editable = !isAuto && (inlineEdit || batchEdit);
+  // Inline (rolling) edit only — batch edit keeps its own parent-owned buffer.
+  const inlineEditable = !isAuto && inlineEdit;
+  // The surviving draft for THIS row, if the operator was mid-edit when the
+  // virtualizer last unmounted it (or is mid-edit right now). Read during
+  // render because that is where it is needed: as the `defaultValue` of the
+  // uncontrolled controls below, and as the initial inline category.
+  const draft = inlineEditable ? inlineDrafts.read(event.event_id) : undefined;
+  /** Record a keystroke so it survives this row's next unmount. */
+  const writeDraft = (patch: InlineDraft) => {
+    if (!inlineEditable) return;
+    inlineDrafts.write(event.event_id, patch);
+  };
   // Generated-row marker (auto-generate-event-logs): rendered in the message cell in
   // both view and edit branches (batch edit is the cleanup mode, so the marker must
   // survive it). `role="img"` + aria-label gives the chip a queryable accessible name.
@@ -166,20 +220,32 @@ export function EventLogRow({
   const wallRef = useRef<HTMLInputElement>(null);
   const msgRef = useRef<HTMLInputElement>(null);
   // Category is now controlled (Radix Select needs state) but still saves via blur of siblings.
-  const [inlineCategory, setInlineCategory] = useState(event.category);
+  const [inlineCategory, setInlineCategory] = useState(draft?.category ?? event.category);
 
   // Keep inline inputs in sync when event changes (e.g., after save + refetch)
   // but only when not currently focused inside this row
   const rowRef = useRef<HTMLTableRowElement>(null);
+  // The `event` object this row last reconciled its inputs against, seeded with
+  // the mount-time one. The reset below must run for SERVER-DRIVEN changes only
+  // — on the mount pass the controls already carry draft-or-server values, and
+  // resetting there would wipe a draft the virtualizer just restored (React
+  // StrictMode's second mount pass makes an "is this the first run" flag
+  // useless; object identity does not care how many times the effect runs).
+  const syncedEventRef = useRef(event);
   useEffect(() => {
     if (!inlineEdit) return;
+    if (syncedEventRef.current === event) return;
     const row = rowRef.current;
     if (row?.contains(document.activeElement)) return;
+    syncedEventRef.current = event;
     if (tcRef.current) tcRef.current.value = formatTimecodeHMS(event.timecode);
     if (wallRef.current) wallRef.current.value = formatWallUtcYmdHms(event.wall_time_utc);
     setInlineCategory(event.category);
     if (msgRef.current) msgRef.current.value = event.message ?? '';
-  }, [event, inlineEdit]);
+    // The row now shows server state, so any draft it was holding is spent —
+    // leaving it would let it shadow this fresh row on the next remount.
+    inlineDrafts.clear(event.event_id);
+  }, [event, inlineEdit, inlineDrafts]);
 
   const saveInline = (catOverride?: string) => {
     if (!inlineEdit || isAuto) return;
@@ -194,8 +260,14 @@ export function EventLogRow({
       msg === (event.message ?? '').trim() &&
       tc === origTc &&
       wall === origWall
-    )
+    ) {
+      // Nothing to commit — the row already matches the server, so the draft is
+      // spent. (The committed path does NOT clear here: `EventLogSheet` drops it
+      // once the save has round-tripped, so a FAILED save leaves the operator's
+      // text recoverable rather than silently reverting on the next remount.)
+      inlineDrafts.clear(event.event_id);
       return;
+    }
     onInlineSave(event, { category: cat, message: msg, timecode_hms: tc, wall_time_utc: wall });
   };
 
@@ -248,7 +320,7 @@ export function EventLogRow({
                 type="text"
                 // `.sheetCellControl` reset + `.sheetTcStackInline .sheetWall` sizing.
                 className={clsx(CELL_CONTROL, 'flex-[1_1_auto] min-w-0 text-center')}
-                defaultValue={batchEdit ? undefined : wallVal}
+                defaultValue={batchEdit ? undefined : (draft?.wall_text ?? wallVal)}
                 value={batchEdit ? wallVal : undefined}
                 aria-label="UTC"
                 placeholder="YY-MM-DD HH:MM:SS"
@@ -261,7 +333,7 @@ export function EventLogRow({
                         fireBatchChange({
                           wall_time_utc: buildWallIso(e.target.value, event.wall_time_utc),
                         })
-                    : undefined
+                    : (e) => writeDraft({ wall_text: e.target.value })
                 }
               />
               <input
@@ -271,7 +343,7 @@ export function EventLogRow({
                 // rule (pre-module names; the hashed `.sheetCellControl`/`.sheetTc` never
                 // applied here), so this input rendered bare. Dropped with that as-rendered
                 // state preserved — no styling class.
-                defaultValue={batchEdit ? undefined : tcVal}
+                defaultValue={batchEdit ? undefined : (draft?.timecode_hms ?? tcVal)}
                 value={batchEdit ? tcVal : undefined}
                 aria-label="Timecode"
                 maxLength={8}
@@ -281,7 +353,7 @@ export function EventLogRow({
                 onChange={
                   batchEdit
                     ? (e) => fireBatchChange({ timecode_hms: e.target.value.trim() })
-                    : undefined
+                    : (e) => writeDraft({ timecode_hms: e.target.value })
                 }
               />
             </div>
@@ -297,7 +369,7 @@ export function EventLogRow({
               type="text"
               // `.sheetCellControl` reset; text-align inherits the edit cell's `text-center`.
               className={CELL_CONTROL}
-              defaultValue={batchEdit ? undefined : tcVal}
+              defaultValue={batchEdit ? undefined : (draft?.timecode_hms ?? tcVal)}
               value={batchEdit ? tcVal : undefined}
               aria-label="Timecode"
               maxLength={8}
@@ -307,7 +379,7 @@ export function EventLogRow({
               onChange={
                 batchEdit
                   ? (e) => fireBatchChange({ timecode_hms: e.target.value.trim() })
-                  : undefined
+                  : (e) => writeDraft({ timecode_hms: e.target.value })
               }
             />
           );
@@ -350,6 +422,9 @@ export function EventLogRow({
           fireBatchChange({ category: next });
         } else {
           setInlineCategory(next);
+          // Recorded before the save so a remount mid-round-trip shows the
+          // chosen category rather than snapping back to the stale server one.
+          writeDraft({ category: next });
           // Inline mode has no traditional blur signal — save immediately.
           saveInline(next);
         }
@@ -365,12 +440,16 @@ export function EventLogRow({
       ref={batchEdit ? undefined : msgRef}
       type="text"
       className={CELL_CONTROL}
-      defaultValue={batchEdit ? undefined : (event.message ?? '')}
+      defaultValue={batchEdit ? undefined : (draft?.message ?? event.message ?? '')}
       value={batchEdit ? msgVal : undefined}
       aria-label="Message"
       disabled={dis}
       onBlur={handleBlur}
-      onChange={batchEdit ? (e) => fireBatchChange({ message: e.target.value }) : undefined}
+      onChange={
+        batchEdit
+          ? (e) => fireBatchChange({ message: e.target.value })
+          : (e) => writeDraft({ message: e.target.value })
+      }
     />
   ) : null;
 

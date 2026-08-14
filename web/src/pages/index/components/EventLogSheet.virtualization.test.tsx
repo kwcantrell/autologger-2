@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, screen } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
+import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
 import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
 import { renderStrict } from '../../../test/renderStrict';
@@ -109,9 +110,13 @@ function categoryFixture(): Category {
   };
 }
 
+/** Flipped by the inline-draft suite below: inline (rolling) edit is live
+ *  exactly while `is_rolling` — every other suite here runs stopped. */
+let rolling = false;
+
 function statusFixture(): SessionStatus {
   return {
-    is_rolling: false,
+    is_rolling: rolling,
     timecode: '00:01:00:00',
     session_timecode: '00:01:00:00',
     master_timecode: '00:01:00:00',
@@ -168,31 +173,62 @@ function eventsFixture(count: number): EventsResponse {
   };
 }
 
+/** The served event list, mutable so a PUT can persist the way a real backend
+ *  does — the inline-save suite below needs the refetch after a save to carry
+ *  the committed row. */
+let serverEvents: LogEvent[] = [];
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
   virtualMock.size = 0;
   virtualMock.scrollToIndex.mockReset();
+  rolling = false;
+  serverEvents = eventsFixture(EVENT_COUNT).events;
   mockedApiFetch.mockReset();
-  mockedApiFetch.mockImplementation(async (path: string) => {
+  mockedApiFetch.mockImplementation(async (path: string, opts: RequestInit = {}) => {
     if (path.includes('/status')) return statusFixture();
     if (path.includes('/show-categories')) {
       return { categories: [categoryFixture()], show_name: '', show_code: '' };
     }
-    if (path.includes('/events')) return eventsFixture(EVENT_COUNT);
+    if (path.includes('/events/') && opts.method === 'PUT') {
+      const eventId = path.split('/events/')[1];
+      const body = JSON.parse(String(opts.body)) as {
+        category: string;
+        message: string;
+      };
+      const index = serverEvents.findIndex((e) => e.event_id === eventId);
+      if (index < 0) throw new Error(`unknown event: ${eventId}`);
+      // A fresh object for the edited row only, so React Query's structural
+      // sharing hands EventLogRow a NEW `event` identity for it and keeps every
+      // other row's — exactly what the server round trip produces.
+      const updated = { ...serverEvents[index], category: body.category, message: body.message };
+      serverEvents = [...serverEvents];
+      serverEvents[index] = updated;
+      return updated;
+    }
+    if (path.includes('/events')) {
+      return {
+        ...eventsFixture(EVENT_COUNT),
+        events: serverEvents,
+      };
+    }
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
 });
 
 function renderSheet() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return renderStrict(
-    <QueryClientProvider client={client}>
-      <TooltipProvider delayDuration={400}>
-        <EventLogSheet sessionId={SESSION_ID} />
-      </TooltipProvider>
-    </QueryClientProvider>,
-  );
+  return {
+    client,
+    ...renderStrict(
+      <QueryClientProvider client={client}>
+        <TooltipProvider delayDuration={400}>
+          <EventLogSheet sessionId={SESSION_ID} />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 function renderedEventIds(): string[] {
@@ -273,5 +309,136 @@ describe('EventLogSheet virtualization', () => {
     expect(virtualMock.scrollToIndex).toHaveBeenCalledWith(EVENT_COUNT - 1 - 4, {
       align: 'center',
     });
+  });
+});
+
+// --- Inline-edit drafts across a virtual unmount (data-loss regression) ---
+//
+// Virtualizing this feed made a previously impossible failure reachable: the
+// inline (rolling) edit controls are UNCONTROLLED (`defaultValue` + refs in
+// EventLogRow), so before the draft store the only copy of an in-progress edit
+// was the <tr>'s own DOM nodes. Scrolling the edited row more than `overscan`
+// rows away — or a timeline-marker reveal calling `scrollToIndex` at the other
+// end of the list — unmounted it and destroyed the keystrokes silently:
+// scrolling back showed the original server text, with no error and no toast.
+// Pre-virtualization every row stayed mounted, so this could not happen.
+//
+// EventLogSheet now owns the drafts and each row writes through to them, so the
+// round trip below must be lossless. The suite also pins the two ways a draft
+// STOPS being live — a committed save and the end of inline-edit mode — because
+// a store that never forgets would shadow fresh server state instead.
+describe('EventLogSheet inline-edit drafts', () => {
+  function row(eventId: string): HTMLElement {
+    const el = document.querySelector<HTMLTableRowElement>(
+      `#v4-log-sheet tr[data-event-id="${eventId}"]`,
+    );
+    if (!el) throw new Error(`row ${eventId} is not mounted`);
+    return el;
+  }
+
+  function messageInput(eventId: string): HTMLInputElement {
+    return within(row(eventId)).getByLabelText('Message') as HTMLInputElement;
+  }
+
+  /** Move the rendered window, driven the way the app does it: a timeline-marker
+   *  reveal. (`scrollToIndex` is the mock's no-op here, so the resulting window
+   *  is set directly — the reveal supplies the render, the window supplies the
+   *  range.) */
+  function scrollWindowTo(first: number, last: number, revealEventId: string) {
+    act(() => {
+      virtualMock.first = first;
+      virtualMock.last = last;
+      document.body.dispatchEvent(
+        new CustomEvent('autologger:reveal-event', { detail: { eventId: revealEventId } }),
+      );
+    });
+  }
+
+  /** Renders with timecode rolling — the state inline edit is live in — and
+   *  waits for the first window of rows to reach edit mode. */
+  async function renderRollingSheet() {
+    rolling = true;
+    const utils = renderSheet();
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('note 0'));
+    return utils;
+  }
+
+  it('restores an in-progress edit when the virtualizer unmounts and remounts the row', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'half-typed thought' } });
+    fireEvent.change(within(row('ev-0')).getByLabelText('Timecode'), {
+      target: { value: '00:00:1' },
+    });
+
+    // Jump far enough away that ev-0 leaves the window entirely.
+    scrollWindowTo(10, 13, 'ev-11');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+
+    // ...and back. Before the draft store this rendered the server text again.
+    scrollWindowTo(0, 3, 'ev-1');
+    expect(messageInput('ev-0').value).toBe('half-typed thought');
+    expect((within(row('ev-0')).getByLabelText('Timecode') as HTMLInputElement).value).toBe(
+      '00:00:1',
+    );
+    // Untyped fields are untouched, and no other row inherits the draft.
+    expect(messageInput('ev-1').value).toBe('note 1');
+  });
+
+  it('drops the draft once the inline save has round-tripped', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    // Trailing whitespace is the discriminator: `saveInline` trims what it
+    // COMMITS, so the server row and a leftover draft differ by exactly those
+    // two spaces — a stale draft would be visible on the remount below.
+    fireEvent.change(input, { target: { value: 'committed note  ' } });
+    await act(async () => {
+      input.blur();
+      // handleBlur defers its save a tick to let focus settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('committed note'),
+    );
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('committed note'));
+    // Let the mutation's own continuation (which forgets the draft) run.
+    await act(async () => {});
+
+    scrollWindowTo(10, 13, 'ev-11');
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(messageInput('ev-0').value).toBe('committed note');
+  });
+
+  it('drops inline drafts when inline-edit mode ends', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'abandoned thought' } });
+
+    // Timecode stops: every inline control unmounts. That is the closest thing
+    // rolling edit has to a cancel — nothing was committed, and the abandoned
+    // text must not come back.
+    rolling = false;
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: sessionStatusKeys.bySession(SESSION_ID) });
+    });
+    await waitFor(() => expect(within(row('ev-0')).queryByLabelText('Message')).toBeNull());
+
+    rolling = true;
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: sessionStatusKeys.bySession(SESSION_ID) });
+    });
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('note 0'));
   });
 });

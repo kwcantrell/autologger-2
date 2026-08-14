@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Category, LogEvent } from '../../../api/types';
 import { formatWallUtcYmdHms } from '../../../shared/utils/timecode';
 import { renderStrict } from '../../../test/renderStrict';
-import { EventLogRow } from './EventLogRow';
+import { EventLogRow, type InlineDraft, type InlineDraftStore } from './EventLogRow';
 
 // --- EventLogRow jump cell (feed-row-seek, task 6.1/6.2) ---
 //
@@ -45,12 +45,31 @@ function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   };
 }
 
+/** A standalone stand-in for `EventLogSheet`'s inline-draft store — the same
+ *  Map-behind-stable-callbacks shape, owned by the test instead of the sheet. */
+function draftStore(seed: Array<[string, InlineDraft]> = []): InlineDraftStore & {
+  map: Map<string, InlineDraft>;
+} {
+  const map = new Map<string, InlineDraft>(seed);
+  return {
+    map,
+    read: (eventId) => map.get(eventId),
+    write: (eventId, patch) => {
+      map.set(eventId, { ...(map.get(eventId) ?? {}), ...patch });
+    },
+    clear: (eventId) => {
+      map.delete(eventId);
+    },
+  };
+}
+
 function renderRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) {
   const onJump = vi.fn();
   const onInlineSave = vi.fn();
   const onBatchChange = vi.fn();
   const onDelete = vi.fn();
   const onUndelete = vi.fn();
+  const inlineDrafts = draftStore();
   const utils = renderStrict(
     <table>
       <tbody>
@@ -70,12 +89,13 @@ function renderRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) 
           onJump={onJump}
           jumpUnavailable={false}
           jumpReasonId="v5-event-feed-jump-reason"
+          inlineDrafts={inlineDrafts}
           {...overrides}
         />
       </tbody>
     </table>,
   );
-  return { ...utils, onJump };
+  return { ...utils, onJump, onInlineSave, inlineDrafts };
 }
 
 describe('EventLogRow — jump control', () => {
@@ -125,6 +145,70 @@ describe('EventLogRow — jump control', () => {
     expect(screen.getByLabelText('Timecode')).toBeTruthy();
     expect(screen.getByLabelText('Category')).toBeTruthy();
     expect(screen.getByLabelText('Message')).toBeTruthy();
+  });
+});
+
+// --- Inline-edit draft write-through (virtualized-feed data loss) ---
+//
+// The inline (rolling) controls are uncontrolled — `defaultValue` + refs — so
+// before this store existed the only copy of an in-progress edit was the DOM
+// node itself, and the virtualized feed unmounts that node as soon as the row
+// leaves the window. The row's half of the contract is pinned here: every
+// keystroke is written through to the parent's store, and a row that mounts
+// with a draft already recorded renders the DRAFT, not the server text. The
+// unmount/remount round trip it exists for is driven end-to-end against the
+// real virtualizer window in EventLogSheet.virtualization.test.tsx.
+
+describe('EventLogRow — inline-edit drafts', () => {
+  it('writes every inline field through to the parent store as it is typed', () => {
+    const { inlineDrafts } = renderRow({ inlineEdit: true, viewUtc: true });
+
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'half a thought' } });
+    fireEvent.change(screen.getByLabelText('Timecode'), { target: { value: '00:00:12' } });
+    fireEvent.change(screen.getByLabelText('UTC'), { target: { value: '26-07-21 00:00:1' } });
+
+    expect(inlineDrafts.map.get('ev-1')).toEqual({
+      message: 'half a thought',
+      timecode_hms: '00:00:12',
+      // Stored as RAW input text: '26-07-21 00:00:1' is mid-typing and has no
+      // ISO form, so it could not round-trip through `wall_time_utc`.
+      wall_text: '26-07-21 00:00:1',
+    });
+  });
+
+  it('renders a recorded draft instead of the server values when it mounts mid-edit', () => {
+    renderRow({
+      inlineEdit: true,
+      viewUtc: true,
+      inlineDrafts: draftStore([['ev-1', { message: 'half a thought', timecode_hms: '00:00:12' }]]),
+    });
+
+    expect((screen.getByLabelText('Message') as HTMLInputElement).value).toBe('half a thought');
+    expect((screen.getByLabelText('Timecode') as HTMLInputElement).value).toBe('00:00:12');
+    // Untouched fields still come from the event — a draft is per-field.
+    expect((screen.getByLabelText('UTC') as HTMLInputElement).value).toBe(
+      formatWallUtcYmdHms('2026-07-21T00:00:10Z'),
+    );
+  });
+
+  it('records nothing for a non-editable (batch / automatic) row', () => {
+    // Batch edit has always had a parent-owned buffer (`batchValues`); the
+    // inline store must stay out of it or the two would both claim the row.
+    const { inlineDrafts, onInlineSave } = renderRow({
+      inlineEdit: false,
+      batchEdit: true,
+      batchValues: {
+        category: 'general',
+        message: 'A logged note',
+        timecode_hms: '00:00:10',
+        wall_time_utc: '2026-07-21T00:00:10Z',
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'batch text' } });
+
+    expect(inlineDrafts.map.size).toBe(0);
+    expect(onInlineSave).not.toHaveBeenCalled();
   });
 });
 

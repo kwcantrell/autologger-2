@@ -26,7 +26,12 @@ import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { REVEAL_EVENT } from '../utils/revealEventInFeed';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventGenerateCustomModal } from './EventGenerateCustomModal';
-import { EventLogRow, type RowEditValues } from './EventLogRow';
+import {
+  EventLogRow,
+  type InlineDraft,
+  type InlineDraftStore,
+  type RowEditValues,
+} from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
 import {
@@ -366,6 +371,29 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
   const [batchSaving, setBatchSaving] = useState(false);
 
+  // --- Inline edit drafts ---
+  // The inline (rolling) counterpart of `batchEdits`: the in-progress text of
+  // every inline edit, held HERE rather than in each row's DOM so it survives
+  // the row unmounting when the virtual window moves past it. Kept in a ref,
+  // not state, because nothing renders from it except the `defaultValue` of a
+  // row that is mounting anyway — see `InlineDraftStore` for the full
+  // rationale. Cleared per row once its save has round-tripped, and wholesale
+  // when inline-edit mode ends or the session changes.
+  const inlineDraftsRef = useRef<Map<string, InlineDraft>>(new Map());
+  const inlineDrafts = useMemo<InlineDraftStore>(
+    () => ({
+      read: (eventId) => inlineDraftsRef.current.get(eventId),
+      write: (eventId, patch) => {
+        const prev = inlineDraftsRef.current.get(eventId);
+        inlineDraftsRef.current.set(eventId, prev ? { ...prev, ...patch } : { ...patch });
+      },
+      clear: (eventId) => {
+        inlineDraftsRef.current.delete(eventId);
+      },
+    }),
+    [],
+  );
+
   // --- Mutations ---
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
@@ -426,6 +454,15 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- Derived ---
   const inlineEdit = isLogSheetRolling && !batchEditMode;
 
+  // Leaving inline-edit mode (timecode stopped, recording ended, or batch edit
+  // entered) unmounts every inline control — the closest thing this mode has to
+  // a cancel, and the point where a draft stops being recoverable UI state.
+  // Drop them all rather than let them resurface if rolling resumes.
+  useEffect(() => {
+    if (inlineEdit) return;
+    inlineDraftsRef.current.clear();
+  }, [inlineEdit]);
+
   // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
   // every render (each keystroke in an inline edit re-sorts the whole feed);
   // keyed on its actual inputs, output unchanged.
@@ -444,11 +481,11 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- Virtualization (the TranscribeFeed precedent: padding rows inside the
   // real <table>, never a div grid). Only the visible window (+overscan) of
   // <tr>s is mounted; two spacer rows hold the scroll height on either side.
-  // KNOWN GAP (accepted, same structure as TranscribeRow today): inline-edit
-  // inputs are UNCONTROLLED (`defaultValue` in EventLogRow), so an actively
-  // edited row scrolled more than `overscan` rows out of view unmounts and its
-  // unsaved keystrokes are lost. Batch-edit mode is unaffected — its drafts live
-  // in this component's parent-owned `batchEdits` Map, not in the DOM.
+  // Inline-edit drafts survive that unmount: EventLogRow's inline controls are
+  // uncontrolled, so their keystrokes are ALSO written through to the
+  // `inlineDrafts` store below and read back as `defaultValue` when the row
+  // remounts (see `InlineDraftStore`). Batch-edit mode never had the exposure —
+  // its drafts have always lived in the parent-owned `batchEdits` Map.
   const virtualizer = useVirtualizer({
     count: sorted.length,
     getScrollElement: () => scrollEl,
@@ -564,6 +601,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     setBatchEditMode(false);
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
+    inlineDraftsRef.current.clear();
     setLoadedLimit(200);
     setHiddenCategoryIds(new Set());
     setGenerateMenuOpen(false);
@@ -643,6 +681,12 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     async (event: LogEvent, values: RowEditValues) => {
       try {
         await updateEvent.mutateAsync({ eventId: event.event_id, body: values });
+        // Committed — and `mutateAsync` resolves only after the mutation's
+        // `invalidateQueries` refetch settles, so the row this draft belonged to
+        // is already backed by fresh server state. Dropping it here (rather than
+        // when the save is ISSUED) means a failed save leaves the operator's
+        // text recoverable on the next remount instead of silently reverting.
+        inlineDraftsRef.current.delete(event.event_id);
         showToast('Updated.');
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);
@@ -1009,6 +1053,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
               onJump={jump}
               jumpUnavailable={jumpUnavailable}
               jumpReasonId={jumpReasonId}
+              inlineDrafts={inlineDrafts}
               onInlineSave={handleInlineSave}
               onBatchChange={handleBatchChange}
               onDelete={handleDelete}
