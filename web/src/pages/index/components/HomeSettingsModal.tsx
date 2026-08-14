@@ -257,10 +257,6 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     setActiveShowId(pickShowIdForStudio(profile, studioId));
   }
 
-  const showsForStudio = (profile?.shows ?? []).filter((s) => s.studio_id === activeStudioId);
-  const currentDraft = activeShowId ? showDrafts[activeShowId] : undefined;
-  const otherShows = showsForStudio.filter((s) => s.id !== activeShowId);
-
   // Derived dirtiness (D11, panel-revised — the spike hand-armed a per-callsite `dirty` flag;
   // that fails in the dangerous direction if a future edit path forgets to arm it, both
   // bricking Save and skipping the discard guard). Deep-compare against the initialized
@@ -295,6 +291,10 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // the tree below (both `Select` option arrays, the four tab-panel wrappers, `confirmElement`,
   // and the nested Add-Show `Dialog`) on every render while closed.
   if (!isOpen) return null;
+
+  const showsForStudio = (profile?.shows ?? []).filter((s) => s.studio_id === activeStudioId);
+  const currentDraft = activeShowId ? showDrafts[activeShowId] : undefined;
+  const otherShows = showsForStudio.filter((s) => s.id !== activeShowId);
 
   async function handleRequestClose() {
     if (dirty) {
