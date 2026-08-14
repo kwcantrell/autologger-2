@@ -20,12 +20,16 @@
 // transcript DOES have persisted paragraphs — a known, accepted consequence
 // of "no new HTTP route", not a bug (see clientAggregates.ts's own comment).
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useEvents } from '../../../../api/hooks/useEvents';
 import { useShowCategories } from '../../../../api/hooks/useShowCategories';
 import { useTopics } from '../../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../../api/hooks/useTranscriptWords';
 import type { Category } from '../../../../api/types';
+import {
+  useDashboardsTabActive,
+  useTranscriptWordsGate,
+} from '../../hooks/TranscriptWordsGateContext';
 import {
   computeEventCounts,
   computeEventDensity,
@@ -37,7 +41,7 @@ import {
   computeUtteranceStats,
 } from './clientAggregates';
 import type { CatalogWidgetData } from './widgetRegistry';
-import type { WidgetLayout } from './widgetTypes';
+import type { WidgetLayout, WidgetType } from './widgetTypes';
 
 /** Bounded, matching the server's own clamp on this route
  * (`server/src/routers/events.ts`'s `clampInt(..., 200, 1, 2000)`) — the
@@ -61,6 +65,23 @@ const INTERNAL_CATEGORY_LABEL = 'Internal';
  * `undefined`) — even before `categories` has loaded — so
  * `EventCountByCategoryWidget` always sees "a resolution was attempted" and
  * never falls back to rendering a bare opaque id (D2a). */
+/** Widget types whose data is derived from the transcript word list (perf plan
+ * B4) — exactly the `switch` cases below that gate on `wordsLoading`, including
+ * `event_density`, which needs the word-derived duration as well as the events.
+ * A SHOWN dashboard containing ANY of these needs the multi-MB words payload
+ * even when the user never opens a words-dependent TAB, so this set — ANDed
+ * with the Dashboards tab being active, see the hook body — is the second
+ * (dashboards-side) trigger for the deferred fetch. Keep it in step with the
+ * `switch`: a words-derived case added there without an entry here would render
+ * permanently empty on a session whose gate never opened. */
+const WORDS_WIDGET_TYPES: ReadonlySet<WidgetType> = new Set<WidgetType>([
+  'session_duration',
+  'talk_time_by_speaker',
+  'filler_counts',
+  'event_density',
+  'transcript_excerpt',
+]);
+
 function buildCategoryLabelMap(categories: Category[] | undefined): Record<string, string> {
   const map: Record<string, string> = { internal: INTERNAL_CATEGORY_LABEL };
   for (const c of categories ?? []) map[c.id] = c.label;
@@ -80,7 +101,39 @@ export function useAiV2WidgetData(
   sessionId: string | null,
   widgets: WidgetLayout[],
 ): Record<string, CatalogWidgetData> {
-  const wordsQuery = useTranscriptWords(sessionId);
+  // --- Deferred transcript-words fetch (perf plan B4) ---
+  //
+  // This hook is the dashboards-side words consumer, and it has its OWN
+  // trigger on top of the workspace tab latch: a config containing a
+  // words-derived widget needs the payload even though the Dashboards tab
+  // itself is not a words-dependent tab.
+  //
+  // That trigger is ANDed with the tab actually being SHOWN (review fix). The
+  // config half alone was not enough of a condition: `AiV2Panel` is one of the
+  // six always-mounted panels and loads the persisted dashboard in a mount
+  // effect, so `widgets` is populated on session mount — a user whose saved
+  // dashboard happens to contain any of the five words widgets pulled the
+  // multi-MB payload on every session mount while sitting on the Events tab,
+  // which is precisely what the deferral exists to prevent. Nothing is lost:
+  // the widgets cannot render before their tab is shown.
+  //
+  // Sticky, for the same reason the workspace latch is: leaving the tab, or
+  // editing a words widget out of the config, must not cancel the fetch its
+  // siblings may still need. The stickiness lives HERE and only here — the
+  // published `dashboardsTabActive` is a plain "showing right now", so there is
+  // no second sticky latch (and no second reset mechanism) to keep in step.
+  // `AiV2Panel` mounts this with `key={sessionId}`, so a session change
+  // remounts the panel and this ref starts over — no `prevSessionIdRef` compare
+  // needed here.
+  const gateOpen = useTranscriptWordsGate();
+  const dashboardsTabActive = useDashboardsTabActive();
+  const wordsNeeded =
+    gateOpen || (dashboardsTabActive && widgets.some((w) => WORDS_WIDGET_TYPES.has(w.type)));
+  const wordsEnabledRef = useRef(false);
+  if (wordsNeeded) wordsEnabledRef.current = true;
+  const wordsEnabled = wordsEnabledRef.current;
+
+  const wordsQuery = useTranscriptWords(sessionId, { enabled: wordsEnabled });
   const topicsQuery = useTopics(sessionId);
   const eventsQuery = useEvents(sessionId, { limit: EVENTS_LIMIT });
   const categoriesQuery = useShowCategories(sessionId);
@@ -100,7 +153,31 @@ export function useAiV2WidgetData(
   // signal; once a query has EVER resolved, `isLoading` stays `false` even
   // during a later background refetch, so an already-loaded widget's real
   // data (including a genuinely empty result) is never withheld.
-  const wordsLoading = wordsQuery.isLoading;
+  //
+  // Perf plan B4 amends the WORDS signal only, because words are now the one
+  // source that can be pending WITHOUT being fetched. `isLoading` is
+  // react-query v5's `isPending && isFetching`, so it answers "no data yet AND
+  // a request is in flight" — for an always-on query those are the same
+  // question, but for a gated one they are not.
+  //
+  // Measured, not assumed: on the render where `enabled` flips true,
+  // react-query's optimistic result ALREADY reports `isFetching` (it knows it
+  // is about to fetch), so `isLoading` is true there too — the enable-flip
+  // "empty flash" this change was expected to fix does not reproduce on v5.
+  // What DOES diverge is a pending query that is not fetching: `enabled` false
+  // (the shut gate), and a query PAUSED because the browser is offline. In
+  // both, `isLoading` is `false` with `data === undefined`, so reading it would
+  // publish `words ?? []` — the settled "This session has no transcript words
+  // yet." answer — for a session that has never been measured at all. That is
+  // exactly the zeros-as-data claim Fix 5 removed, so the words signal reads
+  // `isPending && wordsEnabled` instead: "enabled, and no data yet". No
+  // withhold is reintroduced on background refetches — once a query has
+  // resolved, `isPending` stays `false` forever, just like `isLoading`. The
+  // shut-gate case resolves to `false` here and the `?? []` defaults apply, but
+  // no words widget can be on screen in that state: a words widget in the
+  // config of a SHOWN Dashboards tab is itself what opens the gate, and a
+  // hidden panel's widgets are not rendered.
+  const wordsLoading = wordsEnabled && wordsQuery.isPending;
   const topicsLoading = topicsQuery.isLoading;
   const eventsLoading = eventsQuery.isLoading;
 

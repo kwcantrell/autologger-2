@@ -795,7 +795,6 @@ describe('transcript generation', () => {
         start_sec: number;
         end_sec: number;
         ordinal: number;
-        session_id: string;
       }>;
     };
     expect(body.words).toHaveLength(2);
@@ -806,7 +805,9 @@ describe('transcript generation', () => {
     for (const w of body.words) {
       expect(typeof w.session_time).toBe('string');
       expect(w.session_time.length).toBeGreaterThan(0);
-      expect(w.session_id).toBe(s);
+      // The wire projection carries no `session_id` — the caller already holds
+      // it as the path parameter (transcript-words wire trim).
+      expect('session_id' in w).toBe(false);
     }
     expect(body.words[0].start_sec).toBeCloseTo(0.5, 1);
     expect(body.words[1].start_sec).toBeCloseTo(1.0, 1);
@@ -1160,18 +1161,10 @@ describe('transcript generation', () => {
     const body = (await res.json()) as { words: Array<Record<string, unknown>> };
     expect(body.words.length).toBeGreaterThan(0);
     for (const w of body.words) {
+      // The wire projection (`wordApiDict`) is narrower than the stored row:
+      // `created_at_utc` and the former `session_id` graft are both absent.
       expect(Object.keys(w).sort()).toEqual(
-        [
-          'created_at_utc',
-          'end_sec',
-          'id',
-          'ordinal',
-          'session_id',
-          'session_time',
-          'speaker',
-          'start_sec',
-          'word',
-        ].sort(),
+        ['end_sec', 'id', 'ordinal', 'session_time', 'speaker', 'start_sec', 'word'].sort(),
       );
     }
   });

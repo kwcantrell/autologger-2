@@ -102,6 +102,31 @@ export interface Show {
   event_palette_custom: string[];
 }
 
+/**
+ * `profile.shows[]` — the SLIM show entry (`showBriefApiDict`, server:
+ * `packages/catalog/src/showsStore.ts`), NOT a `Show`.
+ *
+ * `/api/profile` fans out over every show in every studio the caller can
+ * reach, so embedding each show's `categories` and three palettes made that
+ * payload scale with the whole account's configuration (measured 52 KB, 48 KB
+ * of it `shows[]`) on a request every page load makes — and the heavy fields
+ * were read only by closed-by-default modals. They now come from
+ * `useStudioShows` / `useShow`, which still receive the full `Show`.
+ *
+ * `title_suffix` is on the brief shape deliberately: NewSessionModal decides
+ * whether to ask for an episode number the moment a show is picked, with no
+ * further fetch. The union is duplicated from `Show` rather than shared, so
+ * `Show` staying assignable to `ShowBrief` is a fact the compiler checks
+ * against two independent declarations.
+ */
+export interface ShowBrief {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: 'date' | 'episode';
+}
+
 export interface StudioBrief {
   id: string;
   name: string;
@@ -249,7 +274,9 @@ export interface ProfilePayload {
   active_studio: { id: string; name: string; categories: ActiveStudioCategory[] };
   studios: StudioBrief[];
   studio_settings: Record<string, Record<string, unknown>>;
-  shows: Show[];
+  /** Brief entries only — see `ShowBrief`. Full per-show config comes from
+   * `useStudioShows(studioId)` / `useShow(showId)`. */
+  shows: ShowBrief[];
   new_session_defaults: NewSessionDefaults;
   admin: AdminInfo;
   auth: AuthSection;
@@ -259,33 +286,44 @@ export interface ProfilePayload {
 // Transcript words + Topics
 // ---------------------------------------------------------------------------
 
+/**
+ * A transcript-words row **as served on the wire** — the projection
+ * `wordApiDict` builds in `server/src/routers/transcribe.ts`, shared by all
+ * four word-emitting handlers (GET list, POST generate, POST create 201,
+ * PATCH).
+ *
+ * It is deliberately narrower than the server's stored `TranscriptWord`
+ * (`packages/session-core/src/transcriptStore.ts`), which also carries
+ * `created_at_utc`; the handlers additionally used to graft a `session_id`
+ * onto every row. Both were dropped from the wire by the transcript-words
+ * wire trim — `created_at_utc` had no client reader, and `session_id` merely
+ * echoed the path parameter the caller already holds. Server-internal
+ * consumers (AI-runtime aggregates, log import, topic generation) read the
+ * hub directly, so they still see the full row.
+ */
 export interface TranscriptWord {
   id: string;
-  session_id: string;
   session_time: string;
   speaker: string;
   word: string;
-  /** Already present on the wire (the server spreads its own `TranscriptWord`
-   * row verbatim — `server/src/routers/transcribe.ts`'s
-   * `words.map((w) => ({ ...w, session_id: sessionId }))`) but omitted from
-   * this type until ai-v2-dashboards task 5.6 needed typed access for
-   * client-side aggregation (`0.0` for manually-entered/anchorless words —
-   * see `packages/ai-runtime/src/aggregates.ts`'s degenerate-timing discipline, D2a).
-   * Declaring it here is a type-only fix, not a wire-shape change. */
+  /** Seconds from session start. Rounded server-side to 3 decimals (ms
+   * precision) for the wire; the store keeps full float precision. `0` for
+   * manually-entered/anchorless words — see `packages/ai-runtime/src/aggregates.ts`'s
+   * degenerate-timing discipline (D2a). */
   start_sec: number;
   end_sec: number;
   ordinal: number;
-  created_at_utc: string;
 }
 
 /**
  * A topics row — server: `topicRow` (`server/src/session/topicStore.ts`),
  * returned **verbatim** by all four `transcribe.ts` topic handlers.
  *
- * Note the asymmetry with `TranscriptWord` above: the transcript-words routes
- * spread `{...w, session_id: sessionId}` onto every row, the topics routes do
- * not, and `Topic` has no `session_id` column. The client declared one anyway
- * (web-api-shape-conformance audit CW-6).
+ * The client once declared a `session_id` here that the topics routes never
+ * emitted (web-api-shape-conformance audit CW-6). The asymmetry that made
+ * that easy to get wrong is gone: the transcript-words handlers used to graft
+ * `session_id` onto every row, and no longer do — neither row type carries
+ * one, and neither route emits one.
  */
 export interface SessionTopic {
   id: string;
@@ -515,6 +553,19 @@ export interface AudioSegment {
 
 export interface AudioSegmentsResponse {
   segments: AudioSegment[];
+  has_audio: boolean;
+}
+
+/**
+ * Response of `POST /api/sessions/:id/audio/segments/sync-from-disk`
+ * (perf-fixes A3/B3). The server emits counts only — no `segments` array;
+ * callers that need the rows refetch the segments list (`useAudioClips`
+ * invalidates `audioSegmentsKeys.bySession` when `inserted > 0`).
+ */
+export interface AudioSyncFromDiskResponse {
+  inserted: number;
+  updated: number;
+  scanned: number;
   has_audio: boolean;
 }
 

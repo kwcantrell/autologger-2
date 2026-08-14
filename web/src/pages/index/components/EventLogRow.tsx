@@ -9,6 +9,7 @@ import {
   normalizeWallIso,
   parseYmdHmsUtcToIso,
 } from '../../../shared/utils/timecode';
+import type { DraftStore } from '../utils/draftStore';
 import { JumpToTimeButton } from './JumpToTimeButton';
 import { Select } from './Select';
 
@@ -93,6 +94,140 @@ export interface RowEditValues {
   wall_time_utc: string;
 }
 
+/** One row's in-progress INLINE (rolling) edit, as raw input text.
+ *
+ *  Every field is exactly what sits in the corresponding control, so a
+ *  restored draft is keystroke-identical to what was typed — including
+ *  `wall_text`, which is the displayed `YY-MM-DD HH:MM:SS` form and NOT the
+ *  ISO string `RowEditValues.wall_time_utc` carries (a half-typed date has no
+ *  ISO form at all). Fields are optional: only the controls the operator
+ *  actually touched are recorded. */
+export interface InlineDraft {
+  category?: string;
+  message?: string;
+  timecode_hms?: string;
+  wall_text?: string;
+}
+
+/** Every field an `InlineDraft` can carry, so a draft can be walked
+ *  exhaustively (`DraftStore#clearMatching`). Compiler-checked against the
+ *  interface: adding a field without listing it here fails the `satisfies`. */
+export const INLINE_DRAFT_FIELDS = [
+  'category',
+  'message',
+  'timecode_hms',
+  'wall_text',
+] as const satisfies ReadonlyArray<keyof InlineDraft>;
+
+/** Parent-owned storage for inline-edit drafts, keyed by event id — the shared
+ *  feed-draft primitive (`utils/draftStore`) at this feed's draft shape.
+ *
+ *  Inline-edit controls are UNCONTROLLED (`defaultValue` + refs), so the draft
+ *  used to live only in the DOM — and the feed is virtualized, so the <tr>
+ *  unmounts as soon as it scrolls past the overscan (or a reveal calls
+ *  `scrollToIndex` elsewhere in the list), taking the draft with it.
+ *  `EventLogSheet` owns the store so a draft outlives its row's DOM node; the
+ *  row writes through on every keystroke and reads it back when it remounts.
+ *
+ *  Deliberately a mutable store behind stable callbacks rather than
+ *  `useState` (the shape `batchEdits` uses): nothing RENDERS from a draft
+ *  except the `defaultValue` of a freshly mounted input, so keystrokes must
+ *  not re-render the sheet and every mounted row with it — inline edit is
+ *  live exactly while timecode is rolling, the render-budget-critical state.
+ *  Batch edit is unaffected either way: its drafts are already parent-owned
+ *  (`batchValues`) and its inputs are controlled. */
+export type InlineDraftStore = DraftStore<InlineDraft>;
+
+/** The draft text this row's controls WOULD render from the given server event
+ *  — the reference every "this field is spent" comparison in this file
+ *  measures a stored draft against (`DraftStore#clearMatching`).
+ *
+ *  Draft space, field for field: `wall_text` is the displayed
+ *  `YY-MM-DD HH:MM:SS` form the wall input shows (never the ISO string),
+ *  `message` is untrimmed. Kept beside the `defaultValue`s it mirrors so the
+ *  two cannot drift — a mismatch here would either strand a spent draft or
+ *  delete a live one. */
+export function serverInlineDraft(event: LogEvent): Required<InlineDraft> {
+  return {
+    category: event.category,
+    message: event.message ?? '',
+    timecode_hms: formatTimecodeHMS(event.timecode),
+    wall_text: formatWallUtcYmdHms(event.wall_time_utc),
+  };
+}
+
+/** The three text controls an inline edit can be focused in. The category
+ *  control is a Radix `Select` trigger, not a text field — it has no caret to
+ *  restore and blur-to-save never runs through it, so it is deliberately not a
+ *  member (a record made for an open category Select carries `field: null`). */
+export type InlineFocusField = 'timecode' | 'wall' | 'message';
+
+/** Where the operator's cursor is inside an inline edit, as of the last focus
+ *  or selection change. `selectionStart`/`selectionEnd` are the input's own
+ *  values (null for a control that does not expose a selection). */
+export interface InlineFocusRecord {
+  eventId: string;
+  /** `null` when the row is held for a reason with no caret to restore —
+   *  today, only an open category Select. */
+  field: InlineFocusField | null;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+  /** True while this row's category Select is open. Radix portals the listbox
+   *  OUTSIDE the row, so neither DOM containment nor `document.activeElement`
+   *  can tell "focus moved into this row's own dropdown" from "focus left the
+   *  row"; the explicit flag can. Both the deferred blur handler and the
+   *  sheet's abandon listener treat a flagged row as still being edited. */
+  selectOpen?: boolean;
+  /** When the store last accepted this record — stamped BY the store, so no
+   *  caller can forget to. Read only by the remount focus restore, to refuse a
+   *  record the operator has long since walked away from. */
+  recordedAt: number;
+}
+
+/** What a caller hands `InlineFocusStore#record`: the store stamps the clock. */
+export type InlineFocusRecordInput = Omit<InlineFocusRecord, 'recordedAt'>;
+
+/** How stale a focus record may be and still pull focus back on remount.
+ *
+ *  INVARIANT: a restore may only happen for a row the operator is still
+ *  plausibly editing. Every focus/caret/selection change re-stamps the record,
+ *  so this measures time since the operator last touched THIS edit — not since
+ *  it began. Past the bound the record is inert for focus purposes: the row
+ *  remounts showing its draft (which is never dropped by age), just without
+ *  grabbing the caret. */
+export const INLINE_FOCUS_RESTORE_MAX_AGE_MS = 30_000;
+
+/** Parent-owned record of WHICH row is being inline-edited, and where the caret
+ *  sits in it — the focus counterpart of `InlineDraftStore`.
+ *
+ *  It exists for the same reason: the feed is virtualized. While timecode rolls,
+ *  incoming events prepend at index 0 under a descending sort and push the row
+ *  being edited down the list; once it passes the overscan the virtualizer
+ *  unmounts the focused `<tr>`, focus falls to `<body>`, and further keystrokes
+ *  go nowhere. `EventLogSheet` uses this record twice: to PIN the edited row's
+ *  index into the virtual window (`rangeExtractor`), and — when a remount
+ *  happens anyway — to let the remounting row put focus and caret back.
+ *
+ *  A ref-backed store rather than state, for `InlineDraftStore`'s reason: a
+ *  caret move must not re-render the feed. */
+export interface InlineFocusStore {
+  read: () => InlineFocusRecord | null;
+  record: (record: InlineFocusRecordInput) => void;
+  /** Forgets the record only if it still belongs to `eventId` — a row must
+   *  never clear a record that focus has already moved on to. */
+  clear: (eventId: string) => void;
+  /** Drops the `selectOpen` flag (only) if the record still belongs to
+   *  `eventId`, leaving the record itself — and its `recordedAt` stamp —
+   *  otherwise untouched.
+   *
+   *  Exists because `selectOpen` is a claim only a MOUNTED row can maintain:
+   *  Radix fires no `onOpenChange(false)` when the row is unmounted out from
+   *  under an open dropdown, so the flag would stick true forever, permanently
+   *  disarming the sheet's abandon listener and holding the pin. The row clears
+   *  it on unmount, where the claim stops being true. */
+  clearSelectOpen: (eventId: string) => void;
+}
+
 interface Props {
   event: LogEvent;
   categories: Category[];
@@ -116,6 +251,12 @@ interface Props {
   /** id of the ONE reason node `EventLogSheet` renders while unavailable — every
    *  row passes the same id (design D2 gate decision). */
   jumpReasonId?: string;
+  /** `EventLogSheet`'s inline-draft store (see `InlineDraftStore`) — one
+   *  identity for the whole feed, stable for the sheet's lifetime. */
+  inlineDrafts: InlineDraftStore;
+  /** `EventLogSheet`'s inline-focus record (see `InlineFocusStore`) — likewise
+   *  one identity for the whole feed. */
+  inlineFocus: InlineFocusStore;
   onInlineSave: (event: LogEvent, values: RowEditValues) => void;
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
@@ -140,6 +281,8 @@ export function EventLogRow({
   onJump,
   jumpUnavailable,
   jumpReasonId,
+  inlineDrafts,
+  inlineFocus,
   onInlineSave,
   onBatchChange,
   onDelete,
@@ -147,6 +290,18 @@ export function EventLogRow({
 }: Props) {
   const isAuto = isAutomaticLogEvent(event);
   const editable = !isAuto && (inlineEdit || batchEdit);
+  // Inline (rolling) edit only — batch edit keeps its own parent-owned buffer.
+  const inlineEditable = !isAuto && inlineEdit;
+  // The surviving draft for THIS row, if the operator was mid-edit when the
+  // virtualizer last unmounted it (or is mid-edit right now). Read during
+  // render because that is where it is needed: as the `defaultValue` of the
+  // uncontrolled controls below, and as the initial inline category.
+  const draft = inlineEditable ? inlineDrafts.read(event.event_id) : undefined;
+  /** Record a keystroke so it survives this row's next unmount. */
+  const writeDraft = (patch: InlineDraft) => {
+    if (!inlineEditable) return;
+    inlineDrafts.write(event.event_id, patch);
+  };
   // Generated-row marker (auto-generate-event-logs): rendered in the message cell in
   // both view and edit branches (batch edit is the cleanup mode, so the marker must
   // survive it). `role="img"` + aria-label gives the chip a queryable accessible name.
@@ -166,20 +321,132 @@ export function EventLogRow({
   const wallRef = useRef<HTMLInputElement>(null);
   const msgRef = useRef<HTMLInputElement>(null);
   // Category is now controlled (Radix Select needs state) but still saves via blur of siblings.
-  const [inlineCategory, setInlineCategory] = useState(event.category);
+  const [inlineCategory, setInlineCategory] = useState(draft?.category ?? event.category);
 
   // Keep inline inputs in sync when event changes (e.g., after save + refetch)
   // but only when not currently focused inside this row
   const rowRef = useRef<HTMLTableRowElement>(null);
+  // The `event` object this row last reconciled its inputs against, seeded with
+  // the mount-time one. The reset below must run for SERVER-DRIVEN changes only
+  // — on the mount pass the controls already carry draft-or-server values, and
+  // resetting there would wipe a draft the virtualizer just restored (React
+  // StrictMode's second mount pass makes an "is this the first run" flag
+  // useless; object identity does not care how many times the effect runs).
+  const syncedEventRef = useRef(event);
   useEffect(() => {
     if (!inlineEdit) return;
+    if (syncedEventRef.current === event) return;
     const row = rowRef.current;
     if (row?.contains(document.activeElement)) return;
-    if (tcRef.current) tcRef.current.value = formatTimecodeHMS(event.timecode);
-    if (wallRef.current) wallRef.current.value = formatWallUtcYmdHms(event.wall_time_utc);
-    setInlineCategory(event.category);
-    if (msgRef.current) msgRef.current.value = event.message ?? '';
-  }, [event, inlineEdit]);
+    syncedEventRef.current = event;
+    const server = serverInlineDraft(event);
+    // A draft field that MATCHES the incoming server text is spent — leaving it
+    // would let it shadow this fresh row on the next remount. A field that
+    // DIVERGES is unsaved operator text and must survive: either the sheet's
+    // save-resolution clear just deliberately preserved it (keystrokes typed
+    // during the round trip) or the operator typed it into a blurred row while
+    // an unrelated refetch was in flight. Clearing wholesale here deleted
+    // exactly those survivors — and a later failed save then had nothing to
+    // recover. Same comparison discipline as every other clear in this feed:
+    // draft space, one shared helper.
+    // The reference is the WHOLE server row, so this clear legitimately covers
+    // every field (`INLINE_DRAFT_FIELDS`) — unlike a save, which covers only
+    // what it persisted. See `DraftStore#clearMatching`.
+    inlineDrafts.clearMatching(event.event_id, server, INLINE_DRAFT_FIELDS);
+    const survivors = inlineDrafts.read(event.event_id);
+    // ...and refresh only the controls whose draft did NOT survive. The others
+    // are still displaying the operator's text; overwriting them with server
+    // values would lose it on screen even though the store kept it.
+    if (survivors?.timecode_hms === undefined && tcRef.current) {
+      tcRef.current.value = server.timecode_hms;
+    }
+    if (survivors?.wall_text === undefined && wallRef.current) {
+      wallRef.current.value = server.wall_text;
+    }
+    if (survivors?.category === undefined) setInlineCategory(server.category);
+    if (survivors?.message === undefined && msgRef.current) msgRef.current.value = server.message;
+  }, [event, inlineEdit, inlineDrafts]);
+
+  const inputForField = (field: InlineFocusField): HTMLInputElement | null =>
+    field === 'timecode' ? tcRef.current : field === 'wall' ? wallRef.current : msgRef.current;
+
+  /** Record that THIS row holds the inline-edit focus, and where its caret is.
+   *  Called on focus and on every selection change (React's `onSelect` fires for
+   *  a collapsed caret move too, so typing keeps the offset current). Cheap by
+   *  construction: a ref write in the parent, no render. */
+  const recordFocus = (field: InlineFocusField, el: HTMLInputElement | null) => {
+    if (!inlineEditable || !el) return;
+    inlineFocus.record({
+      eventId: event.event_id,
+      field,
+      selectionStart: el.selectionStart,
+      selectionEnd: el.selectionEnd,
+    });
+  };
+
+  // Focus restore across an unavoidable remount (mount-only). The sheet pins the
+  // edited row into the virtual window, but the pin is bounded (see
+  // `PINNED_ROW_MAX_EXTRA_ROWS` there) and a far-off-window row still unmounts —
+  // taking focus with it, since the browser drops focus to <body> when the
+  // focused node is removed. On the way back in, put the operator's cursor
+  // exactly where it was.
+  //
+  // The guard is deliberately narrow: restore ONLY when focus is currently
+  // nowhere (<body>/<html>), which is precisely the state a focus-stealing
+  // unmount leaves behind. If the operator has since focused anything at all,
+  // the remount must not yank it away.
+  //
+  // "Focus is nowhere" is necessary but NOT sufficient, because wheel scrolling
+  // never moves focus: a record left behind by an edit the operator walked away
+  // from stays eligible forever, and the remount would then steal the caret out
+  // of nowhere minutes later. Two bounds close that (see
+  // `INLINE_FOCUS_RESTORE_MAX_AGE_MS` for the invariant): the record expires,
+  // and `preventScroll` means even a restore that does fire can never yank the
+  // viewport the operator is looking at. The third bound lives in
+  // `EventLogSheet`, which drops the record on the first pointerdown/focusin
+  // outside the row — the abandonment signal a scroll wheel cannot give.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — this restores the focus the PREVIOUS unmount destroyed; re-running on prop changes would re-grab focus mid-edit.
+  useEffect(() => {
+    if (!inlineEditable) return;
+    const rec = inlineFocus.read();
+    if (!rec || rec.eventId !== event.event_id) return;
+    // No caret to put back (the record is holding the row for an open category
+    // Select, not for a text control).
+    if (rec.field === null) return;
+    if (Date.now() - rec.recordedAt > INLINE_FOCUS_RESTORE_MAX_AGE_MS) return;
+    const active = document.activeElement;
+    // `active.isConnected` covers the browsers that leave a REMOVED node as
+    // `document.activeElement` instead of resetting to <body> — focus is just
+    // as gone either way.
+    if (active && active !== document.body && active !== document.documentElement) {
+      if (active.isConnected) return;
+    }
+    const el = inputForField(rec.field);
+    if (!el) return;
+    // `preventScroll`: this row may be mounting at the far edge of the
+    // overscan, and a default `focus()` would scroll it into view — yanking the
+    // viewport out from under an operator who is scrolling, not editing.
+    el.focus({ preventScroll: true });
+    if (rec.selectionStart != null) {
+      el.setSelectionRange(rec.selectionStart, rec.selectionEnd ?? rec.selectionStart);
+    }
+    // `el.focus()` fired this row's own `onFocus`, which re-recorded the caret
+    // as it stood BEFORE the range was restored; put the real one back.
+    inlineFocus.record(rec);
+  }, []);
+
+  // `selectOpen` is a claim only a MOUNTED row can maintain. Radix's
+  // `onOpenChange` never fires when the virtualizer unmounts the row out from
+  // under an open category dropdown (the dropdown goes with it), so the flag
+  // would stay true on a record nothing can ever correct: the sheet's abandon
+  // listener treats a flagged record as still being edited and skips it
+  // forever, and `rangeExtractor` keeps pinning the row. Only the flag is
+  // dropped here — the record itself is exactly what a remount restores focus
+  // from, so an unmount must never clear THAT (the same rule `handleBlur` and
+  // `handleCategoryOpenChange` follow when they find a null row ref).
+  useEffect(() => {
+    return () => inlineFocus.clearSelectOpen(event.event_id);
+  }, [inlineFocus, event.event_id]);
 
   const saveInline = (catOverride?: string) => {
     if (!inlineEdit || isAuto) return;
@@ -194,9 +461,33 @@ export function EventLogRow({
       msg === (event.message ?? '').trim() &&
       tc === origTc &&
       wall === origWall
-    )
+    ) {
+      // Nothing to COMMIT — but that is not the same as nothing to keep. The
+      // comparison above is in VALUE space: it trims, and it runs the wall
+      // field through `buildWallIso`, which falls back to the original ISO for
+      // any text that does not parse. So a half-typed date ("26-07-2") compares
+      // equal while the input still displays it, and a message the operator
+      // only added spaces to does too. Clearing the whole draft there left the
+      // mounted row showing text the store no longer had, which the next
+      // remount silently reverted.
+      //
+      // Clear in DRAFT space instead — only fields whose RAW text is exactly
+      // what this row renders from the server event — through the same helper
+      // the server-sync effect above and the sheet's save-resolution clear use.
+      // (The committed path does NOT clear here: `EventLogSheet` drops it once
+      // the save has round-tripped, so a FAILED save leaves the operator's text
+      // recoverable rather than silently reverting on the next remount.)
+      // Whole-row reference again, so the covered set is every field.
+      inlineDrafts.clearMatching(event.event_id, serverInlineDraft(event), INLINE_DRAFT_FIELDS);
       return;
+    }
     onInlineSave(event, { category: cat, message: msg, timecode_hms: tc, wall_time_utc: wall });
+  };
+
+  /** Is the record currently held by THIS row's open category Select? */
+  const selectIsOpenForThisRow = (): boolean => {
+    const rec = inlineFocus.read();
+    return rec?.eventId === event.event_id && rec.selectOpen === true;
   };
 
   const handleBlur = () => {
@@ -204,9 +495,58 @@ export function EventLogRow({
     // Defer to let focus settle
     setTimeout(() => {
       const row = rowRef.current;
+      // Row gone: the virtualizer unmounted it while focus was settling, so
+      // there is nothing left to read a save out of (the draft store holds the
+      // text). The focus record is deliberately NOT cleared here — it is what
+      // the remount uses to put the operator's cursor back.
       if (!row) return;
       if (row.contains(document.activeElement)) return;
+      // Focus genuinely left a row that is still on screen: this row is no
+      // longer the one being edited, so it stops being pinned — UNLESS what
+      // took the focus is this row's own category Select, whose listbox Radix
+      // portals outside the <tr> (so containment above cannot see it). Dropping
+      // the pin there unmounts the row mid-choice on the next incoming event
+      // and discards the selection. The text controls' save still runs either
+      // way: opening the dropdown is a legitimate blur-to-commit for them.
+      if (!selectIsOpenForThisRow()) inlineFocus.clear(event.event_id);
       saveInline();
+    }, 0);
+  };
+
+  /** Hold the pin for as long as the category dropdown is open.
+   *
+   *  Radix's `onOpenChange` is the explicit signal — preferred over inspecting
+   *  the portal's DOM position, which is an implementation detail of where
+   *  Radix chooses to render. */
+  const handleCategoryOpenChange = (open: boolean) => {
+    if (!inlineEditable) return;
+    const rec = inlineFocus.read();
+    if (open) {
+      // Preserve the caret this row already recorded (the operator may have
+      // been typing in the message field before reaching for the dropdown);
+      // otherwise start a caret-less record, since the trigger has none.
+      const base: InlineFocusRecordInput =
+        rec?.eventId === event.event_id
+          ? rec
+          : { eventId: event.event_id, field: null, selectionStart: null, selectionEnd: null };
+      inlineFocus.record({ ...base, selectOpen: true });
+      return;
+    }
+    if (rec?.eventId !== event.event_id) return;
+    inlineFocus.record({ ...rec, selectOpen: false });
+    // Closed. Radix returns focus to the trigger — inside this row — so the row
+    // stays pinned; normal blur semantics resume. Defer one tick to let that
+    // focus return land, then release the pin if focus really did leave (the
+    // trigger has no blur handler of its own, and the sheet's abandon listener
+    // covers a later click elsewhere).
+    setTimeout(() => {
+      if (selectIsOpenForThisRow()) return;
+      const row = rowRef.current;
+      // Row gone: same rule as `handleBlur` — the record is what a remount
+      // restores from, so an unmount must not clear it.
+      if (!row) return;
+      if (row.contains(document.activeElement)) return;
+      inlineFocus.clear(event.event_id);
     }, 0);
   };
 
@@ -248,12 +588,14 @@ export function EventLogRow({
                 type="text"
                 // `.sheetCellControl` reset + `.sheetTcStackInline .sheetWall` sizing.
                 className={clsx(CELL_CONTROL, 'flex-[1_1_auto] min-w-0 text-center')}
-                defaultValue={batchEdit ? undefined : wallVal}
+                defaultValue={batchEdit ? undefined : (draft?.wall_text ?? wallVal)}
                 value={batchEdit ? wallVal : undefined}
                 aria-label="UTC"
                 placeholder="YY-MM-DD HH:MM:SS"
                 spellCheck={false}
                 disabled={dis}
+                onFocus={(e) => recordFocus('wall', e.currentTarget)}
+                onSelect={(e) => recordFocus('wall', e.currentTarget)}
                 onBlur={handleBlur}
                 onChange={
                   batchEdit
@@ -261,7 +603,7 @@ export function EventLogRow({
                         fireBatchChange({
                           wall_time_utc: buildWallIso(e.target.value, event.wall_time_utc),
                         })
-                    : undefined
+                    : (e) => writeDraft({ wall_text: e.target.value })
                 }
               />
               <input
@@ -271,17 +613,19 @@ export function EventLogRow({
                 // rule (pre-module names; the hashed `.sheetCellControl`/`.sheetTc` never
                 // applied here), so this input rendered bare. Dropped with that as-rendered
                 // state preserved — no styling class.
-                defaultValue={batchEdit ? undefined : tcVal}
+                defaultValue={batchEdit ? undefined : (draft?.timecode_hms ?? tcVal)}
                 value={batchEdit ? tcVal : undefined}
                 aria-label="Timecode"
                 maxLength={8}
                 spellCheck={false}
                 disabled={dis}
+                onFocus={(e) => recordFocus('timecode', e.currentTarget)}
+                onSelect={(e) => recordFocus('timecode', e.currentTarget)}
                 onBlur={handleBlur}
                 onChange={
                   batchEdit
                     ? (e) => fireBatchChange({ timecode_hms: e.target.value.trim() })
-                    : undefined
+                    : (e) => writeDraft({ timecode_hms: e.target.value })
                 }
               />
             </div>
@@ -297,17 +641,19 @@ export function EventLogRow({
               type="text"
               // `.sheetCellControl` reset; text-align inherits the edit cell's `text-center`.
               className={CELL_CONTROL}
-              defaultValue={batchEdit ? undefined : tcVal}
+              defaultValue={batchEdit ? undefined : (draft?.timecode_hms ?? tcVal)}
               value={batchEdit ? tcVal : undefined}
               aria-label="Timecode"
               maxLength={8}
               spellCheck={false}
               disabled={dis}
+              onFocus={(e) => recordFocus('timecode', e.currentTarget)}
+              onSelect={(e) => recordFocus('timecode', e.currentTarget)}
               onBlur={handleBlur}
               onChange={
                 batchEdit
                   ? (e) => fireBatchChange({ timecode_hms: e.target.value.trim() })
-                  : undefined
+                  : (e) => writeDraft({ timecode_hms: e.target.value })
               }
             />
           );
@@ -344,12 +690,18 @@ export function EventLogRow({
       }
       ariaLabel="Category"
       disabled={dis}
+      // Inline only: the pin exists for the rolling feed, and batch edit
+      // neither pins nor virtualizes its drafts away.
+      onOpenChange={inlineEditable ? handleCategoryOpenChange : undefined}
       value={catVal}
       onChange={(next) => {
         if (batchEdit) {
           fireBatchChange({ category: next });
         } else {
           setInlineCategory(next);
+          // Recorded before the save so a remount mid-round-trip shows the
+          // chosen category rather than snapping back to the stale server one.
+          writeDraft({ category: next });
           // Inline mode has no traditional blur signal — save immediately.
           saveInline(next);
         }
@@ -365,12 +717,18 @@ export function EventLogRow({
       ref={batchEdit ? undefined : msgRef}
       type="text"
       className={CELL_CONTROL}
-      defaultValue={batchEdit ? undefined : (event.message ?? '')}
+      defaultValue={batchEdit ? undefined : (draft?.message ?? event.message ?? '')}
       value={batchEdit ? msgVal : undefined}
       aria-label="Message"
       disabled={dis}
+      onFocus={(e) => recordFocus('message', e.currentTarget)}
+      onSelect={(e) => recordFocus('message', e.currentTarget)}
       onBlur={handleBlur}
-      onChange={batchEdit ? (e) => fireBatchChange({ message: e.target.value }) : undefined}
+      onChange={
+        batchEdit
+          ? (e) => fireBatchChange({ message: e.target.value })
+          : (e) => writeDraft({ message: e.target.value })
+      }
     />
   ) : null;
 

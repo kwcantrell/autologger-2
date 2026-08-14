@@ -5,7 +5,5 @@
   "word": "hello",
   "start_sec": 0,
   "end_sec": 0,
-  "ordinal": 0,
-  "created_at_utc": "####-##-##T##:##:##.###Z",
-  "session_id": "########-####-####-####-############"
+  "ordinal": 0
 }

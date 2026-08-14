@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { app, env } from '../test/harness';
+import { app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
@@ -90,6 +90,51 @@ describe('GET /api/studio + /api/profile', () => {
     expect(body.active_show_id).toBe(showId); // only show → becomes active
     expect(body.shows.filter((s) => s.id === showId)).toHaveLength(1);
   });
+
+  // profile-shows-slimming: `shows[]` is the SLIM `showBriefApiDict` entry.
+  // The four heavy per-show config fields moved to the two full-show read
+  // routes below; only these five keys stay on a payload that fans out over
+  // every show in every reachable studio.
+  it('shows[] entries are brief: exactly the five identity/selection keys', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Brief Show', code: 'BS' });
+
+    const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
+    const show = body.shows.find((s) => s.id === showId);
+    expect(show).toBeTruthy();
+    expect(Object.keys(show ?? {}).sort()).toEqual([
+      'id',
+      'name',
+      'show_code',
+      'studio_id',
+      'title_suffix',
+    ]);
+  });
+
+  it('logged-in shows[] entries are brief too (both fan-out loops)', async () => {
+    const studio = seedStudio();
+    const showId = seedShow({ studioId: studio, name: 'Brief Show', code: 'BS' });
+    const userId = seedUser({ studios: [studio] });
+
+    const res = await app.request(
+      '/api/profile',
+      { method: 'GET', headers: { Cookie: await loginCookie(userId) } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
+    const show = body.shows.find((s) => s.id === showId);
+    expect(show).toBeTruthy();
+    expect(Object.keys(show ?? {}).sort()).toEqual([
+      'id',
+      'name',
+      'show_code',
+      'studio_id',
+      'title_suffix',
+    ]);
+  });
 });
 
 describe('PUT /api/profile', () => {
@@ -138,6 +183,83 @@ describe('shows', () => {
     );
     expect(res.status).toBe(200);
     expect((await res.json()) as { show: { id: string } }).toHaveProperty('show.id');
+  });
+
+  // GET /api/shows/:showId — the per-show full-config read added by
+  // profile-shows-slimming, now that `/api/profile` carries brief entries.
+  it('GET /api/shows/:showId returns the FULL show config', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Detail Show', code: 'DS' });
+
+    const res = await app.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { show: Record<string, unknown> };
+    expect(Object.keys(body.show).sort()).toEqual([
+      'categories',
+      'event_palette',
+      'event_palette_custom',
+      'event_palette_preset',
+      'id',
+      'name',
+      'show_code',
+      'studio_id',
+      'title_suffix',
+    ]);
+    expect(body.show.id).toBe(showId);
+    expect(Array.isArray(body.show.categories)).toBe(true);
+    expect((body.show.event_palette as string[]).length).toBe(9);
+  });
+
+  it('GET /api/shows/:showId 404s on an unknown show id', async () => {
+    const res = await app.request('/api/shows/no-such-show', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /api/shows/:showId 404s for a logged-in non-member (no existence oracle)', async () => {
+    const otherStudio = seedStudio();
+    const showId = seedShow({ studioId: otherStudio, name: 'Private Show', code: 'PV' });
+    const outsider = seedUser({ studios: [seedStudio()] });
+
+    const res = await app.request(
+      `/api/shows/${showId}`,
+      { method: 'GET', headers: { Cookie: await loginCookie(outsider) } },
+      { ...env },
+    );
+    expect(res.status).toBe(404);
+    // Byte-identical to the unknown-id body: the two outcomes must not be
+    // distinguishable by a caller probing for other tenants' show ids.
+    const unknown = await app.request(
+      '/api/shows/no-such-show',
+      { method: 'GET', headers: { Cookie: await loginCookie(outsider) } },
+      { ...env },
+    );
+    expect(await res.json()).toEqual(await unknown.json());
+  });
+
+  it('GET /api/shows/:showId 200s for a member of the show’s studio', async () => {
+    const studio = seedStudio();
+    const showId = seedShow({ studioId: studio, name: 'Member Show', code: 'MS' });
+    const member = seedUser({ studios: [studio] });
+
+    const res = await app.request(
+      `/api/shows/${showId}`,
+      { method: 'GET', headers: { Cookie: await loginCookie(member) } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { show: { id: string } }).show.id).toBe(showId);
+  });
+
+  it('GET /api/shows/:showId 404s for an anonymous caller when OAuth is configured', async () => {
+    const sid = await activeStudioId();
+    const showId = seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
+
+    const res = await app.request(
+      `/api/shows/${showId}`,
+      { method: 'GET' },
+      envWith({ GOOGLE_CLIENT_ID: 'test-client-id' }),
+    );
+    expect(res.status).toBe(404);
   });
 
   it('422 on POST /api/shows with a missing name', async () => {

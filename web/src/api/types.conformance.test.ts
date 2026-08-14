@@ -68,6 +68,8 @@ import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
 import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
 import { showCategories } from '../../../fixtures/api-responses/showCategories';
 import { showCreate } from '../../../fixtures/api-responses/showCreate';
+import { showDetail } from '../../../fixtures/api-responses/showDetail';
+import { showsList } from '../../../fixtures/api-responses/showsList';
 import { teamCreate } from '../../../fixtures/api-responses/teamCreate';
 import { teamDetailAdmin } from '../../../fixtures/api-responses/teamDetailAdmin';
 import { teamDetailMember } from '../../../fixtures/api-responses/teamDetailMember';
@@ -106,6 +108,7 @@ import type {
   SessionTopic,
   SessionUpdateResponse,
   Show,
+  ShowBrief,
   ShowCategoriesResponse,
   TeamCreateResponse,
   TeamDetail,
@@ -298,13 +301,15 @@ describe('CW-6 — SessionTopic declared a `session_id` the topics routes never 
     expect(listed).toHaveLength(1);
   });
 
-  it('`session_id` is absent from the captured topic — unlike the transcript-words rows', () => {
+  it('`session_id` is absent from the captured topic — and now from the transcript-words rows too', () => {
     expect('session_id' in topicCreate).toBe(false);
-    // The contrast that made this easy to get wrong, both sides captured in
-    // the same run: the transcript-words handlers DO spread
-    // `{...w, session_id}` onto every row.
+    // The contrast that made this easy to get wrong is gone, both sides
+    // captured in the same run: the transcript-words handlers used to spread
+    // `{...w, session_id}` onto every row; the wire trim replaced that with
+    // `wordApiDict`, which emits neither `session_id` nor `created_at_utc`.
     const word: TranscriptWord = transcriptWordsList.words[0];
-    expect(word.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+    expect('session_id' in word).toBe(false);
+    expect('created_at_utc' in word).toBe(false);
   });
 });
 
@@ -438,6 +443,50 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
     expect(check.auth.user?.teams.map((t) => t.role)).toEqual(['admin', 'member']);
   });
 
+  // profile-shows-slimming. `ProfilePayload.shows` is `ShowBrief[]`, and the
+  // point of the change is what the entries DON'T carry — so both directions
+  // are asserted: the captured entry is assignable to `ShowBrief` (type
+  // level), and the heavy fields are absent from the bytes (runtime level). A
+  // type-level check alone would pass on a fat entry, since additive tolerance
+  // is deliberate everywhere else in this file.
+  it('`profile.shows[]` entries are ShowBrief — no categories, no palettes', () => {
+    const brief: ShowBrief = profileAnonymous.shows[0];
+    expect(brief.id).toBeTruthy();
+    expect(['date', 'episode']).toContain(brief.title_suffix);
+
+    for (const fixture of [profileAnonymous, profileAuthenticated]) {
+      const show = fixture.shows[0];
+      expect(Object.keys(show).sort()).toEqual([
+        'id',
+        'name',
+        'show_code',
+        'studio_id',
+        'title_suffix',
+      ]);
+      expect('categories' in show).toBe(false);
+      expect('event_palette' in show).toBe(false);
+      expect('event_palette_preset' in show).toBe(false);
+      expect('event_palette_custom' in show).toBe(false);
+      // These directives go UNUSED (a compile error) the moment a re-capture
+      // starts emitting the field again — which is the signal to re-check
+      // `ShowBrief` and the two lazy hooks, not to delete the lines.
+      // @ts-expect-error `categories` is not on the captured brief entry
+      expect(show.categories).toBeUndefined();
+      // @ts-expect-error `event_palette` is not on the captured brief entry
+      expect(show.event_palette).toBeUndefined();
+    }
+  });
+
+  it('a full `Show` is NOT assignable from a brief profile entry', () => {
+    // The other direction of the split, stated once: the brief entry is
+    // structurally missing four required members of `Show`, so a consumer that
+    // keeps reading `profile.shows[]` as `Show` fails to compile rather than
+    // rendering an empty category list at runtime.
+    // @ts-expect-error ShowBrief is missing categories + the three palettes
+    const wrongWay: Show = profileAnonymous.shows[0];
+    expect(wrongWay.id).toBeTruthy();
+  });
+
   it('the logged-out + oauth-configured capture is assignable to ProfilePayload', () => {
     const check: ProfilePayload = profileLoggedOutOauth;
     expect(check.auth.logged_in).toBe(false);
@@ -454,14 +503,6 @@ describe('POST /api/shows — the created show', () => {
     const check: { show: Show } = showCreate;
     expect(check.show.show_code).toBe('ATS');
     expect(check.show.event_palette.length).toBeGreaterThan(0);
-
-    // …and `Show` itself, directly. The inline annotation above checks the same
-    // bytes, but only the bare-name assignment counts `Show` as fixture-checked
-    // for `apiResponseShapes.repo.test.ts` — coverage read out of an inline
-    // object type would be coverage inferred from a mention, which is the
-    // weaker property that guard was reported for asserting.
-    const show: Show = showCreate.show;
-    expect(show.id).toBe(check.show.id);
   });
 
   it('its categories are `ShowCategory`, i.e. `{label, needs_context}` options', () => {
@@ -472,6 +513,56 @@ describe('POST /api/shows — the created show', () => {
     expect(dropdown?.dropdown_options).toEqual([
       { label: 'Lav', needs_context: false },
       { label: 'Boom', needs_context: false },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two lazy full-show reads (profile-shows-slimming). These are where the
+// `Show` type is anchored now: `/api/profile` no longer emits one, and these
+// are the endpoints the web tier actually reads a full show FROM. The
+// `POST /api/shows` block above still checks its own response, but the bare
+// `Show` assignment — the one `apiResponseShapes.repo.test.ts` reads as
+// coverage for the `useStudioShows`/`useShow` call sites — lives here, on the
+// captures those two hooks fetch.
+// ---------------------------------------------------------------------------
+
+describe('GET /api/shows?studio_id=… — useStudioShows', () => {
+  it("the captured body is assignable to the call site's `{shows: Show[]}`", () => {
+    const check: { shows: Show[] } = showsList;
+    expect(check.shows.length).toBeGreaterThan(0);
+  });
+
+  it('every entry is a full `Show`, unlike the brief profile entry', () => {
+    const show: Show = showsList.shows[0];
+    expect(show.categories.length).toBeGreaterThan(0);
+    expect(show.event_palette.length).toBeGreaterThan(0);
+    expect(show.event_palette_custom.length).toBeGreaterThan(0);
+    expect(typeof show.event_palette_preset).toBe('string');
+    // …and it still carries everything `ShowBrief` promises, which is what
+    // lets HomeSettingsModal drive its show picker off this response alone.
+    const brief: ShowBrief = showsList.shows[0];
+    expect(brief.show_code).toBe(show.show_code);
+  });
+});
+
+describe('GET /api/shows/:showId — useShow', () => {
+  it("the captured body is assignable to the call site's `{show: Show}`", () => {
+    const check: { show: Show } = showDetail;
+    expect(check.show.show_code).toBe('ATS');
+  });
+
+  it('carries the per-button generation instructions the Custom modal reads', () => {
+    const show: Show = showDetail.show;
+    // EventGenerateCustomModal's entire input: `categories[].auto_instruction`
+    // and `categories[].dropdown_options[].auto_instruction`. The seeded
+    // categories carry neither key, so what this pins is that the OPTION
+    // OBJECTS survive the wire — the shape the instructions hang off.
+    const dropdown = show.categories.find((c) => c.type === 'DROPDOWN');
+    expect(dropdown).toBeDefined();
+    expect(dropdown?.dropdown_options).toEqual([
+      { label: 'Lav', needs_context: false },
+      { label: 'Boom', needs_context: true },
     ]);
   });
 });
@@ -520,9 +611,11 @@ describe('POST …/transcript-words — the created word', () => {
   it('the captured 201 body is assignable to TranscriptWord', () => {
     const check: TranscriptWord = transcriptWordCreate;
     expect(check.word).toBe('hello');
-    // The asymmetry CW-6 turns on, captured on the create route too: the
-    // transcript-words handlers spread `{...w, session_id}`; topics do not.
-    expect(check.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+    // The wire trim, captured on the create route too: the 201 body is the
+    // same `wordApiDict` projection as the list route — no `session_id`
+    // graft, no `created_at_utc`.
+    expect('session_id' in transcriptWordCreate).toBe(false);
+    expect('created_at_utc' in transcriptWordCreate).toBe(false);
   });
 });
 

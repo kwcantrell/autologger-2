@@ -883,3 +883,27 @@ describe('durTimer identity guard on stop-then-restart (fix-wave F6/D1)', () => 
     expect(durEl.textContent).toBe(textAtUnmount);
   });
 });
+
+describe('beforeunload registration is scoped to an active recording (bfcache)', () => {
+  it('an idle mount registers no beforeunload listener; starting a recording registers one', async () => {
+    // A registered `beforeunload` listener disqualifies the page from the
+    // back/forward cache on its mere presence — a handler that early-returns
+    // for every non-recording phase still costs bfcache for the whole mount
+    // span. So the registration itself, not just the handler body, is gated on
+    // the recording phase.
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const beforeUnloadRegistrations = () =>
+      addSpy.mock.calls.filter((call) => call[0] === 'beforeunload').length;
+    try {
+      const utils = renderRecorder();
+      expect(beforeUnloadRegistrations()).toBe(0);
+
+      await act(async () => {
+        await utils.ref.current?.toggle();
+      });
+      expect(beforeUnloadRegistrations()).toBe(1);
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+});

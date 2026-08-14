@@ -25,6 +25,13 @@ interface SelectProps {
    * activation that mounted it, since the freshly-mounted trigger cannot receive the
    * gesture that triggered the swap. */
   defaultOpen?: boolean;
+  /** Radix's own open/close signal, forwarded verbatim. Additive and optional —
+   * every other call site omits it and `RadixSelect.Root` behaves exactly as
+   * before. `EventLogRow` needs it because its listbox is portaled outside the
+   * virtualized row: while the dropdown is open, focus and DOM containment both
+   * say the row is no longer being edited, and the row would be unpinned (and
+   * then unmounted by an incoming event) mid-choice. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 // Shared trigger chrome, exported so a lazy stand-in (EventButtonsTable's inert
@@ -58,7 +65,19 @@ export function SelectChevronIcon() {
 }
 
 export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select(
-  { value, onChange, options, id, className, ariaLabel, placeholder, disabled, name, defaultOpen },
+  {
+    value,
+    onChange,
+    options,
+    id,
+    className,
+    ariaLabel,
+    placeholder,
+    disabled,
+    name,
+    defaultOpen,
+    onOpenChange,
+  },
   ref,
 ) {
   return (
@@ -68,6 +87,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select
       disabled={disabled}
       name={name}
       defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
     >
       <RadixSelect.Trigger
         ref={ref}

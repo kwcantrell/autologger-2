@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
+import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload } from '../../../api/types';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { HomeSettingsModal } from './HomeSettingsModal';
@@ -21,6 +22,21 @@ vi.mock('../../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
   useProfileMutation: vi.fn(),
   useCreateShow: vi.fn(),
+}));
+
+// profile-shows-slimming: the modal's DRAFT SOURCE is no longer `profile.shows`
+// (which is now brief — no categories, no palettes) but this studio-scoped
+// query. Mocked at the module boundary like the profile hooks, and driven by
+// `fullShows` below so a test can hold the answer in flight and assert on the
+// loading window the async source introduced.
+//
+// Only the HOOK is replaced: `showKeys` is spread through from the real module
+// so the invalidation assertions below build their expected keys with the same
+// factory production does. Hand-writing the key shapes here would let the two
+// drift apart silently, which is the whole reason the factory exists.
+vi.mock('../../../api/hooks/useShows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../api/hooks/useShows')>()),
+  useStudioShows: vi.fn(),
 }));
 
 // Shared across every `useQueryClient()` call (the component calls the hook fresh each
@@ -206,6 +222,7 @@ vi.mock('./EventButtonsTable', () => ({
 }));
 
 const mockedUseProfile = vi.mocked(useProfile);
+const mockedUseStudioShows = vi.mocked(useStudioShows);
 const mockedUseProfileMutation = vi.mocked(useProfileMutation);
 const mockedUseCreateShow = vi.mocked(useCreateShow);
 
@@ -252,10 +269,25 @@ const showWithCategories = {
   event_palette_custom: [],
 };
 
+/** `/api/profile` emits BRIEF entries (profile-shows-slimming). Derived from
+ * the full show rather than written out, so the two halves of every fixture
+ * below — what the profile says exists, and what `useStudioShows` serves —
+ * cannot drift apart. */
+function briefOf(show: {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: string;
+}) {
+  const { id, studio_id, name, show_code, title_suffix } = show;
+  return { id, studio_id, name, show_code, title_suffix };
+}
+
 const profileWithShow = {
   ...profile,
   active_show_id: 'show-1',
-  shows: [showWithCategories],
+  shows: [briefOf(showWithCategories)],
 } as unknown as ProfilePayload;
 
 // --- Derived-dirty fixtures (ui-refresh D11) ---
@@ -272,7 +304,7 @@ const secondShow = {
 const profileFull = {
   ...profile,
   active_show_id: 'show-1',
-  shows: [showWithCategories, secondShow],
+  shows: [showWithCategories, secondShow].map(briefOf),
   auth: {
     logged_in: true,
     oauth_configured: true,
@@ -286,14 +318,76 @@ const profileFull = {
 } as unknown as ProfilePayload;
 
 let mutateAsync: ReturnType<typeof vi.fn>;
+/** Structural stand-in for a full `Show` fixture. Deliberately loose about
+ * `categories`: individual tests widen it (per-option `auto_instruction`), and
+ * `typeof showWithCategories` would infer those arrays as `never[]`. */
+type FullShowFixture = {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: string;
+  categories: Array<Record<string, unknown>>;
+  event_palette: string[];
+  event_palette_preset: string;
+  event_palette_custom: string[];
+};
+
+/** The full show configs `GET /api/shows?studio_id=…` would serve, across all
+ * studios; the mock filters them by the requested studio. */
+let fullShows: FullShowFixture[] = [];
+/** `null` while the studio-shows answer is deliberately held in flight. */
+let studioShowsPending = false;
+/** Set when `GET /api/shows?studio_id=…` should come back a hard failure. Distinct from
+ * `studioShowsPending`: an errored query is an answer (`isError`), a pending one is not. */
+let studioShowsFailed = false;
+/** Set when the browser is OFFLINE and react-query has PAUSED the fetch (`networkMode:
+ * 'online'`, the default). A third state distinct from both of the above: no answer came
+ * back (`isError` stays false) and none is on its way either (`fetchStatus: 'paused'`, with
+ * `isPending` stuck true for as long as the network is down). */
+let studioShowsPaused = false;
+/** The query's own `refetch`, so the Retry path is assertable. */
+let studioShowsRefetch: ReturnType<typeof vi.fn>;
+
+/** Points BOTH of the modal's data sources at one fixture: the profile (brief
+ * entries) and the studio-shows query (full configs). Every test that swaps the
+ * profile has to swap both, or the modal would list shows it cannot hydrate. */
+function useProfileWith(p: ProfilePayload, shows: FullShowFixture[] = []) {
+  mockedUseProfile.mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
+  fullShows = shows;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fullShows = [];
+  studioShowsPending = false;
+  studioShowsFailed = false;
+  studioShowsPaused = false;
+  studioShowsRefetch = vi.fn();
+  mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+    // Mirrors the real hook: DISABLED on a null id (the closed-modal case), so
+    // `isSuccess` stays false and no data is handed back — and a disabled query never
+    // errors, which is why `isError` is keyed off the id as well as the flag.
+    const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
+    if (!studioId) return { ...pending, isError: false };
+    if (studioShowsFailed) return { ...pending, isError: true };
+    // Offline HOLD: pending forever, never erroring — the shape react-query reports while
+    // `networkMode: 'online'` withholds the fetch.
+    if (studioShowsPaused)
+      return { ...pending, isError: false, isPending: true, fetchStatus: 'paused' };
+    if (studioShowsPending) return { ...pending, isError: false };
+    return {
+      data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+      isSuccess: true,
+      isError: false,
+      refetch: studioShowsRefetch,
+    };
+  }) as unknown as typeof useStudioShows);
   eventButtonsMountCount.current = 0;
   dialogRenderCount.current = 0;
   normalizePalette9CallCount.current = 0;
   mutateAsync = vi.fn().mockResolvedValue({});
-  mockedUseProfile.mockReturnValue({ data: profile } as unknown as ReturnType<typeof useProfile>);
+  useProfileWith(profile);
   mockedUseProfileMutation.mockReturnValue({
     mutateAsync,
     isPending: false,
@@ -365,9 +459,7 @@ describe('HomeSettingsModal studio-switch save branch', () => {
     // snapshot, and re-selecting the originally-active studio round-trips back to that
     // snapshot (view-only selection must not read dirty) — so arming Save here without
     // touching the active studio requires a real fixture with an editable show/account field.
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
     const onCloseSession = vi.fn();
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={onCloseSession} />);
 
@@ -410,9 +502,7 @@ describe('HomeSettingsModal session-list refetch on save', () => {
 // back to the initial value (studio/show re-selection) must read clean again.
 describe('HomeSettingsModal derived dirty tracking', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
   });
 
   it('starts with Save disabled and labeled "Saved"', () => {
@@ -469,9 +559,7 @@ describe('HomeSettingsModal derived dirty tracking', () => {
 // `show_updates[].categories` — both must use the wire key `name`, not `label`.
 describe('HomeSettingsModal category round-trip', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('hydrates existing category names (non-blank) from a name-keyed show', () => {
@@ -534,9 +622,10 @@ describe('HomeSettingsModal category round-trip', () => {
         },
       ],
     };
-    mockedUseProfile.mockReturnValue({
-      data: { ...profileWithShow, shows: [showWithInstructions] },
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(
+      { ...profileWithShow, shows: [briefOf(showWithInstructions)] } as ProfilePayload,
+      [showWithInstructions],
+    );
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
@@ -635,9 +724,7 @@ describe('HomeSettingsModal category round-trip', () => {
 // shows (design D7).
 describe('HomeSettingsModal Suffix control', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('renders the Suffix select immediately after Code, and no Next Ep control exists', () => {
@@ -700,9 +787,7 @@ describe('HomeSettingsModal Suffix control', () => {
 // runs after things settle.
 describe('HomeSettingsModal defers inactive tab content', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
   });
 
   it('opening mounts only General’s content while all four aria-controls targets resolve', () => {
@@ -775,9 +860,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
   });
 
   it('editing General and saving without ever activating Event Buttons still submits the same show_updates', async () => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
@@ -826,9 +909,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
 // two collaborators that are only reachable through the wasted work.
 describe('HomeSettingsModal costs nothing while closed', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('does not hydrate drafts or initialise form state while closed', () => {
@@ -890,5 +971,681 @@ describe('HomeSettingsModal costs nothing while closed', () => {
 
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+  });
+});
+
+// --- Async draft source (profile-shows-slimming, A4/B7) ---
+//
+// `/api/profile` no longer carries per-show categories or palettes, so the
+// drafts this modal edits are hydrated from `useStudioShows(studioId)` — a
+// second request that resolves AFTER the profile. Everything below is about
+// the window that opens up between those two: the modal must not present an
+// empty-looking shows section as the answer, must not let a Save go out
+// against drafts it has not built yet, and must rebuild — exactly once — when
+// the selected studio changes.
+const studioTwoShow = {
+  ...showWithCategories,
+  id: 'show-3',
+  studio_id: 'studio-2',
+  name: 'Late Night',
+  show_code: 'LN',
+};
+
+describe('HomeSettingsModal shows arrive asynchronously', () => {
+  it('issues no shows request while closed', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(mockedUseStudioShows).toHaveBeenCalled();
+    // Every call passes null — the hook is disabled on a null id, so a closed
+    // modal costs no request (the same "costs nothing while closed" property
+    // the block above pins for hydration).
+    for (const call of mockedUseStudioShows.mock.calls) expect(call[0]).toBeNull();
+  });
+
+  it('skeletons the shows section and disables Save until the studio’s shows arrive', () => {
+    studioShowsPending = true;
+    useProfileWith(profileWithShow, [showWithCategories]);
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    // No show details, no "No shows for this team yet" (which would be a WRONG
+    // answer, not a pending one), and the picker is disabled rather than
+    // offering an empty list.
+    expect(screen.queryByLabelText('Name:')).toBeNull();
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+    expect(screen.queryByText('No shows for this team yet. Add one below.')).toBeNull();
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+    // Add-New-Show is `hidden` this early (the studio selection is only
+    // committed by the same effect that builds the drafts), so there is no
+    // window in which a show can be created into a draft map about to be
+    // replaced.
+    expect(screen.queryByRole('button', { name: /Add New Show/ })).toBeNull();
+
+    studioShowsPending = false;
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+  });
+
+  it('distinguishes "still loading" from "this team has no shows"', () => {
+    useProfileWith(profileWithShow, []);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'No shows for this team yet. Add one below.',
+    );
+  });
+
+  it('rebuilds drafts from the newly selected studio’s shows', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+
+    // The new studio's show, hydrated from ITS response — never the previous
+    // studio's draft left standing under a new team label.
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Late Night');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-3');
+    const options = Array.from(
+      (screen.getByLabelText('Show to edit') as HTMLSelectElement).options,
+    ).map((o) => o.value);
+    expect(options).toEqual(['show-3']);
+  });
+
+  it('does not clobber unsaved edits when the shows response is re-delivered', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+
+    // A refetch (this modal triggers its own on save and on add-show) re-runs
+    // the hydration effect's deps. The rebuild is keyed on the STUDIO having
+    // changed, not on the data arriving, so the in-progress edit survives.
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Renamed Show');
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('invalidates both lazy show caches on save, alongside show-categories', async () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // Without these two, a 30s-stale cache would keep serving pre-edit
+    // categories to the settings modal itself and to
+    // EventGenerateCustomModal.
+    await waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: showKeys.allStudios() }),
+    );
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: showKeys.all() });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['show-categories'] });
+  });
+
+  // --- Scoped show invalidation (PR review finding 4c) ---
+  //
+  // Both show roots are BARE prefixes: dropping them invalidates every studio's
+  // list and every per-show entry, so a save that carried no `show_updates` at
+  // all would still refetch every show's full config for changes no show
+  // payload reflects.
+  it('does not invalidate either show cache when the save carried no show_updates', async () => {
+    // A studio with no shows: `show_updates` is built from the studio-shows
+    // response, so it comes out empty and the body omits the key entirely.
+    // Save is armed from an account field instead (profileFull is logged in).
+    useProfileWith(profileFull, []);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ show_updates: undefined });
+    // The unrelated invalidations still fire — this is a scoping fix, not a
+    // removal, so a passing assertion here is not just "nothing ran".
+    await waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['sessions'] }),
+    );
+    expect(invalidateQueriesMock).not.toHaveBeenCalledWith({ queryKey: showKeys.allStudios() });
+    expect(invalidateQueriesMock).not.toHaveBeenCalledWith({ queryKey: showKeys.all() });
+  });
+});
+
+// --- A→B→A studio round-trip over an unresolved B (PR review finding 1) ---
+//
+// The rebuild effect is idempotent per studio (`draftsStudioId === targetStudioId`
+// declines a second build), and it early-returns while the target studio's shows
+// are still in flight. Those two together are a trap if a studio switch does not
+// also clear `draftsStudioId`: switching to an uncached studio leaves the marker
+// pointing at the PREVIOUS studio, so switching back finds marker === target and
+// never rebuilds — the drafts stay empty for the rest of the open, the
+// dirty-compare (empty map vs. the snapshot's) arms Save, and that save posts no
+// `show_updates` at all. Held in flight for the whole test, since the bug is
+// about the return trip happening BEFORE B ever answers.
+describe('HomeSettingsModal studio round-trip while the other studio is still in flight', () => {
+  it('rebuilds the original studio’s drafts, and Save stays disarmed', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+      // studio-2 never answers; studio-1 is already cached (its answer is what
+      // the return trip must rebuild from).
+      if (!studioId || studioId === 'studio-2') return { data: undefined, isSuccess: false };
+      return {
+        data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+        isSuccess: true,
+      };
+    }) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-1' } });
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+    // The rebuild reproduces the snapshot's bytes, so the view-only round trip
+    // reads clean (D11) rather than arming Save over an empty draft map.
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+  });
+});
+
+// --- Failed shows fetch (PR review finding 2) ---
+//
+// `showsLoaded` only ever flips on `isSuccess`, so an errored
+// `GET /api/shows?studio_id=…` used to leave the section on its loading
+// skeleton forever: no message, no retry, and nothing else in the modal
+// re-arms it short of a reopen.
+describe('HomeSettingsModal shows-fetch failure', () => {
+  it('shows an error and a working Retry instead of a permanent skeleton', () => {
+    const refetch = vi.fn();
+    useProfileWith(profileWithShow, [showWithCategories]);
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => ({
+      data: undefined,
+      isSuccess: false,
+      // Disabled (closed-modal) queries never error; only the enabled one does.
+      isError: Boolean(studioId),
+      refetch,
+    })) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+    // No FALSE pending claim anywhere — neither the placeholder nor the show
+    // picker may still say the answer is on its way.
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+    // Save stays disabled: `showsReady` is unreachable, so there is nothing
+    // honest to submit for the shows section.
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer Add-New-Show over a section that failed to load', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // The account init commits the studio selection immediately now, so this is no longer
+    // hidden as a side effect of `activeStudioId` being empty — it is hidden on purpose.
+    expect(screen.queryByRole('button', { name: /Add New Show/ })).toBeNull();
+  });
+
+  it('says the same thing on the Event Buttons tab', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => ({
+      data: undefined,
+      isSuccess: false,
+      isError: Boolean(studioId),
+      refetch: vi.fn(),
+    })) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+
+    expect(screen.getAllByText('Couldn’t load shows.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+  });
+});
+
+// --- Offline-PAUSED shows fetch (PR review finding: missing third state) ---
+//
+// react-query's default `networkMode: 'online'` HOLDS a fetch while the browser is offline:
+// `isPending` stays true and `isError` stays false for as long as the network is down. So
+// the query is neither `isSuccess` (which is all `showsLoaded` watches) nor `isError` (which
+// is all the failure branch watched) — read as "loading", it stranded the shows section on
+// "Loading shows…" indefinitely, with Add-New-Show hidden, the picker disabled, and the only
+// Retry in the unreachable error branch. `EventGenerateCustomModal` draws the same
+// paused-vs-loading distinction over its own `useShow`.
+describe('HomeSettingsModal offline-paused shows fetch', () => {
+  it('names the offline hold instead of claiming an indefinite load, and offers no dead Retry', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'You’re offline — can’t load shows.',
+    );
+    // Specifically NOT the loading hint, in the placeholder OR the picker: nothing is in
+    // flight to finish.
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).textContent).toBe(
+      '— Offline —',
+    );
+
+    // No Retry: `refetch()` on a PAUSED query hits query-core's `continueRetry()` branch and
+    // returns the pending promise without starting a fetch, so the button was a dead control.
+    // The honest affordance is the recovery sentence — `onlineManager` resumes the query on
+    // reconnect by itself.
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(document.getElementById('profile-shows-offline-recovery')?.textContent).toBe(
+      'Shows will load on their own once you’re back online.',
+    );
+  });
+
+  it('says the same thing on the Event Buttons tab', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+
+    expect(screen.getAllByText('You’re offline — can’t load shows.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+  });
+
+  it('says nothing about a paused BACKGROUND refetch over drafts already on screen', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => ({
+      data: studioId ? { shows: fullShows.filter((s) => s.studio_id === studioId) } : undefined,
+      isSuccess: Boolean(studioId),
+      isError: false,
+      // Paused, but NOT pending: the data is already in hand, so the hold withholds nothing.
+      isPending: false,
+      fetchStatus: 'paused',
+      refetch: studioShowsRefetch,
+    })) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect(screen.queryByText('You’re offline — can’t load shows.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('leaves a genuinely in-flight fetch on the loading hint, with no Retry', () => {
+    // The mirror of the first test: a real request IS on its way, so the honest hint is the
+    // pending one — the offline copy must not swallow the ordinary loading window.
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPending = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+    expect(screen.queryByText('You’re offline — can’t load shows.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+});
+
+// --- Account scope survives an unavailable shows query (PR review finding 2) ---
+//
+// The draft/init gating used to couple EVERYTHING to `useStudioShows`: the init effect —
+// which also hydrates the ACCOUNT fields from the profile — was gated on `showsLoaded`, so
+// a 500 or a hung `GET /api/shows?studio_id=…` left the name fields empty, took no
+// snapshot, never armed `dirty`, and disabled Save via `!showsReady`. The save handler's
+// account-only branch (a body with no `show_updates`) was unreachable, even though the
+// profile it needs is always in hand before the modal can open.
+//
+// Both failure shapes are pinned, because they are different states: an errored query is an
+// answer, a pending one is not — and the coupling bricked the account scope under both.
+describe('HomeSettingsModal account scope is independent of the shows query', () => {
+  /** The body as it goes ON THE WIRE. `handleSave` always sets the `show_updates` KEY (to
+   * `undefined` when there is nothing to send), so an in-memory property check cannot tell
+   * "omitted" from "present and empty" — and it is the serialized form that decides whether
+   * the server sees a show update at all. */
+  function wireBody(call: unknown[]) {
+    return JSON.parse(JSON.stringify(call[0])) as Record<string, unknown>;
+  }
+
+  async function editAccountNameAndSave() {
+    expect((screen.getByLabelText('First name') as HTMLInputElement).value).toBe('Ada');
+    expect((screen.getByLabelText('Last name') as HTMLInputElement).value).toBe('Lovelace');
+    // Nothing edited yet — Save is disabled because the form is CLEAN, not because the
+    // shows query is unavailable.
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(save);
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = wireBody(mutateAsync.mock.calls[0]);
+    expect(body.given_name).toBe('Grace');
+    expect(body.family_name).toBe('Lovelace');
+    expect(body.active_studio_id).toBe('studio-1');
+    expect(body.settings).toEqual({ default_frame_rate: 24 });
+    // The account-only branch, byte for byte: no `show_updates` — sending an empty or partial
+    // one here would post over server state the modal never managed to read.
+    expect(body).not.toHaveProperty('show_updates');
+    // `active_show_id`, by contrast, must be PRESENT and carry the server's own current
+    // value. Omitting it is not "leave unchanged": the route resets the active show to the
+    // studio's first show whenever the field is missing. See the dedicated describe below.
+    expect(body.active_show_id).toBe('show-1');
+  }
+
+  it('hydrates and saves the account scope while the shows fetch is ERRORING', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // The shows section still reports its own failure and keeps its Retry — decoupling the
+    // account scope must not paper over the error. The Retry is real on THIS side: an errored
+    // query has an idle fetchStatus, so `refetch()` starts a fresh fetch.
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toBeNull();
+    expect(document.getElementById('profile-shows-offline-recovery')).toBeNull();
+
+    await editAccountNameAndSave();
+  });
+
+  it('hydrates and saves the account scope while the shows fetch is PAUSED (offline)', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // The shows section names its own offline hold and says how it recovers — the half-dead
+    // section is the confusing part precisely because the account scope stays live, so it
+    // has to explain itself. No Retry: it would do nothing on a paused query.
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'You’re offline — can’t load shows.',
+    );
+    expect(document.getElementById('profile-shows-offline-recovery')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+
+    await editAccountNameAndSave();
+  });
+
+  it('hydrates and saves the account scope while the shows fetch is still IN FLIGHT', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsPending = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+
+    await editAccountNameAndSave();
+  });
+
+  it('picks the shows scope back up after a retry — the account-only save baselined nothing', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsFailed = true;
+
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+    await editAccountNameAndSave();
+
+    // Retry succeeds.
+    studioShowsFailed = false;
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    // The drafts hydrate now and read CLEAN: the account-only save must not have
+    // rebaselined the (then-empty, meaning "unknown") shows scope, or every field the retry
+    // just delivered would read as an unsaved edit.
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+
+    // And the shows scope now saves normally, alongside the already-saved account fields.
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    const body = wireBody(mutateAsync.mock.calls[1]);
+    expect(body.active_show_id).toBe('show-1');
+    expect(
+      (body.show_updates as Array<{ show_id: string; name: string }>).map((u) => [
+        u.show_id,
+        u.name,
+      ]),
+    ).toEqual([
+      ['show-1', 'Renamed Show'],
+      ['show-2', 'Evening News'],
+    ]);
+  });
+});
+
+// --- The shows baseline is keyed to the STUDIO, not to the open (PR review finding 1) ---
+//
+// The two mechanisms above compose into a trap when the baseline is taken once per OPEN
+// while the DRAFTS are rebuilt per studio: open on studio-1 (baseline taken), switch to
+// studio-2 while its fetch is failing (drafts cleared, no rebuild, so the account-only save
+// below correctly declines to rebaseline the shows scope), then Retry. The rebuild for
+// studio-2 lands against studio-1's baseline, and every field it just delivered reads as an
+// unsaved edit: Save armed over a form nobody touched, a discard warning on close, and a
+// redundant full `show_updates` for studio-2 on the next save. The account-only save is
+// load-bearing in the sequence — it is what clears `accountDirty` (which the studio switch
+// itself arms) and so exposes the shows scope's phantom dirtiness on its own.
+describe('HomeSettingsModal shows baseline follows the selected studio', () => {
+  it('studio switch over a failed fetch, account-only save, then Retry reads clean', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    // studio-1 answers from the start; studio-2 fails until the Retry below.
+    let studioTwoDown = true;
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+      const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
+      if (!studioId) return { ...pending, isError: false };
+      if (studioId === 'studio-2' && studioTwoDown) return { ...pending, isError: true };
+      return {
+        data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+        isSuccess: true,
+        isError: false,
+        refetch: studioShowsRefetch,
+      };
+    }) as unknown as typeof useStudioShows);
+
+    const onClose = vi.fn();
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />,
+    );
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    // Account-only save: posts the new studio pointer, rebaselines the account scope, and
+    // skips the shows scope (nothing was on screen to baseline).
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(JSON.stringify(mutateAsync.mock.calls[0][0]))).not.toHaveProperty(
+      'show_updates',
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true),
+    );
+
+    // Retry succeeds: studio-2's drafts finally hydrate.
+    studioTwoDown = false;
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Late Night');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-3');
+    // Baselined against studio-2's own drafts, so the untouched form reads CLEAN…
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+    // …and closing raises no phantom discard warning.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('You have unsaved settings changes. Discard them?')).toBeNull();
+  });
+});
+
+// --- `active_show_id` survives an account-only save (PR review, review-3 follow-up) ---
+//
+// Decoupling the account scope from the shows query made an account-only save reachable
+// while `GET /api/shows?studio_id=…` is erroring or in flight. In exactly that state
+// `activeShowId` is `''` (only the shows-init effect populates it, and it needs
+// `showsReady`), and `handleSave` used to post `activeShowId || undefined`.
+//
+// An ABSENT `active_show_id` is NOT "leave unchanged" server-side. `server/src/routers/
+// profile.ts`:
+//   const rawActiveShow = (body.active_show_id ?? '').trim();
+//   … else { nextShow = showsNow.length ? String(showsNow[0].id) : ''; }
+// — a missing or blank field RESETS the caller to the studio's first show. So editing a
+// display name while the shows fetch was down silently re-pointed the user's active show,
+// changing the event-button strip and the new-session defaults. (Before
+// profile-shows-slimming `profile.shows` was synchronous, so `activeShowId` was always
+// populated by save time and the omission never fired.)
+describe('HomeSettingsModal preserves the active show on an account-only save', () => {
+  function wireBody(call: unknown[]) {
+    return JSON.parse(JSON.stringify(call[0])) as Record<string, unknown>;
+  }
+
+  async function editNameAndSave() {
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return wireBody(mutateAsync.mock.calls[0]);
+  }
+
+  it('echoes the profile’s active show back while the shows fetch is ERRORING', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    // Precondition: the selector never hydrated, so the modal holds no selection of its own.
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    const body = await editNameAndSave();
+    expect(body.given_name).toBe('Grace');
+    // The whole point: on the wire, and equal to what the server already has — so the save
+    // is a genuine no-op for show selection rather than a reset to `show-1`-by-accident.
+    expect(body.active_show_id).toBe(profileFull.active_show_id);
+  });
+
+  it('echoes it back while the shows fetch is still IN FLIGHT', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsPending = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+
+    expect((await editNameAndSave()).active_show_id).toBe('show-1');
+  });
+
+  it('a profile with a show that is not first in the list is preserved, not re-picked', async () => {
+    // `show-2` is the active one while `show-1` sorts first, so an omitted field would be
+    // observably WRONG rather than coincidentally right — this is the mutation-check case.
+    useProfileWith({ ...profileFull, active_show_id: 'show-2' } as ProfilePayload, [
+      showWithCategories,
+      secondShow,
+    ]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((await editNameAndSave()).active_show_id).toBe('show-2');
+  });
+
+  it('still posts the user’s selection on the loaded happy path', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    // Hydrated from the profile, then switched by hand.
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+    fireEvent.change(screen.getByLabelText('Show to edit'), { target: { value: 'show-2' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(wireBody(mutateAsync.mock.calls[0]).active_show_id).toBe('show-2');
+  });
+
+  // The two cases where OMITTING the field is the correct wire shape, both preserved.
+  it('omits it for a studio that genuinely has no shows', async () => {
+    // Loaded, empty: `showsReady` is true and there is no selection to preserve. The
+    // profile's stale `show-1` belongs to no show here, so echoing it would 400.
+    useProfileWith(profileFull, []);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const body = await editNameAndSave();
+    expect(body).not.toHaveProperty('active_show_id');
+  });
+
+  it('omits it mid-switch, when the profile’s show belongs to the OLD team', async () => {
+    // Switched to studio-2 while ITS shows are unavailable. `profile.active_show_id` is a
+    // studio-1 show, which the route rejects with 400 ("must belong to the selected team") —
+    // and a team switch legitimately re-picks the show anyway.
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    let studioTwoDown = true;
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+      const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
+      if (!studioId) return { ...pending, isError: false };
+      if (studioId === 'studio-2' && studioTwoDown) return { ...pending, isError: true };
+      return {
+        data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+        isSuccess: true,
+        isError: false,
+        refetch: studioShowsRefetch,
+      };
+    }) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    const body = await editNameAndSave();
+    expect(body.active_studio_id).toBe('studio-2');
+    expect(body).not.toHaveProperty('active_show_id');
+    studioTwoDown = false;
   });
 });

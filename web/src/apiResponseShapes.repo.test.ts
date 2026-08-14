@@ -1332,6 +1332,19 @@ const EXEMPTIONS: readonly Exemption[] = [
       'a 200 at all — a capture is the right answer if this shape ever grows beyond the two-key literal.',
   },
 
+  // --- `apiFetch<AudioSyncFromDiskResponse>` — perf-fixes B3 (replaces the raw
+  // `fetch` d11 site: the response is no longer discarded).
+  {
+    key: 'pages/index/hooks/useAudioClips.ts :: apiFetch<AudioSyncFromDiskResponse>(`sessions/<var>/audio/segments/sync-from-disk`) [POST]',
+    reason:
+      'perf-fixes B3 — the sync-from-disk POST now consumes its counts-only body (`{inserted, updated, ' +
+      'scanned, has_audio}`, the perf-fixes A3 server shape replacing the discarded full-segments echo): ' +
+      'only `inserted` is read, gating one audio-segments invalidation. Not fixture-covered yet: the A3 ' +
+      'shape lands in a parallel server workstream on this branch, so no CaptureSpec exists to back a ' +
+      'conformance assignment — a capture (a POST beside audioSegmentCreate/audioSegmentsList in ' +
+      'apiResponseFixtures.int.test.ts) is the right follow-up once the server shape is on main.',
+  },
+
   // --- Types declared OUTSIDE `api/types.ts` — captured AND fixture-checked,
   // but structurally invisible to this guard's covered-set, which only counts
   // a name the site's file imports from the canonical `api/types` module
@@ -1450,10 +1463,6 @@ const EXEMPTIONS: readonly Exemption[] = [
   {
     key: 'pages/index/components/aiV2/dashboardPersistence.ts :: fetch(`/api/sessions/<var>/ai/v2/dashboard<var>`) [PUT]',
     reason: 'audit §4 d3 — the PUT request; its success body is never read.',
-  },
-  {
-    key: 'pages/index/hooks/useAudioClips.ts :: fetch(`/api/sessions/<var>/audio/segments/sync-from-disk`) [POST]',
-    reason: 'audit §4 d11 — sync-from-disk POST; the response is fully discarded.',
   },
   {
     key: 'shared/utils/waveformDecode.ts :: fetch(url)',

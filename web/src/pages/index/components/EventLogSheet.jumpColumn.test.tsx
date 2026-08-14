@@ -32,6 +32,33 @@ vi.mock('../../../api/client', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
+// `@tanstack/react-virtual` is mocked to render every row unconditionally:
+// jsdom has no layout engine, so `EventLogSheet`'s real virtualizer measures
+// a zero-height scroll viewport and computes an empty visible range — a
+// known test-infrastructure gap recorded in design.md's panel log. That gap
+// is orthogonal to what this test drives (the jump column, not virtualization),
+// so it's bypassed here rather than routed around per-test.
+// (Spread over the real module rather than replaced: EventLogSheet also imports
+// `defaultRangeExtractor` for its pinned-row `rangeExtractor`, and a
+// replacement factory would hand it `undefined`.)
+vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
+    const size = estimateSize();
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          start: index * size,
+          end: (index + 1) * size,
+          key: index,
+        })),
+      getTotalSize: () => count * size,
+      scrollToIndex: () => {},
+    };
+  },
+}));
+
 const mockedApiFetch = vi.mocked(apiFetch);
 
 const SESSION_ID = 'sess-jump-col-1';

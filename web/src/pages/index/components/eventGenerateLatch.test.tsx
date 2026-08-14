@@ -8,6 +8,7 @@ import type {
   LogEvent,
   ProfilePayload,
   SessionStatus,
+  Show,
   ShowCategoriesResponse,
 } from '../../../api/types';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
@@ -141,6 +142,10 @@ function customProfileFixture(): ProfilePayload {
     active_studio: { id: 'studio-1', name: 'Studio', categories: [] },
     studios: [{ id: 'studio-1', name: 'Studio' }],
     studio_settings: {},
+    // profile-shows-slimming: profile carries BRIEF entries only. The
+    // per-button/per-option `auto_instruction`s the Custom modal lists come
+    // from `GET /api/shows/:showId` (`customShowFixture` below) — which is
+    // also why this fixture alone no longer makes that modal render anything.
     shows: [
       {
         id: 'show-1',
@@ -148,43 +153,56 @@ function customProfileFixture(): ProfilePayload {
         name: 'Show',
         show_code: 'SHOW',
         title_suffix: 'date',
-        categories: [
-          {
-            id: 'general',
-            name: 'General',
-            color: '#4488ff',
-            type: 'BUTTON',
-            dropdown_options: [],
-            on_label: '',
-            off_label: '',
-            auto_instruction: 'Log notable moments',
-          },
-          {
-            id: 'camera',
-            name: 'Camera',
-            color: '#22aa88',
-            type: 'DROPDOWN',
-            dropdown_options: [
-              {
-                label: 'Wide',
-                needs_context: false,
-                auto_instruction: 'Log a wide camera change',
-              },
-              { label: 'Close', needs_context: false },
-            ],
-            on_label: '',
-            off_label: '',
-            auto_instruction: 'Log camera discussion',
-          },
-        ],
-        event_palette: [],
-        event_palette_preset: '',
-        event_palette_custom: [],
       },
     ],
     new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
     admin: { restart_supported: false, restart_needs_token: false },
     auth: { logged_in: false, oauth_configured: false, user: null },
+  };
+}
+
+/** `GET /api/shows/show-1` — the full show config behind the Custom modal. */
+function customShowFixture(): { show: Show } {
+  return {
+    show: {
+      id: 'show-1',
+      studio_id: 'studio-1',
+      name: 'Show',
+      show_code: 'SHOW',
+      title_suffix: 'date',
+      categories: [
+        {
+          id: 'general',
+          name: 'General',
+          color: '#4488ff',
+          type: 'BUTTON',
+          dropdown_options: [],
+          on_label: '',
+          off_label: '',
+          auto_instruction: 'Log notable moments',
+        },
+        {
+          id: 'camera',
+          name: 'Camera',
+          color: '#22aa88',
+          type: 'DROPDOWN',
+          dropdown_options: [
+            {
+              label: 'Wide',
+              needs_context: false,
+              auto_instruction: 'Log a wide camera change',
+            },
+            { label: 'Close', needs_context: false },
+          ],
+          on_label: '',
+          off_label: '',
+          auto_instruction: 'Log camera discussion',
+        },
+      ],
+      event_palette: [],
+      event_palette_preset: '',
+      event_palette_custom: [],
+    },
   };
 }
 
@@ -198,6 +216,8 @@ function mockRoutes(
     /** Served ONLY to the workspace-wide query (`limit=2000`); defaults to `events`. */
     workspaceEvents?: EventsResponse;
     profile?: unknown;
+    /** `GET /api/shows/:showId` — the Custom modal's category source. */
+    show?: unknown;
     statusShowId?: string | null;
   } = {},
 ): { count: number; bodies: unknown[] } {
@@ -214,6 +234,10 @@ function mockRoutes(
     }
     if (path.includes('/show-categories')) {
       return showCategoriesFixture(opts.instructionsPresent ?? true);
+    }
+    if (path.startsWith('shows/')) {
+      if (opts.show === undefined) throw new Error(`unexpected show fetch: ${path}`);
+      return opts.show;
     }
     if (path === 'profile') {
       return (
@@ -480,6 +504,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
   it('opens Custom without a request, requires a selection, and posts selection only', async () => {
     const calls = mockRoutes(() => Promise.resolve({ created: 2, cap_hit: false }), {
       profile: customProfileFixture(),
+      show: customShowFixture(),
       statusShowId: 'show-1',
     });
     renderSheet(SESSION_A);

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
-// Side-effect import: installs the module-scope `beforeunload` listener that
-// covers "queue non-empty or upload in-flight" (design D6) the moment this
-// module is evaluated — independent of whether the banner ever renders
-// visible content, and independent of `AudioRecorder`'s own lifecycle. See
-// chunkLeaveWarning.ts for why this can't be a component effect.
+// Side-effect import: starts the module-scope queue subscription that covers
+// "queue non-empty or upload in-flight" (design D6) the moment this module is
+// evaluated — independent of whether the banner ever renders visible content,
+// and independent of `AudioRecorder`'s own lifecycle. The `beforeunload`
+// listener itself is attached only while the queue actually holds something
+// (bfcache). See chunkLeaveWarning.ts for why this can't be a component effect.
 import '../utils/chunkLeaveWarning';
 import {
   type ChunkUploadQueue,
+  type ChunkUploadQueueDeps,
   getChunkUploadQueue,
   type QueuedChunk,
 } from '../utils/chunkUploadQueue';
@@ -213,31 +215,39 @@ function ChunkRow({ chunk, queue, confirm }: ChunkRowProps) {
   );
 }
 
+/**
+ * `getChunkUploadQueue`'s `deps` are consulted only on the singleton's FIRST
+ * construction anywhere in the tab (module doc comment) — real
+ * upload/listSegments deps come from `AudioRecorder.tsx`'s `buildQueueDeps`.
+ * These placeholders are a landmine-avoidance fallback only, never expected to
+ * run: `SessionWorkspace` renders `<AudioRecorder>` before
+ * `<ChunkRescueBanner>` in the same JSX parent, and React renders siblings in
+ * document order within one commit, so `AudioRecorder`'s render always
+ * constructs the singleton (with real deps) first. If that ordering were ever
+ * violated, failing loudly here (rather than silently swallowing uploads) is
+ * deliberate — an unexpected pump() rejection surfaces via the Retry button's
+ * own catch below, not a data-loss no-op.
+ *
+ * Hoisted to module scope rather than built per render: the object is inert
+ * after first construction, so allocating a fresh literal on every render of a
+ * component that re-renders with playback was pure garbage.
+ */
+const FALLBACK_QUEUE_DEPS: ChunkUploadQueueDeps = {
+  upload: async () => {
+    throw new Error(
+      'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
+    );
+  },
+  listSegments: async () => {
+    throw new Error(
+      'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
+    );
+  },
+  clock: { now: () => Date.now() },
+};
+
 export function ChunkRescueBanner() {
-  // `getChunkUploadQueue`'s `deps` are consulted only on the singleton's
-  // FIRST construction anywhere in the tab (module doc comment) — real
-  // upload/listSegments deps come from `AudioRecorder.tsx`'s `buildQueueDeps`.
-  // These placeholders are a landmine-avoidance fallback only, never expected
-  // to run: `SessionWorkspace` renders `<AudioRecorder>` before
-  // `<ChunkRescueBanner>` in the same JSX parent, and React renders siblings
-  // in document order within one commit, so `AudioRecorder`'s render always
-  // constructs the singleton (with real deps) first. If that ordering were
-  // ever violated, failing loudly here (rather than silently swallowing
-  // uploads) is deliberate — an unexpected pump() rejection surfaces via the
-  // Retry button's own catch below, not a data-loss no-op.
-  const queue = getChunkUploadQueue({
-    upload: async () => {
-      throw new Error(
-        'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
-      );
-    },
-    listSegments: async () => {
-      throw new Error(
-        'chunkUploadQueue: ChunkRescueBanner constructed the singleton before AudioRecorder',
-      );
-    },
-    clock: { now: () => Date.now() },
-  });
+  const queue = getChunkUploadQueue(FALLBACK_QUEUE_DEPS);
   const snapshot = useQueueSnapshot(queue);
   const { confirm, confirmElement } = useConfirm();
 

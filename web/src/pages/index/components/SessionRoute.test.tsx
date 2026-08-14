@@ -30,10 +30,22 @@ vi.mock('../../../api/client', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
+// The `chunkfail-1` id makes the workspace throw a webpack ChunkLoadError the
+// instant it renders. That is the same observable a rejected `React.lazy`
+// import produces — React re-throws the rejection reason during the render
+// that would have mounted the component — so it exercises SessionRoute's
+// boundary placement without needing a rejected module in the registry (which
+// would poison this file's module cache for every other test here). The
+// retry-actually-re-imports mechanics are proven in ChunkLoadBoundary.test.tsx.
 vi.mock('./WorkspaceStatic', () => ({
-  WorkspaceStatic: (props: { sessionId: string }) => (
-    <div data-testid="workspace-static" data-session-id={props.sessionId} />
-  ),
+  WorkspaceStatic: (props: { sessionId: string }) => {
+    if (props.sessionId === 'chunkfail-1') {
+      const err = new Error('Loading chunk 42 failed. (error: /_next/static/chunks/42-abc.js)');
+      err.name = 'ChunkLoadError';
+      throw err;
+    }
+    return <div data-testid="workspace-static" data-session-id={props.sessionId} />;
+  },
 }));
 
 vi.mock('./HomeRoute', () => ({
@@ -286,6 +298,32 @@ describe('SessionRoute resolution states', () => {
     expect(screen.getByTestId('home-route')).not.toBeNull();
     expect(workspace()).toBeNull();
     expect(mockedApiFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('SessionRoute workspace chunk failure (route-level boundary)', () => {
+  // Before the boundary existed this throw escaped `<Suspense>` and the island
+  // root, unmounting the whole client tree to a permanently blank page. Here it
+  // shows up as `render()` itself re-throwing — so this test failing to find
+  // the retry card is indistinguishable from the regression.
+  it('renders the retryable failure card in the route frame instead of throwing out of the tree', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      mockedApiFetch.mockResolvedValue(sessionFixture({ id: 'chunkfail-1' }));
+
+      renderRoute('chunkfail-1');
+
+      const card = await screen.findByTestId('chunk-load-error');
+      expect(card.getAttribute('data-variant')).toBe('route');
+      expect(screen.getByTestId('chunk-load-retry')).not.toBeNull();
+      expect(workspace()).toBeNull();
+      // Not a resolution failure: the session resolved fine, so none of the
+      // per-id states may claim otherwise.
+      expect(stateEl('error')).toBeNull();
+      expect(stateEl('not-found')).toBeNull();
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { API_ROOT } from '../../../api/client';
 import { useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
+import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { buildTopicsCsv, downloadTopicsCsv } from '../utils/topicsCsv';
 import { buildTranscriptCsv, downloadTranscriptCsv } from '../utils/transcriptCsv';
@@ -14,9 +15,21 @@ interface Props {
 
 const EXPORT_BTN = 'btn primary inline-flex items-center justify-center gap-2 text-center';
 
-export function ExportFeed({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const ExportFeed = memo(function ExportFeed({ sessionId }: Props) {
   const base = `${API_ROOT}/sessions/${sessionId}`;
-  const { data: words, isPending: wordsPending } = useTranscriptWords(sessionId);
+  // `enabled` (perf plan B4). `isPending` already reads the way this panel
+  // needs it to while the gate is shut: a disabled query stays `pending`, so
+  // the Transcript CSV button is disabled — correct, since there are no words
+  // to export yet. Activating the Export tab opens the gate in the same render
+  // that first reveals this panel, so the user only ever sees the ordinary
+  // pending → ready progression.
+  const { data: words, isPending: wordsPending } = useTranscriptWords(sessionId, {
+    enabled: useTranscriptWordsGate(),
+  });
   const { data: topics, isPending: topicsPending } = useTopics(sessionId);
 
   const speakerOffset = useMemo(() => speakerOffsetFromWords(words), [words]);
@@ -80,4 +93,4 @@ export function ExportFeed({ sessionId }: Props) {
       </div>
     </FeedShell>
   );
-}
+});

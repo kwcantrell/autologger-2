@@ -183,14 +183,12 @@ const SEGMENTS: AudioSegment[] = [
 // [5, 65) span, so `isCoveredByPlayableClip` must report it covered.
 const COVERED_WORD: TranscriptWord = {
   id: 'w-covered',
-  session_id: SESSION_ID,
   session_time: '00:00:30:00',
   speaker: '0',
   word: 'hello',
   start_sec: 0,
   end_sec: 0,
   ordinal: 0,
-  created_at_utc: '2026-01-01T00:00:00Z',
 };
 
 function statusFixture(): SessionStatus {

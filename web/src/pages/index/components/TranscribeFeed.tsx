@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useReducer, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useTranscriptGenerationStatus } from '../../../api/hooks/useTranscriptGenerationStatus';
 import {
@@ -8,15 +8,17 @@ import {
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
+import { presentFields, useDraftStore } from '../utils/draftStore';
 import { clickSortReducer } from '../utils/sortReducer';
 import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FeedTable } from './FeedTable';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
-import { TranscribeRow } from './TranscribeRow';
+import { TRANSCRIBE_DRAFT_FIELDS, type TranscribeDraft, TranscribeRow } from './TranscribeRow';
 import { TranscriptGenerationLockBanner } from './TranscriptGenerationLockBanner';
 
 type SortKey = 'session_time' | 'speaker' | 'word';
@@ -50,8 +52,18 @@ interface Props {
   sessionId: string;
 }
 
-export function TranscribeFeed({ sessionId }: Props) {
-  const { data: words, isLoading } = useTranscriptWords(sessionId);
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props) {
+  // `enabled` (perf plan B4): this panel is mounted from session mount but
+  // hidden until the Transcript tab is first activated — which is exactly when
+  // the workspace's gate opens, so the first painted render here is the normal
+  // loading state, not a stale "no words" one.
+  const { data: words, isLoading } = useTranscriptWords(sessionId, {
+    enabled: useTranscriptWordsGate(),
+  });
   const { data: generationStatus } = useTranscriptGenerationStatus();
   const generate = useGenerateTranscript(sessionId);
   const insert = useInsertTranscriptWord(sessionId);
@@ -98,11 +110,50 @@ export function TranscribeFeed({ sessionId }: Props) {
     });
   }, [words, sort]);
 
+  // --- Row edit drafts ---
+  // This feed virtualizes its rows, so a row's own state is not a safe place to
+  // hold an uncommitted correction: React fires no blur when the virtualizer
+  // unmounts the row, so scrolling past a half-typed edit destroyed it
+  // silently. The feed owns the drafts instead (EventLogSheet's inline-draft
+  // pattern, through the same `utils/draftStore` primitive) and each row writes
+  // through on every keystroke — see `TranscribeDraft`.
+  const drafts = useDraftStore<TranscribeDraft>();
+  // A session switch retires every row id this store is keyed by (this panel is
+  // mounted-hidden and unkeyed, so it is not remounted).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is a prop, re-run when it changes
+  useEffect(() => {
+    drafts.clearAll();
+  }, [sessionId, drafts]);
+
   const handleUpdate = useCallback(
-    (wordId: string, patch: { session_time?: string; speaker?: string; word?: string }) => {
-      update.mutate({ wordId, patch });
+    async (wordId: string, patch: TranscribeDraft) => {
+      // What this save is committing, and — separately — WHICH fields it
+      // commits. A row PATCHes ONE blurred field at a time (`commitField`), so
+      // the two are not the same question: the reference used to be the row's
+      // whole stored draft, which made every untouched sibling field compare
+      // equal to itself and be dropped as spent. An uncommitted correction in
+      // another cell (or text a failed save had deliberately kept) then
+      // vanished on the next remount, reverting to the server value with
+      // nothing having persisted it. `patch` is already raw control text — the
+      // row writes each keystroke through before it commits — so it IS the
+      // draft-space reference for exactly the fields it carries.
+      const covered = presentFields(patch, TRANSCRIBE_DRAFT_FIELDS);
+      try {
+        await update.mutateAsync({ wordId, patch });
+        // Committed (`mutateAsync` resolves only after the mutation's
+        // `invalidateQueries` refetch settles, so the row is already backed by
+        // fresh server state). Drop ONLY what this save persisted, and only if
+        // its text has not moved on: a round trip is long enough to type into,
+        // and those later keystrokes are in the store. Same shared draft-space
+        // comparison EventLogSheet uses.
+        drafts.clearMatching(wordId, patch, covered);
+      } catch {
+        // Failed: keep the draft, so the operator's text is still there on the
+        // next remount instead of silently reverting. (`mutate` swallowed
+        // rejections; `mutateAsync` needs this catch to keep doing so.)
+      }
     },
-    [update],
+    [update, drafts],
   );
 
   const virtualizer = useVirtualizer({
@@ -211,6 +262,7 @@ export function TranscribeFeed({ sessionId }: Props) {
                 row={w}
                 speakerOffset={speakerOffset}
                 onUpdate={handleUpdate}
+                drafts={drafts}
                 fps={fps}
                 onJump={jump}
                 jumpUnavailable={jumpUnavailable}
@@ -229,4 +281,4 @@ export function TranscribeFeed({ sessionId }: Props) {
       </FeedTable>
     </FeedShell>
   );
-}
+});

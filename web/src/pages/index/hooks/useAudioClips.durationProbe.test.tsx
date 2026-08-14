@@ -102,12 +102,15 @@ beforeEach(() => {
   mockedApiFetch.mockReset();
   mockedApiFetch.mockImplementation(async (path: string) => {
     if (path.includes('/status')) return statusFixture();
+    // The disk-sync POST (checked before the plain segments GET — its path
+    // contains '/audio/segments' too). Nothing inserted: no invalidation.
+    if (path.includes('/sync-from-disk')) {
+      return { inserted: 0, updated: 0, scanned: 1, has_audio: true };
+    }
     if (path.includes('/audio/segments')) return { segments: [WIRE_SEGMENT], has_audio: true };
     throw new Error(`unexpected apiFetch call: ${path}`);
   });
   vi.stubGlobal('Audio', FakeAudio);
-  // The hook's disk-sync effect uses raw `fetch`, not `apiFetch`.
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true } as Response));
 });
 
 afterEach(() => {

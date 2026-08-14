@@ -2,6 +2,8 @@ import clsx from 'clsx';
 import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
 import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
+import type { DraftStore } from '../utils/draftStore';
+import { formatSpeaker, speakerFromInput } from '../utils/speakerOffset';
 import {
   FEED_CELL,
   FEED_CELL_TIME,
@@ -11,11 +13,34 @@ import {
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
 
-interface EditState {
-  session_time: string;
-  speaker: string;
-  word: string;
+/** One row's in-progress edit, as raw input text — every field optional,
+ *  because only the controls the operator actually touched are recorded.
+ *
+ *  This feed is virtualized too, so the edit CANNOT live only in this
+ *  component: React fires no blur when the virtualizer unmounts a row, so a
+ *  correction typed into a row that then scrolls past the overscan was
+ *  committed by nothing and remembered by nothing — it silently reverted to the
+ *  server text on the way back. `TranscribeFeed` owns the store (the same
+ *  `utils/draftStore` primitive EventLogSheet's inline drafts use, not a second
+ *  implementation of it); this row writes through on every keystroke and seeds
+ *  itself from it when it mounts. */
+export interface TranscribeDraft {
+  session_time?: string;
+  speaker?: string;
+  word?: string;
 }
+
+/** Exhaustive field list for `DraftStore#clearMatching`, compiler-checked
+ *  against the interface above. */
+export const TRANSCRIBE_DRAFT_FIELDS = [
+  'session_time',
+  'speaker',
+  'word',
+] as const satisfies ReadonlyArray<keyof TranscribeDraft>;
+
+export type TranscribeDraftStore = DraftStore<TranscribeDraft>;
+
+type EditField = keyof TranscribeDraft;
 
 type UpdateFn = (
   wordId: string,
@@ -26,6 +51,9 @@ interface Props {
   row: TranscriptWord;
   speakerOffset: number;
   onUpdate: UpdateFn;
+  /** `TranscribeFeed`'s draft store — one identity for the whole feed, stable
+   *  for its lifetime (see `TranscribeDraft`). */
+  drafts: TranscribeDraftStore;
   /** The session's ACTUAL (non-rounded) frame rate, for the D3 converter — `null`
    *  while session status hasn't loaded yet. Passed as a prop (design D7): the
    *  row must not subscribe to session status itself. */
@@ -38,14 +66,6 @@ interface Props {
   /** id of the ONE reason node `TranscribeFeed` renders while unavailable — every
    *  row passes the same id (design D2 gate decision). */
   jumpReasonId?: string;
-}
-
-function formatSpeaker(speaker: string, offset: number): string {
-  const n = Number.parseInt(speaker, 10);
-  if (!Number.isNaN(n) && String(n) === speaker.trim()) {
-    return `Person ${n + offset}`;
-  }
-  return speaker;
 }
 
 // --- feed-row-seek, task 7.2 (design D4); collapsed into one resolver by the
@@ -107,15 +127,65 @@ export const TranscribeRow = memo(function TranscribeRow({
   row,
   speakerOffset,
   onUpdate,
+  drafts,
   fps,
   onJump,
   jumpUnavailable,
   jumpReasonId,
 }: Props) {
-  const [edit, setEdit] = useState<EditState | null>(null);
+  // Seeded from the feed-owned store, so a row remounting after the virtualizer
+  // dropped it comes back holding what was typed into it rather than the server
+  // text. `null` = untouched since the last commit.
+  const [edit, setEdit] = useState<TranscribeDraft | null>(() => drafts.read(row.id) ?? null);
 
   function startEdit() {
-    setEdit({ session_time: row.session_time, speaker: row.speaker, word: row.word });
+    // Preserve an edit already in progress (a restored draft, or another field
+    // of this row typed a moment ago) — only seed from the row when there is
+    // nothing to preserve.
+    setEdit(
+      (prev) => prev ?? { session_time: row.session_time, speaker: row.speaker, word: row.word },
+    );
+  }
+
+  // --- Value-space invariant ---
+  //
+  // EVERY layer below holds RAW (storage-space) text — `row`, `edit`, `vals`,
+  // the feed-owned draft store, the `commitField` dirty check, and the PATCH
+  // body. The ONLY display-space string in this component is the `value=` of
+  // the speaker `<input>`, produced by `formatSpeaker` at the JSX site and
+  // converted straight back by `speakerFromInput` in that same element's
+  // `onChange`/`onBlur`. The conversion pair lives ON the element, not inside
+  // `changeField`/`commitField`, so the two directions are visibly adjacent and
+  // the field-generic handlers stay single-space.
+  //
+  // The inbound direction is `speakerFromInput`, not a bare `parseSpeaker`,
+  // because the inverse is only correct for text the operator actually typed:
+  // it pins `row.speaker` whenever the input still reads exactly as that value
+  // renders, so an untouched focus+blur is a no-op even on a row whose stored
+  // label happens to LOOK like a generated one (the literal `"Person 2"`). See
+  // `speakerFromInput`'s doc comment for the full invariant, including what now
+  // happens to rows the old bug already corrupted (nothing, until edited).
+  //
+  // Raw is the right side of the boundary to store on (rather than seeding
+  // drafts in display space) because two other things already compare against
+  // raw: `commitField`'s same-value guard reads `row[field]`, and
+  // `TranscribeFeed.handleUpdate` reuses the PATCH it sent as the draft-space
+  // reference for `drafts.clearMatching`. Storing display here would silently
+  // break both — the guard would never fire (`'Person 1' !== '0'`), so a bare
+  // focus+blur with no typing PATCHed the display string over the numeric
+  // diarization id, permanently, and that row's label then stopped tracking
+  // `speakerOffset`. Remount seeding still renders correctly because `vals`
+  // flows through `formatSpeaker` on the way to the input like everything else.
+  //
+  // `session_time` and `word` have no display/raw distinction: identity both
+  // ways, so they pass through unconverted.
+
+  /** Write-through: local state renders the (controlled) input, the store is
+   *  what survives this row's next unmount. Takes RAW text (see the invariant
+   *  above). */
+  function changeField(field: EditField, value: string) {
+    setEdit((prev) => ({ ...(prev ?? {}), [field]: value }));
+    drafts.write(row.id, { [field]: value });
   }
 
   // feed-row-seek, task 9.2: dirty check mirroring `EventLogRow.handleBlur`'s
@@ -127,15 +197,30 @@ export const TranscribeRow = memo(function TranscribeRow({
   // unconditional commit would fire an unchanged-value PATCH (invalidating
   // the query under a virtualized list) on every such jump. Compares against
   // `row[field]` (the last COMMITTED value), not a focus-time snapshot, same
-  // as `EventLogRow`'s comparison against its current `event` prop.
-  function commitField(field: keyof EditState, value: string) {
+  // as `EventLogRow`'s comparison against its current `event` prop. Takes RAW
+  // text — `value === row[field]` only means "unchanged" when both sides are in
+  // storage space (see the invariant above).
+  function commitField(field: EditField, value: string) {
     if (!edit) return;
     setEdit((p) => (p ? { ...p, [field]: value } : p));
-    if (value === row[field]) return;
+    if (value === row[field]) {
+      // Nothing to commit for this field: its text is already exactly what the
+      // row renders from the server, so its draft entry is spent. This clear
+      // covers THIS field only — a sibling field's uncommitted text is outside
+      // what the blur speaks for and stays alive.
+      drafts.clearMatching(row.id, { [field]: value }, [field]);
+      return;
+    }
     onUpdate(row.id, { [field]: value });
   }
 
-  const vals = edit ?? { session_time: row.session_time, speaker: row.speaker, word: row.word };
+  // `??` per field, never `edit ?? row`: a draft carries only the fields that
+  // were touched, and an empty string is a real edited value.
+  const vals = {
+    session_time: edit?.session_time ?? row.session_time,
+    speaker: edit?.speaker ?? row.speaker,
+    word: edit?.word ?? row.word,
+  };
   const jumpTarget = resolveTranscribeJump(row, fps);
 
   return (
@@ -157,18 +242,28 @@ export const TranscribeRow = memo(function TranscribeRow({
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
+          onChange={(e) => changeField('session_time', e.target.value)}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>
+        {/* The one display-space control in this row: `formatSpeaker` out,
+            `speakerFromInput` back in on BOTH edges, so nothing downstream of
+            these handlers ever sees a "Person N" label (see the value-space
+            invariant above). Both edges pass `row.speaker` as the pinned
+            committed identity, so text the operator never changed converts to
+            nothing. */}
         <input
           className={FEED_INLINE_INPUT}
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, speaker: e.target.value } : p))}
-          onBlur={(e) => commitField('speaker', e.target.value)}
+          onChange={(e) =>
+            changeField('speaker', speakerFromInput(e.target.value, row.speaker, speakerOffset))
+          }
+          onBlur={(e) =>
+            commitField('speaker', speakerFromInput(e.target.value, row.speaker, speakerOffset))
+          }
         />
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>
@@ -176,7 +271,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           className={FEED_INLINE_INPUT}
           value={vals.word}
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, word: e.target.value } : p))}
+          onChange={(e) => changeField('word', e.target.value)}
           onBlur={(e) => commitField('word', e.target.value)}
         />
       </td>

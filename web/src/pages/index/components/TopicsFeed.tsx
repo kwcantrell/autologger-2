@@ -1,8 +1,9 @@
-import { useMemo, useReducer } from 'react';
+import { memo, useMemo, useReducer } from 'react';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import { useGenerateTopics, useInsertTopic, useTopics } from '../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../api/hooks/useTranscriptWords';
 import type { TranscriptWord } from '../../../api/types';
+import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
@@ -61,7 +62,11 @@ interface Props {
   sessionId: string;
 }
 
-export function TopicsFeed({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const TopicsFeed = memo(function TopicsFeed({ sessionId }: Props) {
   const { data: topics, isLoading } = useTopics(sessionId);
   const generate = useGenerateTopics(sessionId);
   const insert = useInsertTopic(sessionId);
@@ -75,7 +80,7 @@ export function TopicsFeed({ sessionId }: Props) {
   // the Transcript feed is mounted (ui-refresh: all tabs stay mounted, just
   // hidden) — React Query dedupes. ---
   const { data: status } = useSessionStatus(sessionId);
-  const { data: words } = useTranscriptWords(sessionId);
+  const { data: words } = useTranscriptWords(sessionId, { enabled: useTranscriptWordsGate() });
   const { unavailable: jumpUnavailable, jump } = useTimelineSeek(sessionId, false);
   const jumpReasonId = 'v5-topics-feed-jump-reason';
   const fps = status?.frame_rate ?? null;
@@ -203,4 +208,4 @@ export function TopicsFeed({ sessionId }: Props) {
       </FeedTable>
     </FeedShell>
   );
-}
+});

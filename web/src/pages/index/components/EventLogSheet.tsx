@@ -1,5 +1,6 @@
+import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   useDeleteEvent,
   useEvents,
@@ -22,10 +23,18 @@ import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
+import { useDraftStore } from '../utils/draftStore';
 import { REVEAL_EVENT } from '../utils/revealEventInFeed';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventGenerateCustomModal } from './EventGenerateCustomModal';
-import { EventLogRow, type RowEditValues } from './EventLogRow';
+import {
+  EventLogRow,
+  INLINE_DRAFT_FIELDS,
+  type InlineDraft,
+  type InlineFocusRecord,
+  type InlineFocusStore,
+  type RowEditValues,
+} from './EventLogRow';
 import { FeedShell } from './FeedShell';
 import { type ColumnDef, FEED_GLASS_BTN, FEED_GLASS_BTN_PRIMARY, FeedTable } from './FeedTable';
 import {
@@ -39,6 +48,56 @@ import {
 } from './feedToolbarCaption';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
+
+// Approximate rendered height of a single EventLogRow, established by
+// TranscribeFeed's documented method (feed-row-seek task 7.3): measured in real
+// headless Chromium against the actual compiled Tailwind CSS — jsdom has no
+// layout engine — on a standalone `sheet sheet-dense` <table> built from the
+// exact class strings EventLogRow/JumpToTimeButton render, served over a local
+// HTTP server (file:// breaks variant matching).
+//
+// Measured ≈30.44px, identical for view rows and inline/batch-edit rows. The
+// row's tallest cell is the LEADING JUMP CELL, not the text cells: the `h-6`
+// (24px) jump button + CELL_BASE's `py-[0.17rem]` (2×2.72px) + the 1px bottom
+// border = 30.44px, while every text cell is 12.48px of `leading-none` text in
+// the same box = 18.92px. (The jump control's `scale-[0.75]` wrapper compiles to
+// a transform, which shrinks it visually but not in layout.) 31 covers the
+// measurement with a small margin, and lands on TranscribeFeed's own constant —
+// consistent, since both rows are dominated by the same 24px jump button.
+//
+// No `measureElement`: every cell is `whitespace-nowrap` (CELL_TC / CELL_CAT /
+// CELL_ACTIONS on the message cell), so a long message clips rather than
+// wrapping and heights do not vary with content — confirmed by measuring a
+// 165-char message row (30.44px, unchanged). The one shape that does measure
+// shorter (18.92px) is a row whose timecode is unresolvable, since
+// `JumpToTimeButton` renders null there — but the server stamps every event with
+// `timecode_total_frames` + `frame_rate` on insert (`eventStore.addEvent`), so
+// that shape only exists for rows whose stored frame count is NULL. Over-
+// estimating those is the safe direction (extra scroll extent, never a short
+// window), so the constant stays, matching TranscribeFeed.
+const ROW_HEIGHT = 31;
+
+// How far outside the virtual window the row being inline-edited may be pinned
+// (in rows) before the pin is dropped.
+//
+// TRADEOFF (the two-spacer padding-row idiom): this table holds its scroll
+// extent with exactly two spacer <tr>s — one before the window, one after — so
+// the rendered indexes MUST be contiguous. A non-contiguous range (the pinned
+// row plus a window far away) has no representation here: the pinned <tr> would
+// render immediately after the top spacer and shove the real window up by the
+// height of the gap. So the pin CLAMPS INTO THE WINDOW instead: the range is
+// extended contiguously to reach the pinned index.
+//
+// Cost: while an edit is pinned off-window, the gap rows render too. Bounded at
+// 50 (~1550px of extra DOM at ROW_HEIGHT) because the case this exists for is
+// small — under a descending sort, incoming events prepend and push the edited
+// row down a few rows at a time — while the pathological case (the operator
+// scrolls to the far end of a 5000-row feed with an edit open) would otherwise
+// render the entire list and cost more than virtualization saves. Past the
+// bound the row unmounts as it did before: its text still survives in
+// `InlineDraftStore`, and `InlineFocusStore` restores focus + caret when it
+// scrolls back into view.
+const PINNED_ROW_MAX_EXTRA_ROWS = 50;
 
 // --- feed-row-seek, task 6.2 (design D4) ---
 //
@@ -270,7 +329,11 @@ interface Props {
   sessionId: string;
 }
 
-export function EventLogSheet({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- Transport state ---
   const { data: status } = useSessionStatus(sessionId);
   const isRolling = Boolean(status?.is_rolling);
@@ -321,12 +384,59 @@ export function EventLogSheet({ sessionId }: Props) {
   const [viewUtc, setViewUtc] = useState(false);
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [customGenerateOpen, setCustomGenerateOpen] = useState(false);
+  // Reactive scroll viewport (the TranscribeFeed idiom): OverlayScrollbars
+  // publishes its viewport via FeedTable's `scrollRef` callback below. Storing
+  // it in state (not a ref) re-renders so useVirtualizer re-attaches the instant
+  // OS initializes, instead of waiting for an unrelated background re-render.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   // --- Batch edit ---
   const [batchEditMode, setBatchEditMode] = useState(false);
   const [batchEdits, setBatchEdits] = useState<Map<string, RowEditValues>>(new Map());
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set());
   const [batchSaving, setBatchSaving] = useState(false);
+
+  // --- Inline edit drafts ---
+  // The inline (rolling) counterpart of `batchEdits`: the in-progress text of
+  // every inline edit, held HERE rather than in each row's DOM so it survives
+  // the row unmounting when the virtual window moves past it. Kept in a ref,
+  // not state, because nothing renders from it except the `defaultValue` of a
+  // row that is mounting anyway — see `InlineDraftStore` for the full
+  // rationale. Cleared per row once its save has round-tripped, and wholesale
+  // when inline-edit mode ends or the session changes.
+  const inlineDrafts = useDraftStore<InlineDraft>();
+
+  // --- Inline edit focus ---
+  // Which row is being inline-edited right now, and where its caret sits. Same
+  // ref-not-state rationale as the draft store (a caret move must not re-render
+  // the feed), and read from two places: `rangeExtractor` below pins this row
+  // into the virtual window, and a remounting row restores focus from it. See
+  // `InlineFocusStore`.
+  const inlineFocusRef = useRef<InlineFocusRecord | null>(null);
+  const inlineFocus = useMemo<InlineFocusStore>(
+    () => ({
+      read: () => inlineFocusRef.current,
+      // The clock is stamped HERE, not by callers: `recordedAt` bounds how long
+      // a record may still pull focus back (see
+      // `INLINE_FOCUS_RESTORE_MAX_AGE_MS`), and a caller that forgot to refresh
+      // it would let a live edit look abandoned.
+      record: (record) => {
+        inlineFocusRef.current = { ...record, recordedAt: Date.now() };
+      },
+      clear: (eventId) => {
+        if (inlineFocusRef.current?.eventId === eventId) inlineFocusRef.current = null;
+      },
+      // Deliberately does NOT re-stamp `recordedAt`: dropping a flag the row
+      // can no longer maintain must not extend how long the record may still
+      // pull focus back.
+      clearSelectOpen: (eventId) => {
+        const rec = inlineFocusRef.current;
+        if (rec?.eventId !== eventId || rec.selectOpen !== true) return;
+        inlineFocusRef.current = { ...rec, selectOpen: false };
+      },
+    }),
+    [],
+  );
 
   // --- Mutations ---
   const updateEvent = useUpdateEvent(sessionId);
@@ -388,6 +498,101 @@ export function EventLogSheet({ sessionId }: Props) {
   // --- Derived ---
   const inlineEdit = isLogSheetRolling && !batchEditMode;
 
+  // Leaving inline-edit mode (timecode stopped, recording ended, or batch edit
+  // entered) unmounts every inline control — the closest thing this mode has to
+  // a cancel, and the point where a draft stops being recoverable UI state.
+  // Drop them all rather than let them resurface if rolling resumes.
+  useEffect(() => {
+    if (inlineEdit) return;
+    inlineDrafts.clearAll();
+    // Nothing is being inline-edited any more, so nothing stays pinned.
+    inlineFocusRef.current = null;
+  }, [inlineEdit, inlineDrafts]);
+
+  // Abandonment: drop the focus record when the operator's attention leaves the
+  // edited row — a focusin outside it, or a pointerdown outside it that FOCUS
+  // ACTUALLY FOLLOWS.
+  //
+  // Installed here rather than in the row because the case that matters is a
+  // row that is no longer mounted: the operator types, wheel-scrolls the row
+  // past the pin bound (wheel scrolling moves neither focus nor
+  // `document.activeElement`, so nothing else in this feed can tell that the
+  // edit was abandoned), and goes off to do something else. Left armed, the
+  // record keeps up to `PINNED_ROW_MAX_EXTRA_ROWS` gap rows pinned, and grabs
+  // the caret out of nowhere if the row ever scrolls back. A click or a focus
+  // move anywhere else is the operator saying they are done with it.
+  //
+  // But an outside pointerdown is NOT by itself that signal, and treating it as
+  // one broke the commonest gesture in this feed: dragging the scrollbar. The
+  // OverlayScrollbars handle and track are ordinary elements outside the <tr>,
+  // and they `preventDefault()` the pointerdown so the focused input KEEPS
+  // focus — the operator is still typing in a row that had just been unpinned,
+  // with no record left to restore from. Dragging past the pin bound then
+  // unmounts the focused row: no blur fires, so nothing saves, and the draft is
+  // dropped wholesale the next time inline edit ends.
+  //
+  // So a pointerdown only ARMS the question and the answer is read from focus,
+  // one tick later (the focus change is the pointerdown's default action, so it
+  // has not happened yet while the handler runs; a widget that suppressed it
+  // simply leaves focus where it was). That generalizes past OverlayScrollbars
+  // to any preventDefault-ing widget, which a scrollbar-DOM allowlist would
+  // not. `focusin` needs no deferral — it IS the focus move, and its target is
+  // the newly focused node.
+  //
+  // The DRAFT is deliberately untouched — abandoning the caret is not
+  // abandoning the text, which stays recoverable until it is saved or
+  // inline-edit mode ends.
+  useEffect(() => {
+    if (!inlineEdit) return;
+    /** Does `node` sit inside the row the record belongs to? */
+    const insideRecordedRow = (node: unknown, eventId: string): boolean => {
+      if (!(node instanceof Element)) return false;
+      return node.closest('tr[data-event-id]')?.getAttribute('data-event-id') === eventId;
+    };
+    /** The record's own reasons to survive any outside interaction. `null` when
+     *  there is nothing (left) to abandon. */
+    const liveRecord = (): InlineFocusRecord | null => {
+      const rec = inlineFocusRef.current;
+      if (!rec) return null;
+      // This row's own category listbox is portaled outside the row, so a click
+      // in it looks exactly like a click elsewhere. It isn't.
+      if (rec.selectOpen) return null;
+      return rec;
+    };
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const onPointerDown = (e: Event) => {
+      const rec = liveRecord();
+      if (!rec || insideRecordedRow(e.target, rec.eventId)) return;
+      if (pending !== null) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = null;
+        // Re-read: the gesture may have moved focus INTO the recorded row, or
+        // opened its dropdown, or the record may have moved on to another row.
+        const settled = liveRecord();
+        if (!settled) return;
+        // Where focus ended up is the answer. An unmounted recorded row leaves
+        // it on <body>, which correctly reads as "not in the row" — that is the
+        // abandonment this listener exists for.
+        if (insideRecordedRow(document.activeElement, settled.eventId)) return;
+        inlineFocusRef.current = null;
+      }, 0);
+    };
+    const onFocusIn = (e: Event) => {
+      const rec = liveRecord();
+      if (!rec || insideRecordedRow(e.target, rec.eventId)) return;
+      inlineFocusRef.current = null;
+    };
+    // Capture phase: a handler that stops propagation elsewhere must not be
+    // able to hide the gesture from this.
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+      if (pending !== null) clearTimeout(pending);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
+    };
+  }, [inlineEdit]);
+
   // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
   // every render (each keystroke in an inline edit re-sorts the whole feed);
   // keyed on its actual inputs, output unchanged.
@@ -402,6 +607,71 @@ export function EventLogSheet({ sessionId }: Props) {
     });
     return doSortEvents(filtered, sortState, status);
   }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
+
+  // `rangeExtractor` runs inside the virtualizer's own measurement, outside the
+  // React render it was created in, so it reads the current rendered order
+  // through a ref (the `allEventsRef` idiom above) rather than a closure.
+  const sortedRef = useRef(sorted);
+  sortedRef.current = sorted;
+
+  // Pin the row being inline-edited into the rendered window (@tanstack/
+  // react-virtual's documented `rangeExtractor` seam, over its own
+  // `defaultRangeExtractor`).
+  //
+  // Without it, inline editing and virtualization are in direct conflict: inline
+  // edit is live exactly while timecode rolls, which is exactly when new events
+  // are arriving — and under a descending sort each one prepends at index 0 and
+  // shifts the edited row down. Past the overscan the focused <tr> unmounts,
+  // focus falls to <body>, and the operator's next keystrokes go nowhere at all
+  // (the deferred blur-to-save also bails on the now-null row ref, so nothing is
+  // even saved).
+  //
+  // Referentially stable (`useCallback` with no deps) on purpose: the
+  // virtualizer treats a new `rangeExtractor` identity as an options change, so
+  // an inline arrow here would churn it on every render. Everything it varies
+  // on is read from refs.
+  const rangeExtractor = useCallback((range: Range) => {
+    const base = defaultRangeExtractor(range);
+    const pinnedId = inlineFocusRef.current?.eventId;
+    if (!pinnedId || base.length === 0) return base;
+    const pinned = sortedRef.current.findIndex((e) => e.event_id === pinnedId);
+    if (pinned < 0) return base;
+    const first = base[0];
+    const last = base[base.length - 1];
+    if (pinned >= first && pinned <= last) return base;
+    // Contiguous clamp, bounded — see `PINNED_ROW_MAX_EXTRA_ROWS` for why the
+    // pinned index is reached by extending the window rather than appended to
+    // it, and what it costs.
+    const extra = pinned < first ? first - pinned : pinned - last;
+    if (extra > PINNED_ROW_MAX_EXTRA_ROWS) return base;
+    const start = Math.min(first, pinned);
+    const end = Math.max(last, pinned);
+    const extended = new Array<number>(end - start + 1);
+    for (let i = 0; i < extended.length; i++) extended[i] = start + i;
+    return extended;
+  }, []);
+
+  // --- Virtualization (the TranscribeFeed precedent: padding rows inside the
+  // real <table>, never a div grid). Only the visible window (+overscan) of
+  // <tr>s is mounted; two spacer rows hold the scroll height on either side.
+  // Inline-edit drafts survive that unmount: EventLogRow's inline controls are
+  // uncontrolled, so their keystrokes are ALSO written through to the
+  // `inlineDrafts` store below and read back as `defaultValue` when the row
+  // remounts (see `InlineDraftStore`). Batch-edit mode never had the exposure —
+  // its drafts have always lived in the parent-owned `batchEdits` Map.
+  const virtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => scrollEl,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+    rangeExtractor,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0;
 
   // Mirror showInternal onto body so timeline markers can hide internal-cat markers via CSS.
   useEffect(() => {
@@ -423,14 +693,28 @@ export function EventLogSheet({ sessionId }: Props) {
   // above, so the wider fetch is a cache hit); SessionWorkspace's retry loop
   // then scrolls once the row renders. Reads the event list through a ref so
   // the listener registers once.
+  //
+  // Virtualization adds a second way the reveal can silently no-op: a row
+  // outside the mounted window has no DOM node at all, so the workspace's
+  // `scrollAndFlashEventRowWithRetry` poll for `tr[data-event-id=…]` would never
+  // find it however long it retried. The target id is therefore parked in
+  // `pendingRevealId` and consumed by the effect below, which scrolls the
+  // virtualizer to the row's index so it mounts; the workspace retry loop then
+  // finds and flashes it. Parked in STATE rather than a ref on purpose: growing
+  // `loadedLimit` is a no-op when the target is already inside the window, so a
+  // ref would leave nothing to schedule the consuming effect on the (common)
+  // already-loaded-but-unmounted path. The effect clears it back to `null`, so
+  // revealing the SAME row twice still re-triggers.
   const allEventsRef = useRef(allEventsData);
   allEventsRef.current = allEventsData;
+  const [pendingRevealId, setPendingRevealId] = useState<string | null>(null);
   useEffect(() => {
     const onReveal = (ev: Event) => {
       const eventId = String(
         (ev as CustomEvent<{ eventId?: string }>).detail?.eventId ?? '',
       ).trim();
       if (!eventId) return;
+      setPendingRevealId(eventId);
       const all = allEventsRef.current?.events;
       setLoadedLimit((prev) => {
         // Workspace-wide page not resolved yet — cover the whole marker range.
@@ -444,6 +728,22 @@ export function EventLogSheet({ sessionId }: Props) {
     document.body.addEventListener(REVEAL_EVENT, onReveal);
     return () => document.body.removeEventListener(REVEAL_EVENT, onReveal);
   }, []);
+
+  // Mount the revealed row. The index MUST be resolved against `sorted` — the
+  // rendered order after filter + sort — not against the raw event list, or a
+  // descending sort (or a hidden category) would scroll to the wrong row.
+  // Re-runs when `sorted` changes, which covers the reveal that had to grow
+  // `loadedLimit` first: the target simply isn't found on the first pass and the
+  // request stays parked until the wider window renders it. A target that never
+  // appears (filtered out) stays parked harmlessly until the next reveal
+  // replaces it.
+  useEffect(() => {
+    if (!pendingRevealId) return;
+    const index = sorted.findIndex((e) => e.event_id === pendingRevealId);
+    if (index < 0) return;
+    setPendingRevealId(null);
+    virtualizer.scrollToIndex(index, { align: 'center' });
+  }, [pendingRevealId, sorted, virtualizer]);
 
   // --- Pagination sentinel ---
   const sentinelRef = useRef<HTMLTableRowElement>(null);
@@ -475,10 +775,13 @@ export function EventLogSheet({ sessionId }: Props) {
     setBatchEditMode(false);
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
+    inlineDrafts.clearAll();
+    inlineFocusRef.current = null;
     setLoadedLimit(200);
     setHiddenCategoryIds(new Set());
     setGenerateMenuOpen(false);
     setCustomGenerateOpen(false);
+    setPendingRevealId(null);
   }, [sessionId]);
 
   // --- Handlers ---
@@ -551,14 +854,50 @@ export function EventLogSheet({ sessionId }: Props) {
 
   const handleInlineSave = useCallback(
     async (event: LogEvent, values: RowEditValues) => {
+      const eventId = event.event_id;
+      // What this save is committing, in DRAFT space. The row writes every
+      // keystroke through to the store before it builds `values`, so the draft
+      // as of right now IS the submitted text — and comparing in draft space
+      // rather than against `values` is the only comparison that can be exact:
+      // `values` is trimmed (message/timecode) and ISO-normalized (`wall_time_utc`
+      // vs the draft's raw `wall_text`, which for a half-typed date has no ISO
+      // form at all), so a field-by-field match against it would report a
+      // divergence for text the operator never touched again.
+      const submitted: InlineDraft = { ...inlineDrafts.read(eventId) };
       try {
-        await updateEvent.mutateAsync({ eventId: event.event_id, body: values });
+        await updateEvent.mutateAsync({ eventId, body: values });
+        // Committed — and `mutateAsync` resolves only after the mutation's
+        // `invalidateQueries` refetch settles, so the row this draft belonged to
+        // is already backed by fresh server state. Dropping the draft here
+        // (rather than when the save is ISSUED) means a failed save leaves the
+        // operator's text recoverable on the next remount instead of silently
+        // reverting.
+        //
+        // But drop ONLY what this save actually persisted. A save round trip is
+        // long enough to type into (blur commits, the operator refocuses the row
+        // and keeps typing) and those keystrokes are in the store — deleting the
+        // row's entry wholesale threw them away, silently, the moment the
+        // virtualizer next unmounted the row: it remounted showing the server
+        // value. Re-read the store HERE, at resolution time (never a value
+        // captured before the await — StrictMode and overlapping saves both
+        // make a captured one stale), and keep any field that has moved on —
+        // the shared draft-space comparison (`DraftStore#clearMatching`) that
+        // EventLogRow's server-sync effect and its nothing-to-commit branch
+        // also go through, so the three cannot disagree about what "this field
+        // is spent" means.
+        //
+        // `INLINE_DRAFT_FIELDS` as the covered set is the literal truth here:
+        // `values` carries all four fields, so this save persisted all four.
+        // (TranscribeFeed's per-field PATCH covers only the field it sent — see
+        // `DraftStore#clearMatching` for why the covered set is stated rather
+        // than inferred from the reference's keys.)
+        inlineDrafts.clearMatching(eventId, submitted, INLINE_DRAFT_FIELDS);
         showToast('Updated.');
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);
       }
     },
-    [updateEvent],
+    [updateEvent, inlineDrafts],
   );
 
   const handleBatchChange = useCallback((eventId: string, values: RowEditValues) => {
@@ -862,7 +1201,12 @@ export function EventLogSheet({ sessionId }: Props) {
         sortDir={sortState.dir}
         onSort={(k) => dispatchSort({ type: 'CLICK', key: k as SortKey })}
         tableClassName={tableClassName}
-        isEmpty={sorted.length === 0 && !isPending}
+        // Loading and empty are DISTINCT states (the TranscribeFeed/TopicsFeed idiom):
+        // FeedTable consults `isEmpty` only when `!isLoading`, so while the events query
+        // is pending the loading row holds the sheet's height instead of the empty
+        // message painting first and being replaced when rows arrive.
+        isLoading={isPending}
+        isEmpty={sorted.length === 0}
         emptyMessage={
           events.length === 0 ? (
             genUnavailable ? (
@@ -888,27 +1232,52 @@ export function EventLogSheet({ sessionId }: Props) {
             <col className="col-message" />
           </colgroup>
         }
+        scrollRef={setScrollEl}
       >
-        {sorted.map((ev) => (
-          <EventLogRow
-            key={ev.event_id}
-            event={ev}
-            categories={categories}
-            inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
-            batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
-            pendingDelete={pendingDeleteIds.has(ev.event_id)}
-            viewUtc={viewUtc}
-            batchValues={batchEdits.get(ev.event_id) ?? null}
-            resolvedSec={eventRowTimelineSec(ev)}
-            onJump={jump}
-            jumpUnavailable={jumpUnavailable}
-            jumpReasonId={jumpReasonId}
-            onInlineSave={handleInlineSave}
-            onBatchChange={handleBatchChange}
-            onDelete={handleDelete}
-            onUndelete={handleUndelete}
-          />
-        ))}
+        {paddingTop > 0 && (
+          <tr>
+            <td
+              colSpan={eventColumns.length}
+              style={{ height: paddingTop, padding: 0, border: 'none' }}
+            />
+          </tr>
+        )}
+        {virtualItems.map((vRow) => {
+          const ev = sorted[vRow.index];
+          return (
+            <EventLogRow
+              key={ev.event_id}
+              event={ev}
+              categories={categories}
+              inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
+              batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
+              pendingDelete={pendingDeleteIds.has(ev.event_id)}
+              viewUtc={viewUtc}
+              batchValues={batchEdits.get(ev.event_id) ?? null}
+              resolvedSec={eventRowTimelineSec(ev)}
+              onJump={jump}
+              jumpUnavailable={jumpUnavailable}
+              jumpReasonId={jumpReasonId}
+              inlineDrafts={inlineDrafts}
+              inlineFocus={inlineFocus}
+              onInlineSave={handleInlineSave}
+              onBatchChange={handleBatchChange}
+              onDelete={handleDelete}
+              onUndelete={handleUndelete}
+            />
+          );
+        })}
+        {paddingBottom > 0 && (
+          <tr>
+            <td
+              colSpan={eventColumns.length}
+              style={{ height: paddingBottom, padding: 0, border: 'none' }}
+            />
+          </tr>
+        )}
+        {/* Sentinel stays AFTER the bottom spacer so it sits at the true end of
+            the scroll extent — the IntersectionObserver semantics (grow the
+            window when the end comes into view) are unchanged by virtualization. */}
         {events.length < total && (
           // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
           <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">
@@ -924,4 +1293,4 @@ export function EventLogSheet({ sessionId }: Props) {
       </FeedTable>
     </FeedShell>
   );
-}
+});

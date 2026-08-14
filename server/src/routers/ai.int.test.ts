@@ -342,9 +342,16 @@ describe('ai/chat — open-network refusal (503)', () => {
 
   it('loopback-bound anonymous dev still serves (guards pass → 200 SSE, real relay spawns)', async () => {
     const s = seededSession();
-    const res = await post(s, { message: 'hi' }, fixtureEnv());
+    // Accept-Encoding is deliberate: the /api/* compress middleware must skip
+    // SSE (Transfer-Encoding: chunked + text/event-stream, both excluded) even
+    // when the client advertises gzip.
+    const res = await post(s, { message: 'hi' }, fixtureEnv(), {
+      ...J,
+      'accept-encoding': 'gzip',
+    });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);
+    expect(res.headers.get('content-encoding')).toBeNull();
     const events = parseSse(await res.text());
     // The real fixture's canned success turn: tool then delta then done.
     expect(events).toEqual([

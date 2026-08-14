@@ -7,16 +7,65 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
-import { BatchImportModal } from './components/BatchImportModal';
-import { HomeSettingsModal } from './components/HomeSettingsModal';
-import { NewSessionModal } from './components/NewSessionModal';
+import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
+import { RouteLoadingState } from './components/RouteLoadingState';
 import { SessionRoute } from './components/SessionRoute';
-import { TeamsRoute } from './components/TeamsRoute';
 import { V6Rail } from './components/V6Rail';
-import { YouTubeImportErrorModal } from './components/YouTubeImportErrorModal';
 import { navigate } from './navigation';
 import { useLoginReturnConsume } from './useLoginReturnConsume';
+
+// --- Code-split edges (bundle route-splitting, plan C5) ---
+//
+// Everything below is reachable only behind a route match or an open flag, so
+// none of it belongs in the homepage's initial download. Plain `React.lazy` is
+// enough: wouter route components are ordinary React elements and the whole
+// app already lives inside one `ssr: false` island (`IndexIsland`), so no
+// router- or framework-level dynamic-import support is involved.
+//
+// Static on purpose (do NOT lazify): `V6Rail`, `HomeRoute`, `LoginPage`,
+// `RootGate`, `SessionRoute` itself — all of them render on the very first
+// homepage paint, so splitting them would only buy a waterfall.
+//
+// Each split point is a module LOADER, mounted through `LazyChunk` (which owns
+// the `React.lazy` instance, its `<Suspense>`, and its own error boundary).
+// The loaders live at module scope because `LazyChunk` reads `load` at mount
+// and on retry without watching its identity — and because a chunk fetch CAN
+// fail (a redeploy rewrites content-hashed URLs out from under an open tab),
+// in which case `lazy()` caches the rejection forever and only a fresh
+// instance can recover. See `./components/ChunkLoadBoundary`.
+//
+// Route-level: gets the shared brand loading frame, identical to the one
+// SessionRoute renders while resolving (`RouteLoadingState`) — a bare `null`
+// here would blank the main column for the chunk fetch.
+const loadTeamsRoute = () =>
+  import('./components/TeamsRoute').then((m) => ({ default: m.TeamsRoute }));
+
+// Overlay-level: `fallback={null}`. These are already gated behind open flags
+// and render as overlays over an unchanged page, so arriving one frame late
+// costs nothing layout-wise (no CLS) — a loading frame would be the worse
+// experience. (BatchImportModal's own inner dynamic import of the log-import
+// client stays exactly as it was; this just adds an outer split.) Their
+// boundaries are per-overlay, so a dead modal chunk shows a dismissible card
+// over an intact route rather than taking the route down with it.
+const loadNewSessionModal = () =>
+  import('./components/NewSessionModal').then((m) => ({ default: m.NewSessionModal }));
+const loadBatchImportModal = () =>
+  import('./components/BatchImportModal').then((m) => ({ default: m.BatchImportModal }));
+const loadYouTubeImportErrorModal = () =>
+  import('./components/YouTubeImportErrorModal').then((m) => ({
+    default: m.YouTubeImportErrorModal,
+  }));
+const loadHomeSettingsModal = () =>
+  import('./components/HomeSettingsModal').then((m) => ({ default: m.HomeSettingsModal }));
+
+// Warm the settings chunk once the page has gone quiet, so the first
+// interactive open is a cache hit rather than a network round trip. 2.5s is
+// deliberately past the initial-load burst (profile + session list + the
+// island's own chunks); the timer is cleared on unmount. Importing a module
+// only evaluates it — it mounts nothing and renders nothing, which
+// `AppShell.test.tsx` pins.
+const SETTINGS_PREFETCH_DELAY_MS = 2500;
 // overlayscrollbars.css import moved to the Next app/ route-group layouts
 // (nextjs-frontend-migration, task 2.3; design D5) -- centralizing both CSS
 // imports in the layout (not a leaf component) pins App Router's otherwise-
@@ -107,6 +156,22 @@ export function AppShell() {
     initPerfDebugUI();
 
     return () => document.removeEventListener('click', handleModalDismiss);
+  }, []);
+
+  // Idle prefetch of the now-split settings chunk (plan C5.5): the modal used
+  // to be always-mounted, so opening it never touched the network. Gating the
+  // mount on `showSettings` would otherwise turn a cold first open into a
+  // chunk fetch; warming it after the load burst keeps interactive opens fast
+  // without putting the bytes on the homepage's critical path.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      // A failed warm-up is harmless and must stay silent: nothing is on screen, and a real
+      // open goes back through `LazyChunk`, which owns the retry and the error card. Without
+      // the catch, a redeploy-rotated chunk URL or a network blip turns the warm-up into an
+      // unhandled rejection (mirrors SessionRoute's workspace warm-up).
+      void loadHomeSettingsModal().catch(() => {});
+    }, SETTINGS_PREFETCH_DELAY_MS);
+    return () => clearTimeout(t);
   }, []);
 
   const handleSelectSession = useCallback(
@@ -307,53 +372,98 @@ export function AppShell() {
             </div>
 
             {showNewSession && (
-              <NewSessionModal
-                profile={profile}
-                onClose={() => setShowNewSession(false)}
-                onCreated={handleSelectSession}
-              />
+              <LazyChunk
+                load={loadNewSessionModal}
+                variant="overlay"
+                onDismiss={() => setShowNewSession(false)}
+              >
+                {(NewSessionModal) => (
+                  <NewSessionModal
+                    profile={profile}
+                    onClose={() => setShowNewSession(false)}
+                    onCreated={handleSelectSession}
+                  />
+                )}
+              </LazyChunk>
             )}
 
             {showBatchImport && (
-              <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
+              <LazyChunk
+                load={loadBatchImportModal}
+                variant="overlay"
+                onDismiss={() => setShowBatchImport(false)}
+              >
+                {(BatchImportModal) => (
+                  <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
+                )}
+              </LazyChunk>
             )}
 
             {ytImportError && (
-              <YouTubeImportErrorModal
-                sessionId={ytImportError.sessionId}
-                lastUrl={ytImportError.lastUrl}
-                onRetry={(newUrl) => {
-                  const sid = ytImportError.sessionId;
-                  setYtImportError(null);
-                  setYtImportPending(true);
-                  runYoutubeImport({ sessionId: sid, url: newUrl, usePublishDate: false })
-                    .then(() => setYtImportPending(false))
-                    .catch((err) => {
-                      setYtImportPending(false);
-                      toast.error(err instanceof Error ? err.message : 'YouTube import failed.');
-                      setYtImportError({ sessionId: sid, lastUrl: newUrl });
-                    });
-                }}
-                onContinue={() => setYtImportError(null)}
-                onCancel={() => {
-                  setYtImportError(null);
-                  handleCloseSession();
-                }}
-              />
+              <LazyChunk
+                load={loadYouTubeImportErrorModal}
+                variant="overlay"
+                onDismiss={() => setYtImportError(null)}
+              >
+                {(YouTubeImportErrorModal) => (
+                  <YouTubeImportErrorModal
+                    sessionId={ytImportError.sessionId}
+                    lastUrl={ytImportError.lastUrl}
+                    onRetry={(newUrl) => {
+                      const sid = ytImportError.sessionId;
+                      setYtImportError(null);
+                      setYtImportPending(true);
+                      runYoutubeImport({ sessionId: sid, url: newUrl, usePublishDate: false })
+                        .then(() => setYtImportPending(false))
+                        .catch((err) => {
+                          setYtImportPending(false);
+                          toast.error(
+                            err instanceof Error ? err.message : 'YouTube import failed.',
+                          );
+                          setYtImportError({ sessionId: sid, lastUrl: newUrl });
+                        });
+                    }}
+                    onContinue={() => setYtImportError(null)}
+                    onCancel={() => {
+                      setYtImportError(null);
+                      handleCloseSession();
+                    }}
+                  />
+                )}
+              </LazyChunk>
             )}
 
-            {/* Settings modal: mounted once here, beside the route switch, so the
+            {/* Settings modal: mounted here, beside the route switch, so the
                 rail's Settings button works on every route (`/`, `/sessions/:id`,
                 `/teams`) — a route-branch-coupled mount was the bug class itself
-                (teams-settings-nav, design D1). Mounting is unconditional (Radix
-                Dialog renders nothing to the DOM while `open` is false), so the
-                modal survives route changes while open instead of desyncing
-                `showSettings` from what's rendered. */}
-            <HomeSettingsModal
-              isOpen={showSettings}
-              onClose={handleCloseSettings}
-              onCloseSession={handleCloseSession}
-            />
+                (teams-settings-nav, design D1). That invariant is unchanged by
+                the code split (plan C5.5): the gate below is `showSettings`, a
+                piece of AppShell state, and NEVER the URL — so an open modal
+                still survives route changes instead of desyncing `showSettings`
+                from what's rendered.
+                What did change: the mount is now conditional rather than
+                unconditional. It used to rely on Radix Dialog rendering nothing
+                while `open` is false; with the modal behind `React.lazy` that
+                would download the chunk on every page load, defeating the split.
+                Gating on `showSettings` keeps the bytes off the homepage; the
+                idle prefetch above keeps the first open warm. The
+                settings-modal-mount-cost optimizations live INSIDE the modal and
+                are untouched. */}
+            {showSettings && (
+              <LazyChunk
+                load={loadHomeSettingsModal}
+                variant="overlay"
+                onDismiss={handleCloseSettings}
+              >
+                {(HomeSettingsModal) => (
+                  <HomeSettingsModal
+                    isOpen
+                    onClose={handleCloseSettings}
+                    onCloseSession={handleCloseSession}
+                  />
+                )}
+              </LazyChunk>
+            )}
 
             {/* Session workspace, behind deep-link resolution: SessionRoute
                 resolves the routed id through the per-id query and gates the
@@ -364,7 +474,16 @@ export function AppShell() {
                 home view (HomeRoute) for the empty id, swapping it out is what
                 hides that home view at the teams route. */}
             {onTeamsRoute ? (
-              <TeamsRoute />
+              <LazyChunk
+                load={loadTeamsRoute}
+                variant="route"
+                // Teams-specific announcement and id: the session route's
+                // `#session-route-loading` identifies THAT route's wait, and `/teams` renders
+                // in its place, not inside it (PR review finding 3).
+                fallback={<RouteLoadingState label="Loading teams" id="teams-route-loading" />}
+              >
+                {(TeamsRoute) => <TeamsRoute />}
+              </LazyChunk>
             ) : (
               <SessionRoute
                 sessionId={activeSessionId}

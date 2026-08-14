@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { AiV2Design, type AiV2Message, type AiV2PendingQuestion } from './AiV2Design';
 import { DashboardEditor } from './aiV2/DashboardEditor';
 import { DashboardGrid } from './aiV2/DashboardGrid';
@@ -73,7 +73,15 @@ const EMPTY_DASHBOARD: DashboardConfig = { widgets: [], interactions: [] };
  * by the option's own catalog `widgetType` (spec "Previews reflect the
  * rendered result").
  */
-export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone (`persistence` is defaulted, and the workspace never
+// passes it; a caller that does must pass a stable port) — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const AiV2Panel = memo(function AiV2Panel({
+  sessionId,
+  persistence = fetchDashboardPersistence,
+}: Props) {
   const [messages, setMessages] = useState<AiV2Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -342,4 +350,4 @@ export function AiV2Panel({ sessionId, persistence = fetchDashboardPersistence }
       </div>
     </div>
   );
-}
+});

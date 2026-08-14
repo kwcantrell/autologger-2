@@ -161,68 +161,7 @@ const captured = {
       "studio_id": "my-crew",
       "name": "All The Smoke",
       "show_code": "ATS",
-      "title_suffix": "date",
-      "categories": [
-        {
-          "id": "cam",
-          "name": "Camera",
-          "color": "#112233",
-          "type": "BUTTON",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "mic",
-          "name": "Mic",
-          "color": "#7cb7ff",
-          "type": "DROPDOWN",
-          "dropdown_options": [
-            {
-              "label": "Lav",
-              "needs_context": false
-            },
-            {
-              "label": "Boom",
-              "needs_context": true
-            }
-          ],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "tally",
-          "name": "Tally",
-          "color": "#ff8800",
-          "type": "ON_OFF",
-          "dropdown_options": [],
-          "on_label": "ON",
-          "off_label": "OFF"
-        }
-      ],
-      "event_palette": [
-        "#64748b",
-        "#e53935",
-        "#fb8c00",
-        "#fdd835",
-        "#43a047",
-        "#00acc1",
-        "#1e88e5",
-        "#8e24aa",
-        "#ec407a"
-      ],
-      "event_palette_preset": "custom",
-      "event_palette_custom": [
-        "#64748b",
-        "#e53935",
-        "#fb8c00",
-        "#fdd835",
-        "#43a047",
-        "#00acc1",
-        "#1e88e5",
-        "#8e24aa",
-        "#ec407a"
-      ]
+      "title_suffix": "date"
     }
   ],
   "new_session_defaults": {

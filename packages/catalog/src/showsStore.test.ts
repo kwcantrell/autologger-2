@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { showApiDict, showCategoriesApiShape } from './showsStore';
+import { showApiDict, showBriefApiDict, showCategoriesApiShape } from './showsStore';
 
 describe('showApiDict', () => {
   it('shapes a full show row with a custom palette', () => {
@@ -95,6 +95,52 @@ describe('showApiDict', () => {
     expect(showApiDict({ ...base, title_suffix: ' Episode ' }).title_suffix).toBe('episode');
     expect(showApiDict({ ...base, title_suffix: 'garbage' }).title_suffix).toBe('date');
     expect(showApiDict({ ...base, title_suffix: '' }).title_suffix).toBe('date');
+  });
+});
+
+describe('showBriefApiDict', () => {
+  const row = {
+    id: 'sh1',
+    studio_id: 'st1',
+    name: 'My Show',
+    show_code: 'MS',
+    title_suffix: ' Episode ',
+    categories_json: '[{"label":"Cue","type":"BUTTON","color":"#ff0000"}]',
+    event_palette_json: '["#111111","#222222"]',
+    event_palette_preset: 'custom',
+    event_palette_custom_json: '["#333333"]',
+  };
+
+  // `toEqual` on the whole object, not per-key presence checks: the point of
+  // the brief shape is what it does NOT carry, so a re-added field has to fail
+  // here (profile-shows-slimming).
+  it('emits exactly the five identity/selection keys, dropping categories + palettes', () => {
+    expect(showBriefApiDict(row)).toEqual({
+      id: 'sh1',
+      studio_id: 'st1',
+      name: 'My Show',
+      show_code: 'MS',
+      // Same normalization as showApiDict — NewSessionModal branches on this
+      // value at selection time, so it must be the wire enum, not the column.
+      title_suffix: 'episode',
+    });
+  });
+
+  it('normalizes title_suffix identically to showApiDict', () => {
+    expect(showBriefApiDict({ ...row, title_suffix: 'garbage' }).title_suffix).toBe('date');
+    expect(showBriefApiDict({ ...row, title_suffix: undefined }).title_suffix).toBe('date');
+    const full = showApiDict({ ...row, title_suffix: 'EPISODE' });
+    expect(showBriefApiDict({ ...row, title_suffix: 'EPISODE' }).title_suffix).toBe(
+      full.title_suffix,
+    );
+  });
+
+  it('is a strict projection of showApiDict — every brief key matches the full shape', () => {
+    const brief = showBriefApiDict(row);
+    const full = showApiDict(row);
+    for (const [key, value] of Object.entries(brief)) {
+      expect(full[key]).toEqual(value);
+    }
   });
 });
 

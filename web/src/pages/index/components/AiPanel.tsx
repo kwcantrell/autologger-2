@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { AiChat, type ChatMessage } from './AiChat';
 import { FEED_SHEET_CLASS } from './FeedShell';
 
@@ -18,7 +18,11 @@ interface Props {
  * rather than unmounting it, so switching tabs never aborts an in-flight
  * turn or clears the conversation.
  */
-export function AiPanel({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const AiPanel = memo(function AiPanel({ sessionId }: Props) {
   // Hoisted chat state/stream ownership (design D9). This state's shape may
   // grow (e.g. tool-activity events) but its ownership should stay at this
   // level.
@@ -41,4 +45,4 @@ export function AiPanel({ sessionId }: Props) {
       />
     </div>
   );
-}
+});

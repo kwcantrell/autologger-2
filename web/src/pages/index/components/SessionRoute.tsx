@@ -1,10 +1,27 @@
+import { useEffect } from 'react';
 import { useRestoreSession, useSession } from '../../../api/hooks/useSessions';
 import type { Session } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
-import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { navigate } from '../navigation';
+import { LazyChunk } from './ChunkLoadBoundary';
 import { HomeRoute } from './HomeRoute';
-import { WorkspaceStatic } from './WorkspaceStatic';
+import { ROUTE_STATE_PAGE, RouteLoadingState } from './RouteLoadingState';
+
+// Workspace code-split behind session resolution (bundle route-splitting, plan
+// C5.2): the whole session workspace — Timeline, feeds, AudioPlayer/Recorder,
+// react-virtual, overlayscrollbars — leaves the homepage graph and is fetched
+// only once an id actually resolves to a live session. The `<Suspense>`
+// fallback (inside `LazyChunk`) is the SAME `RouteLoadingState` the pending
+// branch renders, so resolution -> chunk-fetch is one continuous, non-shifting
+// loading frame.
+//
+// Module scope, and passed as a loader rather than pre-wrapped in `lazy()`:
+// `LazyChunk` owns the `lazy()` instance so a failed chunk fetch can be retried
+// with a fresh one (React.lazy caches rejections permanently — see
+// ChunkLoadBoundary). Stable identity matters: `LazyChunk` reads this at mount
+// and on retry.
+const loadWorkspaceStatic = () =>
+  import('./WorkspaceStatic').then((m) => ({ default: m.WorkspaceStatic }));
 
 // --- SessionRoute (session-deep-links, task 4.2; spec: web-session-routing
 // "Deep-link resolution states", design D5) ---
@@ -42,7 +59,10 @@ import { WorkspaceStatic } from './WorkspaceStatic';
 // request is issued. (The settings modal itself is mounted by AppShell, one
 // level up — teams-settings-nav, design D1 — not here.)
 
-const STATE_PAGE = 'relative z-[1] flex w-full items-center justify-center px-5 py-16';
+// The page-frame class (height mirror included) and the brand loading treatment
+// both live in `./RouteLoadingState` now — shared with the Suspense fallbacks
+// added by the route split (plan C5.1), so every wait renders identical markup.
+const STATE_PAGE = ROUTE_STATE_PAGE;
 const STATE_PANEL =
   'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
 const STATE_TITLE =
@@ -52,30 +72,7 @@ const STATE_BADGE = 'm-0 text-[0.6875rem] font-semibold uppercase tracking-[0.14
 const STATE_BUTTON =
   'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text disabled:cursor-not-allowed disabled:opacity-50';
 
-function LoadingState() {
-  // The brand loading treatment (the RootGate LoadingState idiom).
-  return (
-    <output
-      className={STATE_PAGE}
-      id="session-route-loading"
-      aria-busy="true"
-      aria-live="polite"
-      aria-label="Loading session"
-    >
-      <div className="autologger-loading-video">
-        <video
-          className="autologger-loading-video__media"
-          src={AUTOLOGGER_LOADING_VIDEO_SRC}
-          preload="auto"
-          muted
-          playsInline
-          autoPlay
-          loop
-        />
-      </div>
-    </output>
-  );
-}
+const LoadingState = RouteLoadingState;
 
 function NotFoundState() {
   // One and the same state for nonexistent, deleted, and unauthorized ids —
@@ -177,6 +174,25 @@ export function SessionRoute({
 }: SessionRouteProps) {
   const query = useSession(sessionId);
 
+  // Warm the workspace chunk in PARALLEL with resolution, mirroring AppShell's
+  // idle-prefetch idiom (there: the settings chunk after the load burst). The
+  // workspace is the app's largest chunk, and its `lazy()` below only starts
+  // fetching once `useSession` has resolved — so a cold deep link paid two
+  // serial round trips (resolve, then download) behind one loading frame. This
+  // starts the download on route entry instead; webpack de-dupes the module
+  // request, so the `lazy()` below resolves off this same in-flight load rather
+  // than issuing a second one.
+  //
+  // Deliberate trade-off: an id that resolves to 404/archived warms a chunk it
+  // never mounts. Bytes on an uncommon path, in exchange for removing a serial
+  // RTT from the common one. The rejection is swallowed here because this is a
+  // pure warm-up with no UI of its own — a genuinely broken chunk surfaces
+  // through the boundary below, when the render path actually needs it.
+  useEffect(() => {
+    if (!sessionId) return;
+    void loadWorkspaceStatic().catch(() => {});
+  }, [sessionId]);
+
   if (!sessionId) {
     // Home view (design D10): the dedicated route component, not the
     // workspace — useSession is disabled for the empty id, so this issues no
@@ -188,11 +204,20 @@ export function SessionRoute({
 
   if (resolution?.kind === 'found' && !resolution.session.archived) {
     return (
-      <WorkspaceStatic
-        sessionId={sessionId}
-        ytImportPending={ytImportPending}
-        onOpenMobileNav={onOpenMobileNav}
-      />
+      // Same fallback component as the pending branch below: the workspace
+      // chunk fetch continues the loading frame rather than starting a new,
+      // differently-sized one (plan C5.2). A failed fetch renders the
+      // route-variant retry card in that same frame instead of throwing out of
+      // the island.
+      <LazyChunk load={loadWorkspaceStatic} variant="route" fallback={<LoadingState />}>
+        {(WorkspaceStatic) => (
+          <WorkspaceStatic
+            sessionId={sessionId}
+            ytImportPending={ytImportPending}
+            onOpenMobileNav={onOpenMobileNav}
+          />
+        )}
+      </LazyChunk>
     );
   }
 

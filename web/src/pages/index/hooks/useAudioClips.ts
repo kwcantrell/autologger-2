@@ -1,7 +1,9 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAudioSegments } from '../../../api/hooks/useAudio';
+import { apiFetch } from '../../../api/client';
+import { audioSegmentsKeys, useAudioSegments } from '../../../api/hooks/useAudio';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
-import type { AudioSegment, LogEvent } from '../../../api/types';
+import type { AudioSegment, AudioSyncFromDiskResponse, LogEvent } from '../../../api/types';
 import { computeTotalSec, rebuildAudioClips } from '../../../shared/utils/audioClips';
 import type { AudioClipLite } from '../../../shared/utils/waveformMerge';
 
@@ -56,18 +58,27 @@ export function useAudioClips(
   sessionId: string,
   events: LogEvent[],
 ): AudioClipsLayout & { segments: AudioSegment[] } {
+  const qc = useQueryClient();
   const { data: audioData } = useAudioSegments(sessionId || null);
   const { data: status } = useSessionStatus(sessionId || null);
   const segments = useMemo(() => audioData?.segments ?? [], [audioData]);
 
   // Trigger a sync-from-disk once per session so freshly-uploaded files appear.
+  // The response carries counts only; when the scan actually inserted rows,
+  // refetch the segments list so they show up without a reload.
   useEffect(() => {
     if (!sessionId) return;
-    fetch(`/api/sessions/${encodeURIComponent(sessionId)}/audio/segments/sync-from-disk`, {
-      method: 'POST',
-      credentials: 'same-origin',
-    }).catch(() => undefined);
-  }, [sessionId]);
+    apiFetch<AudioSyncFromDiskResponse>(
+      `sessions/${encodeURIComponent(sessionId)}/audio/segments/sync-from-disk`,
+      { method: 'POST' },
+    )
+      .then((res) => {
+        if (res.inserted > 0) {
+          qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) });
+        }
+      })
+      .catch(() => undefined);
+  }, [sessionId, qc]);
 
   // Probe durations. The server emits no duration for a segment (`segmentApiDict`
   // has no such field — web-api-shape-conformance audit CW-5), so the

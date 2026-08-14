@@ -37,6 +37,37 @@ vi.mock('../../../api/client', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
+// `@tanstack/react-virtual` is mocked to render every row unconditionally:
+// jsdom has no layout engine, so `EventLogSheet`'s real virtualizer measures
+// a zero-height scroll viewport and computes an empty visible range — a
+// known test-infrastructure gap recorded in design.md's panel log. That gap
+// is orthogonal to what these tests drive (filtering, sort order, the batch
+// Escape guard, reveal page growth), so it's bypassed here rather than routed
+// around per-test. `scrollToIndex` is the virtualizer method EventLogSheet's
+// reveal effect calls once the target row's index resolves; the window-spacer
+// and reveal-scroll wiring themselves are covered in
+// EventLogSheet.virtualization.test.tsx against a windowing mock.
+// (Spread over the real module rather than replaced: EventLogSheet also imports
+// `defaultRangeExtractor` for its pinned-row `rangeExtractor`, and a
+// replacement factory would hand it `undefined`.)
+vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
+    const size = estimateSize();
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          start: index * size,
+          end: (index + 1) * size,
+          key: index,
+        })),
+      getTotalSize: () => count * size,
+      scrollToIndex: () => {},
+    };
+  },
+}));
+
 const mockedApiFetch = vi.mocked(apiFetch);
 
 const SESSION_ID = 'sess-log-sheet-1';
@@ -184,6 +215,31 @@ describe('EventLogSheet toolbar overflow clamp', () => {
 
     const toolbar = await screen.findByRole('toolbar', { name: 'Event feed tools' });
     expect(toolbar.className.split(/\s+/)).toContain('max-w-full');
+  });
+});
+
+// --- Loading vs. empty (paint stability) ---
+//
+// `isLoading`/`isEmpty` are distinct FeedTable states (FeedTable consults `isEmpty`
+// only when `!isLoading`). Folding the pending flag into `isEmpty` — the old
+// `sorted.length === 0 && !isPending` — rendered NEITHER row while the query was in
+// flight, so the sheet body was empty on first paint and popped when rows arrived.
+describe('EventLogSheet loading state', () => {
+  it('renders the loading row, not the empty message, while the events query is pending', async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      // Never settles: `isPending` stays true for the whole assertion.
+      if (path.includes('/events')) return new Promise<never>(() => {});
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+
+    renderSheet();
+
+    expect(await screen.findByText('Loading…')).toBeTruthy();
+    expect(screen.queryByText('— No logged items yet.')).toBeNull();
   });
 });
 

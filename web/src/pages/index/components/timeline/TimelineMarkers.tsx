@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import type { CSSProperties, MouseEventHandler } from 'react';
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { LogEvent, SessionStatus } from '../../../../api/types';
 import { eventTimelineSec, safeTimelineSec } from '../../../../shared/utils/audioClips';
 
@@ -42,7 +42,12 @@ interface Props {
   onClick: MouseEventHandler<HTMLDivElement>;
 }
 
-export function TimelineMarkers({
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: Timeline
+// re-renders on every playback frame (`audioPlaybackSec`), but NONE of this component's
+// props may change with it — the four handlers are `useCallback`-stable in Timeline
+// (`onMarkers*`, empty or `writeSelectedEventId` deps) and events/status/totalSec are
+// query-derived. A per-frame prop added here re-opens the whole marker list to the tick.
+export const TimelineMarkers = memo(function TimelineMarkers({
   events,
   status,
   totalSec,
@@ -92,4 +97,4 @@ export function TimelineMarkers({
       })}
     </div>
   );
-}
+});

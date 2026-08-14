@@ -407,6 +407,34 @@ function errorMessage(err: unknown): string {
 let singleton: ChunkUploadQueue | null = null;
 
 /**
+ * Listeners notified the moment the singleton comes into existence. The point
+ * is to let a module that must NOT construct the queue itself (see
+ * `chunkLeaveWarning.ts`, which reads via `peekChunkUploadQueue()` precisely so
+ * it never wins the deps race) still start observing it the instant a real
+ * caller builds it — without an import cycle, since the warning module already
+ * imports this one and never the reverse.
+ */
+const creationListeners = new Set<(queue: ChunkUploadQueue) => void>();
+
+/**
+ * Subscribe to singleton construction. A late registrant — one that arrives
+ * after the queue already exists — is called back immediately, so callers never
+ * have to branch on "did I get here first?". Returns an unsubscribe.
+ *
+ * Listeners are NOT cleared by `resetChunkUploadQueueForTesting()`: the reset
+ * seam drops the instance, not the observers, so a test that reconstructs the
+ * singleton gets a fresh notification with the fresh instance (which is exactly
+ * what re-arms the leave warning against the new queue).
+ */
+export function onChunkUploadQueueCreated(cb: (queue: ChunkUploadQueue) => void): () => void {
+  if (singleton) cb(singleton);
+  creationListeners.add(cb);
+  return () => {
+    creationListeners.delete(cb);
+  };
+}
+
+/**
  * Get (lazily creating) the process-wide chunk upload queue. `deps` is only
  * consulted on first call — later calls return the existing instance
  * regardless of `deps` (mirrors `SessionHubRegistry#get()`-style lazy
@@ -419,6 +447,12 @@ let singleton: ChunkUploadQueue | null = null;
 export function getChunkUploadQueue(deps: ChunkUploadQueueDeps): ChunkUploadQueue {
   if (!singleton) {
     singleton = createChunkUploadQueue(deps);
+    // Notified here rather than inside `createChunkUploadQueue` so that only
+    // the SINGLETON's construction is announced — a caller building a private
+    // instance (tests, future non-singleton use) is not an event anyone else
+    // should react to. Notifying on every fresh construction (not just the
+    // first ever) is what makes the post-reset rebuild re-announce.
+    for (const listener of creationListeners) listener(singleton);
   }
   return singleton;
 }
