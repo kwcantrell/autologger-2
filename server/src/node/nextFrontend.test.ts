@@ -66,7 +66,7 @@ describe('createNextFrontend — corrupt-build reject path (prod, web/.next pres
     const fakeApp = {
       prepare: vi.fn().mockRejectedValue(boom),
       getRequestHandler: vi.fn(),
-      getUpgradeHandler: vi.fn(),
+      upgradeHandler: vi.fn(),
       close: vi.fn(),
     };
     const factory = vi.fn().mockReturnValue(fakeApp);
@@ -94,7 +94,7 @@ describe('createNextFrontend — happy path wiring (fake factory, prepare() reso
     const fakeApp = {
       prepare: vi.fn().mockResolvedValue(undefined),
       getRequestHandler: vi.fn().mockReturnValue(requestHandler),
-      getUpgradeHandler: vi.fn().mockReturnValue(upgradeHandler),
+      upgradeHandler,
       close: vi.fn().mockResolvedValue(undefined),
     };
     const factory = vi.fn().mockReturnValue(fakeApp);
@@ -117,6 +117,40 @@ describe('createNextFrontend — happy path wiring (fake factory, prepare() reso
     await frontend?.close();
     expect(fakeApp.close).toHaveBeenCalled();
   });
+
+  it('routes upgrades through the `upgradeHandler` property, NEVER the no-op getUpgradeHandler() method', async () => {
+    // Regression pin for the task-4.3 dev-HMR failure: on real
+    // `next@15.5.23`, NextCustomServer#getUpgradeHandler() resolves to the
+    // render NextServer's `handleUpgrade()` — a documented no-op that
+    // silently drops every socket (the browser's `/_next/webpack-hmr`
+    // handshake never completes, so no HMR push can ever arrive). The
+    // working handler is the `upgradeHandler` property (router-server's
+    // dispatcher, whose dev branch feeds `hotReloader.onHMR`). Give the fake
+    // BOTH members and prove the wrapper touches only the right one.
+    const d = freshDir();
+    mkdirSync(join(d, '.next'));
+    const realUpgradeHandler = vi.fn().mockResolvedValue(undefined);
+    const noOpTrap = vi.fn().mockReturnValue(vi.fn());
+    const fakeApp = {
+      prepare: vi.fn().mockResolvedValue(undefined),
+      getRequestHandler: vi.fn().mockReturnValue(vi.fn()),
+      upgradeHandler: realUpgradeHandler,
+      getUpgradeHandler: noOpTrap,
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const factory = vi.fn().mockReturnValue(fakeApp);
+    const frontend = await createNextFrontend({
+      dev: true,
+      dir: d,
+      nextFactory: factory as unknown as NextFactory,
+    });
+    const req = { fake: 'incoming' } as never;
+    const socket = { fake: 'socket' } as never;
+    const head = Buffer.from('');
+    await frontend?.upgradeHandler(req, socket, head);
+    expect(realUpgradeHandler).toHaveBeenCalledWith(req, socket, head);
+    expect(noOpTrap).not.toHaveBeenCalled();
+  });
 });
 
 describe('httpServer stub — neutralizes NextCustomServer self-attach (drive-by fix, task 3.4)', () => {
@@ -138,7 +172,7 @@ describe('httpServer stub — neutralizes NextCustomServer self-attach (drive-by
     const fakeApp = {
       prepare: vi.fn().mockResolvedValue(undefined),
       getRequestHandler: vi.fn().mockReturnValue(vi.fn()),
-      getUpgradeHandler: vi.fn().mockReturnValue(vi.fn()),
+      upgradeHandler: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
     };
     const factory = vi.fn().mockReturnValue(fakeApp);

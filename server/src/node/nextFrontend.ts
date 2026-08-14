@@ -47,7 +47,27 @@ export interface NextAppLike {
     incoming: IncomingMessage,
     outgoing: ServerResponse,
   ) => Promise<void>;
-  getUpgradeHandler(): (req: IncomingMessage, socket: Duplex, head: Buffer) => Promise<void>;
+  /** NextCustomServer's `upgradeHandler` property GETTER (valid only after
+   * `prepare()`), NOT its confusingly-similar `getUpgradeHandler()` METHOD.
+   * The two are disjoint code paths in `next@15.5.23` and only this one
+   * works (root cause of the task-4.3 dev-HMR regression, fixed here):
+   *   - `getUpgradeHandler()` (method) returns
+   *     `this.server.getUpgradeHandler()` — the internal render
+   *     `NextServer`'s handler, which calls `next-server.js`'s
+   *     `handleUpgrade()`: a documented NO-OP ("The web server does not
+   *     support web sockets, it's only used for HMR in development"). Routing
+   *     the browser's `/_next/webpack-hmr` upgrade there silently drops it:
+   *     no 101 is ever written, the socket sits in CONNECTING forever (which
+   *     probes read as "open"), and the hot reloader never learns the client
+   *     exists — so no HMR push ever reaches the tab.
+   *   - `upgradeHandler` (getter) returns the router-server's real upgrade
+   *     dispatcher (`router-server.js`), whose dev branch routes
+   *     `/_next/webpack-hmr` to `hotReloader.onHMR(...)` — completing the
+   *     handshake and registering the client with the broadcaster that
+   *     publishes compile events. This is also exactly the handler Next's own
+   *     `setupWebSocketHandler` self-attach would have bound (the attach this
+   *     module's `noOpUpgradeServer` stub deliberately swallows). */
+  upgradeHandler(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -191,10 +211,12 @@ export async function createNextFrontend(
   });
   await app.prepare(); // rejection propagates — fail the boot loudly (see header)
   const requestHandler = app.getRequestHandler();
-  const upgradeHandler = app.getUpgradeHandler();
   return {
     handle: (incoming, outgoing) => requestHandler(incoming, outgoing),
-    upgradeHandler: (req, socket, head) => upgradeHandler(req, socket, head),
+    // Property access per call, deliberately: `upgradeHandler` is a GETTER on
+    // NextCustomServer (never `getUpgradeHandler()` — see NextAppLike's doc
+    // comment for the no-op trap that caused the task-4.3 HMR regression).
+    upgradeHandler: (req, socket, head) => app.upgradeHandler(req, socket, head),
     close: () => app.close(),
   };
 }
