@@ -88,9 +88,16 @@ else goes to Next's dev upgrade handler in dev and is destroyed in prod.
 real dispatcher → `hotReloader.onHMR`), NOT the `getUpgradeHandler()` method — that
 method resolves to render-server `handleUpgrade()`, a documented no-op in next
 15.5.23 that silently drops sockets mid-handshake (this broke dev HMR until
-root-caused; pinned by a unit test). Next's `blockCrossSite` runs on HMR upgrades —
-warn-only while `allowedDevOrigins` is unset; if a future Next blocks by default,
-add `allowedDevOrigins: ['127.0.0.1']` to `web/next.config.ts`. **Panel
+root-caused; pinned by a unit test). Next's `blockCrossSite` runs on HMR upgrades and dev
+`/_next/*` requests. **The lever is now SET (post-apply fix, 2026-08-13):**
+`allowedDevOrigins: ['127.0.0.1']` in `web/next.config.ts` — required because dev
+binds `127.0.0.1` while Next without a `hostname` whitelists only `localhost`.
+Setting it flips unlisted origins from warn to 403-block in dev: dev traffic
+through any other hostname (e.g. a tunnel) 403s on `/_next/*` unless the hostname
+is added to the list. Same fix pinned Tailwind v4's source-detection anchor
+(`base` in `web/postcss.config.mjs`) — the embedded dev server's cwd is `server/`,
+which otherwise breaks dev CSS generation entirely (prod unaffected,
+md5-verified). **Panel
 fixes (2026-08-13):** (a) non-`/api` upgrades are admitted to Next's handler only when
 the socket's remote address passes the same IP-allowlist decision applied to HTTP
 requests — upgrade dispatch happens at the raw server level, outside Hono's middleware,
