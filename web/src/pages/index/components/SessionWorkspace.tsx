@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../../../shared/ui/ConfirmDialog';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { register, unregister } from '../coordination/registry';
 import { AudioClipsProvider } from '../hooks/AudioClipsContext';
+import { TranscriptWordsGateProvider } from '../hooks/TranscriptWordsGateContext';
 import { useAudioClips } from '../hooks/useAudioClips';
 import { useRecoveryStopWarning } from '../hooks/useRecoveryStopWarning';
 import { useRemoteRecordingGate } from '../hooks/useRemoteRecordingGate';
@@ -48,6 +49,15 @@ const FEED_TABS = [
 ] as const;
 
 type FeedTabId = (typeof FEED_TABS)[number]['id'];
+
+// Tabs whose content is derived from the transcript word list (perf plan B4).
+// Activating any of them is what opens the deferred-words gate below; the
+// other three tabs never need the multi-MB payload.
+const WORDS_DEPENDENT_TABS: ReadonlySet<FeedTabId> = new Set<FeedTabId>([
+  'transcript',
+  'topics',
+  'export',
+]);
 
 interface Props {
   sessionId: string;
@@ -133,6 +143,34 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   const [feedTab, setFeedTab] = useState<FeedTabId>('events');
   const feedTabRef = useRef(feedTab);
   feedTabRef.current = feedTab;
+
+  // --- Deferred transcript-words gate (perf plan B4) ---
+  //
+  // Sticky latch, published via TranscriptWordsGateContext: the multi-MB word
+  // list is not fetched until the user first activates a words-dependent tab.
+  // Once opened it stays open for the session — switching back to Events must
+  // not cancel an in-flight fetch or re-issue it on the next visit.
+  //
+  // The reset is a render-time `prevSessionIdRef` compare because THIS
+  // COMPONENT DOES NOT REMOUNT PER SESSION: nothing up the tree keys it
+  // (`SessionRoute` renders `<WorkspaceStatic sessionId=… />` with no `key`,
+  // and `useSession`'s `staleTime: Infinity` lets a nav between two cached
+  // sessions merely update the prop — the same fact that forced `key={sessionId}`
+  // on AiV2Panel below). Without the reset, session B would inherit session A's
+  // activation and eagerly pull B's words. Both mutations are idempotent
+  // latches, so StrictMode's double render is a no-op.
+  //
+  // Ordering matters: reset FIRST, then re-latch from the current tab — landing
+  // on session B while the Transcript tab is still selected must open B's gate
+  // immediately (the tab is active; the words really are needed).
+  const wordsGateRef = useRef(false);
+  const prevSessionIdRef = useRef(sessionId);
+  if (prevSessionIdRef.current !== sessionId) {
+    prevSessionIdRef.current = sessionId;
+    wordsGateRef.current = false;
+  }
+  if (WORDS_DEPENDENT_TABS.has(feedTab)) wordsGateRef.current = true;
+  const transcriptWordsEnabled = wordsGateRef.current;
   const pendingRevealEventIdRef = useRef<string | null>(null);
   const [onOffState, setOnOffState] = useState<Map<string, 'on' | 'off'>>(new Map());
   const handleToggle = useCallback((categoryId: string) => {
@@ -329,201 +367,213 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   );
 
   return (
-    // AudioClipsProvider (whole-branch audit fix wave, finding C1/I3): the ONE
-    // `useAudioClips` layout computed above, published for `useTimelineSeek`
-    // (consumed deep inside EventLogSheet/TranscribeFeed/TopicsFeed) to read
-    // instead of each feed computing its own — see AudioClipsContext.tsx.
-    <AudioClipsProvider clips={audioClips}>
+    // TranscriptWordsGateProvider (perf plan B4): publishes the sticky
+    // "transcript words are needed" latch computed above, so the multi-MB word
+    // list is fetched on first activation of a words-dependent tab (or a
+    // words-dependent dashboard widget) instead of on session mount. It sits
+    // HERE, in the render tree, and deliberately NOT inside the `feedPanels`
+    // useMemo below — that memo is keyed on `sessionId` alone, so a provider
+    // built inside it could never re-render its consumers when the latch flips.
+    // Panels stay mounted exactly as before; only an `enabled` flag moves.
+    <TranscriptWordsGateProvider enabled={transcriptWordsEnabled}>
       {
-        // v3-right-wrap (SW-rendered) resolved under its always-present
-        // `.main-v3.v3-layout-session-focus` ancestor + the former `.v6SessionStage`
-        // hashed local, both on this element. The min-height:0 !important quintet
-        // rule (`.main-v3 .v3-right-wrap`) beats the focus rule's calc() via !important
-        // → min-h-0. The `.v3-right-wrap` class string stays (retention).
+        // AudioClipsProvider (whole-branch audit fix wave, finding C1/I3): the ONE
+        // `useAudioClips` layout computed above, published for `useTimelineSeek`
+        // (consumed deep inside EventLogSheet/TranscribeFeed/TopicsFeed) to read
+        // instead of each feed computing its own — see AudioClipsContext.tsx.
       }
-      <section className="v3-right-wrap relative flex min-h-0 w-full min-w-0 flex-1 flex-col [overflow-x:clip] overflow-y-visible [isolation:isolate] z-0">
-        {/* Orphan-recording recovery warning (ui-refresh D13): themed replacement for the
-          blocking window.confirm this used to render through. The hook re-validates the
-          orphan + lease at accept-time and no-ops if either resolved in the meantime. */}
-        {recoveryStopPending && (
-          <ConfirmDialog
-            open
-            title={recoveryStopPending.title}
-            message={recoveryStopPending.message}
-            confirmLabel="Add synthetic stop"
-            cancelLabel="Cancel"
-            onConfirm={recoveryStopPending.onAccept}
-            onCancel={recoveryStopPending.onDecline}
-          />
-        )}
-        <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
-        {/* Headless audio components */}
-        {sessionId && (
-          <>
-            <AudioRecorder
-              ref={audioRecorderRef}
-              sessionId={sessionId}
-              onPhaseChange={(phase) => setIsUploadingAudio(phase === 'uploading')}
+      <AudioClipsProvider clips={audioClips}>
+        {
+          // v3-right-wrap (SW-rendered) resolved under its always-present
+          // `.main-v3.v3-layout-session-focus` ancestor + the former `.v6SessionStage`
+          // hashed local, both on this element. The min-height:0 !important quintet
+          // rule (`.main-v3 .v3-right-wrap`) beats the focus rule's calc() via !important
+          // → min-h-0. The `.v3-right-wrap` class string stays (retention).
+        }
+        <section className="v3-right-wrap relative flex min-h-0 w-full min-w-0 flex-1 flex-col [overflow-x:clip] overflow-y-visible [isolation:isolate] z-0">
+          {/* Orphan-recording recovery warning (ui-refresh D13): themed replacement for the
+            blocking window.confirm this used to render through. The hook re-validates the
+            orphan + lease at accept-time and no-ops if either resolved in the meantime. */}
+          {recoveryStopPending && (
+            <ConfirmDialog
+              open
+              title={recoveryStopPending.title}
+              message={recoveryStopPending.message}
+              confirmLabel="Add synthetic stop"
+              cancelLabel="Cancel"
+              onConfirm={recoveryStopPending.onAccept}
+              onCancel={recoveryStopPending.onDecline}
             />
-            <AudioPlayer
-              ref={audioPlayerRef}
-              segments={segments}
-              clips={audioClips}
-              onPlayingChange={setIsPlaying}
-              onPlaybackSecChange={setAudioPlaybackSec}
-            />
-            <AudioSaveOverlay isUploading={isUploadingAudio} />
-          </>
-        )}
-        {/* Chunk rescue surface (chunked-live-recording task 5.1, design D6):
-          deliberately OUTSIDE the `sessionId &&` gate above and rendered
-          unconditionally — the module-owned chunk upload queue it reads
-          survives `AudioRecorder` unmount and session switches, so a
-          straggler chunk from a session this workspace just navigated away
-          from must still be rescuable. Reads the queue itself; renders
-          nothing when the queue is empty. */}
-        <ChunkRescueBanner />
+          )}
+          <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+          {/* Headless audio components */}
+          {sessionId && (
+            <>
+              <AudioRecorder
+                ref={audioRecorderRef}
+                sessionId={sessionId}
+                onPhaseChange={(phase) => setIsUploadingAudio(phase === 'uploading')}
+              />
+              <AudioPlayer
+                ref={audioPlayerRef}
+                segments={segments}
+                clips={audioClips}
+                onPlayingChange={setIsPlaying}
+                onPlaybackSecChange={setAudioPlaybackSec}
+              />
+              <AudioSaveOverlay isUploading={isUploadingAudio} />
+            </>
+          )}
+          {/* Chunk rescue surface (chunked-live-recording task 5.1, design D6):
+            deliberately OUTSIDE the `sessionId &&` gate above and rendered
+            unconditionally — the module-owned chunk upload queue it reads
+            survives `AudioRecorder` unmount and session switches, so a
+            straggler chunk from a session this workspace just navigated away
+            from must still be rescuable. Reads the queue itself; renders
+            nothing when the queue is empty. */}
+          <ChunkRescueBanner />
 
-        <div
-          id="v3-session-loading"
-          /* `v3SessionLoading` string retained so the loading-video contextual @layer
-           * rules (template-string media DOM) target this overlay; box styling inline. */
-          className="v3SessionLoading hidden absolute inset-0 z-30 flex items-center justify-center bg-[rgba(15,17,22,0.56)] rounded-[10px] border border-border text-[0.9rem]"
-          role="status"
-          aria-busy={true}
-          aria-live="polite"
-          aria-label="Loading"
-        >
-          <div className="autologger-loading-video" data-autologger-animated-logo-loop="">
-            <video
-              className="autologger-loading-video__media"
-              src={AUTOLOGGER_LOADING_VIDEO_SRC}
-              preload="auto"
-              muted
-              playsInline
-              disablePictureInPicture
-            />
-          </div>
-        </div>
-
-        {/* v3-session-active-root: desktop flex column filling the viewport; max-md
-          reflows to plain block flow (see the column-reflow group below). */}
-        <div
-          id="v3-session-active"
-          className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
-        >
-          {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet
-            member; desktop flex column, max-md plain block. The empty-id
-            placeholder branch (`#v3-session-placeholder`) that used to swap
-            against this element is retired (design D10, GATE-OVERRIDDEN):
-            SessionRoute now gates the workspace mount on a resolved session,
-            so SessionWorkspace only ever mounts with a session id and this
-            grid no longer needs the `!sessionId` hidden toggle. */}
           <div
-            id="v3-session-grid"
-            className="v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
+            id="v3-session-loading"
+            /* `v3SessionLoading` string retained so the loading-video contextual @layer
+             * rules (template-string media DOM) target this overlay; box styling inline. */
+            className="v3SessionLoading hidden absolute inset-0 z-30 flex items-center justify-center bg-[rgba(15,17,22,0.56)] rounded-[10px] border border-border text-[0.9rem]"
+            role="status"
+            aria-busy={true}
+            aria-live="polite"
+            aria-label="Loading"
           >
-            {/* #v4-log-session — ancestor id retained (drives descendant
-              [#v4-log-session_&] variants; perfDebug/e2e hooks target it).
-              is-visible is always present here so display resolves to flex. min-h-0
-              !important quintet member; max-md reflows to block. */}
-            <section
-              id="v4-log-session"
-              className="v4-log-session is-visible flex flex-col flex-1 w-full max-w-full min-w-0 min-h-0 max-h-none gap-5 [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
-              aria-label="Log session"
-            >
-              {/* Sole fused strip — always mounted; roll/rec only swaps the scrub lane. */}
-              <div
-                className="v4-log-top v4-log-top--playback flex flex-col w-full max-w-full flex-[0_0_auto] shrink-0 h-auto max-h-none p-0 gap-2 mt-0 bg-transparent border-none rounded-none shadow-none box-border overflow-visible"
-                id="v4-log-top"
-              >
-                <MaximizeLogStrip
-                  sessionId={sessionId}
-                  status={status ?? null}
-                  events={events}
-                  audioClips={audioClips}
-                  totalSec={audioTotalSec}
-                  mergedPeaks={mergedPeaks}
-                  isWaveformDecoding={isWaveformDecoding}
-                  audioPlaybackSec={audioPlaybackSec}
-                  onSeekAudio={handleSeekAudio}
-                  onAudioRecord={handleAudioRecord}
-                  onAudioPlay={handleAudioPlay}
-                  ytImportPending={ytImportPending}
-                  isPlaying={isPlaying}
-                  onOpenShortcuts={() => setShowShortcuts(true)}
-                  liveDock={liveDock}
-                  onOffState={onOffState}
-                  onToggle={handleToggle}
-                  statusText={statusText}
-                  isRecording={isRecording}
-                  isRolling={isRolling}
-                  onOpenMobileNav={onOpenMobileNav}
-                />
-              </div>
-
-              {sessionId && (
-                // v5FeedTabsPanel literal retained: the sheet-corner-flatten rule
-                // (reaches into FeedShell's `.v4-log-sheet.v5-event-feed`) is an
-                // @layer components rule scoped by this ancestor class.
-                <div className="v5FeedTabsPanel flex flex-col flex-[1_1_0] min-h-0">
-                  {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
-                      aligns with the feed container. */}
-                  <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
-                    <div
-                      className="flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]"
-                      role="tablist"
-                      aria-label="Feed tabs"
-                    >
-                      {FEED_TABS.map((tab) => {
-                        const active = feedTab === tab.id;
-                        return (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={active}
-                            className={feedTabButtonClassName(active)}
-                            onClick={() => setFeedTab(tab.id)}
-                          >
-                            {tab.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  {/* All six top-level panels stay mounted (hidden via the
-                    `hidden` attribute) — memoized above, so mounted no longer
-                    means re-rendered — not conditionally rendered: switching
-                    tabs must not unmount AiPanel's hoisted chat state/stream
-                    or AiV2Panel's hoisted design-turn state/stream (design
-                    D9; ai-v2-dashboards spec "AI v2 tab in the session
-                    workspace" — a conditional mount here would abort an
-                    in-flight turn per the subprocess lifecycle rule).
-                    Transcript/Topics/Export inherit the same discipline so their
-                    fetch state stays warm across switches. */}
-                  {FEED_TABS.map((tab) => (
-                    <div
-                      key={tab.id}
-                      className={clsx(
-                        // Stack above the tablist so tabs tuck behind the feed
-                        // sheet edge (tablist is z-0; sheet CSS also uses z-1).
-                        'relative z-[1] flex flex-col flex-1 min-h-0',
-                        feedTab !== tab.id && 'hidden',
-                      )}
-                      hidden={feedTab !== tab.id}
-                      role="tabpanel"
-                      aria-label={tab.label}
-                    >
-                      {feedPanels[tab.id]}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+            <div className="autologger-loading-video" data-autologger-animated-logo-loop="">
+              <video
+                className="autologger-loading-video__media"
+                src={AUTOLOGGER_LOADING_VIDEO_SRC}
+                preload="auto"
+                muted
+                playsInline
+                disablePictureInPicture
+              />
+            </div>
           </div>
-        </div>
-      </section>
-    </AudioClipsProvider>
+
+          {/* v3-session-active-root: desktop flex column filling the viewport; max-md
+            reflows to plain block flow (see the column-reflow group below). */}
+          <div
+            id="v3-session-active"
+            className="v3-session-active-root relative flex flex-1 flex-col [overflow-x:clip] overflow-y-visible min-h-[calc(100vh-2.2rem)] max-md:block max-md:min-h-0 max-md:h-auto"
+          >
+            {/* #v3-session-grid.v4-session-workspace — min-h-0 !important quintet
+              member; desktop flex column, max-md plain block. The empty-id
+              placeholder branch (`#v3-session-placeholder`) that used to swap
+              against this element is retired (design D10, GATE-OVERRIDDEN):
+              SessionRoute now gates the workspace mount on a resolved session,
+              so SessionWorkspace only ever mounts with a session id and this
+              grid no longer needs the `!sessionId` hidden toggle. */}
+            <div
+              id="v3-session-grid"
+              className="v4-session-workspace flex flex-col flex-1 w-full min-w-0 items-stretch min-h-0 max-h-none [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
+            >
+              {/* #v4-log-session — ancestor id retained (drives descendant
+                [#v4-log-session_&] variants; perfDebug/e2e hooks target it).
+                is-visible is always present here so display resolves to flex. min-h-0
+                !important quintet member; max-md reflows to block. */}
+              <section
+                id="v4-log-session"
+                className="v4-log-session is-visible flex flex-col flex-1 w-full max-w-full min-w-0 min-h-0 max-h-none gap-5 [overflow-x:clip] overflow-y-visible max-md:block max-md:h-auto"
+                aria-label="Log session"
+              >
+                {/* Sole fused strip — always mounted; roll/rec only swaps the scrub lane. */}
+                <div
+                  className="v4-log-top v4-log-top--playback flex flex-col w-full max-w-full flex-[0_0_auto] shrink-0 h-auto max-h-none p-0 gap-2 mt-0 bg-transparent border-none rounded-none shadow-none box-border overflow-visible"
+                  id="v4-log-top"
+                >
+                  <MaximizeLogStrip
+                    sessionId={sessionId}
+                    status={status ?? null}
+                    events={events}
+                    audioClips={audioClips}
+                    totalSec={audioTotalSec}
+                    mergedPeaks={mergedPeaks}
+                    isWaveformDecoding={isWaveformDecoding}
+                    audioPlaybackSec={audioPlaybackSec}
+                    onSeekAudio={handleSeekAudio}
+                    onAudioRecord={handleAudioRecord}
+                    onAudioPlay={handleAudioPlay}
+                    ytImportPending={ytImportPending}
+                    isPlaying={isPlaying}
+                    onOpenShortcuts={() => setShowShortcuts(true)}
+                    liveDock={liveDock}
+                    onOffState={onOffState}
+                    onToggle={handleToggle}
+                    statusText={statusText}
+                    isRecording={isRecording}
+                    isRolling={isRolling}
+                    onOpenMobileNav={onOpenMobileNav}
+                  />
+                </div>
+
+                {sessionId && (
+                  // v5FeedTabsPanel literal retained: the sheet-corner-flatten rule
+                  // (reaches into FeedShell's `.v4-log-sheet.v5-event-feed`) is an
+                  // @layer components rule scoped by this ancestor class.
+                  <div className="v5FeedTabsPanel flex flex-col flex-[1_1_0] min-h-0">
+                    {/* Tabs share the sheet's mx-4 edge — no extra pad — so the lid
+                        aligns with the feed container. */}
+                    <div className="relative z-0 mx-4 flex shrink-0 items-end pt-[0.3rem] max-md:overflow-x-auto max-md:overflow-y-hidden max-md:[-webkit-overflow-scrolling:touch] max-md:[scrollbar-width:none]">
+                      <div
+                        className="flex min-w-0 flex-1 flex-nowrap items-end gap-[0.12rem]"
+                        role="tablist"
+                        aria-label="Feed tabs"
+                      >
+                        {FEED_TABS.map((tab) => {
+                          const active = feedTab === tab.id;
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={active}
+                              className={feedTabButtonClassName(active)}
+                              onClick={() => setFeedTab(tab.id)}
+                            >
+                              {tab.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* All six top-level panels stay mounted (hidden via the
+                      `hidden` attribute) — memoized above, so mounted no longer
+                      means re-rendered — not conditionally rendered: switching
+                      tabs must not unmount AiPanel's hoisted chat state/stream
+                      or AiV2Panel's hoisted design-turn state/stream (design
+                      D9; ai-v2-dashboards spec "AI v2 tab in the session
+                      workspace" — a conditional mount here would abort an
+                      in-flight turn per the subprocess lifecycle rule).
+                      Transcript/Topics/Export inherit the same discipline so their
+                      fetch state stays warm across switches. */}
+                    {FEED_TABS.map((tab) => (
+                      <div
+                        key={tab.id}
+                        className={clsx(
+                          // Stack above the tablist so tabs tuck behind the feed
+                          // sheet edge (tablist is z-0; sheet CSS also uses z-1).
+                          'relative z-[1] flex flex-col flex-1 min-h-0',
+                          feedTab !== tab.id && 'hidden',
+                        )}
+                        hidden={feedTab !== tab.id}
+                        role="tabpanel"
+                        aria-label={tab.label}
+                      >
+                        {feedPanels[tab.id]}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          </div>
+        </section>
+      </AudioClipsProvider>
+    </TranscriptWordsGateProvider>
   );
 }

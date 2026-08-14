@@ -8,6 +8,7 @@ import {
   useTranscriptWords,
   useUpdateTranscriptWord,
 } from '../../../api/hooks/useTranscriptWords';
+import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
 import { clickSortReducer } from '../utils/sortReducer';
@@ -55,7 +56,13 @@ interface Props {
 // today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
 // (~60/s) render isolation this buys reopens.
 export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props) {
-  const { data: words, isLoading } = useTranscriptWords(sessionId);
+  // `enabled` (perf plan B4): this panel is mounted from session mount but
+  // hidden until the Transcript tab is first activated — which is exactly when
+  // the workspace's gate opens, so the first painted render here is the normal
+  // loading state, not a stale "no words" one.
+  const { data: words, isLoading } = useTranscriptWords(sessionId, {
+    enabled: useTranscriptWordsGate(),
+  });
   const { data: generationStatus } = useTranscriptGenerationStatus();
   const generate = useGenerateTranscript(sessionId);
   const insert = useInsertTranscriptWord(sessionId);

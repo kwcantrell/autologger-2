@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
+import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { SessionWorkspace } from './SessionWorkspace';
 
 // --- SessionWorkspace tests (mounted-hidden tab discipline) ---
@@ -38,8 +39,16 @@ vi.mock('../../../api/hooks/useEvents', () => ({
 // REAL `useQuery` under the hood, which the wholesale `@tanstack/react-query`
 // mock below does not provide — mocked at the module boundary, matching
 // `useEvents` above, so AiV2Panel's widget-data hook never reaches it.
+// Spied rather than a bare stub (perf plan B4) so the deferred-words gate test
+// below can read the `enabled` option this workspace's only REAL words
+// consumer in this file — AiV2Panel's `useAiV2WidgetData` — was called with.
+const { transcriptWordsSpy } = vi.hoisted(() => ({
+  transcriptWordsSpy: vi.fn((_sessionId: string | null, _opts?: { enabled?: boolean }) => ({
+    data: undefined,
+  })),
+}));
 vi.mock('../../../api/hooks/useTranscriptWords', () => ({
-  useTranscriptWords: () => ({ data: undefined }),
+  useTranscriptWords: transcriptWordsSpy,
 }));
 
 vi.mock('../../../api/hooks/useTopics', () => ({
@@ -115,8 +124,14 @@ vi.mock('./Timeline', () => ({ Timeline: () => null }));
 vi.mock('./TopicsFeed', () => ({
   TopicsFeed: () => <div data-testid="topics-feed-stub" />,
 }));
+// The stub also publishes the deferred-words gate it reads from context (perf
+// plan B4) — this is the value the REAL TranscribeFeed passes straight through
+// as `useTranscriptWords(sessionId, { enabled })`, so asserting on it asserts
+// the wiring without unmocking the whole feed.
 vi.mock('./TranscribeFeed', () => ({
-  TranscribeFeed: () => <div data-testid="transcribe-feed-stub" />,
+  TranscribeFeed: () => (
+    <div data-testid="transcribe-feed-stub" data-words-gate={String(useTranscriptWordsGate())} />
+  ),
 }));
 vi.mock('./TransportControls', () => ({
   getTransportState: () => 'stop',
@@ -267,6 +282,94 @@ describe('SessionWorkspace tab restructure', () => {
 // mocked), same rationale as AiChat/AiPanel: proving genuine no-unmount and
 // no-abort requires the real DOM node and a real (mocked-at-the-fetch-
 // boundary) in-flight stream.
+
+// --- Deferred transcript-words fetch (perf plan B4) ---
+//
+// The word list is the biggest payload the workspace pulls, and the
+// mounted-hidden tab discipline above is exactly what used to make it
+// unconditional: four always-mounted consumers called `useTranscriptWords`
+// from the first render. The gate defers it to first activation of a
+// words-dependent tab. Panels are untouched — these tests assert only the
+// `enabled` flag consumers receive, and the mount-discipline tests above still
+// pass unchanged.
+
+describe('SessionWorkspace deferred transcript-words gate', () => {
+  const gateOnStub = () =>
+    screen.getByTestId('transcribe-feed-stub').getAttribute('data-words-gate');
+
+  it('starts shut on the default (Events) tab, opens on Transcript, and stays open on the way back', () => {
+    transcriptWordsSpy.mockClear();
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+
+    // Nothing words-dependent has been opened yet.
+    expect(gateOnStub()).toBe('false');
+    // End-to-end through a real consumer: AiV2Panel's widget-data hook holds
+    // an empty config here, so the gate is its only trigger.
+    expect(transcriptWordsSpy).toHaveBeenCalled();
+    expect(transcriptWordsSpy.mock.calls.every(([, opts]) => opts?.enabled === false)).toBe(true);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    expect(gateOnStub()).toBe('true');
+    expect(transcriptWordsSpy).toHaveBeenCalledWith('sess-1', { enabled: true });
+
+    // Sticky: leaving the tab must not cancel/re-issue the fetch.
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    expect(gateOnStub()).toBe('true');
+
+    // Topics and Export are words-dependent too; Assistant/Dashboards are not,
+    // but the latch is one-way so they cannot shut it either.
+    fireEvent.click(screen.getByRole('tab', { name: 'Assistant' }));
+    expect(gateOnStub()).toBe('true');
+  });
+
+  it.each([['Topics'], ['Export']])('opens on first activation of the %s tab', (tabName) => {
+    renderStrict(<SessionWorkspace sessionId="sess-1" />);
+    expect(gateOnStub()).toBe('false');
+    fireEvent.click(screen.getByRole('tab', { name: tabName }));
+    expect(gateOnStub()).toBe('true');
+  });
+
+  // The latch lives in a ref, and this component does NOT remount per session
+  // (SessionRoute renders WorkspaceStatic with no `key`; `useSession`'s
+  // `staleTime: Infinity` lets a nav between two cached sessions merely update
+  // the prop — the same fact the AiV2Panel `key={sessionId}` test below turns
+  // on). Without the render-time `prevSessionIdRef` compare, session B would
+  // inherit session A's activation and eagerly pull B's multi-MB word list.
+  // Same `StrictWrapper` re-wrap as that test, for the same reason: a changed
+  // root element TYPE would remount SessionWorkspace and make this pass
+  // regardless of the reset.
+  it('resets the latch when the session changes without a remount', () => {
+    const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+    expect(gateOnStub()).toBe('true');
+
+    rerender(
+      <StrictWrapper>
+        <SessionWorkspace sessionId="sess-b" />
+      </StrictWrapper>,
+    );
+
+    expect(gateOnStub()).toBe('false');
+  });
+
+  // Reset-then-relatch ordering: landing on session B while a words-dependent
+  // tab is still selected must re-open B's gate in the same render — the tab
+  // is active, so the words really are needed.
+  it('re-opens immediately for the next session when a words tab is still selected', () => {
+    const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
+    expect(gateOnStub()).toBe('true');
+
+    rerender(
+      <StrictWrapper>
+        <SessionWorkspace sessionId="sess-b" />
+      </StrictWrapper>,
+    );
+
+    expect(gateOnStub()).toBe('true');
+  });
+});
 
 describe('SessionWorkspace Dashboards (AI v2) tab', () => {
   it('activates the Dashboards tabpanel and deselects it on load (tab count covered above)', () => {
