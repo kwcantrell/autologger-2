@@ -134,7 +134,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
 
 ## 5. SSR easy wins
 
-- [ ] 5.1 Single-source the server-rendered skeleton (panel rework 2026-08-13): one
+- [x] 5.1 Single-source the server-rendered skeleton (panel rework 2026-08-13): one
       shared React component rendered both as the `dynamic()` `loading` fallback and by
       the island's loading branch — no hand-maintained markup mirror. Skeleton contains
       no user- or session-derived data. Done-ness gate: a jsdom test asserting the

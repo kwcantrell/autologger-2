@@ -1,4 +1,5 @@
 import { useProfile } from '../../api/hooks/useProfile';
+import { AppLoadingSkeleton } from '../../shared/ui/AppLoadingSkeleton';
 import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../shared/utils/loadingVideo';
 import { AppShell } from './AppShell';
 import { LoginPage } from './components/LoginPage';
@@ -37,27 +38,29 @@ import { LoginPage } from './components/LoginPage';
 const GATE_PAGE =
   'relative z-[1] flex min-h-screen min-h-[100dvh] w-full items-center justify-center px-5 py-10';
 
+// Single-sourced with the Next `dynamic()` `loading` fallback (task 5.1,
+// design D9.1): this renders the exact same `AppLoadingSkeleton` used by
+// `IndexIsland`/`AdminIsland`, opting into the looping brand video as that
+// component's `media` progressive-enhancement slot rather than hand-rolling
+// a second copy of the loading frame.
 function LoadingState() {
   return (
-    <output
-      className={GATE_PAGE}
+    <AppLoadingSkeleton
       id="root-gate-loading"
-      aria-busy="true"
-      aria-live="polite"
-      aria-label="Loading"
-    >
-      <div className="autologger-loading-video">
-        <video
-          className="autologger-loading-video__media"
-          src={AUTOLOGGER_LOADING_VIDEO_SRC}
-          preload="auto"
-          muted
-          playsInline
-          autoPlay
-          loop
-        />
-      </div>
-    </output>
+      media={
+        <div className="autologger-loading-video">
+          <video
+            className="autologger-loading-video__media"
+            src={AUTOLOGGER_LOADING_VIDEO_SRC}
+            preload="auto"
+            muted
+            playsInline
+            autoPlay
+            loop
+          />
+        </div>
+      }
+    />
   );
 }
 
