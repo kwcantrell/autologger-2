@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
 import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
+import type { DraftStore } from '../utils/draftStore';
 import {
   FEED_CELL,
   FEED_CELL_TIME,
@@ -11,11 +12,34 @@ import {
 } from './FeedTable';
 import { JumpToTimeButton } from './JumpToTimeButton';
 
-interface EditState {
-  session_time: string;
-  speaker: string;
-  word: string;
+/** One row's in-progress edit, as raw input text — every field optional,
+ *  because only the controls the operator actually touched are recorded.
+ *
+ *  This feed is virtualized too, so the edit CANNOT live only in this
+ *  component: React fires no blur when the virtualizer unmounts a row, so a
+ *  correction typed into a row that then scrolls past the overscan was
+ *  committed by nothing and remembered by nothing — it silently reverted to the
+ *  server text on the way back. `TranscribeFeed` owns the store (the same
+ *  `utils/draftStore` primitive EventLogSheet's inline drafts use, not a second
+ *  implementation of it); this row writes through on every keystroke and seeds
+ *  itself from it when it mounts. */
+export interface TranscribeDraft {
+  session_time?: string;
+  speaker?: string;
+  word?: string;
 }
+
+/** Exhaustive field list for `DraftStore#clearMatching`, compiler-checked
+ *  against the interface above. */
+export const TRANSCRIBE_DRAFT_FIELDS = [
+  'session_time',
+  'speaker',
+  'word',
+] as const satisfies ReadonlyArray<keyof TranscribeDraft>;
+
+export type TranscribeDraftStore = DraftStore<TranscribeDraft>;
+
+type EditField = keyof TranscribeDraft;
 
 type UpdateFn = (
   wordId: string,
@@ -26,6 +50,9 @@ interface Props {
   row: TranscriptWord;
   speakerOffset: number;
   onUpdate: UpdateFn;
+  /** `TranscribeFeed`'s draft store — one identity for the whole feed, stable
+   *  for its lifetime (see `TranscribeDraft`). */
+  drafts: TranscribeDraftStore;
   /** The session's ACTUAL (non-rounded) frame rate, for the D3 converter — `null`
    *  while session status hasn't loaded yet. Passed as a prop (design D7): the
    *  row must not subscribe to session status itself. */
@@ -107,15 +134,31 @@ export const TranscribeRow = memo(function TranscribeRow({
   row,
   speakerOffset,
   onUpdate,
+  drafts,
   fps,
   onJump,
   jumpUnavailable,
   jumpReasonId,
 }: Props) {
-  const [edit, setEdit] = useState<EditState | null>(null);
+  // Seeded from the feed-owned store, so a row remounting after the virtualizer
+  // dropped it comes back holding what was typed into it rather than the server
+  // text. `null` = untouched since the last commit.
+  const [edit, setEdit] = useState<TranscribeDraft | null>(() => drafts.read(row.id) ?? null);
 
   function startEdit() {
-    setEdit({ session_time: row.session_time, speaker: row.speaker, word: row.word });
+    // Preserve an edit already in progress (a restored draft, or another field
+    // of this row typed a moment ago) — only seed from the row when there is
+    // nothing to preserve.
+    setEdit(
+      (prev) => prev ?? { session_time: row.session_time, speaker: row.speaker, word: row.word },
+    );
+  }
+
+  /** Write-through: local state renders the (controlled) input, the store is
+   *  what survives this row's next unmount. */
+  function changeField(field: EditField, value: string) {
+    setEdit((prev) => ({ ...(prev ?? {}), [field]: value }));
+    drafts.write(row.id, { [field]: value });
   }
 
   // feed-row-seek, task 9.2: dirty check mirroring `EventLogRow.handleBlur`'s
@@ -128,14 +171,28 @@ export const TranscribeRow = memo(function TranscribeRow({
   // the query under a virtualized list) on every such jump. Compares against
   // `row[field]` (the last COMMITTED value), not a focus-time snapshot, same
   // as `EventLogRow`'s comparison against its current `event` prop.
-  function commitField(field: keyof EditState, value: string) {
+  function commitField(field: EditField, value: string) {
     if (!edit) return;
     setEdit((p) => (p ? { ...p, [field]: value } : p));
-    if (value === row[field]) return;
+    if (value === row[field]) {
+      // Nothing to commit for this field: its text is already exactly what the
+      // row renders from the server, so its draft entry is spent. Passing a
+      // one-field reference clears only that entry — every other field is
+      // `undefined` in the reference and therefore counts as diverged, which is
+      // what keeps a sibling field's uncommitted text alive.
+      drafts.clearMatching(row.id, { [field]: value });
+      return;
+    }
     onUpdate(row.id, { [field]: value });
   }
 
-  const vals = edit ?? { session_time: row.session_time, speaker: row.speaker, word: row.word };
+  // `??` per field, never `edit ?? row`: a draft carries only the fields that
+  // were touched, and an empty string is a real edited value.
+  const vals = {
+    session_time: edit?.session_time ?? row.session_time,
+    speaker: edit?.speaker ?? row.speaker,
+    word: edit?.word ?? row.word,
+  };
   const jumpTarget = resolveTranscribeJump(row, fps);
 
   return (
@@ -157,7 +214,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           className={clsx(FEED_INLINE_INPUT, FEED_INLINE_INPUT_MONO, 'mono')}
           value={vals.session_time}
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, session_time: e.target.value } : p))}
+          onChange={(e) => changeField('session_time', e.target.value)}
           onBlur={(e) => commitField('session_time', e.target.value)}
         />
       </td>
@@ -167,7 +224,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, speaker: e.target.value } : p))}
+          onChange={(e) => changeField('speaker', e.target.value)}
           onBlur={(e) => commitField('speaker', e.target.value)}
         />
       </td>
@@ -176,7 +233,7 @@ export const TranscribeRow = memo(function TranscribeRow({
           className={FEED_INLINE_INPUT}
           value={vals.word}
           onFocus={startEdit}
-          onChange={(e) => setEdit((p) => (p ? { ...p, word: e.target.value } : p))}
+          onChange={(e) => changeField('word', e.target.value)}
           onBlur={(e) => commitField('word', e.target.value)}
         />
       </td>

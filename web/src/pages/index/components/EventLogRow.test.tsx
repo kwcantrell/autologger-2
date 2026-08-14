@@ -1,15 +1,20 @@
-import { act, fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Category, LogEvent } from '../../../api/types';
 import { formatWallUtcYmdHms } from '../../../shared/utils/timecode';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
+import { createDraftStore } from '../utils/draftStore';
 import {
   EventLogRow,
+  INLINE_DRAFT_FIELDS,
+  INLINE_FOCUS_RESTORE_MAX_AGE_MS,
   type InlineDraft,
   type InlineDraftStore,
   type InlineFocusRecord,
+  type InlineFocusRecordInput,
   type InlineFocusStore,
+  serverInlineDraft,
 } from './EventLogRow';
 
 // --- EventLogRow jump cell (feed-row-seek, task 6.1/6.2) ---
@@ -51,35 +56,31 @@ function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
   };
 }
 
-/** A standalone stand-in for `EventLogSheet`'s inline-draft store — the same
- *  Map-behind-stable-callbacks shape, owned by the test instead of the sheet. */
-function draftStore(seed: Array<[string, InlineDraft]> = []): InlineDraftStore & {
-  map: Map<string, InlineDraft>;
-} {
-  const map = new Map<string, InlineDraft>(seed);
-  return {
-    map,
-    read: (eventId) => map.get(eventId),
-    write: (eventId, patch) => {
-      map.set(eventId, { ...(map.get(eventId) ?? {}), ...patch });
-    },
-    clear: (eventId) => {
-      map.delete(eventId);
-    },
-  };
+/** The REAL store `EventLogSheet` hands its rows (`utils/draftStore`), owned by
+ *  the test instead of the sheet — never a re-implementation, so a row driven
+ *  here and a row driven by the sheet cannot see different clear semantics. */
+function draftStore(seed: Array<[string, InlineDraft]> = []): InlineDraftStore {
+  const store = createDraftStore<InlineDraft>(INLINE_DRAFT_FIELDS);
+  for (const [eventId, draft] of seed) store.write(eventId, draft);
+  return store;
 }
 
 /** A standalone stand-in for `EventLogSheet`'s inline-focus record — same
- *  ref-behind-stable-callbacks shape, owned by the test. */
-function focusStore(seed: InlineFocusRecord | null = null): InlineFocusStore & {
+ *  ref-behind-stable-callbacks shape, and the same store-side `recordedAt`
+ *  stamp (the restore staleness bound depends on it). `recordedAt` seeds the
+ *  INITIAL record's stamp, so a test can hand the row an aged one. */
+function focusStore(
+  seed: InlineFocusRecordInput | null = null,
+  recordedAt: number = Date.now(),
+): InlineFocusStore & {
   current: () => InlineFocusRecord | null;
 } {
-  let record = seed;
+  let record: InlineFocusRecord | null = seed ? { ...seed, recordedAt } : null;
   return {
     current: () => record,
     read: () => record,
     record: (next) => {
-      record = next;
+      record = { ...next, recordedAt: Date.now() };
     },
     clear: (eventId) => {
       if (record?.eventId === eventId) record = null;
@@ -193,7 +194,7 @@ describe('EventLogRow — inline-edit drafts', () => {
     fireEvent.change(screen.getByLabelText('Timecode'), { target: { value: '00:00:12' } });
     fireEvent.change(screen.getByLabelText('UTC'), { target: { value: '26-07-21 00:00:1' } });
 
-    expect(inlineDrafts.map.get('ev-1')).toEqual({
+    expect(inlineDrafts.read('ev-1')).toEqual({
       message: 'half a thought',
       timecode_hms: '00:00:12',
       // Stored as RAW input text: '26-07-21 00:00:1' is mid-typing and has no
@@ -233,7 +234,7 @@ describe('EventLogRow — inline-edit drafts', () => {
 
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'batch text' } });
 
-    expect(inlineDrafts.map.size).toBe(0);
+    expect(inlineDrafts.read('ev-1')).toBeUndefined();
     expect(onInlineSave).not.toHaveBeenCalled();
   });
 });
@@ -263,6 +264,7 @@ describe('EventLogRow — inline-edit focus record', () => {
       field: 'message',
       selectionStart: 3,
       selectionEnd: 7,
+      recordedAt: expect.any(Number),
     });
   });
 
@@ -312,6 +314,7 @@ describe('EventLogRow — inline-edit focus record', () => {
       field: 'message',
       selectionStart: 4,
       selectionEnd: 6,
+      recordedAt: expect.any(Number),
     });
   });
 
@@ -403,5 +406,209 @@ describe('EventLogRow — generated-row marker', () => {
     // render exactly as for a manual row.
     expect(screen.getByLabelText('Message')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Delete row' })).toBeTruthy();
+  });
+});
+
+// --- One definition of "this draft field is spent" (review findings 1 and 4) ---
+//
+// Three paths drop inline-draft fields: the sheet's save-resolution clear, this
+// row's server-sync effect, and `saveInline`'s nothing-to-commit branch. All
+// three now go through the SAME comparison — `DraftStore#clearMatching`, in
+// DRAFT space (raw control text) against `serverInlineDraft(event)` — because
+// two of them used to clear the row's whole entry instead, and both lost text
+// the row was still displaying:
+//
+//  * the sync effect deleted the fields the save-resolution clear had just
+//    deliberately preserved (keystrokes typed during a round trip, or the text
+//    a FAILED save left recoverable), whenever the row happened to be blurred
+//    when a refetch landed;
+//  * the nothing-to-commit branch compared in VALUE space — trimmed, and with
+//    `buildWallIso` falling back to the original ISO for anything unparseable —
+//    so a half-typed date read as "unchanged" while the input still showed it.
+
+/** Renders the row in its own <table>, re-renderable with a new `event` (what a
+ *  refetch hands it) while keeping the same draft/focus stores. */
+function mountRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) {
+  const inlineDrafts = overrides.inlineDrafts ?? draftStore();
+  const inlineFocus = overrides.inlineFocus ?? focusStore();
+  const onInlineSave = vi.fn();
+  const tree = (event: LogEvent) => (
+    <StrictWrapper>
+      <table>
+        <tbody>
+          <EventLogRow
+            event={event}
+            categories={[categoryFixture()]}
+            inlineEdit
+            batchEdit={false}
+            pendingDelete={false}
+            viewUtc
+            batchValues={null}
+            onInlineSave={onInlineSave}
+            onBatchChange={vi.fn()}
+            onDelete={vi.fn()}
+            onUndelete={vi.fn()}
+            resolvedSec={10}
+            onJump={vi.fn()}
+            jumpUnavailable={false}
+            {...overrides}
+            inlineDrafts={inlineDrafts}
+            inlineFocus={inlineFocus}
+          />
+        </tbody>
+      </table>
+    </StrictWrapper>
+  );
+  const view = render(tree(overrides.event ?? eventFixture()));
+  return {
+    ...view,
+    inlineDrafts,
+    inlineFocus,
+    onInlineSave,
+    /** A refetch delivering a new object for this row. */
+    serverUpdate: (event: LogEvent) => act(() => view.rerender(tree(event))),
+  };
+}
+
+const input = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+describe('EventLogRow — server-driven refresh vs. unsaved draft text (finding 1)', () => {
+  it('keeps draft fields that diverge from the incoming server row, and refreshes the rest', () => {
+    const { inlineDrafts, serverUpdate } = mountRow();
+
+    // Uncommitted text: what a failed save left recoverable, or keystrokes the
+    // sheet's save-resolution clear kept. The row is NOT focused.
+    fireEvent.change(input('Message'), { target: { value: 'text nothing has saved' } });
+
+    // A refetch hands the row a new identity, with a field the operator never
+    // touched changed by the server.
+    serverUpdate(eventFixture({ timecode: '00:00:20:00', timecode_total_frames: 480 }));
+
+    // The diverging field survives, in the store AND on screen...
+    expect(inlineDrafts.read('ev-1')).toEqual({ message: 'text nothing has saved' });
+    expect(input('Message').value).toBe('text nothing has saved');
+    // ...and the untouched one still refreshes — that is this effect's whole job.
+    expect(input('Timecode').value).toBe('00:00:20');
+  });
+
+  it('still forgets a draft field the server has caught up with', () => {
+    const { inlineDrafts, serverUpdate } = mountRow();
+
+    fireEvent.change(input('Message'), { target: { value: 'committed note' } });
+    serverUpdate(eventFixture({ message: 'committed note' }));
+
+    // Spent: leaving it would shadow the fresh row on the next remount.
+    expect(inlineDrafts.read('ev-1')).toBeUndefined();
+    expect(input('Message').value).toBe('committed note');
+  });
+});
+
+describe('EventLogRow — nothing-to-commit clears in draft space (finding 4)', () => {
+  it('keeps a half-typed wall time that has no parsed form', async () => {
+    const { inlineDrafts, onInlineSave } = mountRow();
+
+    // Unparseable, so `buildWallIso` falls back to the original ISO and every
+    // VALUE-space comparison reports "unchanged" — while the input shows this.
+    act(() => input('UTC').focus());
+    fireEvent.change(input('UTC'), { target: { value: '26-07-2' } });
+    await act(async () => {
+      input('UTC').blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onInlineSave).not.toHaveBeenCalled();
+    expect(inlineDrafts.read('ev-1')).toEqual({ wall_text: '26-07-2' });
+    // The row is showing it, and a remount must keep showing it.
+    expect(input('UTC').value).toBe('26-07-2');
+  });
+
+  it('keeps a message that differs from the server only by whitespace', async () => {
+    const { inlineDrafts } = mountRow();
+
+    act(() => input('Message').focus());
+    fireEvent.change(input('Message'), { target: { value: 'A logged note  ' } });
+    await act(async () => {
+      input('Message').blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(inlineDrafts.read('ev-1')).toEqual({ message: 'A logged note  ' });
+  });
+
+  it('still forgets a field typed back to exactly the server text', async () => {
+    const { inlineDrafts } = mountRow();
+
+    act(() => input('UTC').focus());
+    fireEvent.change(input('UTC'), { target: { value: '26-07-2' } });
+    act(() => input('Message').focus());
+    fireEvent.change(input('Message'), { target: { value: 'changed' } });
+    fireEvent.change(input('Message'), { target: { value: 'A logged note' } });
+    await act(async () => {
+      input('Message').blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // The message entry is spent; the half-typed sibling is not.
+    expect(inlineDrafts.read('ev-1')).toEqual({ wall_text: '26-07-2' });
+  });
+});
+
+// --- An abandoned focus record must not come back to life (finding 3) ---
+//
+// Wheel scrolling changes neither focus nor `document.activeElement`, so the
+// mount-time restore's "focus is nowhere" guard stays satisfied indefinitely
+// for a row the operator walked away from. Two bounds live here (the third —
+// dropping the record on a pointerdown/focusin outside the row — is the sheet's,
+// since it has to work while the row is unmounted).
+describe('EventLogRow — focus restore is bounded (finding 3)', () => {
+  const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus');
+  afterEach(() => focusSpy.mockClear());
+
+  it('restores without scrolling the row into view', () => {
+    const inlineFocus = focusStore({
+      eventId: 'ev-1',
+      field: 'message',
+      selectionStart: 1,
+      selectionEnd: 1,
+    });
+    renderRow({ inlineEdit: true, inlineFocus });
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Message'));
+    // A default focus() scrolls the newly mounted row into view — yanking the
+    // viewport out from under an operator who is scrolling, not editing.
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('refuses a record the operator has long since walked away from', () => {
+    const inlineFocus = focusStore(
+      { eventId: 'ev-1', field: 'message', selectionStart: 1, selectionEnd: 1 },
+      Date.now() - INLINE_FOCUS_RESTORE_MAX_AGE_MS - 1,
+    );
+    renderRow({ inlineEdit: true, inlineFocus });
+
+    expect(document.activeElement).not.toBe(screen.getByLabelText('Message'));
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it('still restores a record the operator touched moments ago', () => {
+    const inlineFocus = focusStore(
+      { eventId: 'ev-1', field: 'message', selectionStart: 1, selectionEnd: 1 },
+      Date.now() - 1_000,
+    );
+    renderRow({ inlineEdit: true, inlineFocus });
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Message'));
+  });
+});
+
+describe('EventLogRow — serverInlineDraft mirrors what the controls render', () => {
+  it('is draft space, field for field (raw wall text, untrimmed message)', () => {
+    const event = eventFixture({ message: 'A logged note' });
+    expect(serverInlineDraft(event)).toEqual({
+      category: 'general',
+      message: 'A logged note',
+      timecode_hms: '00:00:10',
+      wall_text: formatWallUtcYmdHms('2026-07-21T00:00:10Z'),
+    });
   });
 });

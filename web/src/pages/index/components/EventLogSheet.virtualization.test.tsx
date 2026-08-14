@@ -124,6 +124,19 @@ beforeAll(() => {
     window.IntersectionObserver =
       StubIntersectionObserver as unknown as typeof IntersectionObserver;
   }
+  // Radix Select's trigger gesture needs these; jsdom has none of them.
+  if (!Element.prototype.hasPointerCapture) Element.prototype.hasPointerCapture = () => false;
+  if (!Element.prototype.setPointerCapture) Element.prototype.setPointerCapture = () => {};
+  if (!Element.prototype.releasePointerCapture) Element.prototype.releasePointerCapture = () => {};
+  if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+  if (typeof window.ResizeObserver === 'undefined') {
+    class StubResizeObserver {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
+  }
 });
 
 function categoryFixture(): Category {
@@ -210,6 +223,10 @@ let serverEvents: LogEvent[] = [];
  *  (the real one spans a network call plus the invalidation refetch). */
 let putGate: Promise<void> | null = null;
 
+/** Makes the next PUT reject, the state in which the sheet deliberately KEEPS
+ *  the operator's draft so the text stays recoverable. */
+let putFails = false;
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
@@ -217,6 +234,7 @@ beforeEach(() => {
   virtualMock.rangeExtractor = null;
   virtualMock.scrollToIndex.mockReset();
   putGate = null;
+  putFails = false;
   rolling = false;
   serverEvents = eventsFixture(EVENT_COUNT).events;
   mockedApiFetch.mockReset();
@@ -227,6 +245,7 @@ beforeEach(() => {
     }
     if (path.includes('/events/') && opts.method === 'PUT') {
       if (putGate) await putGate;
+      if (putFails) throw new Error('save failed');
       const eventId = path.split('/events/')[1];
       const body = JSON.parse(String(opts.body)) as {
         category: string;
@@ -725,5 +744,202 @@ describe('EventLogSheet inline-edit focus restore', () => {
     scrollWindowTo(0, 3, 'ev-1');
 
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+// --- A refetch must not delete text no save has taken (review finding 1) ---
+//
+// The row's server-sync effect (`event` identity changed ⇒ refresh the inputs)
+// used to end by clearing the row's whole draft entry, guarded only by "focus is
+// not inside this row". That neutralized the merge the save-resolution clear
+// above performs: any refetch landing on a blurred row deleted the fields it had
+// just deliberately preserved — including the text a FAILED save leaves
+// recoverable, which is the one case the operator has no other copy of.
+describe('EventLogSheet inline drafts vs. a server refresh', () => {
+  it('keeps the text a failed save left recoverable when a later refetch touches the row', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    const { client } = await renderRollingSheet();
+
+    // The save fails: nothing is committed, and the sheet keeps the draft.
+    putFails = true;
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    fireEvent.change(input, { target: { value: 'text nothing has saved' } });
+    await act(async () => {
+      input.blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('note 0'),
+    );
+
+    // Something else moves the row on the server (another operator, a
+    // regenerate, a poll) and a refetch hands this — now blurred — row a new
+    // identity.
+    // (A field the sort does not key on, so the row stays in the window.)
+    const index = serverEvents.findIndex((e) => e.event_id === 'ev-0');
+    serverEvents = [...serverEvents];
+    serverEvents[index] = { ...serverEvents[index], category: 'reassigned' };
+    await act(async () => {
+      await client.invalidateQueries();
+    });
+
+    // The unsaved text is still there — on screen and in the store...
+    await waitFor(() => expect(messageInput('ev-0').value).toBe('text nothing has saved'));
+    // ...and the field the server actually moved still refreshed.
+    expect(within(row('ev-0')).getByRole('combobox', { name: 'Category' }).textContent).toContain(
+      'reassigned',
+    );
+
+    // Not merely on screen: it survives the virtualizer dropping the row.
+    scrollWindowTo(10, 13, 'ev-11');
+    scrollWindowTo(0, 3, 'ev-1');
+    expect(messageInput('ev-0').value).toBe('text nothing has saved');
+  });
+});
+
+// --- The pin covers the category dropdown too (review finding 2) ---
+//
+// `recordFocus` is wired to the three text inputs only, so opening the inline
+// category Select — which portals its listbox and moves focus outside the <tr> —
+// made the deferred blur handler read "focus left the row" and drop the pin,
+// exactly while the dropdown was open. The next incoming event then unmounted
+// the row mid-choice and the selection went nowhere. Radix's `onOpenChange` is
+// the explicit signal that this is still the row being edited.
+describe('EventLogSheet pinned row with its category dropdown open', () => {
+  async function openCategory(eventId: string) {
+    const trigger = within(row(eventId)).getByRole('combobox', { name: 'Category' });
+    await act(async () => {
+      fireEvent.pointerDown(trigger, { pointerType: 'mouse', button: 0 });
+      fireEvent.pointerUp(trigger, { pointerType: 'mouse', button: 0 });
+      fireEvent.click(trigger);
+      // The blur-to-save the opening gesture fires is deferred a tick.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it('keeps the row mounted after the window moves past it while the dropdown is open', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    await openCategory('ev-0');
+
+    // Incoming events push the window far past the row being edited.
+    scrollWindowTo(30, 33, 'ev-31');
+
+    expect(renderedEventIds()).toContain('ev-0');
+  });
+
+  it('releases the pin once the dropdown closes and focus has left the row', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    await openCategory('ev-0');
+
+    // Dismissed with Escape, then focus goes somewhere else entirely.
+    await act(async () => {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    scrollWindowTo(30, 33, 'ev-31');
+    expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
+  });
+});
+
+// --- An abandoned focus record expires (review finding 3) ---
+//
+// Wheel scrolling moves neither focus nor `document.activeElement`, so a record
+// left behind by an edit the operator walked away from stayed eligible forever:
+// the row kept up to `PINNED_ROW_MAX_EXTRA_ROWS` gap rows pinned, and grabbed
+// the caret the moment it scrolled back into overscan. A pointerdown anywhere
+// outside the row is the abandonment signal the scroll wheel cannot give.
+describe('EventLogSheet abandoned inline-edit focus', () => {
+  it('does not steal focus on scroll-back after the operator clicked away', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    fireEvent.change(input, { target: { value: 'abandoned but recoverable' } });
+
+    // Past the pin bound: the row unmounts and focus falls to <body>, which is
+    // the state the restore guard looks for.
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+
+    // The operator gets on with something else. Nothing about this changes
+    // `document.activeElement`, so only an explicit signal can retire the record.
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(document.activeElement).toBe(document.body);
+    // The TEXT is not abandoned with the caret — it stays recoverable.
+    expect(messageInput('ev-0').value).toBe('abandoned but recoverable');
+  });
+
+  it('drops the pin with the record, so the gap rows stop rendering', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    scrollWindowTo(30, 33, 'ev-31');
+    expect(renderedEventIds()).toContain('ev-0');
+
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    scrollWindowTo(30, 33, 'ev-31');
+
+    expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
+  });
+
+  it('keeps the record while focus is still inside the row', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    // A click on the row itself (or on another of its controls) is not
+    // abandonment.
+    act(() => {
+      input.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+    scrollWindowTo(30, 33, 'ev-31');
+
+    expect(renderedEventIds()).toContain('ev-0');
   });
 });

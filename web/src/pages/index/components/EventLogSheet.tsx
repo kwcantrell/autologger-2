@@ -23,13 +23,14 @@ import { eventTimelineSec } from '../../../shared/utils/audioClips';
 import { isAutomaticLogEvent } from '../../../shared/utils/timecode';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
+import { useDraftStore } from '../utils/draftStore';
 import { REVEAL_EVENT } from '../utils/revealEventInFeed';
 import { clickSortReducer, type SortState as SharedSortState } from '../utils/sortReducer';
 import { EventGenerateCustomModal } from './EventGenerateCustomModal';
 import {
   EventLogRow,
+  INLINE_DRAFT_FIELDS,
   type InlineDraft,
-  type InlineDraftStore,
   type InlineFocusRecord,
   type InlineFocusStore,
   type RowEditValues,
@@ -75,16 +76,6 @@ import { JUMP_COLUMN } from './JumpToTimeButton';
 // estimating those is the safe direction (extra scroll extent, never a short
 // window), so the constant stays, matching TranscribeFeed.
 const ROW_HEIGHT = 31;
-
-/** Every field an `InlineDraft` can carry, so the post-save reconciliation below
- *  can walk them exhaustively. Compiler-checked against the interface: adding a
- *  field to `InlineDraft` without listing it here fails the `satisfies`. */
-const INLINE_DRAFT_FIELDS = [
-  'category',
-  'message',
-  'timecode_hms',
-  'wall_text',
-] as const satisfies ReadonlyArray<keyof InlineDraft>;
 
 // How far outside the virtual window the row being inline-edited may be pinned
 // (in rows) before the pin is dropped.
@@ -413,20 +404,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // row that is mounting anyway — see `InlineDraftStore` for the full
   // rationale. Cleared per row once its save has round-tripped, and wholesale
   // when inline-edit mode ends or the session changes.
-  const inlineDraftsRef = useRef<Map<string, InlineDraft>>(new Map());
-  const inlineDrafts = useMemo<InlineDraftStore>(
-    () => ({
-      read: (eventId) => inlineDraftsRef.current.get(eventId),
-      write: (eventId, patch) => {
-        const prev = inlineDraftsRef.current.get(eventId);
-        inlineDraftsRef.current.set(eventId, prev ? { ...prev, ...patch } : { ...patch });
-      },
-      clear: (eventId) => {
-        inlineDraftsRef.current.delete(eventId);
-      },
-    }),
-    [],
-  );
+  const inlineDrafts = useDraftStore<InlineDraft>(INLINE_DRAFT_FIELDS);
 
   // --- Inline edit focus ---
   // Which row is being inline-edited right now, and where its caret sits. Same
@@ -438,8 +416,12 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   const inlineFocus = useMemo<InlineFocusStore>(
     () => ({
       read: () => inlineFocusRef.current,
+      // The clock is stamped HERE, not by callers: `recordedAt` bounds how long
+      // a record may still pull focus back (see
+      // `INLINE_FOCUS_RESTORE_MAX_AGE_MS`), and a caller that forgot to refresh
+      // it would let a live edit look abandoned.
       record: (record) => {
-        inlineFocusRef.current = record;
+        inlineFocusRef.current = { ...record, recordedAt: Date.now() };
       },
       clear: (eventId) => {
         if (inlineFocusRef.current?.eventId === eventId) inlineFocusRef.current = null;
@@ -514,9 +496,49 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // Drop them all rather than let them resurface if rolling resumes.
   useEffect(() => {
     if (inlineEdit) return;
-    inlineDraftsRef.current.clear();
+    inlineDrafts.clearAll();
     // Nothing is being inline-edited any more, so nothing stays pinned.
     inlineFocusRef.current = null;
+  }, [inlineEdit, inlineDrafts]);
+
+  // Abandonment: drop the focus record on the first pointerdown or focusin
+  // OUTSIDE the edited row.
+  //
+  // Installed here rather than in the row because the case that matters is a
+  // row that is no longer mounted: the operator types, wheel-scrolls the row
+  // past the pin bound (wheel scrolling moves neither focus nor
+  // `document.activeElement`, so nothing else in this feed can tell that the
+  // edit was abandoned), and goes off to do something else. Left armed, the
+  // record keeps up to `PINNED_ROW_MAX_EXTRA_ROWS` gap rows pinned, and grabs
+  // the caret out of nowhere if the row ever scrolls back. A click or a focus
+  // move anywhere else is the operator saying they are done with it.
+  //
+  // The DRAFT is deliberately untouched — abandoning the caret is not
+  // abandoning the text, which stays recoverable until it is saved or
+  // inline-edit mode ends.
+  useEffect(() => {
+    if (!inlineEdit) return;
+    const onAbandon = (e: Event) => {
+      const rec = inlineFocusRef.current;
+      if (!rec) return;
+      // This row's own category listbox is portaled outside the row, so a click
+      // in it looks exactly like a click elsewhere. It isn't.
+      if (rec.selectOpen) return;
+      const target = e.target;
+      if (target instanceof Element) {
+        const row = target.closest('tr[data-event-id]');
+        if (row?.getAttribute('data-event-id') === rec.eventId) return;
+      }
+      inlineFocusRef.current = null;
+    };
+    // Capture phase: a handler that stops propagation elsewhere must not be
+    // able to hide the gesture from this.
+    document.addEventListener('pointerdown', onAbandon, true);
+    document.addEventListener('focusin', onAbandon, true);
+    return () => {
+      document.removeEventListener('pointerdown', onAbandon, true);
+      document.removeEventListener('focusin', onAbandon, true);
+    };
   }, [inlineEdit]);
 
   // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
@@ -701,7 +723,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     setBatchEditMode(false);
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
-    inlineDraftsRef.current.clear();
+    inlineDrafts.clearAll();
     inlineFocusRef.current = null;
     setLoadedLimit(200);
     setHiddenCategoryIds(new Set());
@@ -789,7 +811,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       // vs the draft's raw `wall_text`, which for a half-typed date has no ISO
       // form at all), so a field-by-field match against it would report a
       // divergence for text the operator never touched again.
-      const submitted: InlineDraft = { ...inlineDraftsRef.current.get(eventId) };
+      const submitted: InlineDraft = { ...inlineDrafts.read(eventId) };
       try {
         await updateEvent.mutateAsync({ eventId, body: values });
         // Committed — and `mutateAsync` resolves only after the mutation's
@@ -806,25 +828,18 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         // virtualizer next unmounted the row: it remounted showing the server
         // value. Re-read the store HERE, at resolution time (never a value
         // captured before the await — StrictMode and overlapping saves both
-        // make a captured one stale), and keep any field that has moved on.
-        const current = inlineDraftsRef.current.get(eventId);
-        if (current) {
-          let survivors: InlineDraft | undefined;
-          for (const field of INLINE_DRAFT_FIELDS) {
-            const value = current[field];
-            if (value === undefined || value === submitted[field]) continue;
-            survivors ??= {};
-            survivors[field] = value;
-          }
-          if (survivors) inlineDraftsRef.current.set(eventId, survivors);
-          else inlineDraftsRef.current.delete(eventId);
-        }
+        // make a captured one stale), and keep any field that has moved on —
+        // the shared draft-space comparison (`DraftStore#clearMatching`) that
+        // EventLogRow's server-sync effect and its nothing-to-commit branch
+        // also go through, so the three cannot disagree about what "this field
+        // is spent" means.
+        inlineDrafts.clearMatching(eventId, submitted);
         showToast('Updated.');
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);
       }
     },
-    [updateEvent],
+    [updateEvent, inlineDrafts],
   );
 
   const handleBatchChange = useCallback((eventId: string, values: RowEditValues) => {

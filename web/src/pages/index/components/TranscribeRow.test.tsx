@@ -3,7 +3,8 @@ import type { ComponentProps } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptWord } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
-import { TranscribeRow } from './TranscribeRow';
+import { createDraftStore } from '../utils/draftStore';
+import { TRANSCRIBE_DRAFT_FIELDS, type TranscribeDraft, TranscribeRow } from './TranscribeRow';
 
 // --- TranscribeRow jump cell (feed-row-seek, task 7.1/7.2) ---
 //
@@ -36,9 +37,16 @@ function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   };
 }
 
+/** The REAL feed-owned store (`utils/draftStore`), owned by the test instead of
+ *  `TranscribeFeed` — never a re-implementation. */
+function draftStore() {
+  return createDraftStore<TranscribeDraft>(TRANSCRIBE_DRAFT_FIELDS);
+}
+
 function renderRow(overrides: Partial<ComponentProps<typeof TranscribeRow>> = {}) {
   const onUpdate = vi.fn();
   const onJump = vi.fn();
+  const drafts = draftStore();
   const utils = renderStrict(
     <table>
       <tbody>
@@ -46,6 +54,7 @@ function renderRow(overrides: Partial<ComponentProps<typeof TranscribeRow>> = {}
           row={wordFixture()}
           speakerOffset={0}
           onUpdate={onUpdate}
+          drafts={drafts}
           fps={24}
           onJump={onJump}
           jumpUnavailable={false}
@@ -55,7 +64,7 @@ function renderRow(overrides: Partial<ComponentProps<typeof TranscribeRow>> = {}
       </tbody>
     </table>,
   );
-  return { ...utils, onUpdate, onJump };
+  return { ...utils, onUpdate, onJump, drafts };
 }
 
 describe('TranscribeRow — jump control resolution (design D4)', () => {
@@ -227,5 +236,81 @@ describe('TranscribeRow — feed-wide gate (design D5/D7)', () => {
 
     fireEvent.click(btn);
     expect(onJump).not.toHaveBeenCalled();
+  });
+});
+
+// --- Feed-owned edit drafts across a virtual unmount (data-loss regression) ---
+//
+// TranscribeFeed is virtualized, and React fires NO blur when the virtualizer
+// unmounts a row. While the edit lived in this component's own `useState`, that
+// made a typed correction unrecoverable: wheel-scrolling past the overscan
+// destroyed it, and scrolling back rendered the server text again with no error
+// and no toast — the exact bug class the EventLog feed fixed with a feed-owned
+// draft store, which this feed now shares (`utils/draftStore`).
+//
+// The unmount/remount below is driven directly (the virtualizer's effect on a
+// row, without its jsdom-hostile geometry); the end-to-end scroll round trip
+// runs in TranscribeFeed.drafts.test.tsx.
+describe('TranscribeRow — feed-owned edit drafts', () => {
+  it('writes each edited field through to the feed store as it is typed', () => {
+    const { drafts } = renderRow();
+
+    const wordInput = screen.getByDisplayValue('hello');
+    fireEvent.focus(wordInput);
+    fireEvent.change(wordInput, { target: { value: 'hellooo' } });
+
+    expect(drafts.read('w-1')).toEqual({ word: 'hellooo' });
+  });
+
+  it('comes back holding the typed text when the virtualizer unmounts and remounts it', () => {
+    const drafts = draftStore();
+    const row = wordFixture();
+    const mount = () =>
+      renderStrict(
+        <table>
+          <tbody>
+            <TranscribeRow
+              row={row}
+              speakerOffset={0}
+              onUpdate={vi.fn()}
+              drafts={drafts}
+              fps={24}
+              onJump={vi.fn()}
+              jumpUnavailable={false}
+            />
+          </tbody>
+        </table>,
+      );
+
+    const first = mount();
+    const wordInput = screen.getByDisplayValue('hello');
+    fireEvent.focus(wordInput);
+    fireEvent.change(wordInput, { target: { value: 'half-typed correction' } });
+
+    // The virtualizer drops the row: no blur, no commit, nothing but the store.
+    first.unmount();
+
+    mount();
+    expect(screen.getByDisplayValue('half-typed correction')).toBeTruthy();
+  });
+
+  it('drops a field from the draft once its text matches the row again, and keeps its siblings', () => {
+    const { drafts, onUpdate } = renderRow();
+
+    const wordInput = screen.getByDisplayValue('hello');
+    fireEvent.focus(wordInput);
+    fireEvent.change(wordInput, { target: { value: 'hellooo' } });
+    // A second field still mid-edit — it must survive the first one's clear.
+    const tcInput = screen.getByDisplayValue('00:00:10:00');
+    fireEvent.focus(tcInput);
+    fireEvent.change(tcInput, { target: { value: '00:00:1' } });
+
+    // Typed back to exactly the committed value, then blurred: nothing to
+    // commit, so that field's draft entry is spent.
+    fireEvent.change(wordInput, { target: { value: 'hello' } });
+    fireEvent.blur(wordInput, { target: { value: 'hello' } });
+
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(drafts.read('w-1')).toEqual({ session_time: '00:00:1' });
   });
 });
