@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useProfile } from '../../api/hooks/useProfile';
 import { useYoutubeImport } from '../../api/hooks/useSessions';
@@ -7,6 +7,7 @@ import { Toast, toast } from '../../shared/components/Toast';
 import { useIsMobile } from '../../shared/ui/breakpoints';
 import { freezeAutologgerLoadingVideos } from '../../shared/utils/loadingVideo';
 import { initPerfDebugUI } from '../../shared/utils/perfDebug';
+import { LazyChunk } from './components/ChunkLoadBoundary';
 import { OnboardingPanel } from './components/OnboardingPanel';
 import { RouteLoadingState } from './components/RouteLoadingState';
 import { SessionRoute } from './components/SessionRoute';
@@ -26,32 +27,37 @@ import { useLoginReturnConsume } from './useLoginReturnConsume';
 // `RootGate`, `SessionRoute` itself — all of them render on the very first
 // homepage paint, so splitting them would only buy a waterfall.
 //
+// Each split point is a module LOADER, mounted through `LazyChunk` (which owns
+// the `React.lazy` instance, its `<Suspense>`, and its own error boundary).
+// The loaders live at module scope because `LazyChunk` reads `load` at mount
+// and on retry without watching its identity — and because a chunk fetch CAN
+// fail (a redeploy rewrites content-hashed URLs out from under an open tab),
+// in which case `lazy()` caches the rejection forever and only a fresh
+// instance can recover. See `./components/ChunkLoadBoundary`.
+//
 // Route-level: gets the shared brand loading frame, identical to the one
 // SessionRoute renders while resolving (`RouteLoadingState`) — a bare `null`
 // here would blank the main column for the chunk fetch.
-const TeamsRoute = lazy(() =>
-  import('./components/TeamsRoute').then((m) => ({ default: m.TeamsRoute })),
-);
+const loadTeamsRoute = () =>
+  import('./components/TeamsRoute').then((m) => ({ default: m.TeamsRoute }));
 
 // Overlay-level: `fallback={null}`. These are already gated behind open flags
 // and render as overlays over an unchanged page, so arriving one frame late
 // costs nothing layout-wise (no CLS) — a loading frame would be the worse
 // experience. (BatchImportModal's own inner dynamic import of the log-import
-// client stays exactly as it was; this just adds an outer split.)
-const NewSessionModal = lazy(() =>
-  import('./components/NewSessionModal').then((m) => ({ default: m.NewSessionModal })),
-);
-const BatchImportModal = lazy(() =>
-  import('./components/BatchImportModal').then((m) => ({ default: m.BatchImportModal })),
-);
-const YouTubeImportErrorModal = lazy(() =>
+// client stays exactly as it was; this just adds an outer split.) Their
+// boundaries are per-overlay, so a dead modal chunk shows a dismissible card
+// over an intact route rather than taking the route down with it.
+const loadNewSessionModal = () =>
+  import('./components/NewSessionModal').then((m) => ({ default: m.NewSessionModal }));
+const loadBatchImportModal = () =>
+  import('./components/BatchImportModal').then((m) => ({ default: m.BatchImportModal }));
+const loadYouTubeImportErrorModal = () =>
   import('./components/YouTubeImportErrorModal').then((m) => ({
     default: m.YouTubeImportErrorModal,
-  })),
-);
-const HomeSettingsModal = lazy(() =>
-  import('./components/HomeSettingsModal').then((m) => ({ default: m.HomeSettingsModal })),
-);
+  }));
+const loadHomeSettingsModal = () =>
+  import('./components/HomeSettingsModal').then((m) => ({ default: m.HomeSettingsModal }));
 
 // Warm the settings chunk once the page has gone quiet, so the first
 // interactive open is a cache hit rather than a network round trip. 2.5s is
@@ -362,45 +368,65 @@ export function AppShell() {
             </div>
 
             {showNewSession && (
-              <Suspense fallback={null}>
-                <NewSessionModal
-                  profile={profile}
-                  onClose={() => setShowNewSession(false)}
-                  onCreated={handleSelectSession}
-                />
-              </Suspense>
+              <LazyChunk
+                load={loadNewSessionModal}
+                variant="overlay"
+                onDismiss={() => setShowNewSession(false)}
+              >
+                {(NewSessionModal) => (
+                  <NewSessionModal
+                    profile={profile}
+                    onClose={() => setShowNewSession(false)}
+                    onCreated={handleSelectSession}
+                  />
+                )}
+              </LazyChunk>
             )}
 
             {showBatchImport && (
-              <Suspense fallback={null}>
-                <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
-              </Suspense>
+              <LazyChunk
+                load={loadBatchImportModal}
+                variant="overlay"
+                onDismiss={() => setShowBatchImport(false)}
+              >
+                {(BatchImportModal) => (
+                  <BatchImportModal profile={profile} onClose={() => setShowBatchImport(false)} />
+                )}
+              </LazyChunk>
             )}
 
             {ytImportError && (
-              <Suspense fallback={null}>
-                <YouTubeImportErrorModal
-                  sessionId={ytImportError.sessionId}
-                  lastUrl={ytImportError.lastUrl}
-                  onRetry={(newUrl) => {
-                    const sid = ytImportError.sessionId;
-                    setYtImportError(null);
-                    setYtImportPending(true);
-                    runYoutubeImport({ sessionId: sid, url: newUrl, usePublishDate: false })
-                      .then(() => setYtImportPending(false))
-                      .catch((err) => {
-                        setYtImportPending(false);
-                        toast.error(err instanceof Error ? err.message : 'YouTube import failed.');
-                        setYtImportError({ sessionId: sid, lastUrl: newUrl });
-                      });
-                  }}
-                  onContinue={() => setYtImportError(null)}
-                  onCancel={() => {
-                    setYtImportError(null);
-                    handleCloseSession();
-                  }}
-                />
-              </Suspense>
+              <LazyChunk
+                load={loadYouTubeImportErrorModal}
+                variant="overlay"
+                onDismiss={() => setYtImportError(null)}
+              >
+                {(YouTubeImportErrorModal) => (
+                  <YouTubeImportErrorModal
+                    sessionId={ytImportError.sessionId}
+                    lastUrl={ytImportError.lastUrl}
+                    onRetry={(newUrl) => {
+                      const sid = ytImportError.sessionId;
+                      setYtImportError(null);
+                      setYtImportPending(true);
+                      runYoutubeImport({ sessionId: sid, url: newUrl, usePublishDate: false })
+                        .then(() => setYtImportPending(false))
+                        .catch((err) => {
+                          setYtImportPending(false);
+                          toast.error(
+                            err instanceof Error ? err.message : 'YouTube import failed.',
+                          );
+                          setYtImportError({ sessionId: sid, lastUrl: newUrl });
+                        });
+                    }}
+                    onContinue={() => setYtImportError(null)}
+                    onCancel={() => {
+                      setYtImportError(null);
+                      handleCloseSession();
+                    }}
+                  />
+                )}
+              </LazyChunk>
             )}
 
             {/* Settings modal: mounted here, beside the route switch, so the
@@ -420,13 +446,19 @@ export function AppShell() {
                 settings-modal-mount-cost optimizations live INSIDE the modal and
                 are untouched. */}
             {showSettings && (
-              <Suspense fallback={null}>
-                <HomeSettingsModal
-                  isOpen
-                  onClose={handleCloseSettings}
-                  onCloseSession={handleCloseSession}
-                />
-              </Suspense>
+              <LazyChunk
+                load={loadHomeSettingsModal}
+                variant="overlay"
+                onDismiss={handleCloseSettings}
+              >
+                {(HomeSettingsModal) => (
+                  <HomeSettingsModal
+                    isOpen
+                    onClose={handleCloseSettings}
+                    onCloseSession={handleCloseSession}
+                  />
+                )}
+              </LazyChunk>
             )}
 
             {/* Session workspace, behind deep-link resolution: SessionRoute
@@ -438,9 +470,9 @@ export function AppShell() {
                 home view (HomeRoute) for the empty id, swapping it out is what
                 hides that home view at the teams route. */}
             {onTeamsRoute ? (
-              <Suspense fallback={<RouteLoadingState />}>
-                <TeamsRoute />
-              </Suspense>
+              <LazyChunk load={loadTeamsRoute} variant="route" fallback={<RouteLoadingState />}>
+                {(TeamsRoute) => <TeamsRoute />}
+              </LazyChunk>
             ) : (
               <SessionRoute
                 sessionId={activeSessionId}

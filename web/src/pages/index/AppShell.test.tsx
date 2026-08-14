@@ -126,13 +126,28 @@ vi.mock('./components/SessionRoute', () => ({
 // (mirroring Dialog/Radix's own mount-on-open behavior) plus a stand-in
 // button for the studio-switch save branch, rewired here from the old
 // SessionRoute-mock button (teams-settings-nav, design D1).
+//
+// `settingsChunk.fail` makes the settings surface throw a webpack
+// ChunkLoadError on render — the same observable a rejected `React.lazy`
+// import produces (React re-throws the rejection reason during the render that
+// would have mounted the component), without a poisoned module registry that
+// would leak into every other test in this file. Used by the code-splitting
+// failure test below; the retry-re-imports mechanics live in
+// ChunkLoadBoundary.test.tsx.
+const settingsChunk = vi.hoisted(() => ({ fail: false }));
+
 vi.mock('./components/HomeSettingsModal', () => ({
   HomeSettingsModal: (props: {
     isOpen: boolean;
     onClose: () => void;
     onCloseSession: () => void;
-  }) =>
-    props.isOpen ? (
+  }) => {
+    if (settingsChunk.fail) {
+      const err = new Error('Loading chunk 42 failed. (error: /_next/static/chunks/42-abc.js)');
+      err.name = 'ChunkLoadError';
+      throw err;
+    }
+    return props.isOpen ? (
       <div role="dialog" aria-label="Settings" data-testid="home-settings-modal">
         <button type="button" data-testid="settings-modal-close" onClick={props.onClose} />
         <button
@@ -141,7 +156,8 @@ vi.mock('./components/HomeSettingsModal', () => ({
           onClick={() => props.onCloseSession()}
         />
       </div>
-    ) : null,
+    ) : null;
+  },
 }));
 
 vi.mock('./components/NewSessionModal', () => ({
@@ -184,6 +200,7 @@ const workspaceSessionId = () =>
   screen.getByTestId('session-route').getAttribute('data-session-id');
 
 beforeEach(() => {
+  settingsChunk.fail = false;
   mockedUseProfile.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useProfile>);
   mockedUseYoutubeImport.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue(undefined),
@@ -471,6 +488,41 @@ describe('AppShell settings modal code-splitting (plan C5.5)', () => {
       expect(screen.queryByTestId('home-settings-modal')).toBeNull();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // --- Chunk-failure containment (review fix) ---
+  //
+  // Each split point gets its OWN error boundary, so a dead chunk degrades the
+  // surface that needed it and nothing else. Without one, the throw travels up
+  // through `<Suspense>` and out of the `ssr: false` island — there is no
+  // `error.page.tsx` above it (pageExtensions is pinned) — and the entire app
+  // unmounts to a blank page that only a manual reload can recover.
+  it('a failed settings chunk shows a dismissible retry card and leaves the route mounted', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      settingsChunk.fail = true;
+      renderShell('/sessions/sess-1');
+      expect(workspaceSessionId()).toBe('sess-1');
+
+      fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+
+      const card = await screen.findByTestId('chunk-load-error');
+      expect(card.getAttribute('data-variant')).toBe('overlay');
+      // Containment: the route, the rail, and the shell all survived a failure
+      // in an overlay-level chunk.
+      expect(workspaceSessionId()).toBe('sess-1');
+      expect(screen.getByTestId('rail')).not.toBeNull();
+      expect(screen.queryByTestId('home-settings-modal')).toBeNull();
+
+      // The overlay's dismiss closes the shell state that opened it, so the
+      // user is not stuck behind a card whose own close button is inside the
+      // chunk that failed to load.
+      fireEvent.click(screen.getByTestId('chunk-load-dismiss'));
+      expect(screen.queryByTestId('chunk-load-error')).toBeNull();
+      expect(workspaceSessionId()).toBe('sess-1');
+    } finally {
+      logged.mockRestore();
     }
   });
 });
