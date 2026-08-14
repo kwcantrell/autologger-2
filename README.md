@@ -531,7 +531,7 @@ server/src/
                            (interface lives in packages/ports; moved from the former clock.ts)
     presence.ts           In-memory Companion presence registry (stays in server — not persistence)
     nextFrontend.ts        Wraps next({ dev, dir: web/ }) + prepare(); exposes
-                           { requestHandler, upgradeHandler, close }; returns null (API-only
+                           { handle, upgradeHandler, close }; returns null (API-only
                            mode) when web/.next is missing in prod (nextjs-frontend-migration)
   auth/
     oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
@@ -782,8 +782,8 @@ was ported from: historical provenance, not a live parity claim.
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` | `routers/teams.ts` (new, teams-self-serve) |
-| `GET /sessions/:id` (SPA shell) | (app.ts page route) |
-| `GET /teams` (SPA shell) | (app.ts page route) |
+| `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
+| `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
 

@@ -194,7 +194,7 @@ const serverComponents: Component[] = [
       'clock, presence, and (added by `nextjs-frontend-migration` task 3.1) the Next.js ' +
       'frontend bridge wrapper — matching CLAUDE.md’s documented role for this directory, ' +
       'now four files instead of three. `nextFrontend.ts` wraps `next({ dev, dir })` + ' +
-      '`prepare()`, exposing `{ requestHandler, upgradeHandler, close }` to ' +
+      '`prepare()`, exposing `{ handle, upgradeHandler, close }` to ' +
       '`server-bootstrap`’s app.ts bridge and main.ts wiring; it returns `null` (API-only ' +
       'mode) when `web/.next` is missing in prod, and rethrows a `prepare()` rejection ' +
       'when a build directory is present (fail loud, never silently degrade). DeepGram ' +

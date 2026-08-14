@@ -83,7 +83,21 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     },
   );
 
-  it.each(['/', '/sessions/abc-123', '/teams', '/admin/users', '/sessions/a%2Fb', '/static/logo.png'])(
+  it.each([
+    '/',
+    '/sessions/abc-123',
+    '/teams',
+    '/admin/users',
+    '/sessions/a%2Fb',
+    '/static/logo.png',
+    // Bare-prefix guard: `/apifoo` and `/authors` share a string prefix with
+    // `/api`/`/auth` but are NOT under either prefix (no `/api/…` or
+    // `/auth/…` separator) — pins that the short-circuit above matches
+    // `/api`/`/auth` exactly or `/api/*`/`/auth/*`, never a bare-prefix
+    // match, so these two MUST still bridge to the frontend.
+    '/apifoo',
+    '/authors',
+  ])(
     'bridges GET %s to the frontend',
     async (path) => {
       const res = await app.request(path, {}, envWithIO());

@@ -9,13 +9,15 @@ import { IndexIsland } from '../IndexIsland';
 // special file under `web/src/app/**` carries the `.page.` suffix.
 //
 // Optional catch-all serving exactly the router-known index paths -- `/`,
-// `/sessions/:id` (one non-empty raw segment, decoded value MAY contain
-// `/`), `/teams` -- via `isShellSegments` (the shared route-definition
+// `/sessions/:id` (one non-empty raw segment; segments arrive still
+// percent-ENCODED, not decoded -- see `isShellSegments`'s doc comment for
+// why this validator is shape-only and never decodes-and-re-splits an
+// entry), `/teams` -- via `isShellSegments` (the shared route-definition
 // module's shell-set predicate, `web/src/shared/utils/loginReturnPath.ts`,
-// task 2.2). Any other decoded segment shape 404s. This retires the
-// three-way route-table lockstep mirror (`web-session-routing` delta):
-// AppShell's wouter route strings remain the one manually-synced mirror
-// (they cannot mechanically import this predicate).
+// task 2.2). Any other segment shape 404s. This retires the three-way
+// route-table lockstep mirror (`web-session-routing` delta): AppShell's
+// wouter route strings remain the one manually-synced mirror (they cannot
+// mechanically import this predicate).
 //
 // `force-dynamic` (panel decision, design D3): Next's default for a
 // dynamic route with no `generateStaticParams` is on-demand static
@@ -24,32 +26,27 @@ import { IndexIsland } from '../IndexIsland';
 // shared-`.next` race. `force-dynamic` keeps `web/.next` read-only at
 // runtime; cheap here since the page is a static client-island shell.
 //
-// KNOWN GAP, discovered empirically while smoke-testing this task (task
-// 2.6's framework-behavior spike is the task of record for verifying and,
-// if needed, escalating this -- not fixed here, out of this unit's scope):
-// against the pinned Next 15.5.23, a live `next build` + `next start`
-// smoke test showed `GET /teams/` resolves to `path: ['teams']` here (the
-// SAME as `/teams`, not `['teams', '']`), so it currently returns `200`,
-// NOT the `404` design D3 / the `web-frontend-platform` spec's "Trailing
-// slash stays 404" scenario require. `skipTrailingSlashRedirect: true`
-// (`next.config.ts`) does suppress the 308 redirect as intended, but Next's
-// catch-all segment computation independently normalizes a trailing slash
-// for ROUTE MATCHING regardless of that flag -- a distinct mechanism design
-// D3 did not distinguish. Separately (lower severity -- does not change
-// this validator's pass/fail outcome, since `isShellSegments` checks shape
-// only): the same smoke test showed `/sessions/a%2Fb` arrives as
-// `['sessions', 'a%2Fb']` (still percent-ENCODED), not the decoded
-// `['sessions', 'a/b']` design D3 states Next produces. Both are
-// version-pinned framework-behavior facts task 2.6 is explicitly scoped to
-// verify and, on failure, escalate to the gate -- recorded here so that
-// spike does not have to rediscover them from scratch.
+// RESOLVED GAP (was discovered empirically while smoke-testing task 2.3;
+// task 2.6's framework-behavior spike confirmed and escalated it to the
+// gate): against the pinned Next 15.5.23, `GET /teams/` resolves to
+// `path: ['teams']` here (the SAME as `/teams`, not `['teams', '']`), so
+// this route alone could not distinguish the two -- `skipTrailingSlashRedirect:
+// true` (`next.config.ts`) suppresses the 308 redirect as intended, but
+// Next's catch-all segment computation independently normalizes a trailing
+// slash for ROUTE MATCHING regardless of that flag, a distinct mechanism
+// design D3 did not originally distinguish. Per the owner ruling
+// (2026-08-13), this is now enforced one layer up, in front of the
+// framework: the Hono bridge (`server/src/app.ts`) 404s any non-`/`
+// trailing-slash path before it ever reaches this page, keeping the pinned
+// `404` (design D3; `web-frontend-platform` spec's "Trailing slash stays
+// 404" scenario) e2e-pinned at the bridge layer.
 export const dynamic = 'force-dynamic';
 
 interface IndexShellPageProps {
-  // Next 15: `params` is a Promise. The optional catch-all's decoded
-  // segment list is `undefined` for `/`, otherwise the array of decoded
-  // segments -- see `isShellSegments`'s doc comment for why this validator
-  // never re-splits an already-decoded segment.
+  // Next 15: `params` is a Promise. The optional catch-all's segment list
+  // is `undefined` for `/`, otherwise the array of raw, still
+  // percent-ENCODED segments -- see `isShellSegments`'s doc comment for why
+  // this validator never decodes-and-re-splits an entry.
   params: Promise<{ path?: string[] }>;
 }
 
