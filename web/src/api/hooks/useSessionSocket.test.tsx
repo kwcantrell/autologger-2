@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { type ReactNode, StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -185,12 +185,13 @@ describe('useSessionSocket — event.changed burst coalescing', () => {
 //
 // resync() still fires its three invalidateQueries calls on every open, but
 // each now carries a predicate that skips queries whose data is already
-// fresher than the connect attempt (`dataUpdatedAt >= connectStartedAt`) and
-// mount fetches still in flight with no data yet. The invalidate SPY cannot
-// see predicate filtering (the call happens either way), so these tests
-// assert through query state — `qc.getQueryState(key)?.isInvalidated` — over
-// seeded caches. Vitest fake timers fake `Date`, so `vi.advanceTimersByTime`
-// moves both the reconnect timers and the `Date.now()` freshness clock.
+// fresher than the connect attempt (`dataUpdatedAt >= connectStartedAt`).
+// In-flight fetches with no data yet are deliberately NOT skipped — see the
+// last test in this block. The invalidate SPY cannot see predicate filtering
+// (the call happens either way), so these tests assert through query state —
+// `qc.getQueryState(key)?.isInvalidated` — over seeded caches. Vitest fake
+// timers fake `Date`, so `vi.advanceTimersByTime` moves both the reconnect
+// timers and the `Date.now()` freshness clock.
 
 describe('useSessionSocket — WS-open resync freshness gate', () => {
   beforeEach(() => {
@@ -274,17 +275,74 @@ describe('useSessionSocket — WS-open resync freshness gate', () => {
     expect(qc.getQueryState(audioKey)?.isInvalidated).toBe(false);
   });
 
-  it('a mount fetch still in flight (no data yet) is not invalidated-restarted by open', () => {
-    const { ws, qc } = renderSocket();
+  // The missed-event window this closes: an event lands server-side after the
+  // mount fetch's snapshot is taken but before the socket's `onopen`. The WS
+  // frame is unreceivable (socket not open yet), so if resync also skipped the
+  // in-flight query, the fetch would resolve with the pre-event snapshot at a
+  // `dataUpdatedAt` past `connectStartedAt` — permanently "fresh", never
+  // re-anchored, on a quiet session. So an in-flight, data-less query MUST be
+  // invalidated and restarted; only a fetch initiated after onopen is safe.
+  // Asserting the restart needs a real observer (invalidateQueries refetches
+  // ACTIVE queries), so this test mounts a useQuery next to the socket hook.
+  it('a mount fetch still in flight (no data yet) IS invalidated and restarted by open', () => {
+    let resolveFetch: ((v: unknown) => void) | undefined;
+    const queryFn = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      </StrictMode>
+    );
+    renderHook(
+      () => {
+        useQuery({ queryKey: statusKey, queryFn });
+        useSessionSocket(SESSION_ID);
+      },
+      { wrapper },
+    );
+    const ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+    if (!ws) throw new Error('useSessionSocket opened no WebSocket');
+
     // In-flight fetch with no data: fetchStatus 'fetching', dataUpdatedAt 0.
+    expect(qc.getQueryState(statusKey)?.fetchStatus).toBe('fetching');
+    expect(qc.getQueryState(statusKey)?.dataUpdatedAt).toBe(0);
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    act(() => ws.open());
+
+    // Restarted. NB this does not come free from `invalidateQueries`: its
+    // `cancelRefetch` default only cancels a fetch that already HAS data
+    // (query-core Query#fetch), so resync cancels the data-less one explicitly
+    // first. This assertion is the guard on that — it fails (1 call) if the
+    // explicit cancel is dropped in favour of "invalidation restarts it".
+    // The new fetch's snapshot is taken after onopen, so it cannot miss the
+    // pre-open window.
+    expect(queryFn).toHaveBeenCalledTimes(2);
+    expect(qc.getQueryState(statusKey)?.fetchStatus).toBe('fetching');
+    // The abandoned first fetch resolving must not leave stale data behind:
+    // its result belongs to a cancelled retryer and is discarded.
+    act(() => resolveFetch?.({ is_rolling: false }));
+    expect(qc.getQueryState(statusKey)?.data).toBeUndefined();
+  });
+
+  it('an observer-less in-flight fetch is left alone (cancel is scoped to active queries)', () => {
+    const { ws, qc } = renderSocket();
+    // No component observes this key, so invalidateQueries (refetchType
+    // 'active') would never restart it — cancelling it would just abandon the
+    // fetch with nothing to re-drive it. The cancel is scoped to type:'active'
+    // precisely to avoid that.
     void qc
       .fetchQuery({ queryKey: statusKey, queryFn: () => new Promise(() => {}) })
       .catch(() => undefined);
     expect(qc.getQueryState(statusKey)?.fetchStatus).toBe('fetching');
-    expect(qc.getQueryState(statusKey)?.dataUpdatedAt).toBe(0);
 
     act(() => ws.open());
 
-    expect(qc.getQueryState(statusKey)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(statusKey)?.fetchStatus).toBe('fetching');
   });
 });

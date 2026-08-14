@@ -9,7 +9,11 @@ import { useCompanionPresence } from './useCompanionPresence';
 // The hook's contract has three moving parts and they interact, so the tests
 // drive all three through their real triggers rather than in isolation:
 //
-//  1. a 5s presence cadence that runs ONLY while the tab is visible,
+//  1. a visibility-dependent presence cadence — 5s visible, 10s hidden. The
+//     hidden cadence is a hard requirement, not an optimization knob: the server
+//     prunes presence entries at PRESENCE_FRESH_MS = 15s and Companion refuses
+//     commands without a fresh entry, so a hidden tab that went silent would
+//     break every Companion command ~15s after backgrounding,
 //  2. an immediate post on every visibility transition (Companion needs to hear
 //     `visible: false` the instant it happens, not up to 5s later), and
 //  3. an immediate post on an `isPlaying` toggle that must NOT re-arm the
@@ -88,7 +92,7 @@ describe('useCompanionPresence', () => {
     expect(postCount()).toBe(base + 3);
   });
 
-  it('hiding posts once immediately and then stops the cadence entirely', () => {
+  it('hiding posts once immediately and then heartbeats on the slower 10s cadence', () => {
     renderHook(() => useCompanionPresence('sess-1', false), { wrapper });
     const base = postCount();
 
@@ -99,15 +103,50 @@ describe('useCompanionPresence', () => {
     expect(postCount()).toBe(base + 1);
     expect(lastBody().visible).toBe(false);
 
-    // …and then silence, however long the tab stays hidden.
-    act(() => vi.advanceTimersByTime(60_000));
+    // …and then a reduced, but non-zero, cadence: nothing at the visible 5s
+    // mark, one post at 10s.
+    act(() => vi.advanceTimersByTime(9_999));
     expect(postCount()).toBe(base + 1);
+    act(() => vi.advanceTimersByTime(1));
+    expect(postCount()).toBe(base + 2);
+    expect(lastBody().visible).toBe(false);
+
+    // …and it keeps going for as long as the tab stays hidden: 5 more over 50s,
+    // versus 10 the visible cadence would have posted.
+    act(() => vi.advanceTimersByTime(50_000));
+    expect(postCount()).toBe(base + 7);
+  });
+
+  it('a hidden tab never lets its server presence entry go stale (gaps < 15s TTL)', () => {
+    // PRESENCE_FRESH_MS on the server is 15_000; entries older than that are
+    // pruned and Companion's primarySession()/requireActiveSession stop seeing
+    // this tab, so every command 409s. The cadence must therefore keep every
+    // gap between consecutive posts strictly under that TTL — with margin.
+    const PRESENCE_FRESH_MS = 15_000;
+    const stamps: number[] = [];
+    mockedApiFetch.mockImplementation(() => {
+      stamps.push(Date.now());
+      return Promise.resolve(undefined as never);
+    });
+
+    renderHook(() => useCompanionPresence('sess-1', true), { wrapper });
+    changeVisibility('hidden');
+    act(() => vi.advanceTimersByTime(120_000));
+
+    expect(stamps.length).toBeGreaterThan(1);
+    const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
+    expect(Math.max(...gaps)).toBeLessThan(PRESENCE_FRESH_MS);
+    // A real safety margin, not a hairline pass — hidden-tab timers get
+    // throttled and can slip past their nominal deadline.
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(PRESENCE_FRESH_MS - 5_000);
   });
 
   it('returning to visible posts immediately and resumes the cadence', () => {
     renderHook(() => useCompanionPresence('sess-1', false), { wrapper });
     changeVisibility('hidden');
     act(() => vi.advanceTimersByTime(60_000));
+    // Baseline taken after the hidden stretch, so the hidden heartbeats above
+    // are absorbed and the deltas below measure only the resumed 5s cadence.
     const base = postCount();
 
     changeVisibility('visible');

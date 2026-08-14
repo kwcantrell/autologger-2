@@ -2,21 +2,31 @@ import { useEffect, useRef } from 'react';
 import { getClientInstanceId } from '../../shared/utils/clientId';
 import { apiFetch, apiUrl } from '../client';
 
-const PRESENCE_INTERVAL_MS = 5_000;
+const PRESENCE_INTERVAL_VISIBLE_MS = 5_000;
+// A hidden tab keeps heartbeating, just half as often. It MUST stay under the server's
+// PRESENCE_FRESH_MS = 15_000 (server/src/node/presence.ts): entries older than that are
+// pruned, and Companion's primarySession()/requireActiveSession only see fresh entries —
+// so a hidden tab that stopped posting would 409 ("No active session") every Companion
+// command ~15s after backgrounding, even with the WS up and a recording rolling. 10s
+// leaves 5s of margin for hidden-tab timer throttling (browsers clamp background timers
+// to >=1s and align them to 1s boundaries; chained/late timers can slip further).
+const PRESENCE_INTERVAL_HIDDEN_MS = 10_000;
 
 /**
  * Reports this tab's presence (open session, visibility, playback state) to the server so
  * Companion can resolve "the" active session and target record/play relay commands.
- * Posts immediately, every 5s **while the tab is visible**, and on session/visibility/
- * playback change; clears via sendBeacon on pagehide. Failures are silent — presence is
- * best-effort.
+ * Posts immediately, then on a cadence — every 5s while the tab is visible, every 10s
+ * while it is hidden — and on session/visibility/playback change; clears via sendBeacon
+ * on pagehide. Failures are silent — presence is best-effort.
  *
- * The 5s timer only runs while `document.visibilityState === 'visible'`: a hidden tab
- * posts once (so Companion learns `visible: false` the instant it happens — that report
- * is what lets it pick a different tab) and then goes quiet until it comes back. `isPlaying`
- * is read through a render-updated ref rather than an effect dependency, so a playback
- * toggle no longer tears down and re-arms the interval; a second, small effect posts once
- * on the toggle without disturbing the cadence.
+ * A hidden tab still heartbeats, because the server prunes presence entries at
+ * PRESENCE_FRESH_MS (15s) and Companion refuses commands without a fresh entry; the win
+ * over the old unconditional 5s timer is *reduced* background traffic, not zero. The
+ * visibility transition itself is always reported immediately (so Companion learns
+ * `visible: false` the instant it happens — that report is what lets it pick a different
+ * tab). `isPlaying` is read through a render-updated ref rather than an effect dependency,
+ * so a playback toggle no longer tears down and re-arms the interval; a second, small
+ * effect posts once on the toggle without disturbing the cadence.
  */
 export function useCompanionPresence(sessionId: string | null, isPlaying: boolean): void {
   const isPlayingRef = useRef(isPlaying);
@@ -40,27 +50,36 @@ export function useCompanionPresence(sessionId: string | null, isPlaying: boolea
     postRef.current = post;
 
     let timer: ReturnType<typeof setInterval> | null = null;
-    const startTimer = () => {
+    let timerPeriod = 0;
+    const cadenceMs = () =>
+      document.visibilityState === 'visible'
+        ? PRESENCE_INTERVAL_VISIBLE_MS
+        : PRESENCE_INTERVAL_HIDDEN_MS;
+    const armTimer = () => {
+      const period = cadenceMs();
       // Idempotent: a visibilitychange that does not actually change visibility
-      // (or a re-fired one) must not stack a second interval.
-      if (timer !== null) return;
-      timer = setInterval(post, PRESENCE_INTERVAL_MS);
+      // (or a re-fired one) must not stack a second interval, or reset the phase
+      // of the one already running at the right period.
+      if (timer !== null && timerPeriod === period) return;
+      if (timer !== null) clearInterval(timer);
+      timerPeriod = period;
+      timer = setInterval(post, period);
     };
     const stopTimer = () => {
       if (timer === null) return;
       clearInterval(timer);
       timer = null;
+      timerPeriod = 0;
     };
 
     post();
-    if (document.visibilityState === 'visible') startTimer();
+    armTimer();
 
     const onVisibility = () => {
       // Always report the transition immediately — hiding is exactly the moment
-      // Companion needs to hear about, and it is also when the timer stops.
+      // Companion needs to hear about, and it is also when the cadence changes.
       post();
-      if (document.visibilityState === 'visible') startTimer();
-      else stopTimer();
+      armTimer();
     };
     document.addEventListener('visibilitychange', onVisibility);
     const onPageHide = () => {

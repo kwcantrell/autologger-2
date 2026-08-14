@@ -100,33 +100,50 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     };
 
     // Re-anchor every cache the deleted polls used to refresh — the catch-up for
-    // any frames missed while the socket was down. Gated on freshness: skip
-    // queries whose data is already proven fresher than this connect attempt
+    // any frames missed while the socket was down. Gated on exactly one thing:
+    // skip queries whose data is already proven fresher than this connect attempt
     // (`dataUpdatedAt >= connectStartedAt` — on first mount that is the just-
-    // landed initial fetch), and skip mount fetches still in flight
-    // (fetching with no data yet — invalidation would restart them). Reconnect
-    // catch-up is preserved: connectStartedAt is re-recorded per attempt, so
-    // anything last updated before the drop still invalidates. A predicate
-    // (not a narrower queryKey) because eventsKeys.all() prefix-matches every
-    // per-page limit/offset variant.
-    const isStaleForThisConnect = (q: Query) => {
-      if (q.state.dataUpdatedAt >= connectStartedAt) return false;
-      if (q.state.fetchStatus === 'fetching' && q.state.dataUpdatedAt === 0) return false;
-      return true;
-    };
+    // landed initial fetch). That test is airtight in the safe direction: data
+    // that landed at/after the attempt started cannot predate the socket, so no
+    // frame can have been missed for it. Reconnect catch-up is preserved:
+    // connectStartedAt is re-recorded per attempt, so anything last updated
+    // before the drop still invalidates.
+    //
+    // Deliberately NOT skipped: fetches still in flight with no data yet. Their
+    // snapshot was taken server-side before this socket opened, and frames sent
+    // before `onopen` are unreceivable — so a change landing in that window is
+    // in neither the response nor the socket, and nothing would ever re-anchor
+    // it (the fetch resolves with `dataUpdatedAt > connectStartedAt`, which the
+    // gate above then treats as fresh forever — a permanent miss on a quiet
+    // session). Only a fetch *initiated* after onopen is safe.
+    //
+    // A predicate (not a narrower queryKey) because eventsKeys.all()
+    // prefix-matches every per-page limit/offset variant.
+    const isStaleForThisConnect = (q: Query) => q.state.dataUpdatedAt < connectStartedAt;
+
+    // …and invalidation alone does not restart such a fetch. React Query's
+    // `cancelRefetch` (default true on invalidateQueries) only cancels a fetch
+    // that ALREADY has data — query-core `Query#fetch` guards on
+    // `state.data !== undefined && cancelRefetch`, otherwise it joins the
+    // existing retryer promise. The pre-open fetch would then resolve normally
+    // and its `success` state clears `isInvalidated`, so the stale snapshot
+    // would stick. Cancelling it explicitly (reverting to idle) is what makes
+    // the invalidateQueries below start a genuinely fresh fetch. Scoped to
+    // `type: 'active'` so we only cancel fetches that same invalidation will
+    // restart — never an observer-less prefetch nobody would re-drive.
+    const isUnanchoredInFlight = (q: Query) =>
+      q.state.fetchStatus === 'fetching' && q.state.dataUpdatedAt === 0;
+
+    const resyncKeys = () => [
+      sessionStatusKeys.bySession(sessionId),
+      eventsKeys.all(sessionId),
+      audioSegmentsKeys.bySession(sessionId),
+    ];
     const resync = () => {
-      qc.invalidateQueries({
-        queryKey: sessionStatusKeys.bySession(sessionId),
-        predicate: isStaleForThisConnect,
-      });
-      qc.invalidateQueries({
-        queryKey: eventsKeys.all(sessionId),
-        predicate: isStaleForThisConnect,
-      });
-      qc.invalidateQueries({
-        queryKey: audioSegmentsKeys.bySession(sessionId),
-        predicate: isStaleForThisConnect,
-      });
+      for (const queryKey of resyncKeys()) {
+        void qc.cancelQueries({ queryKey, type: 'active', predicate: isUnanchoredInFlight });
+        qc.invalidateQueries({ queryKey, predicate: isStaleForThisConnect });
+      }
     };
 
     const scheduleReconnect = () => {
