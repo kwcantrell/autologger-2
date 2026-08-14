@@ -215,9 +215,14 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   }
 
   // Initialise form once when profile first loads (or after reset above), and record the
-  // snapshot dirtiness is compared against.
+  // snapshot dirtiness is compared against. Gated on `isOpen` (settings-modal-mount-cost,
+  // D4): without it, this runs the moment `useProfile` resolves regardless of open state,
+  // then runs again on open once the reset above clears `initialized`. `isOpen` is in the
+  // dep array too, not just the guard — the effect has to re-run on the render where the
+  // guard first passes (the open transition), which a deps-only-on-[profile, initialized]
+  // array would miss.
   useEffect(() => {
-    if (!profile || initialized) return;
+    if (!isOpen || !profile || initialized) return;
     const sid = profile.active_studio_id ?? profile.studios[0]?.id ?? '';
     const fps = getDefaultFps(profile, sid);
     const drafts = initDraftsForStudio(profile.shows, sid);
@@ -242,7 +247,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       familyName: family,
     });
     setInitialized(true);
-  }, [profile, initialized]);
+  }, [isOpen, profile, initialized]);
 
   function handleStudioChange(studioId: string) {
     if (!profile) return;
@@ -281,6 +286,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     givenName,
     familyName,
   ]);
+
+  // Below every hook, so hook order stays unconditional, and below the render-phase
+  // `prevOpen` reset above, which must keep running on the reopen render even though this
+  // return then discards its result until `isOpen` flips back to true (settings-modal-
+  // mount-cost, D4). Radix already renders nothing to the DOM for a closed dialog (no
+  // `forceMount`), so this changes nothing about what commits — it only skips constructing
+  // the tree below (both `Select` option arrays, the four tab-panel wrappers, `confirmElement`,
+  // and the nested Add-Show `Dialog`) on every render while closed.
+  if (!isOpen) return null;
 
   async function handleRequestClose() {
     if (dirty) {

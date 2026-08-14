@@ -35,9 +35,23 @@ vi.mock('../../../api/hooks/useProfile', () => ({
 // `renderStrict` (`<StrictMode>`), which may double-invoke a mount's effects in dev, so the
 // exact increment per mount is not pinned to 1 — tests compare against a baseline captured
 // at runtime (before/after a transition) rather than against a hardcoded literal.
-const { invalidateQueriesMock, eventButtonsMountCount } = vi.hoisted(() => ({
+// `dialogRenderCount` and `normalizePalette9CallCount` back the "costs nothing while
+// closed" tests (settings-modal-mount-cost, task 6.1): the closed-modal DOM is already
+// empty either way (the mocked — and the real Radix — Dialog already renders nothing
+// when `open` is false), so a DOM assertion alone cannot tell "HomeSettingsModal built a
+// full tree and handed it to a closed Dialog that discarded it" apart from "HomeSettingsModal
+// returned null and never touched Dialog". These two spies observe the two independent D4
+// gates directly: whether Dialog was invoked at all, and whether the hydration path ran.
+const {
+  invalidateQueriesMock,
+  eventButtonsMountCount,
+  dialogRenderCount,
+  normalizePalette9CallCount,
+} = vi.hoisted(() => ({
   invalidateQueriesMock: vi.fn(),
   eventButtonsMountCount: { current: 0 },
+  dialogRenderCount: { current: 0 },
+  normalizePalette9CallCount: { current: 0 },
 }));
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
@@ -48,9 +62,26 @@ vi.mock('../utils/toast', () => ({
 }));
 
 vi.mock('../../../shared/ui/Dialog', () => ({
-  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
-    open ? <div role="dialog">{children}</div> : null,
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) => {
+    dialogRenderCount.current += 1;
+    return open ? <div role="dialog">{children}</div> : null;
+  },
 }));
+
+// Wraps the real implementation (not a behavior replacement) purely to count calls —
+// `showToShowDraft` (the hydration path exercised by the init effect) is the only caller
+// that runs before a Save in these tests, so a nonzero count while closed is a direct
+// observable of the init effect having run.
+vi.mock('../utils/palette9', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/palette9')>();
+  return {
+    ...actual,
+    normalizePalette9: (arr: string[]) => {
+      normalizePalette9CallCount.current += 1;
+      return actual.normalizePalette9(arr);
+    },
+  };
+});
 
 vi.mock('./Select', () => ({
   Select: (props: {
@@ -246,6 +277,8 @@ let mutateAsync: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.clearAllMocks();
   eventButtonsMountCount.current = 0;
+  dialogRenderCount.current = 0;
+  normalizePalette9CallCount.current = 0;
   mutateAsync = vi.fn().mockResolvedValue({});
   mockedUseProfile.mockReturnValue({ data: profile } as unknown as ReturnType<typeof useProfile>);
   mockedUseProfileMutation.mockReturnValue({
@@ -765,5 +798,88 @@ describe('HomeSettingsModal defers inactive tab content', () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('You have unsaved settings changes. Discard them?')).toBeNull();
+  });
+});
+
+// --- Costs nothing while closed (settings-modal-mount-cost, task 6.1) ---
+//
+// Spec: "The Settings modal costs nothing while closed" (design D4). Two independent
+// gates: the init effect must not hydrate drafts behind a closed dialog (today its guard
+// is `!profile || initialized`, with no `isOpen` check, so it fires the moment `useProfile`
+// resolves regardless of open state), and the component must return `null` while closed
+// instead of building the full tree and handing it to Dialog to discard. Both costs are
+// invisible to a plain DOM assertion — the mocked Dialog (matching real Radix, which uses
+// no `forceMount`) already renders nothing while closed either way — so these tests spy on
+// two collaborators that are only reachable through the wasted work.
+describe('HomeSettingsModal costs nothing while closed', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileWithShow,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('does not hydrate drafts or initialise form state while closed', () => {
+    renderStrict(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // showToShowDraft (the hydration path the init effect drives) is the only caller of
+    // normalizePalette9 exercised by this test — it must not have run at all behind a
+    // closed modal.
+    expect(normalizePalette9CallCount.current).toBe(0);
+  });
+
+  it('hydrates exactly once, on first open, even when the profile resolved while closed', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+    expect(normalizePalette9CallCount.current).toBe(0);
+
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    // One hydration pass over the fixture's single show: normalizePalette9 called twice
+    // (event_palette, event_palette_custom). Before the fix this ran once behind the
+    // closed dialog and again on open, for 4 calls.
+    expect(normalizePalette9CallCount.current).toBe(2);
+    expect(screen.getByLabelText('Name:')).not.toBeNull();
+  });
+
+  it('a closed modal renders nothing', () => {
+    const { container } = renderStrict(
+      <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    expect(container.innerHTML).toBe('');
+    // The Dialog primitive is never invoked while closed — HomeSettingsModal returns null
+    // itself instead of rendering <Dialog open={false}>{fullTree}</Dialog> and relying on
+    // Dialog to discard the tree it was handed.
+    expect(dialogRenderCount.current).toBe(0);
+  });
+
+  it('opening still yields a fully-initialised modal on the General tab, and it survives an unrelated re-render while open', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    // Simulate the modal surviving a route change while open (teams-settings-nav, D1):
+    // AppShell mounts it unconditionally, so a route change re-renders the shell with the
+    // same isOpen=true prop rather than unmounting the modal.
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe(
+      'true',
+    );
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
   });
 });
