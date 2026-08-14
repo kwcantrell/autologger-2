@@ -134,18 +134,29 @@ vi.mock('./components/SessionRoute', () => ({
 // would leak into every other test in this file. Used by the code-splitting
 // failure test below; the retry-re-imports mechanics live in
 // ChunkLoadBoundary.test.tsx.
-const settingsChunk = vi.hoisted(() => ({ fail: false }));
+//
+// `settingsChunk.importFails` is the *other* half of that observable: the LOAD itself
+// failing, which is what the idle warm-up can hit with no UI to fall back on. It cannot be
+// modelled by throwing from the factory — vitest calls the factory at most once per module
+// graph, and the open-path tests above have already resolved it by the time the warm-up test
+// runs — so the export is exposed as a GETTER, the one step `loadHomeSettingsModal` repeats
+// on every call, and throwing from it rejects that loader's promise exactly like a dead chunk.
+const settingsChunk = vi.hoisted(() => ({ fail: false, importFails: false }));
 
-vi.mock('./components/HomeSettingsModal', () => ({
-  HomeSettingsModal: (props: {
+function chunkLoadError() {
+  const err = new Error('Loading chunk 42 failed. (error: /_next/static/chunks/42-abc.js)');
+  err.name = 'ChunkLoadError';
+  return err;
+}
+
+vi.mock('./components/HomeSettingsModal', () => {
+  const HomeSettingsModal = (props: {
     isOpen: boolean;
     onClose: () => void;
     onCloseSession: () => void;
   }) => {
     if (settingsChunk.fail) {
-      const err = new Error('Loading chunk 42 failed. (error: /_next/static/chunks/42-abc.js)');
-      err.name = 'ChunkLoadError';
-      throw err;
+      throw chunkLoadError();
     }
     return props.isOpen ? (
       <div role="dialog" aria-label="Settings" data-testid="home-settings-modal">
@@ -157,8 +168,14 @@ vi.mock('./components/HomeSettingsModal', () => ({
         />
       </div>
     ) : null;
-  },
-}));
+  };
+  return {
+    get HomeSettingsModal() {
+      if (settingsChunk.importFails) throw chunkLoadError();
+      return HomeSettingsModal;
+    },
+  };
+});
 
 vi.mock('./components/NewSessionModal', () => ({
   NewSessionModal: (props: { onCreated: (sessionId: string) => void }) => (
@@ -201,6 +218,7 @@ const workspaceSessionId = () =>
 
 beforeEach(() => {
   settingsChunk.fail = false;
+  settingsChunk.importFails = false;
   mockedUseProfile.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useProfile>);
   mockedUseYoutubeImport.mockReturnValue({
     mutateAsync: vi.fn().mockResolvedValue(undefined),
@@ -488,6 +506,39 @@ describe('AppShell settings modal code-splitting (plan C5.5)', () => {
       expect(screen.queryByTestId('home-settings-modal')).toBeNull();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // A warm-up is fire-and-forget by construction, so the ONLY way its failure can surface is
+  // as an unhandled rejection — a redeploy that rotates the content-hashed chunk URL out from
+  // under an idle tab makes that the common case, not the exotic one. Nothing is on screen to
+  // degrade and `LazyChunk` still owns the real open, so the warm-up must swallow it.
+  it('a failed warm-up import is swallowed — no unhandled rejection, nothing on screen', async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    vi.useFakeTimers();
+    try {
+      settingsChunk.importFails = true;
+      renderShell('/');
+
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      vi.useRealTimers();
+      // Node reports unhandled rejections a macrotask after the microtask queue drains, so
+      // the assertion has to be behind a real tick — under fake timers it would always pass.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rejections).toEqual([]);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.queryByTestId('chunk-load-error')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      process.off('unhandledRejection', onUnhandled);
     }
   });
 

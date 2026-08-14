@@ -150,16 +150,27 @@ function pickShowIdForStudio(profile: ProfilePayload, shows: Show[], studioId: s
   return preferredShow?.id ?? '';
 }
 
-// Shape compared to derive dirtiness (D11: DERIVED, not hand-armed — a forgotten setDirty
+// Shapes compared to derive dirtiness (D11: DERIVED, not hand-armed — a forgotten setDirty
 // call at some future callsite fails in the dangerous direction, so dirtiness is instead
 // computed from the initialized snapshot vs. current form state on every render).
-interface FormSnapshot {
+//
+// SPLIT IN TWO by scope (PR review finding 2), because the two halves are fed by two
+// different sources with two different failure modes. The account half comes from the
+// profile, which is already in hand before the modal can open; the shows half comes from
+// `GET /api/shows?studio_id=…`, which can be slow, can fail, and is re-fetched per studio.
+// One combined snapshot made the account fields hostage to that query: a 500 meant no
+// snapshot at all, so the account fields never hydrated, `dirty` never armed, and Save
+// stayed disabled — bricking account-only saves that the save handler has always supported.
+interface AccountSnapshot {
   activeStudioId: string;
-  activeShowId: string;
   defaultFps: number;
-  showDrafts: Record<string, ShowDraft>;
   givenName: string;
   familyName: string;
+}
+
+interface ShowsSnapshot {
+  activeShowId: string;
+  showDrafts: Record<string, ShowDraft>;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -182,16 +193,21 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   const [givenName, setGivenName] = useState('');
   const [familyName, setFamilyName] = useState('');
 
-  const [initialized, setInitialized] = useState(false);
+  // Two init flags, one per scope: the account fields initialise from the profile alone, the
+  // shows fields only once this studio's shows have arrived (review finding 2).
+  const [accountInitialized, setAccountInitialized] = useState(false);
+  const [showsInitialized, setShowsInitialized] = useState(false);
   // Which studio the drafts in `showDrafts` were built for. `null` = not built
   // yet this open. Compared against `targetStudioId` below, this is what makes
   // the async draft (re)build idempotent: once it has run for a studio it never
   // runs again for that studio, so a refetch (save, add-show, window focus)
   // cannot clobber in-progress edits.
   const [draftsStudioId, setDraftsStudioId] = useState<string | null>(null);
-  // The initialized snapshot dirtiness is derived against (D11). `null` until the init effect
-  // below runs; a `null` snapshot always reads clean regardless of form state.
-  const [initialSnapshot, setInitialSnapshot] = useState<FormSnapshot | null>(null);
+  // The initialized snapshots dirtiness is derived against (D11). `null` until the matching
+  // init effect below runs; a `null` snapshot always reads clean regardless of form state —
+  // which is exactly what keeps a never-loaded shows section from arming Save on its own.
+  const [accountSnapshot, setAccountSnapshot] = useState<AccountSnapshot | null>(null);
+  const [showsSnapshot, setShowsSnapshot] = useState<ShowsSnapshot | null>(null);
 
   // ui-refresh: unsaved-changes tracking. Save is a no-op until something changed, and Close
   // warns before discarding edits — the old header offered Save + Close with no hint which
@@ -218,8 +234,10 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   if (isOpen !== prevOpen) {
     setPrevOpen(isOpen);
     if (isOpen) {
-      setInitialized(false);
-      setInitialSnapshot(null);
+      setAccountInitialized(false);
+      setShowsInitialized(false);
+      setAccountSnapshot(null);
+      setShowsSnapshot(null);
       setActiveTab('general');
       setVisitedTabs(new Set(['general']));
       // profile-shows-slimming: the studio selection has to be reset too, not
@@ -252,49 +270,33 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // A FAILED shows fetch is a third state, distinct from both "loaded" and
   // "still loading": `showsLoaded` only ever flips on `isSuccess`, so without
   // this the shows section would sit on its loading skeleton forever, with no
-  // message and no way to retry. Save stays disabled either way (it gates on
-  // `showsReady`, which an errored fetch never reaches).
+  // message and no way to retry. It scopes the SHOWS section only: an errored fetch never
+  // reaches `showsReady`, so the shows scope contributes nothing to `dirty` and `handleSave`
+  // omits `show_updates` — but the account scope stays fully editable and saveable
+  // regardless (review finding 2).
   const showsError = Boolean(targetStudioId) && studioShowsQuery.isError;
 
-  // Initialise form once when profile first loads (or after reset above), and record the
-  // snapshot dirtiness is compared against. Gated on `isOpen` (settings-modal-mount-cost,
-  // D4): without it, this runs the moment `useProfile` resolves regardless of open state,
-  // then runs again on open once the reset above clears `initialized`. `isOpen` is in the
-  // dep array too, not just the guard — the effect has to re-run on the render where the
-  // guard first passes (the open transition), which a deps-only-on-[profile, initialized]
-  // array would miss.
+  // ACCOUNT init — once per open, from the profile ALONE. Gated on `isOpen`
+  // (settings-modal-mount-cost, D4): without it, this runs the moment `useProfile` resolves
+  // regardless of open state, then runs again on open once the reset above clears
+  // `accountInitialized`. `isOpen` is in the dep array too, not just the guard — the effect
+  // has to re-run on the render where the guard first passes (the open transition), which a
+  // deps-only-on-[profile, accountInitialized] array would miss.
   //
-  // profile-shows-slimming turned the draft source ASYNC. The drafts (and the
-  // show selection derived from them) can only be built once
-  // `useStudioShows(targetStudioId)` has resolved, so this effect now gates on
-  // `showsLoaded` as well, and covers BOTH the first init and every subsequent
-  // studio switch — `handleStudioChange` can no longer rebuild drafts
-  // synchronously, and duplicating the build in two places is exactly how the
-  // two would drift.
+  // Deliberately NOT gated on `showsLoaded` (review finding 2). The profile is in hand
+  // before the modal can open, so nothing about the name fields, the frame rate, or the
+  // studio pointer has to wait on `GET /api/shows` — and when that request fails or hangs,
+  // waiting on it meant the account fields never hydrated and Save never armed, with no way
+  // out short of closing the modal.
   //
-  // Re-entry is keyed on `draftsStudioId !== targetStudioId`, NOT on a
-  // one-shot flag: that makes the rebuild fire once per studio and never again
-  // for the same studio, so the refetches this modal itself triggers (save,
-  // add-show, remount) cannot overwrite unsaved edits.
-  //
-  // The SNAPSHOT is still taken exactly once per open, on the first pass
-  // (`!initialized`) — deliberately not re-taken on a studio switch, so
-  // switching away and back reads clean again rather than baselining the new
-  // studio (D11: view-only selection round-tripping must not read dirty). The
-  // drafts a studio rebuilds to are a pure function of server state, so the
-  // round-trip reproduces the snapshot's bytes and `dirty` returns to false.
+  // `profileStudioId`, not `targetStudioId`: on the first pass they are equal (the
+  // in-modal selection is still `''`), and reading the profile's value directly keeps this
+  // effect's source of truth unambiguously the profile. Later studio switches are owned by
+  // `handleStudioChange`, not by a re-run of this effect.
   useEffect(() => {
-    if (!isOpen || !profile || !showsLoaded) return;
-    if (initialized && draftsStudioId === targetStudioId) return;
+    if (!isOpen || !profile || accountInitialized) return;
 
-    const sid = targetStudioId;
-    const drafts = initDraftsForStudio(studioShows, sid);
-    const showId = pickShowIdForStudio(profile, studioShows, sid);
-    setShowDrafts(drafts);
-    setActiveShowId(showId);
-    setDraftsStudioId(sid);
-
-    if (initialized) return;
+    const sid = profileStudioId;
     const fps = getDefaultFps(profile, sid);
     const given = profile.auth.user?.given_name ?? '';
     const family = profile.auth.user?.family_name ?? '';
@@ -304,16 +306,52 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       setGivenName(given);
       setFamilyName(family);
     }
-    setInitialSnapshot({
+    setAccountSnapshot({
       activeStudioId: sid,
-      activeShowId: showId,
       defaultFps: fps,
-      showDrafts: drafts,
       givenName: given,
       familyName: family,
     });
-    setInitialized(true);
-  }, [isOpen, profile, initialized, showsLoaded, studioShows, targetStudioId, draftsStudioId]);
+    setAccountInitialized(true);
+  }, [isOpen, profile, accountInitialized, profileStudioId]);
+
+  // SHOWS init — profile-shows-slimming turned the draft source ASYNC. The drafts (and the
+  // show selection derived from them) can only be built once
+  // `useStudioShows(targetStudioId)` has resolved, so this effect gates on
+  // `showsLoaded`, and covers BOTH the first build and every subsequent
+  // studio switch — `handleStudioChange` can no longer rebuild drafts
+  // synchronously, and duplicating the build in two places is exactly how the
+  // two would drift.
+  //
+  // Re-entry is keyed on `draftsStudioId !== targetStudioId`, NOT on a
+  // one-shot flag: that makes the rebuild fire once per studio and never again
+  // for the same studio, so the refetches this modal itself triggers (save,
+  // add-show, remount) cannot overwrite unsaved edits.
+  //
+  // The SHOWS SNAPSHOT is still taken exactly once per open, on the first pass
+  // (`!showsInitialized`) — deliberately not re-taken on a studio switch, so
+  // switching away and back reads clean again rather than baselining the new
+  // studio (D11: view-only selection round-tripping must not read dirty). The
+  // drafts a studio rebuilds to are a pure function of server state, so the
+  // round-trip reproduces the snapshot's bytes and `dirty` returns to false.
+  // "Once per open" survives an errored-then-retried fetch for free: the snapshot is taken
+  // on the first pass that actually has data, whenever that is, so an account-only save made
+  // while the fetch was down does not baseline an empty shows draft map.
+  useEffect(() => {
+    if (!isOpen || !profile || !showsLoaded) return;
+    if (showsInitialized && draftsStudioId === targetStudioId) return;
+
+    const sid = targetStudioId;
+    const drafts = initDraftsForStudio(studioShows, sid);
+    const showId = pickShowIdForStudio(profile, studioShows, sid);
+    setShowDrafts(drafts);
+    setActiveShowId(showId);
+    setDraftsStudioId(sid);
+
+    if (showsInitialized) return;
+    setShowsSnapshot({ activeShowId: showId, showDrafts: drafts });
+    setShowsInitialized(true);
+  }, [isOpen, profile, showsInitialized, showsLoaded, studioShows, targetStudioId, draftsStudioId]);
 
   function handleStudioChange(studioId: string) {
     if (!profile) return;
@@ -338,31 +376,42 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     setDraftsStudioId(null);
   }
 
+  // The shows section is READY exactly when the drafts on screen belong to the
+  // studio currently selected — which is strictly later than `showsLoaded` (the
+  // rebuild effect commits one render after the data lands) and strictly later
+  // than a studio switch. Gating on this rather than on the query's own loading
+  // flag is what stops the one-frame "Select a show above" / empty-selector
+  // flash between "shows arrived" and "drafts built". Computed here, above the
+  // dirtiness hooks that read it, rather than below the `isOpen` early return.
+  const showsReady = draftsStudioId === targetStudioId;
+
   // Derived dirtiness (D11, panel-revised — the spike hand-armed a per-callsite `dirty` flag;
   // that fails in the dangerous direction if a future edit path forgets to arm it, both
   // bricking Save and skipping the discard guard). Deep-compare against the initialized
   // snapshot instead; JSON.stringify of this stable-shaped object is an acceptable deep
   // comparison since both sides are built by the same functions from the same source data.
-  const dirty = useMemo(() => {
-    if (!initialSnapshot) return false;
-    const current: FormSnapshot = {
-      activeStudioId,
-      activeShowId,
-      defaultFps,
-      showDrafts,
-      givenName,
-      familyName,
-    };
-    return JSON.stringify(current) !== JSON.stringify(initialSnapshot);
-  }, [
-    initialSnapshot,
-    activeStudioId,
-    activeShowId,
-    defaultFps,
-    showDrafts,
-    givenName,
-    familyName,
-  ]);
+  //
+  // Computed PER SCOPE (review finding 2) so an unavailable shows query cannot suppress
+  // account dirtiness: the account fields are live from the moment the modal opens.
+  const accountDirty = useMemo(() => {
+    if (!accountSnapshot) return false;
+    const current: AccountSnapshot = { activeStudioId, defaultFps, givenName, familyName };
+    return JSON.stringify(current) !== JSON.stringify(accountSnapshot);
+  }, [accountSnapshot, activeStudioId, defaultFps, givenName, familyName]);
+
+  // Shows dirtiness needs BOTH a snapshot (the query resolved at least once this open) and
+  // `showsReady` (the drafts on screen belong to the selected studio). Without the second
+  // condition the mid-switch window — snapshot from studio A, drafts cleared for B — reads
+  // dirty over a form the user has not touched, which is the state the old `!showsReady`
+  // Save gate existed to suppress. Folding that condition in HERE rather than into the Save
+  // gate is what lets account-only saves through while shows are unavailable.
+  const showsDirty = useMemo(() => {
+    if (!showsSnapshot || !showsReady) return false;
+    const current: ShowsSnapshot = { activeShowId, showDrafts };
+    return JSON.stringify(current) !== JSON.stringify(showsSnapshot);
+  }, [showsSnapshot, showsReady, activeShowId, showDrafts]);
+
+  const dirty = accountDirty || showsDirty;
 
   // Below every hook, so hook order stays unconditional, and below the render-phase
   // `prevOpen` reset above, which must keep running on the reopen render even though this
@@ -373,13 +422,6 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // and the nested Add-Show `Dialog`) on every render while closed.
   if (!isOpen) return null;
 
-  // The shows section is READY exactly when the drafts on screen belong to the
-  // studio currently selected — which is strictly later than `showsLoaded` (the
-  // rebuild effect commits one render after the data lands) and strictly later
-  // than a studio switch. Gating on this rather than on the query's own loading
-  // flag is what stops the one-frame "Select a show above" / empty-selector
-  // flash between "shows arrived" and "drafts built".
-  const showsReady = draftsStudioId === targetStudioId;
   const showsForStudio = studioShows.filter((s) => s.studio_id === targetStudioId);
   const currentDraft = activeShowId ? showDrafts[activeShowId] : undefined;
   const otherShows = showsForStudio.filter((s) => s.id !== activeShowId);
@@ -481,14 +523,16 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       await mutation.mutateAsync(body);
       // Rebaseline: every field just submitted is now the saved state, so re-snapshot from
       // current form state to return Save to disabled/"Saved" (D11).
-      setInitialSnapshot({
-        activeStudioId,
-        activeShowId,
-        defaultFps,
-        showDrafts,
-        givenName,
-        familyName,
-      });
+      setAccountSnapshot({ activeStudioId, defaultFps, givenName, familyName });
+      // Only the shows scope that was actually ON SCREEN gets rebaselined. On an
+      // account-only save made while the shows query is erroring or still in flight, the
+      // drafts map is empty and means "unknown", not "saved as empty" — baselining it would
+      // make the shows section read dirty the moment a retry finally delivered the real
+      // drafts (review finding 2). `showsSnapshot` stays `null`, so the shows init effect
+      // still takes the first real snapshot when the data lands.
+      if (showsReady) {
+        setShowsSnapshot({ activeShowId, showDrafts });
+      }
       showToast('Saved.');
       if (activeStudioId !== prevStudioId) {
         onCloseSession();
@@ -533,7 +577,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       // the snapshot too — otherwise it would read as an unsaved edit even though there's
       // nothing to save. Only this key is patched: any other genuinely-unsaved draft edits
       // stay dirty against their original snapshot values.
-      setInitialSnapshot((prev) =>
+      setShowsSnapshot((prev) =>
         prev ? { ...prev, showDrafts: { ...prev.showDrafts, [show.id]: draft } } : prev,
       );
       setAddShowOpen(false);
@@ -646,10 +690,13 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
             id="profile-save"
             // ui-refresh: disabled until something changed, so "is this saved?" is answerable
             // from the header at a glance (D11).
-            // `!showsReady` as well as `!dirty`: mid-load the drafts map is
-            // empty, so a save would post `show_updates: undefined` and quietly
-            // drop nothing-but-also-save-nothing for the shows section.
-            disabled={mutation.isPending || !dirty || !showsReady}
+            // No `!showsReady` term any more (review finding 2): that made an unavailable
+            // shows query brick account-only saves, which the save handler has always
+            // supported. The property it protected — never submitting a drafts map that
+            // does not belong to the selected studio — now lives in `showsDirty` (which
+            // requires `showsReady`) and in `handleSave`, which omits `show_updates`
+            // entirely rather than posting a partial one.
+            disabled={mutation.isPending || !dirty}
             title={dirty ? undefined : 'No unsaved changes'}
             onClick={handleSave}
           >
@@ -907,7 +954,12 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                   type="button"
                   className="btn"
                   id="profile-show-add"
-                  hidden={!activeStudioId || (profile?.studios ?? []).length === 0}
+                  // `!showsReady` here as well as on `disabled`: the account init now
+                  // commits the studio selection immediately (review finding 2), so
+                  // `activeStudioId` alone no longer implies the shows section is usable —
+                  // and offering Add-New-Show over a section that is still loading, or that
+                  // failed to load, would advertise an action that cannot work.
+                  hidden={!showsReady || !activeStudioId || (profile?.studios ?? []).length === 0}
                   // Creating a show while the studio's shows are still in
                   // flight would land the new draft in a map the rebuild
                   // effect is about to replace.

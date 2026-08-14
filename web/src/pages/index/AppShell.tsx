@@ -165,7 +165,11 @@ export function AppShell() {
   // without putting the bytes on the homepage's critical path.
   useEffect(() => {
     const t = setTimeout(() => {
-      void import('./components/HomeSettingsModal');
+      // A failed warm-up is harmless and must stay silent: nothing is on screen, and a real
+      // open goes back through `LazyChunk`, which owns the retry and the error card. Without
+      // the catch, a redeploy-rotated chunk URL or a network blip turns the warm-up into an
+      // unhandled rejection (mirrors SessionRoute's workspace warm-up).
+      void loadHomeSettingsModal().catch(() => {});
     }, SETTINGS_PREFETCH_DELAY_MS);
     return () => clearTimeout(t);
   }, []);
