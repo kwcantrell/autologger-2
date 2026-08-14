@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, screen } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '../../../api/client';
+import { WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
 import type { Category, EventsResponse, LogEvent, SessionStatus } from '../../../api/types';
 import { TooltipProvider } from '../../../shared/ui/Tooltip';
 import { renderStrict } from '../../../test/renderStrict';
@@ -376,7 +377,7 @@ describe('EventLogSheet marker reveal page growth', () => {
     }));
   }
 
-  it('loads and renders a revealed row beyond the first 200-row page', async () => {
+  it('renders a revealed row beyond the initial window without a second fetch', async () => {
     const all = manyEventsFixture(250);
     mockedApiFetch.mockImplementation(async (path: string) => {
       if (path.includes('/status')) return statusFixture();
@@ -407,12 +408,23 @@ describe('EventLogSheet marker reveal page growth', () => {
       );
     });
 
-    // The sheet grows loadedLimit to the next 200 step covering index 249 (400)
-    // and the row renders once that page resolves.
+    // The sheet grows its RENDER window to cover index 249; the rows were
+    // already fetched, so no new request is issued.
     await screen.findByText('note 249');
     expect(document.querySelector('tr[data-event-id="ev-249"]')).toBeTruthy();
-    expect(
-      mockedApiFetch.mock.calls.some(([p]) => typeof p === 'string' && p.includes('limit=400')),
-    ).toBe(true);
+
+    // The regression this guards: `loadedLimit` used to be passed to
+    // `useEvents` as the query `limit`, which is part of the React Query key.
+    // Growing the window therefore minted a second (then third, …) cache entry
+    // and re-fetched rows the workspace query had already loaded — the exact
+    // divergence `useEvents.ts`'s header forbids. Assert the sheet issues
+    // events requests at exactly one limit, and that it is the shared one.
+    const eventsLimits = new Set(
+      mockedApiFetch.mock.calls
+        .map(([p]) => (typeof p === 'string' ? p : ''))
+        .filter((p) => p.includes('/events?'))
+        .map((p) => new URLSearchParams(p.split('?')[1] ?? '').get('limit')),
+    );
+    expect([...eventsLimits]).toEqual([String(WORKSPACE_EVENTS_LIMIT)]);
   });
 });
