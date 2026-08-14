@@ -239,6 +239,56 @@ describe('GET /api/profile', () => {
 // Shows
 // ---------------------------------------------------------------------------
 
+// The two full-`showApiDict` read routes. Both became web-consumed by
+// profile-shows-slimming — `/api/profile`'s `shows[]` is now the slim
+// `showBriefApiDict`, so `useStudioShows` (HomeSettingsModal) and `useShow`
+// (EventGenerateCustomModal) read the full per-show config from here instead.
+// `format: 'ts'`: the payload carries literal-union values a `.json` import
+// would widen to `string` — `title_suffix: 'date'` and every category's
+// `type: 'BUTTON' | 'DROPDOWN' | 'ON_OFF'` (design D4's wrinkle).
+describe('GET /api/shows?studio_id=…', () => {
+  it('matches the captured fixture', async () => {
+    const studioId = await anonymousStudioId();
+    seedShow({ studioId, name: 'All The Smoke', code: 'ATS', categoriesJson: CATEGORIES_JSON });
+    const res = await app.request(
+      `/api/shows?studio_id=${studioId}`,
+      { method: 'GET' },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'showsList',
+        endpoint: 'GET /api/shows?studio_id=…',
+        format: 'ts',
+        exportName: 'showsList',
+      },
+      res,
+    );
+  });
+});
+
+describe('GET /api/shows/:showId', () => {
+  it('matches the captured fixture', async () => {
+    const studioId = await anonymousStudioId();
+    const showId = seedShow({
+      studioId,
+      name: 'All The Smoke',
+      code: 'ATS',
+      categoriesJson: CATEGORIES_JSON,
+    });
+    const res = await app.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
+    await expectCapturedResponse(
+      {
+        name: 'showDetail',
+        endpoint: 'GET /api/shows/:showId',
+        format: 'ts',
+        exportName: 'showDetail',
+      },
+      res,
+    );
+  });
+});
+
 describe('POST /api/shows', () => {
   it('matches the captured fixture', async () => {
     const studioId = await anonymousStudioId();

@@ -9,14 +9,18 @@ import { EventGenerateCustomModal } from './EventGenerateCustomModal';
 // The server matches a selection entry by (category_id, trimmed option label)
 // and dedupes labels into a Set, so duplicate option labels within a dropdown
 // are ONE wire entry — the modal must render them as one row (duplicate React
-// keys shared one checkbox state across rows). And because a profile refetch
+// keys shared one checkbox state across rows). And because a show refetch
 // mid-modal can remove a selected candidate, Generate is gated on the live
 // candidates ∩ selected intersection — never enabled when a click would
 // submit nothing.
+//
+// profile-shows-slimming: the category source is `useShow(showId)`
+// (`GET /api/shows/:showId`), not the profile — `/api/profile` carries brief
+// show entries with no categories at all.
 
-const useProfileMock = vi.fn();
-vi.mock('../../../api/hooks/useProfile', () => ({
-  useProfile: (...args: unknown[]) => useProfileMock(...args),
+const useShowMock = vi.fn();
+vi.mock('../../../api/hooks/useShows', () => ({
+  useShow: (...args: unknown[]) => useShowMock(...args),
 }));
 
 beforeAll(() => {
@@ -47,18 +51,18 @@ function dropdownCategory(options: Array<{ label: string; auto_instruction?: str
   } as ShowCategory;
 }
 
-function profileWith(categories: ShowCategory[]) {
-  return { data: { shows: [{ id: SHOW_ID, categories }] } };
+function showWith(categories: ShowCategory[]) {
+  return { data: { show: { id: SHOW_ID, categories } }, isPending: false };
 }
 
 beforeEach(() => {
-  useProfileMock.mockReset();
+  useShowMock.mockReset();
 });
 
 describe('EventGenerateCustomModal', () => {
   it('renders duplicate option labels as one row and submits one entry', () => {
-    useProfileMock.mockReturnValue(
-      profileWith([
+    useShowMock.mockReturnValue(
+      showWith([
         dropdownCategory([
           { label: 'Cam A', auto_instruction: 'first copy' },
           { label: 'Cam A', auto_instruction: 'second copy' },
@@ -81,9 +85,35 @@ describe('EventGenerateCustomModal', () => {
     ]);
   });
 
+  // profile-shows-slimming: the categories now arrive over the wire, so the
+  // modal has a loading window it never had while reading the profile cache.
+  it('fetches the show by id and says so while the fetch is in flight', () => {
+    useShowMock.mockReturnValue({ data: undefined, isPending: true });
+    renderStrict(
+      <EventGenerateCustomModal showId={SHOW_ID} onSubmit={vi.fn()} onClose={() => {}} />,
+    );
+
+    expect(useShowMock).toHaveBeenCalledWith(SHOW_ID);
+    expect(screen.getByText('Loading instructions…')).toBeTruthy();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect((screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it('claims no loading state when there is no show to fetch', () => {
+    // A disabled query reports `isPending: true` forever; pairing it with the
+    // id is what keeps the modal from claiming to load a show it never asked
+    // for.
+    useShowMock.mockReturnValue({ data: undefined, isPending: true });
+    renderStrict(<EventGenerateCustomModal showId={null} onSubmit={vi.fn()} onClose={() => {}} />);
+
+    expect(screen.queryByText('Loading instructions…')).toBeNull();
+  });
+
   it('disables Generate when a refetch removes the selected candidate', () => {
-    useProfileMock.mockReturnValue(
-      profileWith([dropdownCategory([{ label: 'Cam A', auto_instruction: 'aim at host' }])]),
+    useShowMock.mockReturnValue(
+      showWith([dropdownCategory([{ label: 'Cam A', auto_instruction: 'aim at host' }])]),
     );
     const onSubmit = vi.fn();
     const { rerender } = renderStrict(
@@ -94,8 +124,8 @@ describe('EventGenerateCustomModal', () => {
     const generate = () => screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement;
     expect(generate().disabled).toBe(false);
 
-    // Profile refetch resolves without the selected option (edited elsewhere).
-    useProfileMock.mockReturnValue(profileWith([dropdownCategory([])]));
+    // Show refetch resolves without the selected option (edited elsewhere).
+    useShowMock.mockReturnValue(showWith([dropdownCategory([])]));
     rerender(<EventGenerateCustomModal showId={SHOW_ID} onSubmit={onSubmit} onClose={() => {}} />);
 
     expect(generate().disabled).toBe(true);

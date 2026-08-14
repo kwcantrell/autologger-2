@@ -143,186 +143,21 @@ const captured = {
       "studio_id": "test-studios",
       "name": "All The Smoke",
       "show_code": "ATS",
-      "title_suffix": "date",
-      "categories": [
-        {
-          "id": "cam",
-          "name": "Camera",
-          "color": "#112233",
-          "type": "BUTTON",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "mic",
-          "name": "Mic",
-          "color": "#7cb7ff",
-          "type": "DROPDOWN",
-          "dropdown_options": [
-            {
-              "label": "Lav",
-              "needs_context": false
-            },
-            {
-              "label": "Boom",
-              "needs_context": true
-            }
-          ],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "tally",
-          "name": "Tally",
-          "color": "#ff8800",
-          "type": "ON_OFF",
-          "dropdown_options": [],
-          "on_label": "ON",
-          "off_label": "OFF"
-        }
-      ],
-      "event_palette": [
-        "#64748b",
-        "#e53935",
-        "#fb8c00",
-        "#fdd835",
-        "#43a047",
-        "#00acc1",
-        "#1e88e5",
-        "#8e24aa",
-        "#ec407a"
-      ],
-      "event_palette_preset": "custom",
-      "event_palette_custom": [
-        "#64748b",
-        "#e53935",
-        "#fb8c00",
-        "#fdd835",
-        "#43a047",
-        "#00acc1",
-        "#1e88e5",
-        "#8e24aa",
-        "#ec407a"
-      ]
+      "title_suffix": "date"
     },
     {
       "id": "show-autolog-test",
       "studio_id": "test-studios",
       "name": "Autolog Test Show",
       "show_code": "ATS",
-      "title_suffix": "episode",
-      "categories": [
-        {
-          "id": "########-####-####-####-############",
-          "name": "Scene",
-          "color": "#4a9fd4",
-          "type": "BUTTON",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "########-####-####-####-############",
-          "name": "Audio issue",
-          "color": "#a86bdc",
-          "type": "DROPDOWN",
-          "dropdown_options": [
-            {
-              "label": "Lav",
-              "needs_context": false
-            },
-            {
-              "label": "Boom",
-              "needs_context": false
-            }
-          ],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "########-####-####-####-############",
-          "name": "Note",
-          "color": "#6bcf7a",
-          "type": "TEXT",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        }
-      ],
-      "event_palette": [
-        "#4a9fd4",
-        "#a86bdc",
-        "#6bcf7a",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b"
-      ],
-      "event_palette_preset": "custom",
-      "event_palette_custom": [
-        "#4a9fd4",
-        "#a86bdc",
-        "#6bcf7a",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b"
-      ]
+      "title_suffix": "episode"
     },
     {
       "id": "show-the-something-podcast",
       "studio_id": "test-studio-2",
       "name": "The Something Podcast",
       "show_code": "TSP",
-      "title_suffix": "episode",
-      "categories": [
-        {
-          "id": "########-####-####-####-############",
-          "name": "Note",
-          "color": "#7cb7ff",
-          "type": "TEXT",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        },
-        {
-          "id": "########-####-####-####-############",
-          "name": "Mark",
-          "color": "#f4a82e",
-          "type": "BUTTON",
-          "dropdown_options": [],
-          "on_label": "",
-          "off_label": ""
-        }
-      ],
-      "event_palette": [
-        "#7cb7ff",
-        "#f4a82e",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b"
-      ],
-      "event_palette_preset": "custom",
-      "event_palette_custom": [
-        "#7cb7ff",
-        "#f4a82e",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b",
-        "#64748b"
-      ]
+      "title_suffix": "episode"
     }
   ],
   "new_session_defaults": {

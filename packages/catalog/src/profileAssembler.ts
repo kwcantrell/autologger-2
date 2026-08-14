@@ -12,7 +12,7 @@ import {
 } from '@autologger/domain';
 import type { AuthStore } from './authStore';
 import type { ShowsStore } from './showsStore';
-import { showApiDict } from './showsStore';
+import { showBriefApiDict } from './showsStore';
 import type { StudioRegistry } from './studioRegistry';
 
 /** Consumption-based facade surface (persistence-package-extraction design D3):
@@ -108,7 +108,16 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
   }
 
   /** _profile_payload — frozen /api/profile JSON shape (originally byte-compatible
-   * with the Python server's). */
+   * with the Python server's).
+   *
+   * `shows[]` carries the SLIM `showBriefApiDict` entry, not the full
+   * `showApiDict` (profile-shows-slimming): the fan-out below covers every show
+   * in every studio the caller can reach, so embedding each show's categories
+   * and three palettes made this payload grow with the whole account's
+   * configuration (measured 52 KB, 48 KB of it `shows[]`) on a request every
+   * page load makes. The full per-show config is served by
+   * `GET /api/shows?studio_id=…` and `GET /api/shows/:showId`, fetched on
+   * demand by the modals that read it. */
   profilePayload(user: AuthUser | null, ctx: ProfileCtx): Record<string, unknown> {
     const { oauthConfigured, adminMeta } = ctx;
 
@@ -145,7 +154,7 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
       for (const s of studiosForList) {
         // Reuse the active studio's rows fetched above (finding 5.7).
         const rows = s.id === active.id ? showsRaw : this.shows.listShowsForStudio(s.id);
-        for (const r of rows) showsOut.push(showApiDict(r));
+        for (const r of rows) showsOut.push(showBriefApiDict(r));
       }
       return {
         active_studio_id: active.id,
@@ -184,7 +193,7 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
       const showsRaw = activeShows;
       for (const s of studiosForList) {
         const rows = s.id === active.id ? showsRaw : this.shows.listShowsForStudio(s.id);
-        for (const r of rows) showsOut.push(showApiDict(r));
+        for (const r of rows) showsOut.push(showBriefApiDict(r));
       }
       activeShowId = computedShowId;
       const validIds = new Set(showsRaw.map((r) => String(r.id)));

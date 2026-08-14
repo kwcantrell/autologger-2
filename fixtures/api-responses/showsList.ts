@@ -1,6 +1,6 @@
 // GENERATED — DO NOT EDIT BY HAND.
 //
-// Captured from a real `GET /api/profile (logged in, two team memberships)` response by
+// Captured from a real `GET /api/shows?studio_id=…` response by
 // `server/src/routers/apiResponseFixtures.int.test.ts` and re-asserted
 // against the live handler on every server test run
 // (web-api-shape-conformance, design D2/D3).
@@ -21,56 +21,13 @@
 import type { Mutable } from './_mutable';
 
 const captured = {
-  "active_studio_id": "my-crew",
-  "active_show_id": "########-####-####-####-############",
-  "active_studio": {
-    "id": "my-crew",
-    "name": "My Crew",
-    "categories": [
-      {
-        "id": "cam",
-        "label": "Camera",
-        "color": "#112233",
-        "type": "BUTTON",
-        "dropdown_options": [],
-        "on_label": "",
-        "off_label": ""
-      },
-      {
-        "id": "mic",
-        "label": "Mic",
-        "color": "#7cb7ff",
-        "type": "DROPDOWN",
-        "dropdown_options": [
-          "Lav",
-          "Boom"
-        ],
-        "on_label": "",
-        "off_label": ""
-      },
-      {
-        "id": "tally",
-        "label": "Tally",
-        "color": "#ff8800",
-        "type": "ON_OFF",
-        "dropdown_options": [],
-        "on_label": "ON",
-        "off_label": "OFF"
-      }
-    ]
-  },
-  "studios": [
+  "shows": [
     {
-      "id": "my-crew",
-      "name": "My Crew"
-    },
-    {
-      "id": "ymhs",
-      "name": "YMHS"
-    }
-  ],
-  "studio_settings": {
-    "my-crew": {
+      "id": "########-####-####-####-############",
+      "studio_id": "test-studios",
+      "name": "All The Smoke",
+      "show_code": "ATS",
+      "title_suffix": "date",
       "categories": [
         {
           "id": "cam",
@@ -109,10 +66,36 @@ const captured = {
           "off_label": "OFF"
         }
       ],
-      "show_title_format": "ATS",
-      "default_frame_rate": 24
+      "event_palette": [
+        "#64748b",
+        "#e53935",
+        "#fb8c00",
+        "#fdd835",
+        "#43a047",
+        "#00acc1",
+        "#1e88e5",
+        "#8e24aa",
+        "#ec407a"
+      ],
+      "event_palette_preset": "custom",
+      "event_palette_custom": [
+        "#64748b",
+        "#e53935",
+        "#fb8c00",
+        "#fdd835",
+        "#43a047",
+        "#00acc1",
+        "#1e88e5",
+        "#8e24aa",
+        "#ec407a"
+      ]
     },
-    "ymhs": {
+    {
+      "id": "show-autolog-test",
+      "studio_id": "test-studios",
+      "name": "Autolog Test Show",
+      "show_code": "ATS",
+      "title_suffix": "episode",
       "categories": [
         {
           "id": "########-####-####-####-############",
@@ -151,50 +134,31 @@ const captured = {
           "off_label": ""
         }
       ],
-      "show_title_format": "",
-      "default_frame_rate": 24
-    }
-  },
-  "shows": [
-    {
-      "id": "########-####-####-####-############",
-      "studio_id": "my-crew",
-      "name": "All The Smoke",
-      "show_code": "ATS",
-      "title_suffix": "date"
-    }
-  ],
-  "new_session_defaults": {
-    "title_prefix": "ATS - Episode ",
-    "default_frame_rate": 24
-  },
-  "admin": {
-    "restart_supported": false,
-    "restart_needs_token": true
-  },
-  "auth": {
-    "logged_in": true,
-    "oauth_configured": false,
-    "user": {
-      "id": "########-####-####-####-############",
-      "email": "ann@example.com",
-      "given_name": "Test",
-      "family_name": "User",
-      "picture_url": "",
-      "teams": [
-        {
-          "id": "my-crew",
-          "name": "My Crew",
-          "role": "admin"
-        },
-        {
-          "id": "ymhs",
-          "name": "YMHS",
-          "role": "member"
-        }
+      "event_palette": [
+        "#4a9fd4",
+        "#a86bdc",
+        "#6bcf7a",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b"
+      ],
+      "event_palette_preset": "custom",
+      "event_palette_custom": [
+        "#4a9fd4",
+        "#a86bdc",
+        "#6bcf7a",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b",
+        "#64748b"
       ]
     }
-  }
+  ]
 } as const;
 
-export const profileAuthenticated = captured as Mutable<typeof captured>;
+export const showsList = captured as Mutable<typeof captured>;

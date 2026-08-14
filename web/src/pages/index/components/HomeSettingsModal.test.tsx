@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
+import { useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload } from '../../../api/types';
 import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { HomeSettingsModal } from './HomeSettingsModal';
@@ -21,6 +22,15 @@ vi.mock('../../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
   useProfileMutation: vi.fn(),
   useCreateShow: vi.fn(),
+}));
+
+// profile-shows-slimming: the modal's DRAFT SOURCE is no longer `profile.shows`
+// (which is now brief — no categories, no palettes) but this studio-scoped
+// query. Mocked at the module boundary like the profile hooks, and driven by
+// `fullShows` below so a test can hold the answer in flight and assert on the
+// loading window the async source introduced.
+vi.mock('../../../api/hooks/useShows', () => ({
+  useStudioShows: vi.fn(),
 }));
 
 // Shared across every `useQueryClient()` call (the component calls the hook fresh each
@@ -206,6 +216,7 @@ vi.mock('./EventButtonsTable', () => ({
 }));
 
 const mockedUseProfile = vi.mocked(useProfile);
+const mockedUseStudioShows = vi.mocked(useStudioShows);
 const mockedUseProfileMutation = vi.mocked(useProfileMutation);
 const mockedUseCreateShow = vi.mocked(useCreateShow);
 
@@ -252,10 +263,25 @@ const showWithCategories = {
   event_palette_custom: [],
 };
 
+/** `/api/profile` emits BRIEF entries (profile-shows-slimming). Derived from
+ * the full show rather than written out, so the two halves of every fixture
+ * below — what the profile says exists, and what `useStudioShows` serves —
+ * cannot drift apart. */
+function briefOf(show: {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: string;
+}) {
+  const { id, studio_id, name, show_code, title_suffix } = show;
+  return { id, studio_id, name, show_code, title_suffix };
+}
+
 const profileWithShow = {
   ...profile,
   active_show_id: 'show-1',
-  shows: [showWithCategories],
+  shows: [briefOf(showWithCategories)],
 } as unknown as ProfilePayload;
 
 // --- Derived-dirty fixtures (ui-refresh D11) ---
@@ -272,7 +298,7 @@ const secondShow = {
 const profileFull = {
   ...profile,
   active_show_id: 'show-1',
-  shows: [showWithCategories, secondShow],
+  shows: [showWithCategories, secondShow].map(briefOf),
   auth: {
     logged_in: true,
     oauth_configured: true,
@@ -286,14 +312,50 @@ const profileFull = {
 } as unknown as ProfilePayload;
 
 let mutateAsync: ReturnType<typeof vi.fn>;
+/** Structural stand-in for a full `Show` fixture. Deliberately loose about
+ * `categories`: individual tests widen it (per-option `auto_instruction`), and
+ * `typeof showWithCategories` would infer those arrays as `never[]`. */
+type FullShowFixture = {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: string;
+  categories: Array<Record<string, unknown>>;
+  event_palette: string[];
+  event_palette_preset: string;
+  event_palette_custom: string[];
+};
+
+/** The full show configs `GET /api/shows?studio_id=…` would serve, across all
+ * studios; the mock filters them by the requested studio. */
+let fullShows: FullShowFixture[] = [];
+/** `null` while the studio-shows answer is deliberately held in flight. */
+let studioShowsPending = false;
+
+/** Points BOTH of the modal's data sources at one fixture: the profile (brief
+ * entries) and the studio-shows query (full configs). Every test that swaps the
+ * profile has to swap both, or the modal would list shows it cannot hydrate. */
+function useProfileWith(p: ProfilePayload, shows: FullShowFixture[] = []) {
+  mockedUseProfile.mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
+  fullShows = shows;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  fullShows = [];
+  studioShowsPending = false;
+  mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+    // Mirrors the real hook: DISABLED on a null id (the closed-modal case), so
+    // `isSuccess` stays false and no data is handed back.
+    if (!studioId || studioShowsPending) return { data: undefined, isSuccess: false };
+    return { data: { shows: fullShows.filter((s) => s.studio_id === studioId) }, isSuccess: true };
+  }) as unknown as typeof useStudioShows);
   eventButtonsMountCount.current = 0;
   dialogRenderCount.current = 0;
   normalizePalette9CallCount.current = 0;
   mutateAsync = vi.fn().mockResolvedValue({});
-  mockedUseProfile.mockReturnValue({ data: profile } as unknown as ReturnType<typeof useProfile>);
+  useProfileWith(profile);
   mockedUseProfileMutation.mockReturnValue({
     mutateAsync,
     isPending: false,
@@ -365,9 +427,7 @@ describe('HomeSettingsModal studio-switch save branch', () => {
     // snapshot, and re-selecting the originally-active studio round-trips back to that
     // snapshot (view-only selection must not read dirty) — so arming Save here without
     // touching the active studio requires a real fixture with an editable show/account field.
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
     const onCloseSession = vi.fn();
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={onCloseSession} />);
 
@@ -410,9 +470,7 @@ describe('HomeSettingsModal session-list refetch on save', () => {
 // back to the initial value (studio/show re-selection) must read clean again.
 describe('HomeSettingsModal derived dirty tracking', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
   });
 
   it('starts with Save disabled and labeled "Saved"', () => {
@@ -469,9 +527,7 @@ describe('HomeSettingsModal derived dirty tracking', () => {
 // `show_updates[].categories` — both must use the wire key `name`, not `label`.
 describe('HomeSettingsModal category round-trip', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('hydrates existing category names (non-blank) from a name-keyed show', () => {
@@ -534,9 +590,10 @@ describe('HomeSettingsModal category round-trip', () => {
         },
       ],
     };
-    mockedUseProfile.mockReturnValue({
-      data: { ...profileWithShow, shows: [showWithInstructions] },
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(
+      { ...profileWithShow, shows: [briefOf(showWithInstructions)] } as ProfilePayload,
+      [showWithInstructions],
+    );
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
@@ -635,9 +692,7 @@ describe('HomeSettingsModal category round-trip', () => {
 // shows (design D7).
 describe('HomeSettingsModal Suffix control', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('renders the Suffix select immediately after Code, and no Next Ep control exists', () => {
@@ -700,9 +755,7 @@ describe('HomeSettingsModal Suffix control', () => {
 // runs after things settle.
 describe('HomeSettingsModal defers inactive tab content', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileFull,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
   });
 
   it('opening mounts only General’s content while all four aria-controls targets resolve', () => {
@@ -775,9 +828,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
   });
 
   it('editing General and saving without ever activating Event Buttons still submits the same show_updates', async () => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
@@ -826,9 +877,7 @@ describe('HomeSettingsModal defers inactive tab content', () => {
 // two collaborators that are only reachable through the wasted work.
 describe('HomeSettingsModal costs nothing while closed', () => {
   beforeEach(() => {
-    mockedUseProfile.mockReturnValue({
-      data: profileWithShow,
-    } as unknown as ReturnType<typeof useProfile>);
+    useProfileWith(profileWithShow, [showWithCategories]);
   });
 
   it('does not hydrate drafts or initialise form state while closed', () => {
@@ -890,5 +939,134 @@ describe('HomeSettingsModal costs nothing while closed', () => {
 
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+  });
+});
+
+// --- Async draft source (profile-shows-slimming, A4/B7) ---
+//
+// `/api/profile` no longer carries per-show categories or palettes, so the
+// drafts this modal edits are hydrated from `useStudioShows(studioId)` — a
+// second request that resolves AFTER the profile. Everything below is about
+// the window that opens up between those two: the modal must not present an
+// empty-looking shows section as the answer, must not let a Save go out
+// against drafts it has not built yet, and must rebuild — exactly once — when
+// the selected studio changes.
+const studioTwoShow = {
+  ...showWithCategories,
+  id: 'show-3',
+  studio_id: 'studio-2',
+  name: 'Late Night',
+  show_code: 'LN',
+};
+
+describe('HomeSettingsModal shows arrive asynchronously', () => {
+  it('issues no shows request while closed', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(mockedUseStudioShows).toHaveBeenCalled();
+    // Every call passes null — the hook is disabled on a null id, so a closed
+    // modal costs no request (the same "costs nothing while closed" property
+    // the block above pins for hydration).
+    for (const call of mockedUseStudioShows.mock.calls) expect(call[0]).toBeNull();
+  });
+
+  it('skeletons the shows section and disables Save until the studio’s shows arrive', () => {
+    studioShowsPending = true;
+    useProfileWith(profileWithShow, [showWithCategories]);
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    // No show details, no "No shows for this team yet" (which would be a WRONG
+    // answer, not a pending one), and the picker is disabled rather than
+    // offering an empty list.
+    expect(screen.queryByLabelText('Name:')).toBeNull();
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+    expect(screen.queryByText('No shows for this team yet. Add one below.')).toBeNull();
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+    // Add-New-Show is `hidden` this early (the studio selection is only
+    // committed by the same effect that builds the drafts), so there is no
+    // window in which a show can be created into a draft map about to be
+    // replaced.
+    expect(screen.queryByRole('button', { name: /Add New Show/ })).toBeNull();
+
+    studioShowsPending = false;
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+  });
+
+  it('distinguishes "still loading" from "this team has no shows"', () => {
+    useProfileWith(profileWithShow, []);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'No shows for this team yet. Add one below.',
+    );
+  });
+
+  it('rebuilds drafts from the newly selected studio’s shows', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+
+    // The new studio's show, hydrated from ITS response — never the previous
+    // studio's draft left standing under a new team label.
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Late Night');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-3');
+    const options = Array.from(
+      (screen.getByLabelText('Show to edit') as HTMLSelectElement).options,
+    ).map((o) => o.value);
+    expect(options).toEqual(['show-3']);
+  });
+
+  it('does not clobber unsaved edits when the shows response is re-delivered', () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+
+    // A refetch (this modal triggers its own on save and on add-show) re-runs
+    // the hydration effect's deps. The rebuild is keyed on the STUDIO having
+    // changed, not on the data arriving, so the in-progress edit survives.
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Renamed Show');
+    expect(screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('invalidates both lazy show caches on save, alongside show-categories', async () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // Without these two, a 30s-stale cache would keep serving pre-edit
+    // categories to the settings modal itself and to
+    // EventGenerateCustomModal.
+    await waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['studio-shows'] }),
+    );
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['show'] });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ['show-categories'] });
   });
 });

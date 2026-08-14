@@ -29,6 +29,16 @@ export function useCreateShow() {
   return useMutation({
     mutationFn: (body: ShowCreateBody) =>
       apiFetch<{ show: Show }>('shows', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profile'] }),
+    // The created show has to reach BOTH show caches, not just the profile:
+    // `profile.shows[]` is the brief list every show picker reads, and
+    // `studio-shows` is the full-config list HomeSettingsModal edits — the new
+    // show would otherwise be missing from its own show selector until that
+    // query's 30s staleTime expired (profile-shows-slimming). The response
+    // itself stays the full `Show`, which the caller uses to seed a draft
+    // synchronously, so neither refetch is on the critical path.
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profile'] });
+      qc.invalidateQueries({ queryKey: ['studio-shows'] });
+    },
   });
 }

@@ -35,6 +35,29 @@ showsRouter.get('/api/shows', async (c) => {
   return c.json({ shows: out });
 });
 
+// One show's full configuration (profile-shows-slimming). `/api/profile` now
+// emits only `showBriefApiDict` entries, so a client that needs a show's
+// categories or palettes without knowing (or caring about) its studio fetches
+// it here; the studio-scoped list route above serves the "every show in this
+// studio" case. Auth mirrors that list route — anonymous is allowed only while
+// OAuth is unconfigured, and a logged-in caller must be a member of the show's
+// studio. Both the unknown-id and the not-a-member outcomes are the SAME 404
+// with the same body: a distinguishable 403 would turn this route into an
+// existence oracle for other tenants' show ids.
+showsRouter.get('/api/shows/:showId', async (c) => {
+  const catalog = c.get('catalog');
+  const user = c.get('user');
+  const notFound = () => c.json({ detail: 'Show not found.' }, 404);
+  if (user === null && oauthConfigured(c.env.config)) return notFound();
+
+  const row = catalog.shows.getShowRow(c.req.param('showId'));
+  if (row === null) return notFound();
+  if (user !== null && !catalog.auth.authUserHasStudio(user.id, String(row.studio_id))) {
+    return notFound();
+  }
+  return c.json({ show: showApiDict(row) });
+});
+
 showsRouter.post('/api/shows', async (c) => {
   const catalog = c.get('catalog');
   const body = showCreateBodySchema.parse(await c.req.json());

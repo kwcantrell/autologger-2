@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useProfile } from '../../../api/hooks/useProfile';
+import { useShow } from '../../../api/hooks/useShows';
 import type { EventGenerateSelection, ShowCategory } from '../../../api/types';
 import { Dialog } from '../../../shared/ui/Dialog';
 
@@ -65,9 +65,14 @@ function selectionCandidates(categories: ShowCategory[]): Candidate[] {
 }
 
 export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
-  const { data: profile } = useProfile();
-  const categories = profile?.shows.find((show) => show.id === showId)?.categories ?? [];
-  const candidates = useMemo(() => selectionCandidates(categories), [categories]);
+  // profile-shows-slimming: the per-button/per-option `auto_instruction`s this
+  // modal lists live on the show's `categories`, which `/api/profile` no
+  // longer carries. This component is mounted only while the modal is open
+  // (its caller renders it behind the open flag), so the fetch is lazy by
+  // construction — no gate of its own is needed.
+  const { data, isPending } = useShow(showId);
+  const categories = data?.show.categories;
+  const candidates = useMemo(() => selectionCandidates(categories ?? []), [categories]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   function toggle(key: string, checked: boolean) {
@@ -79,7 +84,7 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
     });
   }
 
-  // Derived from the LIVE candidate list, not `selected` alone: a profile
+  // Derived from the LIVE candidate list, not `selected` alone: a show
   // refetch mid-modal (instruction removed elsewhere) can orphan selected
   // keys, and gating Generate on this intersection keeps the button honest —
   // it can never be enabled while a click would submit nothing.
@@ -120,6 +125,10 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
       className="md:!w-[min(38rem,96vw)]"
     >
       <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
+        {/* `isPending` is true for a DISABLED query too (null showId, nothing to
+            fetch), so it is paired with the id — otherwise the modal would
+            claim to be loading a show it never requested. */}
+        {isPending && showId !== null && <p className="modal-hint muted">Loading instructions…</p>}
         {[...grouped.values()].map((group) => (
           <fieldset
             key={group[0].categoryId}

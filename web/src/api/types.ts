@@ -102,6 +102,31 @@ export interface Show {
   event_palette_custom: string[];
 }
 
+/**
+ * `profile.shows[]` — the SLIM show entry (`showBriefApiDict`, server:
+ * `packages/catalog/src/showsStore.ts`), NOT a `Show`.
+ *
+ * `/api/profile` fans out over every show in every studio the caller can
+ * reach, so embedding each show's `categories` and three palettes made that
+ * payload scale with the whole account's configuration (measured 52 KB, 48 KB
+ * of it `shows[]`) on a request every page load makes — and the heavy fields
+ * were read only by closed-by-default modals. They now come from
+ * `useStudioShows` / `useShow`, which still receive the full `Show`.
+ *
+ * `title_suffix` is on the brief shape deliberately: NewSessionModal decides
+ * whether to ask for an episode number the moment a show is picked, with no
+ * further fetch. The union is duplicated from `Show` rather than shared, so
+ * `Show` staying assignable to `ShowBrief` is a fact the compiler checks
+ * against two independent declarations.
+ */
+export interface ShowBrief {
+  id: string;
+  studio_id: string;
+  name: string;
+  show_code: string;
+  title_suffix: 'date' | 'episode';
+}
+
 export interface StudioBrief {
   id: string;
   name: string;
@@ -249,7 +274,9 @@ export interface ProfilePayload {
   active_studio: { id: string; name: string; categories: ActiveStudioCategory[] };
   studios: StudioBrief[];
   studio_settings: Record<string, Record<string, unknown>>;
-  shows: Show[];
+  /** Brief entries only — see `ShowBrief`. Full per-show config comes from
+   * `useStudioShows(studioId)` / `useShow(showId)`. */
+  shows: ShowBrief[];
   new_session_defaults: NewSessionDefaults;
   admin: AdminInfo;
   auth: AuthSection;

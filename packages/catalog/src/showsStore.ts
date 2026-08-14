@@ -67,6 +67,26 @@ export function showApiDict(r: Row): Record<string, unknown> {
   };
 }
 
+/** The SLIM per-show shape `/api/profile` emits for every show in every studio
+ * the caller can reach (profile-shows-slimming): identity plus the only field
+ * an always-loaded surface branches on. `title_suffix` is REQUIRED here —
+ * NewSessionModal decides whether to ask for an episode number the moment a
+ * show is selected, with no further fetch.
+ *
+ * Everything else `showApiDict` emits (categories + the three palette fields)
+ * is per-show configuration read only by modals, and is now fetched on demand
+ * from `GET /api/shows?studio_id=…` / `GET /api/shows/:showId`, both of which
+ * still emit the full `showApiDict` shape. */
+export function showBriefApiDict(r: Row): Record<string, unknown> {
+  return {
+    id: String(r.id),
+    studio_id: String(r.studio_id),
+    name: String(r.name),
+    show_code: String(r.show_code),
+    title_suffix: titleSuffixApiValue(r.title_suffix),
+  };
+}
+
 /** _dropdown_options_api_shape. */
 function dropdownOptionsApiShape(raw: unknown): Array<{ label: string; needs_context: boolean }> {
   if (!Array.isArray(raw)) return [];
