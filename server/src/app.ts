@@ -6,10 +6,11 @@ import { ValidationError } from '@autologger/domain';
 import { InvalidRangeError } from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import type { Hono, MiddlewareHandler } from 'hono';
-import { COMPRESSIBLE_CONTENT_TYPE_REGEX, compress } from 'hono/compress';
+import { compress } from 'hono/compress';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
 import type { AppEnv, Bindings } from './appEnv';
+import { isCompressibleResponseType } from './compressibleTypes';
 import { ApiError } from './httpError';
 import { authContext } from './middleware/auth';
 import { ipAllowlistMiddleware } from './middleware/ipAllowlist';
@@ -42,13 +43,6 @@ export interface FrontendBridge {
     outgoing: import('node:http').ServerResponse,
   ): Promise<void>;
 }
-
-/** The `/api/*` compressible-type filter: hono's default compressible-type
- * regex plus `application/x-ndjson` (export.jsonl), which that regex omits.
- * Shared by `compress()` and `measureCompressibleBody` so the two can never
- * disagree about which responses are in scope. */
-const isCompressibleResponseType = (type: string): boolean =>
-  COMPRESSIBLE_CONTENT_TYPE_REGEX.test(type) || /^application\/x-ndjson\b/i.test(type);
 
 /** Does an existing `Vary` value already cover `Accept-Encoding`? `*` covers
  * everything; otherwise match the token case-insensitively. */

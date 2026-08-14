@@ -241,6 +241,53 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes.slice(0, 2048));
   });
 
+  it('serves a batch-imported video/mp4 segment as video/mp4, identity, over a range', async () => {
+    // The batch importer (`web/…/batchImport/`) admits `.mp4` in
+    // SUPPORTED_EXTENSIONS, uploads a single-file group as the ORIGINAL `File`
+    // via POST local-audio-import, and sends `blob.type` verbatim — which for
+    // a .mp4 is the browser-reported `video/mp4`. `local-audio-import` stores
+    // that string as-is, so the download handler's clamp is the only thing
+    // standing between the row and the wire.
+    //
+    // An audio-only allowlist rewrote it to `audio/webm` — a playback
+    // regression on Safari (strict about media mimes) that bought nothing:
+    // `video/mp4` never matched the compressible filter (no `video/` branch,
+    // no structured suffix). The clamp is now the negation of the hazard, so
+    // this round-trips while the identity/206 guarantee below still holds.
+    const session = seededSession().sessionId;
+    const bytes = new Uint8Array(4096).fill(0x41);
+    const up = await app.request(
+      `/api/sessions/${session}/local-audio-import?duration_s=10`,
+      { method: 'POST', headers: { 'content-type': 'video/mp4' }, body: bytes },
+      { ...env },
+    );
+    expect(up.status).toBe(200);
+
+    const listed = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'GET' },
+      { ...env },
+    );
+    expect(listed.status).toBe(200);
+    const segments = (await listed.json()) as { segments: { url: string; mime_type: string }[] };
+    expect(segments.segments).toHaveLength(1);
+    const seg = segments.segments[0];
+    expect(seg.mime_type).toBe('video/mp4');
+
+    const res = await app.request(
+      seg.url,
+      { method: 'GET', headers: { range: 'bytes=0-2047', ...GZIP } },
+      { ...env },
+    );
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-type')).toBe('video/mp4');
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(variesOnAcceptEncoding(res)).toBe(false);
+    expect(res.headers.get('content-range')).toBe('bytes 0-2047/4096');
+    expect(res.headers.get('content-length')).toBe('2048');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes.slice(0, 2048));
+  });
+
   it('leaves full-body audio downloads uncompressed with content-length intact', async () => {
     const session = seededSession().sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);

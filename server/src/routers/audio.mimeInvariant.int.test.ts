@@ -6,10 +6,15 @@
 // was a hope, not a guarantee. `normalizeAudioMimeType` now enforces it at the
 // upload boundary (and again when serving, for rows other writers created).
 //
+// The clamp is stated as the negation of the hazard — degrade only what the
+// `/api/*` compression filter would match — rather than as an audio allowlist,
+// which went stale against the batch importer's video containers on its first
+// outing (see the `video/mp4` case below).
+//
 // Compression's own end-to-end consequence is asserted in
 // `compression.int.test.ts`; this file pins the wire-level mime behavior:
-// producers' types round-trip verbatim, non-audio types degrade, and the
-// download response never advertises a non-audio type.
+// producers' types round-trip verbatim, compressible types degrade, and the
+// download response never advertises a compressible type.
 
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
@@ -50,11 +55,31 @@ describe('audio segment mime normalization', () => {
     expect(res.headers.get('content-type')).toBe(mime);
   });
 
+  // The regression this file's second half exists for: the batch importer
+  // (`web/…/batchImport/`) admits `.mp4`/`.webm`, uploads a single-file group
+  // as the ORIGINAL `File`, and sends its browser-reported `.type` verbatim —
+  // `video/mp4` for a .mp4. An audio-only allowlist clamped those to
+  // `audio/webm`, which Safari (strict about media mimes) refuses to play,
+  // and bought nothing: `video/*` never matched the compressible filter.
+  it.each([
+    'video/mp4',
+    'video/webm',
+    'application/ogg',
+  ])('stores and serves the batch-import container mime %s unchanged', async (mime) => {
+    const session = seededSession().sessionId;
+    const seg = await upload(session, mime);
+    expect(seg.mime_type).toBe(mime);
+
+    const res = await app.request(seg.url, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe(mime);
+  });
+
   it.each([
     'text/plain',
     'text/plain;charset=UTF-8',
-    'application/octet-stream',
-  ])('degrades the non-audio content-type %s to audio/webm rather than rejecting the upload', async (mime) => {
+    'image/svg+xml',
+  ])('degrades the compressible content-type %s to audio/webm rather than rejecting the upload', async (mime) => {
     const session = seededSession().sessionId;
     const seg = await upload(session, mime);
     expect(seg.mime_type).toBe('audio/webm');

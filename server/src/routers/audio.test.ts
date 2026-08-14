@@ -1,5 +1,6 @@
 import { COMPRESSIBLE_CONTENT_TYPE_REGEX } from 'hono/compress';
 import { describe, expect, it } from 'vitest';
+import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
 import {
   enforceAudioByteLimit,
@@ -68,15 +69,32 @@ describe('normalizeAudioMimeType', () => {
     expect(normalizeAudioMimeType(mime)).toBe(mime);
   });
 
+  // The container mimes browsers report for files the batch importer admits
+  // (`SUPPORTED_EXTENSIONS` includes mp4/webm/ogg, and a single-file group is
+  // uploaded as the original `File` with its `.type` verbatim). None are
+  // compressible, so clamping them would only break playback — Safari is
+  // strict about media mimes.
+  it.each([
+    ['video/mp4', 'a .mp4 picked in the batch importer'],
+    ['video/webm', 'a .webm picked in the batch importer'],
+    ['video/ogg', 'a .ogg on a platform whose mime registry says video'],
+    ['application/ogg', 'a .ogg on a platform whose mime registry says application'],
+    ['video/quicktime', 'a QuickTime container'],
+    ['application/octet-stream', 'a generic binary upload'],
+  ])('passes the non-compressible type %s through verbatim (%s)', (mime) => {
+    expect(normalizeAudioMimeType(mime)).toBe(mime);
+  });
+
   it.each([
     ['text/plain', 'a script whose fetch defaulted the header'],
     ['text/plain;charset=UTF-8', 'the Blob/string body default'],
-    ['application/octet-stream', 'a generic binary upload'],
+    ['text/html', 'the one type sniffing would actually make dangerous'],
     ['application/json', 'a mis-set JSON header'],
-    ['video/webm', 'a video container, outside the audio invariant'],
+    ['image/svg+xml', 'a scriptable structured-suffix type'],
+    ['application/x-ndjson', 'compressible only under app.ts’s extended filter'],
     ['audio/x+json', 'the structured-suffix hole a bare audio/ prefix test would leave open'],
     ['', 'a blank header'],
-  ])('degrades %s to the audio/webm default (%s)', (mime) => {
+  ])('degrades the compressible type %s to the audio/webm default (%s)', (mime) => {
     expect(normalizeAudioMimeType(mime)).toBe('audio/webm');
   });
 
@@ -85,12 +103,22 @@ describe('normalizeAudioMimeType', () => {
     expect(normalizeAudioMimeType(null)).toBe('audio/webm');
   });
 
-  it('matches the family case-insensitively and trims surrounding space', () => {
+  it('trims surrounding space and preserves case', () => {
     expect(normalizeAudioMimeType('  AUDIO/WebM;codecs=opus  ')).toBe('AUDIO/WebM;codecs=opus');
   });
 
+  it('matches the compressible filter case-insensitively', () => {
+    expect(normalizeAudioMimeType('  TEXT/Plain; charset=utf-8 ')).toBe('audio/webm');
+  });
+
   it('is idempotent (the download-side guard re-applies it)', () => {
-    for (const raw of ['audio/webm;codecs=opus', 'text/plain', '', 'application/octet-stream']) {
+    for (const raw of [
+      'audio/webm;codecs=opus',
+      'video/mp4',
+      'text/plain',
+      '',
+      'application/octet-stream',
+    ]) {
       const once = normalizeAudioMimeType(raw);
       expect(normalizeAudioMimeType(once)).toBe(once);
     }
@@ -100,7 +128,7 @@ describe('normalizeAudioMimeType', () => {
   // filter app.ts uses: whatever comes out is never compressible, so hono's
   // compress() (which has no 206/Content-Range guard) can never touch an audio
   // range response.
-  it('never returns a type hono considers compressible', () => {
+  it('never returns a type the /api/* compression filter would match', () => {
     const inputs = [
       'audio/webm;codecs=opus',
       'audio/ogg',
@@ -108,16 +136,25 @@ describe('normalizeAudioMimeType', () => {
       'audio/mpeg',
       'audio/wav',
       'audio/x+json',
+      'video/mp4',
+      'video/webm',
+      'application/ogg',
+      'application/octet-stream',
       'text/plain',
       'text/html',
       'application/json',
       'application/x-www-form-urlencoded',
+      'application/x-ndjson',
       'image/svg+xml',
       '',
       undefined,
     ];
     for (const raw of inputs) {
-      expect(COMPRESSIBLE_CONTENT_TYPE_REGEX.test(normalizeAudioMimeType(raw))).toBe(false);
+      const out = normalizeAudioMimeType(raw);
+      expect(isCompressibleResponseType(out)).toBe(false);
+      // hono's own regex is a subset of that filter; assert it directly too so
+      // the invariant survives an extension of the app-level filter.
+      expect(COMPRESSIBLE_CONTENT_TYPE_REGEX.test(out)).toBe(false);
     }
   });
 });

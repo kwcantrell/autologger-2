@@ -9,6 +9,7 @@ import type { AudioSegmentMeta } from '@autologger/session-core';
 import { InvalidRangeError } from '@autologger/storage';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
+import { isCompressibleResponseType } from '../compressibleTypes';
 import { ApiError } from '../httpError';
 import { getSessionHub, parseOptionalMarkedAt, requireSession } from './_helpers';
 
@@ -29,76 +30,57 @@ function segmentApiDict(sessionId: string, m: AudioSegmentMeta): Record<string, 
 }
 
 /** What an audio segment is stored/served as when the caller's content-type is
- * absent, blank, or outside {@link ALLOWED_AUDIO_MIME_FAMILIES}. Matches the
- * fallback `addAudioSegment` already applies to an empty mime. */
+ * absent, blank, or compressible (see {@link normalizeAudioMimeType}). Matches
+ * the fallback `addAudioSegment` already applies to an empty mime. */
 const DEFAULT_AUDIO_MIME_TYPE = 'audio/webm';
 
 /**
- * The audio content-types a segment may be stored/served as — the enforcement
- * point for the invariant `app.ts` relies on when it scopes `compress()` to
- * `/api/*` without excluding audio ("audio/* content-types never match the
- * compressible filter"). Nothing else enforced it: the upload handler used to
- * persist the caller's `content-type` verbatim and the download handler echoes
- * it, so a segment uploaded as `text/plain` (any script whose `fetch` defaults
- * the header) had its >=1KB **206** responses gzipped — hono's `compress()` has
- * no 206/Content-Range guard, so it drops the hand-set `Content-Length` while
+ * Clamp a segment's content-type so it can never match the `/api/*`
+ * compression filter — the enforcement point for the invariant `app.ts` relies
+ * on when it scopes `compress()` to `/api/*` without excluding audio. Nothing
+ * else enforced it: the upload handler used to persist the caller's
+ * `content-type` verbatim and the download handler echoes it, so a segment
+ * uploaded as `text/plain` (any script whose `fetch` defaults the header) had
+ * its >=1KB **206** responses gzipped — hono's `compress()` has no
+ * 206/Content-Range guard, so it drops the hand-set `Content-Length` while
  * `Content-Range` still describes identity bytes. Corrupt audio for any
  * range-assembling client.
  *
- * A bare `audio/` prefix test would NOT be enough: hono's compressible regex
- * ends with a structured-suffix alternative (`[^;\s]+?\+(?:json|text|xml|…)`)
- * that matches ANY type, `audio/x+json` included. Hence a closed set of
- * families, matched after stripping parameters.
+ * The rule is stated as the *negation of the risk*, not as an audio allowlist:
+ * anything {@link isCompressibleResponseType} would match — plus a missing or
+ * blank header — degrades to {@link DEFAULT_AUDIO_MIME_TYPE}; **everything
+ * else round-trips verbatim** (parameters and case included), so
+ * `audio/webm;codecs=opus` stays exactly that.
  *
- * Membership covers every mime the real producers emit:
- * - `MediaRecorder` defaults from `web/…/AudioRecorder.tsx` (which passes
- *   `mr.mimeType` / the delivered Blob's `.type` straight through):
- *   `audio/webm;codecs=opus` (Chrome), `audio/ogg;codecs=opus` (Firefox),
- *   `audio/mp4` (Safari).
- * - `packages/session-core`'s mime<->ext table (`audioStore.ts`), i.e. what the
- *   `sync-from-disk` blob scan restores: ogg / wav / mpeg / aiff / mp4 / webm.
- * - `@autologger/media-import`'s `CONTENT_TYPE_BY_EXT` (yt-dlp import):
- *   webm / ogg / wav / mp4.
- * - `@autologger/transcription`'s `contentTypeForFamily`: webm / mp4 / wav.
- * - Batch/local import file types (`BatchImportModal`): `audio/mpeg`,
- *   `audio/wav`.
- * The x-/legacy spellings are the common browser variants for those same
- * containers, kept so a normalization never silently changes a real upload's
- * declared type.
- */
-const ALLOWED_AUDIO_MIME_FAMILIES: ReadonlySet<string> = new Set([
-  'audio/webm',
-  'audio/ogg',
-  'audio/opus',
-  'audio/mp4',
-  'audio/m4a',
-  'audio/x-m4a',
-  'audio/mpeg',
-  'audio/mp3',
-  'audio/aac',
-  'audio/wav',
-  'audio/wave',
-  'audio/x-wav',
-  'audio/vnd.wave',
-  'audio/aiff',
-  'audio/x-aiff',
-  'audio/flac',
-  'audio/x-flac',
-  'audio/3gpp',
-  'audio/3gpp2',
-]);
-
-/**
- * Clamp a content-type to the audio allowlist. An allowlisted type is returned
- * **verbatim** (parameters and case included) so real uploads round-trip
- * byte-identically — `audio/webm;codecs=opus` stays exactly that. Anything else
- * — missing, blank, `text/plain`, `application/octet-stream` — degrades to
- * {@link DEFAULT_AUDIO_MIME_TYPE}.
+ * Why not an allowlist of audio families: the producers are open-ended and an
+ * enumeration goes stale silently, mangling real media. The batch importer
+ * (`web/…/batchImport/`) admits `.mp4` and `.webm` and uploads a single-file
+ * group as the original `File`, whose browser-reported `.type` is
+ * `video/mp4` / `video/webm`; `.ogg` can come through as `application/ogg`
+ * depending on the platform's mime registry. None of those are compressible,
+ * so clamping them bought nothing — and Safari, which is strict about media
+ * mimes, refuses to play a `video/mp4` clip served as `audio/webm`. Inverting
+ * the test makes the guarantee exactly co-extensive with the hazard it exists
+ * to prevent, and it cannot go stale as new producers appear.
+ *
+ * A bare `audio/` prefix test would NOT have worked either: hono's compressible
+ * regex ends with a structured-suffix alternative
+ * (`[^;\s]+?\+(?:json|text|xml|…)`) that matches ANY type, `audio/x+json`
+ * included. The predicate below tests the full type and so covers that hole.
+ *
+ * Residual accepted: a caller-supplied non-compressible type is now stored
+ * verbatim (`application/octet-stream`, `video/mp4`, …). That is the behavior
+ * this repo shipped before the clamp existed, and it loses no script-injection
+ * protection: every type a browser will execute markup from — `text/html`,
+ * `text/xml`, `application/xhtml+xml`, `image/svg+xml` — is inside the
+ * compressible set and therefore still clamped. Downloads set no
+ * `Content-Disposition` and no `X-Content-Type-Options`, and adding either
+ * would be an observable header change on a frozen endpoint.
  *
  * Deliberately NOT a rejection: a 4xx here would be an observable change for
  * existing clients (api-contract-freeze). Normalizing keeps every upload
- * succeeding and only moves the *stored* mime of a payload that was never
- * declared as audio in the first place.
+ * succeeding and only moves the *stored* mime of a payload whose declared type
+ * would have corrupted its own range responses.
  *
  * Idempotent, so the download handler can apply it as a second line of defense
  * over rows written by other writers (local-audio-import, youtube-import) and
@@ -106,8 +88,8 @@ const ALLOWED_AUDIO_MIME_FAMILIES: ReadonlySet<string> = new Set([
  */
 export function normalizeAudioMimeType(raw: string | undefined | null): string {
   const trimmed = raw?.trim() ?? '';
-  const family = trimmed.split(';')[0]?.trim().toLowerCase() ?? '';
-  return ALLOWED_AUDIO_MIME_FAMILIES.has(family) ? trimmed : DEFAULT_AUDIO_MIME_TYPE;
+  if (trimmed === '') return DEFAULT_AUDIO_MIME_TYPE;
+  return isCompressibleResponseType(trimmed) ? DEFAULT_AUDIO_MIME_TYPE : trimmed;
 }
 
 export const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // 50 MB — live recorder segment upload.
@@ -263,11 +245,14 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
   requireSession(c, sessionId);
   const got = getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
-  // Defense in depth for the "audio responses are never compressible" invariant
-  // (see normalizeAudioMimeType): upload normalization covers rows written from
-  // here on, this covers rows written by the other segment writers
-  // (local-audio-import, youtube-import) and by older builds. No-op for every
-  // mime those paths actually produce.
+  // Defense in depth for the "audio responses are never compressible"
+  // invariant (see normalizeAudioMimeType): upload normalization covers rows
+  // written from here on, this covers rows written by the other segment
+  // writers (local-audio-import, which stores the caller's content-type
+  // verbatim, and youtube-import) and by older builds. A no-op for every mime
+  // those paths actually produce — including the `video/mp4` / `video/webm`
+  // the batch importer sends for a single `.mp4`/`.webm` file, which is why
+  // this clamp must not be an audio-only allowlist.
   const contentType = normalizeAudioMimeType(got.mime_type);
 
   const rangeHeader = c.req.header('range');
