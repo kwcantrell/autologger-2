@@ -154,7 +154,7 @@ Panel & review log.)
       default with the same LAN-bypass rationale, LAN testing via the prod serve
       path), and the Cursor adapter restart rule (single-process `:8787` disposition
       per the `cursor-agent-adapters` delta) — re-run that surface's drift guard.
-- [ ] 6.3 Final gates: full `npm test` + `npm run typecheck` + web vitest +
+- [x] 6.3 Final gates: full `npm test` + `npm run typecheck` + web vitest +
       `npm run e2e` (chromium + login-gate) + visual suites (baselines current or
       re-blessed in this branch) + `npm run docs:check`. Whole-branch layered scoped
       audit per SDLC (contract/seam diffs of phases 3-4, full diffs of deferred phases,
