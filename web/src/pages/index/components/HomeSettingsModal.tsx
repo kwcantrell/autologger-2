@@ -266,14 +266,41 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // effect below would never run for a team-less account and the modal would
   // sit on a permanent skeleton.
   const showsLoaded = Boolean(profile) && (targetStudioId === '' || studioShowsQuery.isSuccess);
-  // A FAILED shows fetch is a third state, distinct from both "loaded" and
-  // "still loading": `showsLoaded` only ever flips on `isSuccess`, so without
-  // this the shows section would sit on its loading skeleton forever, with no
-  // message and no way to retry. It scopes the SHOWS section only: an errored fetch never
-  // reaches `showsReady`, so the shows scope contributes nothing to `dirty` and `handleSave`
-  // omits `show_updates` — but the account scope stays fully editable and saveable
-  // regardless (review finding 2).
-  const showsError = Boolean(targetStudioId) && studioShowsQuery.isError;
+  // An UNAVAILABLE shows fetch — the one "we have nothing to show you, here's why" value, in
+  // the two shapes that reach it. Both are states `showsLoaded` gets wrong, because it only
+  // ever flips on `isSuccess`: without this the shows section would sit on its loading
+  // skeleton forever, with no message and no way to retry.
+  //
+  //   'error'   — a FAILED fetch. Distinct from "still loading": the answer already came
+  //               back, so a picker still saying "Loading shows…" is claiming to wait on a
+  //               request that is over.
+  //   'offline' — a PAUSED fetch, and the state BOTH of the other branches used to get
+  //               wrong. With react-query's default `networkMode: 'online'` (nothing
+  //               overrides it — see `IndexRoot`'s client), going offline HOLDS the fetch
+  //               rather than running it, so `isPending` stays true and `isError` stays
+  //               false INDEFINITELY. Read as "loading", that stranded the section on a
+  //               skeleton promising an answer already on its way — Add-New-Show hidden,
+  //               the picker disabled, and the Retry that recovers it living in the error
+  //               branch, which is unreachable. Split out by `fetchStatus === 'paused'`,
+  //               which is exactly react-query's own name for it —
+  //               `EventGenerateCustomModal` gives its own paused `useShow` the same
+  //               treatment, in the same mechanism and the same wording.
+  //
+  // Scoped to `isPending` on the offline side: a paused BACKGROUND refetch over drafts
+  // already on screen withholds nothing, so it says nothing. Keyed on `targetStudioId`
+  // because a DISABLED query (a caller with no teams) never errors and never pauses on a
+  // fetch it was never going to make.
+  //
+  // Either way this scopes the SHOWS section only: neither state reaches `showsReady`, so
+  // the shows scope contributes nothing to `dirty` and `handleSave` omits `show_updates` —
+  // but the account scope stays fully editable and saveable regardless (review finding 2).
+  const showsUnavailable: 'error' | 'offline' | null = !targetStudioId
+    ? null
+    : studioShowsQuery.isError
+      ? 'error'
+      : studioShowsQuery.fetchStatus === 'paused' && studioShowsQuery.isPending
+        ? 'offline'
+        : null;
 
   // ACCOUNT init — once per open, from the profile ALONE. Gated on `isOpen`
   // (settings-modal-mount-cost, D4): without it, this runs the moment `useProfile` resolves
@@ -692,17 +719,23 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               value={activeShowId}
               onChange={setActiveShowId}
               options={
-                // FOUR states now, not two: loading is distinct from empty
+                // FIVE states now, not two: loading is distinct from empty
                 // (profile-shows-slimming) — a studio's shows arrive over the
                 // wire, so "— No shows —" must not be shown before the answer
-                // is known — and a failed fetch is distinct from loading, or
-                // the picker claims to still be waiting on a request that
-                // already came back.
+                // is known — a failed fetch is distinct from loading, or the
+                // picker claims to still be waiting on a request that already
+                // came back, and an offline HOLD is distinct from both: the
+                // request has not come back and is not on its way either.
                 !showsReady
                   ? [
                       {
                         value: '',
-                        label: showsError ? '— Unavailable —' : 'Loading shows…',
+                        label:
+                          showsUnavailable === 'offline'
+                            ? '— Offline —'
+                            : showsUnavailable === 'error'
+                              ? '— Unavailable —'
+                              : 'Loading shows…',
                         disabled: true,
                       },
                     ]
@@ -881,18 +914,22 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     id="profile-show-fields-placeholder"
                     style={{ marginBottom: '0.75rem' }}
                   >
-                    {showsError
-                      ? 'Couldn’t load shows.'
-                      : !showsReady
-                        ? 'Loading shows…'
-                        : showsForStudio.length === 0
-                          ? 'No shows for this team yet. Add one below.'
-                          : 'Select a show above to view details.'}
+                    {showsUnavailable === 'offline'
+                      ? 'You’re offline — can’t load shows.'
+                      : showsUnavailable === 'error'
+                        ? 'Couldn’t load shows.'
+                        : !showsReady
+                          ? 'Loading shows…'
+                          : showsForStudio.length === 0
+                            ? 'No shows for this team yet. Add one below.'
+                            : 'Select a show above to view details.'}
                   </p>
-                  {/* The only way out of the error state without reopening the
-                      modal — `showsLoaded` never flips on an errored query, so
-                      nothing else re-arms the section. */}
-                  {showsError && (
+                  {/* The only way out of an unavailable state without reopening
+                      the modal — `showsLoaded` never flips on an errored or
+                      paused query, so nothing else re-arms the section. Offered
+                      for the offline hold too: `refetch()` on a paused query is
+                      how react-query resumes it once the network is back. */}
+                  {showsUnavailable !== null && (
                     <button
                       type="button"
                       className="btn"
@@ -1048,11 +1085,13 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               </>
             ) : (
               <p className="modal-hint muted">
-                {showsError
-                  ? 'Couldn’t load shows.'
-                  : showsReady
-                    ? 'Select a show above to edit its event buttons.'
-                    : 'Loading shows…'}
+                {showsUnavailable === 'offline'
+                  ? 'You’re offline — can’t load shows.'
+                  : showsUnavailable === 'error'
+                    ? 'Couldn’t load shows.'
+                    : showsReady
+                      ? 'Select a show above to edit its event buttons.'
+                      : 'Loading shows…'}
               </p>
             ))}
         </div>

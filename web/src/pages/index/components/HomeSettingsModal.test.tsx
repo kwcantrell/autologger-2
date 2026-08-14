@@ -341,6 +341,11 @@ let studioShowsPending = false;
 /** Set when `GET /api/shows?studio_id=…` should come back a hard failure. Distinct from
  * `studioShowsPending`: an errored query is an answer (`isError`), a pending one is not. */
 let studioShowsFailed = false;
+/** Set when the browser is OFFLINE and react-query has PAUSED the fetch (`networkMode:
+ * 'online'`, the default). A third state distinct from both of the above: no answer came
+ * back (`isError` stays false) and none is on its way either (`fetchStatus: 'paused'`, with
+ * `isPending` stuck true for as long as the network is down). */
+let studioShowsPaused = false;
 /** The query's own `refetch`, so the Retry path is assertable. */
 let studioShowsRefetch: ReturnType<typeof vi.fn>;
 
@@ -357,6 +362,7 @@ beforeEach(() => {
   fullShows = [];
   studioShowsPending = false;
   studioShowsFailed = false;
+  studioShowsPaused = false;
   studioShowsRefetch = vi.fn();
   mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
     // Mirrors the real hook: DISABLED on a null id (the closed-modal case), so
@@ -365,6 +371,10 @@ beforeEach(() => {
     const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
     if (!studioId) return { ...pending, isError: false };
     if (studioShowsFailed) return { ...pending, isError: true };
+    // Offline HOLD: pending forever, never erroring — the shape react-query reports while
+    // `networkMode: 'online'` withholds the fetch.
+    if (studioShowsPaused)
+      return { ...pending, isError: false, isPending: true, fetchStatus: 'paused' };
     if (studioShowsPending) return { ...pending, isError: false };
     return {
       data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
@@ -1224,6 +1234,83 @@ describe('HomeSettingsModal shows-fetch failure', () => {
   });
 });
 
+// --- Offline-PAUSED shows fetch (PR review finding: missing third state) ---
+//
+// react-query's default `networkMode: 'online'` HOLDS a fetch while the browser is offline:
+// `isPending` stays true and `isError` stays false for as long as the network is down. So
+// the query is neither `isSuccess` (which is all `showsLoaded` watches) nor `isError` (which
+// is all the failure branch watched) — read as "loading", it stranded the shows section on
+// "Loading shows…" indefinitely, with Add-New-Show hidden, the picker disabled, and the only
+// Retry in the unreachable error branch. `EventGenerateCustomModal` draws the same
+// paused-vs-loading distinction over its own `useShow`.
+describe('HomeSettingsModal offline-paused shows fetch', () => {
+  it('names the offline hold instead of claiming an indefinite load, and keeps Retry', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'You’re offline — can’t load shows.',
+    );
+    // Specifically NOT the loading hint, in the placeholder OR the picker: nothing is in
+    // flight to finish.
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).textContent).toBe(
+      '— Offline —',
+    );
+
+    // Retry is reachable here, and resumes the paused fetch the moment the network is back.
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(studioShowsRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the same thing on the Event Buttons tab', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+
+    expect(screen.getAllByText('You’re offline — can’t load shows.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Loading shows…')).toBeNull();
+  });
+
+  it('says nothing about a paused BACKGROUND refetch over drafts already on screen', () => {
+    useProfileWith(profileWithShow, [showWithCategories]);
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => ({
+      data: studioId ? { shows: fullShows.filter((s) => s.studio_id === studioId) } : undefined,
+      isSuccess: Boolean(studioId),
+      isError: false,
+      // Paused, but NOT pending: the data is already in hand, so the hold withholds nothing.
+      isPending: false,
+      fetchStatus: 'paused',
+      refetch: studioShowsRefetch,
+    })) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+    expect(screen.queryByText('You’re offline — can’t load shows.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('leaves a genuinely in-flight fetch on the loading hint, with no Retry', () => {
+    // The mirror of the first test: a real request IS on its way, so the honest hint is the
+    // pending one — the offline copy must not swallow the ordinary loading window.
+    useProfileWith(profileWithShow, [showWithCategories]);
+    studioShowsPending = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+    expect(screen.queryByText('You’re offline — can’t load shows.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+});
+
 // --- Account scope survives an unavailable shows query (PR review finding 2) ---
 //
 // The draft/init gating used to couple EVERYTHING to `useStudioShows`: the init effect —
@@ -1281,6 +1368,23 @@ describe('HomeSettingsModal account scope is independent of the shows query', ()
     // account scope must not paper over the error.
     expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
       'Couldn’t load shows.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toBeNull();
+
+    await editAccountNameAndSave();
+  });
+
+  it('hydrates and saves the account scope while the shows fetch is PAUSED (offline)', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsPaused = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // The shows section names its own offline hold and keeps its Retry — the half-dead
+    // section is the confusing part precisely because the account scope stays live, so it
+    // has to explain itself.
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'You’re offline — can’t load shows.',
     );
     expect(screen.getByRole('button', { name: 'Retry' })).not.toBeNull();
 
