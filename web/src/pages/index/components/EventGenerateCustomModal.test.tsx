@@ -132,6 +132,65 @@ describe('EventGenerateCustomModal', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  // --- Offline-PAUSED show fetch (PR review finding 2) ---
+  //
+  // react-query's default `networkMode: 'online'` HOLDS a fetch while the browser is
+  // offline: `isPending` stays true and `isError` stays false for as long as the network is
+  // down. Read as "loading", that stranded the modal on "Loading instructions…" forever,
+  // with a dead Generate button and the only Retry in the unreachable error branch.
+  // `useAiV2WidgetData` draws the same paused-vs-loading distinction.
+  it('names an offline hold instead of claiming an indefinite load, and keeps Retry', () => {
+    const refetch = vi.fn();
+    useShowMock.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      fetchStatus: 'paused',
+      refetch,
+    });
+    renderStrict(
+      <EventGenerateCustomModal showId={SHOW_ID} onSubmit={vi.fn()} onClose={() => {}} />,
+    );
+
+    expect(screen.getByText('You’re offline — can’t load instructions.')).toBeTruthy();
+    // Specifically NOT the loading hint: nothing is in flight to finish.
+    expect(screen.queryByText('Loading instructions…')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing about a paused BACKGROUND refetch over already-rendered instructions', () => {
+    useShowMock.mockReturnValue({
+      ...showWith([dropdownCategory([{ label: 'Cam A', auto_instruction: 'aim at host' }])]),
+      isError: false,
+      fetchStatus: 'paused',
+      refetch: vi.fn(),
+    });
+    renderStrict(
+      <EventGenerateCustomModal showId={SHOW_ID} onSubmit={vi.fn()} onClose={() => {}} />,
+    );
+
+    // Data is on screen, so the pause withholds nothing and warrants no banner.
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+    expect(screen.queryByText('You’re offline — can’t load instructions.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('claims no offline state when there is no show to fetch', () => {
+    useShowMock.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      fetchStatus: 'paused',
+      refetch: vi.fn(),
+    });
+    renderStrict(<EventGenerateCustomModal showId={null} onSubmit={vi.fn()} onClose={() => {}} />);
+
+    expect(screen.queryByText('You’re offline — can’t load instructions.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
   it('claims no error state when there is no show to fetch', () => {
     useShowMock.mockReturnValue({ data: undefined, isPending: true, isError: false });
     renderStrict(<EventGenerateCustomModal showId={null} onSubmit={vi.fn()} onClose={() => {}} />);

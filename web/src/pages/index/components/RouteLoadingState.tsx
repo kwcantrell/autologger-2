@@ -20,15 +20,35 @@ import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo
 export const ROUTE_STATE_PAGE =
   'relative z-[1] flex w-full items-center justify-center px-5 py-16 min-h-[calc(100vh-2.2rem)] max-md:min-h-0';
 
-export function RouteLoadingState() {
+interface RouteLoadingStateProps {
+  /** What is being waited on, announced to screen readers. */
+  label?: string;
+  /**
+   * DOM id. Defaults to the session route's because its pending branch, its workspace-chunk
+   * fallback, and the tests keyed on that id all predate this component being shared with
+   * other routes — a route rendering in SessionRoute's PLACE passes its own instead.
+   */
+  id?: string;
+}
+
+// Parameterized (PR review finding 3) because the markup is shared across routes while the
+// ANNOUNCEMENT is not: reused prop-less at the `/teams` Suspense fallback, this told screen
+// readers "Loading session" on a route with no session in it, and duplicated the session
+// route's DOM id onto an element that is not it. The visual treatment — the whole reason the
+// component is shared — is unaffected: only the label and the id vary, and both default to
+// the session values so every existing call site and id-keyed test is unchanged.
+export function RouteLoadingState({
+  label = 'Loading session',
+  id = 'session-route-loading',
+}: RouteLoadingStateProps) {
   // The brand loading treatment (the RootGate LoadingState idiom).
   return (
     <output
       className={ROUTE_STATE_PAGE}
-      id="session-route-loading"
+      id={id}
       aria-busy="true"
       aria-live="polite"
-      aria-label="Loading session"
+      aria-label={label}
     >
       <div className="autologger-loading-video">
         <video

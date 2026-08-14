@@ -193,15 +193,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   const [givenName, setGivenName] = useState('');
   const [familyName, setFamilyName] = useState('');
 
-  // Two init flags, one per scope: the account fields initialise from the profile alone, the
-  // shows fields only once this studio's shows have arrived (review finding 2).
+  // The account fields initialise from the profile alone, once per open (review finding 2).
+  // The shows scope has no boolean twin: its init is keyed to the STUDIO via `draftsStudioId`
+  // below, not to the open (review finding 1) — see the shows init effect.
   const [accountInitialized, setAccountInitialized] = useState(false);
-  const [showsInitialized, setShowsInitialized] = useState(false);
-  // Which studio the drafts in `showDrafts` were built for. `null` = not built
-  // yet this open. Compared against `targetStudioId` below, this is what makes
-  // the async draft (re)build idempotent: once it has run for a studio it never
-  // runs again for that studio, so a refetch (save, add-show, window focus)
-  // cannot clobber in-progress edits.
+  // Which studio the drafts in `showDrafts` — and the shows snapshot they were baselined
+  // into — were built for. `null` = not built yet this open. Compared against
+  // `targetStudioId` below, this is what makes the async draft (re)build idempotent: once it
+  // has run for a studio it never runs again for that studio, so a refetch (save, add-show,
+  // window focus) cannot clobber in-progress edits.
   const [draftsStudioId, setDraftsStudioId] = useState<string | null>(null);
   // The initialized snapshots dirtiness is derived against (D11). `null` until the matching
   // init effect below runs; a `null` snapshot always reads clean regardless of form state —
@@ -235,7 +235,6 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     setPrevOpen(isOpen);
     if (isOpen) {
       setAccountInitialized(false);
-      setShowsInitialized(false);
       setAccountSnapshot(null);
       setShowsSnapshot(null);
       setActiveTab('general');
@@ -328,18 +327,27 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // for the same studio, so the refetches this modal itself triggers (save,
   // add-show, remount) cannot overwrite unsaved edits.
   //
-  // The SHOWS SNAPSHOT is still taken exactly once per open, on the first pass
-  // (`!showsInitialized`) — deliberately not re-taken on a studio switch, so
-  // switching away and back reads clean again rather than baselining the new
-  // studio (D11: view-only selection round-tripping must not read dirty). The
-  // drafts a studio rebuilds to are a pure function of server state, so the
-  // round-trip reproduces the snapshot's bytes and `dirty` returns to false.
-  // "Once per open" survives an errored-then-retried fetch for free: the snapshot is taken
-  // on the first pass that actually has data, whenever that is, so an account-only save made
-  // while the fetch was down does not baseline an empty shows draft map.
+  // The SHOWS SNAPSHOT is taken by the SAME pass that builds the drafts, so the baseline is
+  // keyed to the studio exactly like `draftsStudioId` is (review finding 1). It used to be
+  // taken once per OPEN instead, which decoupled the two: open on studio A (baseline = A),
+  // switch to B while B's fetch fails or hangs, save the account scope (the rebaseline below
+  // is skipped — correctly, the drafts map is empty and means "unknown"), then Retry. The
+  // rebuild for B would then run with A's baseline still in place, so B's untouched drafts
+  // read dirty forever after: Save armed over a form nobody edited, a phantom discard
+  // warning on close, and a redundant full `show_updates` for B on the next save.
+  //
+  // Re-snapshotting per studio cannot lose a real edit, because the rebuild it rides along
+  // with has already discarded any: drafts are rebuilt from server state whenever
+  // `draftsStudioId !== targetStudioId`, and `handleStudioChange` clears them outright. It
+  // also preserves D11 (view-only selection round-tripping must not read dirty): a studio
+  // round trip A→B→A rebuilds A's drafts from A's cached response — a pure function of
+  // server state — and re-baselines against those same bytes, so `dirty` returns to false
+  // either way. And it still survives an errored-then-retried fetch for free: the pass only
+  // runs once it actually has data, so an account-only save made while the fetch was down
+  // never baselines an empty shows draft map.
   useEffect(() => {
     if (!isOpen || !profile || !showsLoaded) return;
-    if (showsInitialized && draftsStudioId === targetStudioId) return;
+    if (draftsStudioId === targetStudioId) return;
 
     const sid = targetStudioId;
     const drafts = initDraftsForStudio(studioShows, sid);
@@ -347,11 +355,8 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     setShowDrafts(drafts);
     setActiveShowId(showId);
     setDraftsStudioId(sid);
-
-    if (showsInitialized) return;
     setShowsSnapshot({ activeShowId: showId, showDrafts: drafts });
-    setShowsInitialized(true);
-  }, [isOpen, profile, showsInitialized, showsLoaded, studioShows, targetStudioId, draftsStudioId]);
+  }, [isOpen, profile, showsLoaded, studioShows, targetStudioId, draftsStudioId]);
 
   function handleStudioChange(studioId: string) {
     if (!profile) return;
@@ -399,12 +404,14 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     return JSON.stringify(current) !== JSON.stringify(accountSnapshot);
   }, [accountSnapshot, activeStudioId, defaultFps, givenName, familyName]);
 
-  // Shows dirtiness needs BOTH a snapshot (the query resolved at least once this open) and
+  // Shows dirtiness needs BOTH a snapshot (a rebuild has run at least once this open) and
   // `showsReady` (the drafts on screen belong to the selected studio). Without the second
   // condition the mid-switch window — snapshot from studio A, drafts cleared for B — reads
   // dirty over a form the user has not touched, which is the state the old `!showsReady`
   // Save gate existed to suppress. Folding that condition in HERE rather than into the Save
-  // gate is what lets account-only saves through while shows are unavailable.
+  // gate is what lets account-only saves through while shows are unavailable. `showsReady`
+  // also settles WHOSE baseline this is: snapshot and `draftsStudioId` are written by the
+  // same pass, so drafts-belong-to-the-selected-studio implies the snapshot does too.
   const showsDirty = useMemo(() => {
     if (!showsSnapshot || !showsReady) return false;
     const current: ShowsSnapshot = { activeShowId, showDrafts };
@@ -528,8 +535,10 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       // account-only save made while the shows query is erroring or still in flight, the
       // drafts map is empty and means "unknown", not "saved as empty" — baselining it would
       // make the shows section read dirty the moment a retry finally delivered the real
-      // drafts (review finding 2). `showsSnapshot` stays `null`, so the shows init effect
-      // still takes the first real snapshot when the data lands.
+      // drafts (review finding 2). Skipping is safe because `showsSnapshot` is keyed to the
+      // studio, not to the open (review finding 1): `!showsReady` means no rebuild has run
+      // for the selected studio yet, so whatever the snapshot holds — `null`, or an earlier
+      // studio's baseline — is superseded by the rebuild that fires when the data lands.
       if (showsReady) {
         setShowsSnapshot({ activeShowId, showDrafts });
       }

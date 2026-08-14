@@ -91,7 +91,12 @@ describe('SessionRoute workspace chunk warm-up', () => {
     // Still resolving, and the mount gate is intact — warming a chunk is not
     // mounting the workspace (the same property AppShell's idle-prefetch test
     // pins for the settings chunk).
-    expect(document.querySelector('#session-route-loading')).not.toBeNull();
+    // Both halves of the wait's identity, pinned since `RouteLoadingState` became shared and
+    // parameterized (PR review finding 3): the session route keeps the id other tests key on
+    // AND keeps announcing the session — the defaults exist so this call site never changed.
+    const loading = document.querySelector('#session-route-loading');
+    expect(loading).not.toBeNull();
+    expect(loading?.getAttribute('aria-label')).toBe('Loading session');
     expect(screen.queryByTestId('workspace-static')).toBeNull();
   });
 });

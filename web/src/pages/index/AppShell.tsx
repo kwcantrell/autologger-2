@@ -474,7 +474,14 @@ export function AppShell() {
                 home view (HomeRoute) for the empty id, swapping it out is what
                 hides that home view at the teams route. */}
             {onTeamsRoute ? (
-              <LazyChunk load={loadTeamsRoute} variant="route" fallback={<RouteLoadingState />}>
+              <LazyChunk
+                load={loadTeamsRoute}
+                variant="route"
+                // Teams-specific announcement and id: the session route's
+                // `#session-route-loading` identifies THAT route's wait, and `/teams` renders
+                // in its place, not inside it (PR review finding 3).
+                fallback={<RouteLoadingState label="Loading teams" id="teams-route-loading" />}
+              >
                 {(TeamsRoute) => <TeamsRoute />}
               </LazyChunk>
             ) : (

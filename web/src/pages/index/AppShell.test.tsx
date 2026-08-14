@@ -366,6 +366,23 @@ describe('AppShell routing (URL-addressed session state)', () => {
     expect(screen.queryByTestId('teams-route')).toBeNull();
   });
 
+  it('the /teams chunk fallback announces TEAMS, not "Loading session" (PR review finding 3)', () => {
+    // Synchronous on purpose: `LazyChunk`'s `lazy()` suspends on its FIRST render whatever
+    // the module cache holds (the loader hands back a promise either way), so the fallback
+    // is what the initial `/teams` commit paints — no waiting required, and waiting would
+    // only race the resolution that replaces it.
+    renderShell('/teams');
+
+    const loading = document.querySelector('#teams-route-loading');
+    expect(loading).not.toBeNull();
+    expect(loading?.getAttribute('aria-label')).toBe('Loading teams');
+    // Reused prop-less, this wait announced "Loading session" on a route with no session in
+    // it and duplicated the session route's id onto an element that is not it. `/teams`
+    // renders in SessionRoute's PLACE, so neither may appear here.
+    expect(document.querySelector('#session-route-loading')).toBeNull();
+    expect(screen.queryByLabelText('Loading session')).toBeNull();
+  });
+
   it('an unmatched path renders the home view without rewriting the URL', () => {
     const { memory } = renderShell('/src/pages/index/index.html');
 

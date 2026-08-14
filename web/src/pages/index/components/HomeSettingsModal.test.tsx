@@ -1341,3 +1341,73 @@ describe('HomeSettingsModal account scope is independent of the shows query', ()
     ]);
   });
 });
+
+// --- The shows baseline is keyed to the STUDIO, not to the open (PR review finding 1) ---
+//
+// The two mechanisms above compose into a trap when the baseline is taken once per OPEN
+// while the DRAFTS are rebuilt per studio: open on studio-1 (baseline taken), switch to
+// studio-2 while its fetch is failing (drafts cleared, no rebuild, so the account-only save
+// below correctly declines to rebaseline the shows scope), then Retry. The rebuild for
+// studio-2 lands against studio-1's baseline, and every field it just delivered reads as an
+// unsaved edit: Save armed over a form nobody touched, a discard warning on close, and a
+// redundant full `show_updates` for studio-2 on the next save. The account-only save is
+// load-bearing in the sequence — it is what clears `accountDirty` (which the studio switch
+// itself arms) and so exposes the shows scope's phantom dirtiness on its own.
+describe('HomeSettingsModal shows baseline follows the selected studio', () => {
+  it('studio switch over a failed fetch, account-only save, then Retry reads clean', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    // studio-1 answers from the start; studio-2 fails until the Retry below.
+    let studioTwoDown = true;
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+      const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
+      if (!studioId) return { ...pending, isError: false };
+      if (studioId === 'studio-2' && studioTwoDown) return { ...pending, isError: true };
+      return {
+        data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+        isSuccess: true,
+        isError: false,
+        refetch: studioShowsRefetch,
+      };
+    }) as unknown as typeof useStudioShows);
+
+    const onClose = vi.fn();
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />,
+    );
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    // Account-only save: posts the new studio pointer, rebaselines the account scope, and
+    // skips the shows scope (nothing was on screen to baseline).
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(JSON.stringify(mutateAsync.mock.calls[0][0]))).not.toHaveProperty(
+      'show_updates',
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true),
+    );
+
+    // Retry succeeds: studio-2's drafts finally hydrate.
+    studioTwoDown = false;
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Late Night');
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-3');
+    // Baselined against studio-2's own drafts, so the untouched form reads CLEAN…
+    expect(screen.getByRole('button', { name: 'Saved' }).hasAttribute('disabled')).toBe(true);
+    // …and closing raises no phantom discard warning.
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('You have unsaved settings changes. Discard them?')).toBeNull();
+  });
+});
