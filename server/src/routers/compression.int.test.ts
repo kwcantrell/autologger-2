@@ -203,6 +203,44 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([4, 5]));
   });
 
+  it('clamps a compressible upload content-type so its 206 range response still ships identity', async () => {
+    // The invariant behind "audio byte-serving needs no explicit exclusion" is
+    // that a segment's content-type is always audio/* — and NOTHING enforced
+    // that until the upload handler started normalizing (audio.ts
+    // normalizeAudioMimeType). Before it, any client whose fetch defaulted the
+    // header (text/plain) stored that verbatim, the download echoed it, and
+    // compress() — which has no 206/Content-Range guard — gzipped the range
+    // body: the hand-set Content-Length is dropped while Content-Range still
+    // describes identity bytes. Corrupt audio for a range-assembling client.
+    //
+    // Highly compressible and comfortably over compress()'s 1KB threshold, so
+    // a regression here gzips rather than silently squeaking under it.
+    const session = seededSession().sessionId;
+    const bytes = new Uint8Array(4096).fill(0x41);
+    const up = await app.request(
+      `/api/sessions/${session}/audio/segments`,
+      { method: 'POST', headers: { 'content-type': 'text/plain' }, body: bytes },
+      { ...env },
+    );
+    expect(up.status).toBe(200);
+    const seg = (await up.json()) as { url: string; mime_type: string };
+    // Stored (and reported) as audio, not as the caller's compressible type.
+    expect(seg.mime_type).toBe('audio/webm');
+
+    const res = await app.request(
+      seg.url,
+      { method: 'GET', headers: { range: 'bytes=0-2047', ...GZIP } },
+      { ...env },
+    );
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-type')).toBe('audio/webm');
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(variesOnAcceptEncoding(res)).toBe(false);
+    expect(res.headers.get('content-range')).toBe('bytes 0-2047/4096');
+    expect(res.headers.get('content-length')).toBe('2048');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes.slice(0, 2048));
+  });
+
   it('leaves full-body audio downloads uncompressed with content-length intact', async () => {
     const session = seededSession().sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
