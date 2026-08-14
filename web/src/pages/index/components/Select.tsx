@@ -18,40 +18,66 @@ interface SelectProps {
   placeholder?: string;
   disabled?: boolean;
   name?: string;
+  /** Mounts the Radix root already open (settings-modal-mount-cost, D3). Additive and
+   * optional — every existing call site omits it and keeps mounting closed, which is
+   * `RadixSelect.Root`'s own default when the prop is undefined. It exists so a
+   * lazily-upgraded control (`EventButtonsTable`'s inert trigger) can open on the same
+   * activation that mounted it, since the freshly-mounted trigger cannot receive the
+   * gesture that triggered the swap. */
+  defaultOpen?: boolean;
+}
+
+// Shared trigger chrome, exported so a lazy stand-in (EventButtonsTable's inert
+// per-row trigger, settings-modal-mount-cost D3) can reuse the identical classes and
+// icon markup rather than re-deriving them.
+export const SELECT_TRIGGER_CLASSNAME = clsx(
+  'glass-face-strong inline-flex w-full min-h-9 cursor-pointer items-center justify-between gap-2 rounded-v5-md border border-v5-border-strong px-3 py-2 text-left text-[0.85rem] leading-[1.2] text-v5-text outline-none transition-[border-color,box-shadow] duration-[0.12s] ease-[ease] [font-family:inherit]',
+  'hover-always:not-data-disabled:border-v5-primary',
+  'focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-2',
+  'data-[state=open]:border-v5-primary',
+  'data-disabled:cursor-not-allowed data-disabled:opacity-50',
+  'data-[placeholder]:text-v5-muted',
+);
+
+export const SELECT_ICON_CLASSNAME =
+  'inline-flex flex-[0_0_auto] items-center justify-center text-v5-muted transition-[transform,color] duration-[0.12s] ease-[ease] [button[data-state=open]_&]:[transform:rotate(180deg)] [button[data-state=open]_&]:text-v5-primary';
+
+export function SelectChevronIcon() {
+  return (
+    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" role="img" aria-label="open">
+      <title>Open</title>
+      <path
+        d="M1 1L5 5L9 1"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 export const Select = forwardRef<HTMLButtonElement, SelectProps>(function Select(
-  { value, onChange, options, id, className, ariaLabel, placeholder, disabled, name },
+  { value, onChange, options, id, className, ariaLabel, placeholder, disabled, name, defaultOpen },
   ref,
 ) {
   return (
-    <RadixSelect.Root value={value} onValueChange={onChange} disabled={disabled} name={name}>
+    <RadixSelect.Root
+      value={value}
+      onValueChange={onChange}
+      disabled={disabled}
+      name={name}
+      defaultOpen={defaultOpen}
+    >
       <RadixSelect.Trigger
         ref={ref}
         id={id}
         aria-label={ariaLabel}
-        className={clsx(
-          'glass-face-strong inline-flex w-full min-h-9 cursor-pointer items-center justify-between gap-2 rounded-v5-md border border-v5-border-strong px-3 py-2 text-left text-[0.85rem] leading-[1.2] text-v5-text outline-none transition-[border-color,box-shadow] duration-[0.12s] ease-[ease] [font-family:inherit]',
-          'hover-always:not-data-disabled:border-v5-primary',
-          'focus-visible:outline-2 focus-visible:outline-v5-primary focus-visible:outline-offset-2',
-          'data-[state=open]:border-v5-primary',
-          'data-disabled:cursor-not-allowed data-disabled:opacity-50',
-          'data-[placeholder]:text-v5-muted',
-          className,
-        )}
+        className={clsx(SELECT_TRIGGER_CLASSNAME, className)}
       >
         <RadixSelect.Value placeholder={placeholder} />
-        <RadixSelect.Icon className="inline-flex flex-[0_0_auto] items-center justify-center text-v5-muted transition-[transform,color] duration-[0.12s] ease-[ease] [button[data-state=open]_&]:[transform:rotate(180deg)] [button[data-state=open]_&]:text-v5-primary">
-          <svg width="10" height="6" viewBox="0 0 10 6" fill="none" role="img" aria-label="open">
-            <title>Open</title>
-            <path
-              d="M1 1L5 5L9 1"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+        <RadixSelect.Icon className={SELECT_ICON_CLASSNAME}>
+          <SelectChevronIcon />
         </RadixSelect.Icon>
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
