@@ -1,6 +1,7 @@
-import loadingVideoSrc from '../../assets/video/AutoLogger_Small.webm';
+import loadingVideoAsset from '../../assets/video/AutoLogger_Small.webm';
+import { assetSrc } from './assetSrc';
 
-export const AUTOLOGGER_LOADING_VIDEO_SRC = loadingVideoSrc;
+export const AUTOLOGGER_LOADING_VIDEO_SRC = assetSrc(loadingVideoAsset);
 
 function applyFreezeAtFirstFrame(v: HTMLVideoElement | null | undefined): void {
   if (v?.tagName !== 'VIDEO') return;

@@ -1,5 +1,8 @@
-import brandStripUrl from '../../../assets/logos/logo-autologger-transparent.png';
+import brandStripAsset from '../../../assets/logos/logo-autologger-transparent.png';
+import { assetSrc } from '../../../shared/utils/assetSrc';
 import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginReturnStash';
+
+const brandStripUrl = assetSrc(brandStripAsset);
 
 // --- LoginPage (add-login-screen, task 2.1) ---
 // Full-screen branded login view for OAuth-configured deployments. Mounted by

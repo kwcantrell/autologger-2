@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateLoginReturnPath } from './loginReturnPath';
+import { isShellSegments, validateLoginReturnPath } from './loginReturnPath';
 
 // The recipe (design D6 / spec web-login-experience) is order-sensitive:
 // syntactic rejects (string shape, `\`, control chars) run BEFORE the URL
@@ -219,6 +219,117 @@ describe('validateLoginReturnPath', () => {
 
     it('data: URI bypass attempt', () => {
       expect(validateLoginReturnPath('data:text/html,<script>alert(1)</script>')).toBeNull();
+    });
+  });
+});
+
+// `isShellSegments` has a DIFFERENT DOMAIN from `isRouterKnownPathname`/
+// `validateLoginReturnPath` above (design D3, nextjs-frontend-migration): it
+// validates the segment list Next's optional catch-all (`[[...path]]`)
+// receives — `string[] | undefined` — not a raw pathname string. The shell
+// set INCLUDES the `/` route (`undefined`/`[]`), unlike the deep-link set
+// above, which deliberately excludes it. Encoding-agnostic: measured on
+// Next 15.5.23 (task 2.3/2.6), segments arrive still percent-ENCODED, not
+// decoded, so these tests exercise both a plain segment and a literal
+// percent-encoded one — the property under test is "one raw path segment =
+// one list entry", never "decode-and-re-split", regardless of encoding.
+describe('isShellSegments', () => {
+  describe('accepts', () => {
+    it('undefined (the `/` route with no catch-all match at all)', () => {
+      expect(isShellSegments(undefined)).toBe(true);
+    });
+
+    it('an empty list (the `/` route)', () => {
+      expect(isShellSegments([])).toBe(true);
+    });
+
+    it("['sessions', <id>] — a bare session id segment", () => {
+      expect(isShellSegments(['sessions', 'abc'])).toBe(true);
+    });
+
+    it("['sessions', <id>] — an id containing URL-safe punctuation", () => {
+      expect(isShellSegments(['sessions', 'abc-123_def'])).toBe(true);
+    });
+
+    it("['teams'] — the teams shell route", () => {
+      expect(isShellSegments(['teams'])).toBe(true);
+    });
+
+    it(
+      "['sessions', 'a/b'] — an id segment MAY itself contain '/' (if the " +
+        'framework ever decodes it) and still counts as ONE segment',
+      () => {
+        // Content-agnostic acceptance (spec: web-frontend-platform "Shell
+        // routing from the shared route definition"): whatever encoding Next
+        // hands this function, one raw path segment is one LIST entry. This
+        // case covers a hypothetical decoded entry containing a literal '/'
+        // character — it's still a single id segment and MUST be accepted
+        // (matches pre-change behavior: the shell is served). Do not
+        // re-split this value — see the reject case for `/sessions/a/b`
+        // (three list entries) just below, which is a genuinely different,
+        // and rejected, shape.
+        expect(isShellSegments(['sessions', 'a/b'])).toBe(true);
+      },
+    );
+
+    it(
+      "['sessions', 'a%2Fb'] — the actual measured shape on Next 15.5.23: a single " +
+        'id segment arrives still percent-ENCODED, not decoded',
+      () => {
+        // Measured, not assumed (task 2.3/2.6): `/sessions/a%2Fb` (one raw
+        // path segment) arrives here as ['sessions', 'a%2Fb'] — the '%2F' is
+        // NOT decoded back into '/'. Same property as the case above (one
+        // raw segment = one list entry, content never inspected), exercised
+        // against the real encoding this framework version actually uses.
+        expect(isShellSegments(['sessions', 'a%2Fb'])).toBe(true);
+      },
+    );
+  });
+
+  describe('rejects: nested / empty shapes', () => {
+    it("['sessions'] — missing id segment", () => {
+      expect(isShellSegments(['sessions'])).toBe(false);
+    });
+
+    it("['sessions', ''] — empty id segment (trailing-slash shape)", () => {
+      expect(isShellSegments(['sessions', ''])).toBe(false);
+    });
+
+    it(
+      "['sessions', 'a', 'b'] — three list entries (raw `/sessions/a/b`) " +
+        'is nested, not one id segment with a literal slash',
+      () => {
+        // Contrast with the accepted ['sessions', 'a/b'] case above: this is
+        // the list shape a request for `/sessions/a/b` (two raw path
+        // separators) produces — three list entries — and stays 404,
+        // matching pre-change behavior, regardless of how any one entry is
+        // encoded.
+        expect(isShellSegments(['sessions', 'a', 'b'])).toBe(false);
+      },
+    );
+
+    it("['teams', ''] — trailing slash under /teams", () => {
+      expect(isShellSegments(['teams', ''])).toBe(false);
+    });
+
+    it("['teams', 'x'] — a segment under /teams is not the teams shell route", () => {
+      expect(isShellSegments(['teams', 'x'])).toBe(false);
+    });
+
+    it("['admin', 'users'] — a concrete route, not the catch-all's business", () => {
+      expect(isShellSegments(['admin', 'users'])).toBe(false);
+    });
+
+    it("[''] — a single empty segment", () => {
+      expect(isShellSegments([''])).toBe(false);
+    });
+
+    it("['foo'] — an unknown single segment", () => {
+      expect(isShellSegments(['foo'])).toBe(false);
+    });
+
+    it("['sessions', 'abc', 'extra'] — three segments with a valid-looking prefix", () => {
+      expect(isShellSegments(['sessions', 'abc', 'extra'])).toBe(false);
     });
   });
 });

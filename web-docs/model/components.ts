@@ -135,12 +135,25 @@ function externalComponent(name: string, description: string): Component {
 const serverComponents: Component[] = [
   runtimeComponent(
     'server-bootstrap',
-    'Composition root: Hono app wiring (middleware chain, router mounts, static serving) ' +
-      'and the Node process entry (env → bindings → app → listen). Also carries ' +
-      '`httpError.ts` (router-directory-decomposition D3): the `ApiError` class, app-level ' +
-      'plumbing mapped to a JSON response by the `onError` handler here and thrown by ' +
-      'every router — root-level, not a `routers/` layer member.',
-    ['server/src/app.ts', 'server/src/main.ts', 'server/src/httpError.ts'],
+    'Composition root: Hono app wiring (middleware chain, router mounts, the GET-only ' +
+      'frontend bridge to Next.js — `nextjs-frontend-migration` D1, replacing the retired ' +
+      'static-serving block) and the Node process entry (env → bindings → app → listen). ' +
+      'Also carries `httpError.ts` (router-directory-decomposition D3): the `ApiError` ' +
+      'class, app-level plumbing mapped to a JSON response by the `onError` handler here ' +
+      'and thrown by every router — root-level, not a `routers/` layer member. And ' +
+      '`upgradeDispatch.ts` (`nextjs-frontend-migration` task 3.3): the single ' +
+      '`server.on(\'upgrade\')` dispatcher installed by `main.ts` — `/api/*` upgrades go ' +
+      'to Hono (captured via a stub `{on()}` object passed to `injectWebSocket`), ' +
+      'everything else goes to the Next dev upgrade handler (dev) or is destroyed (prod), ' +
+      'gated by the same IP-allowlist decision HTTP requests get.',
+    [
+      'server/src/app.ts',
+      'server/src/main.ts',
+      'server/src/httpError.ts',
+      'server/src/upgradeDispatch.ts',
+      'server/src/upgradeDispatch.test.ts',
+      'server/src/upgradeDispatch.int.test.ts',
+    ],
   ),
   runtimeComponent(
     'server-core',
@@ -177,9 +190,15 @@ const serverComponents: Component[] = [
   ),
   runtimeComponent(
     'node-infra',
-    'Node-specific infrastructure: only the composition root (config wiring), the system ' +
-      'clock, and presence remain — matching CLAUDE.md’s documented role for this ' +
-      'directory. DeepGram transcription + audio-segment merge left this component for ' +
+    'Node-specific infrastructure: the composition root (config wiring), the system ' +
+      'clock, presence, and (added by `nextjs-frontend-migration` task 3.1) the Next.js ' +
+      'frontend bridge wrapper — matching CLAUDE.md’s documented role for this directory, ' +
+      'now four files instead of three. `nextFrontend.ts` wraps `next({ dev, dir })` + ' +
+      '`prepare()`, exposing `{ handle, upgradeHandler, close }` to ' +
+      '`server-bootstrap`’s app.ts bridge and main.ts wiring; it returns `null` (API-only ' +
+      'mode) when `web/.next` is missing in prod, and rethrows a `prepare()` rejection ' +
+      'when a build directory is present (fail loud, never silently degrade). DeepGram ' +
+      'transcription + audio-segment merge left this component for ' +
       '`@autologger/transcription`, and YouTube audio import (yt-dlp) + its guard/scratch ' +
       'handling left for `@autologger/media-import`, in this change’s phases 4 and 3 ' +
       'respectively (feature-service-packages tasks 4.1/3.1) — the transcription and ' +
@@ -191,6 +210,8 @@ const serverComponents: Component[] = [
       'server/src/node/presence.ts',
       'server/src/node/presence.test.ts',
       'server/src/node/systemClock.ts',
+      'server/src/node/nextFrontend.ts',
+      'server/src/node/nextFrontend.test.ts',
     ],
   ),
   runtimeComponent(
@@ -373,18 +394,34 @@ const webComponents: Component[] = [
     'web-app',
     'The main session-workspace SPA page: transport/timeline/feed components, the AI ' +
       'chat and AI v2 dashboard panels, batch import, and the page-local hooks/utils that ' +
-      'back them.',
-    ['web/src/pages/index/**'],
+      'back them. Also covers the Next.js App Router entry shell for this page ' +
+      '(nextjs-frontend-migration task 2.3) — the `(index)` route group\'s root layout, ' +
+      'the optional catch-all page (`/`, `/sessions/:id`, `/teams`), and the client-only ' +
+      '`IndexIsland` wrapper that mounts `IndexRoot` — replacing the retired Vite ' +
+      '`main.tsx`/`index.html` entry.',
+    ['web/src/pages/index/**', 'web/src/app/(index)/**'],
   ),
-  runtimeComponent('web-admin', 'The standalone admin-users SPA page and its entry point.', [
-    'web/src/pages/admin-users/**',
-  ]),
+  runtimeComponent(
+    'web-admin',
+    'The standalone admin-users SPA page and its entry point. Also covers the Next.js App ' +
+      'Router entry shell for this page (nextjs-frontend-migration task 2.3) — the ' +
+      '`(admin)` route group\'s root layout, the concrete `/admin/users` page, and the ' +
+      'client-only `AdminIsland` wrapper that mounts `AdminRoot` — replacing the retired ' +
+      'Vite `main.tsx`/`index.html` entry.',
+    ['web/src/pages/admin-users/**', 'web/src/app/(admin)/**'],
+  ),
   runtimeComponent(
     'web-shared',
     'Design-system primitives and cross-page utilities shared across web SPA pages: UI ' +
-      'primitives (Dialog/Popover/Tooltip/RadioGroup/ConfirmDialog), theme, and shared ' +
-      'utils (audio clips, timecode, waveform, login-return handling).',
-    ['web/src/shared/**'],
+      'primitives (Dialog/Popover/Tooltip/RadioGroup/ConfirmDialog), theme, shared ' +
+      'utils (audio clips, timecode, waveform, login-return handling), and the single ' +
+      'shared `AppLoadingSkeleton` (design D9.1) both Next.js islands render as their ' +
+      '`dynamic()` loading fallback. Also covers the root `app/not-found.page.tsx` ' +
+      '(nextjs-frontend-migration task 2.3): it sits outside both `(index)`/`(admin)` ' +
+      'route groups — the webBoundaries drift guard (`appGroupOf`) deliberately treats it ' +
+      'as belonging to neither entry — so it is shared shell infrastructure, not ' +
+      'index- or admin-owned.',
+    ['web/src/shared/**', 'web/src/app/not-found.page.tsx'],
   ),
   runtimeComponent(
     'web-types',
@@ -533,8 +570,22 @@ const externalComponents: Component[] = [
 ];
 
 const exclusions: Exclusion[] = [
-  { file: 'web/vite.config.ts', reason: 'Vite build tool config, not application code.' },
+  // web/vite.config.ts exclusion removed (nextjs-frontend-migration task 3.4 deleted the
+  // file itself, along with both index.html entries and both main.tsx shims — this
+  // component model no longer needs a pin for any of them: web/vitest.config.ts below is
+  // the sole surviving Vite-tooling config, kept for the vitest-only web unit-test path).
   { file: 'web/vitest.config.ts', reason: 'Vitest tool config, not application code.' },
+  {
+    file: 'web/next.config.ts',
+    reason: 'Next.js build tool config, not application code (nextjs-frontend-migration).',
+  },
+  {
+    file: 'web/next-env.d.ts',
+    reason:
+      'Next-managed ambient type-reference triple-slash file, regenerated by `next dev`/' +
+      '`next build` — tooling scaffolding, not authored application code ' +
+      '(nextjs-frontend-migration task 2.1).',
+  },
   { file: 'server/vitest.config.ts', reason: 'Vitest tool config, not application code.' },
   {
     file: 'companion/vitest.config.ts',
@@ -592,11 +643,18 @@ const relationships: Relationship[] = [
     evidence: [{ file: 'companion/src/api.ts', mustContain: ['fetch(', 'this.base'] }],
   },
   {
+    // Relabeled (nextjs-frontend-migration D1/D6): the static block
+    // (`serveHtml` + four HTML routes + `serveStatic` catch-all) is deleted;
+    // a GET-only Hono catch-all now bridges unmatched requests to the
+    // Next.js frontend via `frontend.handle(...)`, returning
+    // RESPONSE_ALREADY_SENT. `from`/`to` endpoints are unchanged — the
+    // composition root still serves the web app, just through the Next
+    // bridge rather than static files.
     id: 'server-bootstrap-to-web-app',
     from: 'server-bootstrap',
     to: 'web-app',
-    label: 'Serves the built web SPA (web/dist) as static files',
-    evidence: [{ file: 'server/src/app.ts', mustContain: ['serveStatic'] }],
+    label: 'Bridges unmatched GET requests to the Next.js frontend (server-side rendered shell)',
+    evidence: [{ file: 'server/src/app.ts', mustContain: ['frontend.handle('] }],
   },
   {
     id: 'e2e-to-server-bootstrap',

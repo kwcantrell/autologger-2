@@ -1112,7 +1112,27 @@
  * and flatten primary/danger to default buttons.
  * ============================================================ */
 @layer components {
+  /* nextjs-frontend-migration (task 4.2 visual-gate fix): `width: 100%`
+   * added. `.shell` is the admin page's sole root element (AdminUsersPage.tsx)
+   * and, under the retired Vite entry, sat inside `<div id="root">` — an
+   * ordinary block box, so `width: auto` + `margin: 0 auto` filled the
+   * available width before `max-width` clamped and centered it (the classic
+   * block "auto-margin centering" algorithm). Next's App Router mounts the
+   * page tree directly under `<body>` with no such wrapper div, and `body`
+   * carries this file's `display: flex; flex-direction: column` "viewport-
+   * locked shell" rule (below), so `.shell` is now itself a flex item. Per
+   * the flexbox spec, `align-self: stretch` (the default) is SUPPRESSED
+   * when an item's cross-axis margins are auto — exactly `.shell`'s
+   * `margin: 0 auto` — so without an explicit `width`, the item fell back to
+   * fit-content sizing instead of filling the flex line, visibly narrowing
+   * the admin page (caught by the visual-desktop `admin-users.png` gate,
+   * ~7.6k px / 1% diff). `.shell-v3` (AppShell's own root, below) already
+   * sets `width: 100%` explicitly for the same reason — this mirrors that
+   * precedent rather than introducing a new pattern. Restores the exact
+   * pre-migration blessed baseline (verified zero-diff after this fix).
+   */
   .shell {
+    width: 100%;
     max-width: 1100px;
     margin: 0 auto;
     padding: 1.1rem 1.05rem 2.2rem;

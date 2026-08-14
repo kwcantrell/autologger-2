@@ -501,15 +501,18 @@ feature files and the retired `server/src/logImport/` — `@autologger/transcrip
 `@autologger/media-import`, and `@autologger/log-import` — and a fourth (`ai-runtime-package`)
 extracted from the retired `server/src/ai-runtime/` and `server/src/aiV2/` pair —
 `@autologger/ai-runtime`. A service package may import L0 and L1 but never another service
-package; `server/src/node/` itself now holds exactly `config.ts`, `systemClock.ts`, and
-`presence.ts` — matching its documented role, and pinned by a recursive name check rather
-than left to drift again. Cross-package boundaries at every
+package; `server/src/node/` itself now holds exactly `config.ts`, `systemClock.ts`,
+`presence.ts`, and `nextFrontend.ts` (the Next.js frontend bridge wrapper, added by
+`nextjs-frontend-migration`) — matching its documented composition-root-wiring role, and
+pinned by a recursive name check rather than left to drift again. Cross-package boundaries at every
 layer are enforced by `server/src/packageBoundaries.repo.test.ts`, not the compiler.
 
 ```
 server/src/
   main.ts                Node entry: env config → bindings → app → listen
-  app.ts                 Hono app wiring: middleware chain + router mounts + static (← web/app.py)
+  app.ts                 Hono app wiring: middleware chain + router mounts + the frontend
+                          bridge (GET-only catch-all → nextFrontend.handle(), RESPONSE_ALREADY_SENT)
+                          (← web/app.py)
   env.ts                 Typed env accessors                           (← auth_identity.py getters)
   appEnv.ts              Composition root's Hono generics: Ports + Config + Variables (AppEnv) —
                           types Ports.sessions/Variables.catalog with the session-core/catalog
@@ -527,6 +530,9 @@ server/src/
     systemClock.ts        Clock port implementation — the sole sanctioned Date.now() call site
                            (interface lives in packages/ports; moved from the former clock.ts)
     presence.ts           In-memory Companion presence registry (stays in server — not persistence)
+    nextFrontend.ts        Wraps next({ dev, dir: web/ }) + prepare(); exposes
+                           { handle, upgradeHandler, close }; returns null (API-only
+                           mode) when web/.next is missing in prod (nextjs-frontend-migration)
   auth/
     oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
     identity.ts             Login sessions + CSRF, bearer compare, gate rule (← auth_identity.py)
@@ -776,8 +782,8 @@ was ported from: historical provenance, not a live parity claim.
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` | `routers/teams.ts` (new, teams-self-serve) |
-| `GET /sessions/:id` (SPA shell) | (app.ts page route) |
-| `GET /teams` (SPA shell) | (app.ts page route) |
+| `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
+| `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
 
@@ -870,7 +876,7 @@ cp server/.env.example server/.env # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 # upgrading an existing checkout? your state moved: mv .env data server/
 
 npm run typecheck                  # server + web + e2e
-npm run dev                        # server (tsx watch, :8787) + Vite (:5173), concurrently
+npm run dev                        # single process (tsx watch), :8787 — Next-served frontend
 npm test                           # server vitest (unit + integration projects)
 ```
 
@@ -894,17 +900,27 @@ curl $B/api/shows
 
 ## Frontend (web/ workspace)
 
-The React frontend lives in `web/` (Vite 8 + React 19, Tailwind v4) and is canonical for
-this app. `npm run build` emits `web/dist/`; the server serves it directly — `GET /`,
-`GET /sessions/:id`, and `GET /admin/users` return the built page HTML verbatim (no serve-time rewriting; the API
-root is hardcoded same-origin `/api`), and a static catch-all serves hashed `/assets/*`
-plus `/static/*` (favicon logos ship from `web/public/static/`).
+The React frontend lives in `web/` (Next.js 15 App Router + React 19, Tailwind v4) and is
+canonical for this app. `npm run build` runs `next build`, emitting `web/.next/`; the server
+bridges unmatched GET requests to Next (`server/src/node/nextFrontend.ts`, mounted from a Hono
+catch-all — `frontend.handle(...)`) rather than serving prebuilt static files. `GET /`,
+`GET /sessions/:id`, `GET /teams`, and `GET /admin/users` all render through the shell (the API
+root is hardcoded same-origin `/api`; the two route groups share page identity per path, but
+responses are no longer byte-identical — Next embeds the requested route's serialized URL data).
+Hashed bundles are served at `/_next/static/*` (was `/assets/*` under Vite); `/static/*` is
+unchanged, served straight from `web/public/static/` (favicon logos, …). The `/_next/image`
+optimizer is disabled (`images: { unoptimized: true }` in `web/next.config.ts`) — the app uses
+plain `<img>` throughout, and the optimizer is an unauthenticated compute endpoint this repo
+declines to expose. Heavy app trees are mounted as client-only (`ssr: false`) islands inside a
+server-rendered shell (layout chrome, fonts, a static loading skeleton) — the shell reads no
+cookies and embeds no session- or catalog-derived data.
 
 ### Styling (Tailwind v4)
 
 All styling lives in one entry, `web/src/shared/theme/tailwind.css`, side-effect imported
-from each page's `main.tsx`. No CSS Modules, no per-component `*.css` files. Layers,
-declared in order:
+(before `overlayscrollbars/overlayscrollbars.css`, pinned order) from each route group's root
+layout (`web/src/app/(index)/layout.page.tsx`, `web/src/app/(admin)/layout.page.tsx`). No CSS
+Modules, no per-component `*.css` files. Layers, declared in order:
 
 - **`theme`** — two `@theme` blocks emit the design-token scale. `@theme inline` holds
   tokens whose only job is generating utilities (`--color-*`, `--radius-*`); `@theme
@@ -949,20 +965,30 @@ harness (below) is network-independent as a result.
 ### Dev flow
 
 ```bash
-npm run dev        # concurrently: server (tsx watch, :8787) + Vite (:5173)
+npm run dev        # single process (tsx watch), :8787 — Next dev-serves the frontend
 ```
 
-Browse `http://127.0.0.1:5173/`. Deep links (`/sessions/<id>`) also work in dev — a small
-Vite dev-only middleware (`web/vite.config.ts`) serves the transformed index shell for `/`
-and `/sessions/<id>`, mirroring the production serve block. The raw entry path
-(`http://127.0.0.1:5173/src/pages/index/index.html`) still works too. Vite proxies `/api`
-(incl. the session WebSocket) and `/auth` to :8787. The admin page keeps its own dev URL:
-`http://127.0.0.1:5173/src/pages/admin-users/index.html`.
+Browse `http://127.0.0.1:8787/`. Deep links (`/sessions/<id>`, `/teams`, `/admin/users`) work
+natively — the Next App Router catch-all renders the shell for every router-known path, so no
+dev-only shell middleware is needed (the retired `web/vite.config.ts`'s `sessionDeepLinkDevShell`
+plugin and its `/api`+`/auth` proxy are gone; dev and prod now share one origin and one port).
+Editing a web-source file triggers Next's webpack-pipeline dev HMR (Turbopack is unavailable
+under a custom server) with no server restart; editing a server-source file restarts the `tsx
+watch` process, which re-`prepare()`s Next (amortized by the on-disk `.next` cache — `tsx watch`
+excludes `web/**` so Next's own build-output churn under `web/.next/**` can't trigger spurious
+restarts). The session WebSocket (`/api/sessions/:id/ws`) and Next's dev HMR socket
+(`/_next/webpack-hmr`) coexist on the same upgrade path, dispatched by path prefix
+(`server/src/upgradeDispatch.ts`).
 
-**Dev auth is anonymous by design**: set `REQUIRE_LOGIN=0` and `HOST=127.0.0.1` in
-`server/.env`. Google OAuth cannot round-trip through the Vite proxy (the callback
-redirects to `PUBLIC_BASE_URL` on :8787 and the cookie lands on that origin) — verify
-OAuth against the production serve path instead:
+**`web/next.config.ts` edits need a manual restart** — Next reads its config only at
+`prepare()`, and (per the exclusion above) a config-only edit under `web/**` doesn't trigger
+one; `Ctrl-C` and re-run `npm run dev`. Every other `web/src/**` edit gets normal HMR.
+
+**Dev auth is anonymous by design**: set `REQUIRE_LOGIN=0` in `server/.env`. Dev OAuth now
+round-trips same-origin at `:8787` for the first time (the retired Vite proxy could never carry
+the Google callback) — set real `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and a `:8787`
+`PUBLIC_BASE_URL` to verify it directly against `npm run dev`. The production serve path still
+works too, and remains the only way to test from a LAN device (see below):
 
 ```bash
 npm run build && npm run start   # everything on :8787
@@ -972,9 +998,13 @@ If dev auth is misconfigured (login required but no session), the first symptom 
 opaque WebSocket drop — the 401 fires before the upgrade, so the browser sees a bare
 close with no status.
 
-**Keep Vite on loopback.** `server.host` is pinned to `127.0.0.1` in `web/vite.config.ts`;
-exposing Vite to the LAN would let peers reach the API *as* 127.0.0.1, bypassing
-`IP_ALLOWLIST`. Test LAN devices against :8787.
+**Keep dev loopback-bound.** The `dev` script defaults `HOST=127.0.0.1` (overridable) — the
+successor to the retired Vite `server.host` pin, same rationale: exposing the dev frontend
+(source modules, the HMR socket, Next's `/__nextjs_*` dev endpoints) to the LAN would let peers
+reach the API *as* 127.0.0.1, bypassing `IP_ALLOWLIST`, and the HMR socket sits on the raw
+upgrade path outside Hono's middleware so a configured `IP_ALLOWLIST` alone wouldn't cover it.
+Test LAN devices against the production serve path (`npm run build && npm run start`, which
+defaults `HOST=0.0.0.0`) instead.
 
 ### e2e smoke
 

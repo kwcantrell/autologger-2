@@ -9,8 +9,7 @@ as this repo's dev process by inspecting its command line.
 
 - Any other listener — an unidentified process on `:8787`, and ALWAYS the hermetic e2e
   server on `:8791` — ask the user first; never restart or kill it yourself.
-- `:5173` (Vite) follows the same ownership rule: restart it yourself only if you started
-  it or identified its command line as this repo's Vite dev process; an unidentified
-  `:5173` listener is also ask-first.
+- Dev runs as a single process on `:8787`; there is no separate `:5173` frontend dev
+  server to manage.
 - Reference the repo's dev script — see the `dev` scripts in `server/package.json` and
   the root `package.json` — rather than reconstructing or duplicating a command line here.

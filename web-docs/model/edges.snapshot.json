@@ -236,6 +236,11 @@
   },
   {
     "from": "server-bootstrap",
+    "to": "ports",
+    "kind": "test"
+  },
+  {
+    "from": "server-bootstrap",
     "to": "routers",
     "kind": "production"
   },
@@ -243,6 +248,11 @@
     "from": "server-bootstrap",
     "to": "server-core",
     "kind": "production"
+  },
+  {
+    "from": "server-bootstrap",
+    "to": "server-test-harness",
+    "kind": "test"
   },
   {
     "from": "server-bootstrap",
@@ -423,6 +433,11 @@
     "from": "web-shared",
     "to": "web-api",
     "kind": "production"
+  },
+  {
+    "from": "web-shared",
+    "to": "web-app",
+    "kind": "test"
   },
   {
     "from": "web-shared",
