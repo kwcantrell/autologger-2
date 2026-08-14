@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { getClientInstanceId } from '../../shared/utils/clientId';
+import { createWorkerInterval, type WorkerInterval } from '../../shared/utils/workerInterval';
 import { apiFetch, apiUrl } from '../client';
 
 const PRESENCE_INTERVAL_VISIBLE_MS = 5_000;
@@ -8,8 +9,14 @@ const PRESENCE_INTERVAL_VISIBLE_MS = 5_000;
 // pruned, and Companion's primarySession()/requireActiveSession only see fresh entries —
 // so a hidden tab that stopped posting would 409 ("No active session") every Companion
 // command ~15s after backgrounding, even with the WS up and a recording rolling. 10s
-// leaves 5s of margin for hidden-tab timer throttling (browsers clamp background timers
-// to >=1s and align them to 1s boundaries; chained/late timers can slip further).
+// leaves 5s of margin for late/slipping ticks.
+//
+// 5s of margin is NOT enough against Chrome's *intensive* throttling, which is why the
+// cadence runs on `createWorkerInterval` rather than a bare `setInterval`: after a tab has
+// been hidden >5min, main-thread timers are coalesced to roughly one wake-up per MINUTE,
+// so a nominal 10s heartbeat would post ~60s apart and blow straight past the 15s TTL —
+// Companion would then 409 intermittently on a tab that looks perfectly healthy.
+// Dedicated-worker timers are exempt from that clamp. See the fallback note on the hook.
 const PRESENCE_INTERVAL_HIDDEN_MS = 10_000;
 
 /**
@@ -21,7 +28,20 @@ const PRESENCE_INTERVAL_HIDDEN_MS = 10_000;
  *
  * A hidden tab still heartbeats, because the server prunes presence entries at
  * PRESENCE_FRESH_MS (15s) and Companion refuses commands without a fresh entry; the win
- * over the old unconditional 5s timer is *reduced* background traffic, not zero. The
+ * over the old unconditional 5s timer is *reduced* background traffic, not zero.
+ *
+ * How honest is "every 10s while hidden"? It holds **when the worker clock is available**
+ * (`createWorkerInterval` → `kind: 'worker'`): worker timers are exempt from Chrome's
+ * intensive background throttling, so hidden-tab gaps stay ~10s, comfortably under the
+ * 15s TTL. On the **fallback** path — no `Worker` global (SSR/jsdom/tests), or a CSP that
+ * forbids `blob:` workers — the cadence is a plain main-thread `setInterval` and the
+ * guarantee does NOT hold: after ~5 minutes hidden the posts can land ~60s apart, the
+ * server entry goes stale, and Companion commands 409 until the tab is foregrounded
+ * again. That residual is accepted rather than papered over; the fake-timer tests below
+ * exercise the fallback path (neither vitest environment provides `Worker`), so they
+ * verify the cadence LOGIC, never the throttling immunity.
+ *
+ * The
  * visibility transition itself is always reported immediately (so Companion learns
  * `visible: false` the instant it happens — that report is what lets it pick a different
  * tab). `isPlaying` is read through a render-updated ref rather than an effect dependency,
@@ -49,7 +69,10 @@ export function useCompanionPresence(sessionId: string | null, isPlaying: boolea
     };
     postRef.current = post;
 
-    let timer: ReturnType<typeof setInterval> | null = null;
+    // Off-main-thread clock (see PRESENCE_INTERVAL_HIDDEN_MS): the handle owns its
+    // worker + blob URL and releases both on stop(), which the effect cleanup below
+    // always reaches — so StrictMode's double-invoked mount leaks nothing.
+    let timer: WorkerInterval | null = null;
     let timerPeriod = 0;
     const cadenceMs = () =>
       document.visibilityState === 'visible'
@@ -59,15 +82,16 @@ export function useCompanionPresence(sessionId: string | null, isPlaying: boolea
       const period = cadenceMs();
       // Idempotent: a visibilitychange that does not actually change visibility
       // (or a re-fired one) must not stack a second interval, or reset the phase
-      // of the one already running at the right period.
+      // of the one already running at the right period. Doubly worth keeping now
+      // that a re-arm costs a worker teardown + spawn, not just a timer id.
       if (timer !== null && timerPeriod === period) return;
-      if (timer !== null) clearInterval(timer);
+      timer?.stop();
       timerPeriod = period;
-      timer = setInterval(post, period);
+      timer = createWorkerInterval(period, post);
     };
     const stopTimer = () => {
       if (timer === null) return;
-      clearInterval(timer);
+      timer.stop();
       timer = null;
       timerPeriod = 0;
     };

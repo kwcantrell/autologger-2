@@ -183,15 +183,29 @@ describe('useSessionSocket — event.changed burst coalescing', () => {
 
 // --- WS-open resync freshness gate (perf-fixes B2) ---
 //
-// resync() still fires its three invalidateQueries calls on every open, but
-// each now carries a predicate that skips queries whose data is already
-// fresher than the connect attempt (`dataUpdatedAt >= connectStartedAt`).
-// In-flight fetches with no data yet are deliberately NOT skipped — see the
-// last test in this block. The invalidate SPY cannot see predicate filtering
-// (the call happens either way), so these tests assert through query state —
-// `qc.getQueryState(key)?.isInvalidated` — over seeded caches. Vitest fake
-// timers fake `Date`, so `vi.advanceTimersByTime` moves both the reconnect
-// timers and the `Date.now()` freshness clock.
+// resync() still fires its three invalidateQueries calls on every open, but the
+// gate is now per-key rather than uniform:
+//
+//  - STATUS and AUDIO carry a predicate that skips queries whose data is already
+//    fresher than the connect attempt (`dataUpdatedAt >= connectStartedAt`).
+//    That gate is a cost trade, not a proof: `dataUpdatedAt` is a resolution
+//    time, so a change landing between the response's server snapshot and
+//    `onopen` slips through it. Both keys are re-anchored by later traffic
+//    (status: the rolling poll + lease/transport frames; audio: every chunk
+//    upload and sync-from-disk), so the residual is bounded.
+//  - EVENTS carries NO predicate — it is invalidated on every open. The feed is
+//    append-only with no poll, so a frame missed in the pre-open window is a
+//    permanent, user-visible hole. The airtight criterion ("data came from a
+//    fetch STARTED after onopen") can never be satisfied by anything already in
+//    cache at the instant resync runs, so the correct gate degenerates to
+//    "always invalidate".
+//
+// In-flight fetches with no data yet are deliberately NOT skipped by either
+// treatment — see the last two tests in this block. The invalidate SPY cannot
+// see predicate filtering (the call happens either way), so these tests assert
+// through query state — `qc.getQueryState(key)?.isInvalidated` — over seeded
+// caches. Vitest fake timers fake `Date`, so `vi.advanceTimersByTime` moves both
+// the reconnect timers and the `Date.now()` freshness clock.
 
 describe('useSessionSocket — WS-open resync freshness gate', () => {
   beforeEach(() => {
@@ -218,18 +232,38 @@ describe('useSessionSocket — WS-open resync freshness gate', () => {
     qc.setQueryData(audioKey, { segments: [], has_audio: false });
   };
 
-  it('first open with freshly seeded caches invalidates none of them', () => {
+  it('first open with freshly seeded caches skips status/audio but still re-anchors events', () => {
     const { ws, qc } = renderSocket();
     // Seed after connect() recorded connectStartedAt — the just-landed mount
-    // fetch case: data provably fresher than the connect attempt.
+    // fetch case: data newer than the connect attempt, so the gated pair is
+    // skipped and the mount double-fetch they used to cause stays avoided.
     act(() => vi.advanceTimersByTime(5));
     seedAll(qc);
 
     act(() => ws.open());
 
     expect(qc.getQueryState(statusKey)?.isInvalidated).toBe(false);
-    expect(qc.getQueryState(eventsPageKey)?.isInvalidated).toBe(false);
     expect(qc.getQueryState(audioKey)?.isInvalidated).toBe(false);
+    // Events is ungated: the mount fetch's server snapshot predates onopen, so
+    // an insert in that window would be in neither the response nor the socket.
+    expect(qc.getQueryState(eventsPageKey)?.isInvalidated).toBe(true);
+  });
+
+  // The regression this pins: the seeded events data resolves strictly BETWEEN
+  // connect-start and onopen — the exact profile of a mount fetch that resolved
+  // during the WS handshake. Under the old uniform `dataUpdatedAt >=
+  // connectStartedAt` gate it was treated as fresh forever, so a row inserted in
+  // that window was lost from the feed permanently on a session that then went
+  // quiet. It must be invalidated.
+  it('events data that resolved during the handshake IS invalidated on open', () => {
+    const { ws, qc } = renderSocket();
+
+    act(() => vi.advanceTimersByTime(150)); // fetch resolves mid-handshake
+    qc.setQueryData(eventsPageKey, { events: [] });
+    act(() => vi.advanceTimersByTime(650)); // …and only now does the socket open
+    act(() => ws.open());
+
+    expect(qc.getQueryState(eventsPageKey)?.isInvalidated).toBe(true);
   });
 
   it('reconnect: data last updated before the reconnect attempt IS invalidated (catch-up preserved)', () => {
@@ -255,7 +289,7 @@ describe('useSessionSocket — WS-open resync freshness gate', () => {
     expect(qc.getQueryState(audioKey)?.isInvalidated).toBe(true);
   });
 
-  it('reconnect: data refreshed after the reconnect attempt started is NOT invalidated', () => {
+  it('reconnect: status/audio refreshed after the reconnect attempt started are NOT invalidated', () => {
     const { ws, qc } = renderSocket();
     act(() => ws.open());
     act(() => vi.advanceTimersByTime(3_000));
@@ -271,8 +305,9 @@ describe('useSessionSocket — WS-open resync freshness gate', () => {
     act(() => ws2.open());
 
     expect(qc.getQueryState(statusKey)?.isInvalidated).toBe(false);
-    expect(qc.getQueryState(eventsPageKey)?.isInvalidated).toBe(false);
     expect(qc.getQueryState(audioKey)?.isInvalidated).toBe(false);
+    // …events is ungated on every open, reconnects included.
+    expect(qc.getQueryState(eventsPageKey)?.isInvalidated).toBe(true);
   });
 
   // The missed-event window this closes: an event lands server-side after the
