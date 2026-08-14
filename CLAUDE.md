@@ -49,8 +49,8 @@ auto-generation (AUTO GENERATE)"). `transcribe.csv` stays intentionally `503`
 npm install
 cp server/.env.example server/.env             # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 
-npm run dev                                    # server :8787 + Vite :5173 (concurrently)
-npm run build && npm run start                 # production: server serves web/dist
+npm run dev                                    # single process, :8787 (Next dev-served frontend)
+npm run build && npm run start                 # production: server serves web/.next via the bridge
 npm run typecheck                              # server + web + e2e
 npm test                                       # server vitest (unit + integration)
 npm run e2e                                    # Playwright smoke (hermetic server on :8791)
@@ -86,18 +86,23 @@ npm run lint:fix                               # same paths, with --write (never
 - **Google ID-token verification** fetches Google's JWKS via global `fetch` +
   `jose`'s `createLocalJWKSet` (10-minute cache, refetch once on an unrecognized `kid`) —
   not `jose`'s `node:https`-based remote-JWKS path.
-- **Dev auth is anonymous** (`REQUIRE_LOGIN=0`, loopback); OAuth is verified on the production
-  serve path — the Vite proxy cannot round-trip the Google callback.
+- **Dev auth is anonymous by default** (`REQUIRE_LOGIN=0`, loopback); dev OAuth now round-trips
+  same-origin at `:8787` (the single-process migration retired the Vite proxy, which could never
+  carry the Google callback) — real Google creds can be verified directly against `npm run dev`,
+  no separate production build required.
 
 ## Source layout
 
 Server code keeps the module-for-module layout it inherited from its Python origin under
 `server/src/`; files ported from Python note their origin in a header comment. `server/src/
 routers/` holds HTTP-layer route modules only; the app-level `ApiError` class lives at
-`server/src/httpError.ts`, outside it. `server/src/node/` now holds exactly the three files
+`server/src/httpError.ts`, outside it. `server/src/node/` now holds exactly the four files
 its documented role has always claimed — `config.ts` (composition-root wiring), `systemClock.ts`,
-and `presence.ts` — membership pinned by name and test-enforced (`feature-service-packages`),
-not merely documented; `server/src/logImport/`, `server/src/ai-runtime/`, and `server/src/
+`presence.ts`, and `nextFrontend.ts` (the Next.js frontend bridge wrapper — wraps `next({ dev, dir
+})`/`prepare()` the way `config.ts` wraps SQLite/blob construction, `nextjs-frontend-migration`
+task 3.1) — membership pinned by name and test-enforced (`feature-service-packages`; the fourth
+member added by `nextjs-frontend-migration`), not merely documented; `server/src/logImport/`,
+`server/src/ai-runtime/`, and `server/src/
 aiV2/` no longer exist — `server/src/` now holds exactly `node`, `auth`, `middleware`,
 `routers`, and `test`. Persistence itself lives in three source-only **L1** sibling packages
 under `packages/` (extracted from `server/src/session/` and `server/src/db/` and part of
@@ -161,9 +166,12 @@ normative endpoint table (with its historical Python-origin column) are in **`RE
 ## Guardrails
 
 - Never commit secrets. `.env` is gitignored; real tokens never land in tracked files.
-- `web/dist/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it.
-  Keep the Vite dev server loopback-bound (`server.host` pin in `web/vite.config.ts`); LAN
-  testing goes through :8787.
+- `web/.next/` is a reproducible build artifact (gitignored) — don't hand-edit or commit it.
+  **Keep dev loopback-bound.** The server `dev` script defaults `HOST=127.0.0.1` (successor to
+  the retired Vite `server.host` pin — same LAN-bypass rationale: an exposed dev frontend/HMR
+  socket would let LAN peers reach the API *as* 127.0.0.1, bypassing `IP_ALLOWLIST`); test LAN
+  devices against the production serve path (`npm run build && npm run start`, default
+  `HOST=0.0.0.0`) instead.
 
 ## How we work (SDLC)
 
