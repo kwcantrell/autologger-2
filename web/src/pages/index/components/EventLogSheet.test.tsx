@@ -47,7 +47,11 @@ vi.mock('../../../api/client', async (importOriginal) => {
 // reveal effect calls once the target row's index resolves; the window-spacer
 // and reveal-scroll wiring themselves are covered in
 // EventLogSheet.virtualization.test.tsx against a windowing mock.
-vi.mock('@tanstack/react-virtual', () => ({
+// (Spread over the real module rather than replaced: EventLogSheet also imports
+// `defaultRangeExtractor` for its pinned-row `rangeExtractor`, and a
+// replacement factory would hand it `undefined`.)
+vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
   useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
     const size = estimateSize();
     return {

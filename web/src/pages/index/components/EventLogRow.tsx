@@ -131,6 +131,43 @@ export interface InlineDraftStore {
   clear: (eventId: string) => void;
 }
 
+/** The three text controls an inline edit can be focused in. The category
+ *  control is a Radix `Select` trigger, not a text field — it has no caret to
+ *  restore and blur-to-save never runs through it, so it is deliberately not a
+ *  member. */
+export type InlineFocusField = 'timecode' | 'wall' | 'message';
+
+/** Where the operator's cursor is inside an inline edit, as of the last focus
+ *  or selection change. `selectionStart`/`selectionEnd` are the input's own
+ *  values (null for a control that does not expose a selection). */
+export interface InlineFocusRecord {
+  eventId: string;
+  field: InlineFocusField;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+}
+
+/** Parent-owned record of WHICH row is being inline-edited, and where the caret
+ *  sits in it — the focus counterpart of `InlineDraftStore`.
+ *
+ *  It exists for the same reason: the feed is virtualized. While timecode rolls,
+ *  incoming events prepend at index 0 under a descending sort and push the row
+ *  being edited down the list; once it passes the overscan the virtualizer
+ *  unmounts the focused `<tr>`, focus falls to `<body>`, and further keystrokes
+ *  go nowhere. `EventLogSheet` uses this record twice: to PIN the edited row's
+ *  index into the virtual window (`rangeExtractor`), and — when a remount
+ *  happens anyway — to let the remounting row put focus and caret back.
+ *
+ *  A ref-backed store rather than state, for `InlineDraftStore`'s reason: a
+ *  caret move must not re-render the feed. */
+export interface InlineFocusStore {
+  read: () => InlineFocusRecord | null;
+  record: (record: InlineFocusRecord) => void;
+  /** Forgets the record only if it still belongs to `eventId` — a row must
+   *  never clear a record that focus has already moved on to. */
+  clear: (eventId: string) => void;
+}
+
 interface Props {
   event: LogEvent;
   categories: Category[];
@@ -157,6 +194,9 @@ interface Props {
   /** `EventLogSheet`'s inline-draft store (see `InlineDraftStore`) — one
    *  identity for the whole feed, stable for the sheet's lifetime. */
   inlineDrafts: InlineDraftStore;
+  /** `EventLogSheet`'s inline-focus record (see `InlineFocusStore`) — likewise
+   *  one identity for the whole feed. */
+  inlineFocus: InlineFocusStore;
   onInlineSave: (event: LogEvent, values: RowEditValues) => void;
   onBatchChange: (eventId: string, values: RowEditValues) => void;
   onDelete: (eventId: string) => void;
@@ -182,6 +222,7 @@ export function EventLogRow({
   jumpUnavailable,
   jumpReasonId,
   inlineDrafts,
+  inlineFocus,
   onInlineSave,
   onBatchChange,
   onDelete,
@@ -247,6 +288,57 @@ export function EventLogRow({
     inlineDrafts.clear(event.event_id);
   }, [event, inlineEdit, inlineDrafts]);
 
+  const inputForField = (field: InlineFocusField): HTMLInputElement | null =>
+    field === 'timecode' ? tcRef.current : field === 'wall' ? wallRef.current : msgRef.current;
+
+  /** Record that THIS row holds the inline-edit focus, and where its caret is.
+   *  Called on focus and on every selection change (React's `onSelect` fires for
+   *  a collapsed caret move too, so typing keeps the offset current). Cheap by
+   *  construction: a ref write in the parent, no render. */
+  const recordFocus = (field: InlineFocusField, el: HTMLInputElement | null) => {
+    if (!inlineEditable || !el) return;
+    inlineFocus.record({
+      eventId: event.event_id,
+      field,
+      selectionStart: el.selectionStart,
+      selectionEnd: el.selectionEnd,
+    });
+  };
+
+  // Focus restore across an unavoidable remount (mount-only). The sheet pins the
+  // edited row into the virtual window, but the pin is bounded (see
+  // `PINNED_ROW_MAX_EXTRA_ROWS` there) and a far-off-window row still unmounts —
+  // taking focus with it, since the browser drops focus to <body> when the
+  // focused node is removed. On the way back in, put the operator's cursor
+  // exactly where it was.
+  //
+  // The guard is deliberately narrow: restore ONLY when focus is currently
+  // nowhere (<body>/<html>), which is precisely the state a focus-stealing
+  // unmount leaves behind. If the operator has since focused anything at all,
+  // the remount must not yank it away.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — this restores the focus the PREVIOUS unmount destroyed; re-running on prop changes would re-grab focus mid-edit.
+  useEffect(() => {
+    if (!inlineEditable) return;
+    const rec = inlineFocus.read();
+    if (!rec || rec.eventId !== event.event_id) return;
+    const active = document.activeElement;
+    // `active.isConnected` covers the browsers that leave a REMOVED node as
+    // `document.activeElement` instead of resetting to <body> — focus is just
+    // as gone either way.
+    if (active && active !== document.body && active !== document.documentElement) {
+      if (active.isConnected) return;
+    }
+    const el = inputForField(rec.field);
+    if (!el) return;
+    el.focus();
+    if (rec.selectionStart != null) {
+      el.setSelectionRange(rec.selectionStart, rec.selectionEnd ?? rec.selectionStart);
+    }
+    // `el.focus()` fired this row's own `onFocus`, which re-recorded the caret
+    // as it stood BEFORE the range was restored; put the real one back.
+    inlineFocus.record(rec);
+  }, []);
+
   const saveInline = (catOverride?: string) => {
     if (!inlineEdit || isAuto) return;
     const tc = tcRef.current?.value.trim() ?? formatTimecodeHMS(event.timecode);
@@ -276,8 +368,15 @@ export function EventLogRow({
     // Defer to let focus settle
     setTimeout(() => {
       const row = rowRef.current;
+      // Row gone: the virtualizer unmounted it while focus was settling, so
+      // there is nothing left to read a save out of (the draft store holds the
+      // text). The focus record is deliberately NOT cleared here — it is what
+      // the remount uses to put the operator's cursor back.
       if (!row) return;
       if (row.contains(document.activeElement)) return;
+      // Focus genuinely left a row that is still on screen: this row is no
+      // longer the one being edited, so it stops being pinned.
+      inlineFocus.clear(event.event_id);
       saveInline();
     }, 0);
   };
@@ -326,6 +425,8 @@ export function EventLogRow({
                 placeholder="YY-MM-DD HH:MM:SS"
                 spellCheck={false}
                 disabled={dis}
+                onFocus={(e) => recordFocus('wall', e.currentTarget)}
+                onSelect={(e) => recordFocus('wall', e.currentTarget)}
                 onBlur={handleBlur}
                 onChange={
                   batchEdit
@@ -349,6 +450,8 @@ export function EventLogRow({
                 maxLength={8}
                 spellCheck={false}
                 disabled={dis}
+                onFocus={(e) => recordFocus('timecode', e.currentTarget)}
+                onSelect={(e) => recordFocus('timecode', e.currentTarget)}
                 onBlur={handleBlur}
                 onChange={
                   batchEdit
@@ -375,6 +478,8 @@ export function EventLogRow({
               maxLength={8}
               spellCheck={false}
               disabled={dis}
+              onFocus={(e) => recordFocus('timecode', e.currentTarget)}
+              onSelect={(e) => recordFocus('timecode', e.currentTarget)}
               onBlur={handleBlur}
               onChange={
                 batchEdit
@@ -444,6 +549,8 @@ export function EventLogRow({
       value={batchEdit ? msgVal : undefined}
       aria-label="Message"
       disabled={dis}
+      onFocus={(e) => recordFocus('message', e.currentTarget)}
+      onSelect={(e) => recordFocus('message', e.currentTarget)}
       onBlur={handleBlur}
       onChange={
         batchEdit

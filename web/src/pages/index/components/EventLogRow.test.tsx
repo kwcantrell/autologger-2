@@ -1,10 +1,16 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Category, LogEvent } from '../../../api/types';
 import { formatWallUtcYmdHms } from '../../../shared/utils/timecode';
 import { renderStrict } from '../../../test/renderStrict';
-import { EventLogRow, type InlineDraft, type InlineDraftStore } from './EventLogRow';
+import {
+  EventLogRow,
+  type InlineDraft,
+  type InlineDraftStore,
+  type InlineFocusRecord,
+  type InlineFocusStore,
+} from './EventLogRow';
 
 // --- EventLogRow jump cell (feed-row-seek, task 6.1/6.2) ---
 //
@@ -63,6 +69,24 @@ function draftStore(seed: Array<[string, InlineDraft]> = []): InlineDraftStore &
   };
 }
 
+/** A standalone stand-in for `EventLogSheet`'s inline-focus record — same
+ *  ref-behind-stable-callbacks shape, owned by the test. */
+function focusStore(seed: InlineFocusRecord | null = null): InlineFocusStore & {
+  current: () => InlineFocusRecord | null;
+} {
+  let record = seed;
+  return {
+    current: () => record,
+    read: () => record,
+    record: (next) => {
+      record = next;
+    },
+    clear: (eventId) => {
+      if (record?.eventId === eventId) record = null;
+    },
+  };
+}
+
 function renderRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) {
   const onJump = vi.fn();
   const onInlineSave = vi.fn();
@@ -70,6 +94,7 @@ function renderRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) 
   const onDelete = vi.fn();
   const onUndelete = vi.fn();
   const inlineDrafts = draftStore();
+  const inlineFocus = focusStore();
   const utils = renderStrict(
     <table>
       <tbody>
@@ -90,12 +115,13 @@ function renderRow(overrides: Partial<ComponentProps<typeof EventLogRow>> = {}) 
           jumpUnavailable={false}
           jumpReasonId="v5-event-feed-jump-reason"
           inlineDrafts={inlineDrafts}
+          inlineFocus={inlineFocus}
           {...overrides}
         />
       </tbody>
     </table>,
   );
-  return { ...utils, onJump, onInlineSave, inlineDrafts };
+  return { ...utils, onJump, onInlineSave, inlineDrafts, inlineFocus };
 }
 
 describe('EventLogRow — jump control', () => {
@@ -209,6 +235,127 @@ describe('EventLogRow — inline-edit drafts', () => {
 
     expect(inlineDrafts.map.size).toBe(0);
     expect(onInlineSave).not.toHaveBeenCalled();
+  });
+});
+
+// --- Inline-edit focus record + restore (virtualized-feed focus yank) ---
+//
+// The draft store keeps the TEXT across a virtual unmount; this keeps the
+// CURSOR. While timecode rolls (the only time inline edit is live) new events
+// arrive, and under a descending sort each one prepends and pushes the edited
+// row down — past the overscan the focused <tr> is unmounted, focus falls to
+// <body>, and further keystrokes go nowhere. EventLogSheet pins the recorded row
+// into the virtual window to prevent that; this is the row's half of the
+// contract — publishing where focus is, and taking it back on a remount the pin
+// could not prevent. The pin itself, and the end-to-end unmount/remount round
+// trip, are driven in EventLogSheet.virtualization.test.tsx.
+
+describe('EventLogRow — inline-edit focus record', () => {
+  it('records the focused field and caret offsets on focus', () => {
+    const { inlineFocus } = renderRow({ inlineEdit: true });
+    const input = screen.getByLabelText('Message') as HTMLInputElement;
+
+    input.setSelectionRange(3, 7);
+    input.focus();
+
+    expect(inlineFocus.current()).toEqual({
+      eventId: 'ev-1',
+      field: 'message',
+      selectionStart: 3,
+      selectionEnd: 7,
+    });
+  });
+
+  it('keeps the caret current as it moves within the focused field', () => {
+    const { inlineFocus } = renderRow({ inlineEdit: true });
+    const input = screen.getByLabelText('Message') as HTMLInputElement;
+    input.focus();
+
+    input.setSelectionRange(5, 5);
+    // React derives `onSelect` from keyup (among others), not from a native
+    // 'select' event — this is the same path a keystroke takes.
+    fireEvent.keyUp(input);
+
+    expect(inlineFocus.current()?.selectionStart).toBe(5);
+  });
+
+  it('records the field, so a caret in the timecode input restores there and not in the message', () => {
+    const { inlineFocus } = renderRow({ inlineEdit: true });
+    (screen.getByLabelText('Timecode') as HTMLInputElement).focus();
+    expect(inlineFocus.current()?.field).toBe('timecode');
+  });
+
+  it('records nothing for a non-editable (batch) row', () => {
+    const inlineFocus = focusStore();
+    renderRow({ inlineEdit: false, batchEdit: true, inlineFocus });
+    (screen.getByLabelText('Message') as HTMLInputElement).focus();
+    expect(inlineFocus.current()).toBeNull();
+  });
+
+  it('restores focus and caret when it mounts as the recorded row', () => {
+    const inlineFocus = focusStore({
+      eventId: 'ev-1',
+      field: 'message',
+      selectionStart: 4,
+      selectionEnd: 6,
+    });
+    renderRow({ inlineEdit: true, inlineFocus });
+
+    const input = screen.getByLabelText('Message') as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(4);
+    expect(input.selectionEnd).toBe(6);
+    // Its own onFocus re-recorded the caret as it stood before the range was
+    // restored; the record must end up holding the restored one.
+    expect(inlineFocus.current()).toEqual({
+      eventId: 'ev-1',
+      field: 'message',
+      selectionStart: 4,
+      selectionEnd: 6,
+    });
+  });
+
+  it('does not restore focus for a record belonging to another row', () => {
+    const inlineFocus = focusStore({
+      eventId: 'ev-other',
+      field: 'message',
+      selectionStart: 0,
+      selectionEnd: 0,
+    });
+    renderRow({ inlineEdit: true, inlineFocus });
+    expect(document.activeElement).not.toBe(screen.getByLabelText('Message'));
+  });
+
+  it('does not steal focus from wherever it already is', () => {
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
+
+    const inlineFocus = focusStore({
+      eventId: 'ev-1',
+      field: 'message',
+      selectionStart: 0,
+      selectionEnd: 0,
+    });
+    renderRow({ inlineEdit: true, inlineFocus });
+
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it('forgets the record when focus leaves a row that is still mounted', async () => {
+    const { inlineFocus } = renderRow({ inlineEdit: true });
+    const input = screen.getByLabelText('Message') as HTMLInputElement;
+    input.focus();
+    expect(inlineFocus.current()?.eventId).toBe('ev-1');
+
+    await act(async () => {
+      input.blur();
+      // Blur-to-save defers a tick to let focus settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(inlineFocus.current()).toBeNull();
   });
 });
 

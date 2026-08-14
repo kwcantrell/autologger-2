@@ -1,4 +1,4 @@
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { defaultRangeExtractor, type Range, useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
@@ -30,6 +30,8 @@ import {
   EventLogRow,
   type InlineDraft,
   type InlineDraftStore,
+  type InlineFocusRecord,
+  type InlineFocusStore,
   type RowEditValues,
 } from './EventLogRow';
 import { FeedShell } from './FeedShell';
@@ -73,6 +75,38 @@ import { JUMP_COLUMN } from './JumpToTimeButton';
 // estimating those is the safe direction (extra scroll extent, never a short
 // window), so the constant stays, matching TranscribeFeed.
 const ROW_HEIGHT = 31;
+
+/** Every field an `InlineDraft` can carry, so the post-save reconciliation below
+ *  can walk them exhaustively. Compiler-checked against the interface: adding a
+ *  field to `InlineDraft` without listing it here fails the `satisfies`. */
+const INLINE_DRAFT_FIELDS = [
+  'category',
+  'message',
+  'timecode_hms',
+  'wall_text',
+] as const satisfies ReadonlyArray<keyof InlineDraft>;
+
+// How far outside the virtual window the row being inline-edited may be pinned
+// (in rows) before the pin is dropped.
+//
+// TRADEOFF (the two-spacer padding-row idiom): this table holds its scroll
+// extent with exactly two spacer <tr>s — one before the window, one after — so
+// the rendered indexes MUST be contiguous. A non-contiguous range (the pinned
+// row plus a window far away) has no representation here: the pinned <tr> would
+// render immediately after the top spacer and shove the real window up by the
+// height of the gap. So the pin CLAMPS INTO THE WINDOW instead: the range is
+// extended contiguously to reach the pinned index.
+//
+// Cost: while an edit is pinned off-window, the gap rows render too. Bounded at
+// 50 (~1550px of extra DOM at ROW_HEIGHT) because the case this exists for is
+// small — under a descending sort, incoming events prepend and push the edited
+// row down a few rows at a time — while the pathological case (the operator
+// scrolls to the far end of a 5000-row feed with an edit open) would otherwise
+// render the entire list and cost more than virtualization saves. Past the
+// bound the row unmounts as it did before: its text still survives in
+// `InlineDraftStore`, and `InlineFocusStore` restores focus + caret when it
+// scrolls back into view.
+const PINNED_ROW_MAX_EXTRA_ROWS = 50;
 
 // --- feed-row-seek, task 6.2 (design D4) ---
 //
@@ -394,6 +428,26 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     [],
   );
 
+  // --- Inline edit focus ---
+  // Which row is being inline-edited right now, and where its caret sits. Same
+  // ref-not-state rationale as the draft store (a caret move must not re-render
+  // the feed), and read from two places: `rangeExtractor` below pins this row
+  // into the virtual window, and a remounting row restores focus from it. See
+  // `InlineFocusStore`.
+  const inlineFocusRef = useRef<InlineFocusRecord | null>(null);
+  const inlineFocus = useMemo<InlineFocusStore>(
+    () => ({
+      read: () => inlineFocusRef.current,
+      record: (record) => {
+        inlineFocusRef.current = record;
+      },
+      clear: (eventId) => {
+        if (inlineFocusRef.current?.eventId === eventId) inlineFocusRef.current = null;
+      },
+    }),
+    [],
+  );
+
   // --- Mutations ---
   const updateEvent = useUpdateEvent(sessionId);
   const deleteEvent = useDeleteEvent(sessionId);
@@ -461,6 +515,8 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   useEffect(() => {
     if (inlineEdit) return;
     inlineDraftsRef.current.clear();
+    // Nothing is being inline-edited any more, so nothing stays pinned.
+    inlineFocusRef.current = null;
   }, [inlineEdit]);
 
   // Memoized (code-health-tail 4.8, perf only): the filter+sort re-ran on
@@ -478,6 +534,49 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     return doSortEvents(filtered, sortState, status);
   }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
 
+  // `rangeExtractor` runs inside the virtualizer's own measurement, outside the
+  // React render it was created in, so it reads the current rendered order
+  // through a ref (the `allEventsRef` idiom above) rather than a closure.
+  const sortedRef = useRef(sorted);
+  sortedRef.current = sorted;
+
+  // Pin the row being inline-edited into the rendered window (@tanstack/
+  // react-virtual's documented `rangeExtractor` seam, over its own
+  // `defaultRangeExtractor`).
+  //
+  // Without it, inline editing and virtualization are in direct conflict: inline
+  // edit is live exactly while timecode rolls, which is exactly when new events
+  // are arriving — and under a descending sort each one prepends at index 0 and
+  // shifts the edited row down. Past the overscan the focused <tr> unmounts,
+  // focus falls to <body>, and the operator's next keystrokes go nowhere at all
+  // (the deferred blur-to-save also bails on the now-null row ref, so nothing is
+  // even saved).
+  //
+  // Referentially stable (`useCallback` with no deps) on purpose: the
+  // virtualizer treats a new `rangeExtractor` identity as an options change, so
+  // an inline arrow here would churn it on every render. Everything it varies
+  // on is read from refs.
+  const rangeExtractor = useCallback((range: Range) => {
+    const base = defaultRangeExtractor(range);
+    const pinnedId = inlineFocusRef.current?.eventId;
+    if (!pinnedId || base.length === 0) return base;
+    const pinned = sortedRef.current.findIndex((e) => e.event_id === pinnedId);
+    if (pinned < 0) return base;
+    const first = base[0];
+    const last = base[base.length - 1];
+    if (pinned >= first && pinned <= last) return base;
+    // Contiguous clamp, bounded — see `PINNED_ROW_MAX_EXTRA_ROWS` for why the
+    // pinned index is reached by extending the window rather than appended to
+    // it, and what it costs.
+    const extra = pinned < first ? first - pinned : pinned - last;
+    if (extra > PINNED_ROW_MAX_EXTRA_ROWS) return base;
+    const start = Math.min(first, pinned);
+    const end = Math.max(last, pinned);
+    const extended = new Array<number>(end - start + 1);
+    for (let i = 0; i < extended.length; i++) extended[i] = start + i;
+    return extended;
+  }, []);
+
   // --- Virtualization (the TranscribeFeed precedent: padding rows inside the
   // real <table>, never a div grid). Only the visible window (+overscan) of
   // <tr>s is mounted; two spacer rows hold the scroll height on either side.
@@ -491,6 +590,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     getScrollElement: () => scrollEl,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
+    rangeExtractor,
   });
 
   const virtualItems = virtualizer.getVirtualItems();
@@ -602,6 +702,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     setBatchEdits(new Map());
     setPendingDeleteIds(new Set());
     inlineDraftsRef.current.clear();
+    inlineFocusRef.current = null;
     setLoadedLimit(200);
     setHiddenCategoryIds(new Set());
     setGenerateMenuOpen(false);
@@ -679,14 +780,45 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
 
   const handleInlineSave = useCallback(
     async (event: LogEvent, values: RowEditValues) => {
+      const eventId = event.event_id;
+      // What this save is committing, in DRAFT space. The row writes every
+      // keystroke through to the store before it builds `values`, so the draft
+      // as of right now IS the submitted text — and comparing in draft space
+      // rather than against `values` is the only comparison that can be exact:
+      // `values` is trimmed (message/timecode) and ISO-normalized (`wall_time_utc`
+      // vs the draft's raw `wall_text`, which for a half-typed date has no ISO
+      // form at all), so a field-by-field match against it would report a
+      // divergence for text the operator never touched again.
+      const submitted: InlineDraft = { ...inlineDraftsRef.current.get(eventId) };
       try {
-        await updateEvent.mutateAsync({ eventId: event.event_id, body: values });
+        await updateEvent.mutateAsync({ eventId, body: values });
         // Committed — and `mutateAsync` resolves only after the mutation's
         // `invalidateQueries` refetch settles, so the row this draft belonged to
-        // is already backed by fresh server state. Dropping it here (rather than
-        // when the save is ISSUED) means a failed save leaves the operator's
-        // text recoverable on the next remount instead of silently reverting.
-        inlineDraftsRef.current.delete(event.event_id);
+        // is already backed by fresh server state. Dropping the draft here
+        // (rather than when the save is ISSUED) means a failed save leaves the
+        // operator's text recoverable on the next remount instead of silently
+        // reverting.
+        //
+        // But drop ONLY what this save actually persisted. A save round trip is
+        // long enough to type into (blur commits, the operator refocuses the row
+        // and keeps typing) and those keystrokes are in the store — deleting the
+        // row's entry wholesale threw them away, silently, the moment the
+        // virtualizer next unmounted the row: it remounted showing the server
+        // value. Re-read the store HERE, at resolution time (never a value
+        // captured before the await — StrictMode and overlapping saves both
+        // make a captured one stale), and keep any field that has moved on.
+        const current = inlineDraftsRef.current.get(eventId);
+        if (current) {
+          let survivors: InlineDraft | undefined;
+          for (const field of INLINE_DRAFT_FIELDS) {
+            const value = current[field];
+            if (value === undefined || value === submitted[field]) continue;
+            survivors ??= {};
+            survivors[field] = value;
+          }
+          if (survivors) inlineDraftsRef.current.set(eventId, survivors);
+          else inlineDraftsRef.current.delete(eventId);
+        }
         showToast('Updated.');
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);
@@ -1054,6 +1186,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
               jumpUnavailable={jumpUnavailable}
               jumpReasonId={jumpReasonId}
               inlineDrafts={inlineDrafts}
+              inlineFocus={inlineFocus}
               onInlineSave={handleInlineSave}
               onBatchChange={handleBatchChange}
               onDelete={handleDelete}

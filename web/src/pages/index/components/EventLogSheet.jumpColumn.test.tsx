@@ -38,7 +38,11 @@ vi.mock('../../../api/client', async (importOriginal) => {
 // known test-infrastructure gap recorded in design.md's panel log. That gap
 // is orthogonal to what this test drives (the jump column, not virtualization),
 // so it's bypassed here rather than routed around per-test.
-vi.mock('@tanstack/react-virtual', () => ({
+// (Spread over the real module rather than replaced: EventLogSheet also imports
+// `defaultRangeExtractor` for its pinned-row `rangeExtractor`, and a
+// replacement factory would hand it `undefined`.)
+vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
   useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
     const size = estimateSize();
     return {

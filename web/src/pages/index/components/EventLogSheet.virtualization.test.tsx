@@ -40,27 +40,55 @@ vi.mock('../../../api/client', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
+type VirtualRange = { startIndex: number; endIndex: number; overscan: number; count: number };
+
 const virtualMock = vi.hoisted(() => ({
   /** Rendered window, [first, last) in row indexes. Widened per test. */
   first: 0,
   last: Number.POSITIVE_INFINITY,
   /** Row height the component asked for, captured from `estimateSize()`. */
   size: 0,
+  /** The sheet's own `rangeExtractor`, captured so the pinned-row rule can be
+   *  called directly as well as observed through the rendered window. */
+  rangeExtractor: null as ((range: VirtualRange) => number[]) | null,
   scrollToIndex: vi.fn(),
 }));
 
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
+// Spread over the real module: the sheet builds its `rangeExtractor` on top of
+// the library's own `defaultRangeExtractor`, so that export has to stay real.
+// The window mock RUNS the sheet's extractor over `[first, last)` (with zero
+// overscan, so an unpinned range comes back exactly as set) — the rows the
+// extractor asks for are the rows that mount, which is how the pin is
+// observable end-to-end here.
+vi.mock('@tanstack/react-virtual', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-virtual')>()),
+  useVirtualizer: ({
+    count,
+    estimateSize,
+    rangeExtractor,
+  }: {
+    count: number;
+    estimateSize: () => number;
+    rangeExtractor?: (range: VirtualRange) => number[];
+  }) => {
     const size = estimateSize();
     virtualMock.size = size;
+    virtualMock.rangeExtractor = rangeExtractor ?? null;
     const first = Math.min(virtualMock.first, count);
     const last = Math.min(virtualMock.last, count);
+    const window =
+      last <= first
+        ? []
+        : (rangeExtractor?.({ startIndex: first, endIndex: last - 1, overscan: 0, count }) ??
+          Array.from({ length: last - first }, (_, offset) => first + offset));
     return {
       getVirtualItems: () =>
-        Array.from({ length: Math.max(0, last - first) }, (_, offset) => {
-          const index = first + offset;
-          return { index, start: index * size, end: (index + 1) * size, key: index };
-        }),
+        window.map((index) => ({
+          index,
+          start: index * size,
+          end: (index + 1) * size,
+          key: index,
+        })),
       getTotalSize: () => count * size,
       scrollToIndex: virtualMock.scrollToIndex,
     };
@@ -178,11 +206,17 @@ function eventsFixture(count: number): EventsResponse {
  *  the committed row. */
 let serverEvents: LogEvent[] = [];
 
+/** Holds the PUT in flight when set, so a test can type INTO a save round trip
+ *  (the real one spans a network call plus the invalidation refetch). */
+let putGate: Promise<void> | null = null;
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
   virtualMock.size = 0;
+  virtualMock.rangeExtractor = null;
   virtualMock.scrollToIndex.mockReset();
+  putGate = null;
   rolling = false;
   serverEvents = eventsFixture(EVENT_COUNT).events;
   mockedApiFetch.mockReset();
@@ -192,6 +226,7 @@ beforeEach(() => {
       return { categories: [categoryFixture()], show_name: '', show_code: '' };
     }
     if (path.includes('/events/') && opts.method === 'PUT') {
+      if (putGate) await putGate;
       const eventId = path.split('/events/')[1];
       const body = JSON.parse(String(opts.body)) as {
         category: string;
@@ -211,6 +246,10 @@ beforeEach(() => {
       return {
         ...eventsFixture(EVENT_COUNT),
         events: serverEvents,
+        // Derived from what is actually served: one suite below swaps in a
+        // longer list so a row can be pushed past the pin bound.
+        total: serverEvents.length,
+        logged_event_count: serverEvents.length,
       };
     }
     throw new Error(`unexpected apiFetch call: ${path}`);
@@ -242,6 +281,52 @@ function spacerHeights(): string[] {
   return Array.from(document.querySelectorAll<HTMLTableCellElement>('#v4-log-sheet tbody td'))
     .filter((td) => td.style.height !== '')
     .map((td) => td.style.height);
+}
+
+// --- Shared inline-edit harness (the draft, pinning and focus suites below all
+// drive the same rolling sheet through the same windowing mock) ---
+
+function row(eventId: string): HTMLElement {
+  const el = document.querySelector<HTMLTableRowElement>(
+    `#v4-log-sheet tr[data-event-id="${eventId}"]`,
+  );
+  if (!el) throw new Error(`row ${eventId} is not mounted`);
+  return el;
+}
+
+function messageInput(eventId: string): HTMLInputElement {
+  return within(row(eventId)).getByLabelText('Message') as HTMLInputElement;
+}
+
+/** Move the rendered window, driven the way the app does it: a timeline-marker
+ *  reveal. (`scrollToIndex` is the mock's no-op here, so the resulting window
+ *  is set directly — the reveal supplies the render, the window supplies the
+ *  range.) */
+function scrollWindowTo(first: number, last: number, revealEventId: string) {
+  act(() => {
+    virtualMock.first = first;
+    virtualMock.last = last;
+    document.body.dispatchEvent(
+      new CustomEvent('autologger:reveal-event', { detail: { eventId: revealEventId } }),
+    );
+  });
+}
+
+/** Renders with timecode rolling — the state inline edit is live in — and
+ *  waits for the first window of rows to reach edit mode. */
+async function renderRollingSheet() {
+  rolling = true;
+  const utils = renderSheet();
+  await waitFor(() => expect(messageInput('ev-0').value).toBe('note 0'));
+  return utils;
+}
+
+/** Longer than `PINNED_ROW_MAX_EXTRA_ROWS` (50) so a window move can push the
+ *  edited row past the pin and make it genuinely unmount. `eventsFixture`'s
+ *  `i * 7 % count` shuffle stays a permutation (7 and 120 are coprime). */
+const LONG_COUNT = 120;
+function serveLongFixture() {
+  serverEvents = eventsFixture(LONG_COUNT).events;
 }
 
 describe('EventLogSheet virtualization', () => {
@@ -328,41 +413,6 @@ describe('EventLogSheet virtualization', () => {
 // STOPS being live — a committed save and the end of inline-edit mode — because
 // a store that never forgets would shadow fresh server state instead.
 describe('EventLogSheet inline-edit drafts', () => {
-  function row(eventId: string): HTMLElement {
-    const el = document.querySelector<HTMLTableRowElement>(
-      `#v4-log-sheet tr[data-event-id="${eventId}"]`,
-    );
-    if (!el) throw new Error(`row ${eventId} is not mounted`);
-    return el;
-  }
-
-  function messageInput(eventId: string): HTMLInputElement {
-    return within(row(eventId)).getByLabelText('Message') as HTMLInputElement;
-  }
-
-  /** Move the rendered window, driven the way the app does it: a timeline-marker
-   *  reveal. (`scrollToIndex` is the mock's no-op here, so the resulting window
-   *  is set directly — the reveal supplies the render, the window supplies the
-   *  range.) */
-  function scrollWindowTo(first: number, last: number, revealEventId: string) {
-    act(() => {
-      virtualMock.first = first;
-      virtualMock.last = last;
-      document.body.dispatchEvent(
-        new CustomEvent('autologger:reveal-event', { detail: { eventId: revealEventId } }),
-      );
-    });
-  }
-
-  /** Renders with timecode rolling — the state inline edit is live in — and
-   *  waits for the first window of rows to reach edit mode. */
-  async function renderRollingSheet() {
-    rolling = true;
-    const utils = renderSheet();
-    await waitFor(() => expect(messageInput('ev-0').value).toBe('note 0'));
-    return utils;
-  }
-
   it('restores an in-progress edit when the virtualizer unmounts and remounts the row', async () => {
     virtualMock.first = 0;
     virtualMock.last = 3;
@@ -419,6 +469,100 @@ describe('EventLogSheet inline-edit drafts', () => {
     expect(messageInput('ev-0').value).toBe('committed note');
   });
 
+  it('keeps keystrokes typed DURING the save round trip, and still drops what the save committed', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    fireEvent.change(input, { target: { value: 'first half' } });
+
+    // Hold the PUT so the round trip is a window the operator can type into.
+    let release!: () => void;
+    putGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await act(async () => {
+      input.blur();
+      // handleBlur defers its save a tick to let focus settle.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Save in flight. The operator comes back to the row and keeps typing —
+    // these keystrokes are in the draft store but are NOT what is being saved.
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'first half plus more' } });
+
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('first half'),
+    );
+    // Let the mutation's own continuation (which reconciles the draft) run.
+    await act(async () => {});
+
+    // Past the pin bound, so the row really is unmounted and remounted from the
+    // draft store — the only place those later keystrokes now live.
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(messageInput('ev-0').value).toBe('first half plus more');
+  });
+
+  it('drops the draft of a clean save even when the row is unmounted as it lands', async () => {
+    // The blind-clear regression guard. The row's own event-changed effect also
+    // clears a spent draft, but only while the row is MOUNTED — unmounting it
+    // before the save resolves leaves `handleInlineSave` as the only thing that
+    // can forget it. Trailing whitespace is the discriminator: `saveInline`
+    // trims what it commits, so a surviving draft is visible on the remount.
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.focus();
+    });
+    fireEvent.change(input, { target: { value: 'committed note  ' } });
+
+    let release!: () => void;
+    putGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await act(async () => {
+      input.blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Focus left the row before the save was issued, so nothing is pinned: the
+    // row unmounts while its own save is still in flight.
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() =>
+      expect(serverEvents.find((e) => e.event_id === 'ev-0')?.message).toBe('committed note'),
+    );
+    await act(async () => {});
+
+    scrollWindowTo(0, 3, 'ev-1');
+    expect(messageInput('ev-0').value).toBe('committed note');
+  });
+
   it('drops inline drafts when inline-edit mode ends', async () => {
     virtualMock.first = 0;
     virtualMock.last = 3;
@@ -440,5 +584,146 @@ describe('EventLogSheet inline-edit drafts', () => {
       await client.invalidateQueries({ queryKey: sessionStatusKeys.bySession(SESSION_ID) });
     });
     await waitFor(() => expect(messageInput('ev-0').value).toBe('note 0'));
+  });
+});
+
+// --- Pinning the edited row into the virtual window (focus yank) ---
+//
+// Inline edit is live exactly while timecode is rolling, which is exactly when
+// new events are arriving. Under a descending sort every arrival prepends at
+// index 0 and shifts the row being edited one further down; past the overscan
+// the virtualizer unmounts the focused <tr>. The browser then drops focus to
+// <body>: keystrokes go nowhere, the deferred blur-to-save bails on the null row
+// ref (so nothing is even saved), and nothing puts focus back.
+//
+// The sheet answers with @tanstack/react-virtual's `rangeExtractor` seam — the
+// library's documented way to force an index into the rendered range. Two
+// properties matter and are pinned here: the edited row's index is in the range
+// whatever the window does (up to the documented bound), and the range stays
+// CONTIGUOUS while doing it, because this table holds its scroll extent with two
+// spacer rows and a hole in the middle of the range would shove the window up by
+// the height of the gap.
+describe('EventLogSheet pinned inline-edit row', () => {
+  it('keeps the row being edited mounted after the window moves past it', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+
+    // The window moves 30 rows down — far past the row being edited.
+    scrollWindowTo(30, 33, 'ev-31');
+
+    const ids = renderedEventIds();
+    expect(ids).toContain('ev-0');
+    // Contiguous clamp (the documented tradeoff): the gap rows come along, so
+    // the rendered range runs from the pinned row to the end of the window.
+    expect(ids[0]).toBe('ev-0');
+    expect(ids[ids.length - 1]).toBe('ev-32');
+    expect(ids).toHaveLength(33);
+    // Spacer math is unaffected: still one contiguous run, so the top spacer is
+    // zero (omitted) and the bottom one covers everything after it.
+    expect(spacerHeights()).toEqual([`${(LONG_COUNT - 33) * virtualMock.size}px`]);
+    // ...and the edit is still where the operator left it.
+    expect(document.activeElement).toBe(messageInput('ev-0'));
+  });
+
+  it('leaves the window alone when nothing is being edited', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    scrollWindowTo(30, 33, 'ev-31');
+
+    expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
+  });
+
+  it('includes the edited row index in the extracted range, and drops the pin past the bound', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+
+    const extract = virtualMock.rangeExtractor;
+    if (!extract) throw new Error('the sheet passed no rangeExtractor');
+
+    // Within the bound: the pinned index (0 — ev-0 leads the ascending sort) is
+    // in the range, and the range is a contiguous run reaching the window.
+    const near = extract({ startIndex: 20, endIndex: 25, overscan: 2, count: LONG_COUNT });
+    expect(near[0]).toBe(0);
+    expect(near[near.length - 1]).toBe(27);
+    expect(near).toEqual(Array.from({ length: 28 }, (_, i) => i));
+
+    // Past PINNED_ROW_MAX_EXTRA_ROWS (50) the pin is dropped rather than render
+    // the whole gap — the draft store keeps the text and the focus record
+    // restores the caret when the row scrolls back. Plain overscan window only.
+    const far = extract({ startIndex: 80, endIndex: 85, overscan: 2, count: LONG_COUNT });
+    expect(far).toEqual(Array.from({ length: 10 }, (_, i) => 78 + i));
+  });
+
+  it('hands the virtualizer one stable rangeExtractor identity across renders', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const first = virtualMock.rangeExtractor;
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    fireEvent.change(messageInput('ev-0'), { target: { value: 'typing' } });
+    scrollWindowTo(5, 8, 'ev-6');
+
+    // A fresh identity per render is an options change to the virtualizer, so
+    // everything the extractor varies on is read through refs instead.
+    expect(virtualMock.rangeExtractor).toBe(first);
+  });
+});
+
+// --- Focus + caret restore across a remount the pin could not prevent ---
+describe('EventLogSheet inline-edit focus restore', () => {
+  it('puts focus and caret back when the edited row remounts', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    act(() => {
+      input.setSelectionRange(2, 4);
+      input.focus();
+    });
+
+    // Past the pin bound, so the row genuinely unmounts and focus is lost.
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+
+    scrollWindowTo(0, 3, 'ev-1');
+
+    const restored = messageInput('ev-0');
+    expect(document.activeElement).toBe(restored);
+    expect(restored.selectionStart).toBe(2);
+    expect(restored.selectionEnd).toBe(4);
+  });
+
+  it('does not grab focus for a row nobody was editing', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    scrollWindowTo(100, 103, 'ev-101');
+    scrollWindowTo(0, 3, 'ev-1');
+
+    expect(document.activeElement).toBe(document.body);
   });
 });
