@@ -64,9 +64,11 @@ beforeEach(() => {
   resetChunkUploadQueueForTesting();
   // ESM modules evaluate once — importing `chunkLeaveWarning` (transitively,
   // via `ChunkRescueBanner`) does not re-run its module-scope install() on a
-  // later import. Reinstall fresh per test so each test's listener state is
-  // isolated (mirrors the uninstall/reinstall pair, not a real prod path —
-  // production only ever installs once, at first module evaluation).
+  // later import. Reinstall fresh per test so each test's subscription and
+  // listener state is isolated (mirrors the uninstall/reinstall pair, not a
+  // real prod path — production only ever installs once, at first module
+  // evaluation). Ordering matters: the reset drops the singleton first, so the
+  // reinstalled creation subscription is what picks up this test's `seedQueue()`.
   uninstallChunkLeaveWarningForTesting();
   installChunkLeaveWarning();
   uploadImpl = async () => ({ ok: false, status: 502, message: 'still failing' });
@@ -324,27 +326,90 @@ describe('ChunkRescueBanner', () => {
   });
 });
 
+// --- chunk leave-warning coverage (task 5.1) + conditional attach (bfcache) ---
+//
+// The warning is no longer a listener installed for the module's lifetime: a
+// registered `beforeunload` listener disqualifies the page from the
+// back/forward cache on its mere presence, so `chunkLeaveWarning.ts` subscribes
+// to the queue and attaches only while the queue actually holds something.
+// These tests therefore assert BOTH halves — the observable warning behaviour
+// (preventDefault) and the registration itself, which is the part bfcache
+// eligibility turns on.
 describe('chunk leave-warning coverage (task 5.1)', () => {
+  function dispatchBeforeUnload(): BeforeUnloadEvent {
+    const evt = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+    window.dispatchEvent(evt);
+    return evt;
+  }
+
+  function beforeUnloadCalls(spy: { mock: { calls: unknown[][] } }): number {
+    return spy.mock.calls.filter((call) => call[0] === 'beforeunload').length;
+  }
+
+  function spyOnWindowListeners() {
+    return {
+      add: vi.spyOn(window, 'addEventListener'),
+      remove: vi.spyOn(window, 'removeEventListener'),
+    };
+  }
+
+  it('registers no beforeunload listener while the queue is empty', () => {
+    const spies = spyOnWindowListeners();
+    seedQueue();
+    render(<ChunkRescueBanner />);
+
+    expect(beforeUnloadCalls(spies.add)).toBe(0);
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+  });
+
+  it('attaches the listener as soon as a chunk enqueues', () => {
+    const spies = spyOnWindowListeners();
+    const queue = seedQueue();
+
+    // Queue notification is synchronous with `enqueue()`, so the listener is
+    // armed in the same turn the chunk becomes at-risk — no unwarned window.
+    queue.enqueue(chunkInput());
+
+    expect(beforeUnloadCalls(spies.add)).toBe(1);
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+  });
+
   it('warns (preventDefault) when the queue is non-empty after stop', async () => {
     const queue = seedQueue();
-    // Importing the banner module installs the module-scope beforeunload
-    // listener as a side effect.
     render(<ChunkRescueBanner />);
 
     queue.enqueue(chunkInput());
     await queue.pump(); // fails, stays queued
 
-    const evt = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
-    window.dispatchEvent(evt);
-    expect(evt.defaultPrevented).toBe(true);
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
   });
 
-  it('does not warn when the queue is empty', () => {
-    seedQueue();
-    render(<ChunkRescueBanner />);
+  it('detaches the listener once the queue drains', () => {
+    const spies = spyOnWindowListeners();
+    const queue = seedQueue();
+    queue.enqueue(chunkInput());
+    expect(beforeUnloadCalls(spies.add)).toBe(1);
 
-    const evt = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
-    window.dispatchEvent(evt);
-    expect(evt.defaultPrevented).toBe(false);
+    queue.discardAll();
+
+    expect(beforeUnloadCalls(spies.remove)).toBe(1);
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+  });
+
+  it('attach/detach are idempotent across repeated same-state snapshots', () => {
+    const spies = spyOnWindowListeners();
+    const queue = seedQueue();
+    queue.enqueue(chunkInput({ chunkIndex: 0 }));
+    queue.enqueue(chunkInput({ chunkIndex: 1, startedAtUtc: '2026-08-12T10:10:00.000Z' }));
+    // Still non-empty after both notifications — exactly one attach.
+    expect(beforeUnloadCalls(spies.add)).toBe(1);
+
+    queue.discard(1, 1); // one chunk left: still non-empty, still one attach
+    expect(beforeUnloadCalls(spies.add)).toBe(1);
+    expect(beforeUnloadCalls(spies.remove)).toBe(0);
+
+    queue.discardAll();
+    queue.discardAll(); // repeated empty snapshot must not re-remove
+    expect(beforeUnloadCalls(spies.remove)).toBe(1);
   });
 });

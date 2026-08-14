@@ -774,8 +774,14 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       return () => window.removeEventListener('pagehide', onHide);
     }, [beaconRelease, stopHeartbeat]);
 
-    // Warn before unload while recording
+    // Warn before unload while recording. The listener is registered only for
+    // the span of an actual recording, not for the component's whole mount:
+    // a registered `beforeunload` listener disqualifies the page from the
+    // back/forward cache on its mere presence, regardless of whether the
+    // handler would warn, so gating the registration (not just the handler
+    // body) is what keeps bfcache eligible on an idle session page.
     useEffect(() => {
+      if (state.phase !== 'recording') return;
       const onBeforeUnload = (e: BeforeUnloadEvent) => {
         if (stateRef.current.phase !== 'recording') return;
         const msg =
@@ -785,7 +791,7 @@ export const AudioRecorder = forwardRef<AudioRecorderHandle, AudioRecorderProps>
       };
       window.addEventListener('beforeunload', onBeforeUnload);
       return () => window.removeEventListener('beforeunload', onBeforeUnload);
-    }, []);
+    }, [state.phase]);
 
     // Cleanup on unmount. Stopping the recorder marks a 'final' stop: its
     // onstop enqueues what was captured and the module-owned queue keeps

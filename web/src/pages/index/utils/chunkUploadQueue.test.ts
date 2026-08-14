@@ -6,6 +6,7 @@ import {
   createChunkUploadQueue,
   type ExistingSegment,
   getChunkUploadQueue,
+  onChunkUploadQueueCreated,
   resetChunkUploadQueueForTesting,
   type UploadOutcome,
 } from './chunkUploadQueue';
@@ -634,6 +635,70 @@ describe('createChunkUploadQueue', () => {
 
       expect(second).not.toBe(first);
       expect(second.getSnapshot().chunks).toHaveLength(0);
+    });
+
+    // The creation seam exists so `chunkLeaveWarning.ts` can start observing
+    // the singleton the instant a real caller builds it, without ever
+    // constructing (and mis-depping) it itself.
+    describe('onChunkUploadQueueCreated', () => {
+      it('fires when the singleton is constructed, with the instance', () => {
+        const seen: ChunkUploadQueue[] = [];
+        const dispose = onChunkUploadQueueCreated((q) => seen.push(q));
+        try {
+          expect(seen).toHaveLength(0); // nothing constructed yet
+
+          const queue = getChunkUploadQueue({
+            upload: vi.fn(),
+            listSegments: vi.fn(),
+            clock: makeClock(),
+          });
+
+          expect(seen).toEqual([queue]);
+
+          // A later get() returns the existing instance and must not re-fire.
+          getChunkUploadQueue({ upload: vi.fn(), listSegments: vi.fn(), clock: makeClock() });
+          expect(seen).toHaveLength(1);
+        } finally {
+          dispose();
+        }
+      });
+
+      it('calls a late registrant immediately with the existing singleton', () => {
+        const queue = getChunkUploadQueue({
+          upload: vi.fn(),
+          listSegments: vi.fn(),
+          clock: makeClock(),
+        });
+
+        const seen: ChunkUploadQueue[] = [];
+        const dispose = onChunkUploadQueueCreated((q) => seen.push(q));
+        try {
+          expect(seen).toEqual([queue]);
+        } finally {
+          dispose();
+        }
+      });
+
+      it('re-fires after a reset + reconstruction, and stops after unsubscribe', () => {
+        const seen: ChunkUploadQueue[] = [];
+        const dispose = onChunkUploadQueueCreated((q) => seen.push(q));
+        const deps = { upload: vi.fn(), listSegments: vi.fn(), clock: makeClock() };
+        try {
+          const first = getChunkUploadQueue(deps);
+          resetChunkUploadQueueForTesting();
+          const second = getChunkUploadQueue(deps);
+
+          // The reset seam drops the instance, not the observers — so the
+          // rebuilt singleton is announced to the same listener.
+          expect(seen).toEqual([first, second]);
+        } finally {
+          dispose();
+        }
+
+        resetChunkUploadQueueForTesting();
+        getChunkUploadQueue(deps);
+        expect(seen).toHaveLength(2);
+      });
     });
   });
 });
