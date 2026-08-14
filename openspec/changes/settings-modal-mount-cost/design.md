@@ -209,7 +209,21 @@ mutation mocks to force a rejection, and it would exercise the *identical* mecha
 the four triggers already covered — disproportionate scaffolding for a fifth exercise of the same
 code path. Accepted as a residual gap between spec and test coverage, not silently narrowed away.
 
-### D0.1 — The session-dependent cost is still unexplained
+### D0.1 — The session-dependent cost (RESOLVED by phases 3–4; see the update below)
+
+> **UPDATE 2026-08-14 — this decision's premise is falsified, in the good direction.** D0.1 assumed
+> the session-dependent long tasks were *independent* of the modal's mount and therefore untouched
+> by this change. Measured on the session path at last (7 trials each side, clean builds,
+> `.apply/profile-after.md`): **long tasks went from 3 of 7 runs to 0 of 7**, and the median click
+> went **55.7 ms → 35.2 ms (−37 %)**. Phases 3 and 4 removed it. Two corrections: the recorded
+> "67–143 ms on every run" came from a 3-run sample taken under machine load and overstated the
+> magnitude (clean baseline: 55.7 ms median, long tasks on 3 of 7); and the Radix-Dialog mechanisms
+> below are best read as **multipliers on how much DOM the open inserts**, not as independent
+> costs — shrinking the mounted subtree shrank what they operate on. A residual session-dependence
+> remains (35.2 ms with a session vs 19.0 ms without) but crosses no jank threshold, so the
+> Dialog-open investigation is **not** opened on current evidence.
+
+The original decision text, kept as the record of what was believed before the measurement:
 
 Independent of the withdrawn render-count story, one measurement stands because it never used the
 DevTools tool: `PerformanceObserver` reports **67–143 ms long tasks on every settings click with a
@@ -462,6 +476,11 @@ the number, and dev is also a candidate confound in its own right (see the panel
   this change's scope: it is a different component, a different fix (memoization + per-card Radix
   cost), and confirming it requires changing the active show. If it is confirmed, it belongs in its
   own change. See the measured-context section for the mechanism.
+
+**Closed 2026-08-14 — D0.1's session-dependent cost.** It was carried as the change's largest open
+question. Measured on the session path: long tasks 3-of-7 runs → 0-of-7, median 55.7 → 35.2 ms.
+Phases 3–4 removed it; the Radix-Dialog hypothesis is not pursued. See D0.1's update block and
+`.apply/profile-after.md`.
 
 The two questions carried by the pre-gate draft were closed at the 2026-08-13 gate: the warming
 trigger died with the code-splitting phase, and the `WorkspaceStatic` characterization test moved
