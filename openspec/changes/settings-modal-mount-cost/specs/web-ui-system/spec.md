@@ -16,8 +16,9 @@ withdrawn when the render counts supporting it proved to be a profiling-tool art
   what it was before the click
 
 #### Scenario: The boundary holds for every shell state change
-- **WHEN** the user opens the New Session modal or the Batch Import modal, closes the settings
-  modal, or toggles the mobile navigation rail, while a session workspace is mounted
+- **WHEN** the user opens the New Session modal, the Batch Import modal, or the YouTube import
+  error modal, closes the settings modal, or toggles the mobile navigation rail, while a session
+  workspace is mounted
 - **THEN** the boundary props remain referentially identical across each of those state changes
 
 ### Requirement: Settings modal defers inactive tab content

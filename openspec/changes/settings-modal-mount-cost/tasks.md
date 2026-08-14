@@ -12,8 +12,12 @@ partition the click into two independent costs (numbers and method in `design.md
 
 - **Modal mount** — 1,337 mounts, ~70 ms, dominated by Radix `Select` item trees (12
   `SelectTrigger` mounts, matching the modal's Select inventory exactly). Addressed by phases 3–4.
-- **Workspace re-render** — +11,097 re-renders and 70 ms → 101 ms once a session workspace is
-  open, caused by a defeated `memo`. Addressed by phase 2.
+- **Workspace re-render — claim withdrawn.** Originally recorded here as "+11,097 re-renders and
+  70 ms → 101 ms once a session workspace is open, caused by a defeated `memo`." That render-count
+  claim was withdrawn post-apply: it came from an over-counting instrument, and ground truth shows
+  the workspace re-renders zero times on a settings click either way (see design.md D0 and
+  `.apply/phase2-diagnostic.md`). What phase 2 actually addressed is a real but modest prop-identity
+  defect at the shell-to-workspace boundary, kept for correctness rather than a measured win.
 
 - [x] 1.1 Baseline profile of the settings-open click, production serve path, reporter's data.
 - [x] 1.2 Halt-gate attribution — **passed**.
@@ -31,13 +35,13 @@ Spec: "The shell-to-workspace render boundary stays memoizable". Design: D0.
 > (`.apply/phase2-diagnostic.md`). The fix and its tests are kept for correctness only; task 2.3's
 > verification criterion is void and replaced below.
 
-- [ ] 2.1 Write the failing test in `AppShell.test.tsx`: with a session workspace mounted, a shell
+- [x] 2.1 Write the failing test in `AppShell.test.tsx`: with a session workspace mounted, a shell
       state change (open the settings modal) must not re-render the workspace subtree. Assert via a
       render counter on a mocked `SessionRoute`/`WorkspaceStatic` child, or by asserting that the
       props crossing the boundary keep a stable identity across shell renders — presence assertions
       cannot see this. Extend to the other shell overlays and the mobile rail toggle per the second
       scenario. Confirm it fails against the current implementation.
-- [ ] 2.2 Give `onOpenMobileNav` a stable identity in `AppShell` — `useCallback`, matching
+- [x] 2.2 Give `onOpenMobileNav` a stable identity in `AppShell` — `useCallback`, matching
       `handleOpenSettings` / `handleCloseSettings` / `handleOpenNewSession` alongside it — so
       `WorkspaceStatic`'s existing `memo` holds. Locate by content: the inline
       `onOpenMobileNav={() => setRailOpen(true)}` arrow on the `SessionRoute` element. Verify no
@@ -100,10 +104,17 @@ Spec: "Event-button rows defer their type control". Design: D3.
 ## 5. Final gates
 
 - [ ] 5.1 `npm run typecheck` and `npm test` (full workspace sweep).
-- [ ] 5.2 Re-run the measurements from 1.1/1.3 and record them beside the baseline: the
-      settings-open click with a session open, the reopen path, and the first tab activation must
-      all improve. If any is unchanged, that is a finding for the whole-branch review, not a
-      rounding error. Record the numbers in `design.md`.
+- [ ] 5.2 Re-run the measurements from 1.1/1.3 and record them beside the baseline, using only the
+      instruments this change trusts (`PerformanceObserver` long-task timings and/or `console.log`
+      ground truth — not `agent-browser react renders`, whose per-component and aggregate counts
+      this change found unreliable; see D0 and `.apply/phase2-diagnostic.md`): the modal-mount cost
+      (task 1.1's baseline) and the first Event Buttons tab activation must both improve — these are
+      what phases 3–4 (deferred tab content, lazy per-row `Select`) can actually deliver. Do **not**
+      expect the settings-open click's 67–143 ms session-dependent long task (D0.1) to improve —
+      that cost's cause is untested and out of scope for this change; phase 2's contribution to it
+      was the withdrawn claim. If the modal-mount or first-tab-activation numbers are unchanged,
+      that is a finding for the whole-branch review, not a rounding error. Record the numbers in
+      `design.md`.
 - [ ] 5.3 `npm run e2e` (chromium + login-gate) **and** `npm run e2e:visual` (visual-desktop +
       visual-mobile). The settings snapshots and the teams smoke flow both click
       `#v6-settings-tab-event-buttons` before touching table content. This change alters no UI

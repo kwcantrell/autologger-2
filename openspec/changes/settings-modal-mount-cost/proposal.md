@@ -18,21 +18,30 @@ synchronous mount cost, and the panel measurement refined it twice:
   second commit after the init effect. `showDrafts` is never cleared on close, so every
   *subsequent* open mounts the full table inside the opening commit.
 
-Profiling on the reporter's own data then found a **second, larger cost** that only appears with a
-session open — which is why the first profile (taken from `/`) missed it entirely. With session
-`ed1413e0-…` mounted (15,150 transcript words), the same click goes from 6,141 to **17,238
-renders** and 70 ms to **101 ms**. Mounts are identical; the entire delta is the already-mounted
-workspace re-rendering. `WorkspaceStatic` is `memo()`'d expressly to prevent this, but `AppShell`
-passes `SessionRoute` an inline `onOpenMobileNav={() => setRailOpen(true)}` arrow that it forwards
-into the memo, so shallow comparison always misses and the guard never holds. That defect fires on
-*every* shell state change, not just this modal.
+Profiling on the reporter's own data then appeared to find a **second, larger cost** that only
+shows up with a session open — which is why the first profile (taken from `/`) missed it. With
+session `ed1413e0-…` mounted (15,150 transcript words), the same click's tool-reported total went
+from 6,141 to 17,238 renders and 70 ms to 101 ms, read at the time as the already-mounted workspace
+re-rendering because `AppShell` passed `SessionRoute` an inline `onOpenMobileNav={() =>
+setRailOpen(true)}` arrow that defeated `WorkspaceStatic`'s `memo`.
+
+**This reading was withdrawn post-apply** (see `design.md` D0): the render counts came from an
+instrument later found to over-count for this app, and ground truth (`console.log` at the top of
+each render body) shows the workspace re-renders zero times on a settings click either way — the
+memo was never actually defeated on this interaction. What remains real and unchanged by the
+withdrawal is the modal's own mount cost (below) and a genuine, if unglamorous, prop-identity
+inconsistency: `onOpenMobileNav` was the one boundary prop left as an inline arrow while its three
+siblings were already `useCallback`'d. Fixing it is correct on its own terms; no performance win is
+claimed for it.
 
 ## What Changes
 
-- **The workspace render-isolation memo is restored** by giving `onOpenMobileNav` a stable
-  identity, matching the three already-`useCallback`'d handlers beside it. Largest measured win,
-  smallest diff, and it fixes the same defect for New Session, Batch Import, the YouTube error
-  modal, and the mobile rail toggle.
+- **The workspace render-isolation memo boundary is made prop-stable** by giving
+  `onOpenMobileNav` a stable identity, matching the three already-`useCallback`'d handlers beside
+  it, so the boundary's props stay referentially identical across New Session, Batch Import, the
+  YouTube error modal, settings open/close, and the mobile rail toggle. Smallest diff of the three
+  changes here; no performance win is claimed for it (see Why — the originally-claimed win was
+  withdrawn post-apply).
 
 - **Inactive tab content mounts on first activation** and stays mounted afterwards. The four panel
   wrapper elements keep rendering, so every `aria-controls` target and e2e-observable id survives.

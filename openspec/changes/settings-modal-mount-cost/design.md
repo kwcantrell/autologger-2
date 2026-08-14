@@ -68,6 +68,20 @@ Attribution above rests on the Radix component names (which survive via `display
 
 ### The session-data dependence, measured (2026-08-13) — a second, larger cost
 
+> **WITHDRAWN (2026-08-13, post-apply).** This section's headline finding — a "defeated memo"
+> causing +11,097 re-renders of the already-mounted workspace — **does not hold up**. The render
+> counts below came from the `agent-browser react renders` instrument, which was independently
+> found to over-count for this app (singleton components reported as `2 insts`, ancestors with
+> `self: -` despite "9 renders", counts that scale with recording-window length rather than actual
+> work). Ground truth — a `console.log` as the first statement of each render body, which cannot
+> under-count — shows `SessionWorkspace` renders **zero** times on a settings click, with or
+> without the `useCallback` fix below, and the fix did not move this section's own tool-reported
+> totals either (17,238 before and after). **`WorkspaceStatic`'s memo was never actually defeated
+> for this interaction.** See D0 (rewritten) and `.apply/phase2-diagnostic.md` for the full
+> reconciliation. The section below is kept as the historical record of how the finding was
+> reached — the mount-count and long-task numbers stand, but every re-render count, the "root
+> cause" causal claim, and the "not settings-specific" generalization that follow **do not**.
+
 The reporter observes the lag scaling with `server/data/sessions`, and notes it reproduces with
 session `ed1413e0-…` open. The first profile was taken from `/` with **no session open**, so it
 could not have exercised that path at all. Re-profiling with that session's workspace mounted
@@ -76,10 +90,10 @@ could not have exercised that path at all. Re-profiling with that session's work
 > **Timing correction (apply-time, task 1.3).** The millisecond figures in the two tables of this
 > section were taken with the React DevTools hook enabled, which inflates render time. Re-measured
 > without it: from `/` the settings click costs ~37 ms click→paint and produces **no long task at
-> all**; with a session workspace open it produces a **67–143 ms long task on every run**. The
-> **render counts below stand unchanged** — the hook does not inflate counts — so the structural
-> conclusion (identical mounts, +11,097 re-renders) is unaffected. The corrected numbers
-> *strengthen* D0/phase 2 and show the modal's own mount is the smaller cost. Full baseline:
+> all**; with a session workspace open it produces a **67–143 ms long task on every run** (this
+> long-task finding is real and independent of the withdrawal above — see D0.1). The render counts
+> in the table below are **not** reliable per-component evidence — see the withdrawal notice at
+> the top of this section — so no structural conclusion is drawn from them here. Full baseline:
 > `.apply/profile-before.md`.
 
 | Settings-open click | No session open | Session workspace open |
@@ -91,30 +105,34 @@ could not have exercised that path at all. Re-profiling with that session's work
 | Components | 107 | 148 |
 | Min FPS | 15 | **10** |
 
-**The mount count is identical**, so the modal's own subtree costs the same in both. The entire
-+11,097 delta is *re-renders of the already-mounted workspace*: `Tooltip` / `TooltipTrigger` /
-`TooltipPortal` / `TooltipProvider` at **142 instances, 0 mounts, 639 re-renders each**, and the
-event-row components at **132 instances, 0 mounts, 594 re-renders**, whose top change reason the
-profiler reports as **`props.onDelete`** — the signature of a fresh function identity cascading
-through a subtree.
+**The mount count is identical**, so the modal's own subtree costs the same in both. At the time
+this was written, the entire +11,097 delta was read as *re-renders of the already-mounted
+workspace* (`Tooltip` / `TooltipTrigger` / `TooltipPortal` / `TooltipProvider` at 142 instances,
+639 re-renders each; event-row components at 132 instances, 594 re-renders, top change reason
+`props.onDelete`). **That reading is withdrawn** — see the notice at the top of this section; the
+instrument producing these per-component counts over-counts, and ground truth shows the workspace
+does not re-render on this click at all.
 
-**Root cause — a defeated memo.** `WorkspaceStatic` is `memo()`'d *expressly* to isolate the
-workspace from this modal (its own comment says so). But `SessionRoute` is not memoized, and
-`AppShell` renders it with `onOpenMobileNav={() => setRailOpen(true)}` — an inline arrow, fresh
-identity on every `AppShell` render — which `SessionRoute` forwards unchanged into
-`WorkspaceStatic`. Shallow comparison therefore always misses and the memo never holds. The
-neighbouring callbacks (`handleOpenSettings`, `handleCloseSettings`, `handleOpenNewSession`) are
-all correctly `useCallback`'d; this one prop was left inline and silently disables the guard.
+**Originally-claimed root cause — a defeated memo (withdrawn).** The reasoning below was the
+change's working theory and motivated the D0 fix, but ground-truth measurement (`.apply/
+phase2-diagnostic.md`) shows `WorkspaceStatic`'s memo bails correctly on this interaction and was
+never actually defeated here — so **none of the causal claims in this paragraph or the next hold
+as fact**, though they remain the record of the reasoning that led to the (still-correct, for
+other reasons) fix in D0. `WorkspaceStatic` is `memo()`'d *expressly* to isolate the workspace
+from this modal (its own comment says so). `SessionRoute` is not memoized, and `AppShell` rendered
+it with `onOpenMobileNav={() => setRailOpen(true)}` — an inline arrow, fresh identity on every
+`AppShell` render — which `SessionRoute` forwards unchanged into `WorkspaceStatic`. The
+neighbouring callbacks (`handleOpenSettings`, `handleCloseSettings`, `handleOpenNewSession`) were
+already `useCallback`'d; this one prop was left inline. Giving it the same treatment is a genuine
+prop-stability fix (see D0) — it just is not established to have changed how often anything
+re-renders.
 
-Because the trigger is *any* `AppShell` state change, this is not settings-specific: opening New
-Session, Batch Import, the YouTube error modal, or toggling the mobile rail all re-render the whole
-workspace the same way. It scales with the open session's content, which is exactly the
-"function of `server/data/sessions`" the reporter described.
+The "not settings-specific — any `AppShell` state change would do the same" generalization
+likewise inherits the same withdrawal and is not asserted as fact.
 
 **Not investigated (and not needed):** the rail's own per-card cost. `V6Rail` is likewise
 un-memoized with inline arrow props, so `SessionCard`s re-render on the same click; with one
-session in the active show this contributed nothing measurable, and the workspace finding above
-accounts for the reported symptom. Left as a note, not a task.
+session in the active show this contributed nothing measurable. Left as a note, not a task.
 
 ### Constraints
 
@@ -176,6 +194,17 @@ underlying inconsistency is real and the test is cheap to keep. *Memoize `Sessio
 unnecessary and unmotivated now that no re-render problem is known to exist there. *Restore the
 performance framing once a better instrument is available*: that is a new investigation (see the
 Dialog-open hypothesis below), not this decision.
+
+**Residual: the YouTube import error modal trigger is spec'd but not tested.** The spec's second
+scenario names five triggers (New Session, Batch Import, YouTube import error modal, settings
+close, mobile rail toggle) because all five are genuinely `AppShell` state changes that cross the
+same boundary and the requirement should describe the behavior the boundary owes, not the set a
+test happens to cover. Task 2.1's test suite exercises four of the five and deliberately omits the
+YouTube import error modal: reaching it requires overriding the shared `NewSessionModal`/YouTube-
+mutation mocks to force a rejection, and it would exercise the *identical* mechanism (the same
+`onOpenMobileNav`/`onNewSession` props, the same `AppShell` re-render, the same boundary check) as
+the four triggers already covered — disproportionate scaffolding for a fifth exercise of the same
+code path. Accepted as a residual gap between spec and test coverage, not silently narrowed away.
 
 ### D0.1 — The session-dependent cost is still unexplained
 

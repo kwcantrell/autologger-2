@@ -422,14 +422,22 @@ describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)',
 });
 
 describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', () => {
-  // Spec: "Shell state changes do not re-render the session workspace" —
-  // every prop crossing the AppShell -> SessionRoute -> WorkspaceStatic
-  // boundary must hold a stable identity across shell renders, or
-  // WorkspaceStatic's memo never bails out. Profiled cost of the defect: with
-  // a session workspace mounted, opening the settings modal produced 17,238
-  // renders vs 6,141 with no session open — +11,097 re-renders, all of them
-  // the already-mounted workspace, traced to the inline
-  // `onOpenMobileNav={() => setRailOpen(true)}` arrow.
+  // Spec: "The shell-to-workspace render boundary stays memoizable" — every
+  // prop crossing the AppShell -> SessionRoute -> WorkspaceStatic boundary
+  // must hold a stable identity across shell renders, or WorkspaceStatic's
+  // memo never bails out. These tests assert exactly that: prop identity
+  // survives each of five shell state changes. They assert nothing about how
+  // often the workspace actually re-renders in practice.
+  //
+  // An earlier version of this comment cited a profiled win for this fix
+  // (+11,097 re-renders, 70 ms -> 101 ms). That figure was withdrawn — it came
+  // from the `agent-browser react renders` instrument, which was found to
+  // over-count for this app; ground truth (console.log at the top of the
+  // render body) shows the workspace re-renders zero times on a settings
+  // click, with or without this fix. See design.md D0 and
+  // `.apply/phase2-diagnostic.md`. The fix is kept for correctness (it removes
+  // a real, mutation-checked memo defeat), not for a measured performance
+  // consequence.
 
   beforeEach(() => {
     sessionRouteProbe.renders.length = 0;
@@ -473,6 +481,7 @@ describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', 
     const before = lastRender();
 
     fireEvent.click(screen.getByTestId('rail-new'));
+    expect(screen.getByTestId('new-session-create')).not.toBeNull();
 
     const after = lastRender();
     expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
