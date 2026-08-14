@@ -111,6 +111,35 @@ describe('EventGenerateCustomModal', () => {
     expect(screen.queryByText('Loading instructions…')).toBeNull();
   });
 
+  // --- Failed show fetch (PR review finding 3) ---
+  //
+  // An errored `useShow` settles: `isPending` goes false and `candidates` is
+  // empty, so the modal used to render a blank body with a dead Generate
+  // button — pixel-identical to a show that genuinely has no auto-instructions.
+  it('surfaces a failed show fetch with a message and a working Retry', () => {
+    const refetch = vi.fn();
+    useShowMock.mockReturnValue({ data: undefined, isPending: false, isError: true, refetch });
+    renderStrict(
+      <EventGenerateCustomModal showId={SHOW_ID} onSubmit={vi.fn()} onClose={() => {}} />,
+    );
+
+    expect(screen.getByText('Couldn’t load instructions.')).toBeTruthy();
+    // Not the settled-but-empty state, and not a false pending claim either.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByText('Loading instructions…')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('claims no error state when there is no show to fetch', () => {
+    useShowMock.mockReturnValue({ data: undefined, isPending: true, isError: false });
+    renderStrict(<EventGenerateCustomModal showId={null} onSubmit={vi.fn()} onClose={() => {}} />);
+
+    expect(screen.queryByText('Couldn’t load instructions.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
   it('disables Generate when a refetch removes the selected candidate', () => {
     useShowMock.mockReturnValue(
       showWith([dropdownCategory([{ label: 'Cam A', auto_instruction: 'aim at host' }])]),

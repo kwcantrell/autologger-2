@@ -13,10 +13,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 // --- Query-key factory grep-clean guard (code-health-tail task 4.6, finding
 // 2.8) ---
 //
-// `sessionStatusKeys` (web/src/api/hooks/useSessionStatus.ts) and
-// `audioSegmentsKeys` (web/src/api/hooks/useAudio.ts) are the single owners
-// of the session-status and audio-segments React Query key literals
-// (unquoted here on purpose — this file is in its own scan scope).
+// `sessionStatusKeys` (web/src/api/hooks/useSessionStatus.ts),
+// `audioSegmentsKeys` (web/src/api/hooks/useAudio.ts) and `showKeys`
+// (web/src/api/hooks/useShows.ts) are the single owners of the
+// session-status, audio-segments, studio-shows and show React Query key
+// literals (unquoted here on purpose — this file is in its own scan scope).
 // Every other consumer — hooks, components, tests — must build keys through
 // the factories, so the key shapes cannot drift apart the way finding 2.8's
 // nine scattered copies could. This guard scans all of web/src and fails on
@@ -28,8 +29,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 // only a string literal can reconstitute a bare key.
 //
 // NOTE ON THIS FILE'S OWN FIXTURES: the literals below are built via
-// concatenation (`SESSION_STATUS`, `AUDIO_SEGMENTS`) so this file — itself in
-// scope — never contains the quoted contiguous run its own scan looks for.
+// concatenation (`SESSION_STATUS`, `AUDIO_SEGMENTS`, `STUDIO_SHOWS`, `SHOW`)
+// so this file — itself in scope — never contains the quoted contiguous run
+// its own scan looks for.
+//
+// NOTE ON THE BARE show ROOT: it is an ordinary English word, so unlike the
+// hyphenated literals it can plausibly collide with an unrelated string (a
+// `describe` title, a discriminant value). That is deliberate and the tradeoff
+// is accepted: the root IS the key prefix `HomeSettingsModal` invalidates by,
+// so a stray copy is exactly the drift this guard exists to catch. A genuine
+// non-key collision should be renamed, not exempted — an exemption list would
+// reopen the hole.
 
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage', '.git']);
@@ -37,11 +47,15 @@ const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'coverage',
 // Built via concatenation — see the file header note.
 const SESSION_STATUS = ['session', 'status'].join('-');
 const AUDIO_SEGMENTS = ['audio', 'segments'].join('-');
+const STUDIO_SHOWS = ['studio', 'shows'].join('-');
+const SHOW = ['sh', 'ow'].join('');
 
 /** file (relative to the scan root, posix separators) allowed to hold each literal. */
 const FACTORY_MODULE: Record<string, string> = {
   [SESSION_STATUS]: 'api/hooks/useSessionStatus.ts',
   [AUDIO_SEGMENTS]: 'api/hooks/useAudio.ts',
+  [STUDIO_SHOWS]: 'api/hooks/useShows.ts',
+  [SHOW]: 'api/hooks/useShows.ts',
 };
 
 function quotedPattern(literal: string): RegExp {
@@ -159,7 +173,7 @@ describe('scanForBareKeyLiterals — end-to-end mutation check on a real filesys
 });
 
 describe('web/src grep-clean guard — factories are the only key-literal owners (finding 2.8)', () => {
-  it('contains ZERO bare session-status/audio-segments key literals outside the factory modules', () => {
+  it('contains ZERO bare session-status/audio-segments/studio-shows/show key literals outside the factory modules', () => {
     expect(scanForBareKeyLiterals(WEB_SRC)).toEqual([]);
   });
 });

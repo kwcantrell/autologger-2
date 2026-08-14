@@ -70,7 +70,7 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
   // longer carries. This component is mounted only while the modal is open
   // (its caller renders it behind the open flag), so the fetch is lazy by
   // construction — no gate of its own is needed.
-  const { data, isPending } = useShow(showId);
+  const { data, isPending, isError, refetch } = useShow(showId);
   const categories = data?.show.categories;
   const candidates = useMemo(() => selectionCandidates(categories ?? []), [categories]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -129,6 +129,24 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
             fetch), so it is paired with the id — otherwise the modal would
             claim to be loading a show it never requested. */}
         {isPending && showId !== null && <p className="modal-hint muted">Loading instructions…</p>}
+        {/* A FAILED fetch is otherwise indistinguishable from a show with no
+            auto-instructions at all: `isPending` is false, `candidates` is
+            empty, so the modal settles into a blank body with a dead Generate
+            button and no hint that anything went wrong. */}
+        {isError && showId !== null && (
+          <div className="flex flex-col items-start gap-2">
+            <p className="modal-hint muted !mb-0">Couldn’t load instructions.</p>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                void refetch();
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {[...grouped.values()].map((group) => (
           <fieldset
             key={group[0].categoryId}

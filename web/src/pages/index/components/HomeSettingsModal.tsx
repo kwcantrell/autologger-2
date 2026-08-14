@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
-import { useStudioShows } from '../../../api/hooks/useShows';
+import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
@@ -249,6 +249,12 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   // effect below would never run for a team-less account and the modal would
   // sit on a permanent skeleton.
   const showsLoaded = Boolean(profile) && (targetStudioId === '' || studioShowsQuery.isSuccess);
+  // A FAILED shows fetch is a third state, distinct from both "loaded" and
+  // "still loading": `showsLoaded` only ever flips on `isSuccess`, so without
+  // this the shows section would sit on its loading skeleton forever, with no
+  // message and no way to retry. Save stays disabled either way (it gates on
+  // `showsReady`, which an errored fetch never reaches).
+  const showsError = Boolean(targetStudioId) && studioShowsQuery.isError;
 
   // Initialise form once when profile first loads (or after reset above), and record the
   // snapshot dirtiness is compared against. Gated on `isOpen` (settings-modal-mount-cost,
@@ -319,6 +325,17 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     // its skeleton instead of another team's show details.
     setShowDrafts({});
     setActiveShowId('');
+    // …and forget WHICH studio the (now-cleared) drafts belonged to. Leaving
+    // the previous studio's id here is an A→B→A trap: if B's shows are still in
+    // flight the rebuild effect early-returns on `!showsLoaded`, so
+    // `draftsStudioId` would still read 'A' when the user switches back — and
+    // the effect's idempotence guard (`draftsStudioId === targetStudioId`)
+    // would then decline to rebuild, leaving the drafts map empty for the rest
+    // of the open (dirty-compare arms Save; the save silently omits
+    // `show_updates`). `null` cannot equal any studio id, so the return trip
+    // always rebuilds — from A's already-cached response, reproducing the
+    // snapshot's bytes so dirtiness round-trips back to clean (D11).
+    setDraftsStudioId(null);
   }
 
   // Derived dirtiness (D11, panel-revised — the spike hand-armed a per-callsite `dirty` flag;
@@ -483,11 +500,21 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       // button strip keeps serving stale ones for its 30s staleTime (design D4).
       queryClient.invalidateQueries({ queryKey: ['show-categories'] });
       // Same 30s-staleness argument, for the two caches this save just made
-      // wrong (profile-shows-slimming): `studio-shows` is THIS modal's own
-      // draft source, and `show` backs EventGenerateCustomModal — which would
-      // otherwise list the auto-instructions as they were before this save.
-      queryClient.invalidateQueries({ queryKey: ['studio-shows'] });
-      queryClient.invalidateQueries({ queryKey: ['show'] });
+      // wrong (profile-shows-slimming): the studio-shows list is THIS modal's
+      // own draft source, and the per-show entries back EventGenerateCustomModal
+      // — which would otherwise list the auto-instructions as they were before
+      // this save. Both are addressed through `showKeys`, never a bare literal
+      // (`queryKeyFactories.repo.test.ts`).
+      //
+      // Scoped to saves that actually carried `show_updates`: both roots are
+      // BARE prefixes, so an unconditional drop invalidates every studio's list
+      // and every per-show entry — refetching every show's full config for a
+      // save that only changed the account name or the active-studio pointer,
+      // neither of which any show payload reflects.
+      if (body.show_updates) {
+        queryClient.invalidateQueries({ queryKey: showKeys.allStudios() });
+        queryClient.invalidateQueries({ queryKey: showKeys.all() });
+      }
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Save failed.', true);
     }
@@ -587,12 +614,20 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               value={activeShowId}
               onChange={setActiveShowId}
               options={
-                // Three states now, not two: loading is distinct from empty
+                // FOUR states now, not two: loading is distinct from empty
                 // (profile-shows-slimming) — a studio's shows arrive over the
                 // wire, so "— No shows —" must not be shown before the answer
-                // is known.
+                // is known — and a failed fetch is distinct from loading, or
+                // the picker claims to still be waiting on a request that
+                // already came back.
                 !showsReady
-                  ? [{ value: '', label: 'Loading shows…', disabled: true }]
+                  ? [
+                      {
+                        value: '',
+                        label: showsError ? '— Unavailable —' : 'Loading shows…',
+                        disabled: true,
+                      },
+                    ]
                   : showsForStudio.length === 0
                     ? [{ value: '', label: '— No shows —', disabled: true }]
                     : showsForStudio.map((s) => ({
@@ -759,17 +794,37 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                   )}
                 </div>
               ) : (
-                <p
-                  className="modal-hint muted"
-                  id="profile-show-fields-placeholder"
-                  style={{ marginBottom: '0.75rem' }}
-                >
-                  {!showsReady
-                    ? 'Loading shows…'
-                    : showsForStudio.length === 0
-                      ? 'No shows for this team yet. Add one below.'
-                      : 'Select a show above to view details.'}
-                </p>
+                <>
+                  <p
+                    className="modal-hint muted"
+                    id="profile-show-fields-placeholder"
+                    style={{ marginBottom: '0.75rem' }}
+                  >
+                    {showsError
+                      ? 'Couldn’t load shows.'
+                      : !showsReady
+                        ? 'Loading shows…'
+                        : showsForStudio.length === 0
+                          ? 'No shows for this team yet. Add one below.'
+                          : 'Select a show above to view details.'}
+                  </p>
+                  {/* The only way out of the error state without reopening the
+                      modal — `showsLoaded` never flips on an errored query, so
+                      nothing else re-arms the section. */}
+                  {showsError && (
+                    <button
+                      type="button"
+                      className="btn"
+                      id="profile-shows-retry"
+                      style={{ marginBottom: '0.75rem' }}
+                      onClick={() => {
+                        void studioShowsQuery.refetch();
+                      }}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </>
               )}
 
               {/* Account section */}
@@ -907,7 +962,11 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               </>
             ) : (
               <p className="modal-hint muted">
-                {showsReady ? 'Select a show above to edit its event buttons.' : 'Loading shows…'}
+                {showsError
+                  ? 'Couldn’t load shows.'
+                  : showsReady
+                    ? 'Select a show above to edit its event buttons.'
+                    : 'Loading shows…'}
               </p>
             ))}
         </div>
