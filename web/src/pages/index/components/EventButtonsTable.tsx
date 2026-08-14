@@ -205,6 +205,15 @@ interface LazyTypeSelectProps {
  * that focus would upgrade-and-mount closed a beat before the click could reopen it —
  * and because `defaultOpen` is read only once, at mount, the click would then have no
  * way left to open the now-already-mounted control.
+ *
+ * The ref must clear on every path off the element, not only the successful ones:
+ * `pointerup`/`blur`/`click` cover a completed press, but a press-and-drag-off-and-
+ * release-elsewhere fires none of them on browsers that do not focus a `<button>` on
+ * mousedown (Safari/Firefox on macOS) — no pointer capture is set for mouse, so the
+ * release lands off-element, and the button was never focused so no `blur` fires
+ * either. `onPointerCancel`/`onPointerLeave` close that gap so a later, unrelated
+ * keyboard focus is not mistaken for the tail of that earlier gesture and left inert
+ * (settings-modal-mount-cost audit finding M4).
  */
 function LazyTypeSelect({ ariaLabel, value, className, options, onChange }: LazyTypeSelectProps) {
   const [upgrade, setUpgrade] = useState<{ open: boolean } | null>(null);
@@ -241,11 +250,18 @@ function LazyTypeSelect({ ariaLabel, value, className, options, onChange }: Lazy
       aria-label={ariaLabel}
       aria-expanded={false}
       aria-autocomplete="none"
+      data-state="closed"
       className={clsx(SELECT_TRIGGER_CLASSNAME, className)}
       onPointerDown={() => {
         pointerActiveRef.current = true;
       }}
       onPointerUp={() => {
+        pointerActiveRef.current = false;
+      }}
+      onPointerCancel={() => {
+        pointerActiveRef.current = false;
+      }}
+      onPointerLeave={() => {
         pointerActiveRef.current = false;
       }}
       onBlur={() => {

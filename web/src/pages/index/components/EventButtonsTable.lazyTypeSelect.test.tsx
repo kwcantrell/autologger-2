@@ -116,6 +116,16 @@ describe('EventButtonsTable — lazy button-type control (scenario a)', () => {
     renderTable(makeButtons(50));
     expect(screen.getAllByRole('combobox', { name: 'Button type' })).toHaveLength(50);
   });
+
+  it('the inert trigger carries data-state="closed" (audit finding M5)', () => {
+    // `SELECT_TRIGGER_CLASSNAME` is shared with the real Radix trigger and already
+    // includes a `data-[state=open]:` utility; the inert stand-in must expose the same
+    // attribute (in its closed value) so a future utility keyed off `data-state` applies
+    // to both, not just the upgraded control.
+    renderTable(makeButtons(1));
+    const trigger = screen.getByRole('combobox', { name: 'Button type' });
+    expect(trigger.getAttribute('data-state')).toBe('closed');
+  });
 });
 
 describe('EventButtonsTable — lazy button-type control (scenario b: single activation)', () => {
@@ -171,6 +181,32 @@ describe('EventButtonsTable — lazy button-type control (scenario b: single act
     expect(onChange).toHaveBeenCalled();
     const [newButtons] = onChange.mock.lastCall as [EventButtonDraft[]];
     expect(newButtons[0].type).toBe('ON_OFF');
+  });
+});
+
+describe('EventButtonsTable — lazy button-type control (regression: M4, pointerActiveRef stuck true)', () => {
+  it('recovers when a pointerdown is never followed by pointerup, blur, or click (press, drag off, release elsewhere)', () => {
+    renderTable([makeDraft({ id: 'b1', type: 'DROPDOWN' })]);
+    const trigger = screen.getByRole('combobox', { name: 'Button type' });
+
+    // Press-and-drag-off-and-release-elsewhere: on Safari/Firefox on macOS a <button>
+    // is not focused as part of mousedown's default action, and the release lands off
+    // the element with no pointer capture for mouse — so this gesture fires pointerdown,
+    // then a pointerleave as the pointer moves off the element mid-drag, and nothing
+    // else on the trigger (no pointerup, no blur — it was never focused).
+    // `pointerActiveRef` is set true by the pointerdown and, without M4's fix, has no
+    // way left to clear.
+    fireEvent.pointerDown(trigger, { pointerType: 'mouse', button: 0 });
+    fireEvent.pointerLeave(trigger, { pointerType: 'mouse' });
+
+    // Later, an unrelated keyboard Tab focuses the control. A real Radix trigger opens
+    // on the following ArrowDown; the guarded `onFocus` here must not treat this as the
+    // tail of the earlier pointer gesture (there is no click coming to open it).
+    fireEvent.focus(trigger);
+    const stillTrigger = screen.getByRole('combobox', { name: 'Button type' });
+    fireEvent.keyDown(stillTrigger, { key: 'ArrowDown' });
+
+    expect(screen.getByRole('listbox')).toBeTruthy();
   });
 });
 
