@@ -518,6 +518,19 @@ export interface AudioSegmentsResponse {
   has_audio: boolean;
 }
 
+/**
+ * Response of `POST /api/sessions/:id/audio/segments/sync-from-disk`
+ * (perf-fixes A3/B3). The server emits counts only — no `segments` array;
+ * callers that need the rows refetch the segments list (`useAudioClips`
+ * invalidates `audioSegmentsKeys.bySession` when `inserted > 0`).
+ */
+export interface AudioSyncFromDiskResponse {
+  inserted: number;
+  updated: number;
+  scanned: number;
+  has_audio: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Request bodies
 // ---------------------------------------------------------------------------
