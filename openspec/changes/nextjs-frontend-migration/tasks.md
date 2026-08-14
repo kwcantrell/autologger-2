@@ -125,7 +125,7 @@ frozen-contract surface and get risk-tier per-phase reviews.
       diffs; if any appear, inspect each and re-bless baselines deliberately in this
       branch's diff (never defer drift), recording the inspection outcome in the phase
       report.
-- [ ] 4.3 Manual dev-mode verification (documented in the phase report): single-process
+- [x] 4.3 Manual dev-mode verification (documented in the phase report): single-process
       dev boots at :8787, web-edit HMR works, server-edit restart re-prepares Next,
       session WS + dev HMR sockets coexist, dev OAuth start/callback round-trips
       same-origin (with real creds if available; otherwise assert the redirect shape),
