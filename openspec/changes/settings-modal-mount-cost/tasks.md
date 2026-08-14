@@ -62,7 +62,7 @@ Spec: "The shell-to-workspace render boundary stays memoizable". Design: D0.
 
 Spec: "Settings modal defers inactive tab content". Design: D2.
 
-- [ ] 3.1 Write the failing tests in `HomeSettingsModal.test.tsx` (which already mocks
+- [x] 3.1 Write the failing tests in `HomeSettingsModal.test.tsx` (which already mocks
       `./EventButtonsTable` — extend that mock with a **mount counter**, since the reopen scenario
       is about mounts, not final DOM), one per spec scenario: (a) opening mounts only General's
       content while all four `aria-controls` targets resolve; (b) activating Event Buttons mounts
@@ -70,7 +70,7 @@ Spec: "Settings modal defers inactive tab content". Design: D2.
       panel content** across the transition; (d) editing General and saving without ever activating
       Event Buttons still submits the same `show_updates`; (e) activating Event Buttons, editing
       nothing, and closing raises no discard confirmation. Confirm each fails for the stated reason.
-- [ ] 3.2 Implement: a `visitedTabs` `Set<TabId>` seeded `{'general'}`, added to where the tablist
+- [x] 3.2 Implement: a `visitedTabs` `Set<TabId>` seeded `{'general'}`, added to where the tablist
       button currently calls `setActiveTab(tab.id)`; gate only each panel's **children** on
       membership, leaving the four wrappers' `id`/`role`/`aria-labelledby`/`hidden`/`SECTION_CLASS`
       untouched. Move the open-reset out of the passive `isOpen` effect into the render-phase
