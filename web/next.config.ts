@@ -38,8 +38,22 @@ import type { NextConfig } from 'next';
 //   a plain string URL) — matching the `string | { src }` union already declared for these
 //   modules (`web/src/types/assets.d.ts`, task 1.2) and landing under the already-declared
 //   `/_next/static/*` path family (D6.4), not new surface.
+// - allowedDevOrigins (dev-layout-fix, 2026-08-13; lever pre-approved in design.md D1):
+//   dev-only — silences (and, when a future Next flips warn→block, keeps allowing) the
+//   "Cross origin request detected from 127.0.0.1 to /_next/* resource" warning. Mechanism
+//   (verified in next@15.5.23 `router-server.js` → `block-cross-site.js`): dev requests to
+//   `/_next/*`/`/__nextjs*` (incl. the HMR WS upgrade) compare the browser's `Origin`
+//   hostname against `['*.localhost', 'localhost', opts.hostname]` + `allowedDevOrigins`.
+//   Our embedded custom server instantiates `next({ dev, dir })` with no `hostname` option,
+//   so only `localhost` is assumed — while the dev server binds 127.0.0.1:8787 (D10 loopback
+//   pin) and the browser therefore sends `Origin: http://127.0.0.1:8787`. `127.0.0.1` is the
+//   one extra origin dev actually uses; `localhost` stays allowed built-in. Setting the
+//   option flips unlisted origins from warn to 403-block, which is correct for the loopback
+//   posture (LAN testing goes through the prod serve path, not dev). No prod effect:
+//   `blockCrossSite` runs only on the dev router path.
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  allowedDevOrigins: ['127.0.0.1'],
   images: {
     unoptimized: true,
   },
