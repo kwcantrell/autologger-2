@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCompanionPresence } from '../../../api/hooks/useCompanionPresence';
 import { eventsKeys, useEvents, WORKSPACE_EVENTS_LIMIT } from '../../../api/hooks/useEvents';
@@ -62,7 +62,15 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
   // EventLogSheet/MarkerNav also use useEvents; React Query dedupes the cache key per limit/offset,
   // so consumers wanting the full session share WORKSPACE_EVENTS_LIMIT (2000, the server's max limit).
   const { data: eventsRes } = useEvents(sessionId || null, { limit: WORKSPACE_EVENTS_LIMIT });
-  const events = eventsRes?.events ?? [];
+  // Referentially stable across renders (the `MarkerNav.tsx:90` idiom). A bare
+  // `?? []` mints a fresh array every render, which defeats the `useMemo` in
+  // `useAudioClips` below — `events` is one of its deps, so the memo can never
+  // compare equal and `clips` gets a new identity every render. That breaks the
+  // stability contract `AudioClipsContext.tsx:43-44` documents for the provider
+  // ("`value={audioClips}` is stable exactly when `useAudioClips`'s memoized
+  // result is"). Correctness fix for that contract; no performance claim is
+  // made — the measured settings-click cost is post-commit, not React render.
+  const events = useMemo(() => eventsRes?.events ?? [], [eventsRes]);
 
   const { clips: audioClips, totalSec: audioTotalSec, segments } = useAudioClips(sessionId, events);
 

@@ -284,8 +284,11 @@ export function EventLogSheet({ sessionId }: Props) {
   // Fetch-once + WS-driven invalidation (event.changed) — no polling.
   const { data, isPending } = useEvents(sessionId, { limit: loadedLimit });
 
-  const categories = categoriesData?.categories ?? [];
-  const events = data?.events ?? [];
+  // Stable identities (the `MarkerNav.tsx:90` idiom) — both feed the `sorted`
+  // useMemo below, whose deps include them, so a fresh array per render made
+  // that memo unable to hit. Correctness fix; no performance claim is made.
+  const categories = useMemo(() => categoriesData?.categories ?? [], [categoriesData]);
+  const events = useMemo(() => data?.events ?? [], [data]);
   const total = data?.total ?? 0;
   const loggedTotal = data?.logged_event_count ?? 0;
 
