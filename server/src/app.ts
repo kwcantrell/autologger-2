@@ -50,10 +50,37 @@ export interface FrontendBridge {
 const isCompressibleResponseType = (type: string): boolean =>
   COMPRESSIBLE_CONTENT_TYPE_REGEX.test(type) || /^application\/x-ndjson\b/i.test(type);
 
-/** Give `compress()`'s size threshold something to measure (see the ordering
- * comment at its registration site). Buffers the response body and stamps an
- * accurate `Content-Length` — but ONLY for responses that are (a) compressible
- * by the filter above and (b) missing a `Content-Length`.
+/** Does an existing `Vary` value already cover `Accept-Encoding`? `*` covers
+ * everything; otherwise match the token case-insensitively. */
+const varyCoversAcceptEncoding = (existing: string | null): boolean => {
+  if (existing === null) return false;
+  const tokens = existing.split(',').map((t) => t.trim().toLowerCase());
+  return tokens.includes('*') || tokens.includes('accept-encoding');
+};
+
+/** Two jobs, both keyed off "is this response subject to content negotiation
+ * by `compress()`" — i.e. does the filter above match its content-type.
+ *
+ * (1) **`Vary: Accept-Encoding` on every negotiable response.** hono's
+ * `compress()` sets no `Vary` at all, so before this middleware nothing did.
+ * A shared cache (browser HTTP cache, corporate proxy, any reverse proxy in
+ * front of the process) would then key a gzipped `export.csv` on the URL alone
+ * and hand those bytes to a client that never sent `Accept-Encoding` — e.g.
+ * the CSV is fetched by a plain `<a href>` (gzip-capable), then `curl`'d
+ * behind the same cache, which gets garbled bytes. The header goes on
+ * responses that are ELIGIBLE for negotiation, not just the ones that ended up
+ * encoded: a cached IDENTITY response is exactly as dangerous in reverse (a
+ * gzip-capable client must still be able to revalidate rather than be served
+ * an entry that was chosen for a different `Accept-Encoding`). It is set here,
+ * INSIDE `compress()`, so `compress()`'s response rebuild (`new
+ * Response(body, ctx.res)` + the `c.res` setter's old→new header copy)
+ * carries it through onto the gzipped response — asserted in
+ * `compression.int.test.ts`. Appended, never clobbered, if a route already set
+ * its own `Vary`.
+ *
+ * (2) **A `Content-Length` for `compress()`'s size threshold to measure** (see
+ * the ordering comment at its registration site) — buffering the body and
+ * stamping an accurate length, but ONLY for responses missing one.
  *
  * Every skip below is load-bearing, and each is checked BEFORE the body is
  * touched — nothing here may consume a streaming response:
@@ -61,32 +88,47 @@ const isCompressibleResponseType = (type: string): boolean =>
  *   SSE stream would hang the request until the turn ended and then deliver it
  *   as one blob; the content-type check below independently excludes
  *   `text/event-stream`, but this guard covers any future compressible-typed
- *   stream too.
- * - `Content-Encoding` present => already encoded; leave it alone.
+ *   stream too. It also precedes the `Vary` step: `compress()` skips
+ *   `Transfer-Encoding` responses outright, so their representation does not
+ *   depend on `Accept-Encoding` and they get no `Vary` from us.
  * - non-compressible content-type => audio byte-serving (`audio/*`) and its
- *   hand-set `content-length`/`content-range` range headers stay byte-identical.
+ *   hand-set `content-length`/`content-range` range headers stay byte-identical
+ *   — and, being outside negotiation entirely, get no `Vary` either.
+ * - `Content-Encoding` present => already encoded; leave the body alone (it
+ *   still gets `Vary`: it IS one negotiated representation of several).
  * - `Content-Length` already set => nothing to measure; `compress()` can
  *   already apply its threshold.
  * - HEAD / bodyless (204, 304) => no body to measure; `new Response(body, …)`
- *   would throw on a null-body status.
+ *   would throw on a null-body status. Still `Vary`-stamped — the cache entry a
+ *   HEAD validates is the GET representation, which does vary.
  *
  * The buffering itself is cheap: these are fully-materialized string bodies
  * (`c.json()`/`c.text()`) already resident in memory — the ArrayBuffer is a
  * copy, not new I/O. */
 const measureCompressibleBody: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
+  if (c.res.headers.has('Transfer-Encoding')) return;
+  const type = c.res.headers.get('Content-Type');
+  if (!type || !isCompressibleResponseType(type)) return;
+
+  // Via `c.header` rather than `c.res.headers`: on a finalized context it
+  // rebuilds the response instance for us, so the header lands on the object
+  // `compress()` will read, and `{ append: true }` preserves a route's own
+  // `Vary`.
+  const existingVary = c.res.headers.get('Vary');
+  if (!varyCoversAcceptEncoding(existingVary)) {
+    c.header('Vary', 'Accept-Encoding', { append: existingVary !== null });
+  }
+
   const res = c.res;
   if (
     c.req.method === 'HEAD' ||
     res.headers.has('Content-Length') ||
     res.headers.has('Content-Encoding') ||
-    res.headers.has('Transfer-Encoding') ||
     !res.body
   ) {
     return;
   }
-  const type = res.headers.get('Content-Type');
-  if (!type || !isCompressibleResponseType(type)) return;
 
   const buffered = await res.arrayBuffer();
   const measured = new Response(buffered, res);
@@ -154,7 +196,11 @@ export function wireApp(
   // accurate `Content-Length` before `compress()` makes its decision. Small
   // bodies then fall under the threshold and ship uncompressed with a correct
   // length; large ones compress exactly as before (`compress()` drops the
-  // length again when it encodes).
+  // length again when it encodes). The same inner middleware is also where
+  // `Vary: Accept-Encoding` is stamped — `compress()` never sets it, and its
+  // "is this response compressible" question is already answered there; see
+  // that middleware's own doc comment for why it is set on negotiable
+  // responses whether or not they ended up encoded.
   app.use('/api/*', compress({ contentTypeFilter: isCompressibleResponseType }));
   app.use('/api/*', measureCompressibleBody);
 

@@ -1,21 +1,58 @@
 // Compression middleware coverage (perf-fixes A1): the `/api/*`-scoped
 // `compress()` in app.ts gzips large JSON and export bodies when the client
 // advertises Accept-Encoding, while leaving audio byte-serving (range
-// semantics, hand-set content-length/content-range) untouched. SSE exclusion
-// is asserted in ai.int.test.ts (the streaming success test), where the
-// fixture-CLI env it needs already exists.
+// semantics, hand-set content-length/content-range) untouched.
+//
+// CACHE CORRECTNESS (`Vary: Accept-Encoding`): every response ELIGIBLE for
+// encoding negotiation must carry it, whether or not this particular response
+// came back gzipped — a cached identity body served to a gzip client, or a
+// cached gzip body served to a client that sent no Accept-Encoding (a plain
+// `<a href>` download of export.csv, later curl'd behind the same cache), is
+// the bug it prevents. hono's `compress()` sets no Vary of its own; the inner
+// `measureCompressibleBody` middleware stamps it, and the assertions below
+// pin that it SURVIVES compress()'s response rebuild. Surfaces outside
+// negotiation (audio byte-serving, SSE) must NOT gain it.
 //
 // NOTE: `app.request(...)` bypasses Node's HTTP client, so Accept-Encoding is
 // never added implicitly — every request here sets (or omits) it explicitly,
 // and compressed bodies arrive still-gzipped (no auto-decode). Decode via
 // DecompressionStream.
 
-import { describe, expect, it } from 'vitest';
-import { app, env } from '../test/harness';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
+import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
+import { afterEach, describe, expect, it } from 'vitest';
+import { app, env, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
 
 const GZIP = { 'accept-encoding': 'gzip' };
 const J = { 'content-type': 'application/json' };
+
+/** The hermetic fake-claude CLI (ai.int.test.ts's `FIXTURE_CLI`) — the only
+ * env that completes a real ai/chat turn, and so the only way to reach a
+ * genuine SSE response through the shared app. */
+const FIXTURE_CLI = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
+
+/** The fixture writes into a deterministic per-session cwd outside DATA_DIR;
+ * clean up after the SSE test the way ai.int.test.ts does. */
+const sseSessionIds: string[] = [];
+afterEach(() => {
+  for (const id of sseSessionIds.splice(0)) {
+    rmSync(stableSessionCwd(id), { recursive: true, force: true });
+  }
+});
+
+/** Vary is a comma-separated token list; assert membership, not the exact
+ * string, so a route that adds its own token later doesn't fail this. */
+function variesOnAcceptEncoding(res: Response): boolean {
+  const vary = res.headers.get('vary');
+  if (vary === null) return false;
+  return vary
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .includes('accept-encoding');
+}
 
 async function gunzipJson(res: Response): Promise<unknown> {
   return await new Response(res.body!.pipeThrough(new DecompressionStream('gzip'))).json();
@@ -74,6 +111,10 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     );
     expect(plain.status).toBe(200);
     expect(plain.headers.get('content-encoding')).toBeNull();
+    // (b) No Accept-Encoding at all: the identity body still advertises that
+    // its representation depends on the header, so a cache can never hand it
+    // to a gzip client (or vice versa) without revalidating.
+    expect(plain.headers.get('vary')).toBe('Accept-Encoding');
     const plainBody = (await plain.json()) as { words: unknown[] };
     expect(plainBody.words).toHaveLength(30);
 
@@ -85,6 +126,9 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(compressed.status).toBe(200);
     expect(compressed.headers.get('content-encoding')).toBe('gzip');
     expect(compressed.headers.get('content-length')).toBeNull();
+    // (a) Set by the INNER middleware, before compress() rebuilt the response
+    // around a CompressionStream — this asserts it survived that rebuild.
+    expect(compressed.headers.get('vary')).toBe('Accept-Encoding');
     expect(await gunzipJson(compressed)).toEqual(plainBody);
   });
 
@@ -103,6 +147,9 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-encoding')).toBeNull();
+    // (c) Below the threshold, so never encoded — but still a negotiable
+    // representation, so still Vary-stamped.
+    expect(res.headers.get('vary')).toBe('Accept-Encoding');
 
     const raw = new Uint8Array(await res.arrayBuffer());
     expect(raw.byteLength).toBeLessThan(1024);
@@ -120,6 +167,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     );
     expect(res.status).toBe(404);
     expect(res.headers.get('content-encoding')).toBeNull();
+    expect(res.headers.get('vary')).toBe('Accept-Encoding');
 
     const raw = new Uint8Array(await res.arrayBuffer());
     expect(raw.byteLength).toBeLessThan(1024);
@@ -145,6 +193,11 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     );
     expect(res.status).toBe(206);
     expect(res.headers.get('content-encoding')).toBeNull();
+    // (d) audio/* is outside the compressible filter, so its representation
+    // does not depend on Accept-Encoding — no Vary is added. (Range responses
+    // vary on `Range`, which is the audio router's business, not ours; assert
+    // only that WE contributed nothing.)
+    expect(variesOnAcceptEncoding(res)).toBe(false);
     expect(res.headers.get('content-range')).toBe('bytes 3-4/5');
     expect(res.headers.get('content-length')).toBe('2');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([4, 5]));
@@ -164,6 +217,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     const res = await app.request(seg.url, { method: 'GET', headers: GZIP }, { ...env });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-encoding')).toBeNull();
+    expect(variesOnAcceptEncoding(res)).toBe(false);
     expect(res.headers.get('content-length')).toBe('5');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
   });
@@ -187,6 +241,10 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     );
     expect(csv.status).toBe(200);
     expect(csv.headers.get('content-encoding')).toBe('gzip');
+    // The concrete scenario the header exists for: export.csv is fetched by a
+    // plain `<a href>` download and later re-fetched by a non-gzip client.
+    expect(csv.headers.get('vary')).toBe('Accept-Encoding');
+    expect(plainCsv.headers.get('vary')).toBe('Accept-Encoding');
     expect(await gunzipText(csv)).toBe(plainCsvText);
 
     const plainJsonl = await app.request(
@@ -207,6 +265,31 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(jsonl.status).toBe(200);
     expect(jsonl.headers.get('content-type')).toBe('application/x-ndjson; charset=utf-8');
     expect(jsonl.headers.get('content-encoding')).toBe('gzip');
+    expect(jsonl.headers.get('vary')).toBe('Accept-Encoding');
     expect(await gunzipText(jsonl)).toBe(plainJsonlText);
+  });
+
+  it('adds no Vary: Accept-Encoding to an SSE stream', async () => {
+    // (d), streaming half. `streamSSE` sets Transfer-Encoding: chunked and
+    // text/event-stream — compress() skips both, so the response is not a
+    // negotiated representation and must gain nothing from the middleware.
+    // Driven through the real ai/chat route with the hermetic fake-claude
+    // fixture (the same env ai.int.test.ts's streaming test uses) because
+    // that is the only way to reach a genuine streaming response through the
+    // shared app: the middleware pair only wraps routes wireApp mounted.
+    const session = seededSession().sessionId;
+    sseSessionIds.push(session);
+
+    const res = await app.request(
+      `/api/sessions/${session}/ai/chat`,
+      { method: 'POST', headers: { ...J, ...GZIP }, body: JSON.stringify({ message: 'hi' }) },
+      envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/event-stream/);
+    expect(res.headers.get('content-encoding')).toBeNull();
+    expect(variesOnAcceptEncoding(res)).toBe(false);
+    // Drain so the fixture subprocess finishes before teardown.
+    await res.text();
   });
 });
