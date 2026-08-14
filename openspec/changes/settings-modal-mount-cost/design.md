@@ -481,9 +481,15 @@ warming re-fetches ~96% of the deferred bytes, making the win *scheduling* rathe
 ### 2026-08-13 — Post-gate measurement (halt-gate) and the phase-2 addition
 
 Profiling on the reporter's data (method and numbers in Context) passed task 1.2's halt-gate for
-D2/D3 **and** surfaced a larger, independent cost that no artifact had contemplated: a defeated
-`WorkspaceStatic` memo re-rendering the entire session workspace on every shell state change
-(+11,097 re-renders, 70 ms → 101 ms). This became D0 / phase 2, with its own requirement.
+D2/D3 **and** appeared to surface a larger, independent cost that no artifact had contemplated: a
+defeated `WorkspaceStatic` memo re-rendering the entire session workspace on every shell state
+change (+11,097 re-renders, 70 ms → 101 ms). This became D0 / phase 2, with its own requirement.
+
+> **That second finding was withdrawn during apply** — the render counts came from an instrument
+> later shown to over-count, and ground truth puts `SessionWorkspace` at **zero** renders on a
+> settings click. D0 and its requirement were rescoped to prop stability only. See the WITHDRAWN
+> notice in Context, D0 as rewritten, and the fix-wave entry below. The halt-gate pass for D2/D3 is
+> unaffected — it rests on mount counts and the `SelectTrigger` inventory match, not on re-renders.
 
 Two honest notes on process:
 
