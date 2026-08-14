@@ -863,9 +863,7 @@ describe('HomeSettingsModal costs nothing while closed', () => {
       <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
     );
 
-    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
 
     // Simulate the modal surviving a route change while open (teams-settings-nav, D1):
@@ -877,9 +875,7 @@ describe('HomeSettingsModal costs nothing while closed', () => {
       </StrictWrapper>,
     );
 
-    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe(
-      'true',
-    );
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
   });
 });

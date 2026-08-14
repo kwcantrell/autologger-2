@@ -119,13 +119,27 @@ audit closed, so this phase reopens the branch and takes its own review.
       closed dialog and again on open. Re-run the open/reopen medians from 5.2 to confirm no
       regression on the paths this change already improved.
 
-## 7. Final gates (re-run after phase 6)
+## 7. Final gates after phase 6 — scoped by owner decision
 
-- [ ] 7.1 `npm run typecheck` and `npm test` (full workspace sweep).
-- [ ] 7.2 `npm run e2e` and `npm run e2e:visual` — the modal's open behaviour must be unchanged.
-- [ ] 7.3 `npm run docs:check` and `npm run lint` (report-only).
-- [ ] 7.4 Whole-branch audit re-run scoped to phase 6's diff, per the audit protocol for a phase
-      added after the audit closed.
+Phase 6 is a small, fully-tested UI change. The owner directed (2026-08-14) that it does not need
+the full gate + audit ceremony re-run. **Verified after phase 6:**
+
+- [x] 7.1 Full-workspace `npm run typecheck` (clean) and full `npm test` (server 711/3 skipped,
+      web 1227, web-docs 242, companion 21, all `packages/*`) — both run at the last code commit
+      `25766a9` by the residual-fix unit, and `npm run typecheck` + `npm test -w web` again by the
+      phase 6 reviewer. `openspec validate --strict` passes.
+- [x] 7.2 Scoped `biome check --error-on-warnings` over both phase 6 files — caught and fixed a
+      formatting violation in `HomeSettingsModal.test.tsx`; re-checked clean, file 28/28 green.
+- [x] 7.3 Phase 6 review: PASS on both spec compliance and code quality, with the D2 zero-mount
+      reopen guarantee independently mutation-re-verified (and both `isOpen`-gate variants).
+
+**Deliberately NOT re-run after phase 6** (declared, not silently assumed):
+`npm run e2e`, `npm run e2e:visual`, `npm run docs:check`, full `npm run lint`, and the
+whole-branch audit re-run. Residual risk accepted by the owner: phase 6 is DOM-identical while
+closed and behaviour-identical while open (asserted by its own tests), touches one component plus
+its test, adds no import or capability, so the e2e/visual/docs surfaces it could disturb are the
+ones its unit tests already cover. These all passed at phase 5 (`eaf816d`): e2e 30 passed,
+e2e:visual 44 passed with zero diffs, docs:check clean.
 
 ## 5. Final gates
 
