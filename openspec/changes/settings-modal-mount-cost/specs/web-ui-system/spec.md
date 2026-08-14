@@ -1,20 +1,24 @@
 ## ADDED Requirements
 
-### Requirement: Shell state changes do not re-render the session workspace
-Opening or closing a shell-level overlay, or toggling shell-level navigation state, SHALL NOT
-cause the mounted session workspace to re-render. The render-isolation boundary that exists
-between the shell and the workspace SHALL be effective, which requires every prop crossing it to
-hold a stable identity across shell renders.
+### Requirement: The shell-to-workspace render boundary stays memoizable
+Every prop the shell passes across the render-isolation boundary to the mounted session workspace
+SHALL hold a stable identity across shell renders, so that the boundary's memoization is able to
+bail out. A shell state change SHALL NOT be the reason a boundary prop changes identity.
 
-#### Scenario: Opening the settings modal leaves the workspace untouched
+This requirement is deliberately scoped to prop stability — the property that is observable and
+testable at the boundary. It makes no claim about how often the workspace renders in practice: the
+change that introduced it originally asserted a large re-render reduction, and that assertion was
+withdrawn when the render counts supporting it proved to be a profiling-tool artifact.
+
+#### Scenario: Opening the settings modal does not disturb the boundary props
 - **WHEN** a session workspace is mounted and the user opens the settings modal
-- **THEN** the workspace and its feed panels do not re-render, and the work performed by the click
-  does not grow with the open session's event or transcript volume
+- **THEN** every prop passed across the shell-to-workspace boundary is referentially identical to
+  what it was before the click
 
-#### Scenario: The isolation holds for every shell overlay
-- **WHEN** the user opens the New Session modal, the Batch Import modal, or the YouTube import
-  error modal, or toggles the mobile navigation rail, while a session workspace is mounted
-- **THEN** the workspace does not re-render in any of those cases
+#### Scenario: The boundary holds for every shell state change
+- **WHEN** the user opens the New Session modal or the Batch Import modal, closes the settings
+  modal, or toggles the mobile navigation rail, while a session workspace is mounted
+- **THEN** the boundary props remain referentially identical across each of those state changes
 
 ### Requirement: Settings modal defers inactive tab content
 The Settings modal SHALL mount a tab panel's content on that tab's first activation, not on modal

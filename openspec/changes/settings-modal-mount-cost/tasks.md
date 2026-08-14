@@ -22,10 +22,14 @@ partition the click into two independent costs (numbers and method in `design.md
       Buttons tab activation**, on a show with many event buttons. Record to
       `openspec/changes/settings-modal-mount-cost/.apply/profile-before.md`.
 
-## 2. Restore the workspace render-isolation memo
+## 2. Keep the shell-to-workspace boundary memoizable
 
-Spec: "Shell state changes do not re-render the session workspace". Design: D0. **Largest measured
-win, smallest diff — lands first and independently of phases 3–4.**
+Spec: "The shell-to-workspace render boundary stays memoizable". Design: D0.
+
+> **Rescoped 2026-08-13.** This phase originally claimed the change's largest performance win. That
+> claim was withdrawn — the render counts behind it were a profiling-tool artifact
+> (`.apply/phase2-diagnostic.md`). The fix and its tests are kept for correctness only; task 2.3's
+> verification criterion is void and replaced below.
 
 - [ ] 2.1 Write the failing test in `AppShell.test.tsx`: with a session workspace mounted, a shell
       state change (open the settings modal) must not re-render the workspace subtree. Assert via a
@@ -39,9 +43,16 @@ win, smallest diff — lands first and independently of phases 3–4.**
       `onOpenMobileNav={() => setRailOpen(true)}` arrow on the `SessionRoute` element. Verify no
       other prop crossing that boundary is unstable (`sessionId` and `ytImportPending` are a string
       and a boolean). Gate: `npm run typecheck` + `npm test`.
-- [ ] 2.3 Re-profile the settings-open click with session `ed1413e0-…` open and confirm the
-      re-render count drops back to the no-session baseline (~6,141 total renders, ~4,804
-      re-renders). This phase's whole claim is that number.
+- [x] 2.3 ~~Re-profile and confirm the re-render count drops to the no-session baseline.~~
+      **Void — criterion withdrawn.** Executed, and it failed: counts were identical before and
+      after (17,238). The follow-up diagnostic established the counts themselves were unreliable
+      and that `SessionWorkspace` renders zero times on the click either way. Recorded in
+      `.apply/phase2-diagnostic.md` and the ledger. Nothing further to verify at this phase: the
+      rescoped requirement is prop stability, which task 2.1's tests already assert with a
+      mutation check.
+- [x] 2.4 Correct the rationale left in the tree by the withdrawn claim: the code comment in
+      `AppShell.tsx`, the delta spec requirement, and design D0 must assert only prop stability,
+      with the withdrawal recorded rather than silently dropped.
 
 ## 3. Deferred tab content
 

@@ -160,11 +160,21 @@ export function AppShell() {
   }, []);
 
   // Stable identity for the mobile-rail-open trigger threaded down to
-  // WorkspaceStatic (settings-modal-mount-cost, design D0): an inline arrow
-  // here defeats WorkspaceStatic's memo on every AppShell render (any shell
-  // state change, not just this one), re-rendering the entire mounted
-  // session workspace. Matches the useCallback treatment already given to
-  // handleOpenSettings / handleCloseSettings / handleOpenNewSession above.
+  // WorkspaceStatic (settings-modal-mount-cost, design D0). An inline arrow
+  // here gives WorkspaceStatic's memo a fresh prop reference on every AppShell
+  // render, so the memo's shallow comparison can never bail. Matches the
+  // useCallback treatment already given to handleOpenSettings /
+  // handleCloseSettings / handleOpenNewSession above.
+  //
+  // Scope of the claim (deliberately narrow): this keeps the boundary props
+  // referentially stable, which is what AppShell.test.tsx asserts. It is NOT
+  // known to change how often the workspace actually renders — the change that
+  // introduced it originally claimed a large re-render win, and that claim was
+  // withdrawn when the render counts behind it turned out to be an artifact of
+  // the profiling tool (ground truth: SessionWorkspace renders zero times on a
+  // settings click, with or without this callback). Do not restore a
+  // performance rationale here without a measurement that does not come from
+  // `agent-browser react renders`.
   const handleOpenMobileNav = useCallback(() => {
     setRailOpen(true);
   }, []);

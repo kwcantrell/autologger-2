@@ -150,23 +150,44 @@ accounts for the reported symptom. Left as a note, not a task.
 
 ## Decisions
 
-### D0 — Restore the workspace render-isolation memo first
+### D0 — Keep the shell-to-workspace boundary memoizable (claim withdrawn and rescoped)
 
-Measured as the largest single contributor to the reported click (+11,097 re-renders, 70 ms → 101
-ms) and the smallest fix: give `onOpenMobileNav` a stable identity in `AppShell` (`useCallback`,
-matching its three already-stabilised neighbours) so `WorkspaceStatic`'s existing `memo` holds.
-Nothing is added or restructured — an isolation boundary that already exists starts working.
+> **This decision was rewritten on 2026-08-13 after its evidence collapsed.** As originally
+> written it claimed the largest measured win in the change: +11,097 re-renders and 70 ms → 101 ms,
+> caused by `onOpenMobileNav`'s inline arrow defeating `WorkspaceStatic`'s `memo`. **Those render
+> counts were an artifact of the `agent-browser react renders` instrument.** Ground truth
+> (`console.log` as the first statement of the render body) shows `SessionWorkspace` renders
+> **zero** times on a settings click, `AppShell` 1–2, `HomeSettingsModal` 3 — and the fix did not
+> move the tool's numbers either (17,238 before and after). See `.apply/phase2-diagnostic.md`.
 
-This lands first because it is independent of D2/D3, it is the dominant half of the symptom
-whenever a session is open, and it fixes the same defect for every other `AppShell` state change
-(New Session, Batch Import, the YouTube error modal, mobile rail toggle).
+What survives is a genuine but modest defect: `AppShell` passed `SessionRoute` an inline
+`onOpenMobileNav={() => setRailOpen(true)}` arrow, forwarded unchanged into the memo'd
+`WorkspaceStatic`, so shallow comparison could never bail. Its three sibling handlers were already
+`useCallback`'d; this one was not. Giving it the same treatment restores the boundary's ability to
+bail out.
 
-**Alternatives considered.** *Memoize `SessionRoute` as well*: unnecessary — `SessionRoute` itself
-is cheap, and once `WorkspaceStatic`'s props are stable its memo blocks the expensive subtree.
-*Drop the `WorkspaceStatic` wrapper and memoize `SessionWorkspace` directly*: a larger refactor of
-a component the repo deliberately kept as a recorded deferral, for no measured gain. *Leave it and
-rely on D2/D3*: rejected — those address the modal's own mount, which the measurement shows is the
-*smaller* half whenever a session is open.
+**The claim is now scoped to exactly that**: boundary props stay referentially stable across shell
+renders. No performance consequence is asserted, because none has been measured on an instrument
+this change trusts. The fix is kept rather than reverted because it is correct, one line, has a
+mutation-checked test, and removes a real inconsistency — not because it is known to be faster.
+
+**Alternatives considered.** *Revert it entirely*: defensible, and rejected only because the
+underlying inconsistency is real and the test is cheap to keep. *Memoize `SessionRoute` too*:
+unnecessary and unmotivated now that no re-render problem is known to exist there. *Restore the
+performance framing once a better instrument is available*: that is a new investigation (see the
+Dialog-open hypothesis below), not this decision.
+
+### D0.1 — The session-dependent cost is still unexplained
+
+Independent of the withdrawn render-count story, one measurement stands because it never used the
+DevTools tool: `PerformanceObserver` reports **67–143 ms long tasks on every settings click with a
+session workspace open, and none at all from `/`**. The jank is real and it scales with the open
+session, but it is **not** React re-renders of the workspace.
+
+Leading hypothesis, **untested**: DOM-proportional work in Radix Dialog's open path — `hideOthers()`
+aria-hiding every sibling, `FocusScope` walking the tabbable tree, `react-remove-scroll`'s
+`getComputedStyle` forced reflow. All three scale with mounted DOM size, which is far larger with a
+workspace open. Nothing in this change addresses it; it is queued as follow-on investigation.
 
 ### D1 — Fix the measured cause (mount cost), not the reported one (fetch latency)
 
