@@ -622,7 +622,6 @@ active, the strip status area SHALL reveal the mic level meter and recording dur
 - **WHEN** local mic recording is active
 - **THEN** status reads Recording and the status row shows mic level and recording
   duration
-</content>
 
 ### Requirement: Recording intervals lay out multi-chunk segments contiguously
 

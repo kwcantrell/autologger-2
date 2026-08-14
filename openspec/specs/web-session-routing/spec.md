@@ -204,4 +204,3 @@ session through the URL.
   caller of `window.V3_closeSession` today) while on `/sessions/<id>`
 - **THEN** the app navigates to `/` with the same behavior the close-session control
   produces
-</content>
