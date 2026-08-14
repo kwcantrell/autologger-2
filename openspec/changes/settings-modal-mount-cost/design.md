@@ -1,0 +1,487 @@
+# Design: settings-modal-mount-cost
+
+## Context
+
+### Current state, measured on `main` @ `3eaca8f`
+
+The request that opened this change framed the Settings-modal lag as "a large lag spike due to a
+series of linear fetches", remediable "via async function". Measuring that framing's nouns against
+the tree contradicts it, and the correction is the reason this change exists:
+
+| Claim in the framing | Measured | Derivation |
+| --- | --- | --- |
+| Opening the modal runs a series of fetches | **False.** The open transition issues no request | `HomeSettingsModal` reads one query — `useProfile()` (key `['profile']`, `staleTime: 30_000`) — which `AppShell` already calls at boot (`AppShell.tsx:50`), so it is cache-satisfied before the modal can open. Its other two hooks are `useMutation`, which fire only on explicit `mutateAsync`. Across the whole render subtree — `EventButtonsTable`, `EventInstructionModal`, `EventOptionsModal`, `Select`, `FpsSelect`, `Popover`, `RadioGroup`, `ConfirmDialog`, `Dialog` — there is no other `useQuery`/`apiFetch`/`fetch(` call |
+| The fetches are sequential (a waterfall) | **Not applicable.** There is no second fetch to be sequential with | as above |
+
+What the open actually costs is synchronous mount work. The panel refined the initial reading
+twice, and both refinements changed the fix:
+
+- `HomeSettingsModal` is rendered unconditionally at `AppShell.tsx:332`. Radix keeps a closed
+  dialog's children unmounted (`Dialog.tsx` uses no `forceMount`), so nothing below it exists
+  until `isOpen` flips.
+- All four tab panels are rendered on every pass and hidden with the `hidden` **attribute**
+  (`HomeSettingsModal.tsx:560/729/769/784`), so the Event Buttons panel mounts even though the
+  modal always opens on General.
+- **The spike is a reopen phenomenon, not a first-open one.** `showDrafts` starts `{}` and the
+  reset effect sets `initialized = false`, so on a *first* open `currentDraft` is `undefined` and
+  the Event Buttons panel renders its "Select a show above to edit its event buttons" hint — the
+  table mounts only on a second commit, after the init effect populates the drafts. `showDrafts`
+  is **not** cleared on close (the reset effect clears only `initialized`, `initialSnapshot`, and
+  `activeTab`), so every subsequent open mounts the fully-populated table inside the opening
+  commit.
+- **The dominant per-row cost is the `Select`, not the `Popover`.** Each row renders both
+  (`EventButtonsTable.tsx:494` and `:536`), but they are not equivalent: `@radix-ui/react-select`
+  renders `SelectContentFragment` when closed, portalling the **entire item subtree** into a
+  detached `DocumentFragment` (`react-select/dist/index.mjs:284-298`), so a closed Select fully
+  mounts Trigger + Viewport + every Item with its ItemText/ItemIndicator. The `Popover`'s content
+  is `Presence`-gated and genuinely unmounted while closed. The row cost is therefore
+  approximately "one full Select item tree", multiplied by the number of event buttons.
+
+### The causal step, now measured (2026-08-13)
+
+The draft carried this as inference. It has since been profiled against the **production** serve
+path (`npm run build && npm run start`) on the reporter's own `server/data`, driving a real
+Chromium via CDP with the React DevTools hook. Task 1.2's halt-gate **passes**: the dominant cost
+is the modal's own mount, and specifically the Radix `Select` item trees.
+
+| Measurement | Result |
+| --- | --- |
+| Long tasks while idle, 12 s (spans 2+ `useSessions` poll cycles) | **none** |
+| Long task on the settings-open click | **one, 70 ms** |
+| React work in that commit | **6,141 renders — 1,337 mounts + 4,804 re-renders — across 107 components**, byte-identical across two consecutive runs |
+| Frame rate during the commit | avg 37 fps, **min 15**, 109 frames under 30 fps |
+| `SelectTrigger` mounts | **12** — exactly the modal's twelve Selects (studio, show, suffix, FPS, copy-from-show, plus one per event-button row × 7 rows) |
+| `SelectItem` / `SelectItemText` / `SelectItemIndicator` / `SelectItemProvider` / `SelectCollectionItemSlot`(+`.Slot`) | **60 mounts and 240 re-renders each** — ~360 mounts and ~1,440 re-renders of Select *item* internals alone |
+| `SelectContentFragment` | 12 mounts, 60 re-renders — the closed-Select-mounts-its-items mechanism, observed live |
+| `GET /api/sessions`, `GET /api/profile` server time | 1–2 ms — no server-side cost, the list reads the catalog index |
+
+The `SelectTrigger` count matching the modal's Select inventory exactly is what pins attribution:
+every Select mounted in that commit belongs to the modal, and the item-level components dominate
+the mount count. **This measured with only 7 event-button rows and still cost 70 ms** — above the
+50 ms jank threshold — so the cost grows from there with show size. D3 (lazy per-row control) is
+therefore aimed at the measured dominant cost, not an inferred one.
+
+**Caveat on attribution granularity:** a production build minifies app component names, so
+first-party components appear as single letters in the profile and cannot be told apart by name.
+Attribution above rests on the Radix component names (which survive via `displayName`) and on the
+`SelectTrigger` inventory match, not on reading first-party names.
+
+### The session-data dependence, measured (2026-08-13) — a second, larger cost
+
+The reporter observes the lag scaling with `server/data/sessions`, and notes it reproduces with
+session `ed1413e0-…` open. The first profile was taken from `/` with **no session open**, so it
+could not have exercised that path at all. Re-profiling with that session's workspace mounted
+(66 events, **15,150 transcript words**, 1,049 paragraphs, 337 sentiment rows, 3.4 MB DB):
+
+| Settings-open click | No session open | Session workspace open |
+| --- | --- | --- |
+| Long task | 70 ms | **101 ms** |
+| Total renders | 6,141 | **17,238** |
+| Mounts | 1,337 | **1,337 — identical** |
+| Re-renders | 4,804 | **15,901 (+11,097)** |
+| Components | 107 | 148 |
+| Min FPS | 15 | **10** |
+
+**The mount count is identical**, so the modal's own subtree costs the same in both. The entire
++11,097 delta is *re-renders of the already-mounted workspace*: `Tooltip` / `TooltipTrigger` /
+`TooltipPortal` / `TooltipProvider` at **142 instances, 0 mounts, 639 re-renders each**, and the
+event-row components at **132 instances, 0 mounts, 594 re-renders**, whose top change reason the
+profiler reports as **`props.onDelete`** — the signature of a fresh function identity cascading
+through a subtree.
+
+**Root cause — a defeated memo.** `WorkspaceStatic` is `memo()`'d *expressly* to isolate the
+workspace from this modal (its own comment says so). But `SessionRoute` is not memoized, and
+`AppShell` renders it with `onOpenMobileNav={() => setRailOpen(true)}` — an inline arrow, fresh
+identity on every `AppShell` render — which `SessionRoute` forwards unchanged into
+`WorkspaceStatic`. Shallow comparison therefore always misses and the memo never holds. The
+neighbouring callbacks (`handleOpenSettings`, `handleCloseSettings`, `handleOpenNewSession`) are
+all correctly `useCallback`'d; this one prop was left inline and silently disables the guard.
+
+Because the trigger is *any* `AppShell` state change, this is not settings-specific: opening New
+Session, Batch Import, the YouTube error modal, or toggling the mobile rail all re-render the whole
+workspace the same way. It scales with the open session's content, which is exactly the
+"function of `server/data/sessions`" the reporter described.
+
+**Not investigated (and not needed):** the rail's own per-card cost. `V6Rail` is likewise
+un-memoized with inline arrow props, so `SessionCard`s re-render on the same click; with one
+session in the active show this contributed nothing measurable, and the workspace finding above
+accounts for the reported symptom. Left as a note, not a task.
+
+### Constraints
+
+- **The Settings modal's drafts live in `HomeSettingsModal`'s own state** (`showDrafts`,
+  `initialSnapshot`). `EventButtonsTable` holds transient UI state only (`dragIdx`, `dragOverIdx`,
+  `openColorFor`, `openInstructionFor`, `editingOptsFor`, `copyFromId`), has **no `useEffect` at
+  all**, and never populates parent state on mount. `handleSave` builds `show_updates` from
+  `showsForStudio` + `showDrafts`, both modal-owned. Deferring the table cannot drop a save — the
+  panel attacked this property from three directions and could not break it.
+- **`web-session-console` pins the workspace feed panels as always-mounted**
+  (`openspec/specs/web-session-console/spec.md:19`), echoed by `ai-v2-dashboards/spec.md:363`.
+  Nothing in this change touches them, but the rule is recorded so the discipline written here is
+  not later generalized onto them.
+- **The frozen HTTP/WS contract is untouched.**
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Opening the Settings modal — including reopening it — commits only the content the user is
+  looking at.
+- The Event Buttons tab click gets faster too, rather than inheriting the cost deferral removed
+  from the open.
+- The deferral discipline is written down in a form that a future refactor cannot silently undo.
+
+**Non-Goals:**
+
+- Code-splitting / deferred module loading (split out to `web-boot-split-boundaries`).
+- Any change to the six workspace feed panels.
+- Any data-fetching change.
+- Virtualizing the event-button rows; reworking the dirtiness derivation or the discard guard.
+- Visual or behavioral redesign of any control.
+
+## Decisions
+
+### D0 — Restore the workspace render-isolation memo first
+
+Measured as the largest single contributor to the reported click (+11,097 re-renders, 70 ms → 101
+ms) and the smallest fix: give `onOpenMobileNav` a stable identity in `AppShell` (`useCallback`,
+matching its three already-stabilised neighbours) so `WorkspaceStatic`'s existing `memo` holds.
+Nothing is added or restructured — an isolation boundary that already exists starts working.
+
+This lands first because it is independent of D2/D3, it is the dominant half of the symptom
+whenever a session is open, and it fixes the same defect for every other `AppShell` state change
+(New Session, Batch Import, the YouTube error modal, mobile rail toggle).
+
+**Alternatives considered.** *Memoize `SessionRoute` as well*: unnecessary — `SessionRoute` itself
+is cheap, and once `WorkspaceStatic`'s props are stable its memo blocks the expensive subtree.
+*Drop the `WorkspaceStatic` wrapper and memoize `SessionWorkspace` directly*: a larger refactor of
+a component the repo deliberately kept as a recorded deferral, for no measured gain. *Leave it and
+rely on D2/D3*: rejected — those address the modal's own mount, which the measurement shows is the
+*smaller* half whenever a session is open.
+
+### D1 — Fix the measured cause (mount cost), not the reported one (fetch latency)
+
+The framing's remedy — "convert components to async" — would not have touched the cost.
+
+**Alternatives considered.** *Implement the request as stated* (parallelize fetches): rejected —
+there are no fetches to parallelize. *Report the misdiagnosis and stop*: rejected — the lag is
+real and reproducible; only its cause was misattributed.
+
+### D2 — Defer tab content via a visited-tabs set, reset **during render**
+
+A `Set<TabId>` seeded with `'general'`, added to on tab activation. Panel wrappers keep rendering
+with today's `id` / `role="tabpanel"` / `aria-labelledby` / `hidden`; only their children are
+gated.
+
+**The reset must not live in the `isOpen` effect.** The component never unmounts between opens
+(`AppShell.tsx:332` is unconditional, deliberately — `teams-settings-nav` D1), so `activeTab` and
+`visitedTabs` survive a close. Resetting them in the existing passive `useEffect` would sequence a
+reopen as: commit with the stale tab → **the table mounts** → effect fires → re-render → table
+unmounts. That is strictly worse than today (same mount, plus an unmount and an extra render), and
+it violates this design's own "never unmount a visited tab" invariant. The reset therefore uses
+React's adjust-state-during-render pattern:
+
+```tsx
+const [prevOpen, setPrevOpen] = useState(isOpen);
+if (isOpen !== prevOpen) {
+  setPrevOpen(isOpen);
+  if (isOpen) { /* reset activeTab, visitedTabs, initialized, initialSnapshot */ }
+}
+```
+
+React re-runs the render before committing, so the stale-tab commit never reaches the DOM. This
+also fixes a latent version of the same problem for `initialized`/`initialSnapshot`, which today
+are reset one commit late.
+
+Keeping the wrappers is not cosmetic: each tab control carries `aria-controls` pointing at its
+panel id (`HomeSettingsModal.tsx:544`), and dropping the element would strand that reference.
+
+**Alternatives considered.** *Render only the active panel*: rejected — loses in-tab state on
+every switch and re-pays the mount each time. *`content-visibility: auto`*: rejected — defers
+layout and paint, not React mount or Radix root creation. *Gate only `EventButtonsTable` with a
+single boolean instead of a set over all panels* (panel finding): genuinely simpler, and the other
+three panels are cheap (Auto Sync is two `<p>`s; Debug is two `<p>`s plus an orphaned
+`#v6-settings-perf-debug-mount` div that nothing currently writes to). Rejected anyway because the
+general rule costs a few lines more and states a discipline that stays correct as tabs are added,
+where the special case would have to be revisited every time. Recorded as a residual minor.
+
+### D3 — Make the per-row `Select` lazy, rather than only relocating its cost
+
+Deferral alone moves the table's mount from the modal-open click to the Event Buttons tab click.
+For a user who opens Settings *to edit event buttons* — the tab's whole purpose — that is not an
+improvement; it is the same spike, one click later. The design's own anti-relocation principle
+demands the cost be attacked, not moved.
+
+So each row's type control renders an inert trigger — same classes, same accessible name, role, and
+ARIA state, same displayed value — and upgrades to the real Radix `Select` on intent.
+
+**The upgrade cannot rely on the upgraded control receiving the triggering gesture.** Radix's
+`SelectTrigger` opens on `onPointerDown` for mouse (`react-select/dist/index.mjs:208-217`, which
+also calls `event.preventDefault()`), not on click. If the inert trigger's own pointerdown is what
+swaps in the real control, the freshly-mounted Radix trigger never sees that pointerdown, and
+whether the menu opens then depends on browser-specific click retargeting after the DOM node under
+the cursor changed mid-gesture — undocumented and not something to build on.
+
+The deterministic technique is to mount the upgraded control **already open**:
+`RadixSelect.Root` accepts `open` / `defaultOpen` / `onOpenChange` (`index.mjs:47-48,67-69`), so an
+activation-triggered upgrade renders the real `Select` with `defaultOpen`. This also covers touch
+taps and assistive-technology synthetic activations, which deliver no prior hover or focus event —
+a hover-only upgrade path would strand exactly those users. Hover and focus remain *additional*
+cheap pre-warm triggers, not the mechanism; note `pointerenter` is desktop-only and contributes
+nothing on touch.
+
+Two consequences the spec pins:
+
+- **Scope reaches `Select.tsx`.** The shared wrapper does not currently forward `defaultOpen`, so
+  it gains an optional pass-through. That file is shared with `FpsSelect`, the copy-from-show
+  select, and the suffix select, so the prop is additive and optional — existing call sites are
+  untouched. The alternative — reimplementing `RadixSelect.Root`/`Trigger`/`Portal`/`Content`
+  locally in `EventButtonsTable.tsx` — is exactly the wholesale duplication this approach exists
+  to avoid.
+- **Focus must be transferred explicitly.** Removing a focused element from the DOM blurs to
+  `document.body`; nothing transfers focus to a same-position replacement automatically. A
+  focus-triggered upgrade must `.focus()` the new trigger via a ref, or a keyboard user tabbing
+  onto the control loses focus entirely.
+
+**Alternatives considered.** *Deferral only, accept the trade*: rejected at the gate (2026-08-13).
+*Deferral plus idle-warming of unvisited tab content*: rejected — it makes the cost invisible on
+fast machines rather than smaller, and it is strictly more machinery than removing the cost.
+*Virtualize the rows with `@tanstack/react-virtual`* (already a dependency, already used in
+`TranscribeFeed`): a real alternative that would bound the cost regardless of show size. Not
+chosen because it changes the table's scroll/layout behavior inside a modal that is already
+`overflow: auto`, and because it caps cost per *viewport* rather than removing the per-row waste.
+Recorded as the follow-up if D3's measurement is insufficient for very large shows.
+
+### Deliberate invariants a future reader might "helpfully" undo
+
+- **The four Settings panel wrappers render unconditionally.** They look redundant next to the
+  gated children; removing them strands `aria-controls` and the e2e id surface.
+- **Deferred tabs are never unmounted once visited.** Turning the visited-set into "render only the
+  active tab" looks like a simplification and is a behavior regression (D2).
+- **The open-reset runs during render, not in an effect.** Moving it "back where resets belong"
+  reintroduces the transient reopen mount this change exists to remove (D2). The spec's
+  zero-mounts-on-reopen scenario is the tripwire.
+- **The lazy trigger must be a true visual/a11y stand-in.** Letting it differ "just until it
+  upgrades" produces a flash and a screen-reader discrepancy on every row.
+
+## Risks / Trade-offs
+
+- **The lazy trigger diverges from the real control** (styling, accessible name, keyboard entry)
+  → the spec pins appearance, role, accessible name, and single-interaction opening; tests assert
+  the keyboard path, which is the one most likely to be missed.
+- **The upgrade swallows the first interaction** → explicit scenario and test: one click opens.
+- **Render-phase state adjustment is unfamiliar** and can loop if written carelessly (it must be
+  guarded by the `prevOpen` comparison, and must set state only when the guard trips) → the
+  pattern is written out above verbatim; a loop would surface immediately as a hang in tests.
+- **Deferral hides a save regression** if a save ever comes to depend on a mounted
+  `EventButtonsTable` → the "saving persists shows whose tab was never visited" scenario is the
+  standing test.
+- **Mounting a tab arms dirtiness** → confirmed impossible today (`EventButtonsTable` has zero
+  effects; all seven `onChange` calls sit in user event handlers), and pinned by the
+  discard-guard scenario so it stays impossible.
+- **The Debug tab's `#v6-settings-perf-debug-mount` becomes conditionally present.** It is an
+  orphan today — `initPerfDebugUI()` is called from `AppShell.tsx:107` with no `mount` option, so
+  nothing writes to it — but if the embedded variant is ever wired, deferral makes the node absent
+  at that moment. Recorded so the next person does not rediscover it.
+- **Trade-off accepted**: a first activation of the Event Buttons tab still mounts the table's
+  non-Select structure. D3 removes the dominant per-row cost, not all of it.
+
+## Migration Plan
+
+Single-phase, `web/`-only, no data migration and no server change. Rollback is a revert. Evidence
+is a Performance profile of (a) the reopen path and (b) the first Event-Buttons activation, taken
+against the production serve path (`npm run build && npm run start`) — dev-mode compile cost masks
+the number, and dev is also a candidate confound in its own right (see the panel log).
+
+## Open Questions
+
+- **Does the rail add a session-count-proportional cost to the same click?** The reporter observes
+  the lag scaling with `server/data/sessions`; the profile could not exercise that (active show had
+  one session) and the un-memoized `V6Rail` gives a plausible mechanism. Deliberately **not** in
+  this change's scope: it is a different component, a different fix (memoization + per-card Radix
+  cost), and confirming it requires changing the active show. If it is confirmed, it belongs in its
+  own change. See the measured-context section for the mechanism.
+
+The two questions carried by the pre-gate draft were closed at the 2026-08-13 gate: the warming
+trigger died with the code-splitting phase, and the `WorkspaceStatic` characterization test moved
+with it to `web-boot-split-boundaries`.
+
+## Panel & review log
+
+### 2026-08-13 — Pre-panel fact-check pass (light tier)
+
+Mechanical fetch-and-compare of the stated checkable claims against the live tree at `main` @
+`3eaca8f`. Each claim was posed as a **property to verify**, not a line to confirm; claims about
+what a function does required reading the whole function plus callees on the claim-relevant path.
+
+**23 claims checked. 21 CONFIRMED, 1 CORRECTED, 1 left UNVERIFIED.**
+
+**Corrected in place (major):** "The only code-split boundary in `web/` today is the island
+wrapper." False — `BatchImportModal.tsx:146` already does
+`await import('../batchImport/logImportClient')` inside its submit handler. Independently
+re-verified by the orchestrator. (That correction now lives with the code-splitting work in
+`web-boot-split-boundaries`.)
+
+**Sharpened in place (minors):** the "zero fetches on open" claim was literally imprecise —
+`HomeSettingsModal` does call `useProfile()`, but `AppShell` already calls it at boot, so the
+`isOpen` transition adds no request; the per-row Radix description attached "with its own Portal"
+only to `Popover` when `Select` has one too; the nine swatches were confirmed via
+`PALETTE_SLOT_INDICES` (a nine-element tuple) rather than by counting JSX.
+
+**Left UNVERIFIED:** the causal claim that the mount commit is what the user perceives as the lag.
+No profile taken. Reached the panel un-vouched, and is now a halt-gate (task 1.2).
+
+Notable CONFIRMED-with-full-read results: `handleSave` reads nothing `EventButtonsTable` owns;
+`Dialog.tsx` uses no `forceMount`; no e2e assertion touches Event Buttons content without first
+clicking `#v6-settings-tab-event-buttons` (whole `e2e/` tree swept for table-specific markers).
+
+This pass was an **aid, not a warrant** — the panel prompt said so explicitly and preserved the
+reviewers' full skeptical mandate, which is what produced the findings below.
+
+### 2026-08-13 — Adversarial panel (4 reviewers: requirements / assumptions / failure & abuse / scope & simpler design)
+
+The panel materially changed this change: it found two defects in the proposed fix, corrected the
+diagnosis twice, and split the work in two. Synthesis below; conflicts between reviewers are
+resolved in the disposition.
+
+**Blockers/majors fixed in place:**
+
+1. **The proposed fix would have made reopen worse** (found independently by two reviewers).
+   Resetting `activeTab`/`visitedTabs` in the passive `isOpen` effect lets the reopen commit mount
+   the stale tab's content before the reset lands, then unmount it. Both the existing reopen test
+   and the drafted scenario asserted only settled state, so neither would have caught it. Fixed:
+   D2 now specifies the render-phase reset, and the spec's reopen scenario demands **zero mounts**
+   during the transition rather than absence afterwards. Verified by the orchestrator against
+   `HomeSettingsModal.tsx`.
+2. **The diagnosis named the wrong open.** On a *first* open `showDrafts` is empty, so the panel
+   renders its "Select a show" hint and the table mounts on a later commit; `showDrafts` survives
+   close, so the expensive commit is on *reopen*. Fixed: Context rewritten; measurement tasks now
+   profile the reopen path explicitly.
+3. **The diagnosis named the wrong widget.** A closed Radix `Select` mounts its whole item subtree
+   into a `DocumentFragment` (`SelectContentFragment`), while `Popover` is `Presence`-gated. The
+   per-row cost is the Select. Verified by the orchestrator in
+   `node_modules/@radix-ui/react-select/dist/index.mjs:284-298`. Fixed: Context corrected, and it
+   is the basis of the new D3.
+4. **Deferral relocates the cost onto the Event Buttons tab click** (found by three reviewers) —
+   the users who lose are exactly the ones the tab exists for. Escalated to the gate; see below.
+5. **`everOpened`'s stated justifications were both false** (the mount site is outside the route
+   branch, so a plain conditional survives route changes; and both lazy mechanisms cache the
+   resolved module, so there is no re-fetch to avoid). Moot here — the latch belonged to the
+   code-splitting phase and left with it.
+
+**Escalated to the gate — decided 2026-08-13:**
+
+- **Relocation vs. root cause.** Options priced: deferral only / deferral + idle-warm the tabs /
+  deferral + make the per-row control lazy. **Ruled: make the per-row control lazy** (D3), so the
+  tab click improves rather than inheriting the spike.
+- **Boundary count for the code-splitting work.** A reviewer built all six boundaries in a scratch
+  tree and ran a real production build: **−350,963 B raw (−60.7%)** off the index boot chunk, of
+  which `SessionWorkspace` is 74.9% and `HomeSettingsModal` 13.8%, while **`TeamsRoute` produced
+  no chunk at all (0 bytes)** and the remaining three totalled ~29 KB. **Ruled: audit first, let
+  the measured per-seam table select the boundary list** — carried to
+  `web-boot-split-boundaries` along with the numbers (to be re-measured there, not inherited as
+  fact).
+- **One change or two.** **Ruled: two.** This change ships the lag fix; code-splitting becomes its
+  own queued change. Rationale: the splitting work's dominant boundary optimizes a boot cost
+  unrelated to the reported symptom, and it carries a risk surface — a new independent
+  chunk-failure mode with **no error boundary anywhere in `web/src`** and no `error.page.tsx`
+  (React caches a `lazy` rejection permanently, so a failed chunk replaces the whole document with
+  Next's fatal error page), an App Router `next/dynamic` that resolves to a **different
+  implementation than the vitest tier sees** (`create-compiler-aliases.js:226` →
+  `app-dynamic` → `React.lazy`/`Suspense`, no `.preload()`, `error` hardcoded `null`), overlay
+  fallbacks that would render inline in `<main>` rather than as overlays, and a First Load JS
+  measurement instrument structurally blind to boundaries inside the already-dynamic island
+  chunk. All three mechanism claims were independently verified by the orchestrator. None of it
+  should block this fix.
+
+**Minors accepted as residual:**
+
+- The general visited-set over four panels is broader than the measured problem (only Event
+  Buttons has real cost; Auto Sync and Debug are a handful of `<p>`s). Accepted: the general rule
+  is a few lines more and stays correct as tabs are added — recorded in D2's alternatives.
+- `#v6-settings-perf-debug-mount` is an orphaned mount node; deferral is safe today and would need
+  attention if the embedded perf-debug variant is ever wired. Recorded in Risks.
+- Two pre-existing draft-loss paths this change reaches near but does not close:
+  `handleStudioChange` discards the previous studio's drafts with no discard guard, and
+  `AppShell`'s `needsOnboarding` early return unmounts an open modal with unsaved drafts. Both
+  pre-date this change and are out of scope; recorded here so the next reader does not assume the
+  modal's lifecycle was audited clean.
+- `dirty` deep-compares the full draft set via double `JSON.stringify` on every render — a
+  plausible contributor to "settings feels laggy" that this change does not touch. Task 1.1's
+  profile will attribute it or rule it out.
+- The proposal described its delta as "extending" an existing requirement when the operation is
+  `ADDED`. Fixed in the rewrite.
+
+**Panel findings that belong to the split-out work** (recorded here for traceability, since the
+queued `web-boot-split-boundaries` draft attributes them to this panel): focus capture and
+un-cancellable opens across the async gap (failure & abuse); `SessionWorkspace`'s coordination
+handles being unregistered during the load window (assumptions); and the measurement that idle
+warming re-fetches ~96% of the deferred bytes, making the win *scheduling* rather than elimination
+(scope). All three are carried in that draft's risk surface.
+
+### 2026-08-13 — Post-gate measurement (halt-gate) and the phase-2 addition
+
+Profiling on the reporter's data (method and numbers in Context) passed task 1.2's halt-gate for
+D2/D3 **and** surfaced a larger, independent cost that no artifact had contemplated: a defeated
+`WorkspaceStatic` memo re-rendering the entire session workspace on every shell state change
+(+11,097 re-renders, 70 ms → 101 ms). This became D0 / phase 2, with its own requirement.
+
+Two honest notes on process:
+
+- **The first profile was taken from `/` with no session open**, so it could not have exercised
+  this path. The reporter's "it scales with `server/data/sessions`" observation is what redirected
+  the measurement; an earlier orchestrator hypothesis (the rail's per-`SessionCard` cost) was
+  measured and **not** supported — the rail contributed nothing with one session in the active
+  show — and was discarded rather than kept as a hedge.
+- **D0 and its requirement post-date the panel and the consistency read below.** They rest on
+  measurement rather than argument, and the fix restores an isolation boundary that already exists
+  rather than adding a mechanism — but they have not been through an adversarial pass. Flagged for
+  the whole-branch review, which per the phase-risk rule covers phase 2 anyway (it changes render
+  semantics around a memo boundary).
+
+### 2026-08-13 — Post-gate consistency read (light tier, widened)
+
+Read all four artifacts as a set plus the split-out queued draft. Widened beyond a pure
+consistency read to also scrutinize D3 and the "Event-button rows defer their type control"
+requirement, which were added **after** the panel and so had never been adversarially reviewed.
+
+**Consistency: clean.** No stale two-phase / six-boundary / `next/dynamic` / warming language
+survives in any normative section; every remaining mention is an explicit backward reference in
+Non-Goals or the panel log. D1/D2/D3 cross-references resolve. Spec-to-task coverage is 1:1 in both
+directions — every scenario has a test task, every task traces to a requirement or a gate. No
+rename residue, no reference to the deleted `web-frontend-platform` delta, and every panel risk for
+the splitting work survived into the queued draft.
+
+**Findings on the new content, fixed in place:**
+
+1. **BLOCKER — "a single click opens it" was not achievable as described.** Radix's `SelectTrigger`
+   opens on `onPointerDown` for mouse (and calls `preventDefault()`), not on click, so upgrading
+   *on* pointerdown means the fresh trigger never receives the gesture, and any resulting open
+   would depend on browser-specific click retargeting after a mid-gesture DOM swap. Verified by the
+   orchestrator at `react-select/dist/index.mjs:200-217`. Fixed: D3 now names the deterministic
+   technique — mount the upgraded control with `defaultOpen` (`RadixSelect.Root` accepts
+   `open`/`defaultOpen`/`onOpenChange`, `index.mjs:47-48,67-69`) — which also covers touch taps and
+   assistive-technology synthetic activations that deliver no prior hover or focus. The reviewer
+   correctly flagged that the artifacts asserted both "no duplication" and "no scope beyond
+   `EventButtonsTable.tsx`", which were jointly unsatisfiable: `Select.tsx` now appears in the
+   proposal's Impact and as its own task (3.2), as one additive optional prop.
+2. **MAJOR — keyboard upgrade dropped focus.** Removing a focused node blurs to `document.body`;
+   nothing transfers focus to a replacement. Fixed: the spec now requires focus to end on the
+   upgraded control, and task 3.3 specifies the ref-based `.focus()`.
+3. **MAJOR — assistive-technology activation was unpinned.** Rotor/explore-by-touch activations
+   deliver a synthesized click with no preceding pointer or focus events, reproducing the
+   swallowed-interaction failure for exactly the users least able to work around it. Fixed: the
+   requirement and task 3.1(b) now name mouse, touch, and AT activation explicitly.
+4. **MINOR — ARIA-state parity was under-specified.** Pinning only "appearance, accessible name,
+   and role" would permit an inert `role="combobox"` with no `aria-expanded`, which fails
+   `aria-required-attr`. Fixed: the requirement now pins expanded and disabled state and demands
+   identical automated-accessibility results.
+5. **MINOR — `pointerenter` is desktop-only.** Recorded in D3 so no future reader treats hover as
+   the mechanism.
+
+**Also confirmed clean by this read:** no `<form>`/submit path in `EventButtonsTable`, so the inert
+trigger cannot alter submission semantics; the row's other controls (drag handle, name input, color
+popover, options button) are independent siblings with no dependency on the Select's mount state;
+`updateButton`'s `onChange` wiring is unchanged; and a repo-wide sweep of `openspec/specs/` found no
+existing requirement about per-row Select mount behavior, so neither "Honest save model in Settings"
+nor "Generation instruction fields in Settings" is contradicted.
