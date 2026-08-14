@@ -6,6 +6,7 @@ import { ValidationError } from '@autologger/domain';
 import { InvalidRangeError } from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import type { Hono } from 'hono';
+import { COMPRESSIBLE_CONTENT_TYPE_REGEX, compress } from 'hono/compress';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
 import type { AppEnv, Bindings } from './appEnv';
@@ -75,6 +76,28 @@ export function wireApp(
   // in registration order. So register ipAllowlist first to keep it outermost.
   app.use('*', ipAllowlistMiddleware);
   app.use('*', authContext);
+
+  // Response compression for the API surface only. Scoped to `/api/*` so the
+  // Next frontend bridge (which compresses its own responses) and `/auth/*`
+  // are untouched. The filter is the middleware's default compressible-type
+  // regex plus `application/x-ndjson` (export.jsonl), which the default regex
+  // omits. Surfaces that must NOT be compressed need no explicit exclusion:
+  // - Audio downloads: `audio/*` content-types never match the filter, so the
+  //   hand-set `content-length`/`content-range` headers (range scrubbing)
+  //   survive untouched.
+  // - SSE (ai/chat, aiV2): `streamSSE` sets both `Transfer-Encoding: chunked`
+  //   (the middleware skips any response with an existing Transfer-Encoding)
+  //   and `text/event-stream` (excluded by the default regex's negative
+  //   lookahead) — doubly excluded.
+  // - WS upgrades: no compressible response body, and compress() never touches
+  //   `c.env`, so the @hono/node-ws env-identity handshake above is unaffected.
+  app.use(
+    '/api/*',
+    compress({
+      contentTypeFilter: (type) =>
+        COMPRESSIBLE_CONTENT_TYPE_REGEX.test(type) || /^application\/x-ndjson\b/i.test(type),
+    }),
+  );
 
   app.onError((err, c) => {
     if (err instanceof ApiError) return c.json({ detail: err.detail }, err.status as 400);
