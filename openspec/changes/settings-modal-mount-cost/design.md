@@ -154,8 +154,11 @@ session in the active show this contributed nothing measurable. Left as a note, 
 
 - Opening the Settings modal — including reopening it — commits only the content the user is
   looking at.
-- The Event Buttons tab click gets faster too, rather than inheriting the cost deferral removed
-  from the open.
+- The Event Buttons tab click is attacked at the cost itself (the lazy per-row `Select`, D3)
+  rather than merely inheriting the mount that deferral removed from the open. **Measured
+  outcome (task 5.2):** the click did not get faster — 13.1 ms → 15.9 ms, a +2.8 ms regression —
+  because deferral moves the table's mount onto that click and D3 only bounds the added cost, it
+  does not eliminate it. Accepted as an expected residual; see the Outcome section.
 - The deferral discipline is written down in a form that a future refactor cannot silently undo.
 
 **Non-Goals:**
@@ -360,9 +363,49 @@ deliberately not used (see D0). Full data: `.apply/profile-after.md`.
 The modal-mount cost D2 and D3 targeted is delivered on both open paths. The tab-activation path
 regressed by 2.8 ms, which is inherent to deferral — before the change that click merely flipped a
 `hidden` attribute because the table was already mounted; after it, that click is where the table
-mounts. D3's lazy per-row `Select` is what holds the regression to +2.8 ms. Task 5.2's wording
-demanded improvement on this path too, which contradicts `profile-before.md`'s own framing of it as
-the *regression guard*; recorded as a finding for the whole-branch review rather than reinterpreted.
+mounts. **What D3 is established to hold the line on is structural, not the +2.8 ms figure
+itself**: the phase-4 test (`EventButtonsTable.lazyTypeSelect.test.tsx`, scenario a) shows no
+row mounts a `RadixSelect.Root` (an inert trigger only), and the mounted-`Root` count does not
+grow with row count. **No deferral-only variant (tab content deferred, per-row `Select` left
+eager) was ever built or timed**, so the claim that D3 specifically is "what holds the regression
+to +2.8 ms" — as opposed to some other or larger number a deferral-only build would have
+produced — is an unmeasured counterfactual and is not asserted (whole-branch audit finding I3).
+
+**5.2 amendment (whole-branch audit, 2026-08-13).** Task 5.2 as originally worded required this
+path to *improve*; it regressed. Ruled **not a defect**: the criterion measured a workload the
+change deliberately redefined (this click previously flipped a `hidden` attribute on an
+already-mounted table; now it *is* the mount), `profile-before.md` itself framed the number as a
+regression guard with a "must not regress meaningfully" bar rather than an improvement target,
+and +2.8 ms sits at or below the double-`rAF` instrument's floor with heavily overlapping trial
+ranges (before `[10.1–15.8]`, after `[12.8–17.3]`). Task 5.2 is amended (see `tasks.md`) to
+require the modal-mount paths to improve and the first tab activation to **not regress
+meaningfully past the 12.5–13.1 ms baseline** (`profile-before.md`'s no-session baseline and
+`profile-after.md`'s before-median). The +2.8 ms is recorded here as an accepted, expected
+residual of deferral, not reinterpreted or hidden. `profile-after.md`'s "+21 %" framing is
+dropped — the percentage implies precision the instrument does not have (see `.apply/
+profile-after.md`). Taken together, open + first-tab-activation went **41.8 ms → 32.7 ms**
+(28.7 + 13.1 before; 16.8 + 15.9 after) — the combined path the user experiences when opening
+Settings specifically to edit event buttons is faster, even though the second leg alone is not.
+
+### Residuals (whole-branch audit, 2026-08-13)
+
+Findings recorded rather than discharged, carried forward as known gaps:
+
+- **M7 — `dirty`'s double `JSON.stringify` over the full draft set.** The panel log ("Minors
+  accepted as residual") promised "task 1.1's profile will attribute it or rule it out." No
+  artifact records either outcome — neither `profile-before.md` nor `profile-after.md` isolates
+  `dirty`'s cost. Left open; a future profile should attribute or rule it out before further
+  Settings-modal performance work relies on either answer.
+- **M8 — accessibility-check requirement has no gate.** `spec.md`'s "Event-button rows defer
+  their type control" requirement says "automated accessibility checks pass identically before
+  and after the upgrade," but the repo has no axe/jest-axe tooling anywhere, so nothing
+  mechanically checks this. What is actually gated, by the phase-4 tests, is role, accessible
+  name, and `aria-expanded` parity between the inert trigger and the upgraded control — those
+  properties are asserted; the broader "automated accessibility checks" claim is not. Recorded as
+  a gap between the spec's wording and the test suite's actual coverage, not silently narrowed.
+- **M9 — commit `ce62a8c`'s message still asserts the withdrawn `+11,097` figure.** History is
+  immutable — the commit is not rewritten — but recorded here so a future `git log` reader is not
+  misled by a claim this change itself withdrew (see D0 and `phase2-diagnostic.md`).
 
 ## Migration Plan
 

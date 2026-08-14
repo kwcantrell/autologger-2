@@ -50,8 +50,12 @@ claimed for it.
   it — strictly worse than today. Adjusting state during render keeps that commit off the DOM.
 - **Each event-button row's type `Select` becomes lazy**: an inert trigger with the same
   appearance and accessible name, upgraded to the real Radix `Select` on pointer or focus intent.
-  This attacks the cost itself rather than relocating it, so the Event Buttons tab click gets
-  faster too — deferral alone would simply move the spike onto that click.
+  This attacks the cost itself rather than merely relocating it: deferring tab content alone
+  would move the table's whole per-row `Select` mount onto the Event Buttons tab click, and D3
+  bounds how much of that cost lands there. **Measured (task 5.2): the click did not get
+  faster** — first tab activation went 13.1 ms → 15.9 ms, a +2.8 ms regression the whole-branch
+  audit accepted as an expected residual (see `design.md`'s Outcome section) rather than the
+  improvement this bullet originally claimed.
 
 No **BREAKING** changes.
 
