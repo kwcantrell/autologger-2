@@ -88,6 +88,45 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     expect(await gunzipJson(compressed)).toEqual(plainBody);
   });
 
+  it('leaves a small JSON body uncompressed with an accurate content-length', async () => {
+    // Same route as the gzip test above, but with nothing seeded — so the only
+    // difference is payload size. `c.json()` sets no content-length, which used
+    // to make compress()'s 1024-byte threshold inert: this 14-byte body gzipped
+    // to a LARGER one. measureCompressibleBody stamps the length so the
+    // threshold can actually fire.
+    const session = seededSession().sessionId;
+
+    const res = await app.request(
+      `/api/sessions/${session}/transcript-words`,
+      { method: 'GET', headers: GZIP },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-encoding')).toBeNull();
+
+    const raw = new Uint8Array(await res.arrayBuffer());
+    expect(raw.byteLength).toBeLessThan(1024);
+    expect(res.headers.get('content-length')).toBe(String(raw.byteLength));
+    expect(JSON.parse(new TextDecoder().decode(raw))).toEqual({ words: [] });
+  });
+
+  it('leaves a small JSON error body uncompressed with an accurate content-length', async () => {
+    // Error bodies come from app.onError, downstream of the same middleware
+    // pair — the hot path where a handful of bytes were being gzipped.
+    const res = await app.request(
+      '/api/sessions/does-not-exist/transcript-words',
+      { method: 'GET', headers: GZIP },
+      { ...env },
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-encoding')).toBeNull();
+
+    const raw = new Uint8Array(await res.arrayBuffer());
+    expect(raw.byteLength).toBeLessThan(1024);
+    expect(res.headers.get('content-length')).toBe(String(raw.byteLength));
+    expect(JSON.parse(new TextDecoder().decode(raw))).toHaveProperty('detail');
+  });
+
   it('leaves audio 206 range responses uncompressed with range headers intact', async () => {
     const session = seededSession().sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);

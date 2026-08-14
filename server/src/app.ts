@@ -5,7 +5,7 @@
 import { ValidationError } from '@autologger/domain';
 import { InvalidRangeError } from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
-import type { Hono } from 'hono';
+import type { Hono, MiddlewareHandler } from 'hono';
 import { COMPRESSIBLE_CONTENT_TYPE_REGEX, compress } from 'hono/compress';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { ZodError } from 'zod';
@@ -42,6 +42,57 @@ export interface FrontendBridge {
     outgoing: import('node:http').ServerResponse,
   ): Promise<void>;
 }
+
+/** The `/api/*` compressible-type filter: hono's default compressible-type
+ * regex plus `application/x-ndjson` (export.jsonl), which that regex omits.
+ * Shared by `compress()` and `measureCompressibleBody` so the two can never
+ * disagree about which responses are in scope. */
+const isCompressibleResponseType = (type: string): boolean =>
+  COMPRESSIBLE_CONTENT_TYPE_REGEX.test(type) || /^application\/x-ndjson\b/i.test(type);
+
+/** Give `compress()`'s size threshold something to measure (see the ordering
+ * comment at its registration site). Buffers the response body and stamps an
+ * accurate `Content-Length` — but ONLY for responses that are (a) compressible
+ * by the filter above and (b) missing a `Content-Length`.
+ *
+ * Every skip below is load-bearing, and each is checked BEFORE the body is
+ * touched — nothing here may consume a streaming response:
+ * - `Transfer-Encoding` present => a stream (`streamSSE` sets it). Buffering an
+ *   SSE stream would hang the request until the turn ended and then deliver it
+ *   as one blob; the content-type check below independently excludes
+ *   `text/event-stream`, but this guard covers any future compressible-typed
+ *   stream too.
+ * - `Content-Encoding` present => already encoded; leave it alone.
+ * - non-compressible content-type => audio byte-serving (`audio/*`) and its
+ *   hand-set `content-length`/`content-range` range headers stay byte-identical.
+ * - `Content-Length` already set => nothing to measure; `compress()` can
+ *   already apply its threshold.
+ * - HEAD / bodyless (204, 304) => no body to measure; `new Response(body, …)`
+ *   would throw on a null-body status.
+ *
+ * The buffering itself is cheap: these are fully-materialized string bodies
+ * (`c.json()`/`c.text()`) already resident in memory — the ArrayBuffer is a
+ * copy, not new I/O. */
+const measureCompressibleBody: MiddlewareHandler<AppEnv> = async (c, next) => {
+  await next();
+  const res = c.res;
+  if (
+    c.req.method === 'HEAD' ||
+    res.headers.has('Content-Length') ||
+    res.headers.has('Content-Encoding') ||
+    res.headers.has('Transfer-Encoding') ||
+    !res.body
+  ) {
+    return;
+  }
+  const type = res.headers.get('Content-Type');
+  if (!type || !isCompressibleResponseType(type)) return;
+
+  const buffered = await res.arrayBuffer();
+  const measured = new Response(buffered, res);
+  measured.headers.set('Content-Length', String(buffered.byteLength));
+  c.res = measured;
+};
 
 export function wireApp(
   app: Hono<AppEnv>,
@@ -91,13 +142,21 @@ export function wireApp(
   //   lookahead) — doubly excluded.
   // - WS upgrades: no compressible response body, and compress() never touches
   //   `c.env`, so the @hono/node-ws env-identity handshake above is unaffected.
-  app.use(
-    '/api/*',
-    compress({
-      contentTypeFilter: (type) =>
-        COMPRESSIBLE_CONTENT_TYPE_REGEX.test(type) || /^application\/x-ndjson\b/i.test(type),
-    }),
-  );
+  //
+  // The pair below is deliberate and ORDER-SENSITIVE. `compress()` applies its
+  // 1024-byte threshold only when the response already carries a
+  // `Content-Length` — and `c.json()`/`c.text()` set none, so on this API the
+  // threshold was inert: an 11-byte `{"ok":true}` ack gzipped to a ~32-byte
+  // body, paying CompressionStream CPU for negative savings on every hot-path
+  // poll and ack. `measureCompressibleBody` runs INSIDE `compress()`
+  // (registered second => inner middleware => its post-`next()` work happens
+  // first), materializing length-less compressible bodies and stamping an
+  // accurate `Content-Length` before `compress()` makes its decision. Small
+  // bodies then fall under the threshold and ship uncompressed with a correct
+  // length; large ones compress exactly as before (`compress()` drops the
+  // length again when it encodes).
+  app.use('/api/*', compress({ contentTypeFilter: isCompressibleResponseType }));
+  app.use('/api/*', measureCompressibleBody);
 
   app.onError((err, c) => {
     if (err instanceof ApiError) return c.json({ detail: err.detail }, err.status as 400);
