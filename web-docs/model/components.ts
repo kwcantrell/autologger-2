@@ -824,6 +824,19 @@ const capabilityScopes: CapabilityScope[] = [
       'ports',
     ],
   },
+  {
+    type: 'cross-cutting',
+    capability: 'web-frontend-platform',
+    // nextjs-frontend-migration: the Next.js platform surface genuinely spans
+    // server and web. Server side: server-bootstrap owns the GET-only bridge
+    // catch-all (app.ts) and the upgrade dispatcher (upgradeDispatch.ts);
+    // node-infra owns the `nextFrontend.ts` wrapper (prepare()/boot-ordering/
+    // API-only fallback). Web side: web-app and web-admin own their route
+    // groups' root layout, page, and client-only island wrapper; web-shared
+    // owns the route-definition module's segment-shape helper, the shared
+    // not-found page, and the single AppLoadingSkeleton both islands render.
+    components: ['server-bootstrap', 'node-infra', 'web-app', 'web-admin', 'web-shared'],
+  },
   // Process (attached to no component; listed on the About page).
   { type: 'process', capability: 'sdlc-process' },
   // cursor-agent-adapters governs the `.cursor/**` + AGENTS.md pointer-adapter

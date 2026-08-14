@@ -29,17 +29,22 @@ way selection does. Navigating to `/teams` SHALL push a history entry and leaves
 active session (the departure semantics of the transport-stop requirement apply
 unchanged). The workspace's session id SHALL come from the route parameter —
 there SHALL be no parallel component-state copy of the active session id that can
-disagree with the URL. The router-known route predicate SHALL remain defined in the
-shared route-definition module, which its two runtime consumers (the post-login
-stash write and the return-path validator) import; the three sanctioned mirrors of
-the route table — `AppShell`'s wouter patterns, the vite dev-middleware matcher, and
-the server serve block — SHALL each be extended in the same change that extends the
-module (they cannot mechanically share one definition; keeping them in lockstep is
-the requirement).
+disagree with the URL. The router-known route table SHALL remain defined in the
+shared route-definition module, which its runtime consumers import: the post-login
+stash write, the return-path validator, and the server-side shell router (the Next
+catch-all's segment-shape validation). The module holds two predicates with
+deliberately different domains — the deep-link predicate (`isRouterKnownPathname`,
+excludes `/`) consumed by the stash write and return-path validator, and the shell
+segment-shape helper (includes `/`) consumed by the catch-all — and they SHALL NOT be
+merged into one predicate. `AppShell`'s wouter patterns remain the one
+sanctioned mirror that cannot mechanically share the definition — extending it in the
+same change that extends the module is the requirement. (The former vite dev-middleware
+matcher and hand-written server serve block no longer exist; the shell router consumes
+the module directly instead of mirroring it.)
 
-(Non-normative: a path matching no route — reachable today via the raw built-asset
-path the static handler serves, e.g. `/src/pages/index/index.html` — renders the
-no-session home view without rewriting the address bar.)
+(Non-normative: a path matching no route 404s at the HTML layer under the shell
+router; the previously reachable raw built-asset path, e.g.
+`/src/pages/index/index.html`, no longer exists as a served asset.)
 
 #### Scenario: Selecting a session updates the URL
 - **WHEN** an authenticated user selects a session from the rail or session list
@@ -69,6 +74,12 @@ no-session home view without rewriting the address bar.)
   on `/teams`
 - **THEN** the team management view mounts at that URL, and browser Back returns to
   the previous view
+
+#### Scenario: Route table extension is single-sourced
+- **WHEN** a future change adds a router-known route
+- **THEN** it extends the shared route-definition module (predicate and segment shape)
+  and `AppShell`'s wouter patterns in the same change, and no other copy of the route
+  table exists to update
 
 ### Requirement: Deep-link resolution states
 The client SHALL resolve the `:id` route parameter with a per-id query against
