@@ -69,13 +69,13 @@ Archive a completed change in the experimental workflow.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
-5. **Run the web-docs drift gate; attach any newly archived capability**
+5. **Run the archive gates, proportional to what the archive actually moves**
 
-   Run root `npm run docs:check`. If it fails, stop and report the failure — do not archive with a red gate.
+   An archive commit moves `openspec/changes/<name>/` into `archive/` and syncs delta specs into `openspec/specs/`. If that is *all* it does, it has no runtime surface: state explicitly that root `npm test`/`npm run typecheck` are skipped and why (per `openspec/config.yaml`'s docs-only rule) rather than spending a full suite run that is structurally incapable of failing for any archive-related reason.
 
-   Check whether this change's delta specs introduce a capability that doesn't yet exist in `openspec/specs/` on `main` (a **new** capability, not a modification of an existing one). If so, attach it in `web-docs/model/components.ts` — the component model backing the architecture atlas — in the same commit that performs the archive move (below); pending-grace for that capability ends once it joins the baseline. Re-run `npm run docs:check` after attaching it to confirm the capability-accounting gate now passes.
+   Run root `npm test` and `npm run typecheck` when the archive commit also carries code, test, or config edits. If either fails, stop and report the failure — do not archive with a red gate.
 
-   If no delta specs exist, or none introduce a new capability, skip the attach step but still run `docs:check`.
+   There is **no** architecture-atlas drift gate and no capability-attachment step: both were retired with the `web-docs/` workspace. Nothing mechanically checks that a synced delta spec lands coherently in the baseline, so read the sync diff yourself before committing.
 
 6. **Perform the archive**
 

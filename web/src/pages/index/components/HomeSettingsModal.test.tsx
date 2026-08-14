@@ -83,15 +83,28 @@ vi.mock('../utils/palette9', async (importOriginal) => {
   };
 });
 
-vi.mock('./Select', () => ({
-  Select: (props: {
-    id?: string;
-    ariaLabel?: string;
-    value: string;
-    disabled?: boolean;
-    onChange: (value: string) => void;
-    options: { value: string; label: string; disabled?: boolean }[];
-  }) => (
+// `LazySelect` is the deferred-mount stand-in for `Select` (settings-modal-mount-cost D3,
+// widened to the modal's own always-mounted selects). It is a pure mount-cost optimisation
+// with the same contract, so both modules share one native-`<select>` stub — these tests
+// are about the modal's logic, and the deferral/upgrade behaviour itself is exercised
+// against the real component in EventButtonsTable.test.tsx.
+vi.mock('./Select', () => ({ Select: selectStub }));
+// Resolves to the mocked './Select' above, so `LazySelect` stands in as the same native
+// `<select>` — the swap is deliberate and must stay a re-export rather than a second stub,
+// or the two would be free to drift apart.
+vi.mock('./LazySelect', async () => ({ LazySelect: (await import('./Select')).Select }));
+
+function selectStub(props: {
+  id?: string;
+  ariaLabel?: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  options: { value: string; label: string; disabled?: boolean }[];
+}) {
+  // A function *declaration*, not a const: `vi.mock` is hoisted above this point, and only
+  // a declaration is hoisted with it so the factory can close over the stub.
+  return (
     <select
       id={props.id}
       aria-label={props.ariaLabel}
@@ -105,8 +118,8 @@ vi.mock('./Select', () => ({
         </option>
       ))}
     </select>
-  ),
-}));
+  );
+}
 
 vi.mock('./FpsSelect', () => ({ FpsSelect: () => null }));
 // Renders the `buttons` prop's names so hydration (D3) is observable; `(blank)` stands in

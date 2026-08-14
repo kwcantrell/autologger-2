@@ -43,10 +43,7 @@ import type { Duplex } from 'node:stream';
  * augmentations (see the module header). */
 export interface NextAppLike {
   prepare(): Promise<void>;
-  getRequestHandler(): (
-    incoming: IncomingMessage,
-    outgoing: ServerResponse,
-  ) => Promise<void>;
+  getRequestHandler(): (incoming: IncomingMessage, outgoing: ServerResponse) => Promise<void>;
   /** NextCustomServer's `upgradeHandler` property GETTER (valid only after
    * `prepare()`), NOT its confusingly-similar `getUpgradeHandler()` METHOD.
    * The two are disjoint code paths in `next@15.5.23` and only this one

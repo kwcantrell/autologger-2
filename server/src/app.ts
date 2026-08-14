@@ -132,7 +132,12 @@ export function wireApp(
     // Next's not-found document instead of Hono's own 404. Guard explicitly
     // so the closed API/auth surface never leaks a frontend-authored
     // response, matching pre-change `serveStatic` behavior.
-    if (path === '/api' || path === '/auth' || path.startsWith('/api/') || path.startsWith('/auth/')) {
+    if (
+      path === '/api' ||
+      path === '/auth' ||
+      path.startsWith('/api/') ||
+      path.startsWith('/auth/')
+    ) {
       return c.notFound();
     }
 

@@ -31,10 +31,7 @@ import type { NextFrontend } from './node/nextFrontend';
  * `injectWebSocket` (captures Hono's handler without installing it) and the
  * real server this module installs its own listener on. */
 export interface UpgradeCapableServer {
-  on(
-    event: 'upgrade',
-    handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void,
-  ): void;
+  on(event: 'upgrade', handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void): void;
 }
 
 /** Captures the `server.on('upgrade', handler)` listener `injectWebSocket`

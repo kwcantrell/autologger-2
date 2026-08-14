@@ -81,12 +81,7 @@ describe('E-A clamp premise (design D5/D9) — negative deltas floor to 0', () =
 describe('resolveAnchors chunk-group derivation (design D5, task 3.2)', () => {
   // A `Recording N Started` internal event with an explicit event wall time
   // and frame-derived anchor seconds.
-  function startedEvent(
-    n: number,
-    totalFrames: number,
-    frameRate: number,
-    wallTimeUtc: string,
-  ) {
+  function startedEvent(n: number, totalFrames: number, frameRate: number, wallTimeUtc: string) {
     return {
       category: 'internal',
       message: `Recording ${n} Started`,
@@ -267,9 +262,24 @@ describe('resolveAnchors chunk-group derivation (design D5, task 3.2)', () => {
     // — the group exhausts the whole chain and every member is anchorless.
     const anchors = recordingStartAnchors([startedEvent(1, 0, 24, '2026-08-12T10:00:00.000Z')]);
     const segmentInfo: SegmentAnchorInfo[] = [
-      { path: 'claims-it', ordinal: 1, recordingOrdinal: 1, startedAtUtc: '2026-08-12T10:00:00.000Z' },
-      { path: 'orphan-a', ordinal: 2, recordingOrdinal: 9, startedAtUtc: '2026-08-12T10:05:00.000Z' },
-      { path: 'orphan-b', ordinal: 3, recordingOrdinal: 9, startedAtUtc: '2026-08-12T10:06:00.000Z' },
+      {
+        path: 'claims-it',
+        ordinal: 1,
+        recordingOrdinal: 1,
+        startedAtUtc: '2026-08-12T10:00:00.000Z',
+      },
+      {
+        path: 'orphan-a',
+        ordinal: 2,
+        recordingOrdinal: 9,
+        startedAtUtc: '2026-08-12T10:05:00.000Z',
+      },
+      {
+        path: 'orphan-b',
+        ordinal: 3,
+        recordingOrdinal: 9,
+        startedAtUtc: '2026-08-12T10:06:00.000Z',
+      },
     ];
     const groups: GroupWords[] = [
       {

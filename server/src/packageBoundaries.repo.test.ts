@@ -143,8 +143,7 @@ const IMPORT_FROM_RE = new RegExp(
  * matched as if it were an import clause, and reported the string-continuation
  * text as an undeclared third-party specifier. This was latent all along; it
  * surfaced the moment `mcpTools.ts` moved into a package, because
- * `checkThirdPartySpecifiers` only walks `packages/`. `generateL0.ts` in
- * `web-docs` carries the identical shape.
+ * `checkThirdPartySpecifiers` only walks `packages/`.
  *
  * That is why `CLAUSE_PLAIN_CHAR_SRC` excludes `(`, `)`, `=` and the quotes —
  * and why the run must ALSO carry explicit comment branches. Task 3.1 shipped

@@ -136,8 +136,7 @@ each such class SHALL have exactly one module instance in the running process (m
 land as same-commit move + import rewrite; no shim window). `@autologger/contract`
 SHALL declare `zod` as a peerDependency so it can never install a private copy, and
 `@autologger/session-core` and `@autologger/storage` SHALL declare `better-sqlite3` as
-a peerDependency (the server workspace remains the installing dependency; `web-docs`'s
-devDependency declaration dedupes to the same resolved copy).
+a peerDependency (the server workspace remains the installing dependency).
 
 `instanceof` mapping is **not** the only ground for single-copy treatment, and this
 requirement SHALL NOT be read as licensing a private copy wherever no `instanceof` occurs.

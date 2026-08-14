@@ -502,7 +502,9 @@ function buildChunkGroups(
   });
   for (const list of anchorIndicesByOrdinal.values()) {
     list.sort(
-      (i, j) => Date.parse(anchors[i].eventWallTimeUtc ?? '') - Date.parse(anchors[j].eventWallTimeUtc ?? ''),
+      (i, j) =>
+        Date.parse(anchors[i].eventWallTimeUtc ?? '') -
+        Date.parse(anchors[j].eventWallTimeUtc ?? ''),
     );
   }
 
@@ -511,7 +513,8 @@ function buildChunkGroups(
     members.sort((a, b) => a.ordinal - b.ordinal);
     if (ordinal === null) {
       // Every null-ordinal segment is its own singleton group.
-      for (const seg of members) groups.push({ base: seg, members: [seg], pairedAnchorIndex: null });
+      for (const seg of members)
+        groups.push({ base: seg, members: [seg], pairedAnchorIndex: null });
       continue;
     }
     const candidateIdx = anchorIndicesByOrdinal.get(ordinal) ?? [];
@@ -545,7 +548,11 @@ function buildChunkGroups(
     cycles.forEach((cycleMembers, i) => {
       if (cycleMembers.length === 0) return;
       cycleMembers.sort((a, b) => a.ordinal - b.ordinal);
-      groups.push({ base: cycleMembers[0], members: cycleMembers, pairedAnchorIndex: candidateIdx[i] });
+      groups.push({
+        base: cycleMembers[0],
+        members: cycleMembers,
+        pairedAnchorIndex: candidateIdx[i],
+      });
     });
   }
   return groups;
@@ -589,7 +596,10 @@ function resolveAnchors(
   // time order aren't guaranteed to co-vary (e.g. a discarded first chunk).
   const sortedGroups = [...groups].sort((a, b) => a.base.ordinal - b.base.ordinal);
   const unmatchedGroups: ChunkGroup[] = [];
-  const resolved = new Map<ChunkGroup, { anchorSeconds: number; eventWallTimeUtc: string | null }>();
+  const resolved = new Map<
+    ChunkGroup,
+    { anchorSeconds: number; eventWallTimeUtc: string | null }
+  >();
   for (const group of sortedGroups) {
     const seg = group.base;
     let idx: number | undefined;

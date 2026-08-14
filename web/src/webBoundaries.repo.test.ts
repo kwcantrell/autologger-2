@@ -399,10 +399,9 @@ interface DynamicImportEdge {
  * is caught identically to `import('../foo')`, matching how the static-edge
  * walk above already treats the two forms as equivalent). A `CallExpression`
  * is a dynamic import iff its callee is the bare `import` keyword
- * (`node.expression.kind === ts.SyntaxKind.ImportKeyword`) -- this is
- * `web-docs/src/lib/extractImports.ts`'s own `walkSourceFile` check (its
- * `CallExpression`/`ImportKeyword` branch), reused here rather than
- * reinvented, per the standing "in-repo precedent beats invention" rule.
+ * (`node.expression.kind === ts.SyntaxKind.ImportKeyword`) -- the same check
+ * the retired `web-docs` import extractor used, kept here as the canonical
+ * form rather than reinvented.
  *
  * A non-literal first argument (a bare variable, a template literal WITH a
  * substitution, a concatenation, a function call) cannot be resolved
@@ -1100,9 +1099,9 @@ describe('detection predicate (mutation check — proves each piece fires)', () 
       'app/(admin)/admin/users/page.tsx',
       valueImport('AdminIsland', '../../AdminIsland'),
     );
-    expect(v.filter((viol) => viol.kind === 'app-entry-cross' || viol.kind === 'app-layer-inbound')).toEqual(
-      [],
-    );
+    expect(
+      v.filter((viol) => viol.kind === 'app-entry-cross' || viol.kind === 'app-layer-inbound'),
+    ).toEqual([]);
   });
 
   it('flags a DYNAMIC import from outside app/ reaching into app/ (app-layer-inbound, mirrors the packages-escape dynamic-import coverage)', () => {

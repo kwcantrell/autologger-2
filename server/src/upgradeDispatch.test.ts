@@ -74,28 +74,53 @@ describe('decideUpgradeRoute (pure)', () => {
 
   it('destroys a non-/api upgrade that fails the allowlist decision, in dev or prod', () => {
     expect(
-      decideUpgradeRoute({ path: '/_next/webpack-hmr', dev: true, frontendAvailable: true, allowed: false }),
+      decideUpgradeRoute({
+        path: '/_next/webpack-hmr',
+        dev: true,
+        frontendAvailable: true,
+        allowed: false,
+      }),
     ).toBe('destroy');
     expect(
-      decideUpgradeRoute({ path: '/_next/webpack-hmr', dev: false, frontendAvailable: true, allowed: false }),
+      decideUpgradeRoute({
+        path: '/_next/webpack-hmr',
+        dev: false,
+        frontendAvailable: true,
+        allowed: false,
+      }),
     ).toBe('destroy');
   });
 
   it('routes an allowed non-/api upgrade to the frontend only in dev with a frontend available', () => {
     expect(
-      decideUpgradeRoute({ path: '/_next/webpack-hmr', dev: true, frontendAvailable: true, allowed: true }),
+      decideUpgradeRoute({
+        path: '/_next/webpack-hmr',
+        dev: true,
+        frontendAvailable: true,
+        allowed: true,
+      }),
     ).toBe('frontend');
   });
 
   it('destroys an allowed non-/api upgrade in prod even though it passed the allowlist (D6.5)', () => {
     expect(
-      decideUpgradeRoute({ path: '/_next/webpack-hmr', dev: false, frontendAvailable: true, allowed: true }),
+      decideUpgradeRoute({
+        path: '/_next/webpack-hmr',
+        dev: false,
+        frontendAvailable: true,
+        allowed: true,
+      }),
     ).toBe('destroy');
   });
 
   it('destroys an allowed non-/api upgrade in dev when no frontend is available (API-only / HTTP-test callers)', () => {
     expect(
-      decideUpgradeRoute({ path: '/_next/webpack-hmr', dev: true, frontendAvailable: false, allowed: true }),
+      decideUpgradeRoute({
+        path: '/_next/webpack-hmr',
+        dev: true,
+        frontendAvailable: false,
+        allowed: true,
+      }),
     ).toBe('destroy');
   });
 });
@@ -153,7 +178,7 @@ describe('installUpgradeDispatcher', () => {
     installUpgradeDispatcher({
       server,
       honoUpgrade,
-      // biome-ignore lint: test stub shape matches NextFrontend's used surface only
+      // Test stub shape matches NextFrontend's used surface only.
       frontend: opts.frontend as never,
       dev: opts.dev ?? true,
       config: opts.config ?? baseConfig,
@@ -170,7 +195,7 @@ describe('installUpgradeDispatcher', () => {
 
   it('installs exactly one real "upgrade" listener on the server', () => {
     const { server } = install({});
-    expect((server.on as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(server.on as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
   it('routes /api/* to the captured Hono handler, untouched by the allowlist/frontend', () => {

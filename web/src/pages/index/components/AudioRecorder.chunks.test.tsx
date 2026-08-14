@@ -135,13 +135,18 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
 
 function segmentPosts(): string[] {
   return fetchMock.mock.calls
-    .filter(([input, init]) => (init?.method ?? 'GET') === 'POST' && String(input).includes('/audio/segments?'))
+    .filter(
+      ([input, init]) =>
+        (init?.method ?? 'GET') === 'POST' && String(input).includes('/audio/segments?'),
+    )
     .map(([input]) => String(input));
 }
 
 function waveformPuts(): string[] {
   return fetchMock.mock.calls
-    .filter(([input, init]) => (init?.method ?? 'GET') === 'PUT' && String(input).endsWith('/waveform'))
+    .filter(
+      ([input, init]) => (init?.method ?? 'GET') === 'PUT' && String(input).endsWith('/waveform'),
+    )
     .map(([input]) => String(input));
 }
 
@@ -247,7 +252,9 @@ describe('deriveNextOrdinal (design D8)', () => {
   it('counts rescue-queued ordinals and ignores null ordinals and non-internal events', () => {
     expect(deriveNextOrdinal(undefined, undefined, [7])).toBe(8);
     expect(deriveNextOrdinal([{ recording_ordinal: null }], [], [])).toBe(1);
-    expect(deriveNextOrdinal([], [{ category: 'note', message: 'Recording 9 Started' }], [])).toBe(1);
+    expect(deriveNextOrdinal([], [{ category: 'note', message: 'Recording 9 Started' }], [])).toBe(
+      1,
+    );
   });
 });
 

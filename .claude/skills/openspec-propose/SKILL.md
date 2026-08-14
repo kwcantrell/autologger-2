@@ -15,8 +15,9 @@ Propose a new change - create the change and generate all artifacts in one step.
 > **Repo customization (autologger):** the stock Output step below ended with an
 > apply-now prompt that contradicts this repo's SDLC gate ordering. It is replaced with a
 > gate stop: artifacts complete, but tasks.md stays
-> provisional until the fact-check pass, adversarial panel, and human gate recorded in
-> CLAUDE.md "How we work (SDLC)" have run — this file does not suggest or trigger apply.
+> provisional until the adversarial panel and human gate recorded in
+> CLAUDE.md "How we work (SDLC)" have run (plus the fact-check pass, on process changes
+> only) — this file does not suggest or trigger apply.
 > If the `openspec` CLI ever regenerates this file, re-apply this customization.
 
 I'll create a change with artifacts:
@@ -24,8 +25,9 @@ I'll create a change with artifacts:
 - design.md (how)
 - tasks.md (implementation steps)
 
-Artifacts are provisional until the fact-check pass, adversarial panel, and human gate
-recorded in CLAUDE.md "How we work (SDLC)" have run — see Output below.
+Artifacts are provisional until the adversarial panel and human gate recorded in
+CLAUDE.md "How we work (SDLC)" have run — plus the fact-check pass, which that section
+scopes to process changes only. See Output below.
 
 ---
 
@@ -103,9 +105,9 @@ After completing all artifacts, summarize:
 - List of artifacts created with brief descriptions
 - What's ready: "All artifacts created." tasks.md is provisional — it does not authorize
   implementation yet.
-- Stop: the fact-check pass, adversarial panel, and human gate recorded in CLAUDE.md "How
-  we work (SDLC)" have not run. Do not suggest or run apply; that decision belongs to the
-  gate, not this step.
+- Stop: the adversarial panel and human gate recorded in CLAUDE.md "How we work (SDLC)"
+  have not run — nor the fact-check pass, if that section's process-change scope applies.
+  Do not suggest or run apply; that decision belongs to the gate, not this step.
 
 **Artifact Creation Guidelines**
 

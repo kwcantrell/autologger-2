@@ -24,7 +24,7 @@ rules:
   design:
     - Record each key decision with alternatives considered + rationale
     - Include a "Panel & review log" section with three buckets — blockers/majors fixed in place, findings escalated to the gate (with the decision), minors accepted as residual
-    - The Panel & review log also carries the pre-panel fact-check entry (dated; claims checked / corrected / left unverified, with per-claim method and evidence) and the post-gate consistency read's outcome line (dated; "clean" naming the documents read, or findings + fixes)
+    - The Panel & review log also carries the pre-panel fact-check entry — required on process changes only, per CLAUDE.md "Adversarial review of the spec" (dated; claims checked / corrected / left unverified, with per-claim method and evidence) — and the post-gate consistency read's outcome line (dated; "clean" naming the documents read, or findings + fixes)
     - Note deliberate invariants a future reader might "helpfully" undo (e.g. the synchronous-hub / single-process posture)
   specs:
     - Normative SHALL/MUST, avoid should/may; every requirement has at least one WHEN/THEN scenario using exactly four hashtags

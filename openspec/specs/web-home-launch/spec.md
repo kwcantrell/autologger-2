@@ -60,7 +60,6 @@ collapsed affordance SHALL be a focusable control activatable by keyboard, and a
 - **WHEN** the desktop rail is collapsed and the user activates the search affordance by
   pointer or keyboard
 - **THEN** the rail expands and keyboard focus lands in the visible search input
-</content>
 
 ### Requirement: Session-card status polling is bounded
 

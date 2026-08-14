@@ -74,14 +74,16 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     expect(stub.handle).not.toHaveBeenCalled();
   });
 
-  it.each(['/api/definitely-not-a-route', '/auth/nope', '/api', '/auth'])(
-    'unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")',
-    async (path) => {
-      const res = await app.request(path, {}, envWithIO());
-      expect(res.status).toBe(404);
-      expect(stub.handle).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    '/api/definitely-not-a-route',
+    '/auth/nope',
+    '/api',
+    '/auth',
+  ])('unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")', async (path) => {
+    const res = await app.request(path, {}, envWithIO());
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
 
   it.each([
     '/',
@@ -97,19 +99,16 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     // match, so these two MUST still bridge to the frontend.
     '/apifoo',
     '/authors',
-  ])(
-    'bridges GET %s to the frontend',
-    async (path) => {
-      const res = await app.request(path, {}, envWithIO());
-      expect(stub.handle).toHaveBeenCalledTimes(1);
-      // RESPONSE_ALREADY_SENT carries this header (@hono/node-server/utils/response) —
-      // its presence is the observable signal that the bridge, not Hono's
-      // own 404, answered the dispatch (the wire-level bytes of the stub's
-      // canned write are a Node-socket side effect this Fetch Response
-      // can't see; the e2e tier covers real shell content).
-      expect(res.headers.get('x-hono-already-sent')).toBe('true');
-    },
-  );
+  ])('bridges GET %s to the frontend', async (path) => {
+    const res = await app.request(path, {}, envWithIO());
+    expect(stub.handle).toHaveBeenCalledTimes(1);
+    // RESPONSE_ALREADY_SENT carries this header (@hono/node-server/utils/response) —
+    // its presence is the observable signal that the bridge, not Hono's
+    // own 404, answered the dispatch (the wire-level bytes of the stub's
+    // canned write are a Node-socket side effect this Fetch Response
+    // can't see; the e2e tier covers real shell content).
+    expect(res.headers.get('x-hono-already-sent')).toBe('true');
+  });
 
   it('real vs. nonexistent session id both bridge (dispatch never depends on session/catalog data)', async () => {
     const studio = seedStudio();
@@ -130,14 +129,15 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     expect(stub.handle).not.toHaveBeenCalled();
   });
 
-  it.each(['/teams/', '/sessions/abc/', '/admin/users/'])(
-    'trailing slash %s 404s without invoking the bridge',
-    async (path) => {
-      const res = await app.request(path, {}, envWithIO());
-      expect(res.status).toBe(404);
-      expect(stub.handle).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    '/teams/',
+    '/sessions/abc/',
+    '/admin/users/',
+  ])('trailing slash %s 404s without invoking the bridge', async (path) => {
+    const res = await app.request(path, {}, envWithIO());
+    expect(res.status).toBe(404);
+    expect(stub.handle).not.toHaveBeenCalled();
+  });
 
   it('GET / (root) is not treated as a trailing-slash path', async () => {
     const res = await app.request('/', {}, envWithIO());

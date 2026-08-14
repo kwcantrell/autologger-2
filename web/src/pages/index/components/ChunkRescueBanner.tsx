@@ -282,9 +282,9 @@ export function ChunkRescueBanner() {
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="m-0 text-[0.85rem] font-medium text-v5-text">
-            {failedChunks.length} recorded audio{' '}
-            {failedChunks.length === 1 ? 'chunk' : 'chunks'} could not be uploaded. Keep this tab
-            open until they are retried, downloaded, or discarded.
+            {failedChunks.length} recorded audio {failedChunks.length === 1 ? 'chunk' : 'chunks'}{' '}
+            could not be uploaded. Keep this tab open until they are retried, downloaded, or
+            discarded.
           </p>
           <div className="flex gap-2">
             <button type="button" className="btn" onClick={handleRetryAll}>

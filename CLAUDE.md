@@ -54,8 +54,8 @@ npm run build && npm run start                 # production: server serves web/.
 npm run typecheck                              # server + web + e2e
 npm test                                       # server vitest (unit + integration)
 npm run e2e                                    # Playwright smoke (hermetic server on :8791)
-npm run lint                                   # biome, REPORT-ONLY: web/src, web-docs (src/model/scripts),
-                                               #   e2e/, playwright.config.ts, companion/src, server/src, packages/
+npm run lint                                   # biome, REPORT-ONLY: web/src, e2e/,
+                                               #   playwright.config.ts, companion/src, server/src, packages/
 npm run lint:fix                               # same paths, with --write (never run this as a gate)
 ```
 
@@ -140,10 +140,9 @@ concretes, and `middleware/auth.ts` constructs the per-request `Catalog` via
 import boundaries — including the L1-sibling, L2-sibling, and facade-only-consumer rules
 above, and the Hono-freedom split between `server/src/routers/` and the AI runtime's package
 — are enforced by a repo test (`server/src/packageBoundaries.repo.test.ts`), not the
-compiler. Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. The
-generated architecture atlas + docs SPA (component model, edge extraction, drift gates,
-mermaid site) live in `web-docs/` — see README's web-docs section. Full annotated tree + the
-normative endpoint table (with its historical Python-origin column) are in **`README.md`**.
+compiler. Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. Full
+annotated tree + the normative endpoint table (with its historical Python-origin column)
+are in **`README.md`**.
 
 ## Conventions
 
@@ -210,7 +209,9 @@ diff files, progress ledger under `openspec/changes/<name>/.apply/`, git-ignored
 briefs — dispatch prompts point at them rather than pasting context. Full protocol lives in
 `.claude/skills/openspec-apply-change/SKILL.md` (steps 6–7); `.claude/skills/openspec-propose/SKILL.md`
 carries a matching customization (its Output step stops at the gate instead of prompting
-apply); re-apply either customization if the `openspec` CLI regenerates that skill. Process rules live **normatively in the three
+apply), and `.claude/skills/openspec-archive-change/SKILL.md` carries a third (its step 5
+runs gates proportional to what the archive moves, and records that no drift gate exists);
+re-apply any of the three if the `openspec` CLI regenerates that skill. Process rules live **normatively in the three
 operational encodings** — this file, that skill, and `openspec/config.yaml` — with no
 parallel process rulebook (gate ruling 2026-07-14, recorded durably as the `sdlc-process`
 marker spec); process-rule changes are design-bearing, never "small, obvious fixes".
@@ -224,10 +225,17 @@ change is complex enough to need it). On archive, delta specs sync into the dura
 check. The legacy `docs/superpowers/specs|plans/` are **frozen historical records** — new
 work goes through OpenSpec, not there. Repo conventions are also encoded as
 `openspec/config.yaml` `context` + per-artifact `rules`, so generated artifacts inherit them.
-**Final gates**: branch completion and archive both run root `npm run docs:check` (the
-web-docs architecture atlas' drift gate); a change whose archive adds a new capability to
-`openspec/specs/` attaches it in `web-docs/model/components.ts` in that same archive commit
-(pending-grace ends when the capability joins the baseline).
+**Final gates**: branch completion runs root `npm test` and `npm run typecheck`; archive runs
+whichever of them the change's own surface can actually move (a docs/ledger-only archive
+states which it skips and why, per `openspec/config.yaml`). (The former `npm run docs:check`
+architecture-atlas drift gate was retired with the `web-docs/` workspace. Its own standalone
+cost was never part of `npm test` — what was, and what drove the removal, is that
+workspace's **vitest leg**: 31.3s of a 99.1s run, and the only tier that saturated every
+core, because its test files re-ran the gate battery — `runAllGates()` three times in
+`check.test.ts`, plus `snapshot.test.ts` — each pass building 16 whole-repo
+`ts.createProgram` programs, in concurrent forks. **No drift gate replaces it**: cross-
+component architectural drift is now unguarded, and `packageBoundaries.repo.test.ts` covers
+only `packages/**` import rules, not the whole component graph.)
 
 **`opsx:propose` ordering — do not skip the gate.** `opsx:propose` drafts *all four*
 artifacts at once, and OpenSpec treats a change as apply-ready the moment `tasks.md` exists
@@ -251,7 +259,8 @@ Before implementation (`opsx:apply`) — i.e. while `tasks.md` is still provisio
 least-reversible artifacts, where catching a wrong assumption is cheapest. A flawed
 spec makes a *perfect* plan build the wrong thing.
 
-**Before the panel, run a light-tier fact-check pass** (decided 2026-07-14): a mechanical
+**Before the panel, run a light-tier fact-check pass — on process changes only** (decided
+2026-07-14; narrowed to process changes 2026-08-14): a mechanical
 fetch-and-compare reviewer verifies the *stated* checkable claims in
 `proposal.md`/`spec.md`/`design.md` against the live repo (symbol existence, caller
 counts, wire shapes, "X is dead/unused" claims, file inventories, **precedent citations** —
@@ -274,6 +283,27 @@ full skeptical mandate** — reviewers verify anything they doubt and remain the
 mechanism that can surface *implicit* premises the pass structurally cannot enumerate.
 Never phrase the panel prompt as "don't re-verify". Claims introduced later, when rulings
 are folded back, are covered by the post-gate consistency read.
+
+**Which changes run it** (decided 2026-08-14). **Process changes do** — changes to the SDLC
+itself (this file, the `openspec-*` skills, `openspec/config.yaml`, the Cursor adapter
+surface), where the load-bearing claims are about the repo's own history, logs, and prior
+changes. Nothing mechanical stands behind those: no compiler, no test suite, no
+contract-phase review. That is also where the pass made the catch that most justified it —
+`sdlc-orchestrator-obligations`' escalation counts ("0-2 then 4/5/6/10") were a **grep
+artifact**; corrected, they removed a rule the owner had already approved.
+**Code changes skip it.** The panel independently corrected the pass in
+`event-generate-hardening` (claim 11), `package-split-foundation` (the `evictIdle` note),
+`web-coordination-seam` (its stated method), and `ui-refresh` (a grep-spacing artifact),
+and caught the premise the pass got materially wrong in `feed-row-seek` (D6, 3 of 4
+reviewers) — while `ai-runtime-package` records a *correct* CONFIRMED that still did not
+stop a wrong change. The pass's most frequent output on code changes is
+inventory/count corrections, and those are caught more reliably by `npm run typecheck` and
+`npm test`: `feature-service-packages`' missed `server/scripts/` consumer was never
+actually at risk, because `server/tsconfig.json` includes `scripts/**/*.ts`.
+**Cost accepted:** on a code change a false premise now reaches the panel un-caught and
+spends opus-tier reviewer attention that a light-tier pass would have saved. This is a cost
+trade, not a correctness one — the same framing the propose-time premise measurement carries
+above.
 
 Fan out (via `dispatching-parallel-agents`) reviewers with **distinct** mandates —
 not clones:

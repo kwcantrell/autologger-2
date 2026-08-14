@@ -14,7 +14,7 @@ import type { ReactNode } from 'react';
 // `RootGate` renders for its own in-app loading branch once the island has
 // mounted and `useProfile()` is still pending (`web/src/pages/index/
 // RootGate.tsx`'s `LoadingState`) -- there is exactly one definition of the
-// shared structural frame (wrapper div, aria-busy/aria-live/aria-label,
+// shared structural frame (wrapper div, role/aria-busy/aria-live/aria-label,
 // `data-testid="app-loading-skeleton"`), never two hand-maintained mirrors
 // of the loading markup. `RootGate` opts into its richer, client-only
 // treatment (the looping brand video) via the `media` prop -- that content
@@ -31,6 +31,7 @@ export function AppLoadingSkeleton({ id, media }: AppLoadingSkeletonProps = {}) 
     <div
       className="relative z-[1] flex min-h-screen min-h-[100dvh] w-full items-center justify-center px-5 py-10"
       id={id}
+      role="status"
       aria-busy="true"
       aria-live="polite"
       aria-label="Loading"

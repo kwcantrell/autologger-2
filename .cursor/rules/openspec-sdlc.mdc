@@ -9,8 +9,9 @@ design-bearing work, read `CLAUDE.md` "How we work (SDLC)" in full and follow it
 rule is a pointer, not a substitute.
 
 Stop-conditions:
-1. `tasks.md` is provisional until the fact-check pass, adversarial panel, and human gate
-   recorded in `CLAUDE.md` "How we work (SDLC)" have run.
+1. `tasks.md` is provisional until the adversarial panel and human gate recorded in
+   `CLAUDE.md` "How we work (SDLC)" have run — plus the fact-check pass, which that
+   section scopes to process changes only.
 2. Apply is not runnable in this environment — stop and hand the change off (see
    `.claude/skills/openspec-apply-change/SKILL.md`).
 3. The HTTP/WS contract is frozen — read `CLAUDE.md` "Invariants" before touching any

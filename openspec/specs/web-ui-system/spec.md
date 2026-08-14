@@ -309,4 +309,3 @@ When the upgrade is triggered by keyboard focus, focus SHALL end on the upgraded
   the control exposes the same accessible name, role, and ARIA state as before this change and is
   operable by keyboard without any pointer event
 
-</content>

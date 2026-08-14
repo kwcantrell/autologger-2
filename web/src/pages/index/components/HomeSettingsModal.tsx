@@ -13,7 +13,7 @@ import type { EventButtonDraft } from './EventButtonsTable';
 import { EventButtonsTable } from './EventButtonsTable';
 import { FpsSelect } from './FpsSelect';
 import { feedTabButtonClassName } from './feedTabStyles';
-import { Select } from './Select';
+import { LazySelect } from './LazySelect';
 
 // Compact toolbar-select box (ports the .teamSelect/.showSelect layout): auto width
 // bounded 7–18rem, toolbar row height (2.5rem), slim horizontal padding, centered. `!` so it
@@ -493,7 +493,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           </h2>
           <div className="flex flex-nowrap items-center self-center gap-x-3 gap-y-2 min-w-0 flex-[1_1_auto]">
             {/* Studio selector */}
-            <Select
+            <LazySelect
               id="profile-studio-select"
               // Compact toolbar box (the .teamSelect layout, now ported into TOOLBAR_SELECT_BOX).
               className={TOOLBAR_SELECT_BOX}
@@ -503,7 +503,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               options={(profile?.studios ?? []).map((s) => ({ value: s.id, label: s.name }))}
             />
             {/* Show selector */}
-            <Select
+            <LazySelect
               id="profile-show-select"
               className={TOOLBAR_SELECT_BOX}
               ariaLabel="Show to edit"
@@ -642,7 +642,7 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     server uses to derive untitled-create titles (design D5-D8). */}
                     <label className={clsx('field', FIELD_SUFFIX)} htmlFor="profile-show-suffix">
                       <span>Suffix:</span>
-                      <Select
+                      <LazySelect
                         id="profile-show-suffix"
                         ariaLabel="Suffix"
                         value={currentDraft.title_suffix}
