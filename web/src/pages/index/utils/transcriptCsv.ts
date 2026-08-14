@@ -1,15 +1,7 @@
 import type { TranscriptWord } from '../../../api/types';
+import { formatSpeaker } from './speakerOffset';
 
 const COLUMNS = ['Session Time', 'Speaker', 'Word(s)'] as const;
-
-/** Match TranscribeRow's Person-N display for numeric speaker ids. */
-export function formatSpeaker(speaker: string, offset: number): string {
-  const n = Number.parseInt(speaker, 10);
-  if (!Number.isNaN(n) && String(n) === speaker.trim()) {
-    return `Person ${n + offset}`;
-  }
-  return speaker;
-}
 
 /** QUOTE_MINIMAL-style quoting + CRLF — same dialect as server export.csv. */
 function csvField(value: string): string {

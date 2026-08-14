@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptWord } from '../../../api/types';
-import { buildTranscriptCsv, downloadTranscriptCsv, formatSpeaker } from './transcriptCsv';
+import { buildTranscriptCsv, downloadTranscriptCsv } from './transcriptCsv';
 
 function word(
   partial: Partial<TranscriptWord> & Pick<TranscriptWord, 'id' | 'ordinal'>,
@@ -15,16 +15,9 @@ function word(
   };
 }
 
-describe('formatSpeaker', () => {
-  it('shifts numeric speaker ids by the feed offset', () => {
-    expect(formatSpeaker('0', 1)).toBe('Person 1');
-    expect(formatSpeaker('2', 0)).toBe('Person 2');
-  });
-
-  it('leaves non-numeric speakers unchanged', () => {
-    expect(formatSpeaker('Host', 1)).toBe('Host');
-  });
-});
+// `formatSpeaker` itself now lives in (and is tested from) `./speakerOffset`,
+// alongside its `parseSpeaker` inverse — one definition shared by this exporter
+// and TranscribeRow's display, so the two labelings cannot drift.
 
 describe('buildTranscriptCsv', () => {
   it('emits a header and rows in ordinal order with CRLF', () => {

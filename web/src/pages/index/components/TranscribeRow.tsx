@@ -3,6 +3,7 @@ import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
 import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import type { DraftStore } from '../utils/draftStore';
+import { formatSpeaker, parseSpeaker } from '../utils/speakerOffset';
 import {
   FEED_CELL,
   FEED_CELL_TIME,
@@ -65,14 +66,6 @@ interface Props {
   /** id of the ONE reason node `TranscribeFeed` renders while unavailable — every
    *  row passes the same id (design D2 gate decision). */
   jumpReasonId?: string;
-}
-
-function formatSpeaker(speaker: string, offset: number): string {
-  const n = Number.parseInt(speaker, 10);
-  if (!Number.isNaN(n) && String(n) === speaker.trim()) {
-    return `Person ${n + offset}`;
-  }
-  return speaker;
 }
 
 // --- feed-row-seek, task 7.2 (design D4); collapsed into one resolver by the
@@ -154,8 +147,34 @@ export const TranscribeRow = memo(function TranscribeRow({
     );
   }
 
+  // --- Value-space invariant ---
+  //
+  // EVERY layer below holds RAW (storage-space) text — `row`, `edit`, `vals`,
+  // the feed-owned draft store, the `commitField` dirty check, and the PATCH
+  // body. The ONLY display-space string in this component is the `value=` of
+  // the speaker `<input>`, produced by `formatSpeaker` at the JSX site and
+  // converted straight back by `parseSpeaker` in that same element's
+  // `onChange`/`onBlur`. The conversion pair lives ON the element, not inside
+  // `changeField`/`commitField`, so the two directions are visibly adjacent and
+  // the field-generic handlers stay single-space.
+  //
+  // Raw is the right side of the boundary to store on (rather than seeding
+  // drafts in display space) because two other things already compare against
+  // raw: `commitField`'s same-value guard reads `row[field]`, and
+  // `TranscribeFeed.handleUpdate` reuses the PATCH it sent as the draft-space
+  // reference for `drafts.clearMatching`. Storing display here would silently
+  // break both — the guard would never fire (`'Person 1' !== '0'`), so a bare
+  // focus+blur with no typing PATCHed the display string over the numeric
+  // diarization id, permanently, and that row's label then stopped tracking
+  // `speakerOffset`. Remount seeding still renders correctly because `vals`
+  // flows through `formatSpeaker` on the way to the input like everything else.
+  //
+  // `session_time` and `word` have no display/raw distinction: identity both
+  // ways, so they pass through unconverted.
+
   /** Write-through: local state renders the (controlled) input, the store is
-   *  what survives this row's next unmount. */
+   *  what survives this row's next unmount. Takes RAW text (see the invariant
+   *  above). */
   function changeField(field: EditField, value: string) {
     setEdit((prev) => ({ ...(prev ?? {}), [field]: value }));
     drafts.write(row.id, { [field]: value });
@@ -170,7 +189,9 @@ export const TranscribeRow = memo(function TranscribeRow({
   // unconditional commit would fire an unchanged-value PATCH (invalidating
   // the query under a virtualized list) on every such jump. Compares against
   // `row[field]` (the last COMMITTED value), not a focus-time snapshot, same
-  // as `EventLogRow`'s comparison against its current `event` prop.
+  // as `EventLogRow`'s comparison against its current `event` prop. Takes RAW
+  // text — `value === row[field]` only means "unchanged" when both sides are in
+  // storage space (see the invariant above).
   function commitField(field: EditField, value: string) {
     if (!edit) return;
     setEdit((p) => (p ? { ...p, [field]: value } : p));
@@ -218,13 +239,17 @@ export const TranscribeRow = memo(function TranscribeRow({
         />
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>
+        {/* The one display-space control in this row: `formatSpeaker` out,
+            `parseSpeaker` back in on BOTH edges, so nothing downstream of these
+            handlers ever sees a "Person N" label (see the value-space
+            invariant above). */}
         <input
           className={FEED_INLINE_INPUT}
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
-          onChange={(e) => changeField('speaker', e.target.value)}
-          onBlur={(e) => commitField('speaker', e.target.value)}
+          onChange={(e) => changeField('speaker', parseSpeaker(e.target.value, speakerOffset))}
+          onBlur={(e) => commitField('speaker', parseSpeaker(e.target.value, speakerOffset))}
         />
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>

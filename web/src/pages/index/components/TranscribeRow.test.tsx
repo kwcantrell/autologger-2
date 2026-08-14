@@ -226,6 +226,89 @@ describe('TranscribeRow — commitField dirty check (task 9.2)', () => {
   });
 });
 
+// --- speaker display/raw boundary (data-corruption regression) ---
+//
+// The speaker cell is the only inline control whose rendered text differs from
+// its stored value: `formatSpeaker` turns the stored diarization id `"0"` into
+// `"Person 1"` under a +1 offset. Its handlers used to pass `e.target.value` —
+// the DISPLAY string — straight into `changeField`/`commitField`, so the
+// same-value guard compared `"Person 1"` against `"0"`, never matched, and a
+// bare focus+blur with NO typing PATCHed the label over the numeric id. From
+// then on `formatSpeaker` returned the stored label verbatim, so that row
+// stopped tracking `speakerOffset` and drifted away from its siblings.
+//
+// The fix converts at the element: `formatSpeaker` on the way out,
+// `parseSpeaker` on the way back in, leaving every other layer in raw space.
+// The raw form is what the rest of the system needs — `aiV2/palette.ts`
+// renders "Speaker Person 1" for a label, the talk-time/excerpt aggregates key
+// their maps on the raw string (so one speaker would split in two), and
+// `mcpTools`' `speaker_stats` promises the model "diarization indices".
+describe('TranscribeRow — speaker display/raw boundary', () => {
+  it('blurring an untouched DeepGram speaker cell issues no update', () => {
+    const { onUpdate } = renderRow({
+      row: wordFixture({ speaker: '0' }),
+      speakerOffset: 1,
+    });
+    const speakerInput = screen.getByDisplayValue('Person 1');
+
+    fireEvent.focus(speakerInput);
+    fireEvent.blur(speakerInput);
+
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('editing to a different Person N patches the RAW id under a non-zero offset', () => {
+    const { onUpdate } = renderRow({
+      row: wordFixture({ speaker: '0' }),
+      speakerOffset: 1,
+    });
+    const speakerInput = screen.getByDisplayValue('Person 1');
+
+    fireEvent.focus(speakerInput);
+    fireEvent.change(speakerInput, { target: { value: 'Person 3' } });
+    fireEvent.blur(speakerInput, { target: { value: 'Person 3' } });
+
+    // Display 3 under offset 1 is raw id 2 — never the label.
+    expect(onUpdate).toHaveBeenCalledWith('w-1', { speaker: '2' });
+  });
+
+  it('a custom label still patches, verbatim, and renders back unchanged', () => {
+    const { onUpdate } = renderRow({
+      row: wordFixture({ speaker: '0' }),
+      speakerOffset: 1,
+    });
+    const speakerInput = screen.getByDisplayValue('Person 1');
+
+    fireEvent.focus(speakerInput);
+    fireEvent.change(speakerInput, { target: { value: 'Ari' } });
+    fireEvent.blur(speakerInput, { target: { value: 'Ari' } });
+
+    expect(onUpdate).toHaveBeenCalledWith('w-1', { speaker: 'Ari' });
+    // Round trip: a custom label is not a Person-N label, so it renders as-is.
+    expect(screen.getByDisplayValue('Ari')).toBeTruthy();
+  });
+
+  it('blurring a row already corrupted by the old bug heals it back to a raw id', () => {
+    const { onUpdate } = renderRow({
+      row: wordFixture({ speaker: 'Person 1' }),
+      speakerOffset: 1,
+    });
+    // Renders identically either way — the heal is invisible to the operator.
+    const speakerInput = screen.getByDisplayValue('Person 1');
+
+    fireEvent.focus(speakerInput);
+    fireEvent.blur(speakerInput);
+
+    expect(onUpdate).toHaveBeenCalledWith('w-1', { speaker: '0' });
+  });
+
+  it('still displays the offset label for an untouched row (unchanged rendering)', () => {
+    renderRow({ row: wordFixture({ speaker: '2' }), speakerOffset: 1 });
+
+    expect(screen.getByDisplayValue('Person 3')).toBeTruthy();
+  });
+});
+
 describe('TranscribeRow — feed-wide gate (design D5/D7)', () => {
   it('renders aria-disabled with the shared reason id when jump is unavailable, and activation no-ops', () => {
     const { onJump } = renderRow({ jumpUnavailable: true, jumpReasonId: 'shared-reason-x' });
@@ -292,6 +375,44 @@ describe('TranscribeRow — feed-owned edit drafts', () => {
 
     mount();
     expect(screen.getByDisplayValue('half-typed correction')).toBeTruthy();
+  });
+
+  it('stores the speaker draft in RAW space, and re-renders it in display space on remount', () => {
+    // The draft store is raw space like every other layer — only the input's
+    // `value` is display space. A remounted row therefore re-formats what it
+    // reads back, under the CURRENT offset.
+    const drafts = draftStore();
+    const row = wordFixture({ speaker: '0' });
+    const mount = () =>
+      renderStrict(
+        <table>
+          <tbody>
+            <TranscribeRow
+              row={row}
+              speakerOffset={1}
+              onUpdate={vi.fn()}
+              drafts={drafts}
+              fps={24}
+              onJump={vi.fn()}
+              jumpUnavailable={false}
+            />
+          </tbody>
+        </table>,
+      );
+
+    const first = mount();
+    const speakerInput = screen.getByDisplayValue('Person 1');
+    fireEvent.focus(speakerInput);
+    fireEvent.change(speakerInput, { target: { value: 'Person 4' } });
+
+    // Raw in the store, never the label.
+    expect(drafts.read('w-1')).toEqual({ speaker: '3' });
+
+    // The virtualizer drops the row mid-edit: no blur, no commit.
+    first.unmount();
+
+    mount();
+    expect(screen.getByDisplayValue('Person 4')).toBeTruthy();
   });
 
   it('drops a field from the draft once its text matches the row again, and keeps its siblings', () => {
