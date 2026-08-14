@@ -82,7 +82,7 @@ Spec: "Settings modal defers inactive tab content". Design: D2.
 
 Spec: "Event-button rows defer their type control". Design: D3.
 
-- [ ] 4.1 Write the failing tests for `EventButtonsTable`, one per spec scenario: (a) rendering N
+- [x] 4.1 Write the failing tests for `EventButtonsTable`, one per spec scenario: (a) rendering N
       rows mounts no listbox-style overlay component and the count does not grow with N; (b) a
       single activation opens the control, operable, with the same options and selected value —
       cover mouse click **and** a bare `click` with no preceding pointer/focus events (the
@@ -90,10 +90,10 @@ Spec: "Event-button rows defer their type control". Design: D3.
       the same accessible name, role, and ARIA state, operable without any pointer event. Note the
       existing `HomeSettingsModal.test.tsx` mocks `./Select` wholesale, so these assertions belong
       at the `EventButtonsTable` level against the real component.
-- [ ] 4.2 Add an optional `defaultOpen` pass-through to `web/src/pages/index/components/Select.tsx`
+- [x] 4.2 Add an optional `defaultOpen` pass-through to `web/src/pages/index/components/Select.tsx`
       (additive; existing call sites untouched). Verify the other three call sites — `FpsSelect`,
       the copy-from-show select, the suffix select — are unaffected.
-- [ ] 4.3 Implement the inert trigger + intent upgrade in `EventButtonsTable.tsx`: a non-Radix
+- [x] 4.3 Implement the inert trigger + intent upgrade in `EventButtonsTable.tsx`: a non-Radix
       trigger carrying the same classes, accessible name, role, ARIA state (expanded/disabled), and
       displayed value. Upgrade on activation, mounting the real `Select` with `defaultOpen` so the
       already-consumed gesture is not required to re-fire on the new node (design D3 — Radix opens
