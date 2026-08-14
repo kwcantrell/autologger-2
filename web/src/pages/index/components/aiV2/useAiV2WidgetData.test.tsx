@@ -39,14 +39,12 @@ function wrapperFor(client: QueryClient) {
 
 function word(overrides: Partial<TranscriptWord> & Pick<TranscriptWord, 'id'>): TranscriptWord {
   return {
-    session_id: 'sess-1',
     session_time: '00:00:00',
     speaker: '0',
     word: 'hello',
     start_sec: 0,
     end_sec: 0,
     ordinal: 0,
-    created_at_utc: '2026-07-21T00:00:00.000Z',
     ...overrides,
   };
 }

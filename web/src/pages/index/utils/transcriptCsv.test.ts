@@ -6,13 +6,11 @@ function word(
   partial: Partial<TranscriptWord> & Pick<TranscriptWord, 'id' | 'ordinal'>,
 ): TranscriptWord {
   return {
-    session_id: 'sess-1',
     session_time: '00:00:01:00',
     speaker: '0',
     word: 'hello',
     start_sec: 1,
     end_sec: 1.2,
-    created_at_utc: '2026-07-27T00:00:00Z',
     ...partial,
   };
 }

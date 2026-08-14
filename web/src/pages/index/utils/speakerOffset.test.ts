@@ -5,7 +5,6 @@ import { speakerOffsetFromWords } from './speakerOffset';
 function word(speaker: string): TranscriptWord {
   return {
     id: `w-${speaker}-${Math.random().toString(36).slice(2, 8)}`,
-    session_id: 'sess-1',
     session_time: '00:00:01:00',
     speaker,
     word: 'hello',

@@ -16,6 +16,7 @@ import {
   transcriptWordCreateSchema,
   transcriptWordUpdateSchema,
 } from '@autologger/contract';
+import type { TranscriptWord } from '@autologger/session-core';
 import {
   DEEPGRAM_MAX_GROUP_BYTES,
   deepgramConfigured,
@@ -45,6 +46,30 @@ const UNAVAILABLE = TRANSCRIPT_UNAVAILABLE;
 
 // Re-export for existing tests that import the size-limit helpers from this module.
 export { DEEPGRAM_MAX_GROUP_BYTES, exceedsGroupSizeLimit };
+
+/** Wire projection for a transcript-word row.
+ *
+ * Deliberately narrower than the stored `TranscriptWord`: `created_at_utc` is
+ * server-internal bookkeeping no client reads, and the former `session_id`
+ * graft was redundant with the path parameter the caller already holds. Both
+ * are dropped here; the store and the DB keep them, so server-internal
+ * consumers (AI-runtime aggregates, log import, topic generation) — which read
+ * `SessionHub.listTranscriptWords()` directly rather than this JSON — are
+ * unaffected. `start_sec`/`end_sec` are rounded to millisecond precision for
+ * the wire only; full float precision stays in the store. */
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
+function wordApiDict(w: TranscriptWord) {
+  return {
+    id: w.id,
+    session_time: w.session_time,
+    speaker: w.speaker,
+    word: w.word,
+    start_sec: round3(w.start_sec),
+    end_sec: round3(w.end_sec),
+    ordinal: w.ordinal,
+  };
+}
 
 export function enforceGroupSizeLimit(bytes: number): void {
   if (exceedsGroupSizeLimit(bytes)) {
@@ -125,7 +150,7 @@ transcribeRouter.get('/api/sessions/:sessionId/transcript-words', async (c) => {
   const sessionId = c.req.param('sessionId');
   requireSession(c, sessionId);
   const words = getSessionHub(c, sessionId).listTranscriptWords();
-  return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
+  return c.json({ words: words.map(wordApiDict) });
 });
 
 transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', async (c) => {
@@ -146,7 +171,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
       signal: c.req.raw.signal,
       resolveSessionTitle: (id) => resolveCatalogSessionTitle(c.get('catalog'), id),
     });
-    return c.json({ words: words.map((w) => ({ ...w, session_id: sessionId })) });
+    return c.json({ words: words.map(wordApiDict) });
   } catch (err) {
     // Cross-tenant redaction on the enriched 409: the in-flight detail names
     // the HOLDER's session (title or id), which may belong to a studio the
@@ -169,7 +194,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words', async (c) => 
   requireSession(c, sessionId);
   const body = transcriptWordCreateSchema.parse(await c.req.json());
   const word = getSessionHub(c, sessionId).insertTranscriptWord(body);
-  return c.json({ ...word, session_id: sessionId }, 201);
+  return c.json(wordApiDict(word), 201);
 });
 
 transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {
@@ -182,7 +207,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', asyn
   if (body.word != null) patch.word = body.word;
   const row = getSessionHub(c, sessionId).updateTranscriptWord(c.req.param('wordId'), patch);
   if (row === null) throw new ApiError(404, 'Transcript word not found.');
-  return c.json({ ...row, session_id: sessionId });
+  return c.json(wordApiDict(row));
 });
 
 transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {

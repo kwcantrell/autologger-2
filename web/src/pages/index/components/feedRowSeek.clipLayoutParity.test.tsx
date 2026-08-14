@@ -211,14 +211,12 @@ function statusFixture(): SessionStatus {
 function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   return {
     id: 'w-1',
-    session_id: SESSION_ID,
     session_time: '00:00:10:00',
     speaker: '0',
     word: 'hello',
     start_sec: 0,
     end_sec: 0,
     ordinal: 0,
-    created_at_utc: '2026-01-01T00:00:00Z',
     ...overrides,
   };
 }

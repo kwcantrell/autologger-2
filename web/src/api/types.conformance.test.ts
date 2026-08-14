@@ -298,13 +298,15 @@ describe('CW-6 — SessionTopic declared a `session_id` the topics routes never 
     expect(listed).toHaveLength(1);
   });
 
-  it('`session_id` is absent from the captured topic — unlike the transcript-words rows', () => {
+  it('`session_id` is absent from the captured topic — and now from the transcript-words rows too', () => {
     expect('session_id' in topicCreate).toBe(false);
-    // The contrast that made this easy to get wrong, both sides captured in
-    // the same run: the transcript-words handlers DO spread
-    // `{...w, session_id}` onto every row.
+    // The contrast that made this easy to get wrong is gone, both sides
+    // captured in the same run: the transcript-words handlers used to spread
+    // `{...w, session_id}` onto every row; the wire trim replaced that with
+    // `wordApiDict`, which emits neither `session_id` nor `created_at_utc`.
     const word: TranscriptWord = transcriptWordsList.words[0];
-    expect(word.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+    expect('session_id' in word).toBe(false);
+    expect('created_at_utc' in word).toBe(false);
   });
 });
 
@@ -520,9 +522,11 @@ describe('POST …/transcript-words — the created word', () => {
   it('the captured 201 body is assignable to TranscriptWord', () => {
     const check: TranscriptWord = transcriptWordCreate;
     expect(check.word).toBe('hello');
-    // The asymmetry CW-6 turns on, captured on the create route too: the
-    // transcript-words handlers spread `{...w, session_id}`; topics do not.
-    expect(check.session_id).toMatch(/^#+-#+-#+-#+-#+$/);
+    // The wire trim, captured on the create route too: the 201 body is the
+    // same `wordApiDict` projection as the list route — no `session_id`
+    // graft, no `created_at_utc`.
+    expect('session_id' in transcriptWordCreate).toBe(false);
+    expect('created_at_utc' in transcriptWordCreate).toBe(false);
   });
 });
 

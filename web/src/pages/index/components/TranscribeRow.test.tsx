@@ -26,14 +26,12 @@ import { TranscribeRow } from './TranscribeRow';
 function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
   return {
     id: 'w-1',
-    session_id: 'sess-1',
     session_time: '00:00:10:00',
     speaker: '0',
     word: 'hello',
     start_sec: 0,
     end_sec: 0,
     ordinal: 0,
-    created_at_utc: '2026-07-21T00:00:00Z',
     ...overrides,
   };
 }
