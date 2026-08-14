@@ -145,10 +145,10 @@ Panel & review log.)
 
 ## 6. Docs + cleanup + final gates
 
-- [ ] 6.1 Repartition `web-docs/model/components.ts` globs (`web/src/app/**` covered,
+- [x] 6.1 Repartition `web-docs/model/components.ts` globs (`web/src/app/**` covered,
       deleted-file pins removed), regenerate the edges snapshot, and pass
       `npm run docs:check`.
-- [ ] 6.2 Update README (dev/build/run sections, `:5173` references, architecture
+- [x] 6.2 Update README (dev/build/run sections, `:5173` references, architecture
       notes; endpoint table unchanged), CLAUDE.md (dev-auth invariant wording; the
       Vite loopback-pin guardrail is **ported, not deleted** — dev binds loopback by
       default with the same LAN-bypass rationale, LAN testing via the prod serve
