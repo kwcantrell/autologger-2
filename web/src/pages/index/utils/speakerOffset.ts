@@ -61,3 +61,38 @@ export function parseSpeaker(display: string, offset: number): string {
   const raw = String(Number.parseInt(m[1], 10) - offset);
   return formatSpeaker(raw, offset) === display ? raw : display;
 }
+
+/**
+ * The speaker control's DISPLAY -> RAW boundary, anchored on the row's committed
+ * value. `parseSpeaker` alone is the wrong function to hang on an input, because
+ * it cannot tell "the operator retyped this label" from "the operator typed
+ * nothing at all": `formatSpeaker` renders a stored *custom* label like the
+ * literal `"Person 2"` verbatim, so a bare focus+blur handed `parseSpeaker` a
+ * string it dutifully converted to the diarization id `"2"` — silently merging a
+ * hand-named speaker into a diarized one on a field the operator never edited.
+ *
+ * INVARIANT: the input text maps back through `parseSpeaker`, EXCEPT that text
+ * byte-identical to what the row's committed raw value renders as maps to that
+ * committed value itself. Equivalently: the identity `committedRaw` is *pinned*
+ * across the round trip, and only text that differs from the rendering the
+ * operator was shown counts as an edit.
+ *
+ * `committedRaw` (the `row` prop) rather than a focus-time snapshot of the
+ * input, deliberately: this feed is virtualized and backed by a draft store, so
+ * a row can unmount and remount mid-edit and any component-local snapshot dies
+ * with it — whereas the committed value is a prop and survives. It also makes
+ * "typed something, then typed it back" a true no-op, matching how the row's
+ * plain-text fields behave.
+ *
+ * Consequence, stated rather than implied: rows genuinely corrupted by the old
+ * display-string bug (a stored `"Person 1"` the operator never typed) are NOT
+ * healed by merely tabbing through them any more. They keep rendering exactly as
+ * they always did and convert to a raw id the next time someone actually edits
+ * that cell. Leaving stale-but-stable data alone strictly beats rewriting rows
+ * nobody touched, since the two cases are indistinguishable from here.
+ */
+export function speakerFromInput(display: string, committedRaw: string, offset: number): string {
+  return display === formatSpeaker(committedRaw, offset)
+    ? committedRaw
+    : parseSpeaker(display, offset);
+}

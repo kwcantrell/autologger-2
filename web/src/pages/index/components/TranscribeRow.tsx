@@ -3,7 +3,7 @@ import { memo, useState } from 'react';
 import type { TranscriptWord } from '../../../api/types';
 import { formatTimelineSec, sessionTimeToTimelineSec } from '../../../shared/utils/timelineSec';
 import type { DraftStore } from '../utils/draftStore';
-import { formatSpeaker, parseSpeaker } from '../utils/speakerOffset';
+import { formatSpeaker, speakerFromInput } from '../utils/speakerOffset';
 import {
   FEED_CELL,
   FEED_CELL_TIME,
@@ -153,10 +153,18 @@ export const TranscribeRow = memo(function TranscribeRow({
   // the feed-owned draft store, the `commitField` dirty check, and the PATCH
   // body. The ONLY display-space string in this component is the `value=` of
   // the speaker `<input>`, produced by `formatSpeaker` at the JSX site and
-  // converted straight back by `parseSpeaker` in that same element's
+  // converted straight back by `speakerFromInput` in that same element's
   // `onChange`/`onBlur`. The conversion pair lives ON the element, not inside
   // `changeField`/`commitField`, so the two directions are visibly adjacent and
   // the field-generic handlers stay single-space.
+  //
+  // The inbound direction is `speakerFromInput`, not a bare `parseSpeaker`,
+  // because the inverse is only correct for text the operator actually typed:
+  // it pins `row.speaker` whenever the input still reads exactly as that value
+  // renders, so an untouched focus+blur is a no-op even on a row whose stored
+  // label happens to LOOK like a generated one (the literal `"Person 2"`). See
+  // `speakerFromInput`'s doc comment for the full invariant, including what now
+  // happens to rows the old bug already corrupted (nothing, until edited).
   //
   // Raw is the right side of the boundary to store on (rather than seeding
   // drafts in display space) because two other things already compare against
@@ -240,16 +248,22 @@ export const TranscribeRow = memo(function TranscribeRow({
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>
         {/* The one display-space control in this row: `formatSpeaker` out,
-            `parseSpeaker` back in on BOTH edges, so nothing downstream of these
-            handlers ever sees a "Person N" label (see the value-space
-            invariant above). */}
+            `speakerFromInput` back in on BOTH edges, so nothing downstream of
+            these handlers ever sees a "Person N" label (see the value-space
+            invariant above). Both edges pass `row.speaker` as the pinned
+            committed identity, so text the operator never changed converts to
+            nothing. */}
         <input
           className={FEED_INLINE_INPUT}
           value={formatSpeaker(vals.speaker, speakerOffset)}
           placeholder="Unknown"
           onFocus={startEdit}
-          onChange={(e) => changeField('speaker', parseSpeaker(e.target.value, speakerOffset))}
-          onBlur={(e) => commitField('speaker', parseSpeaker(e.target.value, speakerOffset))}
+          onChange={(e) =>
+            changeField('speaker', speakerFromInput(e.target.value, row.speaker, speakerOffset))
+          }
+          onBlur={(e) =>
+            commitField('speaker', speakerFromInput(e.target.value, row.speaker, speakerOffset))
+          }
         />
       </td>
       <td className={clsx(FEED_CELL, 'align-middle')}>
