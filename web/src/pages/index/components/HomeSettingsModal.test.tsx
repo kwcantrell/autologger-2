@@ -1,8 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import type { ProfilePayload } from '../../../api/types';
-import { renderStrict } from '../../../test/renderStrict';
+import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { HomeSettingsModal } from './HomeSettingsModal';
 
 // --- HomeSettingsModal studio-switch tests (session-deep-links, task 3.3;
@@ -24,7 +25,34 @@ vi.mock('../../../api/hooks/useProfile', () => ({
 
 // Shared across every `useQueryClient()` call (the component calls the hook fresh each
 // render) so tests can pin `invalidateQueries` calls made from any render pass.
-const { invalidateQueriesMock } = vi.hoisted(() => ({ invalidateQueriesMock: vi.fn() }));
+//
+// `eventButtonsMountCount` is the mount counter for `./EventButtonsTable`
+// (settings-modal-mount-cost, task 3.1): the reopen scenario asserts on *mounts*, not
+// settled DOM — a transient mount-then-unmount within one close/reopen transition would be
+// invisible to any assertion that only inspects the final tree. Incremented from a
+// mount-only effect (empty dep array) on the mock component itself, so it counts real
+// (re)mounts of the component instance and not ordinary re-renders. Tests render via
+// `renderStrict` (`<StrictMode>`), which may double-invoke a mount's effects in dev, so the
+// exact increment per mount is not pinned to 1 — tests compare against a baseline captured
+// at runtime (before/after a transition) rather than against a hardcoded literal.
+// `dialogRenderCount` and `normalizePalette9CallCount` back the "costs nothing while
+// closed" tests (settings-modal-mount-cost, task 6.1): the closed-modal DOM is already
+// empty either way (the mocked — and the real Radix — Dialog already renders nothing
+// when `open` is false), so a DOM assertion alone cannot tell "HomeSettingsModal built a
+// full tree and handed it to a closed Dialog that discarded it" apart from "HomeSettingsModal
+// returned null and never touched Dialog". These two spies observe the two independent D4
+// gates directly: whether Dialog was invoked at all, and whether the hydration path ran.
+const {
+  invalidateQueriesMock,
+  eventButtonsMountCount,
+  dialogRenderCount,
+  normalizePalette9CallCount,
+} = vi.hoisted(() => ({
+  invalidateQueriesMock: vi.fn(),
+  eventButtonsMountCount: { current: 0 },
+  dialogRenderCount: { current: 0 },
+  normalizePalette9CallCount: { current: 0 },
+}));
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: invalidateQueriesMock }),
 }));
@@ -34,9 +62,26 @@ vi.mock('../utils/toast', () => ({
 }));
 
 vi.mock('../../../shared/ui/Dialog', () => ({
-  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
-    open ? <div role="dialog">{children}</div> : null,
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) => {
+    dialogRenderCount.current += 1;
+    return open ? <div role="dialog">{children}</div> : null;
+  },
 }));
+
+// Wraps the real implementation (not a behavior replacement) purely to count calls —
+// `showToShowDraft` (the hydration path exercised by the init effect) is the only caller
+// that runs before a Save in these tests, so a nonzero count while closed is a direct
+// observable of the init effect having run.
+vi.mock('../utils/palette9', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/palette9')>();
+  return {
+    ...actual,
+    normalizePalette9: (arr: string[]) => {
+      normalizePalette9CallCount.current += 1;
+      return actual.normalizePalette9(arr);
+    },
+  };
+});
 
 vi.mock('./Select', () => ({
   Select: (props: {
@@ -88,56 +133,63 @@ vi.mock('./EventButtonsTable', () => ({
       palettePreset: string,
       paletteCustom: string[],
     ) => void;
-  }) => (
-    <ul data-testid="event-buttons-mock">
-      {buttons.map((b) => (
-        <li key={b.id}>
-          {b.name || '(blank)'}
-          <button
-            type="button"
-            onClick={() =>
-              onChange(
-                buttons.map((x) =>
-                  x.id === b.id ? { ...x, auto_instruction: 'Log every slate call' } : x,
-                ),
-                palette,
-                palettePreset,
-                paletteCustom,
-              )
-            }
-          >
-            set-instruction-{b.id}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onChange(
-                buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '' } : x)),
-                palette,
-                palettePreset,
-                paletteCustom,
-              )
-            }
-          >
-            clear-instruction-{b.id}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onChange(
-                buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '   ' } : x)),
-                palette,
-                palettePreset,
-                paletteCustom,
-              )
-            }
-          >
-            whitespace-instruction-{b.id}
-          </button>
-        </li>
-      ))}
-    </ul>
-  ),
+  }) => {
+    // Mount-only effect (empty deps): fires once per real mount of this component instance,
+    // not on every re-render — the property the reopen scenario needs.
+    useEffect(() => {
+      eventButtonsMountCount.current += 1;
+    }, []);
+    return (
+      <ul data-testid="event-buttons-mock">
+        {buttons.map((b) => (
+          <li key={b.id}>
+            {b.name || '(blank)'}
+            <button
+              type="button"
+              onClick={() =>
+                onChange(
+                  buttons.map((x) =>
+                    x.id === b.id ? { ...x, auto_instruction: 'Log every slate call' } : x,
+                  ),
+                  palette,
+                  palettePreset,
+                  paletteCustom,
+                )
+              }
+            >
+              set-instruction-{b.id}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChange(
+                  buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '' } : x)),
+                  palette,
+                  palettePreset,
+                  paletteCustom,
+                )
+              }
+            >
+              clear-instruction-{b.id}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChange(
+                  buttons.map((x) => (x.id === b.id ? { ...x, auto_instruction: '   ' } : x)),
+                  palette,
+                  palettePreset,
+                  paletteCustom,
+                )
+              }
+            >
+              whitespace-instruction-{b.id}
+            </button>
+          </li>
+        ))}
+      </ul>
+    );
+  },
 }));
 
 const mockedUseProfile = vi.mocked(useProfile);
@@ -224,6 +276,9 @@ let mutateAsync: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  eventButtonsMountCount.current = 0;
+  dialogRenderCount.current = 0;
+  normalizePalette9CallCount.current = 0;
   mutateAsync = vi.fn().mockResolvedValue({});
   mockedUseProfile.mockReturnValue({ data: profile } as unknown as ReturnType<typeof useProfile>);
   mockedUseProfileMutation.mockReturnValue({
@@ -252,10 +307,23 @@ describe('HomeSettingsModal activeTab reset on reopen', () => {
       'true',
     );
 
-    // Close (isOpen: false) then reopen — no unmount in between (the modal
-    // stays mounted across route changes post-lift).
-    rerender(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
-    rerender(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    // Close (isOpen: false) then reopen — no unmount in between (the modal stays mounted
+    // across route changes post-lift). `rerender` is re-wrapped in the same
+    // `<StrictWrapper>` the initial `renderStrict` call used: passing the bare
+    // `<HomeSettingsModal>` element here would change the root element type and make React
+    // replace the whole tree (a real unmount+remount, resetting state for free) instead of
+    // updating the existing one in place — which would make this test pass even if the
+    // production reset logic were removed entirely (settings-modal-mount-cost, task 3.1).
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
 
     expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Event Buttons' }).getAttribute('aria-selected')).toBe(
@@ -605,5 +673,209 @@ describe('HomeSettingsModal Suffix control', () => {
     const showUpdate = body.show_updates?.find((u) => u.show_id === 'show-1');
     expect(showUpdate?.title_suffix).toBe('date');
     expect(showUpdate && 'next_episode' in showUpdate).toBe(false);
+  });
+});
+
+// --- Deferred tab content (settings-modal-mount-cost, task 3.1) ---
+//
+// Spec: "Settings modal defers inactive tab content". `profileFull` gives the modal a real
+// show on the active studio, so `currentDraft` is truthy and the Event Buttons panel would
+// (pre-deferral) mount `EventButtonsTable` immediately regardless of `activeTab`. The mount
+// counter (above) distinguishes a genuine (re)mount from an ordinary re-render, which a
+// settled-DOM assertion alone cannot: a reset applied one commit late would mount the table
+// and then unmount it within the same reopen transition, invisible to any check that only
+// runs after things settle.
+describe('HomeSettingsModal defers inactive tab content', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileFull,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('opening mounts only General’s content while all four aria-controls targets resolve', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // Event Buttons content (the mocked table) has not mounted.
+    expect(eventButtonsMountCount.current).toBe(0);
+    // General's own content mounted.
+    expect(screen.getByLabelText('Name:')).not.toBeNull();
+    // Every tab's aria-controls target resolves to a present element regardless of whether
+    // that panel's content has mounted.
+    for (const id of ['general', 'event-buttons', 'autosync', 'debug']) {
+      expect(document.getElementById(`v6-settings-section-${id}`)).not.toBeNull();
+    }
+  });
+
+  it('activating Event Buttons mounts it and switching back keeps it mounted', () => {
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect(eventButtonsMountCount.current).toBe(0);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    // A real mount happened (StrictMode may double-invoke the mount effect, so the exact
+    // count is not pinned to 1 — what matters is that it moved off zero, and stays put).
+    expect(eventButtonsMountCount.current).toBeGreaterThan(0);
+    const mountedCount = eventButtonsMountCount.current;
+    expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
+    // Switching away and back does not remount it.
+    expect(eventButtonsMountCount.current).toBe(mountedCount);
+    expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
+  });
+
+  it('close-then-reopen records zero mounts of the panel content across the transition', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    const mountedAfterActivation = eventButtonsMountCount.current;
+    expect(mountedAfterActivation).toBeGreaterThan(0);
+
+    // Close, then reopen — no unmount of HomeSettingsModal itself in between (AppShell
+    // mounts it unconditionally); this is the reopen transition the spec's tripwire
+    // scenario targets. `rerender` must be re-wrapped in the same `<StrictWrapper>` used by
+    // the initial `renderStrict` call, not passed the bare `<HomeSettingsModal>` element —
+    // rerendering with a different root element type than the container was created with
+    // makes React replace the whole tree (a real unmount+remount) instead of updating the
+    // existing one in place, which would reset all local state for free and mask the very
+    // bug this test exists to catch. The count must not move at any point during the
+    // transition: a reset applied one commit late (in the passive `isOpen` effect) would
+    // commit the stale Event-Buttons-active tab first — mounting the table — and only
+    // unmount it on a later commit once the effect fires, which this single before/after
+    // comparison catches either way (it counts mounts, not renders after settling).
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect(eventButtonsMountCount.current).toBe(mountedAfterActivation);
+    // Settled state: back on General, Event Buttons content unmounted.
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('event-buttons-mock')).toBeNull();
+  });
+
+  it('editing General and saving without ever activating Event Buttons still submits the same show_updates', async () => {
+    mockedUseProfile.mockReturnValue({
+      data: profileWithShow,
+    } as unknown as ReturnType<typeof useProfile>);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // The Event Buttons tab was never activated, so its content never mounted — the save
+    // still reads the show's categories from the modal's own `showDrafts` state.
+    expect(eventButtonsMountCount.current).toBe(0);
+    const body = mutateAsync.mock.calls[0][0] as {
+      show_updates?: Array<{ show_id: string; categories?: unknown[] }>;
+    };
+    const showUpdate = body.show_updates?.find((u) => u.show_id === 'show-1');
+    expect(showUpdate?.categories?.[0]).toEqual({
+      id: 'cat-1',
+      name: 'Roll Call',
+      color: '#112233',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+    });
+  });
+
+  it('activating Event Buttons, editing nothing, and closing raises no discard confirmation', () => {
+    const onClose = vi.fn();
+    renderStrict(<HomeSettingsModal isOpen onClose={onClose} onCloseSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('You have unsaved settings changes. Discard them?')).toBeNull();
+  });
+});
+
+// --- Costs nothing while closed (settings-modal-mount-cost, task 6.1) ---
+//
+// Spec: "The Settings modal costs nothing while closed" (design D4). Two independent
+// gates: the init effect must not hydrate drafts behind a closed dialog (today its guard
+// is `!profile || initialized`, with no `isOpen` check, so it fires the moment `useProfile`
+// resolves regardless of open state), and the component must return `null` while closed
+// instead of building the full tree and handing it to Dialog to discard. Both costs are
+// invisible to a plain DOM assertion — the mocked Dialog (matching real Radix, which uses
+// no `forceMount`) already renders nothing while closed either way — so these tests spy on
+// two collaborators that are only reachable through the wasted work.
+describe('HomeSettingsModal costs nothing while closed', () => {
+  beforeEach(() => {
+    mockedUseProfile.mockReturnValue({
+      data: profileWithShow,
+    } as unknown as ReturnType<typeof useProfile>);
+  });
+
+  it('does not hydrate drafts or initialise form state while closed', () => {
+    renderStrict(<HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    // showToShowDraft (the hydration path the init effect drives) is the only caller of
+    // normalizePalette9 exercised by this test — it must not have run at all behind a
+    // closed modal.
+    expect(normalizePalette9CallCount.current).toBe(0);
+  });
+
+  it('hydrates exactly once, on first open, even when the profile resolved while closed', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+    expect(normalizePalette9CallCount.current).toBe(0);
+
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    // One hydration pass over the fixture's single show: normalizePalette9 called twice
+    // (event_palette, event_palette_custom). Before the fix this ran once behind the
+    // closed dialog and again on open, for 4 calls.
+    expect(normalizePalette9CallCount.current).toBe(2);
+    expect(screen.getByLabelText('Name:')).not.toBeNull();
+  });
+
+  it('a closed modal renders nothing', () => {
+    const { container } = renderStrict(
+      <HomeSettingsModal isOpen={false} onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    expect(container.innerHTML).toBe('');
+    // The Dialog primitive is never invoked while closed — HomeSettingsModal returns null
+    // itself instead of rendering <Dialog open={false}>{fullTree}</Dialog> and relying on
+    // Dialog to discard the tree it was handed.
+    expect(dialogRenderCount.current).toBe(0);
+  });
+
+  it('opening still yields a fully-initialised modal on the General tab, and it survives an unrelated re-render while open', () => {
+    const { rerender } = renderStrict(
+      <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
+
+    // Simulate the modal surviving a route change while open (teams-settings-nav, D1):
+    // AppShell mounts it unconditionally, so a route change re-renders the shell with the
+    // same isOpen=true prop rather than unmounting the modal.
+    rerender(
+      <StrictWrapper>
+        <HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />
+      </StrictWrapper>,
+    );
+
+    expect(screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByLabelText('Name:') as HTMLInputElement).value).toBe('Morning News');
   });
 });

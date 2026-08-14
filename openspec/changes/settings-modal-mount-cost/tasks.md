@@ -1,0 +1,175 @@
+# Tasks: settings-modal-mount-cost
+
+> Gated 2026-08-13 (panel + gate rulings folded across all four artifacts), then extended
+> 2026-08-13 with phase 2 after profiling on the reporter's data. `file:line` anchors are
+> orientation only — locate the quoted code by content before editing.
+
+## 1. Baseline evidence
+
+**Tasks 1.1/1.2 are DONE — performed 2026-08-13, before apply.** The halt-gate passed. Two
+profiles were taken against the production serve path on the reporter's own data, and they
+partition the click into two independent costs (numbers and method in `design.md`):
+
+- **Modal mount** — 1,337 mounts, ~70 ms, dominated by Radix `Select` item trees (12
+  `SelectTrigger` mounts, matching the modal's Select inventory exactly). Addressed by phases 3–4.
+- **Workspace re-render — claim withdrawn.** Originally recorded here as "+11,097 re-renders and
+  70 ms → 101 ms once a session workspace is open, caused by a defeated `memo`." That render-count
+  claim was withdrawn post-apply: it came from an over-counting instrument, and ground truth shows
+  the workspace re-renders zero times on a settings click either way (see design.md D0 and
+  `.apply/phase2-diagnostic.md`). What phase 2 actually addressed is a real but modest prop-identity
+  defect at the shell-to-workspace boundary, kept for correctness rather than a measured win.
+
+- [x] 1.1 Baseline profile of the settings-open click, production serve path, reporter's data.
+- [x] 1.2 Halt-gate attribution — **passed**.
+- [x] 1.3 Extend the baseline with the two paths not yet separated, same method (CDP + React
+      DevTools render profile + `longtask` observer): the **reopen** path and the **first Event
+      Buttons tab activation**, on a show with many event buttons. Record to
+      `openspec/changes/settings-modal-mount-cost/.apply/profile-before.md`.
+
+## 2. Keep the shell-to-workspace boundary memoizable
+
+Spec: "The shell-to-workspace render boundary stays memoizable". Design: D0.
+
+> **Rescoped 2026-08-13.** This phase originally claimed the change's largest performance win. That
+> claim was withdrawn — the render counts behind it were a profiling-tool artifact
+> (`.apply/phase2-diagnostic.md`). The fix and its tests are kept for correctness only; task 2.3's
+> verification criterion is void and replaced below.
+
+- [x] 2.1 Write the failing test in `AppShell.test.tsx`: with a session workspace mounted, a shell
+      state change (open the settings modal) must not re-render the workspace subtree. Assert via a
+      render counter on a mocked `SessionRoute`/`WorkspaceStatic` child, or by asserting that the
+      props crossing the boundary keep a stable identity across shell renders — presence assertions
+      cannot see this. Extend to the other shell overlays and the mobile rail toggle per the second
+      scenario. Confirm it fails against the current implementation.
+- [x] 2.2 Give `onOpenMobileNav` a stable identity in `AppShell` — `useCallback`, matching
+      `handleOpenSettings` / `handleCloseSettings` / `handleOpenNewSession` alongside it — so
+      `WorkspaceStatic`'s existing `memo` holds. Locate by content: the inline
+      `onOpenMobileNav={() => setRailOpen(true)}` arrow on the `SessionRoute` element. Verify no
+      other prop crossing that boundary is unstable (`sessionId` and `ytImportPending` are a string
+      and a boolean). Gate: `npm run typecheck` + `npm test`.
+- [x] 2.3 ~~Re-profile and confirm the re-render count drops to the no-session baseline.~~
+      **Void — criterion withdrawn.** Executed, and it failed: counts were identical before and
+      after (17,238). The follow-up diagnostic established the counts themselves were unreliable
+      and that `SessionWorkspace` renders zero times on the click either way. Recorded in
+      `.apply/phase2-diagnostic.md` and the ledger. Nothing further to verify at this phase: the
+      rescoped requirement is prop stability, which task 2.1's tests already assert with a
+      mutation check.
+- [x] 2.4 Correct the rationale left in the tree by the withdrawn claim: the code comment in
+      `AppShell.tsx`, the delta spec requirement, and design D0 must assert only prop stability,
+      with the withdrawal recorded rather than silently dropped.
+
+## 3. Deferred tab content
+
+Spec: "Settings modal defers inactive tab content". Design: D2.
+
+- [x] 3.1 Write the failing tests in `HomeSettingsModal.test.tsx` (which already mocks
+      `./EventButtonsTable` — extend that mock with a **mount counter**, since the reopen scenario
+      is about mounts, not final DOM), one per spec scenario: (a) opening mounts only General's
+      content while all four `aria-controls` targets resolve; (b) activating Event Buttons mounts
+      it and switching back keeps it mounted; (c) **close-then-reopen records zero mounts of the
+      panel content** across the transition; (d) editing General and saving without ever activating
+      Event Buttons still submits the same `show_updates`; (e) activating Event Buttons, editing
+      nothing, and closing raises no discard confirmation. Confirm each fails for the stated reason.
+- [x] 3.2 Implement: a `visitedTabs` `Set<TabId>` seeded `{'general'}`, added to where the tablist
+      button currently calls `setActiveTab(tab.id)`; gate only each panel's **children** on
+      membership, leaving the four wrappers' `id`/`role`/`aria-labelledby`/`hidden`/`SECTION_CLASS`
+      untouched. Move the open-reset out of the passive `isOpen` effect into the render-phase
+      `prevOpen` pattern written out in design D2, resetting `activeTab`, `visitedTabs`,
+      `initialized`, and `initialSnapshot` together. Never unmount a visited tab. Gate:
+      `npm run typecheck` + `npm test`.
+
+## 4. Lazy per-row type control
+
+Spec: "Event-button rows defer their type control". Design: D3.
+
+- [x] 4.1 Write the failing tests for `EventButtonsTable`, one per spec scenario: (a) rendering N
+      rows mounts no listbox-style overlay component and the count does not grow with N; (b) a
+      single activation opens the control, operable, with the same options and selected value —
+      cover mouse click **and** a bare `click` with no preceding pointer/focus events (the
+      assistive-technology and touch path); (c) tabbing to the control leaves focus **on** it, with
+      the same accessible name, role, and ARIA state, operable without any pointer event. Note the
+      existing `HomeSettingsModal.test.tsx` mocks `./Select` wholesale, so these assertions belong
+      at the `EventButtonsTable` level against the real component.
+- [x] 4.2 Add an optional `defaultOpen` pass-through to `web/src/pages/index/components/Select.tsx`
+      (additive; existing call sites untouched). Verify the other three call sites — `FpsSelect`,
+      the copy-from-show select, the suffix select — are unaffected.
+- [x] 4.3 Implement the inert trigger + intent upgrade in `EventButtonsTable.tsx`: a non-Radix
+      trigger carrying the same classes, accessible name, role, ARIA state (expanded/disabled), and
+      displayed value. Upgrade on activation, mounting the real `Select` with `defaultOpen` so the
+      already-consumed gesture is not required to re-fire on the new node (design D3 — Radix opens
+      on `pointerDown` for mouse, so a swap-on-pointerdown would not open). Hover/focus may
+      pre-warm the upgrade; a focus-triggered upgrade must `.focus()` the new trigger via a ref.
+      Gate: `npm run typecheck` + `npm test`.
+
+## 6. Stop paying for the modal while it is closed
+
+Spec: "The Settings modal costs nothing while closed". Design: D4. Added after the whole-branch
+audit closed, so this phase reopens the branch and takes its own review.
+
+- [x] 6.1 Write the failing tests in `HomeSettingsModal.test.tsx`, one per spec scenario:
+      (a) with the modal closed, the profile query resolving does **not** hydrate drafts or
+      initialise form state — assert on the observable consequence (no init work) rather than on
+      internals; (b) a closed modal renders nothing; (c) opening still yields a fully-initialised
+      modal on the General tab, and it survives a route change while open. Confirm each fails.
+- [x] 6.2 Implement both gates from D4: add `isOpen` to the init effect's guard **and** deps, and
+      add `if (!isOpen) return null;` below every hook (and below the render-phase `prevOpen`
+      reset, which must keep running). Gate: `npm run typecheck` + `npm test`.
+- [x] 6.3 Verify by ground truth (not by the discredited render-count tool) that the init pass runs
+      **zero** times while closed and **once** on first open, where before it ran once behind the
+      closed dialog and again on open. Re-run the open/reopen medians from 5.2 to confirm no
+      regression on the paths this change already improved.
+
+## 7. Final gates after phase 6 — scoped by owner decision
+
+Phase 6 is a small, fully-tested UI change. The owner directed (2026-08-14) that it does not need
+the full gate + audit ceremony re-run. **Verified after phase 6:**
+
+- [x] 7.1 Full-workspace `npm run typecheck` (clean) and full `npm test` (server 711/3 skipped,
+      web 1227, web-docs 242, companion 21, all `packages/*`) — both run at the last code commit
+      `25766a9` by the residual-fix unit, and `npm run typecheck` + `npm test -w web` again by the
+      phase 6 reviewer. `openspec validate --strict` passes.
+- [x] 7.2 Scoped `biome check --error-on-warnings` over both phase 6 files — caught and fixed a
+      formatting violation in `HomeSettingsModal.test.tsx`; re-checked clean, file 28/28 green.
+- [x] 7.3 Phase 6 review: PASS on both spec compliance and code quality, with the D2 zero-mount
+      reopen guarantee independently mutation-re-verified (and both `isOpen`-gate variants).
+
+**Deliberately NOT re-run after phase 6** (declared, not silently assumed):
+`npm run e2e`, `npm run e2e:visual`, `npm run docs:check`, full `npm run lint`, and the
+whole-branch audit re-run. Residual risk accepted by the owner: phase 6 is DOM-identical while
+closed and behaviour-identical while open (asserted by its own tests), touches one component plus
+its test, adds no import or capability, so the e2e/visual/docs surfaces it could disturb are the
+ones its unit tests already cover. These all passed at phase 5 (`eaf816d`): e2e 30 passed,
+e2e:visual 44 passed with zero diffs, docs:check clean.
+
+## 5. Final gates
+
+- [x] 5.1 `npm run typecheck` and `npm test` (full workspace sweep).
+- [x] 5.2 Re-run the measurements from 1.1/1.3 and record them beside the baseline, using only the
+      instruments this change trusts (`PerformanceObserver` long-task timings and/or `console.log`
+      ground truth — not `agent-browser react renders`, whose per-component and aggregate counts
+      this change found unreliable; see D0 and `.apply/phase2-diagnostic.md`): the modal-mount cost
+      (task 1.1's baseline) — both the cold-open and reopen paths — must improve, ~~and the first
+      Event Buttons tab activation must both improve~~. Do **not** expect the settings-open
+      click's 67–143 ms session-dependent long task (D0.1) to improve — that cost's cause is
+      untested and out of scope for this change; phase 2's contribution to it was the withdrawn
+      claim. Record the numbers in `design.md`.
+      **Amended 2026-08-13 (whole-branch audit).** Measured: first tab activation regressed,
+      13.1 ms → 15.9 ms. Ruled **not a defect**: the struck criterion measured a workload this
+      change deliberately redefined — before the change, that click flipped a `hidden` attribute
+      on an already-mounted table; after, that click *is* the mount — `profile-before.md` itself
+      called the number a "regression guard," not an improvement target, and +2.8 ms sits at or
+      below the double-`rAF` instrument's floor with heavily overlapping trial ranges (before
+      `[10.1–15.8]`, after `[12.8–17.3]`). **Amended criterion:** the modal-mount paths (cold
+      open, reopen) must improve, and first tab activation must **not regress meaningfully past
+      the 12.5–13.1 ms baseline** (`profile-before.md`'s no-session baseline / `profile-after.md`'s
+      before-median). The measured +2.8 ms is accepted as an expected residual of deferral —
+      recorded in `design.md`'s Outcome section, not silently reinterpreted or hidden.
+- [x] 5.3 `npm run e2e` (chromium + login-gate) **and** `npm run e2e:visual` (visual-desktop +
+      visual-mobile). The settings snapshots and the teams smoke flow both click
+      `#v6-settings-tab-event-buttons` before touching table content. This change alters no UI
+      intentionally — the lazy trigger is specified as a visual stand-in — so **any** visual diff is
+      branch-induced signal to investigate, not a baseline to re-bless.
+- [x] 5.4 `npm run docs:check` — the atlas drift gate. No new capability is added, so no
+      `web-docs/model/components.ts` attachment is expected; confirm the gate is clean rather than
+      assuming it.
+- [x] 5.5 `npm run lint` (report-only) over the touched paths.

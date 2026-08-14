@@ -47,6 +47,13 @@ vi.mock('./Select', () => ({
       ))}
     </select>
   ),
+  // `EventButtonsTable`'s lazy per-row trigger (settings-modal-mount-cost, D3) reuses
+  // these named exports for its inert stand-in, independently of whether `Select`
+  // itself is mocked — supply harmless placeholders so this wholesale mock doesn't
+  // crash the row's initial (pre-upgrade) render.
+  SELECT_TRIGGER_CLASSNAME: 'select-trigger-stub',
+  SELECT_ICON_CLASSNAME: 'select-icon-stub',
+  SelectChevronIcon: () => null,
 }));
 
 const sourceShow = {
@@ -259,6 +266,10 @@ describe('EventButtonsTable instruction editor', () => {
       }),
     ]);
 
+    // The row's type control renders as an inert trigger until activated
+    // (settings-modal-mount-cost, D3) — click it first to upgrade to the (mocked)
+    // `Select`, then interact with that.
+    fireEvent.click(screen.getByRole('combobox', { name: 'Button type' }));
     fireEvent.change(screen.getByLabelText('Button type'), { target: { value: 'ON_OFF' } });
 
     const [newButtons] = onChange.mock.lastCall as [EventButtonDraft[]];
