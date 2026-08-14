@@ -42,7 +42,11 @@ import { WorkspaceStatic } from './WorkspaceStatic';
 // request is issued. (The settings modal itself is mounted by AppShell, one
 // level up — teams-settings-nav, design D1 — not here.)
 
-const STATE_PAGE = 'relative z-[1] flex w-full items-center justify-center px-5 py-16';
+// Height mirrors `#v3-session-active` (SessionWorkspace's `v3-session-active-root`:
+// `min-h-[calc(100vh-2.2rem)] max-md:min-h-0`) so swapping any of these four states out
+// for the workspace — or back — shifts nothing (measured CLS 0.122 before the mirror).
+const STATE_PAGE =
+  'relative z-[1] flex w-full items-center justify-center px-5 py-16 min-h-[calc(100vh-2.2rem)] max-md:min-h-0';
 const STATE_PANEL =
   'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
 const STATE_TITLE =

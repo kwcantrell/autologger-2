@@ -187,6 +187,31 @@ describe('EventLogSheet toolbar overflow clamp', () => {
   });
 });
 
+// --- Loading vs. empty (paint stability) ---
+//
+// `isLoading`/`isEmpty` are distinct FeedTable states (FeedTable consults `isEmpty`
+// only when `!isLoading`). Folding the pending flag into `isEmpty` — the old
+// `sorted.length === 0 && !isPending` — rendered NEITHER row while the query was in
+// flight, so the sheet body was empty on first paint and popped when rows arrived.
+describe('EventLogSheet loading state', () => {
+  it('renders the loading row, not the empty message, while the events query is pending', async () => {
+    mockedApiFetch.mockImplementation(async (path: string) => {
+      if (path.includes('/status')) return statusFixture();
+      if (path.includes('/show-categories')) {
+        return { categories: [categoryFixture()], show_name: '', show_code: '' };
+      }
+      // Never settles: `isPending` stays true for the whole assertion.
+      if (path.includes('/events')) return new Promise<never>(() => {});
+      throw new Error(`unexpected apiFetch call: ${path}`);
+    });
+
+    renderSheet();
+
+    expect(await screen.findByText('Loading…')).toBeTruthy();
+    expect(screen.queryByText('— No logged items yet.')).toBeNull();
+  });
+});
+
 describe('EventLogSheet filter checkmarks', () => {
   it('shows checkmarks for enabled rows without the PopoverItem selected tint', async () => {
     renderSheet();

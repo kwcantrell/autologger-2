@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   useDeleteEvent,
   useEvents,
@@ -270,7 +270,11 @@ interface Props {
   sessionId: string;
 }
 
-export function EventLogSheet({ sessionId }: Props) {
+// Render-isolation memo (the WorkspaceStatic/TranscribeRow idiom). INVARIANT: every
+// prop passed here must stay referentially stable across a SessionWorkspace render —
+// today that is `sessionId` alone, memoized into `feedPanels` — or the playback-tick
+// (~60/s) render isolation this buys reopens.
+export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // --- Transport state ---
   const { data: status } = useSessionStatus(sessionId);
   const isRolling = Boolean(status?.is_rolling);
@@ -862,7 +866,12 @@ export function EventLogSheet({ sessionId }: Props) {
         sortDir={sortState.dir}
         onSort={(k) => dispatchSort({ type: 'CLICK', key: k as SortKey })}
         tableClassName={tableClassName}
-        isEmpty={sorted.length === 0 && !isPending}
+        // Loading and empty are DISTINCT states (the TranscribeFeed/TopicsFeed idiom):
+        // FeedTable consults `isEmpty` only when `!isLoading`, so while the events query
+        // is pending the loading row holds the sheet's height instead of the empty
+        // message painting first and being replaced when rows arrive.
+        isLoading={isPending}
+        isEmpty={sorted.length === 0}
         emptyMessage={
           events.length === 0 ? (
             genUnavailable ? (
@@ -924,4 +933,4 @@ export function EventLogSheet({ sessionId }: Props) {
       </FeedTable>
     </FeedShell>
   );
-}
+});
