@@ -151,9 +151,15 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
             auto-instructions at all: `isPending` is false, `candidates` is
             empty, so the modal settles into a blank body with a dead Generate
             button and no hint that anything went wrong. An OFFLINE hold shares
-            that ending (no data, dead Generate) so it shares the treatment —
-            named for what it is, and with the same Retry, which resumes the
-            paused fetch the moment the network is back. */}
+            that ending (no data, dead Generate) so it shares the naming — but not
+            the Retry, which only does something on the error side. `refetch()` on
+            a PAUSED query lands in `Query#fetch` with `fetchStatus === 'paused'`
+            and `data === undefined`, taking the `retryer.continueRetry()` branch:
+            it clears the retry-cancelled flag and returns the already-pending
+            promise without starting a fetch. `onlineManager` is what resumes a
+            paused query on reconnect, button or no button, so the offline branch
+            says that instead of offering a control that does nothing. Mirrors
+            `HomeSettingsModal`'s shows section. */}
         {unavailable !== null && (
           <div className="flex flex-col items-start gap-2">
             <p className="modal-hint muted !mb-0">
@@ -161,15 +167,21 @@ export function EventGenerateCustomModal({ showId, onSubmit, onClose }: Props) {
                 ? 'You’re offline — can’t load instructions.'
                 : 'Couldn’t load instructions.'}
             </p>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                void refetch();
-              }}
-            >
-              Retry
-            </button>
+            {unavailable === 'offline' ? (
+              <p className="modal-hint muted !mb-0">
+                Instructions will load on their own once you’re back online.
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void refetch();
+                }}
+              >
+                Retry
+              </button>
+            )}
           </div>
         )}
         {[...grouped.values()].map((group) => (

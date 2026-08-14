@@ -1244,7 +1244,7 @@ describe('HomeSettingsModal shows-fetch failure', () => {
 // Retry in the unreachable error branch. `EventGenerateCustomModal` draws the same
 // paused-vs-loading distinction over its own `useShow`.
 describe('HomeSettingsModal offline-paused shows fetch', () => {
-  it('names the offline hold instead of claiming an indefinite load, and keeps Retry', () => {
+  it('names the offline hold instead of claiming an indefinite load, and offers no dead Retry', () => {
     useProfileWith(profileWithShow, [showWithCategories]);
     studioShowsPaused = true;
 
@@ -1260,9 +1260,14 @@ describe('HomeSettingsModal offline-paused shows fetch', () => {
       '— Offline —',
     );
 
-    // Retry is reachable here, and resumes the paused fetch the moment the network is back.
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(studioShowsRefetch).toHaveBeenCalledTimes(1);
+    // No Retry: `refetch()` on a PAUSED query hits query-core's `continueRetry()` branch and
+    // returns the pending promise without starting a fetch, so the button was a dead control.
+    // The honest affordance is the recovery sentence — `onlineManager` resumes the query on
+    // reconnect by itself.
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(document.getElementById('profile-shows-offline-recovery')?.textContent).toBe(
+      'Shows will load on their own once you’re back online.',
+    );
   });
 
   it('says the same thing on the Event Buttons tab', () => {
@@ -1365,11 +1370,13 @@ describe('HomeSettingsModal account scope is independent of the shows query', ()
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
     // The shows section still reports its own failure and keeps its Retry — decoupling the
-    // account scope must not paper over the error.
+    // account scope must not paper over the error. The Retry is real on THIS side: an errored
+    // query has an idle fetchStatus, so `refetch()` starts a fresh fetch.
     expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
       'Couldn’t load shows.',
     );
     expect(screen.getByRole('button', { name: 'Retry' })).not.toBeNull();
+    expect(document.getElementById('profile-shows-offline-recovery')).toBeNull();
 
     await editAccountNameAndSave();
   });
@@ -1380,13 +1387,14 @@ describe('HomeSettingsModal account scope is independent of the shows query', ()
 
     renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
 
-    // The shows section names its own offline hold and keeps its Retry — the half-dead
+    // The shows section names its own offline hold and says how it recovers — the half-dead
     // section is the confusing part precisely because the account scope stays live, so it
-    // has to explain itself.
+    // has to explain itself. No Retry: it would do nothing on a paused query.
     expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
       'You’re offline — can’t load shows.',
     );
-    expect(screen.getByRole('button', { name: 'Retry' })).not.toBeNull();
+    expect(document.getElementById('profile-shows-offline-recovery')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
 
     await editAccountNameAndSave();
   });

@@ -127,6 +127,10 @@ describe('EventGenerateCustomModal', () => {
     // Not the settled-but-empty state, and not a false pending claim either.
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect(screen.queryByText('Loading instructions…')).toBeNull();
+    // The error branch says nothing about waiting it out — this one needs the click.
+    expect(
+      screen.queryByText('Instructions will load on their own once you’re back online.'),
+    ).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(refetch).toHaveBeenCalledTimes(1);
@@ -139,7 +143,7 @@ describe('EventGenerateCustomModal', () => {
   // down. Read as "loading", that stranded the modal on "Loading instructions…" forever,
   // with a dead Generate button and the only Retry in the unreachable error branch.
   // `useAiV2WidgetData` draws the same paused-vs-loading distinction.
-  it('names an offline hold instead of claiming an indefinite load, and keeps Retry', () => {
+  it('names an offline hold instead of claiming an indefinite load, and offers no dead Retry', () => {
     const refetch = vi.fn();
     useShowMock.mockReturnValue({
       data: undefined,
@@ -156,8 +160,13 @@ describe('EventGenerateCustomModal', () => {
     // Specifically NOT the loading hint: nothing is in flight to finish.
     expect(screen.queryByText('Loading instructions…')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(refetch).toHaveBeenCalledTimes(1);
+    // No Retry here: `refetch()` on a PAUSED query takes query-core's `continueRetry()` branch
+    // and hands back the still-pending promise without starting a fetch. `onlineManager`
+    // resumes it on reconnect on its own, so the recovery sentence is the honest affordance.
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(
+      screen.getByText('Instructions will load on their own once you’re back online.'),
+    ).toBeTruthy();
   });
 
   it('says nothing about a paused BACKGROUND refetch over already-rendered instructions', () => {

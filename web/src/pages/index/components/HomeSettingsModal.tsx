@@ -924,12 +924,20 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                             ? 'No shows for this team yet. Add one below.'
                             : 'Select a show above to view details.'}
                   </p>
-                  {/* The only way out of an unavailable state without reopening
-                      the modal — `showsLoaded` never flips on an errored or
-                      paused query, so nothing else re-arms the section. Offered
-                      for the offline hold too: `refetch()` on a paused query is
-                      how react-query resumes it once the network is back. */}
-                  {showsUnavailable !== null && (
+                  {/* ERROR only. It is the one way out of a FAILED fetch without
+                      reopening the modal — `showsLoaded` never flips on an errored
+                      query, so nothing else re-arms the section.
+
+                      Deliberately NOT offered for the offline hold, where it would
+                      be a dead control: `refetch()` on a paused query reaches
+                      `Query#fetch` with `fetchStatus === 'paused'` and `data ===
+                      undefined`, which takes the `retryer.continueRetry()` branch —
+                      that only clears the retry-cancelled flag and hands back the
+                      still-pending promise. No fetch starts. What actually resumes a
+                      paused query is `onlineManager` firing on reconnect, which
+                      continues the retryer's paused promise with or without a click,
+                      so the honest affordance here is saying so. */}
+                  {showsUnavailable === 'error' && (
                     <button
                       type="button"
                       className="btn"
@@ -941,6 +949,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                     >
                       Retry
                     </button>
+                  )}
+                  {showsUnavailable === 'offline' && (
+                    <p
+                      className="modal-hint muted"
+                      id="profile-shows-offline-recovery"
+                      style={{ marginBottom: '0.75rem' }}
+                    >
+                      Shows will load on their own once you’re back online.
+                    </p>
                   )}
                 </>
               )}

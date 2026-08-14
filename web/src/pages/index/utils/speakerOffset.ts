@@ -86,10 +86,18 @@ export function parseSpeaker(display: string, offset: number): string {
  *
  * Consequence, stated rather than implied: rows genuinely corrupted by the old
  * display-string bug (a stored `"Person 1"` the operator never typed) are NOT
- * healed by merely tabbing through them any more. They keep rendering exactly as
- * they always did and convert to a raw id the next time someone actually edits
- * that cell. Leaving stale-but-stable data alone strictly beats rewriting rows
- * nobody touched, since the two cases are indistinguishable from here.
+ * healed by tabbing through them any more, and there is no keystroke that heals
+ * them in place either. They keep their literal value and render exactly as they
+ * always did. Such a row can be REASSIGNED to a different speaker — typing
+ * `"Person 2"` over a stored `"Person 1"` converts normally, because that text is
+ * not what the committed value renders as — but it cannot be converted to the one
+ * diarization id whose rendering equals its own text (`"0"` under offset 1, which
+ * also renders `"Person 1"`): that input is byte-identical to the committed
+ * rendering, so it pins, and typing away and back re-pins on the final keystroke.
+ * The ambiguity is inherent — from here, "retyped the label shown" and "meant the
+ * diarization id that renders the same" are the same string — and pinning is the
+ * right side of it: leaving stale-but-stable data alone strictly beats rewriting
+ * rows nobody touched.
  */
 export function speakerFromInput(display: string, committedRaw: string, offset: number): string {
   return display === formatSpeaker(committedRaw, offset)
