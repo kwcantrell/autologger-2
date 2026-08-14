@@ -25,6 +25,10 @@ export function useSessionStatus(sessionId: string | null) {
     queryKey: sessionStatusKeys.bySession(sessionId),
     queryFn: () => apiFetch<SessionStatus>(`sessions/${sessionId}/status`),
     enabled: Boolean(sessionId),
+    // Absorbs the rail's late same-key observer (RecentSessionsList) under the
+    // global staleTime:0 default; the rolling refetchInterval and WS
+    // invalidations bypass staleness, so freshness is unchanged.
+    staleTime: 2_000,
     refetchInterval: (query) => {
       const status = query.state.data;
       const active = Boolean(status?.is_rolling || status?.audio_recording_lease_alive);

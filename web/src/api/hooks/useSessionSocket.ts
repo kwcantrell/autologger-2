@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { type Query, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from '../../shared/components/Toast';
 import { wsUrl } from '../client';
@@ -58,6 +58,11 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     let immediateFailures = 0;
     let warned = false;
     let openedAt = 0;
+    // Wall-clock instant the current connect attempt started (recorded just
+    // before `new WebSocket(...)`). resync() compares cache timestamps against
+    // it so an on-open resync only invalidates data that could actually be
+    // stale relative to this attempt.
+    let connectStartedAt = 0;
 
     const clearPing = () => {
       if (pingTimer) {
@@ -95,11 +100,33 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     };
 
     // Re-anchor every cache the deleted polls used to refresh — the catch-up for
-    // any frames missed while the socket was down.
+    // any frames missed while the socket was down. Gated on freshness: skip
+    // queries whose data is already proven fresher than this connect attempt
+    // (`dataUpdatedAt >= connectStartedAt` — on first mount that is the just-
+    // landed initial fetch), and skip mount fetches still in flight
+    // (fetching with no data yet — invalidation would restart them). Reconnect
+    // catch-up is preserved: connectStartedAt is re-recorded per attempt, so
+    // anything last updated before the drop still invalidates. A predicate
+    // (not a narrower queryKey) because eventsKeys.all() prefix-matches every
+    // per-page limit/offset variant.
+    const isStaleForThisConnect = (q: Query) => {
+      if (q.state.dataUpdatedAt >= connectStartedAt) return false;
+      if (q.state.fetchStatus === 'fetching' && q.state.dataUpdatedAt === 0) return false;
+      return true;
+    };
     const resync = () => {
-      qc.invalidateQueries({ queryKey: sessionStatusKeys.bySession(sessionId) });
-      qc.invalidateQueries({ queryKey: eventsKeys.all(sessionId) });
-      qc.invalidateQueries({ queryKey: audioSegmentsKeys.bySession(sessionId) });
+      qc.invalidateQueries({
+        queryKey: sessionStatusKeys.bySession(sessionId),
+        predicate: isStaleForThisConnect,
+      });
+      qc.invalidateQueries({
+        queryKey: eventsKeys.all(sessionId),
+        predicate: isStaleForThisConnect,
+      });
+      qc.invalidateQueries({
+        queryKey: audioSegmentsKeys.bySession(sessionId),
+        predicate: isStaleForThisConnect,
+      });
     };
 
     const scheduleReconnect = () => {
@@ -128,6 +155,7 @@ export function useSessionSocket(sessionId: string | null, opts: Options = {}): 
     const connect = () => {
       if (cancelled) return;
       openedAt = 0;
+      connectStartedAt = Date.now();
       try {
         ws = new WebSocket(wsUrl(`sessions/${encodeURIComponent(sessionId)}/ws?role=browser`));
       } catch {
