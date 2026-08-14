@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
@@ -83,10 +83,38 @@ vi.mock('./components/V6Rail', () => ({
   ),
 }));
 
+// --- render-isolation probe (settings-modal-mount-cost, task 2.1; design D0)
+// ---
+//
+// `WorkspaceStatic` (the real `memo()`'d isolation boundary) sits two levels
+// below this mock, inside the real `SessionRoute`. This file mocks
+// `SessionRoute` wholesale (see the comment above), so the memo boundary
+// itself isn't exercised here — but `SessionRoute` forwards `sessionId` /
+// `ytImportPending` / `onOpenMobileNav` into `WorkspaceStatic` completely
+// unchanged (no new object/closure created in between; see
+// `SessionRoute.tsx`). So asserting that those props keep a stable identity
+// as received by THIS mock is equivalent to asserting the real memo holds —
+// and unlike a presence assertion, it can see a fresh-closure regression that
+// would defeat the memo without ever changing what's on screen.
+const sessionRouteProbe = vi.hoisted(() => ({
+  renders: [] as Array<{
+    sessionId: string;
+    ytImportPending?: boolean;
+    onNewSession: () => void;
+    onOpenMobileNav?: () => void;
+  }>,
+}));
+
 vi.mock('./components/SessionRoute', () => ({
-  SessionRoute: (props: { sessionId: string }) => (
-    <div data-testid="session-route" data-session-id={props.sessionId} />
-  ),
+  SessionRoute: (props: {
+    sessionId: string;
+    ytImportPending?: boolean;
+    onNewSession: () => void;
+    onOpenMobileNav?: () => void;
+  }) => {
+    sessionRouteProbe.renders.push(props);
+    return <div data-testid="session-route" data-session-id={props.sessionId} />;
+  },
 }));
 
 // HomeSettingsModal is the lift target (D1): AppShell now mounts it directly
@@ -390,6 +418,96 @@ describe('AppShell settings modal (teams-settings-nav, D1: lifted to AppShell)',
     fireEvent.click(screen.getByTestId('studio-switch-close'));
 
     expect(memory.history).toEqual(['/teams']);
+  });
+});
+
+describe('AppShell workspace render isolation (settings-modal-mount-cost, D0)', () => {
+  // Spec: "Shell state changes do not re-render the session workspace" —
+  // every prop crossing the AppShell -> SessionRoute -> WorkspaceStatic
+  // boundary must hold a stable identity across shell renders, or
+  // WorkspaceStatic's memo never bails out. Profiled cost of the defect: with
+  // a session workspace mounted, opening the settings modal produced 17,238
+  // renders vs 6,141 with no session open — +11,097 re-renders, all of them
+  // the already-mounted workspace, traced to the inline
+  // `onOpenMobileNav={() => setRailOpen(true)}` arrow.
+
+  beforeEach(() => {
+    sessionRouteProbe.renders.length = 0;
+  });
+
+  function lastRender() {
+    const last = sessionRouteProbe.renders.at(-1);
+    if (!last) throw new Error('SessionRoute mock never rendered');
+    return last;
+  }
+
+  it('opening the settings modal keeps the SessionRoute boundary props referentially stable', () => {
+    renderShell('/sessions/sess-1');
+    const before = lastRender();
+    expect(before.sessionId).toBe('sess-1');
+
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    expect(screen.getByRole('dialog')).not.toBeNull();
+
+    const after = lastRender();
+    expect(after.sessionId).toBe('sess-1');
+    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.onNewSession).toBe(before.onNewSession);
+  });
+
+  it('closing the settings modal keeps the SessionRoute boundary props referentially stable', () => {
+    renderShell('/sessions/sess-1');
+    fireEvent.click(document.getElementById('v6-btn-settings') as HTMLElement);
+    const before = lastRender();
+
+    fireEvent.click(screen.getByTestId('settings-modal-close'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    const after = lastRender();
+    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.onNewSession).toBe(before.onNewSession);
+  });
+
+  it('opening the New Session modal keeps the SessionRoute boundary props referentially stable', () => {
+    renderShell('/sessions/sess-1');
+    const before = lastRender();
+
+    fireEvent.click(screen.getByTestId('rail-new'));
+
+    const after = lastRender();
+    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.onNewSession).toBe(before.onNewSession);
+  });
+
+  it('opening the Batch Import modal keeps the SessionRoute boundary props referentially stable', () => {
+    renderShell('/sessions/sess-1');
+    const before = lastRender();
+
+    fireEvent.click(screen.getByTestId('rail-batch'));
+    expect(screen.getByTestId('batch-import-modal')).not.toBeNull();
+
+    const after = lastRender();
+    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
+    expect(after.onNewSession).toBe(before.onNewSession);
+  });
+
+  it('toggling the mobile nav rail (invoking the boundary prop itself) keeps it referentially stable across the resulting shell render', () => {
+    // The mobile-rail-open trigger IS the prop under test
+    // (`onOpenMobileNav={() => setRailOpen(true)}` in production): the
+    // workspace's own session strip calls it on mobile to open the rail. So
+    // "toggling the mobile navigation rail" (the spec's second scenario) is
+    // exercised by invoking the captured callback and checking its own
+    // identity survives the shell render that results.
+    renderShell('/sessions/sess-1');
+    const before = lastRender();
+    expect(typeof before.onOpenMobileNav).toBe('function');
+
+    act(() => {
+      before.onOpenMobileNav?.();
+    });
+
+    const after = lastRender();
+    expect(after.onOpenMobileNav).toBe(before.onOpenMobileNav);
   });
 });
 

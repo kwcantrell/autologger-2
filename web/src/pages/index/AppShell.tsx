@@ -159,6 +159,16 @@ export function AppShell() {
     setShowSettings(false);
   }, []);
 
+  // Stable identity for the mobile-rail-open trigger threaded down to
+  // WorkspaceStatic (settings-modal-mount-cost, design D0): an inline arrow
+  // here defeats WorkspaceStatic's memo on every AppShell render (any shell
+  // state change, not just this one), re-rendering the entire mounted
+  // session workspace. Matches the useCallback treatment already given to
+  // handleOpenSettings / handleCloseSettings / handleOpenNewSession above.
+  const handleOpenMobileNav = useCallback(() => {
+    setRailOpen(true);
+  }, []);
+
   // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
   // render switch INSIDE the authed shell, keyed on `logged_in && teams
   // .length === 0` — never on `studios` emptiness alone, so this can't
@@ -350,7 +360,7 @@ export function AppShell() {
                 sessionId={activeSessionId}
                 ytImportPending={ytImportPending}
                 onNewSession={handleOpenNewSession}
-                onOpenMobileNav={() => setRailOpen(true)}
+                onOpenMobileNav={handleOpenMobileNav}
               />
             )}
           </main>
