@@ -41,6 +41,14 @@ const PRESENCE_INTERVAL_HIDDEN_MS = 10_000;
  * exercise the fallback path (neither vitest environment provides `Worker`), so they
  * verify the cadence LOGIC, never the throttling immunity.
  *
+ * The CSP case reaches that fallback ASYNCHRONOUSLY — `new Worker(blobUrl)` returns and
+ * the refusal arrives as an `error` event — which `createWorkerInterval` now handles by
+ * tearing the dead worker down and re-arming the main-thread interval. Worth stating
+ * because the alternative was far worse than the throttled residual above: a clock that
+ * never ticked at all, leaving this hook posting only on mount/visibility/playback
+ * changes, so even a VISIBLE idle tab aged past the 15s TTL. This hook needs no code for
+ * that transition — the handle keeps ticking and `stop()` stays the whole teardown.
+ *
  * The
  * visibility transition itself is always reported immediately (so Companion learns
  * `visible: false` the instant it happens — that report is what lets it pick a different

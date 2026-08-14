@@ -16,6 +16,8 @@ import { createWorkerInterval } from './workerInterval';
 class FakeWorker {
   static instances: FakeWorker[] = [];
   onmessage: ((ev: { data: unknown }) => void) | null = null;
+  onerror: ((ev: unknown) => void) | null = null;
+  onmessageerror: ((ev: unknown) => void) | null = null;
   terminated = 0;
   url: string;
 
@@ -31,6 +33,17 @@ class FakeWorker {
   /** Test driver: the worker script's `postMessage` arriving on the main thread. */
   tick() {
     this.onmessage?.({ data: 0 });
+  }
+
+  /** Test driver: the ASYNC failure a CSP `worker-src` refusal produces —
+   * `new Worker(blobUrl)` returned fine, the error arrives afterwards. */
+  fail() {
+    this.onerror?.({ type: 'error', message: 'blocked by CSP' });
+  }
+
+  /** Test driver: the rarer `messageerror` (undeserializable message). */
+  failMessage() {
+    this.onmessageerror?.({ type: 'messageerror' });
   }
 }
 
@@ -142,6 +155,139 @@ describe('createWorkerInterval — worker clock', () => {
     handle.stop();
     vi.advanceTimersByTime(10_000);
     expect(onTick).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createWorkerInterval — async worker failure (CSP worker-src)', () => {
+  // The failure mode a construction-time try/catch structurally cannot see: a
+  // CSP that forbids `blob:` workers lets `new Worker(url)` RETURN, then
+  // delivers an `error` event. Before this handling, the handle reported
+  // `kind: 'worker'` and never ticked again — the presence heartbeat then fired
+  // only on mount/visibility/playback changes, so even a VISIBLE idle tab went
+  // stale past the server's 15s presence TTL and every Companion command 409'd.
+  // Strictly worse than the plain setInterval this utility replaced.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeWorker.instances.length = 0;
+    vi.stubGlobal('Worker', FakeWorker);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('re-arms the main-thread fallback and resumes ticking after an error event', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+    const worker = lastWorker();
+
+    expect(handle.kind).toBe('worker');
+    vi.advanceTimersByTime(20_000);
+    expect(onTick).not.toHaveBeenCalled();
+
+    worker.fail();
+
+    // The caller keeps ticking without knowing — on the main thread now.
+    expect(handle.kind).toBe('timer');
+    vi.advanceTimersByTime(5_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(5_000);
+    expect(onTick).toHaveBeenCalledTimes(2);
+
+    // The dead worker and its URL were released exactly once, and no second
+    // worker was spawned to fail the same way.
+    expect(worker.terminated).toBe(1);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith(worker.url);
+    expect(FakeWorker.instances).toHaveLength(1);
+
+    handle.stop();
+  });
+
+  it('messageerror degrades the same way', () => {
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+
+    lastWorker().failMessage();
+
+    expect(handle.kind).toBe('timer');
+    vi.advanceTimersByTime(5_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+
+    handle.stop();
+  });
+
+  it('a repeated error does not double-terminate, double-revoke, or stack intervals', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+    const worker = lastWorker();
+
+    worker.fail();
+    // Handlers are detached on teardown, so a real worker could not re-fire;
+    // drive the handlers directly to prove the teardown is idempotent anyway.
+    worker.fail();
+    worker.failMessage();
+
+    expect(worker.terminated).toBe(1);
+    expect(revoke).toHaveBeenCalledTimes(1);
+    // One interval, not three: 5s must produce exactly one tick.
+    vi.advanceTimersByTime(5_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+
+    handle.stop();
+  });
+
+  it('stop() after a degrade is clean: no double teardown, no further ticks', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+    const worker = lastWorker();
+
+    worker.fail();
+    vi.advanceTimersByTime(5_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+
+    handle.stop();
+    handle.stop(); // StrictMode double-cleanup
+    expect(worker.terminated).toBe(1);
+    expect(revoke).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(60_000);
+    expect(onTick).toHaveBeenCalledTimes(1);
+  });
+
+  it('an error arriving after stop() never resurrects the interval', () => {
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+    const worker = lastWorker();
+
+    handle.stop();
+    expect(worker.terminated).toBe(1);
+
+    // A queued error event landing after teardown (the real race: stop() runs
+    // in an effect cleanup while the CSP refusal is already in flight).
+    worker.fail();
+    worker.failMessage();
+
+    expect(worker.terminated).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    expect(onTick).not.toHaveBeenCalled();
+  });
+
+  it('a worker message delivered after the degrade does not tick', () => {
+    const onTick = vi.fn();
+    const handle = createWorkerInterval(5_000, onTick);
+    const worker = lastWorker();
+
+    worker.fail();
+    worker.tick(); // handler detached — inert
+    expect(onTick).not.toHaveBeenCalled();
+
+    handle.stop();
   });
 });
 
