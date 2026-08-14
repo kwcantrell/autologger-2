@@ -1,3 +1,4 @@
+import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
@@ -39,6 +40,34 @@ import {
 } from './feedToolbarCaption';
 import { GenerateToolbar } from './GenerateToolbar';
 import { JUMP_COLUMN } from './JumpToTimeButton';
+
+// Approximate rendered height of a single EventLogRow, established by
+// TranscribeFeed's documented method (feed-row-seek task 7.3): measured in real
+// headless Chromium against the actual compiled Tailwind CSS — jsdom has no
+// layout engine — on a standalone `sheet sheet-dense` <table> built from the
+// exact class strings EventLogRow/JumpToTimeButton render, served over a local
+// HTTP server (file:// breaks variant matching).
+//
+// Measured ≈30.44px, identical for view rows and inline/batch-edit rows. The
+// row's tallest cell is the LEADING JUMP CELL, not the text cells: the `h-6`
+// (24px) jump button + CELL_BASE's `py-[0.17rem]` (2×2.72px) + the 1px bottom
+// border = 30.44px, while every text cell is 12.48px of `leading-none` text in
+// the same box = 18.92px. (The jump control's `scale-[0.75]` wrapper compiles to
+// a transform, which shrinks it visually but not in layout.) 31 covers the
+// measurement with a small margin, and lands on TranscribeFeed's own constant —
+// consistent, since both rows are dominated by the same 24px jump button.
+//
+// No `measureElement`: every cell is `whitespace-nowrap` (CELL_TC / CELL_CAT /
+// CELL_ACTIONS on the message cell), so a long message clips rather than
+// wrapping and heights do not vary with content — confirmed by measuring a
+// 165-char message row (30.44px, unchanged). The one shape that does measure
+// shorter (18.92px) is a row whose timecode is unresolvable, since
+// `JumpToTimeButton` renders null there — but the server stamps every event with
+// `timecode_total_frames` + `frame_rate` on insert (`eventStore.addEvent`), so
+// that shape only exists for rows whose stored frame count is NULL. Over-
+// estimating those is the safe direction (extra scroll extent, never a short
+// window), so the constant stays, matching TranscribeFeed.
+const ROW_HEIGHT = 31;
 
 // --- feed-row-seek, task 6.2 (design D4) ---
 //
@@ -325,6 +354,11 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   const [viewUtc, setViewUtc] = useState(false);
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [customGenerateOpen, setCustomGenerateOpen] = useState(false);
+  // Reactive scroll viewport (the TranscribeFeed idiom): OverlayScrollbars
+  // publishes its viewport via FeedTable's `scrollRef` callback below. Storing
+  // it in state (not a ref) re-renders so useVirtualizer re-attaches the instant
+  // OS initializes, instead of waiting for an unrelated background re-render.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   // --- Batch edit ---
   const [batchEditMode, setBatchEditMode] = useState(false);
@@ -407,6 +441,27 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     return doSortEvents(filtered, sortState, status);
   }, [events, hiddenCategoryIds, categories, showInternal, sortState, status]);
 
+  // --- Virtualization (the TranscribeFeed precedent: padding rows inside the
+  // real <table>, never a div grid). Only the visible window (+overscan) of
+  // <tr>s is mounted; two spacer rows hold the scroll height on either side.
+  // KNOWN GAP (accepted, same structure as TranscribeRow today): inline-edit
+  // inputs are UNCONTROLLED (`defaultValue` in EventLogRow), so an actively
+  // edited row scrolled more than `overscan` rows out of view unmounts and its
+  // unsaved keystrokes are lost. Batch-edit mode is unaffected — its drafts live
+  // in this component's parent-owned `batchEdits` Map, not in the DOM.
+  const virtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => scrollEl,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const paddingBottom =
+    virtualItems.length > 0 ? totalSize - virtualItems[virtualItems.length - 1].end : 0;
+
   // Mirror showInternal onto body so timeline markers can hide internal-cat markers via CSS.
   useEffect(() => {
     if (showInternal) {
@@ -427,14 +482,28 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // above, so the wider fetch is a cache hit); SessionWorkspace's retry loop
   // then scrolls once the row renders. Reads the event list through a ref so
   // the listener registers once.
+  //
+  // Virtualization adds a second way the reveal can silently no-op: a row
+  // outside the mounted window has no DOM node at all, so the workspace's
+  // `scrollAndFlashEventRowWithRetry` poll for `tr[data-event-id=…]` would never
+  // find it however long it retried. The target id is therefore parked in
+  // `pendingRevealId` and consumed by the effect below, which scrolls the
+  // virtualizer to the row's index so it mounts; the workspace retry loop then
+  // finds and flashes it. Parked in STATE rather than a ref on purpose: growing
+  // `loadedLimit` is a no-op when the target is already inside the window, so a
+  // ref would leave nothing to schedule the consuming effect on the (common)
+  // already-loaded-but-unmounted path. The effect clears it back to `null`, so
+  // revealing the SAME row twice still re-triggers.
   const allEventsRef = useRef(allEventsData);
   allEventsRef.current = allEventsData;
+  const [pendingRevealId, setPendingRevealId] = useState<string | null>(null);
   useEffect(() => {
     const onReveal = (ev: Event) => {
       const eventId = String(
         (ev as CustomEvent<{ eventId?: string }>).detail?.eventId ?? '',
       ).trim();
       if (!eventId) return;
+      setPendingRevealId(eventId);
       const all = allEventsRef.current?.events;
       setLoadedLimit((prev) => {
         // Workspace-wide page not resolved yet — cover the whole marker range.
@@ -448,6 +517,22 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     document.body.addEventListener(REVEAL_EVENT, onReveal);
     return () => document.body.removeEventListener(REVEAL_EVENT, onReveal);
   }, []);
+
+  // Mount the revealed row. The index MUST be resolved against `sorted` — the
+  // rendered order after filter + sort — not against the raw event list, or a
+  // descending sort (or a hidden category) would scroll to the wrong row.
+  // Re-runs when `sorted` changes, which covers the reveal that had to grow
+  // `loadedLimit` first: the target simply isn't found on the first pass and the
+  // request stays parked until the wider window renders it. A target that never
+  // appears (filtered out) stays parked harmlessly until the next reveal
+  // replaces it.
+  useEffect(() => {
+    if (!pendingRevealId) return;
+    const index = sorted.findIndex((e) => e.event_id === pendingRevealId);
+    if (index < 0) return;
+    setPendingRevealId(null);
+    virtualizer.scrollToIndex(index, { align: 'center' });
+  }, [pendingRevealId, sorted, virtualizer]);
 
   // --- Pagination sentinel ---
   const sentinelRef = useRef<HTMLTableRowElement>(null);
@@ -483,6 +568,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     setHiddenCategoryIds(new Set());
     setGenerateMenuOpen(false);
     setCustomGenerateOpen(false);
+    setPendingRevealId(null);
   }, [sessionId]);
 
   // --- Handlers ---
@@ -897,27 +983,50 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
             <col className="col-message" />
           </colgroup>
         }
+        scrollRef={setScrollEl}
       >
-        {sorted.map((ev) => (
-          <EventLogRow
-            key={ev.event_id}
-            event={ev}
-            categories={categories}
-            inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
-            batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
-            pendingDelete={pendingDeleteIds.has(ev.event_id)}
-            viewUtc={viewUtc}
-            batchValues={batchEdits.get(ev.event_id) ?? null}
-            resolvedSec={eventRowTimelineSec(ev)}
-            onJump={jump}
-            jumpUnavailable={jumpUnavailable}
-            jumpReasonId={jumpReasonId}
-            onInlineSave={handleInlineSave}
-            onBatchChange={handleBatchChange}
-            onDelete={handleDelete}
-            onUndelete={handleUndelete}
-          />
-        ))}
+        {paddingTop > 0 && (
+          <tr>
+            <td
+              colSpan={eventColumns.length}
+              style={{ height: paddingTop, padding: 0, border: 'none' }}
+            />
+          </tr>
+        )}
+        {virtualItems.map((vRow) => {
+          const ev = sorted[vRow.index];
+          return (
+            <EventLogRow
+              key={ev.event_id}
+              event={ev}
+              categories={categories}
+              inlineEdit={inlineEdit && !isAutomaticLogEvent(ev)}
+              batchEdit={batchEditMode && !isAutomaticLogEvent(ev)}
+              pendingDelete={pendingDeleteIds.has(ev.event_id)}
+              viewUtc={viewUtc}
+              batchValues={batchEdits.get(ev.event_id) ?? null}
+              resolvedSec={eventRowTimelineSec(ev)}
+              onJump={jump}
+              jumpUnavailable={jumpUnavailable}
+              jumpReasonId={jumpReasonId}
+              onInlineSave={handleInlineSave}
+              onBatchChange={handleBatchChange}
+              onDelete={handleDelete}
+              onUndelete={handleUndelete}
+            />
+          );
+        })}
+        {paddingBottom > 0 && (
+          <tr>
+            <td
+              colSpan={eventColumns.length}
+              style={{ height: paddingBottom, padding: 0, border: 'none' }}
+            />
+          </tr>
+        )}
+        {/* Sentinel stays AFTER the bottom spacer so it sits at the true end of
+            the scroll extent — the IntersectionObserver semantics (grow the
+            window when the end comes into view) are unchanged by virtualization. */}
         {events.length < total && (
           // `.logSheetSentinel td` centering/padding + `.sheet .utc` mono styling.
           <tr ref={sentinelRef} className="[&>td]:text-center [&>td]:px-2 [&>td]:py-[0.55rem]">

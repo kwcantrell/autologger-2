@@ -37,6 +37,33 @@ vi.mock('../../../api/client', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
+// `@tanstack/react-virtual` is mocked to render every row unconditionally:
+// jsdom has no layout engine, so `EventLogSheet`'s real virtualizer measures
+// a zero-height scroll viewport and computes an empty visible range — a
+// known test-infrastructure gap recorded in design.md's panel log. That gap
+// is orthogonal to what these tests drive (filtering, sort order, the batch
+// Escape guard, reveal page growth), so it's bypassed here rather than routed
+// around per-test. `scrollToIndex` is the virtualizer method EventLogSheet's
+// reveal effect calls once the target row's index resolves; the window-spacer
+// and reveal-scroll wiring themselves are covered in
+// EventLogSheet.virtualization.test.tsx against a windowing mock.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize: () => number }) => {
+    const size = estimateSize();
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: count }, (_, index) => ({
+          index,
+          start: index * size,
+          end: (index + 1) * size,
+          key: index,
+        })),
+      getTotalSize: () => count * size,
+      scrollToIndex: () => {},
+    };
+  },
+}));
+
 const mockedApiFetch = vi.mocked(apiFetch);
 
 const SESSION_ID = 'sess-log-sheet-1';
