@@ -45,7 +45,37 @@ export const viewport: Viewport = {
 export default function IndexLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body data-v4-transport="rolling">{children}</body>
+      <body data-v4-transport="rolling">
+        {/* Font preloads (perf C4b). Rendered in <body> deliberately: this
+            layout has no <head> element, and React 19 hoists <link> to the
+            document head from anywhere in the tree. Next's `metadata` export
+            has no preload API, so this is the supported route.
+
+            Both hrefs are stable /public paths rather than bundler-emitted
+            content-hashed asset URLs, because a preload must name the exact
+            URL the CSS `src:` will request (see the matching @font-face
+            comments in tailwind.css). Trade-off: /public loses immutable
+            content-hash caching; these two files change ~never.
+
+            `crossOrigin="anonymous"` is MANDATORY even same-origin -- fonts
+            are always fetched in CORS mode, so a preload without it is a
+            cache-key mismatch and the font downloads twice. */}
+        <link
+          rel="preload"
+          href="/static/fonts/inter-latin-var.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/static/fonts/league-gothic-latin.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+        {children}
+      </body>
     </html>
   );
 }
