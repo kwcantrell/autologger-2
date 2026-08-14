@@ -7,7 +7,6 @@ import { renderStrict, StrictWrapper } from '../../../test/renderStrict';
 import { createDraftStore } from '../utils/draftStore';
 import {
   EventLogRow,
-  INLINE_DRAFT_FIELDS,
   INLINE_FOCUS_RESTORE_MAX_AGE_MS,
   type InlineDraft,
   type InlineDraftStore,
@@ -60,7 +59,7 @@ function eventFixture(overrides: Partial<LogEvent> = {}): LogEvent {
  *  the test instead of the sheet — never a re-implementation, so a row driven
  *  here and a row driven by the sheet cannot see different clear semantics. */
 function draftStore(seed: Array<[string, InlineDraft]> = []): InlineDraftStore {
-  const store = createDraftStore<InlineDraft>(INLINE_DRAFT_FIELDS);
+  const store = createDraftStore<InlineDraft>();
   for (const [eventId, draft] of seed) store.write(eventId, draft);
   return store;
 }
@@ -84,6 +83,10 @@ function focusStore(
     },
     clear: (eventId) => {
       if (record?.eventId === eventId) record = null;
+    },
+    clearSelectOpen: (eventId) => {
+      if (record?.eventId !== eventId || record.selectOpen !== true) return;
+      record = { ...record, selectOpen: false };
     },
   };
 }

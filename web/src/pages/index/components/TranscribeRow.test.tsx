@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptWord } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { createDraftStore } from '../utils/draftStore';
-import { TRANSCRIBE_DRAFT_FIELDS, type TranscribeDraft, TranscribeRow } from './TranscribeRow';
+import { type TranscribeDraft, TranscribeRow } from './TranscribeRow';
 
 // --- TranscribeRow jump cell (feed-row-seek, task 7.1/7.2) ---
 //
@@ -40,7 +40,7 @@ function wordFixture(overrides: Partial<TranscriptWord> = {}): TranscriptWord {
 /** The REAL feed-owned store (`utils/draftStore`), owned by the test instead of
  *  `TranscribeFeed` — never a re-implementation. */
 function draftStore() {
-  return createDraftStore<TranscribeDraft>(TRANSCRIBE_DRAFT_FIELDS);
+  return createDraftStore<TranscribeDraft>();
 }
 
 function renderRow(overrides: Partial<ComponentProps<typeof TranscribeRow>> = {}) {

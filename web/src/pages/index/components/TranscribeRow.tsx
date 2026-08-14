@@ -176,11 +176,10 @@ export const TranscribeRow = memo(function TranscribeRow({
     setEdit((p) => (p ? { ...p, [field]: value } : p));
     if (value === row[field]) {
       // Nothing to commit for this field: its text is already exactly what the
-      // row renders from the server, so its draft entry is spent. Passing a
-      // one-field reference clears only that entry — every other field is
-      // `undefined` in the reference and therefore counts as diverged, which is
-      // what keeps a sibling field's uncommitted text alive.
-      drafts.clearMatching(row.id, { [field]: value });
+      // row renders from the server, so its draft entry is spent. This clear
+      // covers THIS field only — a sibling field's uncommitted text is outside
+      // what the blur speaks for and stays alive.
+      drafts.clearMatching(row.id, { [field]: value }, [field]);
       return;
     }
     onUpdate(row.id, { [field]: value });

@@ -11,7 +11,7 @@ import {
 import { useTranscriptWordsGate } from '../hooks/TranscriptWordsGateContext';
 import { useGatedGenerate } from '../hooks/useGatedGenerate';
 import { useTimelineSeek } from '../hooks/useTimelineSeek';
-import { useDraftStore } from '../utils/draftStore';
+import { presentFields, useDraftStore } from '../utils/draftStore';
 import { clickSortReducer } from '../utils/sortReducer';
 import { speakerOffsetFromWords } from '../utils/speakerOffset';
 import { FeedShell } from './FeedShell';
@@ -117,7 +117,7 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
   // silently. The feed owns the drafts instead (EventLogSheet's inline-draft
   // pattern, through the same `utils/draftStore` primitive) and each row writes
   // through on every keystroke — see `TranscribeDraft`.
-  const drafts = useDraftStore<TranscribeDraft>(TRANSCRIBE_DRAFT_FIELDS);
+  const drafts = useDraftStore<TranscribeDraft>();
   // A session switch retires every row id this store is keyed by (this panel is
   // mounted-hidden and unkeyed, so it is not remounted).
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is a prop, re-run when it changes
@@ -126,17 +126,27 @@ export const TranscribeFeed = memo(function TranscribeFeed({ sessionId }: Props)
   }, [sessionId, drafts]);
 
   const handleUpdate = useCallback(
-    async (wordId: string, patch: { session_time?: string; speaker?: string; word?: string }) => {
-      // What this save is committing, in draft space, read at issue time.
-      const submitted: TranscribeDraft = { ...drafts.read(wordId) };
+    async (wordId: string, patch: TranscribeDraft) => {
+      // What this save is committing, and — separately — WHICH fields it
+      // commits. A row PATCHes ONE blurred field at a time (`commitField`), so
+      // the two are not the same question: the reference used to be the row's
+      // whole stored draft, which made every untouched sibling field compare
+      // equal to itself and be dropped as spent. An uncommitted correction in
+      // another cell (or text a failed save had deliberately kept) then
+      // vanished on the next remount, reverting to the server value with
+      // nothing having persisted it. `patch` is already raw control text — the
+      // row writes each keystroke through before it commits — so it IS the
+      // draft-space reference for exactly the fields it carries.
+      const covered = presentFields(patch, TRANSCRIBE_DRAFT_FIELDS);
       try {
         await update.mutateAsync({ wordId, patch });
         // Committed (`mutateAsync` resolves only after the mutation's
         // `invalidateQueries` refetch settles, so the row is already backed by
-        // fresh server state). Drop ONLY what this save persisted: a round trip
-        // is long enough to type into, and those later keystrokes are in the
-        // store. Same shared draft-space comparison EventLogSheet uses.
-        drafts.clearMatching(wordId, submitted);
+        // fresh server state). Drop ONLY what this save persisted, and only if
+        // its text has not moved on: a round trip is long enough to type into,
+        // and those later keystrokes are in the store. Same shared draft-space
+        // comparison EventLogSheet uses.
+        drafts.clearMatching(wordId, patch, covered);
       } catch {
         // Failed: keep the draft, so the operator's text is still there on the
         // next remount instead of silently reverting. (`mutate` swallowed

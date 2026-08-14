@@ -404,7 +404,7 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // row that is mounting anyway — see `InlineDraftStore` for the full
   // rationale. Cleared per row once its save has round-tripped, and wholesale
   // when inline-edit mode ends or the session changes.
-  const inlineDrafts = useDraftStore<InlineDraft>(INLINE_DRAFT_FIELDS);
+  const inlineDrafts = useDraftStore<InlineDraft>();
 
   // --- Inline edit focus ---
   // Which row is being inline-edited right now, and where its caret sits. Same
@@ -425,6 +425,14 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
       },
       clear: (eventId) => {
         if (inlineFocusRef.current?.eventId === eventId) inlineFocusRef.current = null;
+      },
+      // Deliberately does NOT re-stamp `recordedAt`: dropping a flag the row
+      // can no longer maintain must not extend how long the record may still
+      // pull focus back.
+      clearSelectOpen: (eventId) => {
+        const rec = inlineFocusRef.current;
+        if (rec?.eventId !== eventId || rec.selectOpen !== true) return;
+        inlineFocusRef.current = { ...rec, selectOpen: false };
       },
     }),
     [],
@@ -501,8 +509,9 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
     inlineFocusRef.current = null;
   }, [inlineEdit, inlineDrafts]);
 
-  // Abandonment: drop the focus record on the first pointerdown or focusin
-  // OUTSIDE the edited row.
+  // Abandonment: drop the focus record when the operator's attention leaves the
+  // edited row — a focusin outside it, or a pointerdown outside it that FOCUS
+  // ACTUALLY FOLLOWS.
   //
   // Installed here rather than in the row because the case that matters is a
   // row that is no longer mounted: the operator types, wheel-scrolls the row
@@ -513,31 +522,74 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
   // the caret out of nowhere if the row ever scrolls back. A click or a focus
   // move anywhere else is the operator saying they are done with it.
   //
+  // But an outside pointerdown is NOT by itself that signal, and treating it as
+  // one broke the commonest gesture in this feed: dragging the scrollbar. The
+  // OverlayScrollbars handle and track are ordinary elements outside the <tr>,
+  // and they `preventDefault()` the pointerdown so the focused input KEEPS
+  // focus — the operator is still typing in a row that had just been unpinned,
+  // with no record left to restore from. Dragging past the pin bound then
+  // unmounts the focused row: no blur fires, so nothing saves, and the draft is
+  // dropped wholesale the next time inline edit ends.
+  //
+  // So a pointerdown only ARMS the question and the answer is read from focus,
+  // one tick later (the focus change is the pointerdown's default action, so it
+  // has not happened yet while the handler runs; a widget that suppressed it
+  // simply leaves focus where it was). That generalizes past OverlayScrollbars
+  // to any preventDefault-ing widget, which a scrollbar-DOM allowlist would
+  // not. `focusin` needs no deferral — it IS the focus move, and its target is
+  // the newly focused node.
+  //
   // The DRAFT is deliberately untouched — abandoning the caret is not
   // abandoning the text, which stays recoverable until it is saved or
   // inline-edit mode ends.
   useEffect(() => {
     if (!inlineEdit) return;
-    const onAbandon = (e: Event) => {
+    /** Does `node` sit inside the row the record belongs to? */
+    const insideRecordedRow = (node: unknown, eventId: string): boolean => {
+      if (!(node instanceof Element)) return false;
+      return node.closest('tr[data-event-id]')?.getAttribute('data-event-id') === eventId;
+    };
+    /** The record's own reasons to survive any outside interaction. `null` when
+     *  there is nothing (left) to abandon. */
+    const liveRecord = (): InlineFocusRecord | null => {
       const rec = inlineFocusRef.current;
-      if (!rec) return;
+      if (!rec) return null;
       // This row's own category listbox is portaled outside the row, so a click
       // in it looks exactly like a click elsewhere. It isn't.
-      if (rec.selectOpen) return;
-      const target = e.target;
-      if (target instanceof Element) {
-        const row = target.closest('tr[data-event-id]');
-        if (row?.getAttribute('data-event-id') === rec.eventId) return;
-      }
+      if (rec.selectOpen) return null;
+      return rec;
+    };
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const onPointerDown = (e: Event) => {
+      const rec = liveRecord();
+      if (!rec || insideRecordedRow(e.target, rec.eventId)) return;
+      if (pending !== null) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = null;
+        // Re-read: the gesture may have moved focus INTO the recorded row, or
+        // opened its dropdown, or the record may have moved on to another row.
+        const settled = liveRecord();
+        if (!settled) return;
+        // Where focus ended up is the answer. An unmounted recorded row leaves
+        // it on <body>, which correctly reads as "not in the row" — that is the
+        // abandonment this listener exists for.
+        if (insideRecordedRow(document.activeElement, settled.eventId)) return;
+        inlineFocusRef.current = null;
+      }, 0);
+    };
+    const onFocusIn = (e: Event) => {
+      const rec = liveRecord();
+      if (!rec || insideRecordedRow(e.target, rec.eventId)) return;
       inlineFocusRef.current = null;
     };
     // Capture phase: a handler that stops propagation elsewhere must not be
     // able to hide the gesture from this.
-    document.addEventListener('pointerdown', onAbandon, true);
-    document.addEventListener('focusin', onAbandon, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
     return () => {
-      document.removeEventListener('pointerdown', onAbandon, true);
-      document.removeEventListener('focusin', onAbandon, true);
+      if (pending !== null) clearTimeout(pending);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
     };
   }, [inlineEdit]);
 
@@ -833,7 +885,13 @@ export const EventLogSheet = memo(function EventLogSheet({ sessionId }: Props) {
         // EventLogRow's server-sync effect and its nothing-to-commit branch
         // also go through, so the three cannot disagree about what "this field
         // is spent" means.
-        inlineDrafts.clearMatching(eventId, submitted);
+        //
+        // `INLINE_DRAFT_FIELDS` as the covered set is the literal truth here:
+        // `values` carries all four fields, so this save persisted all four.
+        // (TranscribeFeed's per-field PATCH covers only the field it sent — see
+        // `DraftStore#clearMatching` for why the covered set is stated rather
+        // than inferred from the reference's keys.)
+        inlineDrafts.clearMatching(eventId, submitted, INLINE_DRAFT_FIELDS);
         showToast('Updated.');
       } catch (e) {
         showToast(e instanceof Error ? e.message : 'Update failed.', true);

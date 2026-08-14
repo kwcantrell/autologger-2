@@ -863,6 +863,38 @@ describe('EventLogSheet pinned row with its category dropdown open', () => {
     scrollWindowTo(30, 33, 'ev-31');
     expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
   });
+
+  // `selectOpen` is a claim only a MOUNTED row can maintain: Radix fires no
+  // `onOpenChange(false)` when the virtualizer unmounts the row out from under
+  // an open dropdown, so the flag stuck true on a record nothing could correct
+  // — permanently disarming the abandon listener and holding the pin.
+  it('stops claiming an open dropdown once the row is unmounted out from under it', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    act(() => {
+      messageInput('ev-0').focus();
+    });
+    await openCategory('ev-0');
+
+    // Past the pin bound: the row — and its dropdown — go away without Radix
+    // ever reporting the close.
+    scrollWindowTo(100, 103, 'ev-101');
+    expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
+
+    // The operator clicks away. A record still claiming an open dropdown would
+    // be skipped by the abandon listener, and stay pinned forever.
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    scrollWindowTo(30, 33, 'ev-31');
+    expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
+  });
 });
 
 // --- An abandoned focus record expires (review finding 3) ---
@@ -870,9 +902,26 @@ describe('EventLogSheet pinned row with its category dropdown open', () => {
 // Wheel scrolling moves neither focus nor `document.activeElement`, so a record
 // left behind by an edit the operator walked away from stayed eligible forever:
 // the row kept up to `PINNED_ROW_MAX_EXTRA_ROWS` gap rows pinned, and grabbed
-// the caret the moment it scrolled back into overscan. A pointerdown anywhere
-// outside the row is the abandonment signal the scroll wheel cannot give.
+// the caret the moment it scrolled back into overscan. An outside interaction
+// that focus FOLLOWS is the abandonment signal the scroll wheel cannot give —
+// and, per the pointerdown/focus split below, the outside pointerdown alone is
+// not that signal.
+//
+// The sheet's listener is isolated here by unmounting the row first: an
+// unmounted row fires no blur, and `handleBlur`'s deferred body bails on the
+// null row ref, so nothing but this listener can retire the record.
 describe('EventLogSheet abandoned inline-edit focus', () => {
+  /** The operator's next interaction lands somewhere else entirely, and focus
+   *  goes with it — a pointerdown on a non-focusable area leaves the document
+   *  focused on <body>. The deferred focus check runs a tick later. */
+  async function clickAway(target: EventTarget = document.body) {
+    await act(async () => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      target.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
   it('does not steal focus on scroll-back after the operator clicked away', async () => {
     serveLongFixture();
     virtualMock.first = 0;
@@ -890,11 +939,9 @@ describe('EventLogSheet abandoned inline-edit focus', () => {
     scrollWindowTo(100, 103, 'ev-101');
     expect(document.querySelector('#v4-log-sheet tr[data-event-id="ev-0"]')).toBeNull();
 
-    // The operator gets on with something else. Nothing about this changes
-    // `document.activeElement`, so only an explicit signal can retire the record.
-    act(() => {
-      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-    });
+    // The operator gets on with something else. Wheel scrolling changed nothing
+    // about focus, so only this gesture can retire the record.
+    await clickAway();
 
     scrollWindowTo(0, 3, 'ev-1');
 
@@ -912,12 +959,11 @@ describe('EventLogSheet abandoned inline-edit focus', () => {
     act(() => {
       messageInput('ev-0').focus();
     });
-    scrollWindowTo(30, 33, 'ev-31');
-    expect(renderedEventIds()).toContain('ev-0');
+    // Past the pin bound, so the row is unmounted and only the sheet's listener
+    // is in play; then the operator clicks away.
+    scrollWindowTo(100, 103, 'ev-101');
+    await clickAway();
 
-    act(() => {
-      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-    });
     scrollWindowTo(30, 33, 'ev-31');
 
     expect(renderedEventIds()).toEqual(['ev-30', 'ev-31', 'ev-32']);
@@ -941,5 +987,46 @@ describe('EventLogSheet abandoned inline-edit focus', () => {
     scrollWindowTo(30, 33, 'ev-31');
 
     expect(renderedEventIds()).toContain('ev-0');
+  });
+
+  // --- An outside pointerdown that focus does NOT follow (review finding 2) ---
+  //
+  // OverlayScrollbars' handle and track are ordinary elements outside the
+  // <tr>, and they `preventDefault()` the pointerdown so the focused input
+  // keeps focus. Treating the bare pointerdown as abandonment unpinned a row
+  // the operator was still typing in, with no record left to restore from —
+  // and dragging the same gesture past the pin bound then unmounted that
+  // focused row, where no blur fires and nothing saves.
+  it('keeps the record when an outside pointerdown does not move focus (a preventDefault-ing scrollbar)', async () => {
+    serveLongFixture();
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    await renderRollingSheet();
+
+    const input = messageInput('ev-0');
+    await act(async () => {
+      input.focus();
+      // Let jsdom's asynchronous `selectionchange` (a side effect of focusing a
+      // text input) land BEFORE the gesture under test: React turns it into an
+      // `onSelect`, which re-records the caret and would mask what the
+      // pointerdown did.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // The scrollbar handle: outside the row, and it swallows the focus change.
+    const handle = document.createElement('div');
+    document.body.appendChild(handle);
+    await act(async () => {
+      handle.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Focus never left, so the edit was never abandoned...
+    expect(document.activeElement).toBe(input);
+    // ...and the row is still pinned when the drag scrolls the window past it.
+    scrollWindowTo(30, 33, 'ev-31');
+    expect(renderedEventIds()).toContain('ev-0');
+
+    handle.remove();
   });
 });

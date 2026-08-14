@@ -117,9 +117,14 @@ function wordsFixture(count: number): TranscriptWord[] {
  *  does — the refetch after a commit must carry the committed row. */
 let serverWords: TranscriptWord[] = [];
 
+/** Field names whose PATCH must reject — the state in which the feed
+ *  deliberately KEEPS the operator's draft so the text stays recoverable. */
+let patchFailsFor = new Set<string>();
+
 beforeEach(() => {
   virtualMock.first = 0;
   virtualMock.last = Number.POSITIVE_INFINITY;
+  patchFailsFor = new Set();
   serverWords = wordsFixture(WORD_COUNT);
   mockedApiFetch.mockReset();
   mockedApiFetch.mockImplementation(async (path: string, opts: RequestInit = {}) => {
@@ -128,6 +133,9 @@ beforeEach(() => {
     if (path.includes('/transcript-words/') && opts.method === 'PATCH') {
       const wordId = path.split('/transcript-words/')[1];
       const patch = JSON.parse(String(opts.body)) as Partial<TranscriptWord>;
+      if (Object.keys(patch).some((field) => patchFailsFor.has(field))) {
+        throw new Error('save failed');
+      }
       const index = serverWords.findIndex((w) => w.id === wordId);
       if (index < 0) throw new Error(`unknown word: ${wordId}`);
       const updated = { ...serverWords[index], ...patch };
@@ -208,5 +216,85 @@ describe('TranscribeFeed edit drafts', () => {
 
     // Server state, not a stale draft shadowing it — and nothing reverted.
     expect(screen.getByDisplayValue('committed word')).toBeTruthy();
+  });
+
+  // --- A save drops only the fields it PERSISTED (review finding 1) ---
+  //
+  // A row commits ONE blurred field at a time, so the PATCH carries one field —
+  // but the save-resolution clear used to measure the row's WHOLE stored draft
+  // against itself. Every untouched sibling field trivially matched, so nothing
+  // looked diverged and all of them were dropped: the next remount rendered the
+  // server text for corrections no save had ever sent. `DraftStore#clearMatching`
+  // now takes the covered field set explicitly, and this feed passes exactly
+  // what it PATCHed.
+  //
+  // The unmount/remount round trip is load-bearing in both tests below: until
+  // the row unmounts, its own `edit` state still shows the text whether or not
+  // the store kept it.
+
+  it('keeps an uncommitted sibling-field draft when a single-field save round-trips', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    renderFeed();
+    await waitFor(() => expect(screen.getByDisplayValue('word-0')).toBeTruthy());
+
+    // Typed into `word` and never blurred: nothing PATCHed it, and the draft
+    // store is the only copy.
+    const word = wordInput('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'uncommitted correction' } });
+
+    // A DIFFERENT field of the same row is then edited and committed, so the
+    // PATCH carries `session_time` alone.
+    const time = wordInput('00:00:10:00');
+    fireEvent.focus(time);
+    fireEvent.change(time, { target: { value: '00:01:30:00' } });
+    await act(async () => {
+      fireEvent.blur(time, { target: { value: '00:01:30:00' } });
+    });
+    await waitFor(() => expect(serverWords[0].session_time).toBe('00:01:30:00'));
+    // Let the mutation's own continuation (which forgets the spent draft) run.
+    await act(async () => {});
+    // Nothing persisted `word` — the server still has the original.
+    expect(serverWords[0].word).toBe('word-0');
+
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+
+    expect(screen.getByDisplayValue('uncommitted correction')).toBeTruthy();
+  });
+
+  it('keeps the text a FAILED save left recoverable when a sibling field saves next', async () => {
+    virtualMock.first = 0;
+    virtualMock.last = 3;
+    patchFailsFor = new Set(['word']);
+    renderFeed();
+    await waitFor(() => expect(screen.getByDisplayValue('word-0')).toBeTruthy());
+
+    // The `word` save fails, so the feed deliberately keeps its draft.
+    const word = wordInput('word-0');
+    fireEvent.focus(word);
+    fireEvent.change(word, { target: { value: 'failed but kept' } });
+    await act(async () => {
+      fireEvent.blur(word, { target: { value: 'failed but kept' } });
+    });
+    await act(async () => {});
+    expect(serverWords[0].word).toBe('word-0');
+
+    // A sibling field then saves successfully. It persisted nothing about
+    // `word`, so it must not discard what the failure kept.
+    const time = wordInput('00:00:10:00');
+    fireEvent.focus(time);
+    fireEvent.change(time, { target: { value: '00:01:30:00' } });
+    await act(async () => {
+      fireEvent.blur(time, { target: { value: '00:01:30:00' } });
+    });
+    await waitFor(() => expect(serverWords[0].session_time).toBe('00:01:30:00'));
+    await act(async () => {});
+
+    scrollWindowTo(10, 13);
+    scrollWindowTo(0, 3);
+
+    expect(screen.getByDisplayValue('failed but kept')).toBeTruthy();
   });
 });

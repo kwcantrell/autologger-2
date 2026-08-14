@@ -216,6 +216,16 @@ export interface InlineFocusStore {
   /** Forgets the record only if it still belongs to `eventId` — a row must
    *  never clear a record that focus has already moved on to. */
   clear: (eventId: string) => void;
+  /** Drops the `selectOpen` flag (only) if the record still belongs to
+   *  `eventId`, leaving the record itself — and its `recordedAt` stamp —
+   *  otherwise untouched.
+   *
+   *  Exists because `selectOpen` is a claim only a MOUNTED row can maintain:
+   *  Radix fires no `onOpenChange(false)` when the row is unmounted out from
+   *  under an open dropdown, so the flag would stick true forever, permanently
+   *  disarming the sheet's abandon listener and holding the pin. The row clears
+   *  it on unmount, where the claim stops being true. */
+  clearSelectOpen: (eventId: string) => void;
 }
 
 interface Props {
@@ -339,7 +349,10 @@ export function EventLogRow({
     // exactly those survivors — and a later failed save then had nothing to
     // recover. Same comparison discipline as every other clear in this feed:
     // draft space, one shared helper.
-    inlineDrafts.clearMatching(event.event_id, server);
+    // The reference is the WHOLE server row, so this clear legitimately covers
+    // every field (`INLINE_DRAFT_FIELDS`) — unlike a save, which covers only
+    // what it persisted. See `DraftStore#clearMatching`.
+    inlineDrafts.clearMatching(event.event_id, server, INLINE_DRAFT_FIELDS);
     const survivors = inlineDrafts.read(event.event_id);
     // ...and refresh only the controls whose draft did NOT survive. The others
     // are still displaying the operator's text; overwriting them with server
@@ -422,6 +435,19 @@ export function EventLogRow({
     inlineFocus.record(rec);
   }, []);
 
+  // `selectOpen` is a claim only a MOUNTED row can maintain. Radix's
+  // `onOpenChange` never fires when the virtualizer unmounts the row out from
+  // under an open category dropdown (the dropdown goes with it), so the flag
+  // would stay true on a record nothing can ever correct: the sheet's abandon
+  // listener treats a flagged record as still being edited and skips it
+  // forever, and `rangeExtractor` keeps pinning the row. Only the flag is
+  // dropped here — the record itself is exactly what a remount restores focus
+  // from, so an unmount must never clear THAT (the same rule `handleBlur` and
+  // `handleCategoryOpenChange` follow when they find a null row ref).
+  useEffect(() => {
+    return () => inlineFocus.clearSelectOpen(event.event_id);
+  }, [inlineFocus, event.event_id]);
+
   const saveInline = (catOverride?: string) => {
     if (!inlineEdit || isAuto) return;
     const tc = tcRef.current?.value.trim() ?? formatTimecodeHMS(event.timecode);
@@ -451,7 +477,8 @@ export function EventLogRow({
       // (The committed path does NOT clear here: `EventLogSheet` drops it once
       // the save has round-tripped, so a FAILED save leaves the operator's text
       // recoverable rather than silently reverting on the next remount.)
-      inlineDrafts.clearMatching(event.event_id, serverInlineDraft(event));
+      // Whole-row reference again, so the covered set is every field.
+      inlineDrafts.clearMatching(event.event_id, serverInlineDraft(event), INLINE_DRAFT_FIELDS);
       return;
     }
     onInlineSave(event, { category: cat, message: msg, timecode_hms: tc, wall_time_utc: wall });

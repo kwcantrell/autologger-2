@@ -30,8 +30,10 @@ export interface DraftStore<TDraft extends object> {
   write: (id: string, patch: TDraft) => void;
   /** Forgets this row's draft outright. */
   clear: (id: string) => void;
-  /** Forgets only the fields whose recorded text is EXACTLY `reference`'s, and
-   *  keeps every field that has diverged from it.
+  /** Forgets only the `covered` fields whose recorded text is EXACTLY
+   *  `reference`'s. A covered field that has DIVERGED from the reference is
+   *  kept, and a field outside `covered` is kept untouched — the reference
+   *  says nothing about it.
    *
    *  This is the one comparison the feeds share, and it is always made in DRAFT
    *  space — raw control text against raw control text. Comparing in value
@@ -41,10 +43,21 @@ export interface DraftStore<TDraft extends object> {
    *  whitespace. Clearing on such a match deletes text the row is showing,
    *  which the next remount then silently reverts.
    *
-   *  Callers pass whichever reference makes "this field is spent" true for
-   *  them: what a just-resolved save actually submitted, or the text the
+   *  `covered` is separate from `reference` — and required — because the two
+   *  answer different questions, and a caller that let the reference answer
+   *  both got it silently wrong. WHICH fields a clear speaks for is decided by
+   *  what the save PERSISTED (or, for a server refresh, the whole row); WHAT to
+   *  compare them against is the raw text, which for a partial save has to be
+   *  read from somewhere wider than the patch. Passing the row's whole draft as
+   *  the reference of a ONE-field save cleared every sibling field too: each
+   *  one trivially equalled itself, so nothing looked diverged, and the next
+   *  remount reverted text no save had ever persisted. Naming the covered set
+   *  makes that claim visible and refutable at the call site.
+   *
+   *  Callers pass whichever reference makes "this covered field is spent" true
+   *  for them: what a just-resolved save actually submitted, or the text the
    *  controls would render from the current server row. */
-  clearMatching: (id: string, reference: TDraft) => void;
+  clearMatching: (id: string, reference: TDraft, covered: ReadonlyArray<keyof TDraft>) => void;
   /** Forgets every row's draft (edit mode ended, or the session changed). */
   clearAll: () => void;
 }
@@ -55,27 +68,45 @@ export interface DraftStore<TDraft extends object> {
 export function retainDivergentFields<TDraft extends object>(
   current: TDraft | undefined,
   reference: TDraft,
-  fields: ReadonlyArray<keyof TDraft>,
+  covered: ReadonlyArray<keyof TDraft>,
 ): TDraft | undefined {
   if (!current) return undefined;
-  let survivors: TDraft | undefined;
-  for (const field of fields) {
+  // Spent: covered by this clear AND still exactly the reference text.
+  const spent = new Set<keyof TDraft>();
+  for (const field of covered) {
     const value = current[field];
-    if (value === undefined || value === reference[field]) continue;
+    if (value !== undefined && value === reference[field]) spent.add(field);
+  }
+  // Everything else the draft carries survives — including fields this clear
+  // never spoke for.
+  let survivors: TDraft | undefined;
+  for (const field of Object.keys(current) as Array<keyof TDraft>) {
+    const value = current[field];
+    if (value === undefined || spent.has(field)) continue;
     survivors ??= {} as TDraft;
     survivors[field] = value;
   }
   return survivors;
 }
 
-/** `fields` is the exhaustive field list of `TDraft`, so `clearMatching` can
- *  walk a draft without relying on the keys a particular object happens to
- *  carry. Declare it at module scope next to the draft interface with
- *  `satisfies ReadonlyArray<keyof TDraft>` so adding a field to the interface
- *  without listing it fails the compiler. */
-export function createDraftStore<TDraft extends object>(
+/** The subset of `fields` that `patch` actually carries — the `covered` list
+ *  for a caller whose persisted field set IS the patch it sent. Filtering the
+ *  declared field list (rather than `Object.keys`) keeps the result typed as
+ *  `keyof TDraft` with no cast. */
+export function presentFields<TDraft extends object>(
+  patch: TDraft,
   fields: ReadonlyArray<keyof TDraft>,
-): DraftStore<TDraft> {
+): Array<keyof TDraft> {
+  return fields.filter((field) => patch[field] !== undefined);
+}
+
+/** The store itself is field-list-free: WHICH fields a clear speaks for is a
+ *  property of that clear, not of the store (see `clearMatching`). Feeds still
+ *  declare an exhaustive field list at module scope next to their draft
+ *  interface, with `satisfies ReadonlyArray<keyof TDraft>` so adding a field to
+ *  the interface without listing it fails the compiler — it is what a
+ *  whole-row clear passes as `covered`, and what `presentFields` filters. */
+export function createDraftStore<TDraft extends object>(): DraftStore<TDraft> {
   const map = new Map<string, TDraft>();
   return {
     read: (id) => map.get(id),
@@ -86,8 +117,8 @@ export function createDraftStore<TDraft extends object>(
     clear: (id) => {
       map.delete(id);
     },
-    clearMatching: (id, reference) => {
-      const survivors = retainDivergentFields(map.get(id), reference, fields);
+    clearMatching: (id, reference, covered) => {
+      const survivors = retainDivergentFields(map.get(id), reference, covered);
       if (survivors) map.set(id, survivors);
       else map.delete(id);
     },
@@ -100,11 +131,9 @@ export function createDraftStore<TDraft extends object>(
 /** One store per mounted feed, with an identity stable for that feed's whole
  *  lifetime — rows take it as a prop, and a fresh identity per render would
  *  defeat their `memo` (and, in EventLogSheet, churn the virtualizer options
- *  that read it). `fields` is read once, at first render. */
-export function useDraftStore<TDraft extends object>(
-  fields: ReadonlyArray<keyof TDraft>,
-): DraftStore<TDraft> {
+ *  that read it). */
+export function useDraftStore<TDraft extends object>(): DraftStore<TDraft> {
   const storeRef = useRef<DraftStore<TDraft> | null>(null);
-  if (storeRef.current === null) storeRef.current = createDraftStore<TDraft>(fields);
+  if (storeRef.current === null) storeRef.current = createDraftStore<TDraft>();
   return storeRef.current;
 }
