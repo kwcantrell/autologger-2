@@ -21,6 +21,31 @@ withdrawn when the render counts supporting it proved to be a profiling-tool art
   workspace is mounted
 - **THEN** the boundary props remain referentially identical across each of those state changes
 
+### Requirement: The Settings modal costs nothing while closed
+While the Settings modal is closed it SHALL perform no form-initialisation work and SHALL render
+no element tree. Specifically: the initialisation that hydrates show drafts from the profile SHALL
+NOT run until the modal is open, and the modal SHALL render nothing while closed rather than
+building a tree the dialog primitive then declines to show.
+
+This SHALL be behaviour-neutral. The modal is mounted unconditionally by the shell so that it
+survives route changes while open; rendering nothing while closed SHALL NOT disturb that, SHALL
+NOT change what the DOM contains at any point, and SHALL NOT change what an open modal shows.
+
+#### Scenario: Initialisation is deferred until the modal opens
+- **WHEN** the app loads with the modal closed and the profile query resolves
+- **THEN** no show drafts are hydrated and no form state is initialised, and that work happens on
+  the first open instead — once, not twice
+
+#### Scenario: A closed modal renders nothing
+- **WHEN** the shell renders with the modal closed
+- **THEN** the modal contributes no elements, and the DOM is identical to what it contained before
+  this requirement existed
+
+#### Scenario: An open modal is unaffected
+- **WHEN** the user opens the modal, and while it is open the route changes
+- **THEN** the modal opens on the General tab fully initialised, and it stays open and functional
+  across the route change exactly as before
+
 ### Requirement: Settings modal defers inactive tab content
 The Settings modal SHALL mount a tab panel's content on that tab's first activation, not on modal
 open, and SHALL NOT unmount it on a subsequent tab switch. Each tab control's `aria-controls`

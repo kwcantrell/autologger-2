@@ -314,6 +314,42 @@ chosen because it changes the table's scroll/layout behavior inside a modal that
 `overflow: auto`, and because it caps cost per *viewport* rather than removing the per-row waste.
 Recorded as the follow-up if D3's measurement is insufficient for very large shows.
 
+### D4 — Stop paying for the modal while it is closed
+
+D2 and D3 attack the *open transition*. They leave untouched a second, orthogonal cost: work the
+modal does while **closed**, which it does on every app load and every shell render because
+`AppShell` mounts it unconditionally.
+
+Two gates, both behaviour-neutral:
+
+- **Gate the init effect on `isOpen`.** Today the effect's guard is `!profile || initialized`, with
+  deps `[profile, initialized]`, so the moment `useProfile` resolves on app load it hydrates every
+  show of the studio into drafts (`initDraftsForStudio` → `showToShowDraft` over every category and
+  every dropdown option) and fires seven `setState` calls — behind a closed dialog. The open-reset
+  then sets `initialized = false`, so the identical work runs **again** on first open. Adding
+  `isOpen` to both the guard and the deps makes it run once, when it is actually needed.
+- **Return `null` while closed**, below every hook so hook order stays unconditional. Radix already
+  renders nothing to the DOM for a closed dialog, so this is DOM-identical; what it skips is
+  *constructing* the tree on every `AppShell` render — both `Select` option arrays mapped from
+  `profile.studios` / `showsForStudio`, the four tab-panel wrappers, `confirmElement`, and the
+  nested Add-Show `Dialog`.
+
+**This composes with D2 rather than replacing it.** Returning `null` while closed does **not** fix
+the transient reopen mount: on reopen the component renders with the previous open's `activeTab`
+still set, so a passive-effect reset would still mount that tab's content and then unmount it.
+D2's render-phase reset runs before the early return and before the commit, so the stale tab never
+reaches the DOM. Both are required; neither subsumes the other.
+
+**Alternatives considered.** *Make `AppShell` mount the modal conditionally instead*: rejected —
+the unconditional mount is a recorded decision (`teams-settings-nav` D1) that keeps the modal alive
+across route changes while open, and this achieves the same saving without touching it. *Only gate
+the init effect*: leaves the per-render tree construction. *Only return `null`*: leaves the
+duplicated init pass, which is the more expensive of the two.
+
+**Honest limit:** the open-transition win is measured (D2/D3, `.apply/profile-after.md`). This
+decision's saving is **not** timed — what is established is that the work no longer happens, which
+the requirement's scenarios assert directly. No performance number is claimed for it.
+
 ### Deliberate invariants a future reader might "helpfully" undo
 
 - **The four Settings panel wrappers render unconditionally.** They look redundant next to the
@@ -325,6 +361,10 @@ Recorded as the follow-up if D3's measurement is insufficient for very large sho
   zero-mounts-on-reopen scenario is the tripwire.
 - **The lazy trigger must be a true visual/a11y stand-in.** Letting it differ "just until it
   upgrades" produces a flash and a screen-reader discrepancy on every row.
+- **The closed-modal early return sits below every hook** (D4). Moving it above one would make hook
+  order conditional; deleting it reinstates per-render tree construction behind a closed dialog.
+- **`isOpen` belongs in the init effect's guard *and* its deps** (D4). Dropping it from the deps
+  would leave the effect unable to run at the moment the gate first opens.
 
 ## Risks / Trade-offs
 
