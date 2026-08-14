@@ -1,10 +1,20 @@
+import { lazy, Suspense } from 'react';
 import { useRestoreSession, useSession } from '../../../api/hooks/useSessions';
 import type { Session } from '../../../api/types';
 import { toast } from '../../../shared/components/Toast';
-import { AUTOLOGGER_LOADING_VIDEO_SRC } from '../../../shared/utils/loadingVideo';
 import { navigate } from '../navigation';
 import { HomeRoute } from './HomeRoute';
-import { WorkspaceStatic } from './WorkspaceStatic';
+import { ROUTE_STATE_PAGE, RouteLoadingState } from './RouteLoadingState';
+
+// Workspace code-split behind session resolution (bundle route-splitting, plan
+// C5.2): the whole session workspace — Timeline, feeds, AudioPlayer/Recorder,
+// react-virtual, overlayscrollbars — leaves the homepage graph and is fetched
+// only once an id actually resolves to a live session. The `<Suspense>`
+// fallback below is the SAME `RouteLoadingState` the pending branch renders,
+// so resolution -> chunk-fetch is one continuous, non-shifting loading frame.
+const WorkspaceStatic = lazy(() =>
+  import('./WorkspaceStatic').then((m) => ({ default: m.WorkspaceStatic })),
+);
 
 // --- SessionRoute (session-deep-links, task 4.2; spec: web-session-routing
 // "Deep-link resolution states", design D5) ---
@@ -42,11 +52,10 @@ import { WorkspaceStatic } from './WorkspaceStatic';
 // request is issued. (The settings modal itself is mounted by AppShell, one
 // level up — teams-settings-nav, design D1 — not here.)
 
-// Height mirrors `#v3-session-active` (SessionWorkspace's `v3-session-active-root`:
-// `min-h-[calc(100vh-2.2rem)] max-md:min-h-0`) so swapping any of these four states out
-// for the workspace — or back — shifts nothing (measured CLS 0.122 before the mirror).
-const STATE_PAGE =
-  'relative z-[1] flex w-full items-center justify-center px-5 py-16 min-h-[calc(100vh-2.2rem)] max-md:min-h-0';
+// The page-frame class (height mirror included) and the brand loading treatment
+// both live in `./RouteLoadingState` now — shared with the Suspense fallbacks
+// added by the route split (plan C5.1), so every wait renders identical markup.
+const STATE_PAGE = ROUTE_STATE_PAGE;
 const STATE_PANEL =
   'glass-panel relative box-border w-full max-w-[25rem] rounded-v5-lg px-7 py-9 text-center';
 const STATE_TITLE =
@@ -56,30 +65,7 @@ const STATE_BADGE = 'm-0 text-[0.6875rem] font-semibold uppercase tracking-[0.14
 const STATE_BUTTON =
   'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text disabled:cursor-not-allowed disabled:opacity-50';
 
-function LoadingState() {
-  // The brand loading treatment (the RootGate LoadingState idiom).
-  return (
-    <output
-      className={STATE_PAGE}
-      id="session-route-loading"
-      aria-busy="true"
-      aria-live="polite"
-      aria-label="Loading session"
-    >
-      <div className="autologger-loading-video">
-        <video
-          className="autologger-loading-video__media"
-          src={AUTOLOGGER_LOADING_VIDEO_SRC}
-          preload="auto"
-          muted
-          playsInline
-          autoPlay
-          loop
-        />
-      </div>
-    </output>
-  );
-}
+const LoadingState = RouteLoadingState;
 
 function NotFoundState() {
   // One and the same state for nonexistent, deleted, and unauthorized ids —
@@ -192,11 +178,16 @@ export function SessionRoute({
 
   if (resolution?.kind === 'found' && !resolution.session.archived) {
     return (
-      <WorkspaceStatic
-        sessionId={sessionId}
-        ytImportPending={ytImportPending}
-        onOpenMobileNav={onOpenMobileNav}
-      />
+      // Same fallback component as the pending branch below: the workspace
+      // chunk fetch continues the loading frame rather than starting a new,
+      // differently-sized one (plan C5.2).
+      <Suspense fallback={<LoadingState />}>
+        <WorkspaceStatic
+          sessionId={sessionId}
+          ytImportPending={ytImportPending}
+          onOpenMobileNav={onOpenMobileNav}
+        />
+      </Suspense>
     );
   }
 

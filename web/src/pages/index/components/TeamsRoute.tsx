@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { ApiError } from '../../../api/client';
 import { useProfile } from '../../../api/hooks/useProfile';
-import { useCreateTeam } from '../../../api/hooks/useTeams';
 import type { TeamMembershipBrief } from '../../../api/types';
 import { navigate } from '../navigation';
+// CreateTeamForm moved to its own module (bundle route-splitting, plan C5.3):
+// it is shared with the eagerly-loaded OnboardingPanel, and while it lived in
+// THIS file that shared import pinned all of TeamsRoute + TeamCard + the teams
+// mutation surface into the homepage graph, zeroing out TeamsRoute's lazy edge.
+import { CreateTeamForm } from './CreateTeamForm';
 import { TeamCard } from './TeamCard';
 
 // --- TeamsRoute (teams-self-serve, task 6.2; design D7) ---
@@ -42,11 +44,6 @@ const STATE_BUTTON =
   'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
 const BACK_WRAP = 'relative z-[1] mx-auto w-full max-w-[25rem] px-5 pb-10';
 
-function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.message;
-  return err instanceof Error ? err.message : fallback;
-}
-
 function SignedInRequiredNotice() {
   // Reachable only in anonymous mode (the production serve path gates AppShell behind the
   // login page — RootGate — so a logged-out user never lands here). ui-refresh: say WHY
@@ -78,82 +75,6 @@ function BuiltinTeamRow({ team }: { team: TeamMembershipBrief }) {
       </span>
       <span className="ml-2 text-[0.75rem] text-v5-muted">Legacy team — managed by support.</span>
     </li>
-  );
-}
-
-/** Create-team form (task 6.1's `useCreateTeam` mutation). Reused verbatim by
- * the zero-membership onboarding panel (task 6.3, design D8). */
-export function CreateTeamForm({ onCreated }: { onCreated?: () => void }) {
-  const [slug, setSlug] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const create = useCreateTeam();
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    create.mutate(
-      { id: slug.trim(), display_name: displayName.trim() },
-      {
-        onSuccess: () => {
-          setSlug('');
-          setDisplayName('');
-          onCreated?.();
-        },
-        onError: (err) => setError(errorMessage(err, 'Could not create team.')),
-      },
-    );
-  }
-
-  return (
-    <form
-      className="glass-panel rounded-v5-lg px-4 py-4"
-      data-testid="team-create-form"
-      onSubmit={handleSubmit}
-    >
-      {error && (
-        <p role="alert" className="modal-hint text-[#ff8a8a]">
-          {error}
-        </p>
-      )}
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="field">
-          <span>Team id (slug)</span>
-          <input
-            type="text"
-            id="team-create-slug"
-            className="profile-select"
-            placeholder="my-crew"
-            maxLength={63}
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>Display name</span>
-          <input
-            type="text"
-            id="team-create-name"
-            className="profile-select"
-            placeholder="My Crew"
-            maxLength={200}
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-          />
-        </label>
-        <button
-          type="submit"
-          className="btn primary"
-          disabled={create.isPending || slug.trim() === '' || displayName.trim() === ''}
-        >
-          {create.isPending ? 'Creating…' : 'Create team'}
-        </button>
-      </div>
-      <p className="modal-hint mt-2">
-        Lowercase, starts with a letter, letters/digits/hyphens only, 2–63 characters. The id
-        can&apos;t be changed later.
-      </p>
-    </form>
   );
 }
 

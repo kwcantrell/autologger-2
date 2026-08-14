@@ -1,4 +1,4 @@
-import { CreateTeamForm } from './TeamsRoute';
+import { CreateTeamForm } from './CreateTeamForm';
 
 // --- OnboardingPanel (teams-self-serve, task 6.3; design D8) ---
 //
