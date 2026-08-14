@@ -369,6 +369,95 @@ describe('SessionWorkspace deferred transcript-words gate', () => {
 
     expect(gateOnStub()).toBe('true');
   });
+
+  // --- The dashboards-side trigger is gated on the tab, too (review fix) ---
+  //
+  // AiV2Panel is one of the six always-mounted panels and loads its persisted
+  // dashboard in a MOUNT effect, so `useAiV2WidgetData`'s config check saw a
+  // saved words widget on every session mount — which armed the multi-MB fetch
+  // for a user sitting on the Events tab, defeating the deferral entirely.
+  // These two run the REAL AiV2Panel against a REAL persisted config (global
+  // `fetch` stubbed at the persistence boundary, the pattern the Dashboards
+  // describe below uses) and read the `enabled` option the REAL words hook was
+  // called with.
+  const savedDashboard = (type: string) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      config: {
+        widgets: [{ id: 'w1', type, title: 'W', x: 0, y: 0, w: 4, h: 3 }],
+        interactions: [],
+      },
+    }),
+  });
+  const stubDashboardFetch = (type: string) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/ai/v2/dashboard')) {
+          return Promise.resolve(savedDashboard(type) as unknown as Response);
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }),
+    );
+  /** Every `enabled` the real words hook has been asked for since the last clear. */
+  const wordsEverEnabled = () =>
+    transcriptWordsSpy.mock.calls.some(([, opts]) => opts?.enabled === true);
+
+  it('keeps the gate shut for a saved words-widget dashboard until the Dashboards tab is shown', async () => {
+    stubDashboardFetch('session_duration');
+    try {
+      transcriptWordsSpy.mockClear();
+      const { rerender } = renderStrict(<SessionWorkspace sessionId="sess-a" />);
+
+      // The persisted config has LANDED (the grid renders it, hidden) while the
+      // Events tab is still the active one — so the negative assertion below is
+      // a real absence, not a not-yet-loaded one.
+      await waitFor(() => expect(screen.getByTestId('aiv2-dashboard-grid')).toBeTruthy());
+      expect(gateOnStub()).toBe('false');
+      expect(wordsEverEnabled()).toBe(false);
+
+      // Showing the tab is what needs the payload.
+      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      expect(wordsEverEnabled()).toBe(true);
+
+      // Sticky: leaving the tab must not cancel/re-issue the fetch. (The tab
+      // latch itself stays shut — Dashboards is not a words-dependent TAB.)
+      transcriptWordsSpy.mockClear();
+      fireEvent.click(screen.getByRole('tab', { name: 'Event Feed' }));
+      expect(gateOnStub()).toBe('false');
+      expect(transcriptWordsSpy.mock.calls.every(([, opts]) => opts?.enabled === true)).toBe(true);
+
+      // Per-session reset: AiV2Panel remounts on `key={sessionId}`, so session
+      // B starts from a shut latch rather than inheriting A's activation.
+      transcriptWordsSpy.mockClear();
+      rerender(
+        <StrictWrapper>
+          <SessionWorkspace sessionId="sess-b" />
+        </StrictWrapper>,
+      );
+      await waitFor(() => expect(screen.getByTestId('aiv2-dashboard-grid')).toBeTruthy());
+      expect(wordsEverEnabled()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps the gate shut on a shown Dashboards tab whose config has no words widget', async () => {
+    stubDashboardFetch('topic_timeline');
+    try {
+      transcriptWordsSpy.mockClear();
+      renderStrict(<SessionWorkspace sessionId="sess-a" />);
+      await waitFor(() => expect(screen.getByTestId('aiv2-dashboard-grid')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Dashboards' }));
+      expect(gateOnStub()).toBe('false');
+      expect(wordsEverEnabled()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('SessionWorkspace Dashboards (AI v2) tab', () => {

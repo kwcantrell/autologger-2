@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext } from 'react';
+import { createContext, type ReactNode, useContext, useMemo } from 'react';
 
 // --- Deferred transcript-words fetch (perf plan B4) ---
 //
@@ -34,17 +34,52 @@ import { createContext, type ReactNode, useContext } from 'react';
 // there the safe default is the inert one (no clips ⇒ no coverage ⇒ no
 // playback), here the safe default is the unchanged one.
 
-const TranscriptWordsGateContext = createContext<boolean>(true);
+// SECOND FIELD — `dashboardsTabActive` (review fix): the Dashboards tab is not
+// a words-dependent TAB (its panel needs the payload only when the displayed
+// config contains a words-derived widget), so `useAiV2WidgetData` carries the
+// config half of that condition itself. But it cannot see the tab, and
+// `AiV2Panel` is one of the six always-mounted panels — it loads the persisted
+// dashboard in a mount effect, so without the tab half a saved dashboard
+// containing any words widget re-armed the fetch on EVERY session mount while
+// the user sat on the Events tab, defeating the deferral this gate exists for.
+// Publishing the tab's activity here (rather than latching a second sticky
+// flag in the workspace) keeps ONE latch per consumer: this field is a plain
+// "is the Dashboards tab showing right now", and the stickiness stays where it
+// already lived, in `useAiV2WidgetData`'s own ref.
+//
+// Its default is `true` for the same fail-open reason as `wordsGateOpen`: no
+// gate in scope ⇒ the config check alone decides, exactly as before this field
+// existed.
+
+interface TranscriptWordsGateValue {
+  /** Sticky: a words-dependent TAB has been activated for this session. */
+  readonly wordsGateOpen: boolean;
+  /** Not sticky: the Dashboards tab is the currently selected tab. */
+  readonly dashboardsTabActive: boolean;
+}
+
+const DEFAULT_VALUE: TranscriptWordsGateValue = {
+  wordsGateOpen: true,
+  dashboardsTabActive: true,
+};
+
+const TranscriptWordsGateContext = createContext<TranscriptWordsGateValue>(DEFAULT_VALUE);
 
 export function TranscriptWordsGateProvider({
   enabled,
+  dashboardsTabActive,
   children,
 }: {
   enabled: boolean;
+  dashboardsTabActive: boolean;
   children: ReactNode;
 }) {
+  const value = useMemo<TranscriptWordsGateValue>(
+    () => ({ wordsGateOpen: enabled, dashboardsTabActive }),
+    [enabled, dashboardsTabActive],
+  );
   return (
-    <TranscriptWordsGateContext.Provider value={enabled}>
+    <TranscriptWordsGateContext.Provider value={value}>
       {children}
     </TranscriptWordsGateContext.Provider>
   );
@@ -54,5 +89,13 @@ export function TranscriptWordsGateProvider({
  *  (e.g. a feed rendered standalone in a test) this reads `true` — the
  *  pre-gate, always-fetch behaviour. See the module header for why. */
 export function useTranscriptWordsGate(): boolean {
-  return useContext(TranscriptWordsGateContext);
+  return useContext(TranscriptWordsGateContext).wordsGateOpen;
+}
+
+/** Read whether the Dashboards tab is currently the selected feed tab. The
+ *  dashboards-side words trigger (`useAiV2WidgetData`) ANDs its config check
+ *  with this, so a saved words widget cannot pull the payload for a panel the
+ *  user has never shown. Outside a provider this reads `true` — see above. */
+export function useDashboardsTabActive(): boolean {
+  return useContext(TranscriptWordsGateContext).dashboardsTabActive;
 }

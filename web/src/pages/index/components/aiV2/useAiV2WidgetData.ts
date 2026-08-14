@@ -26,7 +26,10 @@ import { useShowCategories } from '../../../../api/hooks/useShowCategories';
 import { useTopics } from '../../../../api/hooks/useTopics';
 import { useTranscriptWords } from '../../../../api/hooks/useTranscriptWords';
 import type { Category } from '../../../../api/types';
-import { useTranscriptWordsGate } from '../../hooks/TranscriptWordsGateContext';
+import {
+  useDashboardsTabActive,
+  useTranscriptWordsGate,
+} from '../../hooks/TranscriptWordsGateContext';
 import {
   computeEventCounts,
   computeEventDensity,
@@ -65,8 +68,9 @@ const INTERNAL_CATEGORY_LABEL = 'Internal';
 /** Widget types whose data is derived from the transcript word list (perf plan
  * B4) — exactly the `switch` cases below that gate on `wordsLoading`, including
  * `event_density`, which needs the word-derived duration as well as the events.
- * A dashboard containing ANY of these needs the multi-MB words payload even
- * when the user never opens a words-dependent TAB, so this set is the second
+ * A SHOWN dashboard containing ANY of these needs the multi-MB words payload
+ * even when the user never opens a words-dependent TAB, so this set — ANDed
+ * with the Dashboards tab being active, see the hook body — is the second
  * (dashboards-side) trigger for the deferred fetch. Keep it in step with the
  * `switch`: a words-derived case added there without an entry here would render
  * permanently empty on a session whose gate never opened. */
@@ -100,15 +104,31 @@ export function useAiV2WidgetData(
   // --- Deferred transcript-words fetch (perf plan B4) ---
   //
   // This hook is the dashboards-side words consumer, and it has its OWN
-  // trigger on top of the workspace tab latch: a saved/proposed config
-  // containing a words-derived widget needs the payload even though the
-  // Dashboards tab itself is not a words-dependent tab. Sticky, for the same
-  // reason the workspace latch is: editing a words widget out of the config
-  // must not cancel the fetch its siblings may still need. `AiV2Panel` mounts
-  // this with `key={sessionId}`, so a session change remounts the panel and
-  // this ref starts over — no `prevSessionIdRef` compare needed here.
+  // trigger on top of the workspace tab latch: a config containing a
+  // words-derived widget needs the payload even though the Dashboards tab
+  // itself is not a words-dependent tab.
+  //
+  // That trigger is ANDed with the tab actually being SHOWN (review fix). The
+  // config half alone was not enough of a condition: `AiV2Panel` is one of the
+  // six always-mounted panels and loads the persisted dashboard in a mount
+  // effect, so `widgets` is populated on session mount — a user whose saved
+  // dashboard happens to contain any of the five words widgets pulled the
+  // multi-MB payload on every session mount while sitting on the Events tab,
+  // which is precisely what the deferral exists to prevent. Nothing is lost:
+  // the widgets cannot render before their tab is shown.
+  //
+  // Sticky, for the same reason the workspace latch is: leaving the tab, or
+  // editing a words widget out of the config, must not cancel the fetch its
+  // siblings may still need. The stickiness lives HERE and only here — the
+  // published `dashboardsTabActive` is a plain "showing right now", so there is
+  // no second sticky latch (and no second reset mechanism) to keep in step.
+  // `AiV2Panel` mounts this with `key={sessionId}`, so a session change
+  // remounts the panel and this ref starts over — no `prevSessionIdRef` compare
+  // needed here.
   const gateOpen = useTranscriptWordsGate();
-  const wordsNeeded = gateOpen || widgets.some((w) => WORDS_WIDGET_TYPES.has(w.type));
+  const dashboardsTabActive = useDashboardsTabActive();
+  const wordsNeeded =
+    gateOpen || (dashboardsTabActive && widgets.some((w) => WORDS_WIDGET_TYPES.has(w.type)));
   const wordsEnabledRef = useRef(false);
   if (wordsNeeded) wordsEnabledRef.current = true;
   const wordsEnabled = wordsEnabledRef.current;
@@ -155,7 +175,8 @@ export function useAiV2WidgetData(
   // resolved, `isPending` stays `false` forever, just like `isLoading`. The
   // shut-gate case resolves to `false` here and the `?? []` defaults apply, but
   // no words widget can be on screen in that state: a words widget in the
-  // config is itself what opens the gate.
+  // config of a SHOWN Dashboards tab is itself what opens the gate, and a
+  // hidden panel's widgets are not rendered.
   const wordsLoading = wordsEnabled && wordsQuery.isPending;
   const topicsLoading = topicsQuery.isLoading;
   const eventsLoading = eventsQuery.isLoading;

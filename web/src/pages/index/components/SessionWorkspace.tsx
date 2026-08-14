@@ -50,9 +50,13 @@ const FEED_TABS = [
 
 type FeedTabId = (typeof FEED_TABS)[number]['id'];
 
-// Tabs whose content is derived from the transcript word list (perf plan B4).
-// Activating any of them is what opens the deferred-words gate below; the
-// other three tabs never need the multi-MB payload.
+// Tabs whose content is UNCONDITIONALLY derived from the transcript word list
+// (perf plan B4). Activating any of them is what opens the deferred-words gate
+// below. Events/Assistant never need the multi-MB payload; Dashboards needs it
+// only when the displayed config contains a words-derived widget, a condition
+// only `useAiV2WidgetData` can evaluate — the provider below publishes this
+// tab's activity for that hook to AND with its config check, rather than
+// listing 'dashboards' here unconditionally.
 const WORDS_DEPENDENT_TABS: ReadonlySet<FeedTabId> = new Set<FeedTabId>([
   'transcript',
   'topics',
@@ -370,12 +374,16 @@ export function SessionWorkspace({ sessionId, ytImportPending, onOpenMobileNav }
     // TranscriptWordsGateProvider (perf plan B4): publishes the sticky
     // "transcript words are needed" latch computed above, so the multi-MB word
     // list is fetched on first activation of a words-dependent tab (or a
-    // words-dependent dashboard widget) instead of on session mount. It sits
+    // words-dependent dashboard widget on a SHOWN Dashboards tab — the second
+    // published field, see the context module) instead of on session mount. It sits
     // HERE, in the render tree, and deliberately NOT inside the `feedPanels`
     // useMemo below — that memo is keyed on `sessionId` alone, so a provider
     // built inside it could never re-render its consumers when the latch flips.
     // Panels stay mounted exactly as before; only an `enabled` flag moves.
-    <TranscriptWordsGateProvider enabled={transcriptWordsEnabled}>
+    <TranscriptWordsGateProvider
+      enabled={transcriptWordsEnabled}
+      dashboardsTabActive={feedTab === 'dashboards'}
+    >
       {
         // AudioClipsProvider (whole-branch audit fix wave, finding C1/I3): the ONE
         // `useAudioClips` layout computed above, published for `useTimelineSeek`
