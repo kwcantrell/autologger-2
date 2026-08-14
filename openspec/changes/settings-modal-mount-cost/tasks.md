@@ -103,8 +103,8 @@ Spec: "Event-button rows defer their type control". Design: D3.
 
 ## 5. Final gates
 
-- [ ] 5.1 `npm run typecheck` and `npm test` (full workspace sweep).
-- [ ] 5.2 Re-run the measurements from 1.1/1.3 and record them beside the baseline, using only the
+- [x] 5.1 `npm run typecheck` and `npm test` (full workspace sweep).
+- [x] 5.2 Re-run the measurements from 1.1/1.3 and record them beside the baseline, using only the
       instruments this change trusts (`PerformanceObserver` long-task timings and/or `console.log`
       ground truth — not `agent-browser react renders`, whose per-component and aggregate counts
       this change found unreliable; see D0 and `.apply/phase2-diagnostic.md`): the modal-mount cost
@@ -115,12 +115,12 @@ Spec: "Event-button rows defer their type control". Design: D3.
       was the withdrawn claim. If the modal-mount or first-tab-activation numbers are unchanged,
       that is a finding for the whole-branch review, not a rounding error. Record the numbers in
       `design.md`.
-- [ ] 5.3 `npm run e2e` (chromium + login-gate) **and** `npm run e2e:visual` (visual-desktop +
+- [x] 5.3 `npm run e2e` (chromium + login-gate) **and** `npm run e2e:visual` (visual-desktop +
       visual-mobile). The settings snapshots and the teams smoke flow both click
       `#v6-settings-tab-event-buttons` before touching table content. This change alters no UI
       intentionally — the lazy trigger is specified as a visual stand-in — so **any** visual diff is
       branch-induced signal to investigate, not a baseline to re-bless.
-- [ ] 5.4 `npm run docs:check` — the atlas drift gate. No new capability is added, so no
+- [x] 5.4 `npm run docs:check` — the atlas drift gate. No new capability is added, so no
       `web-docs/model/components.ts` attachment is expected; confirm the gate is clean rather than
       assuming it.
-- [ ] 5.5 `npm run lint` (report-only) over the touched paths.
+- [x] 5.5 `npm run lint` (report-only) over the touched paths.

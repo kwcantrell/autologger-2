@@ -345,6 +345,25 @@ Recorded as the follow-up if D3's measurement is insufficient for very large sho
 - **Trade-off accepted**: a first activation of the Event Buttons tab still mounts the table's
   non-Select structure. D3 removes the dominant per-row cost, not all of it.
 
+### Outcome, measured after implementation (task 5.2, 2026-08-13)
+
+Like-for-like 7-trial medians, click→painted, `/` with no session open, 7 event-button rows;
+pre-change on `main` @ `a8648b6`, post-change on the branch. `agent-browser react renders` counts
+deliberately not used (see D0). Full data: `.apply/profile-after.md`.
+
+| Path | Before | After | Δ |
+| --- | --- | --- | --- |
+| Settings open (cold) | 28.7 ms | **16.8 ms** | **−41 %** |
+| Settings reopen | 27.9 ms | **19.1 ms** | **−32 %** |
+| First Event Buttons tab activation | 13.1 ms | 15.9 ms | +2.8 ms |
+
+The modal-mount cost D2 and D3 targeted is delivered on both open paths. The tab-activation path
+regressed by 2.8 ms, which is inherent to deferral — before the change that click merely flipped a
+`hidden` attribute because the table was already mounted; after it, that click is where the table
+mounts. D3's lazy per-row `Select` is what holds the regression to +2.8 ms. Task 5.2's wording
+demanded improvement on this path too, which contradicts `profile-before.md`'s own framing of it as
+the *regression guard*; recorded as a finding for the whole-branch review rather than reinterpreted.
+
 ## Migration Plan
 
 Single-phase, `web/`-only, no data migration and no server change. Rollback is a revert. Evidence
