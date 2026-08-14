@@ -63,8 +63,9 @@ None.
 
 ### Modified Capabilities
 
-- `web-ui-system`: adds three requirements — shell state changes not re-rendering the mounted
-  session workspace; the Settings modal's tab-panel mount discipline (deferred first mount, no
+- `web-ui-system`: adds three requirements — the shell-to-workspace render boundary staying
+  memoizable (prop stability only; see Why for the withdrawn re-render claim); the Settings
+  modal's tab-panel mount discipline (deferred first mount, no
   unmount on switch, no transient mount on reopen, and the property that makes deferral safe: a
   save persists edits for shows on tabs the user never visited, because the drafts live in the
   modal's own state); and the lazy per-row type control.
@@ -79,7 +80,7 @@ None.
   control),
   `web/src/pages/index/components/Select.tsx` (one additive, optional `defaultOpen` pass-through —
   required to mount the upgraded control already open; existing call sites untouched), and their
-  tests. No change to `AppShell.tsx`.
+  tests.
 - **Dependencies**: none added.
 - **Gates**: `npm run typecheck`, `npm test`, `npm run e2e` + `npm run e2e:visual`,
   `npm run docs:check`, `npm run lint`.
