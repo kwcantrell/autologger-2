@@ -17,7 +17,7 @@ partition the click into two independent costs (numbers and method in `design.md
 
 - [x] 1.1 Baseline profile of the settings-open click, production serve path, reporter's data.
 - [x] 1.2 Halt-gate attribution — **passed**.
-- [ ] 1.3 Extend the baseline with the two paths not yet separated, same method (CDP + React
+- [x] 1.3 Extend the baseline with the two paths not yet separated, same method (CDP + React
       DevTools render profile + `longtask` observer): the **reopen** path and the **first Event
       Buttons tab activation**, on a show with many event buttons. Record to
       `openspec/changes/settings-modal-mount-cost/.apply/profile-before.md`.

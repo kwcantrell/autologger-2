@@ -73,9 +73,18 @@ session `ed1413e0-…` open. The first profile was taken from `/` with **no sess
 could not have exercised that path at all. Re-profiling with that session's workspace mounted
 (66 events, **15,150 transcript words**, 1,049 paragraphs, 337 sentiment rows, 3.4 MB DB):
 
+> **Timing correction (apply-time, task 1.3).** The millisecond figures in the two tables of this
+> section were taken with the React DevTools hook enabled, which inflates render time. Re-measured
+> without it: from `/` the settings click costs ~37 ms click→paint and produces **no long task at
+> all**; with a session workspace open it produces a **67–143 ms long task on every run**. The
+> **render counts below stand unchanged** — the hook does not inflate counts — so the structural
+> conclusion (identical mounts, +11,097 re-renders) is unaffected. The corrected numbers
+> *strengthen* D0/phase 2 and show the modal's own mount is the smaller cost. Full baseline:
+> `.apply/profile-before.md`.
+
 | Settings-open click | No session open | Session workspace open |
 | --- | --- | --- |
-| Long task | 70 ms | **101 ms** |
+| Long task (DevTools-inflated; see correction) | 70 ms | **101 ms** |
 | Total renders | 6,141 | **17,238** |
 | Mounts | 1,337 | **1,337 — identical** |
 | Re-renders | 4,804 | **15,901 (+11,097)** |
