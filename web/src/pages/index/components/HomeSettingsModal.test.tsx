@@ -1262,12 +1262,13 @@ describe('HomeSettingsModal account scope is independent of the shows query', ()
     expect(body.family_name).toBe('Lovelace');
     expect(body.active_studio_id).toBe('studio-1');
     expect(body.settings).toEqual({ default_frame_rate: 24 });
-    // The account-only branch, byte for byte: no `show_updates`, and no `active_show_id`
-    // either (the shows query never resolved, so there is no selection to assert). Sending
-    // an empty or partial `show_updates` here would post over server state the modal never
-    // managed to read.
+    // The account-only branch, byte for byte: no `show_updates` — sending an empty or partial
+    // one here would post over server state the modal never managed to read.
     expect(body).not.toHaveProperty('show_updates');
-    expect(body).not.toHaveProperty('active_show_id');
+    // `active_show_id`, by contrast, must be PRESENT and carry the server's own current
+    // value. Omitting it is not "leave unchanged": the route resets the active show to the
+    // studio's first show whenever the field is missing. See the dedicated describe below.
+    expect(body.active_show_id).toBe('show-1');
   }
 
   it('hydrates and saves the account scope while the shows fetch is ERRORING', async () => {
@@ -1409,5 +1410,130 @@ describe('HomeSettingsModal shows baseline follows the selected studio', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('You have unsaved settings changes. Discard them?')).toBeNull();
+  });
+});
+
+// --- `active_show_id` survives an account-only save (PR review, review-3 follow-up) ---
+//
+// Decoupling the account scope from the shows query made an account-only save reachable
+// while `GET /api/shows?studio_id=…` is erroring or in flight. In exactly that state
+// `activeShowId` is `''` (only the shows-init effect populates it, and it needs
+// `showsReady`), and `handleSave` used to post `activeShowId || undefined`.
+//
+// An ABSENT `active_show_id` is NOT "leave unchanged" server-side. `server/src/routers/
+// profile.ts`:
+//   const rawActiveShow = (body.active_show_id ?? '').trim();
+//   … else { nextShow = showsNow.length ? String(showsNow[0].id) : ''; }
+// — a missing or blank field RESETS the caller to the studio's first show. So editing a
+// display name while the shows fetch was down silently re-pointed the user's active show,
+// changing the event-button strip and the new-session defaults. (Before
+// profile-shows-slimming `profile.shows` was synchronous, so `activeShowId` was always
+// populated by save time and the omission never fired.)
+describe('HomeSettingsModal preserves the active show on an account-only save', () => {
+  function wireBody(call: unknown[]) {
+    return JSON.parse(JSON.stringify(call[0])) as Record<string, unknown>;
+  }
+
+  async function editNameAndSave() {
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Grace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return wireBody(mutateAsync.mock.calls[0]);
+  }
+
+  it('echoes the profile’s active show back while the shows fetch is ERRORING', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    // Precondition: the selector never hydrated, so the modal holds no selection of its own.
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    const body = await editNameAndSave();
+    expect(body.given_name).toBe('Grace');
+    // The whole point: on the wire, and equal to what the server already has — so the save
+    // is a genuine no-op for show selection rather than a reset to `show-1`-by-accident.
+    expect(body.active_show_id).toBe(profileFull.active_show_id);
+  });
+
+  it('echoes it back while the shows fetch is still IN FLIGHT', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+    studioShowsPending = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Loading shows…',
+    );
+
+    expect((await editNameAndSave()).active_show_id).toBe('show-1');
+  });
+
+  it('a profile with a show that is not first in the list is preserved, not re-picked', async () => {
+    // `show-2` is the active one while `show-1` sorts first, so an omitted field would be
+    // observably WRONG rather than coincidentally right — this is the mutation-check case.
+    useProfileWith({ ...profileFull, active_show_id: 'show-2' } as ProfilePayload, [
+      showWithCategories,
+      secondShow,
+    ]);
+    studioShowsFailed = true;
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    expect((await editNameAndSave()).active_show_id).toBe('show-2');
+  });
+
+  it('still posts the user’s selection on the loaded happy path', async () => {
+    useProfileWith(profileFull, [showWithCategories, secondShow]);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    // Hydrated from the profile, then switched by hand.
+    expect((screen.getByLabelText('Show to edit') as HTMLSelectElement).value).toBe('show-1');
+    fireEvent.change(screen.getByLabelText('Show to edit'), { target: { value: 'show-2' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(wireBody(mutateAsync.mock.calls[0]).active_show_id).toBe('show-2');
+  });
+
+  // The two cases where OMITTING the field is the correct wire shape, both preserved.
+  it('omits it for a studio that genuinely has no shows', async () => {
+    // Loaded, empty: `showsReady` is true and there is no selection to preserve. The
+    // profile's stale `show-1` belongs to no show here, so echoing it would 400.
+    useProfileWith(profileFull, []);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    const body = await editNameAndSave();
+    expect(body).not.toHaveProperty('active_show_id');
+  });
+
+  it('omits it mid-switch, when the profile’s show belongs to the OLD team', async () => {
+    // Switched to studio-2 while ITS shows are unavailable. `profile.active_show_id` is a
+    // studio-1 show, which the route rejects with 400 ("must belong to the selected team") —
+    // and a team switch legitimately re-picks the show anyway.
+    useProfileWith(profileFull, [showWithCategories, secondShow, studioTwoShow]);
+    let studioTwoDown = true;
+    mockedUseStudioShows.mockImplementation(((studioId: string | null) => {
+      const pending = { data: undefined, isSuccess: false, refetch: studioShowsRefetch };
+      if (!studioId) return { ...pending, isError: false };
+      if (studioId === 'studio-2' && studioTwoDown) return { ...pending, isError: true };
+      return {
+        data: { shows: fullShows.filter((s) => s.studio_id === studioId) },
+        isSuccess: true,
+        isError: false,
+        refetch: studioShowsRefetch,
+      };
+    }) as unknown as typeof useStudioShows);
+
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'studio-2' } });
+    expect(document.getElementById('profile-show-fields-placeholder')?.textContent).toBe(
+      'Couldn’t load shows.',
+    );
+
+    const body = await editNameAndSave();
+    expect(body.active_studio_id).toBe('studio-2');
+    expect(body).not.toHaveProperty('active_show_id');
+    studioTwoDown = false;
   });
 });

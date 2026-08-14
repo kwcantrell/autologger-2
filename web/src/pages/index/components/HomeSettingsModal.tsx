@@ -514,9 +514,34 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
       })
       .filter((x) => x !== null);
 
+    // ABSENT `active_show_id` DOES NOT MEAN "leave unchanged" (review finding 3 follow-up).
+    // `server/src/routers/profile.ts` treats a missing/blank field as a RESET:
+    //   `nextShow = showsNow.length ? String(showsNow[0].id) : ''`
+    // — i.e. it re-points the caller at the studio's FIRST show. `activeShowId` is only
+    // populated by the shows-init effect, which needs `showsReady`; so on an account-only
+    // save made while the shows query is erroring or still in flight it is `''`, and omitting
+    // the field would silently switch the user's active show (changing the event-button strip
+    // and new-session defaults) as a side effect of, say, editing a display name. Echo the
+    // server's own current value back instead, making that save a genuine no-op for show
+    // selection. (Before profile-shows-slimming `profile.shows` was synchronous, so
+    // `activeShowId` was always populated by save time and the omission never fired.)
+    //
+    // `undefined` stays CORRECT in two cases, both preserved below:
+    //   • shows loaded but the studio genuinely has no shows — `activeShowId` is `''` and
+    //     there is nothing to preserve; the server's `''` fallback is the right answer.
+    //   • a mid-switch save (`activeStudioId` is not the profile's active studio) — the
+    //     profile's show belongs to the OLD team, so echoing it would 400 ("active_show_id
+    //     must belong to the selected team"), and switching teams legitimately re-picks the
+    //     show anyway.
+    const activeShowIdForSave = showsReady
+      ? activeShowId || undefined
+      : activeStudioId === profile.active_studio_id
+        ? profile.active_show_id || undefined
+        : undefined;
+
     const body: Parameters<typeof mutation.mutateAsync>[0] = {
       active_studio_id: activeStudioId,
-      active_show_id: activeShowId || undefined,
+      active_show_id: activeShowIdForSave,
       settings,
       show_updates: show_updates.length ? show_updates : undefined,
     };
