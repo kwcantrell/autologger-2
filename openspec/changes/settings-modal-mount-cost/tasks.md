@@ -106,15 +106,15 @@ Spec: "Event-button rows defer their type control". Design: D3.
 Spec: "The Settings modal costs nothing while closed". Design: D4. Added after the whole-branch
 audit closed, so this phase reopens the branch and takes its own review.
 
-- [ ] 6.1 Write the failing tests in `HomeSettingsModal.test.tsx`, one per spec scenario:
+- [x] 6.1 Write the failing tests in `HomeSettingsModal.test.tsx`, one per spec scenario:
       (a) with the modal closed, the profile query resolving does **not** hydrate drafts or
       initialise form state — assert on the observable consequence (no init work) rather than on
       internals; (b) a closed modal renders nothing; (c) opening still yields a fully-initialised
       modal on the General tab, and it survives a route change while open. Confirm each fails.
-- [ ] 6.2 Implement both gates from D4: add `isOpen` to the init effect's guard **and** deps, and
+- [x] 6.2 Implement both gates from D4: add `isOpen` to the init effect's guard **and** deps, and
       add `if (!isOpen) return null;` below every hook (and below the render-phase `prevOpen`
       reset, which must keep running). Gate: `npm run typecheck` + `npm test`.
-- [ ] 6.3 Verify by ground truth (not by the discredited render-count tool) that the init pass runs
+- [x] 6.3 Verify by ground truth (not by the discredited render-count tool) that the init pass runs
       **zero** times while closed and **once** on first open, where before it ran once behind the
       closed dialog and again on open. Re-run the open/reopen medians from 5.2 to confirm no
       regression on the paths this change already improved.
