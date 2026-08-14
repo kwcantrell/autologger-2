@@ -280,15 +280,35 @@ export function EventLogSheet({ sessionId }: Props) {
 
   // --- Data ---
   const { data: categoriesData } = useShowCategories(sessionId);
+  // `loadedLimit` is a RENDER window, not a fetch size. It used to be passed
+  // straight to `useEvents`, where `limit` is part of the React Query key
+  // (`useEvents.ts`'s key factory) — so this sheet fetched, under a second
+  // key, rows the workspace query had already fetched. That is the exact
+  // divergence `useEvents.ts`'s header forbids ("every full-session consumer
+  // MUST use this same value to dedupe onto one cache entry — a divergent
+  // limit is a second full fetch"), and every infinite-scroll step minted
+  // another permanent cache entry (200, 400, 600 …). Fetching at the shared
+  // WORKSPACE_EVENTS_LIMIT dedupes onto the one entry SessionWorkspace and
+  // MarkerNav already populate; the window is applied locally below.
   const [loadedLimit, setLoadedLimit] = useState(200);
   // Fetch-once + WS-driven invalidation (event.changed) — no polling.
-  const { data, isPending } = useEvents(sessionId, { limit: loadedLimit });
+  const { data, isPending } = useEvents(sessionId, { limit: WORKSPACE_EVENTS_LIMIT });
 
   // Stable identities (the `MarkerNav.tsx:90` idiom) — both feed the `sorted`
   // useMemo below, whose deps include them, so a fresh array per render made
   // that memo unable to hit. Correctness fix; no performance claim is made.
   const categories = useMemo(() => categoriesData?.categories ?? [], [categoriesData]);
-  const events = useMemo(() => data?.events ?? [], [data]);
+  const fetchedEvents = useMemo(() => data?.events ?? [], [data]);
+  // The rendered window. Applied before filter/sort so everything downstream
+  // — `sorted`, the pagination sentinel, the row list — sees exactly what it
+  // saw when the server did the limiting: the oldest `loadedLimit` rows.
+  // Returns `fetchedEvents` itself when no slicing is needed, so the identity
+  // stays stable for the memo below.
+  const events = useMemo(
+    () =>
+      fetchedEvents.length <= loadedLimit ? fetchedEvents : fetchedEvents.slice(0, loadedLimit),
+    [fetchedEvents, loadedLimit],
+  );
   const total = data?.total ?? 0;
   const loggedTotal = data?.logged_event_count ?? 0;
 
@@ -429,7 +449,14 @@ export function EventLogSheet({ sessionId }: Props) {
   const sentinelRef = useRef<HTMLTableRowElement>(null);
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel || events.length >= total) return;
+    // `events.length >= total` is the original stop condition (everything the
+    // session has is on screen). The second clause is new and matters only for
+    // a session larger than WORKSPACE_EVENTS_LIMIT: the window can no longer
+    // grow past what was fetched, so without it the sentinel would keep
+    // enlarging `loadedLimit` forever against a slice that cannot yield more
+    // rows. Previously that same scroll re-fetched under an ever-larger key
+    // instead — same dead end, but paid for over the network each time.
+    if (!sentinel || events.length >= total || events.length >= fetchedEvents.length) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -440,7 +467,7 @@ export function EventLogSheet({ sessionId }: Props) {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [events.length, total]);
+  }, [events.length, fetchedEvents.length, total]);
 
   // --- Reset on session change ---
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is a prop, re-run when it changes
