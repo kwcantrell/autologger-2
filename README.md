@@ -318,12 +318,16 @@ instructions into appended log events. Event buttons of type BUTTON, DROPDOWN, a
 carry an optional `auto_instruction` field in Settings (DROPDOWN options additionally carry
 their own, alongside the whole-button instruction; ON_OFF buttons are excluded — their
 on/off phase lives in client-held toggle state a generated insert would corrupt). The
-instructions persist on the show's categories and round-trip through profile reads;
-`GET …/show-categories` gains one additive top-level boolean, `auto_instructions_present`
-(its `categories` projection is otherwise unchanged, and Companion's `categories` response
-is untouched). These additive shapes — the boolean plus the `auto_instruction` fields on
-`profile.shows[].categories[*]` and their `dropdown_options[*]` — are authorized by the
-`auto-event-generation` delta.
+instructions are written through `PUT /api/profile` `show_updates[*].categories` and persist
+on the show's categories, but profile is **not** the read path back: profile `shows[]` is the
+brief shape `{id, studio_id, name, show_code, title_suffix}` and carries no `categories` at
+all. They round-trip verbatim on the full show reads — `GET /api/shows?studio_id=…` and
+`GET /api/shows/{showId}` — and on the session-scoped `GET …/show-categories`, which gains one
+additive top-level boolean, `auto_instructions_present` (its `categories` projection is
+otherwise unchanged, and Companion's `categories` response is untouched). These additive
+shapes — the boolean plus the `auto_instruction` fields on the full show serializer's
+`categories[*]` and their `dropdown_options[*]` — are authorized by the `auto-event-generation`
+delta.
 
 The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
 `CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`), the same
@@ -511,8 +515,20 @@ layer are enforced by `server/src/packageBoundaries.repo.test.ts`, not the compi
 server/src/
   main.ts                Node entry: env config → bindings → app → listen
   app.ts                 Hono app wiring: middleware chain + router mounts + the frontend
-                          bridge (GET-only catch-all → nextFrontend.handle(), RESPONSE_ALREADY_SENT)
+                          bridge (GET-only catch-all → nextFrontend.handle(), RESPONSE_ALREADY_SENT);
+                          also carries the ORDER-SENSITIVE /api/* compression pair —
+                          compress() outermost, measureCompressibleBody inside it (stamps the
+                          Content-Length compress()'s 1 KB threshold needs, and Vary: Accept-Encoding)
                           (← web/app.py)
+  compressibleTypes.ts   isCompressibleResponseType — the single definition of which responses
+                          the /api/* compression acts on (hono's COMPRESSIBLE_CONTENT_TYPE_REGEX
+                          + application/x-ndjson); shared by compress(), measureCompressibleBody,
+                          and routers/audio.ts's mime clamp so the three can't disagree
+  upgradeDispatch.ts     The single server.on('upgrade') path dispatcher, wired by main.ts:
+                          captures @hono/node-ws's handler off a stub server, then routes each
+                          upgrade by path (non-/api paths through the same IP-allowlist decision)
+                          to Hono, to Next's HMR, or to a destroyed socket
+                          (nextjs-frontend-migration D1)
   env.ts                 Typed env accessors                           (← auth_identity.py getters)
   appEnv.ts              Composition root's Hono generics: Ports + Config + Variables (AppEnv) —
                           types Ports.sessions/Variables.catalog with the session-core/catalog
@@ -545,7 +561,7 @@ server/src/
                               parsing (ApiError moved to httpError.ts at app root)
     auth.ts                  /auth/google/start|callback, /auth/logout
     profile.ts               GET /api/studio, GET|PUT /api/profile
-    shows.ts                 GET|POST /api/shows
+    shows.ts                 GET|POST /api/shows, GET /api/shows/:showId (full show shape)
     sessions.ts              list/create/update/archive/restore/delete; local-audio-import; youtube-import (config-gated)
     events.ts                events CRUD, transport, status, lease, WebSocket upgrade
     audio.ts                 upload/list/range-download, waveform, sync-from-disk
@@ -755,10 +771,37 @@ listed after the table (their shapes *and* when they fire) — changes only with
 authorizing OpenSpec delta spec. The origin column records which Python module each route
 was ported from: historical provenance, not a live parity claim.
 
+**Content-encoding negotiation.** Responses under `/api/*` — and only there — are
+content-encoding negotiated. A compressible body over the middleware's 1024-byte threshold
+ships `Content-Encoding: gzip` when the request's `Accept-Encoding` permits it, and identity
+otherwise; every negotiation-eligible response carries `Vary: Accept-Encoding` whether or not
+it ended up encoded (appended to a `Vary` the route already set, never clobbering it), so a
+shared cache can't hand gzip bytes to a client that never asked for them. "Compressible" is one
+shared predicate — `server/src/compressibleTypes.ts`: hono's `COMPRESSIBLE_CONTENT_TYPE_REGEX`
+plus `application/x-ndjson`, which that regex omits and `export.jsonl` emits. Four surfaces are
+excluded **structurally** — by a property of the response or of the mount, not by an exception
+list a future route could fall out of:
+
+- **Audio byte serving** — the segment `Content-Type` is clamped on store *and* on serve (any
+  value the shared predicate matches, and any blank one, degrades to `audio/webm`; everything
+  else round-trips verbatim, parameters and case intact), so the filter can never select it and
+  a `206`'s hand-set `Content-Range`/`Content-Length` survive untouched. Outside negotiation
+  entirely, these responses also get no `Vary`.
+- **SSE** — `streamSSE` sets both `Transfer-Encoding: chunked` and `text/event-stream`, each of
+  which independently skips; the `Transfer-Encoding` guard runs before the `Vary` step, so an
+  SSE stream is neither buffered nor `Vary`-stamped.
+- **WebSocket upgrades** — no compressible body exists, and the compression middleware never
+  touches `c.env`, so the `@hono/node-ws` env-identity handshake is unaffected.
+- **The Next frontend bridge and `/auth/*`** — outside the `/api/*` mount scope altogether;
+  Next compresses its own responses.
+
+Content-coding is transport applied above the frozen representation: the decoded bytes of
+`export.csv` / `export.jsonl` are byte-for-byte the export bodies this table freezes.
+
 | Route | Origin (historical) |
 |-------|---------------------|
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
-| `GET /api/studio` · `GET\|PUT /api/profile` · `GET\|POST /api/shows` | `routers/profile.py`, `shows.py` |
+| `GET /api/studio` · `GET\|PUT /api/profile` (profile `shows[]` is the **brief** shape `{id, studio_id, name, show_code, title_suffix}` — no `categories`, no palette fields) · `GET\|POST /api/shows` · `GET /api/shows/{showId}` → **200** `{show}` in the full show shape (the brief five plus `categories`, `event_palette`, `event_palette_preset`, `event_palette_custom`); an unknown id and a non-member of the show's studio both get an identical **404** `{detail}`, so the route is no existence oracle | `routers/profile.py`, `shows.py` |
 | `GET\|POST /api/sessions` · `GET\|PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
@@ -908,12 +951,53 @@ catch-all — `frontend.handle(...)`) rather than serving prebuilt static files.
 root is hardcoded same-origin `/api`; the two route groups share page identity per path, but
 responses are no longer byte-identical — Next embeds the requested route's serialized URL data).
 Hashed bundles are served at `/_next/static/*` (was `/assets/*` under Vite); `/static/*` is
-unchanged, served straight from `web/public/static/` (favicon logos, …). The `/_next/image`
-optimizer is disabled (`images: { unoptimized: true }` in `web/next.config.ts`) — the app uses
+served straight from `web/public/static/` — the favicon logos, plus the two preloaded font files
+under `static/fonts/` (see **Styling** below). The `/_next/image` optimizer is disabled (`images: { unoptimized: true }` in `web/next.config.ts`) — the app uses
 plain `<img>` throughout, and the optimizer is an unauthenticated compute endpoint this repo
 declines to expose. Heavy app trees are mounted as client-only (`ssr: false`) islands inside a
 server-rendered shell (layout chrome, fonts, a static loading skeleton) — the shell reads no
 cookies and embeds no session- or catalog-derived data.
+
+### Client island
+
+The `ssr: false` island is **route-split behind `React.lazy`**, not one bundle: six surfaces
+load on demand — the session workspace (`WorkspaceStatic`, mounted by `SessionRoute`), the teams
+route, and four modals (New Session, Batch Import, YouTube Import Error, Home Settings).
+Everything on the very first homepage paint — the rail, home route, login page, root gate, and
+`SessionRoute` itself — stays statically imported, since splitting it would only buy a
+waterfall. Every boundary goes through `LazyChunk`
+(`web/src/pages/index/components/ChunkLoadBoundary.tsx`): the island has no error boundary above
+it (the `pageExtensions` pin means no `error.page.tsx`), so a rejected chunk import — routine,
+because a redeploy rewrites content-hashed chunk URLs under any open tab — would otherwise
+unmount the whole app to a blank page. Its Retry **rebuilds the `lazy()` instance**, since
+`React.lazy` memoizes rejections and a module-scope instance that has failed re-throws forever.
+Route boundaries fall back to the same `RouteLoadingState` frame the pending route already
+renders; overlay boundaries fall back to `null`. Only two of the six are warmed — settings on a
+2.5 s idle prefetch, the workspace on session-route entry — and a cold chunk fetch shows no busy
+affordance on the control that invoked it.
+
+Four things keep the session page inside its render and transfer budget. The **event feed is
+virtualized** (`@tanstack/react-virtual`, using the two-spacer-`<tr>` idiom `TranscribeFeed`
+established — the real `<table>`, its `colgroup`, and the sheet chrome are untouched), so a
+66-event session mounts ~18 rows rather than 66. Because inline edits in both feeds are
+uncontrolled, a shared **draft store** (`web/src/pages/index/utils/draftStore.ts`) backs them:
+text typed into a row the virtualizer then unmounts is re-seeded on remount instead of silently
+discarded, and a draft is cleared only once its save has round-tripped. The **transcript-words
+fetch is deferred** behind a sticky per-session gate (`TranscriptWordsGateContext`) that opens on
+the first activation of Transcript, Topics, or Export and resets on session change — opening a
+session on the Event Feed transfers 172 KB of API payload instead of ~5.3 MB, with the word
+payload (614 KB gzip) fetched only when first needed. And the **Companion presence heartbeat runs
+off a Web Worker clock** (`web/src/shared/utils/workerInterval.ts`), because Chrome coalesces a
+long-hidden tab's main-thread timers to roughly one wakeup a minute — four times the server's 15 s
+presence freshness window — which would drop a backgrounded tab as a Companion target; where a
+worker can't be created (no `Worker`, or a CSP denying `blob:` workers) it falls back to a
+main-thread timer and that guarantee does not hold.
+
+The page-leave warning is **queue-scoped**: `beforeunload` is registered only while the chunk
+rescue queue is non-empty or an upload is in flight — and, in `AudioRecorder`, only for the span
+of an actual recording — because a registered listener disqualifies the page from the
+back/forward cache on its mere presence, whether or not it would ever warn. With nothing to lose,
+the app stays bfcache-eligible.
 
 ### Styling (Tailwind v4)
 
@@ -958,9 +1042,21 @@ dynamically at runtime (`SessionWorkspace.tsx`), so its `@layer components` bloc
 `tailwind.css` is live styling, not dead code — the file carries a parity comment at that
 rule.
 
-Fonts (Inter/Oswald/Roboto/Poppins/League Gothic/Chivo Mono) and `animate.css` are
-vendored locally under `web/src/assets/` — no CDN requests at runtime, and the visual
-harness (below) is network-independent as a result.
+Fonts are vendored locally — no CDN requests at runtime, and the visual harness (below) is
+network-independent as a result. Four families ship: **Inter**, **Roboto**, **Poppins**, and
+**League Gothic** (the Oswald and Chivo Mono faces and files were deleted — nothing in
+`web/src` referenced them; an unreferenced `@font-face` never downloads, so what that removed
+is source and build size, not transfer). Inter is **one** `@font-face` with a `font-weight`
+*range* of `400 600`, not three per-weight faces: those were byte-identical copies of the same
+variable font, so the browser fetched the same ~48 KB file three times to render one typeface.
+The two faces on the critical path — the deduplicated Inter latin subset and the League Gothic
+latin subset the boot loading skeleton renders in — are served from
+`web/public/static/fonts/{inter-latin-var,league-gothic-latin}.woff2` at stable, deliberately
+**non-content-hashed** URLs, so the index route group's `<link rel="preload" as="font"
+crossorigin>` and the stylesheet's `src:` name the same URL and share one request (a mismatch
+would fetch the font twice, and `crossorigin` is mandatory even same-origin because fonts are
+always fetched in CORS mode). Everything else — Roboto, Poppins, and League Gothic's latin-ext
+and vietnamese subsets — stays a bundler-emitted asset import under `web/src/assets/fonts/`.
 
 ### Dev flow
 
@@ -1098,6 +1194,12 @@ WebSocket, so HTTPS works with no extra setup).
 curl -H "Authorization: Bearer <your-API_TOKEN>" \
   https://autologger.example.com/api/companion/state
 ```
+
+> **`/api/companion/*` responses are content-encoding negotiated** like the rest of `/api/*`
+> (see **Endpoints** above). The `curl` as written sends no `Accept-Encoding` and therefore gets
+> identity bytes; add `--compressed` to exercise the gzip path. What this costs a proxy operator:
+> a caching layer in front of the server must honour `Vary: Accept-Encoding` and must not strip
+> it, and must not re-encode a response that already carries `Content-Encoding`.
 
 **Behind an authenticating proxy (Pangolin / SSO / any identity-aware gateway).** A *plain*
 reverse proxy (nginx/Caddy just terminating TLS) is transparent to Companion. An

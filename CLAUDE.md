@@ -140,7 +140,16 @@ concretes, and `middleware/auth.ts` constructs the per-request `Catalog` via
 import boundaries — including the L1-sibling, L2-sibling, and facade-only-consumer rules
 above, and the Hono-freedom split between `server/src/routers/` and the AI runtime's package
 — are enforced by a repo test (`server/src/packageBoundaries.repo.test.ts`), not the
-compiler. Frontend code lives under `web/src/`; e2e smoke tests live under `e2e/`. Full
+compiler. Frontend code lives under `web/src/`, plus two font files served at stable
+non-content-hashed URLs from `web/public/static/fonts/` (`perf-audit-remediation`: the index
+layout preloads them, so the `<link>` and the CSS `src:` must keep naming the same URL);
+e2e smoke tests live under `e2e/`. Modules a stale mental model of `web/src/` will miss, all
+from `perf-audit-remediation`: `pages/index/utils/draftStore.ts` (inline-edit drafts shared by
+both virtualized feeds), `shared/utils/workerInterval.ts` (off-main-thread presence clock),
+`pages/index/components/{ChunkLoadBoundary,RouteLoadingState,CreateTeamForm}.tsx` (the
+`React.lazy` split's boundary, its shared pending frame, and the module pulled out of
+`TeamsRoute` so `OnboardingPanel` stops pinning that chunk),
+`pages/index/hooks/TranscriptWordsGateContext.tsx`, and `api/hooks/useShows.ts`. Full
 annotated tree + the normative endpoint table (with its historical Python-origin column)
 are in **`README.md`**.
 

@@ -12,9 +12,11 @@ import { ROUTE_STATE_PAGE } from './RouteLoadingState';
 
 // --- ChunkLoadBoundary / LazyChunk (bundle route-splitting, review fix) ---
 //
-// The route split put five surfaces behind `React.lazy` (the workspace,
-// TeamsRoute, and three modals + settings). Every one of them is a network
-// fetch at render time, and the island has NO error boundary above it: Next's
+// The route split put six surfaces behind `React.lazy` — six `LazyChunk` call
+// sites: the workspace (`SessionRoute`), `TeamsRoute`, and four modals
+// (NewSession, BatchImport, YouTubeImportError, HomeSettings). Every one of
+// them is a network fetch at render time, and the island has NO error boundary
+// above it: Next's
 // `pageExtensions` pin means there is no `error.page.tsx`, so a rejected chunk
 // import throws straight through `<Suspense>` and out of the `ssr: false`
 // island root — unmounting the ENTIRE app to a permanently blank page. The
