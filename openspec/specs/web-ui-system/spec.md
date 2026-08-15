@@ -9,7 +9,14 @@ dialogs and interactive targets; an AA contrast floor on rendered surfaces; redu
 alternatives for looping animation; vector iconography on interactive control glyphs; an
 honest save model in Settings; and progressive disclosure in the New Session modal.
 
+It also carries the shared surfaces' **mount-cost and render-isolation discipline**: the Settings
+modal costs nothing while closed and defers its inactive tab content; event-button rows defer their
+type control until the user shows intent; the shell-to-workspace prop boundary stays memoizable;
+the playback tick is fenced at named memo boundaries; and the Settings shows section names why it
+has nothing to show rather than sitting on a loading skeleton.
+
 ## Requirements
+
 
 ### Requirement: Single V5 component vocabulary
 The frontend SHALL present one component vocabulary: buttons, form controls, and dialogs render
@@ -28,6 +35,7 @@ family at zero consumers is compatible with this requirement.
 #### Scenario: Disabled buttons are visibly non-interactive without hover response
 - **WHEN** any button in the shared vocabulary is disabled and hovered
 - **THEN** it stays at reduced opacity with muted text and no hover border/background change
+
 
 ### Requirement: Themed confirmations replace browser chrome
 Destructive or discard-style confirmations SHALL use a shared themed confirm dialog (built on
@@ -59,6 +67,7 @@ the pending decision SHALL resolve as declined (no awaiting flow may hang).
   `marked_at_utc` is accept-time, and the dialog copy SHALL NOT promise a specific timecode;
   a pending decision SHALL be dismissed (as decline) on session switch
 
+
 ### Requirement: Global single-key handlers yield to dialogs and interactive targets
 Global single-key shortcuts (Space play/pause, `+`/`−` zoom, `1–9` logging, `?`) SHALL NOT
 fire while any `[role="dialog"]` is open, and SHALL NOT intercept a key when the event target
@@ -73,6 +82,7 @@ activation always wins over the global handler).
 #### Scenario: Zoom keys ignored behind dialogs
 - **WHEN** any dialog is open and the user presses `+` or `−`
 - **THEN** the timeline zoom does not change
+
 
 ### Requirement: AA contrast floor on rendered surfaces
 Text and data labels SHALL meet WCAG AA (≥4.5:1, composited over the surface's effective base
@@ -91,6 +101,7 @@ replacement SHALL still clear the floor.
 - **WHEN** a feed tab is not selected
 - **THEN** its label contrast against the tab surface is at least 4.5:1
 
+
 ### Requirement: Reduced-motion alternatives for looping animation
 Every looping or attention-drawing animation SHALL have a `prefers-reduced-motion: reduce`
 alternative. Specifically the timeline marker-message marquee SHALL stop (static, truncating
@@ -100,6 +111,7 @@ presentation) and status-pulse dots SHALL render static under reduced motion.
 - **WHEN** `prefers-reduced-motion: reduce` is set and a marker message overflows its lane
 - **THEN** the marquee animation does not run and the message renders statically (clipped),
   not scrolling
+
 
 ### Requirement: Vector iconography for interactive control glyphs
 State-tinted glyphs on interactive controls (transport tiles, timecode state icons, in-row
@@ -113,6 +125,7 @@ outside this requirement.
 - **THEN** its glyph is an inline SVG inheriting the tile's state accent, and no `<img>`-based
   or emoji glyph remains in the transport, timecode, or row-action components
 
+
 ### Requirement: Honest save model in Settings
 The Settings modal SHALL make its save state legible: Save is disabled (and labeled as saved)
 when there are no unsaved changes, enabled when any edit exists; closing with unsaved changes
@@ -123,7 +136,7 @@ The Add-Show flow SHALL collect the show name in a themed input dialog. Copy in 
 SHALL match the actual save model (no "auto-saves" claims for draft-then-Save behavior).
 
 #### Scenario: Editing any field enables Save
-- **WHEN** the user edits any Settings field (show name/code/next-episode, categories,
+- **WHEN** the user edits any Settings field (show name/code/title suffix, categories,
   palette, default frame rate, account names) after open
 - **THEN** Save becomes enabled, and after a successful save it returns to the saved state
 
@@ -131,6 +144,7 @@ SHALL match the actual save model (no "auto-saves" claims for draft-then-Save be
 - **WHEN** the user closes the Settings modal (button, Escape, or overlay) with unsaved edits
 - **THEN** a themed discard confirmation intervenes; declining keeps the modal open with edits
   intact
+
 
 ### Requirement: Generation instruction fields in Settings
 The Settings event-buttons table SHALL let the user view and edit each BUTTON,
@@ -173,6 +187,7 @@ fields with the copied buttons.
 - **WHEN** a DROPDOWN button has instructions only on its options
 - **THEN** the table row shows the instruction-bearing indicator
 
+
 ### Requirement: New Session progressive disclosure
 The New Session modal SHALL present the core flow (show, episode with a pressed-state bonus
 toggle, notes, create) directly, with YouTube import and timecode settings (frame rate, start
@@ -185,6 +200,7 @@ be safe without opening either disclosure. The bonus control SHALL expose its on
 - **THEN** the session is created with the profile-default frame rate and zero offset, without
   either disclosure having been opened
 
+
 ### Requirement: The shell-to-workspace render boundary stays memoizable
 Every prop the shell passes across the render-isolation boundary to the mounted session workspace
 SHALL hold a stable identity across shell renders, so that the boundary's memoization is able to
@@ -194,6 +210,20 @@ This requirement is deliberately scoped to prop stability — the property that 
 testable at the boundary. It makes no claim about how often the workspace renders in practice: the
 change that introduced it originally asserted a large re-render reduction, and that assertion was
 withdrawn when the render counts supporting it proved to be a profiling-tool artifact.
+
+The boundary is **two hops**, and this requirement is normative over both: the shell (`AppShell`)
+passes props to `SessionRoute`, which forwards them unchanged into `WorkspaceStatic` — the `memo()`
+that is the render-isolation boundary proper.
+
+**Which half the scenarios below observe.** They observe the **upstream** hop only — the props the
+shell offers, captured on a mocked `SessionRoute` — and that half is mechanically pinned for every
+shell state change named below **except the YouTube-import-error modal**, which no test drives. The
+**downstream** half is pinned by nothing: neither `SessionRoute`'s unchanged forwarding nor
+`WorkspaceStatic`'s comparator is exercised, because every test that reaches `WorkspaceStatic`
+mocks it away with a non-memoized stand-in. Inserting a wrapper object or a fresh closure between
+the two hops, or deleting the `memo()` outright, would fail no test. The obligation is unchanged by
+that; what this paragraph records is the evidence behind it, consistent with the honest-limits note
+under `The playback tick is fenced at named memo boundaries`.
 
 #### Scenario: Opening the settings modal does not disturb the boundary props
 - **WHEN** a session workspace is mounted and the user opens the settings modal
@@ -206,30 +236,64 @@ withdrawn when the render counts supporting it proved to be a profiling-tool art
   workspace is mounted
 - **THEN** the boundary props remain referentially identical across each of those state changes
 
-### Requirement: The Settings modal costs nothing while closed
-While the Settings modal is closed it SHALL perform no form-initialisation work and SHALL render
-no element tree. Specifically: the initialisation that hydrates show drafts from the profile SHALL
-NOT run until the modal is open, and the modal SHALL render nothing while closed rather than
-building a tree the dialog primitive then declines to show.
 
-This SHALL be behaviour-neutral. The modal is mounted unconditionally by the shell so that it
-survives route changes while open; rendering nothing while closed SHALL NOT disturb that, SHALL
-NOT change what the DOM contains at any point, and SHALL NOT change what an open modal shows.
+### Requirement: The Settings modal costs nothing while closed
+While the Settings modal is closed it SHALL perform no form-initialisation work, SHALL issue no
+shows request, and SHALL render no element tree.
+
+The modal initialises in **two independent scopes**, and both SHALL be gated on the modal being
+open. The **account scope** — the studio pointer, the default frame rate, and the account names —
+initialises from the profile, which is already in hand before the modal can open; it SHALL NOT run
+merely because the profile query resolved while the modal is closed. The **shows scope** hydrates
+the per-show drafts and the show selection from the **per-studio shows query** whose states
+`The Settings shows section says why it has nothing to show` governs — not from the profile, whose
+`shows[]` carries only the brief shape; that query SHALL be disabled while the modal is closed, so
+a closed modal fetches no draft source at all. The modal SHALL render nothing while closed rather
+than building a tree the dialog primitive then declines to show.
+
+The shell SHALL mount the modal **only while it is open**, gated on `showSettings` — a piece of
+shell state. The modal is one of the split surfaces enumerated by `web-frontend-platform`'s
+`The client island is route-split behind recoverable boundaries`, which owns the split-point
+inventory, the chunk-boundary mechanics, and the idle prefetch that warms this chunk; this
+requirement does not restate them. The previous mechanism (an unconditional mount relying on the
+dialog primitive to render nothing while `open` was false) SHALL NOT be restored: behind that lazy
+chunk it would download the modal's bytes on every page load, which is the cost the split exists to
+remove.
+
+Route-change survival is unchanged and remains normative: the gate SHALL be shell state and SHALL
+NEVER be the URL or a route branch, so an open modal survives a route change instead of
+desynchronising `showSettings` from what is rendered. Beyond the mount gate this SHALL be
+behaviour-neutral — it SHALL NOT change what an open modal shows, and the deferred-initialisation
+discipline inside the modal SHALL remain in force (the modal still gates its own hydration on
+`isOpen`, so the guarantee does not depend on the mount gate alone).
+
+The chunk boundary is an **overlay** boundary with a `null` fallback — that fallback discipline is
+`web-frontend-platform`'s — so while a cold settings chunk is in flight, nothing is rendered on
+screen and the invoking control offers no busy affordance. This is a known, unclosed gap recorded
+in the `perf-audit-remediation` proposal, not a property of this requirement.
 
 #### Scenario: Initialisation is deferred until the modal opens
 - **WHEN** the app loads with the modal closed and the profile query resolves
-- **THEN** no show drafts are hydrated and no form state is initialised, and that work happens on
-  the first open instead — once, not twice
+- **THEN** neither scope initialises — no account fields are hydrated from the profile, no shows
+  query is issued, and no show drafts are built — and that work happens on the first open instead:
+  the account scope initialises once per open, not once on profile resolution and again after the
+  open-reset
 
 #### Scenario: A closed modal renders nothing
 - **WHEN** the shell renders with the modal closed
-- **THEN** the modal contributes no elements, and the DOM is identical to what it contained before
-  this requirement existed
+- **THEN** the modal contributes no elements — it is not mounted at all, and its module is not
+  fetched by the initial page load
+
+#### Scenario: A cold first open traverses the chunk boundary
+- **WHEN** the user opens the modal before the idle prefetch has completed
+- **THEN** the lazy chunk is fetched, the boundary's `null` fallback renders nothing for the
+  duration of that fetch, and the modal appears once the chunk resolves
 
 #### Scenario: An open modal is unaffected
 - **WHEN** the user opens the modal, and while it is open the route changes
 - **THEN** the modal opens on the General tab fully initialised, and it stays open and functional
   across the route change exactly as before
+
 
 ### Requirement: Settings modal defers inactive tab content
 The Settings modal SHALL mount a tab panel's content on that tab's first activation, not on modal
@@ -274,6 +338,7 @@ SHALL NOT by itself make the modal read as dirty.
   closes the modal
 - **THEN** no unsaved-changes confirmation intervenes and the modal closes directly
 
+
 ### Requirement: Event-button rows defer their type control
 Each event-button row's button-type control SHALL NOT mount a listbox-style overlay component
 until the user shows intent to use that control (pointer or keyboard focus). Rendering the row
@@ -309,3 +374,125 @@ When the upgrade is triggered by keyboard focus, focus SHALL end on the upgraded
   the control exposes the same accessible name, role, and ARIA state as before this change and is
   operable by keyboard without any pointer event
 
+
+### Requirement: The playback tick is fenced at named memo boundaries
+Audio playback drives a `requestAnimationFrame` loop that pushes the absolute timeline second into
+session-workspace state — `audioPlaybackSec`, a `useState` at the top of `SessionWorkspace` — on
+every frame.
+
+**What this requirement does not claim.** Because that state lives at the top of the workspace,
+`SessionWorkspace` re-renders on every playback frame **by design**, and so does every part of its
+tree that is not behind a memo boundary: the maximise strip and the Timeline that read the second,
+and alongside them the headless audio components (`AudioRecorder`, `AudioPlayer` — bare
+`forwardRef`s), the shortcuts dialog, the chunk-rescue banner, the tab strip, the six tabpanel
+wrapper elements, and the surrounding section chrome. This requirement asserts nothing about how
+often any component renders, and no sentence in it may be read as a per-component re-render
+assertion — the instrument that would verify such a claim is not available here (see *Evidence and
+instrument* below).
+
+**What SHALL hold** is prop stability and memo bail-out at named boundaries, so the expensive
+subtrees stay out of the per-frame path even though their parent is in it — the point of the
+fencing is the 66-event feed row set and the marker list, not the chrome:
+
+- Each of the six feed panels (`EventLogSheet`, `TranscribeFeed`, `TopicsFeed`, `AiPanel`,
+  `AiV2Panel`, `ExportFeed`) SHALL be `memo()`-wrapped and SHALL take `sessionId` as its only
+  prop, and the map of panel elements SHALL be memoised on `sessionId` alone — so a tick-driven
+  render of the workspace hands each wrapper the referentially identical element it held on the
+  previous frame, carrying an unchanged prop set.
+- `TimelineMarkers` SHALL be `memo()`-wrapped, and every prop it receives SHALL hold a stable
+  identity across a tick-driven render: its four mouse handlers are `useCallback`-stable in
+  `Timeline`, and `events` / `status` / `totalSec` / `selectedEventId` are query-derived. The
+  Timeline around it re-renders each frame to move the playhead; the marker list's inputs do not
+  move with it.
+
+**Deliberate invariant a future reader might undo.** Every prop crossing one of these memo
+boundaries SHALL hold a stable identity across a tick-driven render. Adding an inline handler, an
+object or array literal, or any per-frame value to the props of a fenced component silently
+reopens the cascade — the component keeps its `memo()` wrapper and stops bailing out, with no test
+failure and no type error to signal it.
+
+**Evidence and instrument.** The outcome claimed for the shipped fencing is a **frame-timing**
+one: **zero long tasks during steady playback** on a 66-event session. Render counts are **not** a
+valid instrument for anything in this requirement — the profiling tool's React render counts
+over-count badly in this app, which is why the re-render assertion recorded under this
+capability's `The shell-to-workspace render boundary stays memoizable` was withdrawn. Any future
+edit here SHALL keep the claim on the frame-timing and prop-identity side of that line.
+
+Honest limits: the fencing is currently **comment-enforced only** — no test pins the fenced prop
+sets, and `WorkspaceStatic` (the outermost render-isolation memo) has no characterization test at
+all, because every test that touches it mocks it away. A future change that widens one of these
+prop sets will not be caught mechanically.
+
+#### Scenario: Steady playback stays inside the frame budget
+- **WHEN** audio plays back on a 66-event session at the audited viewport, with no session change
+  and no query result changing
+- **THEN** that playback stretch records no long task and no dropped frame attributable to the
+  workspace render
+
+#### Scenario: The fenced components' props do not move with the tick
+- **WHEN** the playback second advances from one frame to the next
+- **THEN** each feed panel's element and its `sessionId` prop, and every prop passed to
+  `TimelineMarkers`, are referentially identical to what they were on the previous frame
+
+#### Scenario: A genuine input change still reaches the affected panel
+- **WHEN** a feed panel's own input changes — the session id changes, or a query it owns returns
+  new data
+- **THEN** that panel updates to reflect it; the fencing withholds nothing that a changed input
+  should produce
+
+
+### Requirement: The Settings shows section says why it has nothing to show
+
+The Settings modal's shows section is fed by a per-studio shows query, and its readiness flag only
+ever flips on success. Two non-success outcomes therefore used to be rendered as "Loading shows…"
+forever: a **failed** fetch, whose answer has already come back, and an **offline-paused** fetch,
+which under react-query's default `networkMode: 'online'` is held rather than run — so `isPending`
+stays true and `isError` stays false indefinitely.
+
+The section SHALL distinguish three states, not two: loading, unavailable-because-failed, and
+unavailable-because-offline. The offline state SHALL be identified by the query's own
+`fetchStatus === 'paused'` (ANDed with `isPending`, so a paused *background* refetch over drafts
+already on screen — which withholds nothing — says nothing), and SHALL be suppressed entirely for
+a disabled query (an account with no team never fetches, so it neither errors nor pauses). Each
+state SHALL carry copy of its own in both the show picker and the show-fields placeholder: the
+picker shows `— Offline —`, `— Unavailable —`, or `Loading shows…`, and the placeholder says
+`You’re offline — can’t load shows.`, `Couldn’t load shows.`, or `Loading shows…`.
+
+**A Retry SHALL be offered on the error state and SHALL NOT be offered on the offline hold.** On
+error it is the only way out without reopening the modal, since the readiness flag never flips on
+an errored query. On the offline hold it would be a dead control: `refetch()` on a paused query
+reaches `Query#fetch` with `fetchStatus === 'paused'` and `data === undefined`, which takes the
+`retryer.continueRetry()` branch — that only clears the retry-cancelled flag and returns the
+still-pending promise, starting no fetch. What resumes a paused query is `onlineManager` firing on
+reconnect, with or without a click, so the offline branch SHALL instead state that recovery is
+automatic (`Shows will load on their own once you’re back online.`).
+
+Both unavailable states SHALL scope to the **shows** section only. Neither reaches the readiness
+flag, so the shows scope contributes nothing to the modal's dirty state and a save omits
+`show_updates` — while the **account scope stays fully editable and saveable throughout**. The
+Add-Show control and the show picker stay disabled/hidden while shows are unavailable, because
+there is no studio-scoped show list to act on.
+
+#### Scenario: A failed shows fetch is named and retryable
+
+- **WHEN** the shows query for the selected team fails
+- **THEN** the picker reads `— Unavailable —`, the placeholder reads `Couldn’t load shows.`, and a
+  Retry control is offered that re-issues the query
+
+#### Scenario: An offline hold is not shown as loading, and offers no dead Retry
+
+- **WHEN** the browser goes offline while the shows query is pending, so the fetch is paused
+- **THEN** the picker reads `— Offline —`, the placeholder reads `You’re offline — can’t load
+  shows.`, no Retry is offered, and the section states that shows will load on their own once
+  connectivity returns
+
+#### Scenario: The account scope is unaffected by an unavailable shows query
+
+- **WHEN** the shows query is failed or offline-paused and the user edits an account field
+- **THEN** Save arms and a save succeeds, carrying the account edit and omitting `show_updates`
+
+#### Scenario: A team-less account sees neither unavailable state
+
+- **WHEN** the modal is open for an account with no team, so no shows query is issued
+- **THEN** the section reports neither the error nor the offline state — the disabled query is not
+  an unavailable one

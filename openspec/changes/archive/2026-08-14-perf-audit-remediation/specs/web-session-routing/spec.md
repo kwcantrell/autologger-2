@@ -1,21 +1,6 @@
-# web-session-routing
+# web-session-routing — delta
 
-## Purpose
-
-The web app's client-side routing for session state: a route table with exactly three
-app routes, `/` (no session selected; home/sessions view), `/sessions/:id` (the session
-workspace for `:id`), and `/teams` (the team management view; no session selected),
-replacing the legacy imperative selection spine. Covers how
-selecting, creating, and closing a session drive the URL and browser history; the five
-mutually-exclusive resolution states a deep link to `/sessions/:id` can render (loading,
-workspace, archived, not-found, error) against the `GET /api/sessions/:id` detail
-endpoint (authorized in `api-contract-freeze`); the originator-scoped rule for who stops
-a rolling transport on route departure (including departure to `/teams`); and retirement of
-`body.dataset.sessionId`/`window.V3_selectSession`/`window.V3_closeSession`/`syncChrome`
-in favor of route-driven rendering.
-
-## Requirements
-
+## MODIFIED Requirements
 
 ### Requirement: URL-addressed session state
 The web app SHALL derive its active-session state from the URL via a client-side route
@@ -98,10 +83,10 @@ router; the previously reachable raw built-asset path, e.g.
   and `AppShell`'s wouter patterns in the same change, and no other copy of the route
   table exists to update
 
-
 ### Requirement: Deep-link resolution states
 The client SHALL resolve the `:id` route parameter with a per-id query against
-`GET /api/sessions/:id` (the endpoint specified by the `api-contract-freeze` capability),
+`GET /api/sessions/:id` (the endpoint specified by the `api-contract-freeze` capability, where it
+was authorized by an earlier change — this change's freeze delta neither adds nor modifies it),
 fetched on route entry — not by searching the polled sessions collection.
 Resolution SHALL render exactly one of five states:
 
@@ -214,42 +199,6 @@ a retry of a failed workspace chunk.
   changed)
 - **THEN** the mounted workspace stays until the user navigates; no resolution state
   replaces it in place
-
-
-### Requirement: Originator-scoped transport stop on route departure
-When, and only when, the current client initiated the transport roll during the
-current workspace mount (it issued the transport-start command), a same-document
-departure from that session's `/sessions/:id` — the close control, browser
-Back/Forward within the app, or in-app navigation to any route that does not match
-the same session id (`/`, `/teams`, or a different session's route)
-— SHALL invoke the same stop-transport-if-needed behavior the close-session control
-invokes today, exactly once per departure. A client that did NOT initiate the roll
-(it deep-linked or navigated into an already-rolling session) SHALL NOT stop the
-transport on departure, by any navigation path. Cross-document departures (tab close,
-navigating to another origin, Back off a deep-link landing that is the first history
-entry) are outside this requirement's scope.
-
-#### Scenario: Originator's departure stops the roll
-- **WHEN** the user started the roll in this workspace and leaves `/sessions/<id>` via
-  the close control, browser Back, or by selecting another session
-- **THEN** stop-transport-if-needed fires exactly once for the departure
-
-#### Scenario: Departure to the teams route stops the originator's roll
-- **WHEN** the user started the roll in this workspace and navigates to `/teams`
-- **THEN** stop-transport-if-needed fires exactly once, the same as any other
-  departure
-
-#### Scenario: Passive viewer's departure never stops the roll
-- **WHEN** a user opens `/sessions/<id>` while the transport is already rolling
-  (started by another client) and then leaves by any navigation path
-- **THEN** no transport-stop command is issued — the roll continues for the operator
-  who started it
-
-#### Scenario: StrictMode double-invoke does not stop anything
-- **WHEN** the app runs under React StrictMode (dev) and a workspace mounts on a
-  rolling session
-- **THEN** the mount/unmount simulation issues no transport-stop command
-
 
 ### Requirement: Legacy selection spine retired
 The app SHALL NOT write `body.dataset.sessionId` and SHALL NOT define

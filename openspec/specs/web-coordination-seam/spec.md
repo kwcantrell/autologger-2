@@ -27,6 +27,7 @@ pair showing it fires on a violation and passes on conforming input).
 
 ## Requirements
 
+
 ### Requirement: One-to-one coordination has a single typed module home
 
 **One-to-one request/response coordination** — a call from one component to a single other
@@ -81,6 +82,7 @@ so an eleventh handle would evade it silently.
 - **THEN** no such write exists in production or test code, including for a handle name this
   capability does not enumerate
 
+
 ### Requirement: Registration is explicit, reversible, and absence is a no-op
 
 An owning component SHALL register a handler for a handle by an explicit call, not by assignment
@@ -103,7 +105,7 @@ is outside this mechanism and SHALL NOT be forced into it.
 **Unregistering is a capability, not an obligation.** An owner whose lifetime is the
 application's lifetime MAY register permanently and never unregister. No requirement, test, or
 check SHALL **forbid a deliberately permanent registration** — no balanced-call assertion, no
-"every registration must be matched" rule. This is forward-looking policy: after this change every
+"every registration must be matched" rule. This is forward-looking policy: as the tree stands every
 production owner does tear down, but the contract SHALL NOT be tightened to require it. A guard
 that identifies an *unintended* leak remains permitted.
 
@@ -136,6 +138,7 @@ that identifies an *unintended* leak remains permitted.
   that it should no longer own the handle
 - **THEN** the handle has no registered handler afterwards, and invoking it is a no-op
 
+
 ### Requirement: Ownership state is observable
 
 The registry SHALL expose a way to ask whether a handle currently has a registered handler.
@@ -150,6 +153,7 @@ former is satisfiable by the latter. The mechanism being replaced *was* observab
 - **WHEN** a handle has no registered handler, and separately when it is registered to a handler
   that performs no action
 - **THEN** the two states are distinguishable through the registry's API
+
 
 ### Requirement: Conditional ownership is expressible without a sentinel assignment
 
@@ -177,6 +181,7 @@ requirement forbids.
 
 - **WHEN** an owner becomes ineligible while a different owner holds the registration
 - **THEN** the other owner's handler remains registered
+
 
 ### Requirement: React-external callers are first-class
 
@@ -210,6 +215,7 @@ handle at that moment.
 - **THEN** the transport-stop handle is invoked synchronously during the navigation call, before
   React re-renders, exactly once for the departure
 
+
 ### Requirement: The registry is the test seam and does not leak between tests
 
 Tests SHALL drive coordination through the registry's API rather than by assigning to `window`.
@@ -230,24 +236,58 @@ survives the owner's unmount into the next test.
 - **WHEN** a test registers a stub after its owner has mounted, and a subsequent test runs
 - **THEN** the subsequent test observes no handler registered by the earlier test
 
+
 ### Requirement: Handler ownership is identity-scoped at teardown
 
 A teardown SHALL clear a handle only if the handler being torn down is still the registered one.
 A stale owner's teardown SHALL NOT clear a handler a newer owner has since registered.
 
-**This is forward insurance against a latent hazard, not repair of an observed defect.** No such
-interleave is reachable in the component tree as it stands: each handle has exactly one owner
-rendered at exactly one position, the session workspace is unkeyed so a session switch is a
-same-instance dependency change, and the application uses no `Suspense`, `React.lazy`, transition
-API, or Offscreen boundary that could keep two owners alive across commits. React runs all
-passive destroys for a commit before any passive creates, so single-owner shapes are always
-cleanup-first.
+**This is forward insurance against a latent hazard, not repair of an observed defect.** The
+hazard is real at the mechanism level — two owners of one handle spanning separate commits can
+produce cleanup-after-newer-setup — and it remains unreachable in the component tree as it stands.
+The application **does** now use `React.lazy` and `<Suspense>`: the route split put six surfaces
+behind a shared `LazyChunk` boundary, and the session workspace — a handle-owner tree — is one of
+them. The earlier blanket precondition "the application uses no `Suspense`, `React.lazy`,
+transition API, or Offscreen boundary" is therefore **false and is retired**. Unreachability now
+rests on four narrower, individually checkable facts:
 
-The hazard is real at the mechanism level — two owners of one handle spanning separate commits
-can produce cleanup-after-newer-setup — and becomes reachable if any of those preconditions
-changes: a second owner for a handle, an owner rendered at two positions, adoption of a
-concurrent-rendering boundary, or decomposition of the session workspace into independently
-mounted regions.
+1. **One owner, one position.** Each handle still has exactly one owner rendered at exactly one
+   position. The workspace `LazyChunk` is rendered at exactly one site inside `SessionRoute`,
+   which is itself rendered at exactly one site in the shell.
+2. **No suspension point nested below a handle-owner tree.** The app has six `lazy()` boundaries,
+   every one of them instantiated by the shared `LazyChunk` wrapper — but **none nests below
+   another**. Five are siblings rendered directly by the shell (the New Session, Batch Import,
+   YouTube-import-error and Settings overlays, plus the `/teams` route, which is the mutually
+   exclusive alternative to `SessionRoute` in one ternary); the sixth is the session workspace,
+   rendered by the statically-imported `SessionRoute`. The workspace boundary is therefore the
+   **deepest** suspension point in the tree, and the handle-owner subtree it reveals contains
+   none — no further `lazy()`, no `<Suspense>`, no suspense-mode query below it. Sibling
+   boundaries at the shell level are beside the point: a sibling cannot re-suspend a revealed
+   workspace. Reinforcing this, `useTransition`, `startTransition` and Offscreen appear **nowhere
+   under `web/src`**, production or test, and no query runs in suspense mode; `BatchImportModal`'s
+   inner `await import(...)` of the log-import client is a plain async call in an event handler,
+   not a render-phase suspension. A revealed subtree can therefore never re-suspend — and a
+   post-reveal re-suspension is the only way React would keep a hidden-but-mounted owner alive
+   beside a newly mounted one.
+3. **A session switch is unmount→remount, not overlap.** The per-id resolution query sets
+   `gcTime: 0`, so an id change drops `data` to `undefined`; `SessionRoute` then returns its
+   loading state, unmounting the `LazyChunk` and every owner below it in that same commit, before
+   the new id's workspace can mount.
+4. **Chunk-retry remount cannot interleave.** Retry is offered only for chunk-load errors, and a
+   chunk-load error can only be thrown by the initial module import — at that point no owner below
+   the boundary has mounted and nothing is registered. Retry then remounts the boundary by key,
+   and React runs passive unmount effects before passive mount effects within a key-change commit.
+
+Any of these four changing makes the hazard reachable again: a second owner for a handle, an owner
+rendered at two positions, a nested suspension point (a further `lazy()`, a suspense-mode query, or
+adoption of a transition/Offscreen API) below a handle-owner tree, a resolution cache that lets two
+ids overlap, or decomposition of the session workspace into independently mounted regions.
+
+Identity-scoped `unregister(handle, handler)` — release only if you still own it — SHALL remain the
+mechanism, and it is the **load-bearing mitigation**. Facts 1–4 are defence in depth behind it, not
+a substitute for it: they are properties of today's tree that an ordinary refactor can change
+without touching this module, whereas the identity check holds regardless. There SHALL remain no
+unconditional `clear(handle)`, which would re-admit the same clobber through a second door.
 
 #### Scenario: A stale teardown does not clear a newer registration
 
@@ -259,6 +299,15 @@ mounted regions.
 
 - **WHEN** an owner registers a handler and its teardown runs with no intervening registration
 - **THEN** the handle has no registered handler afterwards
+
+#### Scenario: A lazy boundary between the shell and a handle owner keeps one live owner
+
+- **WHEN** a handle owner is mounted behind a `React.lazy` / `<Suspense>` chunk boundary and the
+  route's session id changes, or the boundary is remounted by a chunk-load retry
+- **THEN** at no point are two owners of the same handle simultaneously registered: the outgoing
+  subtree unmounts before the incoming one mounts, and a failed chunk import registers nothing at
+  all
+
 
 ### Requirement: The coordinated behaviors are observably intact
 
@@ -309,6 +358,7 @@ feed-jump behavior edits `web-session-console` alone.
 - **THEN** they read the current zoom value, and a non-finite or non-positive reading still
   yields the caller's existing fallback
 
+
 ### Requirement: The web app's internal import direction is mechanically enforced
 
 Within `web/src`, production **value** imports SHALL flow only downward through
@@ -322,8 +372,17 @@ boundary this requirement protects is the runtime and bundle structure, not the 
 Forbidding them would force import rewrites this rule was explicitly adopted to avoid.
 
 This direction already holds; the requirement exists because it held only by convention. `web/`
-builds two independent entry bundles, and the smaller one depends on none of the larger one's
-libraries — a property nothing currently protects.
+builds **two independent entry bundles** — the index island and the admin island — and the smaller
+one depends on none of the larger one's libraries; that independence is the property nothing
+currently protects, and it is unchanged.
+
+What has changed is the shape *inside* the index entry: it is no longer a single download. The
+index island is route-split behind `React.lazy`, with at least seven dynamic-import edges below
+the entry — six `LazyChunk` split points (the session workspace, the `/teams` route, and the New
+Session, Batch Import, YouTube-import-error, and Settings overlays) plus Batch Import's own inner
+import of the log-import client. "Entry bundle" in this requirement therefore means the entry
+graph and the chunks reachable from it, not one file; the enforced property is the **direction** of
+edges, which is indifferent to how the bundler carves them into chunks.
 
 **The web app does not depend on the workspace package graph.** Production files under `web/src`
 SHALL NOT import from `packages/` — neither by relative path nor by `@autologger/*` specifier — at
@@ -341,8 +400,6 @@ of exhaustiveness. Across repeated adversarial review, the check has been defeat
 several times; the following bypasses are known, accepted as residual, and disclosed rather than
 chased further:
 
-- `import.meta.glob(...)` — Vite's other build-time bundling primitive besides static `import` and
-  literal dynamic `import(...)`; the check does not resolve its glob argument.
 - A directory literally named `node_modules` living **under** `web/src` (not a real package-manager
   install) — the walk's skip-list excludes any directory named `node_modules` unconditionally, so
   first-party code planted there is never examined.
@@ -350,7 +407,13 @@ chased further:
   but its own internal relative imports resolve against the symlink's location, not the target's
   real location, so nothing about it looks anomalous to a specifier-string check.
 - A non-literal dynamic-import argument (`const p = '…'; await import(p)`) — cannot be resolved
-  statically.
+  statically. This residual now sits directly beside the app's primary code-splitting mechanism:
+  literal dynamic `import(...)`, used at the loaders in `AppShell.tsx` and `SessionRoute.tsx`.
+  Those literal specifiers **are** resolved by the check; only a computed argument escapes it.
+- `import.meta.glob(...)` — Vite's build-time bundling primitive; the check does not resolve its
+  glob argument. The production bundler is now Next/webpack, which does not implement it, so this
+  bypass no longer describes a way to get package code into a shipped bundle; it is retained
+  because Vite survives as the test transform and such a file would still resolve there.
 - `typeof import('...')` in type position — a distinct AST node the check does not walk; it erases
   at compile time regardless.
 - A root-absolute specifier (`'/../packages/domain/src/index.ts'`) — the check does not resolve it,
@@ -385,6 +448,12 @@ one.
 - **WHEN** production files under `web/src/pages/admin-users` are scanned for imports
 - **THEN** none targets `web/src/pages/index`
 
+#### Scenario: Route-split chunks are subject to the same direction rule
+
+- **WHEN** a module reached only through a dynamic `import(...)` below the index entry is scanned
+- **THEN** it is scanned exactly like a statically imported production file — being in a
+  lazily-fetched chunk grants no exemption from the direction, packages, or test-file rules
+
 #### Scenario: Production web code does not reach the package graph
 
 - **WHEN** production files under `web/src` are scanned for imports targeting `packages/`, by
@@ -416,6 +485,7 @@ one.
   imported
 - **THEN** the stated reason reflects a live constraint, and the mirror is identified as permanent
   policy rather than as pending work
+
 
 ### Requirement: Enforcement checks are proven non-vacuous
 

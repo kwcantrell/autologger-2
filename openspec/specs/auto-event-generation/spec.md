@@ -15,6 +15,8 @@ definition. ON_OFF buttons never participate (their on/off phase lives in client
 toggle state a generated insert cannot know or update); BUTTON, DROPDOWN, and TEXT
 buttons participate when instruction-bearing.
 ## Requirements
+
+
 ### Requirement: Per-button generation instructions persist on the show
 Each event button (a show `categories[*]` entry) of type BUTTON, DROPDOWN, or TEXT
 SHALL carry an optional `auto_instruction` string field (trimmed; ≤ 2000 chars;
@@ -24,8 +26,19 @@ absent/empty means no button-level instruction). Each DROPDOWN option (a
 dropped by normalization, not an error). The fields SHALL persist through the existing
 show-update path (profile update `show_updates[*].categories`) — including through the
 server's category normalization, which today rebuilds categories/options from fixed
-field sets and would silently strip unknown keys — and round-trip verbatim through
-profile reads. Bound violations SHALL be rejected with the same validation-error
+field sets and would silently strip unknown keys — and SHALL round-trip verbatim on the
+show reads that carry categories.
+
+The write path is unchanged: instructions are still saved via `PUT /api/profile`
+`show_updates[*].categories`. The **read** path is not `GET /api/profile`:
+`perf-audit-remediation` slimmed profile `shows[]` to `{id, studio_id, name, show_code,
+title_suffix}`, so profile carries no `categories` and therefore no `auto_instruction` at
+all. The full show configuration — categories, options, and their instructions — SHALL be
+read from `GET /api/shows?studio_id=…` and `GET /api/shows/:showId`, both of which emit the
+full show serializer. The session-scoped `GET …/show-categories` route is untouched by that
+slimming.
+
+Bound violations SHALL be rejected with the same validation-error
 mechanics as other category-field violations (the existing 200-char label checks in
 category normalization). The session `GET …/show-categories` response SHALL carry one
 additive top-level boolean, `auto_instructions_present` (true iff any category of the
@@ -35,9 +48,16 @@ extended. These additive shape changes are authorized by this delta. The Compani
 
 #### Scenario: Instruction round-trips through settings save
 - **WHEN** a user saves a button with `auto_instruction` "log every time someone says
-  'slate'" and a dropdown option with its own `auto_instruction`
-- **THEN** a subsequent profile read returns both fields verbatim on that show's
-  category and option entries
+  'slate'" and a dropdown option with its own `auto_instruction` via `PUT /api/profile`
+  `show_updates[*].categories`
+- **THEN** a subsequent read of `GET /api/shows?studio_id=…` or `GET /api/shows/:showId`
+  returns both fields verbatim on that show's category and option entries
+
+#### Scenario: Profile carries no instruction fields to round-trip
+- **WHEN** a client reads `GET /api/profile` after saving instructions
+- **THEN** the `shows[]` entries carry no `categories` and therefore no
+  `auto_instruction` — profile is not the read path for instructions, and its absence there
+  is not a persistence failure
 
 #### Scenario: Over-long instruction is rejected
 - **WHEN** a show update carries an `auto_instruction` longer than 2000 chars
@@ -49,6 +69,7 @@ extended. These additive shape changes are authorized by this delta. The Compani
 - **THEN** `GET …/show-categories` returns `auto_instructions_present: true`, its
   `categories` entries carry no instruction fields, and the Companion categories
   response is byte-shape identical to today
+
 
 ### Requirement: Gated generation endpoint with pre-spawn preconditions
 The server SHALL expose `POST /api/sessions/:sessionId/events/generate` (added to the
@@ -116,6 +137,7 @@ persisted and are reported nowhere in the error body.
 - **THEN** the route responds `502` with the scrubbed generate-failure detail, no raw
   subprocess output, and the already-inserted events remain persisted
 
+
 ### Requirement: Single orchestrator turn over all instructions
 A generation run SHALL execute as **one** CLI turn driven through the existing
 `driveAiTurn` lifecycle (MCP registration → spawn → outcome → no-orphan cleanup; all
@@ -167,6 +189,7 @@ feed's vocabulary):
 - **WHEN** the model logs a hit for a plain BUTTON named "SLATE"
 - **THEN** the created event's `message` is exactly "SLATE", indistinguishable in
   vocabulary from a manual press
+
 
 ### Requirement: Generated events append, bounded and attributable
 
@@ -231,6 +254,7 @@ projection current by the time the route responds (on regenerate, current
 - **WHEN** a run creates 40 events and completes
 - **THEN** `GET /api/sessions` reflects the updated `event_count` without any
   intervening manual write
+
 
 ### Requirement: Optional generate body for regenerate and selection
 
@@ -326,6 +350,7 @@ zero-created success).
   snapshot's still-present rows are deleted in one transaction with one
   `event.changed` broadcast, with `deleted` reporting that count
 
+
 ### Requirement: Events are anchored at transcript timecodes
 `create_event` SHALL accept a category id (which MUST match the run's snapshot of
 instruction-bearing categories and MUST NOT be `internal` in any casing; other ids are
@@ -369,6 +394,7 @@ T**, and generated events sort among themselves in timecode order.
   or with the id `internal`
 - **THEN** the tool returns a validation error, no row is inserted, and the run
   continues
+
 
 ### Requirement: Generation-density transcript rendering
 For a generation-density turn — an event-generation run or a topic-generation one-shot
@@ -416,6 +442,7 @@ turns keep the existing (unpaged) rendering unchanged.
 - **THEN** the rendered body neutralizes it so no body line matches the marker shape,
   and the only marker in the page is the tool's own trailing one
 
+
 ### Requirement: Auto-generation attribution metadata is server-authoritative
 
 The `auto_generated` and `auto_generate_run_id` metadata keys SHALL be
@@ -445,6 +472,7 @@ regenerate's snapshot sweep still removes any predicate-matching row.
 - **THEN** the stored row still matches the auto predicate and remains
   subject to a later regenerate sweep
 
+
 ### Requirement: Anchored event insert is transactional
 
 The `create_event` write path SHALL compute its anchor basis and perform its insert
@@ -468,6 +496,7 @@ snapshot-id exclusion, and exactly one `event.changed` broadcast per successful 
 - **WHEN** the `createAnchoredEvent` RPC body is inspected
 - **THEN** it contains zero `await` expressions and runs inside a single synchronous transaction
 
+
 ### Requirement: The create_event handler is await-free
 
 The `create_event` MCP tool handler SHALL contain zero `await` expressions: the cap
@@ -485,4 +514,3 @@ synchronous prologue or the transactional RPC, authorized by its own delta.
 #### Scenario: Cap holds under concurrent calls
 - **WHEN** multiple `create_event` tool calls arrive concurrently on one generation run at `cap - 1` created events
 - **THEN** at most one insert succeeds and the reported `{created, cap_hit}` never exceeds the configured cap
-

@@ -5,6 +5,8 @@
 Capability scope: the home surface and session-finding affordances — the launch surface on
 `/` plus the navigation rail’s session search and session cards, which render on every route.
 ## Requirements
+
+
 ### Requirement: Branded home launch surface
 The no-session home view (`/`, and any unmatched path rendering the home view) SHALL present a
 launch surface as a **dedicated home route component** rendered in the workspace's place (gate
@@ -38,6 +40,7 @@ is otherwise unchanged — `/` SHALL NOT auto-redirect.
 - **WHEN** the user activates the home New Session action
 - **THEN** the AppShell-owned New Session modal opens (the same flow as the rail's button)
 
+
 ### Requirement: Real rail session search
 The navigation rail SHALL provide a working session search: a visible input that filters the
 Recent and Archived session lists by title (case-insensitive) as the user types, with a clear
@@ -61,6 +64,7 @@ collapsed affordance SHALL be a focusable control activatable by keyboard, and a
   pointer or keyboard
 - **THEN** the rail expands and keyboard focus lands in the visible search input
 
+
 ### Requirement: Session-card status polling is bounded
 
 The recent-sessions list SHALL NOT run per-card session-status pollers for
@@ -71,6 +75,29 @@ beyond the workspace's own. Background cards SHALL derive
 their live indication and timecode from the sessions-list poll's own row
 fields (`is_rolling`, `rolling_timecode`), refreshing at that poll's cadence
 and rendered in the list's `HH:MM:SS` form (no frame field).
+
+The bound above predates the `staleTime` addition and is unaffected by it. What that bound
+amounts to in practice was never written down, and is recorded here rather than restated: at
+most one shared
+`useSessionStatus` poller, whose `refetchInterval` fires at ~1.2 s only while the status it last
+received reports the session rolling or holding a live recording lease, and is off otherwise —
+and, because `refetchIntervalInBackground` is false, off as well while the tab is backgrounded.
+That description is a clarification, not a new obligation; the normative bound remains the
+subscription bound in the paragraph above.
+
+That shared query now additionally declares `staleTime: 2s`, and what that does — and does not —
+do SHALL be read precisely:
+
+- It **does not** change the polling cadence. A `refetchInterval` fires regardless of
+  staleness, so the open session's status keeps refreshing at the same ~1.2 s while
+  rolling/recording, and WebSocket-driven invalidations still bypass staleness.
+- It **only** suppresses a duplicate fetch when a **second observer** subscribes to the
+  same query key shortly after the first. Under the app's global `staleTime: 0` default, the
+  rail card mounting a commit after the workspace counted as a fresh observer of already-fresh
+  data and triggered an immediate extra request. A 2 s window absorbs exactly that.
+
+No claim beyond that is made: the staleTime is not a freshness guarantee, not a cadence
+change, and not a substitute for the subscription bound above, which remains the requirement.
 
 #### Scenario: Background rolling cards add no pollers
 
@@ -90,6 +117,13 @@ and rendered in the list's `HH:MM:SS` form (no frame field).
 #### Scenario: Open-session card stays fresh
 
 - **WHEN** the open session is rolling
-- **THEN** its card's timecode comes from the shared status query at the
-  workspace's existing cadence
+- **THEN** its card's timecode comes from the shared status query, refreshing at the
+  workspace's existing rolling cadence — unaffected by the query's `staleTime`, which
+  gates only observer-triggered fetches, not the interval
 
+#### Scenario: A late same-key observer issues no extra request
+
+- **WHEN** the rail's open-session card subscribes to the session-status query a commit
+  after the workspace has already subscribed to the same key
+- **THEN** no additional status request is issued for that subscription; the card reads the
+  data the workspace's query already holds

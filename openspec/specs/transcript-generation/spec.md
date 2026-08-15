@@ -12,6 +12,8 @@ DeepGram's diarization speaker labels are only consistent within one request, an
 product renders speakers as "Person N" across the whole session. Unconfigured deployments
 keep the frozen `503` unchanged.
 ## Requirements
+
+
 ### Requirement: Configuration-gated generation
 Transcript generation SHALL be gated on a `DEEPGRAM_API_KEY` environment variable. When
 the key is unset or blank, `POST /api/sessions/:sessionId/transcript-words/generate` SHALL
@@ -31,6 +33,7 @@ log line, or stored artifact, and MUST be sent only in the `Authorization` reque
 - **WHEN** `DEEPGRAM_API_KEY` is set and the session has at least one readable audio
   segment
 - **THEN** the endpoint responds `200 {words}` with the generated transcript words
+
 
 ### Requirement: Generation lock status is observable
 The deployment SHALL expose `GET /api/transcript-generation/status` that reports whether
@@ -79,6 +82,7 @@ generation.
 - **THEN** the busy response includes `session_title: null` and still includes `session_id`
   and `started_at`
 
+
 ### Requirement: Single-flight generation
 At most one generation run SHALL execute per process at a time, and at most one per
 session: a generate request arriving while another run is in flight (same or different
@@ -126,10 +130,15 @@ Generation lock status is observable).
   run then succeeds
 - **THEN** the replaced words are persisted and served by subsequent list requests
 
+
 ### Requirement: Segment grouping and concatenation
 The pipeline SHALL classify each audio segment by **probing the blob bytes** (container +
 actual track codec + stream parameters via the muxing library) — the stored `mime_type` is
-a hint only, since upload accepts any client-supplied content type. Segments SHALL be
+a hint only, since the upload path constrains it solely to keep audio responses out of the
+`/api/*` compression filter (any compressible or blank type degrades to `audio/webm`;
+every other client-supplied type, including `application/octet-stream` and `video/*`, is
+stored verbatim), and other segment writers persist their own producer-supplied types. No
+stored `mime_type` therefore identifies the actual codec. Segments SHALL be
 grouped by probed codec + stream parameters — Opus, AAC, PCM families — and, per group,
 concatenated by **packet copy without re-encoding** into a single container the provider
 accepts: Opus groups into WebM, AAC groups into MP4, PCM groups into WAVE. Segments within
@@ -163,6 +172,12 @@ naming the limit.
 - **WHEN** one segment's blob is unparseable (or its probed codec is unsupported) and
   other readable segments exist
 - **THEN** the bad segment is skipped and generation succeeds over the remaining segments
+
+#### Scenario: A clamped mime_type does not determine grouping
+- **WHEN** a segment's stored `mime_type` is `audio/webm` because the upload's declared
+  type was compressible, but its bytes are actually AAC
+- **THEN** the segment is grouped by its probed codec (AAC), not by the stored hint
+
 
 ### Requirement: Timeline remapping of word timestamps
 Each returned word's provider timestamp (time within the combined group file) SHALL be
@@ -254,6 +269,7 @@ end. Anchorless words SHALL still be stored, with empty `session_time` and `star
   (the enrichment requirements' "same anchor chain" language now includes derivation),
   not `null`
 
+
 ### Requirement: Word content, ordering, and provider parameters
 Provider requests SHALL set `diarize=true`, `smart_format=true`, `paragraphs=true`,
 `sentiment=true`, `language=en`, and the configured model; `punctuate` SHALL NOT be set
@@ -274,6 +290,7 @@ ordinal order (it is the complete post-replace list).
 - **THEN** every anchored word's ordinal precedes every anchorless word's ordinal, and
   ordinals are contiguous from 0
 
+
 ### Requirement: Speaker labels
 Diarization SHALL be enabled on provider requests. Each word's `speaker` field SHALL be
 stored as the provider's integer speaker id rendered as a decimal string (`"0"`, `"1"`, …)
@@ -285,6 +302,7 @@ speaker reconciliation.
 - **WHEN** generation stores a word DeepGram attributed to speaker `1`
 - **THEN** the stored `speaker` field is the string `"1"` (rendered by the existing UI as
   "Person 2" at default offset)
+
 
 ### Requirement: Regeneration replaces the transcript atomically
 A successful generation run SHALL replace the session's entire transcript-words set **and
@@ -321,6 +339,7 @@ vice versa).
 - **THEN** the response is `400` with a no-speech-detected detail and the existing words and
   enrichment are untouched
 
+
 ### Requirement: Failure mapping
 When the key is configured: a session with zero audio segment rows SHALL yield `400` with
 an actionable detail; a session whose segments are all skipped (no readable segment
@@ -347,6 +366,7 @@ semantics.
 - **WHEN** DeepGram responds with an error or exceeds the configured timeout
 - **THEN** the endpoint responds `502` with a generic upstream-failure detail and existing
   words are preserved
+
 
 ### Requirement: Enrichment capture from the provider response
 The generation pipeline SHALL capture the paragraph and sentiment enrichment DeepGram
@@ -377,6 +397,7 @@ still succeeds.
   or contain non-numeric scores/indices
 - **THEN** extraction yields empty enrichment for that group, does not throw, and the run
   succeeds with words persisted
+
 
 ### Requirement: Enrichment timeline remapping
 Captured enrichment SHALL be remapped onto the session timeline **per group, using the
@@ -428,6 +449,7 @@ NOT be resolved in a post-pass over the already-merged, already-sorted word set.
 - **THEN** its paragraphs and sentiment segments are stored with NULL session-timeline
   start/end (never silently `0`), and are not dropped
 
+
 ### Requirement: Enrichment persistence and internal read
 A successful generation run SHALL persist the remapped enrichment in the per-session
 database in two tables created idempotently in the per-session schema init (no catalog
@@ -446,9 +468,14 @@ consumer computes any roll-up from the stored segments with the weighting it nee
 Enrichment SHALL be readable through a synchronous SessionHub read
 (`listTranscriptEnrichment`) returning `{ paragraphs, sentiment }` as arrays in ordinal
 order; a session that has never generated (or whose last run produced no enrichment) SHALL
-read as empty arrays, never an error. This is an **in-process read only** — no new HTTP
-route is added, and the frozen `GET /api/sessions/:sessionId/transcript-words` shape is
-unchanged, so this change adds no observable HTTP/WS contract surface.
+read as empty arrays, never an error. This is an **in-process read only** — no HTTP route
+exposes enrichment, and enrichment adds nothing to the transcript-words wire shape.
+
+That wire shape is no longer the shape this capability shipped against: `perf-audit-remediation`
+trimmed it to exactly the seven keys `{id, session_time, speaker, word, start_sec, end_sec,
+ordinal}`, dropping `session_id` and `created_at_utc` and rounding `start_sec`/`end_sec` to
+3 decimals; that shape is specified normatively by the `api-contract-freeze` capability.
+Enrichment SHALL NOT reintroduce either dropped key, and SHALL NOT add fields to that shape.
 
 #### Scenario: Enrichment round-trips through the hub read
 - **WHEN** a generation run persists paragraphs and sentiment segments, and a caller then
@@ -461,10 +488,13 @@ unchanged, so this change adds no observable HTTP/WS contract surface.
 - **THEN** it returns empty `paragraphs` and empty `sentiment` (the tables exist but hold no
   rows), never an error
 
-#### Scenario: The frozen transcript-words shape is unchanged
-- **WHEN** a client calls `GET /api/sessions/:id/transcript-words` after this change
-- **THEN** the response shape is byte-for-byte what it returned before, and no new HTTP
-  route exists — enrichment is read only in-process
+#### Scenario: Enrichment adds nothing to the transcript-words shape
+- **WHEN** a client calls `GET /api/sessions/:id/transcript-words` for a session that has
+  persisted enrichment
+- **THEN** each word object carries exactly the seven keys `id`, `session_time`, `speaker`,
+  `word`, `start_sec`, `end_sec`, and `ordinal` — no paragraph, sentiment, or other
+  enrichment field — and no HTTP route exposes enrichment at all
+
 
 ### Requirement: Enrichment is a generation snapshot
 Persisted enrichment SHALL be treated as a snapshot of the run that produced it, tied to
@@ -477,4 +507,3 @@ subsequent generation run, which replaces it wholesale.
 - **WHEN** a user deletes or edits a transcript word after a generation run
 - **THEN** the persisted paragraphs and sentiment segments are unchanged (and may no longer
   align with the edited words)
-

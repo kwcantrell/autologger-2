@@ -3,26 +3,35 @@
 ## Purpose
 TBD - created by archiving change session-title-suffix. Update Purpose after archive.
 ## Requirements
+
+
 ### Requirement: Show title-suffix preference
 
 Each show SHALL persist a `title_suffix` preference with exactly two allowed
 values: `date` and `episode`. After migration, every **pre-existing** show
 SHALL have `title_suffix: "episode"`. Newly created shows SHALL default to
 `title_suffix: "date"`. Profile show reads and `show_updates` writes SHALL
-round-trip `title_suffix`. The Settings General tab SHALL expose a **Suffix**
-control immediately after **Code** with labels **Date** and **Episode Number**
-mapped to those values. The Settings General tab SHALL NOT expose **Next Ep**.
+round-trip `title_suffix`: it is one of the five keys the **brief** show entry
+`GET /api/profile` emits (`{id, studio_id, name, show_code, title_suffix}`), deliberately
+retained there because an always-loaded surface decides whether to ask for an episode
+number the moment a show is selected. A show's **full** configuration — categories and
+palettes — is not on profile and SHALL be read from `GET /api/shows?studio_id=…` or
+`GET /api/shows/:showId`, which also carry `title_suffix`. The Settings General tab SHALL
+expose a **Suffix** control immediately after **Code** with labels **Date** and **Episode
+Number** mapped to those values. The Settings General tab SHALL NOT expose **Next Ep**.
 
 #### Scenario: Operator sets Date suffix
 
 - **WHEN** the operator selects Suffix = Date for a show and saves profile
-- **THEN** subsequent profile reads for that show include `title_suffix: "date"`
+- **THEN** subsequent profile reads for that show include `title_suffix: "date"` on its
+  brief `shows[]` entry
 
 #### Scenario: Operator sets Episode Number suffix
 
 - **WHEN** the operator selects Suffix = Episode Number for a show and saves
   profile
-- **THEN** subsequent profile reads for that show include `title_suffix: "episode"`
+- **THEN** subsequent profile reads for that show include `title_suffix: "episode"` on its
+  brief `shows[]` entry
 
 #### Scenario: Next Ep is gone from Settings
 
@@ -39,6 +48,7 @@ mapped to those values. The Settings General tab SHALL NOT expose **Next Ep**.
 
 - **WHEN** a show is created after migration
 - **THEN** that show has `title_suffix: "date"` until changed
+
 
 ### Requirement: Create-session title derivation
 
@@ -112,6 +122,7 @@ next-episode counter.
 - **THEN** that title is stored after create-path trim (suffix derivation does
   not run)
 
+
 ### Requirement: New Session modal respects suffix
 
 The New Session modal SHALL omit the Bonus episode control. The episode input
@@ -132,6 +143,7 @@ The modal SHALL NOT display or seed a next-episode default from the show.
 - **THEN** the New Session modal shows an episode field, does not show Bonus,
   and refuses submit while episode is blank
 
+
 ### Requirement: Session meta shows session title instead of Episode N
 
 While a session with a linked show is open, the workspace's session-meta
@@ -147,6 +159,7 @@ heading behavior MAY remain unchanged.
   status includes a show code
 - **THEN** the session-meta line includes `HD_260802` and does not include the
   literal label `Episode`
+
 
 ### Requirement: Wire deck_title is the session name
 
@@ -165,4 +178,3 @@ show code is present.
 
 - **WHEN** session status is fetched for a titled session with a show code
 - **THEN** `deck_title` equals the stored `title`
-

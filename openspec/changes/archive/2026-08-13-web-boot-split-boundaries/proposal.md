@@ -1,10 +1,26 @@
-# Proposal: web-boot-split-boundaries (DRAFT — queued by the settings-modal-mount-cost gate, 2026-08-13)
+# Proposal: web-boot-split-boundaries (SUPERSEDED 2026-08-14 — never gated, work shipped elsewhere)
 
-> Status: draft proposal only — not fact-checked, not paneled, not gated. Queued by the
-> `settings-modal-mount-cost` gate's "two changes, not one" ruling. Remaining artifacts
-> (spec/design/tasks) are deliberately not drafted until this is picked up. **When picked up, the
-> measured audit runs FIRST and selects the boundary list** (gate ruling 2026-08-13) — the numbers
-> below are carried evidence to re-verify, not a pre-decided plan.
+> **SUPERSEDED by `perf-audit-remediation`.** The work this draft proposes was implemented and
+> merged on 2026-08-14 (branch `perf-fixes`, merge `64593f7`) outside the OpenSpec process, at the
+> owner's direction. It shipped the same six boundaries this draft names. The byte table below
+> proved close on its "before" figure and slightly pessimistic on its "after": 578,258 B →
+> 227,295 B predicted here, against 581,762 B → 218,401 B measured (0.6% and 4.1% respectively —
+> the split did marginally better than this scratch build suggested). This draft's panel also predicted the `TeamsRoute` defect —
+> "**`TeamsRoute` 0 B — webpack created no chunk at all**" — whose cause (`OnboardingPanel`
+> statically importing `CreateTeamForm` from `TeamsRoute.tsx`) the implementation independently
+> rediscovered and fixed by extracting the shared leaf.
+>
+> **This file is retained, not deleted, because its risk list is the only pre-implementation
+> analysis of this work that exists.** Three of its eight required mitigations are still open or
+> unverifiable in the shipped tree — the missing busy affordance, the absent cancellation, and the
+> uncharacterized `WorkspaceStatic` seam — and they are carried forward as tracked follow-ups in
+> `perf-audit-remediation`'s `tasks.md` §5 rather than being lost with the draft.
+>
+> Original status line: draft proposal only — not fact-checked, not paneled, not gated. Queued by
+> the `settings-modal-mount-cost` gate's "two changes, not one" ruling. Remaining artifacts
+> (spec/design/tasks) were deliberately never drafted. **When picked up, the measured audit was to
+> run FIRST and select the boundary list** (gate ruling 2026-08-13) — the numbers below are carried
+> evidence, and were in fact re-verified by measurement during the work that superseded this.
 
 ## Why
 
