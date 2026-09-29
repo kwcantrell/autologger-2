@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { NextConfig } from 'next';
 
 // Panel-decided contents (design.md D1/D6, 2026-08-13):
@@ -51,7 +53,20 @@ import type { NextConfig } from 'next';
 //   option flips unlisted origins from warn to 403-block, which is correct for the loopback
 //   posture (LAN testing goes through the prod serve path, not dev). No prod effect:
 //   `blockCrossSite` runs only on the dev router path.
+//
+// - output: 'standalone' + outputFileTracingRoot (containerize-split-images D9, task 3.2):
+//   `next build` additionally emits `.next/standalone` — a self-contained server.js plus a
+//   traced, minimal node_modules — that the split `web` image runs. It only ADDS output:
+//   the single-process bridge still reads `.next` in place and serves identically (pinned by
+//   e2e/serving-contract.spec.ts). `outputFileTracingRoot` is the repo root because npm
+//   workspaces hoist `node_modules` (and the `packages/*` sources) above `web/`; without it
+//   the tracer stops at `web/` and the standalone tree misses hoisted dependencies. It also
+//   nests the output under `standalone/web/` (server.js at `.next/standalone/web/server.js`).
+//   Deliberately NO `assetPrefix`: an ambient ASSET_PREFIX would silently change
+//   single-process builds; asset-host/CDN prefixing belongs to a separate change.
 const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: join(dirname(fileURLToPath(import.meta.url)), '..'),
   reactStrictMode: false,
   allowedDevOrigins: ['127.0.0.1'],
   images: {
