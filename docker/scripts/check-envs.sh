@@ -113,6 +113,12 @@ check_posture_prodlike() { # json label
   jq_ok 7 "$2: api TRUST_PROXY is not \"1\"" "$1" '.services.api.environment.TRUST_PROXY=="1"'
 }
 
+# Invariant 6 (dev, stage): no service uses the host network namespace or runs privileged.
+check_no_host_priv() { # json label
+  jq_ok 6 "$2: a service uses network_mode host or privileged: true" "$1" \
+    '[.services[]|select(.network_mode=="host" or .privileged==true)]|length==0'
+}
+
 # Invariant 9: a file resolves (no -p) to its declared project name.
 check_name() { # json label expected
   jq_ok 9 "$2: resolves without -p to a project name other than \"$3\"" "$1" '.name==$n' --arg n "$3"
@@ -174,10 +180,12 @@ check_dev() {
   jq_ok 6 "dev: a gate GATE_PORT is not exactly \${DEV_PORT:-8787} / \${DEV_COMPANION_PORT:-8000}, or another gate env value is not a literal" "$R" \
     '(.services["app-gate"].environment|.GATE_PORT=="${DEV_PORT:-8787}" and ([to_entries[]|select(.key!="GATE_PORT")|.value|contains("$")]|any|not))
      and (.services["companion-gate"].environment|.GATE_PORT=="${DEV_COMPANION_PORT:-8000}" and ([to_entries[]|select(.key!="GATE_PORT")|.value|contains("$")]|any|not))'
-  jq_ok 6 "dev: companion command does not carry --admin-address 127.0.0.1 as its last --admin-address" "$D" \
-    '.services.companion.command as $c
-     | ([range(0;($c|length)-1)|select($c[.]=="--admin-address")]|last) as $i
-     | $i!=null and $c[$i+1]=="127.0.0.1"'
+  jq_ok 6 "dev: companion command is not exactly [\"--admin-address\",\"127.0.0.1\"]" "$D" \
+    '.services.companion.command==["--admin-address","127.0.0.1"]'
+  # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
+  jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate" "$D" \
+    '(.services|keys|sort)==["app","app-gate","companion","companion-gate"]'
+  check_no_host_priv "$D" dev
 
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
@@ -256,6 +264,7 @@ check_stage() {
   S=$TMP/stage.json; SC=$TMP/stage-c.json; SR=$TMP/stage-raw.json
 
   check_name "$S" stage autologger-stage                               # 9
+  check_no_host_priv "$S" stage                                        # 6
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -274,11 +283,17 @@ check_stage() {
   jq_ok 2 "stage: STAGE_PORT does not drive both the published port and PUBLIC_BASE_URL" "$SC" \
     '.services.router.ports[0].published=="18788" and .services.api.environment.PUBLIC_BASE_URL=="http://localhost:18788"'
 
-  # 8: stage mounts no host path under the home directory (the repo's own docker/Caddyfile is
-  # the one bind, and it lives under the repo root, which may itself be under $HOME).
-  jq_ok 8 "stage: a bind mount sources a host path under the home directory (outside the repo), or from a .claude path" "$SC" \
+  # 8: stage mounts no host path that is, contains or sits under the home directory (outside the
+  # repo), and none from a .claude path. Evaluated per bind source: "/" and any ancestor of
+  # $HOME (a bind of /home or / exposes ~/.claude), $HOME itself, anything below $HOME that is
+  # not under the repo root (the repo's own docker/Caddyfile is the one bind, and the repo root
+  # may itself be under $HOME).
+  jq_ok 8 "stage: a bind mount sources / , the home directory or one of its ancestors, a host path under the home directory (outside the repo), or a .claude path" "$SC" \
     '[.services[]|(.volumes//[])[]|select(.type=="bind")|.source]
-     | all((startswith($home+"/") and (startswith($root+"/")|not) | not) and (contains("/.claude")|not))'
+     | all(. as $s
+           | ($s=="/" or $s==$home or ($home|startswith($s+"/"))
+              or ($s|startswith($home+"/")) and ($s|startswith($root+"/")|not)
+              or ($s|contains("/.claude")))|not)'
   jq_ok 8 "stage: /home/node is not a named volume (stage must keep its own login, not the host ~/.claude)" "$SC" \
     '.services.api.volumes|map(select(.target=="/home/node"))|length==1 and .[0].type=="volume"'
 
