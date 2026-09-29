@@ -81,7 +81,9 @@ creds_exists() {
 creds_inode() {
   c=autologger-dev-app
   [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || true)" = true ] || return 0
-  hi=$(stat -c %i "$HOME/.claude/.credentials.json" 2>/dev/null || true)
+  # TEST-ONLY override (default = the real host file): lets the mismatch branch be exercised
+  # against a scratch file without touching ~/.claude/.credentials.json. Stat only, never read.
+  hi=$(stat -c %i "${AUTOLOGGER_TEST_HOST_CREDS:-$HOME/.claude/.credentials.json}" 2>/dev/null || true)
   ci=$(docker exec "$c" stat -c %i /home/node/.claude/.credentials.json 2>/dev/null || true)
   [ -n "$hi" ] && [ -n "$ci" ] || return 0
   if [ "$hi" != "$ci" ]; then
