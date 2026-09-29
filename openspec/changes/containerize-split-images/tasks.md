@@ -27,19 +27,19 @@
 
 ## 3. Web standalone output + server runtime dependency (gate: typecheck + test + e2e)
 
-- [ ] 3.1 Confirm that `e2e/serving-contract.spec.ts` and `smoke.spec.ts` cover the
+- [x] 3.1 Confirm that `e2e/serving-contract.spec.ts` and `smoke.spec.ts` cover the
       single-process shell, asset, trailing-slash, and non-GET dispositions. Add any
       missing case and see it pass on the unmodified config.
-- [ ] 3.2 In `web/next.config.ts`, set `output: 'standalone'` and `outputFileTracingRoot` to
+- [x] 3.2 In `web/next.config.ts`, set `output: 'standalone'` and `outputFileTracingRoot` to
       the repo root. Do not set an `assetPrefix`. Document both in the file's existing
       decision-comment style.
-- [ ] 3.3 In `server/package.json`, move `tsx` from `devDependencies` to `dependencies`, then
+- [x] 3.3 In `server/package.json`, move `tsx` from `devDependencies` to `dependencies`, then
       refresh `package-lock.json`. Diff the lockfile: only the `tsx`-family `dev` flags may
       change.
-- [ ] 3.4 Run `npm run build`. Confirm `web/.next/standalone/web/server.js` exists, and that
+- [x] 3.4 Run `npm run build`. Confirm `web/.next/standalone/web/server.js` exists, and that
       with `static` and `public` copied in it serves `/`, `/teams`, `/sessions/abc`,
       `/admin/users`, and a `/_next/static/*` asset.
-- [ ] 3.5 Run `npm run typecheck`, `npm test`, `npm run e2e` (chromium + login-gate), and
+- [x] 3.5 Run `npm run typecheck`, `npm test`, `npm run e2e` (chromium + login-gate), and
       `npm run e2e:visual`. The single-process path must be unchanged.
 
 ## 4. Images (security posture; phase review required)

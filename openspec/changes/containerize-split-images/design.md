@@ -182,7 +182,8 @@ Why rule 1 exists: WHATWG URL normalization turns `/api/companion/%2e%2e/session
 ### D3. Keep `tsx` as the `api` runtime by moving it to `dependencies`
 Moving `tsx` to `dependencies` means `npm ci --omit=dev` keeps it. The container invokes it
 by absolute path (`/app/node_modules/.bin/tsx`), because it is hoisted to the root and is not
-on `PATH`. `esbuild` is already installed transitively.
+on `PATH`. `esbuild` and its `@esbuild/*` platform packages were dev-only in the lockfile. They become
+production-kept together with `tsx` (apply, task 3.3: 29 `dev` flags removed).
 - *Alternative: bundle the server with esbuild.* Rejected for now. The resolution risk is
   real: source-only `packages/*` exports, the SDK binary lookup, and the native
   `better-sqlite3`.
