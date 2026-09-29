@@ -150,14 +150,14 @@
 
 ## 5. Dev Companion
 
-- [ ] 5.1 Add `docker/companion.Dockerfile` and `docker/companion.Dockerfile.dockerignore`
+- [x] 5.1 Add `docker/companion.Dockerfile` and `docker/companion.Dockerfile.dockerignore`
       (allowlist form), per D9. Use the digest-pinned `v4.3.4` base. In the build, assert
       that:
       - `runtime.apiVersion` matches `1.14.`;
       - `/module/autologger/node_modules` exists;
       - no file outside the allowlist entered the context (a `find` listing in the build
         log).
-- [ ] 5.2 In `compose.dev.yaml`, add:
+- [x] 5.2 In `compose.dev.yaml`, add:
       - service `companion`: `dev` network, `dev-companion` volume, `cap_drop`,
         `ports: ["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"]`;
       - service `companion-gate`: `network_mode: service:companion`, `LISTEN_PORT=8001`,

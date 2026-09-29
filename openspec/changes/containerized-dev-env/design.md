@@ -596,3 +596,10 @@ Current state). The remaining hits are deliberate negations or history.
   - **detection:** `dev-up` and `check dev` warn when the host and container inodes differ (task 7.2);
   - **documented recovery:** host `claude` re-login, then `make dev-restart` (task 8.1).
 - **Follow-up (separate change):** a `claude setup-token` long-lived token passed as `CLAUDE_CODE_OAUTH_TOKEN`. This needs the AI chat and AI v2 child-env allowlists (and the ai-runtime spec) widened for that one variable. Once it lands, the dev credentials-file mount can be removed.
+
+**2026-09-29 — phase-5 review, owner decision.**
+- **Finding:** I1, Companion's ungated admin UI reachable from the host via the bridge IP.
+- **Fix:** fixed in `0b8e912` with `--admin-address 127.0.0.1`. This was demonstrated red then green, and the mutation was re-executed by the re-reviewer.
+- **Satellite ports 16622/16623:** these are hard-bound on `0.0.0.0` in Companion 4.3.4 and stay host-reachable via the container IP (not from the LAN). The owner **accepted this as a residual**. It was rated Low: presses reach only the dev `/api/companion/log|transport|command`, with no spend and no secrets.
+- **Rejected alternative:** an isolated-gateway network plus a forwarder container, proven live by the reviewer. It was rejected because it cuts Companion's internet and LAN access and adds a container.
+- **Also residual:** Companion sends Sentry error reports by default. Only the user-config key `detailed_data_collection` controls this, and it is not seeded. Documented in 8.1.
