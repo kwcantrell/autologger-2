@@ -159,7 +159,6 @@ const PRIMARY_DASHBOARD_ID = 'primary';
  * bypassing per-user studio scoping, so only `user === null &&
  * apiTokenAuth` is refused.
  *
- * Returns the (possibly still-null, for the permitted anonymous case)
  * NOTE (containerize-split-images): `API_TOKEN` is now scoped to `/api/companion/*` in
  * `authContext`, so `apiTokenAuth` is never true on the AI v2 routes and the refusal below is
  * unreachable over HTTP. It is kept as defence in depth in case the scope ever widens.

@@ -978,7 +978,7 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
 - **`web` and `api` sit on separate networks** and only `router` joins both, so `web` cannot
   reach `api`. `api` has a fixed `container_name: autologger-api`, so
   `docker compose up --scale api=2` is refused (the SessionHub is single-process).
-- **The router never authors a response** (except `abort`, which writes nothing): every
+- **The router never authors a response** (except `abort`, which writes nothing, and the four known router edge cases listed below): every
   `404`/status the single-process server pins is still produced by the server. Rules, in
   order, on the *raw, escaped, case-sensitive* request path: (1) traversal-shaped targets
   (`.`/`..` segments in any encoding, empty segments, encoded `/` or `\` under `/api`/`/auth`)
