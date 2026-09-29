@@ -617,3 +617,35 @@ The `make-guards.sh envfile` guard now checks the *resolved* config (project nam
 - a bind of `/var/run/docker.sock`.
 
 Dev does enforce an exact four-service set, plus no `network_mode: host` and no `privileged`.
+
+**2026-09-29 — whole-branch audit (task 9.5).** Result: PASS, with 0 Critical, 0 Important and 9 Minor findings. All nine Minors were fixed in `dcac51c` and `f30298e`, and a scoped re-review confirmed the fixes, with red/green re-executed for M5, M6 and M8.
+- **Frozen HTTP/WS surface:** no delta. No TS changed, and the prod router adapted config is byte-identical.
+- **Seams:** S1 and S2 hold.
+- **Tree hygiene:** 23 files. The only flag was `README.md` at 141,957 B; it was already 127,784 B at the base, so this was accepted.
+
+Residuals to carry into the archive:
+- The credentials rename-on-refresh path was never exercised (detector and recovery are documented).
+- Companion Satellite ports 16622/16623 are reachable from the host through the container IP.
+- Companion sends Sentry error reports by default.
+- The context-audit listing is printed only on uncached builds.
+- N2: no stage service or capability allowlist.
+- The port guard rejects quoted values.
+- `STAGE_PORT=80` is allowed.
+- DeepGram-configured transcription and the Google sign-ins are owner-verified only (task 9.4).
+- Bind normalization is lexical; symlinks are not resolved.
+
+Follow-ups:
+- A `claude setup-token` path to replace the credentials bind; this needs a server child-env allowlist change.
+- An isolated-gateway Companion network.
+- Seeding `detailed_data_collection`.
+- The Companion "Presets reference action definitions" startup warning.
+- A binfmt/amd64 builder before the first `prod-push`.
+- Letting `e2e:container` run alongside a live prod stack.
+
+Invariants the merge must not disturb:
+- The Caddyfile adapt stays byte-equal to the baseline.
+- `compose.yaml` never sets `ROUTER_FRONT_GW` or `ROUTER_BACK_GW`.
+- `compose-env.sh` stays the single source of compose invocations.
+- Dev posture pins stay literals.
+- The only rw bind is `~/.claude/.credentials.json`.
+- `server/data` is never mounted.
