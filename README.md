@@ -1475,9 +1475,16 @@ compose config, not just the file: the project name must be `autologger-dev`/`au
 every published port must be on `127.0.0.1`, a plain number 1-65535, and not 8080 (prod's router
 port). So a shell `DEV_PORT=...`/`STAGE_PORT=...` counts as much as a file entry, port values must
 be plain numbers (no quotes, ranges or leading zeros), and any `COMPOSE_*` key in an env file
-is rejected (they would re-target compose, e.g. onto prod's project). `COMPOSE_*` variables
-in your shell are stripped from the environment the Makefile hands compose. `dev-check` and
-`stage-claude-login` skip this guard.
+is rejected (they would re-target compose, e.g. onto prod's project). Dev additionally refuses
+ports 80 and 443 (browsers omit the default port from `Host`/`Origin`, so the dev gate would
+reject every request); stage has no Host allowlist, so `STAGE_PORT=80` is accepted. The shell
+`COMPOSE_*` variables that re-target the project, files or env file (`COMPOSE_PROJECT_NAME`,
+`COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROFILES`, `COMPOSE_ENV_FILES`,
+`COMPOSE_DISABLE_ENV_FILE`) are stripped from the environment the Makefile hands compose. The
+env-file guard is run by the dev and stage `build`, `up`, `down` and `logs` targets and by `dev-restart` and `dev-shell`;
+`check`, `dev-check`, `stage-claude-login`, the `prod-*` targets and `help` do not run
+it (`dev-reset`/`stage-reset` do their own `CONFIRM=yes` and project-name check, and the `prod-*`
+targets have their own git and tag guards).
 
 ### Dev posture
 
@@ -1524,8 +1531,9 @@ Accepted residuals:
 
 Detection: `make dev-up` and `make dev-check` print a warning when the host file's inode differs
 from the one the running container sees (the host file was replaced, so the container holds a
-stale one). Recovery: log in again with host `claude` (`claude auth login`), then
-`make dev-restart` (restarting the container re-binds the current file; `make dev-down &&
+stale one). Recovery: if the host is logged out, run `claude auth login` on the host (or plain
+`claude` then `/login`; check which the installed CLI supports with `claude --help` inside the dev
+image), then `make dev-restart` (restarting the container re-binds the current file; `make dev-down &&
 make dev-up` also does). The planned follow-up is a `claude setup-token` long-lived token
 (`CLAUDE_CODE_OAUTH_TOKEN`), which needs a server-side allowlist change and would remove this
 mount. Resets never touch the host file.
