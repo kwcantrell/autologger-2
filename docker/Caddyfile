@@ -13,6 +13,12 @@
 #     so /sessions/a%2F, /API/x and %2e%2e traversal would flip layers. Every rule below matches
 #     {http.request.uri} (raw, escaped, case-preserved, includes ?query) with CEL .matches()
 #     (RE2, case-sensitive). `reverse_proxy` forwards the request-target byte for byte.
+#   * Every reverse_proxy sets `transport http { compression off }`. Caddy's default upstream
+#     transport (Go net/http) silently adds `Accept-Encoding: gzip` to requests that had none and
+#     transparently DEcompresses the answer, which turns an identity `Content-Length` response
+#     into a chunked one and makes the api compress work nobody asked for. With compression off
+#     the request's Accept-Encoding and the upstream's Content-Encoding/Content-Length/Vary pass
+#     through exactly as emitted (found by the container e2e encoding-parity test, task 5.4).
 #   * Site-level `header { -Server -Via }`: reverse_proxy adds `Via`, and header_down cannot
 #     remove it; the router must add no headers.
 #
@@ -66,6 +72,9 @@
 		rewrite * /__autologger_rejected
 		reverse_proxy api:8787 {
 			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
 		}
 	}
 
@@ -85,6 +94,9 @@
 	handle @apiPrefix {
 		reverse_proxy api:8787 {
 			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
 		}
 	}
 
@@ -93,6 +105,9 @@
 	handle @nonRead {
 		reverse_proxy api:8787 {
 			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
 		}
 	}
 
@@ -103,11 +118,18 @@
 	handle @trailing {
 		reverse_proxy api:8787 {
 			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
 		}
 	}
 
 	# ---- Rule 6: everything else -> web ----------------------------------------------------------
 	handle {
-		reverse_proxy web:3000
+		reverse_proxy web:3000 {
+			transport http {
+				compression off
+			}
+		}
 	}
 }
