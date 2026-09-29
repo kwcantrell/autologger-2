@@ -1187,10 +1187,18 @@ single consistent snapshot with SQLite's online-backup API, then runs `PRAGMA in
 and a per-table row-count comparison on the copy, and swaps it in atomically.
 
 ```bash
-VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   # usually needs sudo to read
-npx tsx server/scripts/copyDataDir.ts "$VOL" /backups/autologger-$(date +%F) [--overwrite] [--dry-run]
-sudo rsync -a --delete "$VOL/blobs/" /backups/autologger-$(date +%F)/blobs/    # blobs are plain files
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   # root-only path
+BK=/backups/autologger-$(date +%F)
+# $VOL is unreadable to your user, so the copier runs as root; root's PATH usually lacks node
+sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$VOL" "$BK" [--overwrite] [--dry-run]
+sudo rsync -a --delete "$VOL/blobs/" "$BK/blobs/"     # blobs are plain files
 ```
+
+Run it from the repo checkout (`sudo` there needs the checkout's `node_modules` readable, which
+it is). The backup does **not** need `api` stopped: the source is opened read-only through the
+online-backup API, so a live server is fine. Only `--overwrite` onto a *destination* that a
+process has open needs that process stopped (see below). Files the copier writes are owned by
+root; that is fine for a backup.
 
 Exit codes: `0` ok, `1` copy or verification failure (integrity, row counts, corrupt DB), `2`
 usage error or a refused unsafe invocation (destination equals/nests with the source, missing
@@ -1229,8 +1237,12 @@ sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
 ```
 
 **2. Pre-flight on loopback.** `docker compose up -d`, then on `127.0.0.1:${ROUTER_PORT}` run
-`npm run e2e:container` (separate throwaway stack) or your own probes, and a Google sign-in
-(the session cookie carries `Secure`). Rehearse the membership bootstrap (below). Then
+`npm run e2e:container` (separate throwaway stack) or your own probes. **Do not attempt a
+Google sign-in on loopback:** the OAuth callback always returns to `PUBLIC_BASE_URL`, so it can
+only complete through the public origin. The sign-in and `Secure` session-cookie check happens
+only in the outside verification after the Pangolin repoint. Rehearse the membership bootstrap
+(below); users who have never signed in do not exist in the catalog yet and are reported
+`PENDING` (exit `3`), so the bootstrap is re-run after their first sign-in. Then
 `docker compose stop api` before the window and keep it stopped until step 3e: a running `api`
 leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 
@@ -1238,19 +1250,32 @@ leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 
 ```bash
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
-# b. on OLD, from its checkout, WAL-safe copy of every DB into a staging directory
-ssh OLD 'cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts OLD_DATA /srv/stage-final'
-# c. ship the verified DB copies over the seeded ones (api is stopped). --delete drops the
-#    pre-flight api run's stale -wal/-shm and pre-flight-created sessions (defence in depth: the
-#    staged copy never contains sidecars); blobs/ and tmp/ are excluded (protected from --delete)
-sudo rsync -a --delete --chown=1000:1000 --exclude /blobs --exclude /tmp OLD:/srv/stage-final/ "$VOL/"
+# b. on OLD, from its checkout, WAL-safe copy of every DB into a FRESH staging directory
+STAGE=$(ssh OLDHOST 'mktemp -d')          # fresh and empty: never reuse a previous stage
+ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE"
+# c. bring the stage here as your user (no root ssh agent needed), into a fresh local dir, then
+#    let the copier replace the volume's DBs. It refuses an in-use destination DB, verifies
+#    integrity + row counts, and removes each replaced DB's stale -wal/-shm/-journal.
+LSTAGE=$(mktemp -d)
+rsync -a OLDHOST:"$STAGE"/ "$LSTAGE"/
+sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$LSTAGE" "$VOL" --overwrite
+#    the copier never deletes: drop volume DBs (and sidecars) for sessions deleted since the
+#    pre-seed, i.e. present in the volume but absent from the stage
+sudo env VOL="$VOL" LSTAGE="$LSTAGE" bash -c 'set -eu
+  comm -13 <(cd "$LSTAGE" && find . -name "*.db" | sort) \
+           <(cd "$VOL" && find . -name "*.db" -not -path "./blobs/*" | sort) |
+  while read -r f; do echo "removing stale $f"
+    rm -f "${VOL:?}/${f:?}" "${VOL:?}/${f:?}-wal" "${VOL:?}/${f:?}-shm" "${VOL:?}/${f:?}-journal"; done'
+#    the copier ran as root: give the DB files back to uid 1000 (blobs/ untouched here)
+sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown 1000:1000 {} +
 # d. blob delta, mirroring deletions
-sudo rsync -a --delete --chown=1000:1000 OLD:OLD_DATA/blobs/ "$VOL/blobs/"
-# e. integrity + row-count: the copier on OLD already ran integrity_check and per-table row counts
-#    (copy vs the source snapshot) before exiting 0. Re-check the shipped files (needs the
-#    sqlite3 CLI) before starting:
-for f in "$VOL"/catalog.db "$VOL"/sessions/*.db; do
-  [ "$(sudo sqlite3 "file:$f?mode=ro" 'PRAGMA integrity_check')" = ok ] || echo "BAD $f"; done
+sudo rsync -a --delete --chown=1000:1000 OLDHOST:/path/to/DATA_DIR/blobs/ "$VOL/blobs/"
+# e. integrity: the copier already ran integrity_check + per-table row counts (copy vs source)
+#    before exiting 0. Re-check the shipped files, entirely as root (needs the sqlite3 CLI);
+#    prints "<result>  <file>" per DB and exits non-zero if any is not "ok":
+sudo sh -c 'rc=0; for f in "$1"/catalog.db "$1"/sessions/*.db; do
+    r=$(sqlite3 "file:$f?mode=ro" "PRAGMA integrity_check" 2>&1 | head -1)
+    echo "$r  $f"; [ "$r" = ok ] || rc=1; done; exit $rc' _ "$VOL" || echo "INTEGRITY FAILURE - do not start api"
 docker compose up -d api
 # f. re-run the membership bootstrap (below)
 # g. repoint the Pangolin target at Newt -> 127.0.0.1:${ROUTER_PORT}
@@ -1258,10 +1283,29 @@ docker compose up -d api
 # i. reconfigure the Companion installs with API_TOKEN
 ```
 
+Notes on step 3c:
+
+- **Why not `rsync --delete` onto `$VOL`?** A `--delete` on the volume root can delete anything
+  the exclude list forgets (`tmp/`, `blobs/`, future top-level entries). The copier only ever
+  writes `*.db` files, and the explicit prune above removes only `*.db` (plus their sidecars)
+  that the stage lacks, so nothing else in the volume can be touched. Starting from a fresh
+  `mktemp -d` stage matters: a leftover stage would resurrect sessions deleted since.
+- **A multi-DB run is not atomic.** Each DB is swapped in individually; if one fails
+  verification the run exits `1` with the earlier DBs already replaced. Fix the cause and re-run
+  the same command with `--overwrite` (it is idempotent); do not start `api` until it exits `0`
+  and the prune and the integrity check in step 3e have run.
+- **`sudo rsync … OLDHOST:` may not carry your ssh agent.** Under `sudo` `SSH_AUTH_SOCK` is
+  dropped by default; either `sudo -E` (or `sudo env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" …`), or, as
+  above, rsync as your own user into a user-owned directory and let root copy locally. The blob
+  delta in step 3d runs as root and needs the agent forwarded this way (or rsync the blobs into a
+  user-owned directory first, then `sudo rsync -a --delete --chown=1000:1000` from there).
+
 Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companion `state`,
 `log`, `command`; traversal through a bypass path (`/api/companion/%2e%2e/sessions/x`) returns
 `404`; a non-Companion `/api` path returns the Pangolin SSO `302`; a live session WebSocket
-connects; a forged `X-Forwarded-For` is not adopted.
+connects; a forged `X-Forwarded-For` is not adopted; and a **Google sign-in through the public
+origin** (the first place the callback and the `Secure` session cookie can be proven). Users
+who have not signed in yet are `PENDING`; re-run the membership bootstrap after they do.
 
 ### Membership bootstrap (re-runnable)
 
@@ -1269,7 +1313,8 @@ connects; a forged `X-Forwarded-For` is not adopted.
 memberships JSON file (`{ "teams": [{id, display_name}], "memberships": [{email, team,
 role?}] }`; not committed). It drives only the existing `ADMIN_TOKEN` endpoints and is
 idempotent: existing teams are skipped, a member already in a team with no `role` given is a
-no-op, a given `role` is re-applied.
+no-op, a given `role` is re-applied (re-POSTed, so it **overrides a role changed in the UI**
+since the last run; omit `role` for members whose role should be left alone).
 
 ```bash
 ADMIN_TOKEN=<from .env> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
