@@ -126,8 +126,12 @@ services:
   # Dev-only Bitfocus Companion carrying this repo's module (design D9). `companion` owns the
   # network namespace and is the only service declaring `ports:` (literal 127.0.0.1);
   # `companion-gate` joins it and is the only listener on its external interfaces. Companion
-  # itself binds ::8000 inside the namespace (its entrypoint hard-codes it): reachable ungated
-  # only from the dev network (accepted D9 residual). NEVER publish 8000 directly.
+  # itself is told `--admin-address 127.0.0.1` (via `command:`; the entrypoint's own `--admin-address ::`
+  # comes first and the appended flag wins), so the ungated admin UI listens on loopback inside
+  # the namespace and only the gate sidecar can reach it. Residual: Satellite TCP 16622 / WS 16623
+  # are hard-coded 0.0.0.0 listeners in 4.3.4 with no flag/env/config off-switch, so they stay
+  # reachable (ungated) from the host via the bridge IP and from the dev network. NEVER publish
+  # 8000, 16622 or 16623.
   companion:
     build:
       context: .
@@ -136,6 +140,7 @@ services:
     container_name: autologger-dev-companion
     restart: unless-stopped
     init: true
+    command: ["--admin-address", "127.0.0.1"]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     ports:

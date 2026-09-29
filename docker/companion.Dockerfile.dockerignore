@@ -11,3 +11,9 @@
 **/pkg
 **/*.tgz
 **/.env*
+# Secret-shaped files that could sit inside companion/ (companion/.gitignore is not needed by the build).
+**/.npmrc
+**/*.pem
+**/*.key
+**/id_*
+**/.git*

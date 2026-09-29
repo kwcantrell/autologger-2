@@ -5,7 +5,7 @@
 ARG NODE_IMAGE=node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
 
 # ---- context-audit: prints every file that entered the build context (evidence, not shipped) ----
-FROM busybox:1.37 AS context-audit
+FROM ${NODE_IMAGE} AS context-audit
 COPY . /ctx
 RUN set -eu; find /ctx -type f | sort > /ctx-listing.txt; \
     echo "=== build-context listing ==="; cat /ctx-listing.txt; echo "=== end listing ==="; \

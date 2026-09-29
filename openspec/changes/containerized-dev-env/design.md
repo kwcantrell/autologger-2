@@ -359,7 +359,8 @@ The build uses `docker/companion.Dockerfile.dockerignore`, which *replaces* the 
 `.dockerignore`. It is written in allowlist form:
 1. `*`
 2. `!package.json`, `!package-lock.json`, `!companion/**`
-3. re-exclude `**/node_modules`, `**/dist`, `**/pkg`, `**/*.tgz`, `**/.env*`
+3. re-exclude `**/node_modules`, `**/dist`, `**/pkg`, `**/*.tgz`, `**/.env*`, `**/.npmrc`, `**/*.pem`,
+   `**/*.key`, `**/id_*`, `**/.git*`
 
 Service settings:
 - It runs as `companion`, with `cap_drop: [ALL]` and `no-new-privileges`, on the `dev`
@@ -370,9 +371,14 @@ Service settings:
   and applies the same Origin rule.
 - `companion` declares `127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001`.
 
-Companion itself still binds `::`:8000 inside its namespace. The admin UI is therefore
-reachable ungated from the dev network, which holds only `app` and `companion`. It is not
-reachable from the host or the LAN.
+`companion` sets `command: ["--admin-address", "127.0.0.1"]`: the image entrypoint passes its own
+`--admin-address ::` first and appends `"$@"`, and the later flag wins (verified: from the host,
+`curl -H 'Host: evil.example' http://<container-ip>:8000/` is 200 without it and refused with it). The
+ungated admin UI therefore listens on loopback inside the namespace, reachable only by the gate sidecar.
+Residual (phase-5 fix wave): Companion 4.3.4's Satellite TCP `16622` and WebSocket `16623` listeners are
+hard-coded on `0.0.0.0` with no CLI flag, env var, or user-config key to disable or rebind them
+(`main.js --help` lists none; the services are constructed without an enable key). They stay reachable
+ungated from the dev network and, via the fixed bridge IP, from the host. They are never published.
 
 The base URL to enter is `http://app:8787`, i.e. the app's gate. The gate allows
 `Host: app:8787`. No token is needed, since dev is anonymous.
@@ -556,7 +562,7 @@ and Companion premises on scratch copies and upstream sources.
 - `e2e:visual` stays in the final gates per `openspec/config.yaml` despite the host-baseline
   failure (scope m4). Counts are compared to main.
 - A pattern-rule Makefile (scope m2) is optional. Explicit targets are kept.
-- The Companion admin UI is reachable ungated from inside the dev network (D9).
+- The Companion Satellite ports 16622/16623 are reachable ungated from the dev network and the host bridge IP; no off-switch in 4.3.4 (D9).
 
 **2026-09-29 — post-gate consistency read** (light tier; proposal.md, design.md, spec.md, and tasks.md read). The stale-language scan was clean. Ten findings, all fixed:
 1. Task reference corrected from 4.4 to 4.5.
