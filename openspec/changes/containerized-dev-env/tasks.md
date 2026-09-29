@@ -251,7 +251,7 @@
 
 ## 8. Docs
 
-- [ ] 8.1 Add a README "Local container environments" section, linked from "Container
+- [x] 8.1 Add a README "Local container environments" section, linked from "Container
       deployment". It covers:
       - the target table, and a dev/stage/prod differences table;
       - the dev posture: the loopback bind plus gate, the reach, and "never publish the
@@ -265,7 +265,7 @@
       - stage OAuth client setup and "use localhost";
       - Linux-only file watching;
       - protecting `server/data`.
-- [ ] 8.2 CLAUDE.md: add one line under Setup & commands pointing at `make help` and the
+- [x] 8.2 CLAUDE.md: add one line under Setup & commands pointing at `make help` and the
       README section.
 
 ## 9. Final gates
