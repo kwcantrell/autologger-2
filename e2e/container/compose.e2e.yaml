@@ -1,0 +1,15 @@
+# TEST-ONLY override for the `container` Playwright project (containerize-split-images, 5.4).
+# NEVER used for deployment; run.sh in e2e/container/ layers it over compose.yaml.
+#
+#   * env_file is redirected to a throwaway file the runner generates (so no repo-root .env is
+#     needed and no real secret is touched).
+#   * IP_ALLOWLIST is exposed as an interpolated variable so the forged-X-Forwarded-For test
+#     can recreate `api` with an allowlist that makes the server print the client IP it
+#     resolved (the 403 body names it). It defaults to empty (disabled), i.e. identical to
+#     production behaviour. REQUIRE_LOGIN/TRUST_PROXY/COOKIE_SECURE stay as compose.yaml has them.
+services:
+  api:
+    env_file: !override
+      - ${E2E_ENV_FILE:?path to the throwaway env file}
+    environment:
+      IP_ALLOWLIST: ${E2E_IP_ALLOWLIST:-}
