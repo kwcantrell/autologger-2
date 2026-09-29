@@ -882,7 +882,7 @@ authoritative, fully-commented list (including the config-gate keys below); copy
 | `IP_ALLOWLIST` | *(empty = off)* | CSV of allowed IPs/CIDRs (v4 + v6), enforced **before** auth. Empty disables it; a non-matching client gets `403`. A network-origin gate, orthogonal to `REQUIRE_LOGIN`. |
 | `TRUST_PROXY` | `0` | When `1`, read the client IP from the first `X-Forwarded-For` hop (and `X-Forwarded-Proto` for secure-cookie decisions) instead of the raw socket. Enable **only** behind a proxy you control that overwrites `X-Forwarded-For` — otherwise the header is spoofable and can bypass `IP_ALLOWLIST`. |
 | `COOKIE_SECURE` | *(auto)* | Force the session cookie's `Secure` flag on/off. Blank = auto: secure when the request itself arrived over HTTPS, **or** when `TRUST_PROXY=1` and the proxy set `X-Forwarded-Proto: https`. |
-| `API_TOKEN` | *(empty)* | Device/machine bearer token. A request with `Authorization: Bearer <API_TOKEN>` passes the login gate — this is what the Companion module and other headless clients use. |
+| `API_TOKEN` | *(empty)* | Companion machine bearer token. A request with `Authorization: Bearer <API_TOKEN>` passes the login gate **only on `/api/companion/*`**; everywhere else (other `/api/*` routes, the session WebSocket, `/auth/*`, `/api/admin/*`) it is ignored and the request is handled as if it carried no credential (`/api/admin/*` keeps its own `ADMIN_TOKEN`). The Companion module uses it. |
 | `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
 | `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth credentials. OAuth is available only when both are set **and** `PUBLIC_BASE_URL` is set. |
@@ -895,7 +895,7 @@ transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
 proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, `REQUIRE_LOGIN=1`, and an
-`API_TOKEN` for headless clients — optionally an `IP_ALLOWLIST` to further restrict access.
+`API_TOKEN` for the Companion module (scoped to `/api/companion/*`) — optionally an `IP_ALLOWLIST` to further restrict access.
 
 ## Known parity windows (spec)
 
@@ -931,7 +931,8 @@ B=http://127.0.0.1:8787
 # Login gate (REQUIRE_LOGIN defaults to 1 — see server/.env.example):
 curl -o /dev/null -w '%{http_code}\n' $B/api/sessions                    # 401
 curl -o /dev/null -w '%{http_code}\n' $B/api/profile                     # 200 (always anonymous-safe)
-curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/sessions   # 200
+curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/sessions   # 401 (API_TOKEN is honoured only under /api/companion/)
+curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/companion/state   # 200
 
 # Anonymous parity (set REQUIRE_LOGIN=0 in server/.env): profile + shows both answer.
 curl $B/api/profile
@@ -1221,8 +1222,9 @@ curl -sSi https://autologger.example.com/api/companion/state | grep -i '^locatio
 **bypass the proxy's SSO**, then rely on AutoLogger's own `API_TOKEN` (+ optionally
 `IP_ALLOWLIST`) to secure them — that is exactly the auth model the module is built for. Keep
 the rest of the app behind SSO. (In Pangolin: the resource's **Rules** tab → match path
-`/api/companion/*` → **Accept**.) Making the whole resource public and leaning entirely on
-`API_TOKEN` also works but drops SSO from the browser flow too. Header/resource-token auth on
+`/api/companion/*` → **Accept**.) Making the whole resource public also works for Companion, but drops
+SSO from the browser flow too — and `API_TOKEN` no longer authenticates anything outside
+`/api/companion/*`, so the rest of the app still needs a real login. Header/resource-token auth on
 the proxy generally won't work: the module sends only `Authorization: Bearer <API_TOKEN>` and
 can't add a second custom header, so a proxy that also wants `Authorization` collides with
 AutoLogger's token.

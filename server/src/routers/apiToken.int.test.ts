@@ -1,7 +1,8 @@
-// API_TOKEN scope characterization (containerize-split-images task 2.1).
-// Pins the CURRENT behaviour of a token-only request (valid API_TOKEN bearer,
-// no session cookie) across the surfaces design D10 will re-scope. Written
-// against unmodified code; task 2.2 rewrites the non-companion expectations.
+// API_TOKEN scope (containerize-split-images tasks 2.1/2.2, design D10;
+// api-contract-freeze "API_TOKEN authenticates only the Companion surface").
+// Pins the behaviour of a token-only request (valid API_TOKEN bearer, no session
+// cookie). Originally characterized against pre-change code (commit 956114c);
+// the non-companion expectations now assert the token is inert.
 
 import { request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -19,15 +20,22 @@ const bearer: Record<string, string> = { Authorization: `Bearer ${TOKEN}` };
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 const openLogin = envWith({ REQUIRE_LOGIN: '0' });
 
-describe('token-only requests, REQUIRE_LOGIN=1 (characterization)', () => {
-  it('GET /api/companion/state is 200', async () => {
+describe('token-only requests, REQUIRE_LOGIN=1', () => {
+  it('GET /api/companion/state is 200 with the frozen state shape', async () => {
     const res = await app.request('/api/companion/state', { headers: bearer }, withLogin);
     expect(res.status).toBe(200);
+    expect(Object.keys((await res.json()) as object).sort()).toEqual([
+      'active_session_id',
+      'connected_clients',
+      'last_command',
+      'session',
+    ]);
   });
 
-  it('GET /api/sessions is 200', async () => {
+  it('GET /api/sessions is 401 "Login required." (token no longer opens other API routes)', async () => {
     const res = await app.request('/api/sessions', { headers: bearer }, withLogin);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('anonymous GET /api/sessions is 401 "Login required." (baseline)', async () => {
@@ -60,28 +68,25 @@ describe('/auth/* and /api/admin/* with an API_TOKEN bearer', () => {
   });
 });
 
-describe('AI v2 dashboard with an API_TOKEN bearer (characterization)', () => {
+describe('AI v2 dashboard with an API_TOKEN bearer', () => {
   const dash = (id: string) => `/api/sessions/${id}/ai/v2/dashboard`;
   const aiEnv = (login: '0' | '1') =>
     envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: login });
 
-  it('REQUIRE_LOGIN=0: token-only is refused 404 "Session not found"', async () => {
+  it('REQUIRE_LOGIN=0: token-only is inert — identical to the same request with no Authorization', async () => {
     const s = seededSession().sessionId;
-    const res = await app.request(dash(s), { headers: bearer }, aiEnv('0'));
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
+    const tok = await app.request(dash(s), { headers: bearer }, aiEnv('0'));
+    const anon = await app.request(dash(s), {}, aiEnv('0'));
+    expect(anon.status).toBe(200);
+    expect(tok.status).toBe(anon.status);
+    expect(await tok.text()).toBe(await anon.text());
   });
 
-  it('REQUIRE_LOGIN=0: an anonymous request is served (200)', async () => {
-    const s = seededSession().sessionId;
-    const res = await app.request(dash(s), {}, aiEnv('0'));
-    expect(res.status).toBe(200);
-  });
-
-  it('REQUIRE_LOGIN=1: token-only passes the login gate and is refused 404', async () => {
+  it('REQUIRE_LOGIN=1: token-only is 401 "Login required." like anonymous', async () => {
     const s = seededSession().sessionId;
     const res = await app.request(dash(s), { headers: bearer }, aiEnv('1'));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('REQUIRE_LOGIN=1: anonymous is 401', async () => {
@@ -141,8 +146,13 @@ describe('session WebSocket upgrade with an API_TOKEN bearer, REQUIRE_LOGIN=1', 
     expect(await attempt(s, 'companion', {})).toBe(401);
   });
 
-  it('token-only companion-role upgrade succeeds (101)', async () => {
+  it('token-only companion-role upgrade is refused exactly as for anonymous (401)', async () => {
     const s = seededSession().sessionId;
-    expect(await attempt(s, 'companion', bearer)).toBe(101);
+    expect(await attempt(s, 'companion', bearer)).toBe(401);
+  });
+
+  it('token-only browser-role upgrade is refused (401)', async () => {
+    const s = seededSession().sessionId;
+    expect(await attempt(s, 'browser', bearer)).toBe(401);
   });
 });
