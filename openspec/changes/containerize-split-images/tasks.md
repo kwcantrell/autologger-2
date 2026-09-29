@@ -44,11 +44,11 @@
 
 ## 4. Images (security posture; phase review required)
 
-- [ ] 4.1 Add `.dockerignore` using `**/`-anchored patterns:
+- [x] 4.1 Add `.dockerignore` using `**/`-anchored patterns:
       - `**/node_modules`, `**/.next`, `**/data`, `**/.data*`;
       - `**/.env*` with `!**/.env.example`;
       - `.git`, `companion/`, `openspec/`, `docs/`, test artifacts.
-- [ ] 4.2 Add `docker/Dockerfile` with the `web` and `api` targets (design D4, D5, D6), and
+- [x] 4.2 Add `docker/Dockerfile` with the `web` and `api` targets (design D4, D5, D6), and
       `docker-bake.hcl` with git-SHA tags for GHCR.
       - Pin every base image by digest.
       - Use explicit `COPY` paths only.
@@ -57,7 +57,7 @@
       - Install `yt-dlp` + `deno` into `/opt/ytdlp`, pinned and sha256-verified per
         `TARGETARCH`. Do not install ffmpeg.
       - Install a pinned `claude` CLI.
-- [ ] 4.3 Verify the images natively (arm64):
+- [x] 4.3 Verify the images natively (arm64):
       - Build once with a deliberately wrong `yt-dlp` checksum pin and confirm the build
         fails (scenario "Tampered binary download").
       - Build on this host, where `server/data` (17 GB) and any `server/.env` are present.
