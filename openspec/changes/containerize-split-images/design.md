@@ -135,7 +135,9 @@ escaped, case-sensitive** request path (`container-deployment` spec):
 6. Everything else → `web`.
 
 The key move: every `404` the bridge pins today is still produced **by the server**. The
-router writes no response of its own, and `abort` writes nothing at all.
+router writes no response of its own, and `abort` writes nothing at all. The one exception
+is the four accepted fail-closed edges in the `container-deployment` router requirement; for
+example, `OPTIONS *` gets Caddy's own empty `200`.
 
 **Why raw, case-sensitive matching.** Caddy's default `path` matcher decodes the path,
 cleans it, and ignores case. Hono's `c.req.path` does none of those things.
@@ -595,8 +597,9 @@ maintenance window.
   - E1, decided `REQUIRE_LOGIN=1`.
 
 - **Whole-branch audit, 2026-09-28 (opus).** No Critical findings. Two Important:
-  - **I1.** Five fail-closed router deviations on malformed, non-inventory request shapes had
-    been recorded only in the README. **Owner ruling: accept as documented residuals.** The
+  - **I1.** Fail-closed router deviations on malformed, non-inventory request shapes had been
+    recorded only in the README. The audit listed five; the fix-wave re-review measured four.
+    Absolute-form request targets route identically to origin-form, so they are not an edge. **Owner ruling: accept as documented residuals.** The
     `container-deployment` router requirement now lists them as an explicit carve-out.
   - **I2.** Cutover step 3d used `sudo rsync … OLDHOST:`, which loses the ssh agent. Fixed in
     the pre-archive fix wave.
