@@ -120,6 +120,37 @@ test.describe('shell routing contract (raw HTTP, anonymous)', () => {
   });
 });
 
+// containerize-split-images (task 3.1): pins the single-process asset and non-GET
+// dispositions BEFORE `output: 'standalone'` lands (task 3.2), so the "Standalone output
+// leaves single-process serving unchanged" scenario has an executable witness.
+test.describe('assets and non-GET dispositions (single-process bridge)', () => {
+  test('a /_next/static asset referenced by the shell is served 200 with a JS content-type', async ({
+    request,
+  }) => {
+    const shell = await (await request.get('/teams')).text();
+    const match = shell.match(/\/_next\/static\/[^"'\s\\]+\.js/);
+    expect(match, 'shell HTML should reference a /_next/static/*.js chunk').not.toBeNull();
+    const res = await request.get(match?.[0] as string);
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-type'] ?? '').toContain('javascript');
+  });
+
+  test('a public/ file (/static/logo-autologger-app.png) is served 200', async ({ request }) => {
+    const res = await request.get('/static/logo-autologger-app.png');
+    expect(res.status()).toBe(200);
+    expect((res.headers()['content-type'] ?? '').startsWith('image/')).toBe(true);
+  });
+
+  test('non-GET requests to shell and asset paths stay 404 from the server', async ({
+    request,
+  }) => {
+    for (const path of ['/teams', '/sessions/abc', '/admin/users', '/_next/static/x.js']) {
+      const res = await request.post(path, { data: {}, maxRedirects: 0 });
+      expect(res.status(), `POST ${path}`).toBe(404);
+    }
+  });
+});
+
 test.describe('no existence oracle (api-contract-freeze delta)', () => {
   // Seeds a session in each of the four states the delta names — existing,
   // deleted (ui_hidden), a foreign team's session, and a random nonexistent
