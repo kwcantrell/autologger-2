@@ -1,0 +1,54 @@
+# AutoLogger STAGE environment (containerized-dev-env, design D5 / D6 / D7 / D13).
+# An overlay on the production compose.yaml: same images' build, same routing, same posture
+# (REQUIRE_LOGIN=1, TRUST_PROXY=1), served on plain http://localhost:${STAGE_PORT:-8788}.
+#
+# Always invoked from the repo root as (the Makefile does this):
+#   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
+#   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file .env.stage ...
+# The three exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose
+# interpolates before merging; the overlay's own image, PUBLIC_BASE_URL etc. are what take effect.
+# `.env.stage` is copied from docker/.env.stage.example and is gitignored.
+#
+# Invariants a future reader must not "helpfully" undo:
+#   * Do NOT set REQUIRE_LOGIN or TRUST_PROXY here: stage inherits prod's posture unchanged.
+#   * Do NOT mount the host ~/.claude: stage keeps compose.yaml's /home/node named volume
+#     (project-scoped, so it is stage's own). AI v2 therefore needs AI_V2_API_KEY, as in prod.
+#   * The router publishes ONLY STAGE_PORT on the literal 127.0.0.1; ROUTER_PORT is never used.
+#   * ROUTER_FRONT_GW / ROUTER_BACK_GW must equal the network gateways below (single IPv4 each).
+#   * No Companion service (the scoped token is tested with curl through the router).
+
+name: autologger-stage
+
+services:
+  router:
+    environment:
+      ROUTER_FRONT_GW: 172.28.20.1
+      ROUTER_BACK_GW: 172.28.21.1
+    ports: !override
+      - "127.0.0.1:${STAGE_PORT:-8788}:8080"
+
+  web:
+    image: autologger-stage-web:local
+
+  api:
+    image: autologger-stage-api:local
+    container_name: autologger-stage-api
+    env_file: !override
+      - path: .env.stage
+        required: true
+    environment:
+      PUBLIC_BASE_URL: http://localhost:${STAGE_PORT:-8788}
+      COOKIE_SECURE: "0"
+      SESSION_COOKIE: autologger_stage_sid
+
+networks:
+  front:
+    ipam: !override
+      config:
+        - subnet: 172.28.20.0/24
+          gateway: 172.28.20.1
+  back:
+    ipam: !override
+      config:
+        - subnet: 172.28.21.0/24
+          gateway: 172.28.21.1
