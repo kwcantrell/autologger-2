@@ -579,3 +579,10 @@ Current state). The remaining hits are deliberate negations or history.
 1. Paid smoke calls: Claude features only. YouTube, Sheets, and DeepGram are verified without egress (task 4.5).
 2. Apply creates the env templates; the owner fills in `.env.dev` and `.env.stage` (tasks 2.3/2.4).
 3. Apply commits as it goes on the branch; no push or merge unless asked.
+
+**2026-09-29 — phase-4 review I1, owner decision (path 1).** The credentials bind was verified live for inode, hash, and in-place writes, but no token refresh occurred. So the rename-on-refresh path is **unexercised**, and it is recorded as unverified, not as verified.
+- If the in-container CLI refreshes by writing a temp file and renaming it, the refresh is lost (`EBUSY`), and token rotation could log out the host.
+- The owner accepted this as a residual, with two mitigations:
+  - **detection:** `dev-up` and `check dev` warn when the host and container inodes differ (task 7.2);
+  - **documented recovery:** host `claude` re-login, then `make dev-restart` (task 8.1).
+- **Follow-up (separate change):** a `claude setup-token` long-lived token passed as `CLAUDE_CODE_OAUTH_TOKEN`. This needs the AI chat and AI v2 child-env allowlists (and the ai-runtime spec) widened for that one variable. Once it lands, the dev credentials-file mount can be removed.

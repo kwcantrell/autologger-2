@@ -56,7 +56,7 @@
 
 ## 3. Router gateway parameterization (G3; security-sensitive, reviewed with phase 6)
 
-- [ ] 3.1 In the pinned Caddy image, run `caddy adapt --config docker/Caddyfile` and commit
+- [x] 3.1 In the pinned Caddy image, run `caddy adapt --config docker/Caddyfile` and commit
       the output as `docker/scripts/caddy-adapt.baseline.json`. Replace the
       `trusted_proxies static` literals with
       `{$ROUTER_FRONT_GW:172.28.10.1} {$ROUTER_BACK_GW:172.28.11.1}`. Then show:
@@ -67,7 +67,7 @@
 
 ## 4. Dev environment (security-sensitive posture → phase review)
 
-- [ ] 4.1 `docker/Dockerfile`: add a `dev-deps` stage. It runs `npm ci` for `server`,
+- [x] 4.1 `docker/Dockerfile`: add a `dev-deps` stage. It runs `npm ci` for `server`,
       `web`, and `packages/*`, dev deps included, on the target platform, with the build
       toolchain.
 
@@ -83,7 +83,7 @@
       Verify:
       - `docker buildx bake -f docker-bake.hcl --print` lists only `web` and `api`;
       - the `api` target's stage graph is unchanged.
-- [ ] 4.2 Add `docker/dev-gate.Caddyfile`, per D3/D9. It covers:
+- [x] 4.2 Add `docker/dev-gate.Caddyfile`, per D3/D9. It covers:
       - the Host allowlist: `127.0.0.1:{$GATE_PORT}` and `localhost:{$GATE_PORT}`, plus
         optional `{$GATE_EXTRA_HOST}` for `app:8787`;
       - the listen address `:{$LISTEN_PORT}`;
@@ -92,7 +92,7 @@
       - no `encode`.
 
       One file serves both gates, parameterized by env.
-- [ ] 4.3 Add `docker/compose.dev.yaml`, with `name: autologger-dev`, per D2–D4 and D13:
+- [x] 4.3 Add `docker/compose.dev.yaml`, with `name: autologger-dev`, per D2–D4 and D13:
       - service `app` (`container_name: autologger-dev-app`), with:
         - the literal pins;
         - `PUBLIC_BASE_URL=http://localhost:${DEV_PORT:-8787}`;
@@ -112,7 +112,7 @@
         - env `LISTEN_PORT=8787`, `GATE_PORT=${DEV_PORT:-8787}`, `UPSTREAM_PORT=8786`,
           `GATE_EXTRA_HOST=app:8787`;
         - non-root, `read_only`, tmpfs.
-- [ ] 4.4 Live smoke on this host:
+- [x] 4.4 Live smoke on this host:
       - no open-network warning appears, and the startup log shows a loopback bind;
       - `/` and `/api/profile` answer on `127.0.0.1:8787`;
       - `/app/server/.env` and `/app/server/data` are absent;
@@ -122,7 +122,7 @@
       - the gate rejects an `Upgrade` with a foreign Origin;
       - the host's LAN IP on 8787 is refused;
       - `ss` inside the namespace shows the app only on `127.0.0.1:8786`.
-- [ ] 4.5 Hot reload and Claude:
+- [x] 4.5 Hot reload and Claude:
       - Touch a `server/src` file and confirm the tsx restart.
       - Edit a `web/src` string and confirm the HMR update in agent-browser, then revert.
         Record the latency.
@@ -145,7 +145,7 @@
         request that fails validation before any egress (e.g. an invalid URL or sheet id →
         `4xx`, not `503`). DeepGram is checked only if the owner set `DEEPGRAM_API_KEY`;
         otherwise record its expected `503` and leave it to the owner.
-- [ ] 4.6 Phase review over the Dockerfile, gate, and compose diffs and the 4.4/4.5
+- [x] 4.6 Phase review over the Dockerfile, gate, and compose diffs and the 4.4/4.5
       evidence. Security focus: the gate rules, loopback reach, and mounts.
 
 ## 5. Dev Companion
@@ -211,6 +211,12 @@
       - resets require `CONFIRM=yes` and a resolved-name check;
       - prod guards: clean tree, `main`, the builder platform preflight, and
         `prod-build` tagging `:local`;
+      - `dev-restart` restarts `app` then `app-gate` (and `companion` then `companion-gate`),
+        because a direct restart of the namespace owner leaves its gate dead (phase-4 M1);
+      - `dev-up` (and `check dev`) WARN, without failing, when the inode of the host
+        `~/.claude/.credentials.json` differs from the inode the running dev container sees
+        (`stat -c %i` on both sides; never read contents). This is the rename-on-refresh
+        detector (owner decision, phase-4 I1);
       - `dev-up` and `stage-up` print their URLs (the Companion base URL for dev,
         "use localhost" for stage).
 
@@ -250,7 +256,9 @@
       - the target table, and a dev/stage/prod differences table;
       - the dev posture: the loopback bind plus gate, the reach, and "never publish the
         gate beyond loopback";
-      - the shared credentials-file residuals;
+      - the shared credentials-file residuals, including the unexercised token-refresh path
+        and its recovery: host `claude` re-login, then `make dev-restart`. Name `claude
+        setup-token` as the planned follow-up;
       - AI v2: works on the login in dev, needs a key in stage and prod;
       - Companion first-run steps and the base URL;
       - optional dev sign-in and the empty-shows caveat;
