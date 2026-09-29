@@ -136,6 +136,23 @@ check_name() { # json label expected
   jq_ok 9 "$2: resolves without -p to a project name other than \"$3\"" "$1" '.name==$n' --arg n "$3"
 }
 
+# Invariant 6 (dev, stage, prod): the env_file wiring is pinned. Exactly one service (SVC) has an
+# env_file and it is exactly the one file FILE at the repo root (paths normalized like bind
+# sources), so a mutation pointing it at server/.env, or adding one to another service, is caught.
+check_env_file() { # json label service file
+  jq_ok 6 "$2: env_file wiring is not exactly service $3 -> $ROOT/$4 (no other service may have an env_file)" "$1" \
+    '([.services|to_entries[]|select((.value.env_file//[])|length>0)|.key])==[$svc]
+     and ((.services[$svc].env_file)|map(if type=="object" then .path else . end|norm))==[$root+"/"+$f]' \
+    --arg svc "$3" --arg f "$4"
+}
+
+# Invariant 6 (dev, stage): a container_name that other tooling hard-codes (make-guards.sh
+# creds_inode, the Makefile's stage-claude-login) must match the compose file exactly.
+check_container_name() { # json label service name
+  jq_ok 6 "$2: service $3 container_name is not exactly $4 (make-guards.sh / the Makefile hard-code it)" "$1" \
+    '.services[$svc].container_name==$n' --arg svc "$3" --arg n "$4"
+}
+
 # Invariant 10 (any project): a router gateway variable is only ever a strict single dotted
 # IPv4 (no empty, CIDR, keyword, list). Exact names: ROUTER_PORT is not one of them.
 IPV4='^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$'
@@ -198,6 +215,14 @@ check_dev() {
   jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate" "$D" \
     '(.services|keys|sort)==["app","app-gate","companion","companion-gate"]'
   check_no_host_priv "$D" dev
+  check_env_file "$D" dev app .env.dev                                 # 6 (env_file pinned)
+  check_container_name "$D" dev app autologger-dev-app                 # 6 (container name pinned)
+  # 3 (seam S1): the app gate's extra allowed Host is "app:" + its LISTEN_PORT (resolved, both
+  # default and custom-port configs), so the Companion -> app container-network path is admitted.
+  for f in "$D" "$C"; do
+    jq_ok 3 "dev: app-gate GATE_EXTRA_HOST is not exactly \"app:\" + its LISTEN_PORT" "$f" \
+      '.services["app-gate"].environment|.GATE_EXTRA_HOST==("app:"+.LISTEN_PORT)'
+  done
 
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
@@ -277,6 +302,8 @@ check_stage() {
 
   check_name "$S" stage autologger-stage                               # 9
   check_no_host_priv "$S" stage                                        # 6
+  check_env_file "$S" stage api .env.stage                             # 6 (env_file pinned)
+  check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -331,6 +358,8 @@ check_prod() {
     check_loopback_ports "$f" "$l"                                     # 1
     check_posture_prodlike "$f" "$l"                                   # 7
     check_gw_values "$f" "$l"                                          # 10
+    # The e2e overlay deliberately swaps api's env_file for a throwaway one, so pin plain prod only.
+    if [ "$l" = prod ]; then check_env_file "$f" "$l" api .env; fi     # 6 (env_file pinned)
     jq_ok 10 "$l: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
       '.services.router.environment==null'
   done

@@ -25,8 +25,8 @@ cd "$ROOT"
 die() { echo "make: $*" >&2; exit 1; }
 
 # key_of FILE KEY: last KEY=value line's value, trailing whitespace/CR stripped, may be empty.
-# (Used only for the prod .env tags and the post-`up` URL hints; the dev/stage port and project
-# guards validate the RESOLVED compose config instead, see envfile.)
+# (Used only for the prod .env tags; the dev/stage port and project guards and the post-`up`
+# URL hints use the RESOLVED compose config instead, see envfile and urls.)
 key_of() {
   grep -E "^$2=" "$1" 2>/dev/null | tail -n 1 | sed -e "s/^$2=//" -e 's/[[:space:]]*$//' || true
 }
@@ -57,7 +57,7 @@ envfile() {
     flt='.name==$want
          and ([.services[]|(.ports//[])[]]|length==2)
          and ([.services[]|(.ports//[])[]|select(.host_ip!="127.0.0.1")]|length==0)
-         and ([.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535) and .!="8080"))
+         and ([.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535) and .!="8080" and .!="80" and .!="443"))
          and (.services.app.ports[0].published!=.services.companion.ports[0].published)'
   else
     flt='.name==$want
@@ -74,21 +74,36 @@ envfile() {
     die "refusing: a published $1 port is 8080 (production's router port); pick another (check the env file AND your shell environment)"
   printf '%s' "$json" | jq -e '[.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535))' >/dev/null ||
     die "refusing: a published $1 port is not a plain number 1-65535"
+  # Dev only: 80/443 pass every other guard but browsers omit the default port from the Origin/
+  # Host header, so the dev gate (which matches "host:port") would reject every request
+  # (fail-closed, but confusing). Stage has no Host allowlist, so STAGE_PORT=80 is left alone.
+  if [ "$1" = dev ]; then
+    printf '%s' "$json" | jq -e '[.services[]|(.ports//[])[]|.published|tostring]|any(.=="80" or .=="443")|not' >/dev/null ||
+      die "refusing: a published dev port is 80 or 443; browsers omit the default port from Host/Origin so the dev gate would reject every request. Pick another DEV_PORT/DEV_COMPANION_PORT (check the env file AND your shell environment)"
+  fi
   printf '%s' "$json" | jq -e --arg want "$want" "$flt" >/dev/null ||
     die "refusing: the resolved $1 ports are not the expected set (dev: app and Companion on distinct ports; stage: the router only)"
 }
 
+# urls dev|stage: print the URLs to use after `up`. The ports come from the RESOLVED config (the
+# same compose call the envfile guard uses), so a shell `DEV_PORT=9000`, an `export DEV_PORT=`
+# line or any other form compose accepts is reflected. Prints only port numbers.
 urls() {
   case "$1" in
     dev)
-      dp=$(key_of .env.dev DEV_PORT); cp=$(key_of .env.dev DEV_COMPANION_PORT)
-      echo "dev app:        http://127.0.0.1:${dp:-8787}"
-      echo "dev Companion:  http://127.0.0.1:${cp:-8000}"
+      j=$(compose_dev .env.dev config --no-env-resolution --format json 2>/dev/null) ||
+        die "urls: could not resolve the dev config"
+      p=$(printf '%s' "$j" | jq -r '[.services.app.ports[0].published,.services.companion.ports[0].published]|map(tostring)|join(" ")')
+      dp=${p%% *}; cp=${p##* }
+      echo "dev app:        http://127.0.0.1:$dp"
+      echo "dev Companion:  http://127.0.0.1:$cp"
       echo "In Companion, set the AutoLogger connection base URL to:  http://app:8787"
       ;;
     stage)
-      sp=$(key_of .env.stage STAGE_PORT)
-      echo "stage:          http://localhost:${sp:-8788}   (use localhost, not 127.0.0.1)"
+      j=$(compose_stage .env.stage config --no-env-resolution --format json 2>/dev/null) ||
+        die "urls: could not resolve the stage config"
+      sp=$(printf '%s' "$j" | jq -r '.services.router.ports[0].published|tostring')
+      echo "stage:          http://localhost:$sp   (use localhost, not 127.0.0.1)"
       ;;
     *) die "urls: dev|stage" ;;
   esac
@@ -114,7 +129,7 @@ creds_inode() {
   if [ "$hi" != "$ci" ]; then
     echo "WARNING: the host ~/.claude/.credentials.json (inode $hi) is no longer the file $c sees (inode $ci)." >&2
     echo "         The host file was replaced (rename-on-refresh); the container holds a stale copy." >&2
-    echo "         Fix: make dev-down && make dev-up  (re-binds the current file). See README dev section." >&2
+    echo "         Fix: if the host is logged out run 'claude auth login' (or plain 'claude' then /login; verify which the installed CLI supports via 'claude --help' inside the dev image); then make dev-restart (or make dev-down && make dev-up). See README dev section." >&2
   fi
   return 0
 }
