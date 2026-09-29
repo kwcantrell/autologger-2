@@ -949,7 +949,8 @@ repo builds **two independent images from one multistage `docker/Dockerfile`** a
 behind a small internal router (OpenSpec change `containerize-split-images`; specs
 `container-deployment` and `api-contract-freeze`). Everything is driven from the repo root by
 `compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
-`docker/.env.example`.
+`docker/.env.example`. For a hot-reload dev environment, a locally built stage, and
+`make` entry points for all three, see [Local container environments](#local-container-environments).
 
 ### Topology
 
@@ -1397,6 +1398,228 @@ encoding parity, session WebSocket, token scope, plus `serving-contract.spec.ts`
 everything down. It is excluded from the default `npm run e2e`. Not covered locally and owed at
 cutover: the forged-`X-Forwarded-For` check through your real Pangolin, and the amd64 image's
 behaviour under QEMU.
+
+## Local container environments
+
+Three container environments, driven by a root `Makefile` (OpenSpec change
+`containerized-dev-env`; spec `local-container-environments`). Run `make` (or `make help`) for
+the target list. Each environment is its own compose project, and every dev and stage target
+passes its own `--env-file`, so prod's root `.env` is never read for them. Prod is the stack
+documented under [Container deployment](#container-deployment); this section adds a hot-reload
+**dev** and a locally built **stage**. No HTTP/WS contract changes: the environments only set
+existing configuration.
+
+### Targets
+
+| Target | What it does |
+|---|---|
+| `make check` | Static invariant check of dev, stage and prod compose (reads no real env files) |
+| `make dev-check` | Dev invariants plus the credentials-inode drift warning |
+| `make dev-build` | Rebuild the dev image (needed after dependency, lockfile or config changes) |
+| `make dev-up` | Check, then build and start the whole dev project (app, gate, Companion) |
+| `make dev-down` | Stop and remove dev containers (volumes kept) |
+| `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
+| `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
+| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes |
+| `make stage-build` | Build the stage images (native arch) |
+| `make stage-up` | Check, then build and start the whole stage stack |
+| `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
+| `make stage-claude-login` | Interactive Claude login inside the stage api container |
+| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes |
+| `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
+| `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
+| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in `.env` |
+| `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
+
+### Dev, stage and prod compared
+
+| | dev | stage | prod |
+|---|---|---|---|
+| Compose project | `autologger-dev` | `autologger-stage` | `autologger` |
+| Files | `docker/compose.dev.yaml` | `compose.yaml` + `docker/compose.stage.yaml` | `compose.yaml` |
+| Env file | `.env.dev` | `.env.stage` | root `.env` |
+| Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally | split, pinned registry images |
+| Login | anonymous (`REQUIRE_LOGIN=0`); Google sign-in optional | `REQUIRE_LOGIN=1`, Google sign-in | `REQUIRE_LOGIN=1` |
+| Host port (`127.0.0.1`) | app gate `DEV_PORT` (8787), Companion gate `DEV_COMPANION_PORT` (8000) | router `STAGE_PORT` (8788) | router `ROUTER_PORT` (8080) |
+| Claude login | host `~/.claude/.credentials.json` only (rw bind) | own login in a named volume (`make stage-claude-login`) | own login in the home volume |
+| AI v2 | works on the login, no key | needs `AI_V2_API_KEY` | needs `AI_V2_API_KEY` |
+| Companion | yes (dev only) | no (test the scoped token with `curl`) | your own install |
+| Source | read-only bind mounts (hot reload) | baked into images | baked into images |
+| Subnets | 172.28.30.0/24 | 172.28.20.0/24, 172.28.21.0/24 | 172.28.10.0/24, 172.28.11.0/24 |
+| Cookies | n/a | `COOKIE_SECURE=0`, `SESSION_COOKIE=autologger_stage_sid` | secure |
+
+Docker's default address pools include `172.28.0.0/16`; the subnets above are pinned, so
+another compose project that lands in that range will clash. Dev's 8787 collides with a host
+`npm run dev`: run one or the other, or set `DEV_PORT`.
+
+### Setup
+
+```bash
+cp docker/.env.dev.example .env.dev        # then fill in values (dev)
+cp docker/.env.stage.example .env.stage    # then fill in values (stage)
+make dev-up                                # or: make stage-up
+```
+
+Both files are gitignored (`.env.*`, except `*.example`). **Never put production secrets in
+them**: use separate, low-limit keys, and a separate dev OAuth client. A compromised dependency
+inside a dev container can read the mounted Claude login and `.env.dev`, and egress is
+unrestricted. Only the variables the templates list matter; the security-relevant ones (`HOST`,
+`REQUIRE_LOGIN`, `TRUST_PROXY`, `IP_ALLOWLIST`, `DATA_DIR`, `PUBLIC_BASE_URL`, ...) are pinned in
+compose and cannot be set from the env file.
+
+`make dev-up` and `make stage-up` first run `make check` for that environment; `dev-up` also
+requires the host `~/.claude/.credentials.json` to exist.
+
+**Env-file guard.** Before touching an environment, the Makefile validates the *resolved*
+compose config, not just the file: the project name must be `autologger-dev`/`autologger-stage`,
+every published port must be on `127.0.0.1`, a plain number 1-65535, and not 8080 (prod's router
+port). So a shell `DEV_PORT=...`/`STAGE_PORT=...` counts as much as a file entry, port values must
+be plain numbers (no quotes, ranges or leading zeros), and any `COMPOSE_*` key in an env file
+is rejected (they would re-target compose, e.g. onto prod's project). Dev additionally refuses
+ports 80 and 443 (browsers omit the default port from `Host`/`Origin`, so the dev gate would
+reject every request); stage has no Host allowlist, so `STAGE_PORT=80` is accepted. The shell
+`COMPOSE_*` variables that re-target the project, files or env file (`COMPOSE_PROJECT_NAME`,
+`COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROFILES`, `COMPOSE_ENV_FILES`,
+`COMPOSE_DISABLE_ENV_FILE`) are stripped from the environment the Makefile hands compose. The
+env-file guard is run by the dev and stage `build`, `up`, `down` and `logs` targets and by `dev-restart` and `dev-shell`;
+`check`, `dev-check`, `stage-claude-login`, the `prod-*` targets and `help` do not run
+it (`dev-reset`/`stage-reset` do their own `CONFIRM=yes` and project-name check, and the `prod-*`
+targets have their own git and tag guards).
+
+### Dev posture
+
+The dev app binds `127.0.0.1` **inside its container**. A Caddy Host/Origin **gate** sidecar
+shares the app's network namespace and is the only listener, published on host loopback
+(`127.0.0.1:${DEV_PORT}`). The gate rejects any request whose `Host` is not
+`127.0.0.1:<port>`, `localhost:<port>` or `app:8787`, and any non-GET/HEAD or WebSocket-upgrade
+request whose `Origin` is present and foreign. That stops DNS rebinding and cross-origin writes.
+Because the bind is a true loopback bind, the server's open-network refusal and AI v2's
+loopback-only login rule both pass with no server change.
+
+- **Reach:** host loopback and containers on the dev network (Companion). Nothing else.
+- **Never publish the gate beyond loopback, and never join other networks to it.** That would
+  turn it into exactly the multi-user exposure the AI v2 rule forbids. `make check` enforces
+  loopback-only publishing and the literal pins.
+- Any local process or user on the host can use the dev app anonymously with your Claude
+  login, as with a loopback `npm run dev`.
+- Source subtrees (`server/src`, `web/src`, each `packages/*/src`, ...) are mounted
+  **read-only**, so hot reload works from host edits (Linux file watching only; Docker Desktop is
+  not supported). A dependency-manifest, lockfile or config change needs `make dev-build`.
+- The `dev-next` (Next cache) volume survives `make dev-build`; if a Next upgrade misbehaves,
+  `make dev-reset CONFIRM=yes`.
+- **Protect `server/data`**: it is the live-data copy on this host. It is never mounted, and
+  never used as `DATA_DIR`. Dev data lives in the `dev-data` volume (`/data`).
+- The gate shares the app's namespace, so a bare `docker restart` of `app` kills the gate. Use
+  **`make dev-restart`** (app then gate, Companion then its gate). Dev and stage `up`/`restart`
+  are whole-project only; do not `up -d --build companion` alone (its gate would sit on a stale
+  namespace).
+
+### Claude login (dev)
+
+Dev shares **only** `~/.claude/.credentials.json`, bind-mounted read-write at
+`/home/node/.claude/.credentials.json`. Everything else in the container's home (session store,
+`~/.claude.json`, history) is the `dev-home` volume. AI chat, topics, events and AI v2 all run
+on that login with no in-container login step; if the host file is missing, run `claude auth
+login` on the host first.
+
+Accepted residuals:
+- The container (including a compromised dependency) can read and overwrite the login file.
+- The host and the container may both rewrite the file. Bind liveness (inode and in-place
+  writes) was verified, but a real **token refresh has not been exercised**: if the in-container
+  CLI refreshes by write-temp-and-rename, that refresh can be lost (`EBUSY`), and token rotation
+  could log the host out.
+
+Detection: `make dev-up` and `make dev-check` print a warning when the host file's inode differs
+from the one the running container sees (the host file was replaced, so the container holds a
+stale one). Recovery: if the host is logged out, run `claude auth login` on the host (or plain
+`claude` then `/login`; check which the installed CLI supports with `claude --help` inside the dev
+image), then `make dev-restart` (restarting the container re-binds the current file; `make dev-down &&
+make dev-up` also does). The planned follow-up is a `claude setup-token` long-lived token
+(`CLAUDE_CODE_OAUTH_TOKEN`), which needs a server-side allowlist change and would remove this
+mount. Resets never touch the host file.
+
+**Stage** never mounts the host login: run `make stage-claude-login` once (stored in stage's
+own home volume). **AI v2**: works on the login in dev; in stage and prod it needs
+`AI_V2_API_KEY`.
+
+### Dev Companion
+
+Dev runs Bitfocus Companion `v4.3.4` (pinned by digest) with this repo's module built and
+packaged in `docker/companion.Dockerfile`. Its admin UI sits behind its own gate on host
+loopback. The connection is entered once by hand (not provisioned):
+
+1. `make dev-up`, then open <http://127.0.0.1:8000> (`DEV_COMPANION_PORT`).
+2. **Connections -> Add connection ->** **AutoLogger** (the module loads from the local-dev
+   module path; it is not in the registry).
+3. Set the server URL to **`http://app:8787`** (Companion reaches the dev app through the app's
+   gate on the dev network). Leave the API token empty: dev is anonymous.
+
+Notes:
+- The log-event action needs an **active session with live presence**: open a session in a
+  browser at <http://127.0.0.1:8787> first (see "Connecting Bitfocus Companion to a server").
+- Companion's own admin address is `127.0.0.1` inside its namespace. Its **Satellite ports
+  16622/16623** are hard-bound on all interfaces in 4.3.4 and stay reachable from the host via
+  the container IP (not from the LAN), ungated. Accepted, low impact: presses reach only the dev
+  `/api/companion/*` endpoints, with no spend and no secrets.
+- Companion sends **Sentry error reports by default**. Only its user-config key
+  `detailed_data_collection` controls that; it is not seeded here.
+- The Companion build prints a build-context listing (`context-audit`) only on **uncached**
+  builds; the build fails if a file outside the allowlist enters the context.
+
+### Optional dev sign-in
+
+Set both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.dev` (a dev-only OAuth client,
+never production's) and register the redirect URI
+`http://localhost:8787/auth/google/callback` (your `DEV_PORT`). Open dev at
+`http://localhost:<DEV_PORT>/`. Caveat: **while OAuth is configured, anonymous requests see an
+empty show list**; sign in to see shows. Leave both empty for anonymous dev.
+
+Other integrations are off unless set in `.env.dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
+to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
+`yt-dlp` baked into the dev image.
+
+### Stage
+
+Stage is an overlay on `compose.yaml`, built locally for your native architecture, behaving as
+prod: `REQUIRE_LOGIN=1` and real Google sign-in. Fill `.env.stage` (`STAGE_PORT`, OAuth client,
+`API_TOKEN`, `ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
+for AI chat.
+
+- Create a **separate Google OAuth client** with the authorized redirect URI
+  `http://localhost:8788/auth/google/callback` (your `STAGE_PORT`).
+- Open stage at **`http://localhost:8788`**, not `127.0.0.1`, or the redirect will not match.
+- `API_TOKEN`/`ADMIN_TOKEN` must **differ from prod's** (`openssl rand -hex 32`). `API_TOKEN`
+  authenticates only `/api/companion/*`; there is no Companion in stage, so test it with `curl`.
+- The overlay changes only: project name, container name, subnets and gateways, image names,
+  env file, `PUBLIC_BASE_URL`, `COOKIE_SECURE=0`, `SESSION_COOKIE`, and the loopback port. The
+  router's trusted-proxy gateways are `ROUTER_FRONT_GW`/`ROUTER_BACK_GW` placeholders in
+  `docker/Caddyfile` whose defaults are prod's (checked byte-identical against a committed
+  baseline), so stage and prod can run side by side.
+- Residual: `make check` does not enforce a service or capability allowlist for stage
+  (`cap_add`, `pid: host`, devices, a `docker.sock` bind); dev does enforce an exact service set.
+
+### Resets, checks and prod guards
+
+- **Resets** (`make dev-reset`, `make stage-reset`) need `CONFIRM=yes`, verify the resolved
+  project name, and remove only that project's named volumes. They never touch prod or any host
+  file (including the bind-mounted credentials). No other target prunes or deletes volumes, and
+  there is no destructive prod target.
+- **`make check`** asserts, from `docker compose config` with placeholder env files (it never
+  reads real secrets): loopback-only publishing, no 8080 in dev or stage, numeric ports, dev
+  mounts (one per package, none of `server/data`, `server/.env`, or `$HOME` and its ancestors),
+  literal posture pins, resolved project names, the gateway rules, the Companion ignore file's
+  shape, and the adapted-Caddyfile baseline.
+- **Test-only hooks**: `AUTOLOGGER_TEST=1` (with `AUTOLOGGER_TEST_HOST_CREDS`, or an env-file
+  argument to `docker/scripts/make-guards.sh envfile`) exists only to exercise the guards in
+  tests. Do not set it in normal use.
+- **Prod targets** require a clean tree (untracked files count) on `main`. `make prod-push`
+  also needs a buildx builder (`BUILDER`, default `autologger-multi`) that lists both
+  `linux/amd64` and `linux/arm64` (a one-time privileged binfmt setup; the target prints the
+  commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
+  tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
+  `API_TAG` pinned in `.env`.
+- `npm run e2e:container` still conflicts with a running prod stack (fixed `container_name`, prod
+  subnets); a follow-up.
 
 ## Frontend (web/ workspace)
 

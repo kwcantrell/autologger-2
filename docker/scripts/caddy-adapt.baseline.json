@@ -1,0 +1,283 @@
+{
+	"admin": {
+		"listen": "127.0.0.1:2019",
+		"config": {
+			"persist": false
+		}
+	},
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":8080"
+					],
+					"routes": [
+						{
+							"handle": [
+								{
+									"handler": "headers",
+									"response": {
+										"deferred": true,
+										"delete": [
+											"Server",
+											"Via"
+										]
+									}
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"match": [
+								{
+									"expression": {
+										"expr": "{http.request.uri}.matches(\"(?i)^[^?]*/(\\\\.|%2e){1,2}(/|\\\\?|$)\") || {http.request.uri}.matches(\"^[^?]*//\") || ({http.request.uri}.matches(\"^/(a|%61)(p|%70)(i|%69)(/|\\\\?|$)|^/(a|%61)(u|%75)(t|%74)(h|%68)(/|\\\\?|$)\") \u0026\u0026 {http.request.uri}.matches(\"^[^?]*(%2[fF]|%5[cC])\"))",
+										"name": "traversal"
+									}
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"group": "group0",
+											"handle": [
+												{
+													"handler": "rewrite",
+													"uri": "/__autologger_rejected"
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-For": [
+																	"{http.vars.client_ip}"
+																]
+															}
+														}
+													},
+													"transport": {
+														"compression": false,
+														"protocol": "http"
+													},
+													"upstreams": [
+														{
+															"dial": "api:8787"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"match": [
+								{
+									"expression": {
+										"expr": "{http.request.header.Upgrade} != \"\" \u0026\u0026 {http.request.header.Connection}.matches(\"(?i)(^|,)[ \\\\t]*upgrade[ \\\\t]*(,|$)\") \u0026\u0026 !{http.request.uri}.matches(\"^/api(/|\\\\?|$)\")",
+										"name": "upgradeOutsideApi"
+									}
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"abort": true,
+													"handler": "static_response"
+												}
+											]
+										}
+									]
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"match": [
+								{
+									"expression": {
+										"expr": "{http.request.uri}.matches(\"^/(a|%61)(p|%70)(i|%69)(/|\\\\?|$)|^/(a|%61)(u|%75)(t|%74)(h|%68)(/|\\\\?|$)\")",
+										"name": "apiPrefix"
+									}
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-For": [
+																	"{http.vars.client_ip}"
+																]
+															}
+														}
+													},
+													"transport": {
+														"compression": false,
+														"protocol": "http"
+													},
+													"upstreams": [
+														{
+															"dial": "api:8787"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"match": [
+								{
+									"not": [
+										{
+											"method": [
+												"GET",
+												"HEAD"
+											]
+										}
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-For": [
+																	"{http.vars.client_ip}"
+																]
+															}
+														}
+													},
+													"transport": {
+														"compression": false,
+														"protocol": "http"
+													},
+													"upstreams": [
+														{
+															"dial": "api:8787"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"match": [
+								{
+									"expression": {
+										"expr": "{http.request.uri}.matches(\"^[^?]+/(\\\\?|$)\") \u0026\u0026 !{http.request.uri}.matches(\"^/(\\\\?|$)\")",
+										"name": "trailing"
+									}
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"headers": {
+														"request": {
+															"set": {
+																"X-Forwarded-For": [
+																	"{http.vars.client_ip}"
+																]
+															}
+														}
+													},
+													"transport": {
+														"compression": false,
+														"protocol": "http"
+													},
+													"upstreams": [
+														{
+															"dial": "api:8787"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						},
+						{
+							"group": "group6",
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"transport": {
+														"compression": false,
+														"protocol": "http"
+													},
+													"upstreams": [
+														{
+															"dial": "web:3000"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							]
+						}
+					],
+					"automatic_https": {
+						"disable": true
+					},
+					"trusted_proxies": {
+						"ranges": [
+							"172.28.10.1",
+							"172.28.11.1"
+						],
+						"source": "static"
+					},
+					"trusted_proxies_strict": 1
+				}
+			}
+		}
+	}
+}

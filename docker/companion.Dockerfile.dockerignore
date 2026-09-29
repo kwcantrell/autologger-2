@@ -1,0 +1,19 @@
+# Allowlist-form ignore file for docker/companion.Dockerfile (containerized-dev-env, design D9).
+# A per-Dockerfile ignore file REPLACES the root .dockerignore, so this one must be complete on
+# its own: deny everything, allow only what the module stage copies, then re-exclude build
+# output and secrets that may sit inside the allowed trees.
+*
+!package.json
+!package-lock.json
+!companion/**
+**/node_modules
+**/dist
+**/pkg
+**/*.tgz
+**/.env*
+# Secret-shaped files that could sit inside companion/ (companion/.gitignore is not needed by the build).
+**/.npmrc
+**/*.pem
+**/*.key
+**/id_*
+**/.git*

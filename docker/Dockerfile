@@ -11,6 +11,8 @@
 
 # node:22-bookworm-slim (multi-arch index digest, resolved 2026-09-28)
 ARG NODE_IMAGE=node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+# @anthropic-ai/claude-code pinned (npm registry, resolved 2026-09-28); shared by `api` and `dev`.
+ARG CLAUDE_CODE_VERSION=2.1.284
 
 # ---------------------------------------------------------------------------------------------
 # manifests: only package.json files + the lockfile, so dependency layers cache independently of
@@ -133,8 +135,7 @@ RUN set -eu; \
 
 # ---------------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS api
-# @anthropic-ai/claude-code pinned (npm registry, resolved 2026-09-28).
-ARG CLAUDE_CODE_VERSION=2.1.284
+ARG CLAUDE_CODE_VERSION
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 COPY --from=tools /opt/ytdlp /opt/ytdlp
@@ -163,3 +164,65 @@ USER node
 WORKDIR /app/server
 EXPOSE 8787
 CMD ["/app/node_modules/.bin/tsx", "src/main.ts"]
+
+# =============================================================================================
+# Dev target (containerized-dev-env D2/D12). NOT named in docker-bake.hcl: never baked, pushed,
+# or multi-arch -- built natively via `docker buildx build --target dev`. Nothing above depends
+# on these stages, so the web/api stage graphs are untouched.
+
+# dev-deps: full install (dev included) for server + web + packages/*, on the TARGET platform
+# (native; no --platform pin) so better-sqlite3 and SWC binaries match the running container.
+# Everything except companion, which is absent from `manifests`.
+FROM manifests AS dev-deps
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --workspace=server --workspace=web --workspace='packages/*' --include-workspace-root=false
+RUN node -e "const D=require('better-sqlite3');new D(':memory:').close();console.log('better-sqlite3 native binding loads')" \
+ || { echo 'better-sqlite3 failed to load' >&2; exit 1; }
+
+# dev: deps + baked configs only. Source subtrees are bind-mounted (read-only) by compose.dev.yaml
+# onto the empty mount points created below; config/manifest/lockfile changes need a rebuild.
+FROM ${NODE_IMAGE} AS dev
+ARG CLAUDE_CODE_VERSION
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+COPY --from=tools /opt/ytdlp /opt/ytdlp
+WORKDIR /app
+COPY --chown=node:node --from=dev-deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=manifests /app/ ./
+COPY --chown=node:node server/tsconfig.json server/tsconfig.json
+COPY --chown=node:node web/next.config.ts web/tsconfig.json web/tsconfig.node.json web/postcss.config.mjs web/next-env.d.ts web/
+COPY --chown=node:node packages/ai-runtime/tsconfig.json packages/ai-runtime/tsconfig.json
+COPY --chown=node:node packages/catalog/tsconfig.json packages/catalog/tsconfig.json
+COPY --chown=node:node packages/contract/tsconfig.json packages/contract/tsconfig.json
+COPY --chown=node:node packages/domain/tsconfig.json packages/domain/tsconfig.json
+COPY --chown=node:node packages/log-import/tsconfig.json packages/log-import/tsconfig.json
+COPY --chown=node:node packages/media-import/tsconfig.json packages/media-import/tsconfig.json
+COPY --chown=node:node packages/ports/tsconfig.json packages/ports/tsconfig.json
+COPY --chown=node:node packages/session-core/tsconfig.json packages/session-core/tsconfig.json
+COPY --chown=node:node packages/storage/tsconfig.json packages/storage/tsconfig.json
+COPY --chown=node:node packages/transcription/tsconfig.json packages/transcription/tsconfig.json
+# Empty mount points for the compose bind mounts (the data-and-secret fence: server/data and
+# server/.env are never reachable). /home/node/.claude exists and is node-owned; the operator's
+# credentials file is bind-mounted inside it. settings.json carries DISABLE_AUTOUPDATER as in `api`.
+RUN mkdir -p server/src server/scripts web/src web/public web/.next \
+      packages/ai-runtime/src packages/catalog/src packages/catalog/migrations \
+      packages/contract/src packages/domain/src packages/log-import/src \
+      packages/media-import/src packages/ports/src packages/session-core/src \
+      packages/storage/src packages/transcription/src \
+      /data /home/node/.claude \
+ && printf '{\n  "env": { "DISABLE_AUTOUPDATER": "1" }\n}\n' > /home/node/.claude/settings.json \
+ && find /app -path /app/node_modules -prune -o -exec chown node:node {} + \
+ && chown -R node:node /data /home/node
+ENV NODE_ENV=development \
+    DATA_DIR=/data \
+    YTDLP_PATH=/opt/ytdlp/yt-dlp \
+    CLAUDE_CLI_PATH=/usr/local/bin/claude \
+    DISABLE_AUTOUPDATER=1 \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
+USER node
+WORKDIR /app
+CMD ["npm", "run", "dev"]

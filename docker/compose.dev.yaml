@@ -1,0 +1,187 @@
+# AutoLogger DEV environment (containerized-dev-env, design D2 / D3 / D4 / D13).
+#   Browser -> 127.0.0.1:${DEV_PORT} -> app-gate (Host/Origin gate) -> app (127.0.0.1:8786)
+#
+# Always invoked from the repo root as (the Makefile does this):
+#   docker compose --project-directory . --env-file .env.dev -f docker/compose.dev.yaml ...
+# so every relative path below is repo-root-relative. `.env.dev` is copied from
+# docker/.env.dev.example and is gitignored.
+#
+# Invariants a future reader must not "helpfully" undo:
+#   * The posture keys under `environment:` are LITERALS. They win over `.env.dev`, so the env
+#     file cannot flip the loopback bind or the anonymous/no-proxy posture. The only permitted
+#     variable is PUBLIC_BASE_URL (built from DEV_PORT).
+#   * The source mounts are a per-subtree allowlist (the data-and-secret fence). NEVER replace
+#     them with a whole-repo mount: that would expose server/data and server/.env. Every
+#     packages/* has a mount (docker/scripts/check-envs.sh asserts it).
+#   * `app` owns the network namespace and is the only service declaring `ports:`, on the literal
+#     127.0.0.1. `app-gate` joins that namespace and is the only listener on its external
+#     interfaces; the app binds 127.0.0.1:8786 inside it. Do NOT publish on a non-loopback
+#     address or join other networks to `app` (design D3 "honest note").
+#   * The Claude credentials file is the ONLY host path mounted read-write and the only host
+#     file dev touches. A missing host file must FAIL (create_host_path: false), not become a
+#     directory.
+
+name: autologger-dev
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dev
+    image: autologger-dev:local
+    container_name: autologger-dev-app
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file:
+      - path: .env.dev
+        required: true
+    environment:
+      NODE_ENV: development
+      DATA_DIR: /data
+      HOST: 127.0.0.1
+      PORT: "8786"
+      REQUIRE_LOGIN: "0"
+      TRUST_PROXY: "0"
+      IP_ALLOWLIST: ""
+      YTDLP_PATH: /opt/ytdlp/yt-dlp
+      CLAUDE_CLI_PATH: /usr/local/bin/claude
+      PUBLIC_BASE_URL: http://localhost:${DEV_PORT:-8787}
+    # The gate (app-gate) listens on the container-side 8787; compose attaches ports to the
+    # namespace owner, which is this service.
+    ports:
+      - "127.0.0.1:${DEV_PORT:-8787}:8787"
+    networks: [dev]
+    volumes:
+      - dev-data:/data
+      - dev-next:/app/web/.next
+      - dev-home:/home/node
+      - { type: bind, source: ./server/src, target: /app/server/src, read_only: true }
+      - { type: bind, source: ./server/scripts, target: /app/server/scripts, read_only: true }
+      - { type: bind, source: ./web/src, target: /app/web/src, read_only: true }
+      - { type: bind, source: ./web/public, target: /app/web/public, read_only: true }
+      - { type: bind, source: ./packages/ai-runtime/src, target: /app/packages/ai-runtime/src, read_only: true }
+      - { type: bind, source: ./packages/catalog/src, target: /app/packages/catalog/src, read_only: true }
+      - { type: bind, source: ./packages/catalog/migrations, target: /app/packages/catalog/migrations, read_only: true }
+      - { type: bind, source: ./packages/contract/src, target: /app/packages/contract/src, read_only: true }
+      - { type: bind, source: ./packages/domain/src, target: /app/packages/domain/src, read_only: true }
+      - { type: bind, source: ./packages/log-import/src, target: /app/packages/log-import/src, read_only: true }
+      - { type: bind, source: ./packages/media-import/src, target: /app/packages/media-import/src, read_only: true }
+      - { type: bind, source: ./packages/ports/src, target: /app/packages/ports/src, read_only: true }
+      - { type: bind, source: ./packages/session-core/src, target: /app/packages/session-core/src, read_only: true }
+      - { type: bind, source: ./packages/storage/src, target: /app/packages/storage/src, read_only: true }
+      - { type: bind, source: ./packages/transcription/src, target: /app/packages/transcription/src, read_only: true }
+      # The single rw host bind (design D4). Long syntax so a missing host file fails.
+      - type: bind
+        source: ${HOME}/.claude/.credentials.json
+        target: /home/node/.claude/.credentials.json
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8786/api/profile').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging: *logging
+
+  app-gate:
+    # Caddy v2.11.4 (caddy:2), same digest as compose.yaml's router (design D3 / D4).
+    image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    restart: unless-stopped
+    init: true
+    network_mode: service:app
+    # restart: true recreates/restarts the gate when compose restarts `app`. A Docker-policy
+    # restart (crash, `docker restart autologger-dev-app`) does NOT propagate: the gate's joined
+    # namespace goes stale and the port is dead (fail-closed) until `app-gate` is restarted too.
+    depends_on:
+      app: { condition: service_started, restart: true }
+    user: "65532:65532"
+    read_only: true
+    # As compose.yaml's router: exec fails if the binary's file capability is absent from the
+    # bounding set, even though the gate only binds a high port.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /data
+      - /config
+    environment:
+      LISTEN_PORT: "8787"
+      GATE_PORT: ${DEV_PORT:-8787}
+      UPSTREAM_PORT: "8786"
+      GATE_EXTRA_HOST: app:8787
+    volumes:
+      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
+    logging: *logging
+
+  # Dev-only Bitfocus Companion carrying this repo's module (design D9). `companion` owns the
+  # network namespace and is the only service declaring `ports:` (literal 127.0.0.1);
+  # `companion-gate` joins it and is the only listener on its external interfaces. Companion
+  # itself is told `--admin-address 127.0.0.1` (via `command:`; the entrypoint's own `--admin-address ::`
+  # comes first and the appended flag wins), so the ungated admin UI listens on loopback inside
+  # the namespace and only the gate sidecar can reach it. Residual: Satellite TCP 16622 / WS 16623
+  # are hard-coded 0.0.0.0 listeners in 4.3.4 with no flag/env/config off-switch, so they stay
+  # reachable (ungated) from the host via the bridge IP and from the dev network. NEVER publish
+  # 8000, 16622 or 16623.
+  companion:
+    build:
+      context: .
+      dockerfile: docker/companion.Dockerfile
+    image: autologger-dev-companion:local
+    container_name: autologger-dev-companion
+    restart: unless-stopped
+    init: true
+    command: ["--admin-address", "127.0.0.1"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"
+    networks: [dev]
+    volumes:
+      - dev-companion:/companion
+    logging: *logging
+
+  companion-gate:
+    # Same Caddy digest and gate Caddyfile as app-gate; only the env differs (seam S1).
+    image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    restart: unless-stopped
+    init: true
+    network_mode: service:companion
+    depends_on:
+      companion: { condition: service_started, restart: true }
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /data
+      - /config
+    environment:
+      LISTEN_PORT: "8001"
+      GATE_PORT: ${DEV_COMPANION_PORT:-8000}
+      UPSTREAM_PORT: "8000"
+    volumes:
+      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
+    logging: *logging
+
+networks:
+  dev:
+    ipam:
+      config:
+        - subnet: 172.28.30.0/24
+
+volumes:
+  dev-data:
+  dev-next:
+  dev-home:
+  dev-companion:

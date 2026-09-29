@@ -65,6 +65,7 @@ npm run e2e:container                          # split-stack routing/differentia
 npm run lint                                   # biome, REPORT-ONLY: web/src, e2e/,
                                                #   playwright.config.ts, companion/src, server/src, packages/
 npm run lint:fix                               # same paths, with --write (never run this as a gate)
+make help                                      # containerized dev/stage/prod (Makefile); see README "Local container environments"
 ```
 
 - Two vitest tiers (`test.projects` in `server/vitest.config.ts`): **unit** (`*.test.ts`, node, no bindings) and
