@@ -25,7 +25,8 @@ export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   // "API_TOKEN authenticates only the Companion surface"; design D10). Outside
   // /api/companion/ a token-only request is treated as carrying no credential.
   // This is the single place the scope is decided; every reader of
-  // `apiTokenAuth` (login gate, requireSession, AI v2 refusal, WS upgrade) sees it.
+  // `apiTokenAuth` (the login gate below and the AI v2 principal-less refusal) sees it;
+  // requireSession and the WS upgrade path do not read it.
   const path = new URL(c.req.url).pathname;
   const apiTokenAuth =
     path.startsWith('/api/companion/') &&

@@ -59,7 +59,8 @@ import type { NextConfig } from 'next';
 //   traced, minimal node_modules — that the split `web` image runs. It only ADDS output:
 //   the single-process bridge still reads `.next` in place and serves identically (pinned by
 //   e2e/serving-contract.spec.ts). `outputFileTracingRoot` is the repo root because npm
-//   workspaces hoist `node_modules` (and the `packages/*` sources) above `web/`; without it
+//   workspaces hoist `node_modules` above `web/` (the `packages/*` sources are bundled by Next,
+//   not traced); without it
 //   the tracer stops at `web/` and the standalone tree misses hoisted dependencies. It also
 //   nests the output under `standalone/web/` (server.js at `.next/standalone/web/server.js`).
 //   Deliberately NO `assetPrefix`: an ambient ASSET_PREFIX would silently change

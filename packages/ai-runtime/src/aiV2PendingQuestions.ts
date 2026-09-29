@@ -58,7 +58,8 @@ interface PendingQuestionEntry {
    * because there is no individual to scope it to; see aiV2.ts). `null`
    * can never equal an answering `user.id` (always a non-empty string), so
    * such a turn's questions are structurally unanswerable by anyone and
-   * simply abandon on timeout — a safe degraded state, not a bypass. */
+   * simply abandon on timeout — a safe degraded state, not a bypass. (Defence in depth:
+   * API_TOKEN is now scoped to /api/companion/*, so that path is unreachable over HTTP.) */
   readonly principalUserId: string | null;
   /** The raw `AskUserQuestion` tool input, kept so `resolveAnswer` can
    * rebuild a same-shape `updatedInput` (question text -> answer) without
