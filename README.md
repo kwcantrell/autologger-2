@@ -1252,31 +1252,39 @@ leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
 # b. on OLD, from its checkout, WAL-safe copy of every DB into a FRESH staging directory
 STAGE=$(ssh OLDHOST 'mktemp -d')          # fresh and empty: never reuse a previous stage
-ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE"
+ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE" &&
 # c. bring the stage here as your user (no root ssh agent needed), into a fresh local dir, then
 #    let the copier replace the volume's DBs. It refuses an in-use destination DB, verifies
 #    integrity + row counts, and removes each replaced DB's stale -wal/-shm/-journal.
-LSTAGE=$(mktemp -d)
-rsync -a OLDHOST:"$STAGE"/ "$LSTAGE"/
-sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$LSTAGE" "$VOL" --overwrite
+LSTAGE=$(mktemp -d) &&
+rsync -a OLDHOST:"$STAGE"/ "$LSTAGE"/ &&
+#    Steps b through e (old-host copy, stage rsync, copy, prune, chown, blob delta, integrity check, api start) are ONE
+#    `&&` chain: paste it as a single block; each command runs only if the previous exited 0,
+#    so a failed stage copy never reaches the prune and a failed integrity check never starts api.
+sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$LSTAGE" "$VOL" --overwrite &&
 #    the copier never deletes: drop volume DBs (and sidecars) for sessions deleted since the
-#    pre-seed, i.e. present in the volume but absent from the stage
-sudo env VOL="$VOL" LSTAGE="$LSTAGE" bash -c 'set -eu
-  comm -13 <(cd "$LSTAGE" && find . -name "*.db" | sort) \
-           <(cd "$VOL" && find . -name "*.db" -not -path "./blobs/*" | sort) |
-  while read -r f; do echo "removing stale $f"
-    rm -f "${VOL:?}/${f:?}" "${VOL:?}/${f:?}-wal" "${VOL:?}/${f:?}-shm" "${VOL:?}/${f:?}-journal"; done'
+#    pre-seed, i.e. present in the volume but absent from the stage. Reached ONLY after the
+#    copier exited 0; it refuses (deletes nothing, exits 1) if the stage is missing or has no
+#    catalog.db, so an empty or mistyped $LSTAGE can never wipe the volume.
+sudo env VOL="$VOL" LSTAGE="$LSTAGE" bash -c 'set -euo pipefail
+  [ -f "${LSTAGE:?}/catalog.db" ] || { echo "stage has no catalog.db - refusing to prune" >&2; exit 1; }
+  want=$(cd "$LSTAGE" && find . -name "*.db" | sort)
+  have=$(cd "${VOL:?}" && find . -name "*.db" -not -path "./blobs/*" | sort)
+  comm -13 <(printf "%s\n" "$want") <(printf "%s\n" "$have") |
+  while IFS= read -r f; do [ -n "$f" ] || continue; echo "removing stale $f"
+    rm -f "$VOL/$f" "$VOL/$f-wal" "$VOL/$f-shm" "$VOL/$f-journal"; done' &&
 #    the copier ran as root: give the DB files back to uid 1000 (blobs/ untouched here)
-sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown 1000:1000 {} +
+sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown -h 1000:1000 {} + &&
 # d. blob delta, mirroring deletions
-sudo rsync -a --delete --chown=1000:1000 OLDHOST:/path/to/DATA_DIR/blobs/ "$VOL/blobs/"
+sudo rsync -a --delete --chown=1000:1000 OLDHOST:/path/to/DATA_DIR/blobs/ "$VOL/blobs/" &&
 # e. integrity: the copier already ran integrity_check + per-table row counts (copy vs source)
 #    before exiting 0. Re-check the shipped files, entirely as root (needs the sqlite3 CLI);
 #    prints "<result>  <file>" per DB and exits non-zero if any is not "ok":
 sudo sh -c 'rc=0; for f in "$1"/catalog.db "$1"/sessions/*.db; do
     r=$(sqlite3 "file:$f?mode=ro" "PRAGMA integrity_check" 2>&1 | head -1)
-    echo "$r  $f"; [ "$r" = ok ] || rc=1; done; exit $rc' _ "$VOL" || echo "INTEGRITY FAILURE - do not start api"
-docker compose up -d api
+    echo "$r  $f"; [ "$r" = ok ] || rc=1; done; exit $rc' _ "$VOL" &&
+docker compose up -d api ||
+  echo "CUTOVER STEP FAILED (see output above) - stop here; do not continue past the failed command"
 # f. re-run the membership bootstrap (below)
 # g. repoint the Pangolin target at Newt -> 127.0.0.1:${ROUTER_PORT}
 # h. add the 5 exact-path Companion bypass rules
