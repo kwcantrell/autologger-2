@@ -73,9 +73,17 @@ A router service SHALL front `web` and `api` and SHALL be the only service reach
 outside the compose networks.
 
 It SHALL evaluate every rule on the **raw request-target path exactly as received**: still
-percent-encoded, case-sensitive, with no dot-segment removal or slash merging. The rules
-SHALL mirror, byte for byte, the path checks in the server's bridge. They SHALL be evaluated
-in this order:
+percent-encoded, case-sensitive, with no dot-segment removal or slash merging. Each rule
+SHALL reproduce the path semantics of the server check it replaces:
+- the `Upgrade` rule SHALL match `/api` literally on the raw path, as the server's upgrade
+  dispatch does (it uses the undecoded WHATWG pathname);
+- the `/api` and `/auth` HTTP rule SHALL also match percent-encoded forms of the prefix's
+  letters (for example `/%61pi/x`), because the server's HTTP routing applies `decodeURI`
+  and serves `/%61pi/x` as `/api/x`. It SHALL stay case-sensitive in the decoded letters
+  (`/API/x` is not `/api`) and SHALL NOT decode `%2F`, which `decodeURI` also leaves
+  encoded.
+
+The rules SHALL be evaluated in this order:
 1. A request whose raw path has a segment that is `.` or `..`, or percent-decodes to `.` or
    `..` (any mix of `.`, `%2e` and `%2E`), or contains an empty segment (`//`), or (under
    `/api` or `/auth`) contains `%2f`, `%2F`, `%5c`, or `%5C`, SHALL be forwarded to `api`
@@ -90,7 +98,7 @@ in this order:
 6. All remaining requests SHALL go to `web`.
 
 The router SHALL NOT compress, recompress, cache, or buffer responses. It SHALL NOT add,
-remove, or alter response headers, except for removing its own `Server` header.
+remove, or alter response headers, except for removing the `Server` and `Via` headers it would otherwise add.
 `Content-Encoding`, `Content-Length`, `Vary`, `Content-Range`, and streamed
 (`text/event-stream`, chunked) bodies SHALL pass through exactly as the upstream emitted
 them.
@@ -107,7 +115,7 @@ them.
 - **AND** the list covers: `GET` and `HEAD` of every shell route; an RSC flight request for
   `/teams`; a `/_next/static/*` asset; `/static/fonts/*`; `/_next/image?url=…`;
   `/sessions`; `/sessions/a/b`; `/sessions/a%2F`; `/teams/`; `HEAD /teams/`; `/nope`;
-  `POST /sessions/abc`; `GET /api/does-not-exist`; `GET /API/profile`
+  `POST /sessions/abc`; `GET /api/does-not-exist`; `GET /API/profile`; `GET /%61pi/profile`
 - **THEN** each pair has the same status and the same values (present or absent) for
   `Set-Cookie`, `X-Powered-By`, `Location`, `Content-Type`, `Vary`, and `Cache-Control`
 

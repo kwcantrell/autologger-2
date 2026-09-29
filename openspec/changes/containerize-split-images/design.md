@@ -141,7 +141,17 @@ cleans it, and ignores case. Hono's `c.req.path` does none of those things.
   - `/sessions/a%2F`: `200` → `404`;
   - `/API/x`;
   - `%2e%2e` traversal.
-- So every rule uses an `expression`/regexp matcher on the escaped request path.
+- So every rule uses an `expression`/regexp matcher on the escaped request path. The task 5.1
+  spike showed that the escaped path is `{http.request.uri}`: the raw path plus `?query`, with
+  CEL `.matches()` case-sensitive.
+  - The Go-decoded `{http.request.uri.path}` / `{http.request.orig_uri.path}` are banned.
+  - **Each rule mirrors its own server check.** The HTTP `/api`/`/auth` rule accepts
+    percent-encoded prefix letters, because Hono's `getPath` applies `decodeURI`, so
+    `/%61pi/x` is `/api/x`. The Upgrade rule matches the literal raw `/api`, because
+    `upgradeDispatch.ts` uses the undecoded WHATWG pathname. Found at apply (5.1 +
+    orchestrator code check, 2026-09-28).
+  - The router also strips `Via`, which `reverse_proxy` adds, via a site-level
+    `header { -Server -Via }`. `header_down` cannot remove it.
   - The placeholder to use (e.g. `{http.request.orig_uri.path}` versus an escaped-path
     variant) is **confirmed by a spike at apply time**.
   - The differential e2e pins the result.
