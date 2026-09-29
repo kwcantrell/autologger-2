@@ -34,7 +34,12 @@ COPY packages/transcription/package.json packages/transcription/package.json
 # ---------------------------------------------------------------------------------------------
 # deps: full install (dev included) for the web build. python3/make/g++ exist only in build
 # stages, as the node-gyp fallback for better-sqlite3 when no prebuild matches.
-FROM manifests AS deps
+# Runs on the BUILD host's native platform ($BUILDPLATFORM), not the target: `next build` (SWC)
+# SIGILLs under QEMU amd64 emulation (task 6.1a). The output is arch-independent JS -- see the
+# `.node` guard in web-build -- so the `web` runtime stage below still targets each platform.
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS deps
+WORKDIR /app
+COPY --from=manifests /app/ ./
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
@@ -48,6 +53,11 @@ COPY web/next.config.ts web/tsconfig.json web/postcss.config.mjs web/next-env.d.
 COPY web/public web/public
 COPY web/src web/src
 RUN cd web && npx next build
+# Next traces its optional `sharp` (build-platform native) into the standalone tree. It is dead
+# weight here (images.unoptimized: true, next.config.ts) and would be the WRONG architecture in
+# the cross-built image, so drop it; then fail the build if any native addon remains.
+RUN rm -rf web/.next/standalone/node_modules/sharp web/.next/standalone/node_modules/@img \
+ && ! find web/.next/standalone -name '*.node' | grep -q .
 
 # ---------------------------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS web

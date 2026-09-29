@@ -1008,18 +1008,21 @@ for `linux/amd64` and `linux/arm64`.
 # One-time on the build host: a docker-container builder + QEMU/binfmt for the non-native arch
 # (a privileged host change; amd64 on an arm64 host, or vice versa, runs under QEMU).
 docker run --privileged --rm tonistiigi/binfmt --install all
-docker buildx create --name autologger-multiarch --driver docker-container --use
-docker buildx inspect --bootstrap
+docker buildx create --name autologger-multi --driver docker-container
+docker buildx inspect --builder autologger-multi --bootstrap
 
 # Log in to GHCR with a PAT that has write:packages (classic PAT; keep it out of shell history).
 docker login ghcr.io -u <github-user>
 
 # Build + push both images, both architectures. The tag is what compose will pin.
-GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake --push
+# (-f is required: bare `bake` auto-loads compose.yaml first and fails on its required variables.)
+GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder autologger-multi --push
 ```
 
 - Bake tags with `GIT_SHA` only, so a dirty working tree still gets a clean-looking SHA: build
-  from a clean checkout. The QEMU-emulated build is slow; `better-sqlite3` uses prebuilds.
+  from a clean checkout. The QEMU-emulated build is slow; `better-sqlite3` uses prebuilds. The `web` build stage runs on the
+  build host's native platform (`next build`'s SWC crashes under QEMU amd64); only the `api` stage
+  is emulated for the non-native architecture.
 - **Deploy host:** `docker login ghcr.io` with a PAT that has **`read:packages`** only. An
   anonymous pull of the private images must be refused.
 - `docker compose build` builds the images for the *native* architecture only (local runs,

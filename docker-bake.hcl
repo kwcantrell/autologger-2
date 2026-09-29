@@ -1,6 +1,8 @@
 # Bake definition for the split images (containerize-split-images D5/D8).
-#   GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake
-#   docker buildx bake --set '*.platform=linux/amd64,linux/arm64' --push   (task 6.1; never here)
+#   GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl
+#   ... docker buildx bake -f docker-bake.hcl --builder autologger-multi --push   (task 6.1; never here)
+# Always pass -f docker-bake.hcl: bare `bake` auto-loads compose.yaml first and fails on its
+# required variables. Platforms (amd64 + arm64) are set once, in target "_common".
 variable "GIT_SHA" { default = "dev" }
 variable "REGISTRY" { default = "ghcr.io/kwcantrell" }
 
