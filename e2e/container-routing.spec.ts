@@ -169,6 +169,82 @@ test.describe('stray upgrade writes nothing', () => {
 });
 
 // -------------------------------------------------------------------------------------------
+// Upgrade detection follows Node's definition (differential against the single-process server)
+//
+// Node treats a request as an upgrade only with an `Upgrade` header (non-empty) AND a
+// `Connection` header carrying the `upgrade` token (case-insensitive, comma list, possibly split
+// over several Connection headers). Anything else is an ordinary request. The router must abort
+// exactly where the reference server destroys the socket, and answer exactly where it answers.
+// -------------------------------------------------------------------------------------------
+test.describe('upgrade detection matches Node (router == single-process)', () => {
+  const variants: { name: string; headers: string[]; isUpgrade: boolean }[] = [
+    {
+      name: 'Connection: Upgrade + Upgrade',
+      headers: ['Connection: Upgrade', 'Upgrade: h2c'],
+      isUpgrade: true,
+    },
+    {
+      name: 'Connection: keep-alive, Upgrade',
+      headers: ['Connection: keep-alive, Upgrade', 'Upgrade: h2c'],
+      isUpgrade: true,
+    },
+    {
+      name: 'lowercase names, value UPGRADE',
+      headers: ['connection: UPGRADE', 'upgrade: h2c'],
+      isUpgrade: true,
+    },
+    {
+      name: 'upgrade token padded by spaces',
+      headers: ['Connection: keep-alive ,  upgrade ', 'Upgrade: h2c'],
+      isUpgrade: true,
+    },
+    {
+      name: 'token split over two Connection headers',
+      headers: ['Connection: keep-alive', 'Connection: upgrade', 'Upgrade: h2c'],
+      isUpgrade: true,
+    },
+    { name: 'Upgrade without Connection', headers: ['Upgrade: h2c'], isUpgrade: false },
+    {
+      name: 'Connection: upgrade without Upgrade',
+      headers: ['Connection: upgrade'],
+      isUpgrade: false,
+    },
+    {
+      name: 'Connection: keep-alive + Upgrade',
+      headers: ['Connection: keep-alive', 'Upgrade: h2c'],
+      isUpgrade: false,
+    },
+    { name: 'empty Upgrade value', headers: ['Connection: upgrade', 'Upgrade:'], isUpgrade: false },
+    {
+      name: 'near-miss token upgradex',
+      headers: ['Connection: upgradex', 'Upgrade: h2c'],
+      isUpgrade: false,
+    },
+    {
+      name: 'near-miss token xupgrade',
+      headers: ['Connection: xupgrade', 'Upgrade: h2c'],
+      isUpgrade: false,
+    },
+  ];
+  const req = (headers: string[]) =>
+    ['GET /teams HTTP/1.1', 'Host: container-e2e.invalid', ...headers, '', ''].join('\r\n');
+  for (const v of variants) {
+    test(`GET /teams, ${v.name}: ${v.isUpgrade ? 'aborted' : 'answered'} by router and reference alike`, async () => {
+      const [r, ref] = await Promise.all([
+        rawSocket(ROUTER(), req(v.headers)),
+        rawSocket(REFERENCE(), req(v.headers)),
+      ]);
+      const status = (b: Buffer) => b.toString('latin1').match(/^HTTP\/1\.1 (\d{3})/)?.[1] ?? '';
+      expect(ref.received.length === 0, 'reference (Node) behaviour for this variant').toBe(
+        v.isUpgrade,
+      );
+      expect(r.received.length === 0, 'router aborts iff the reference does').toBe(v.isUpgrade);
+      expect(status(r.received), 'same status line').toBe(status(ref.received));
+    });
+  }
+});
+
+// -------------------------------------------------------------------------------------------
 // Traversal cannot reach a non-Companion route
 // -------------------------------------------------------------------------------------------
 test.describe('traversal cannot reach a non-Companion route', () => {
@@ -564,6 +640,12 @@ test.describe('compose topology', () => {
 //     would send (`<client-supplied>, <real client>`): the rightmost untrusted hop wins;
 //   - a genuinely untrusted peer is a throwaway container on `back` talking to router:8080.
 // Recorded, observed values are written to the test annotations.
+//
+// Not observable here: that api receives exactly ONE X-Forwarded-For value (spec, TLS-proxy
+// requirement). effectiveClientIp() reads only the first hop, and the api exposes the header
+// nowhere else, so a second appended value is invisible from outside; the assertions below pin
+// the first hop (a leaked client-supplied or peer-appended leftmost value would show). The
+// single-value property is left to the 8.3 check on the deployed stack.
 // -------------------------------------------------------------------------------------------
 test.describe('forged X-Forwarded-For is not adopted', () => {
   test.setTimeout(240_000);
