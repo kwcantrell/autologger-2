@@ -99,7 +99,11 @@ services:
     restart: unless-stopped
     init: true
     network_mode: service:app
-    depends_on: [app]
+    # restart: true recreates/restarts the gate when compose restarts `app`. A Docker-policy
+    # restart (crash, `docker restart autologger-dev-app`) does NOT propagate: the gate's joined
+    # namespace goes stale and the port is dead (fail-closed) until `app-gate` is restarted too.
+    depends_on:
+      app: { condition: service_started, restart: true }
     user: "65532:65532"
     read_only: true
     # As compose.yaml's router: exec fails if the binary's file capability is absent from the
