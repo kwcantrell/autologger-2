@@ -100,6 +100,20 @@ The rules SHALL be evaluated in this order:
 5. Paths other than `/` that end in `/` SHALL go to `api`.
 6. All remaining requests SHALL go to `web`.
 
+**Accepted fail-closed exceptions (owner ruling, archive gate, 2026-09-28).** Five
+malformed request shapes are outside the endpoint inventory and never sent by the frontend or
+Companion. For these shapes the router's answer is not required to match the single-process
+server, but it SHALL NOT reach a handler the server would refuse:
+- a path containing a literal `\`: the server treats it as `/` and may serve it; the router
+  sends it to `web`, which answers `404`;
+- `OPTIONS *`: the server answers `400`; the router answers an empty `200`;
+- an `/api` request line too large for the server's header limits: the server answers `431`;
+  the router gives an empty reply;
+- an upgrade whose `/api` path contains dot-segments: the server may admit it; the router
+  (traversal rule) answers `502` or `404`;
+- an absolute-form request target (`GET http://host/…`): the server routes it; the router
+  answers `404`.
+
 The router SHALL NOT compress, recompress, cache, or buffer responses. It SHALL NOT add,
 remove, or alter response headers, except for removing the `Server` and `Via` headers it would otherwise add, and the
 normal proxy handling of hop-by-hop headers (`Connection`, `Keep-Alive`) and header-name

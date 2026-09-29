@@ -594,6 +594,22 @@ maintenance window.
   - the AI v2 key requirement;
   - E1, decided `REQUIRE_LOGIN=1`.
 
+- **Whole-branch audit, 2026-09-28 (opus).** No Critical findings. Two Important:
+  - **I1.** Five fail-closed router deviations on malformed, non-inventory request shapes had
+    been recorded only in the README. **Owner ruling: accept as documented residuals.** The
+    `container-deployment` router requirement now lists them as an explicit carve-out.
+  - **I2.** Cutover step 3d used `sudo rsync … OLDHOST:`, which loses the ssh agent. Fixed in
+    the pre-archive fix wave.
+
+  The owner also folded minors M1 (pin `DATA_DIR`/`NODE_ENV`/`HOST`/`PORT` in compose), M4
+  (`cap_drop`/`no-new-privileges` on web/api) and M6 (empty-source guard on the blob
+  `rsync --delete`) into that wave, plus M5 (stale comments) and M7 (the pre-flight
+  `container_name` clash note). The remaining audit minors are follow-ups:
+  - M2: an encoded `%63ompanion` fails closed;
+  - M3: the web image carries an unused build-arch esbuild binary;
+  - M8: the differential has no Accept-Encoding row for web paths;
+  - a CI multi-arch matrix, and a bake cache.
+
 ### Minors accepted as residual
 - `next` is included in the `api` image.
 - The `web-frontend-platform` MODIFIED requirement is an intentionally edited full
