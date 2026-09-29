@@ -3,12 +3,12 @@
 
 ## 1. Branch and plan of record
 
-- [ ] 1.1 Make the branch's first commit the gated OpenSpec artifacts
+- [x] 1.1 Make the branch's first commit the gated OpenSpec artifacts
       (`openspec/changes/containerize-split-images/`), before any dispatch.
 
 ## 2. API_TOKEN scope (frozen contract + auth; phase review required)
 
-- [ ] 2.1 Characterize current behaviour. Integration tests pin the pre-change `API_TOKEN`
+- [x] 2.1 Characterize current behaviour. Integration tests pin the pre-change `API_TOKEN`
       behaviour, where any gaps remain beyond `server/src/routers/authz.int.test.ts`:
       - a token-only request on `/api/companion/state`;
       - a token-only request on `/api/sessions`;
@@ -18,12 +18,12 @@
       - the AI v2 dashboard, under both `REQUIRE_LOGIN` modes.
 
       All pass on unmodified code.
-- [ ] 2.2 Scope the token (design D10). In `server/src/middleware/auth.ts`, `apiTokenAuth` is
+- [x] 2.2 Scope the token (design D10). In `server/src/middleware/auth.ts`, `apiTokenAuth` is
       true only when the path is under `/api/companion/`. Update the 2.1 tests to the new
       `api-contract-freeze` scenarios and the MODIFIED `core-ports-architecture` scenarios.
       Update the README `API_TOKEN` row and the example that curls `/api/sessions` with the
       bearer.
-- [ ] 2.3 Run `npm run typecheck` and `npm test`.
+- [x] 2.3 Run `npm run typecheck` and `npm test`.
 
 ## 3. Web standalone output + server runtime dependency (gate: typecheck + test + e2e)
 
