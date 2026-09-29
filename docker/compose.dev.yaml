@@ -123,6 +123,52 @@ services:
       - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
     logging: *logging
 
+  # Dev-only Bitfocus Companion carrying this repo's module (design D9). `companion` owns the
+  # network namespace and is the only service declaring `ports:` (literal 127.0.0.1);
+  # `companion-gate` joins it and is the only listener on its external interfaces. Companion
+  # itself binds ::8000 inside the namespace (its entrypoint hard-codes it): reachable ungated
+  # only from the dev network (accepted D9 residual). NEVER publish 8000 directly.
+  companion:
+    build:
+      context: .
+      dockerfile: docker/companion.Dockerfile
+    image: autologger-dev-companion:local
+    container_name: autologger-dev-companion
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"
+    networks: [dev]
+    volumes:
+      - dev-companion:/companion
+    logging: *logging
+
+  companion-gate:
+    # Same Caddy digest and gate Caddyfile as app-gate; only the env differs (seam S1).
+    image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    restart: unless-stopped
+    init: true
+    network_mode: service:companion
+    depends_on:
+      companion: { condition: service_started, restart: true }
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /data
+      - /config
+    environment:
+      LISTEN_PORT: "8001"
+      GATE_PORT: ${DEV_COMPANION_PORT:-8000}
+      UPSTREAM_PORT: "8000"
+    volumes:
+      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
+    logging: *logging
+
 networks:
   dev:
     ipam:
@@ -133,3 +179,4 @@ volumes:
   dev-data:
   dev-next:
   dev-home:
+  dev-companion:
