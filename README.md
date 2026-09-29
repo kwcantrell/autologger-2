@@ -1194,8 +1194,13 @@ sudo rsync -a --delete "$VOL/blobs/" /backups/autologger-$(date +%F)/blobs/    #
 
 Exit codes: `0` ok, `1` copy or verification failure (integrity, row counts, corrupt DB), `2`
 usage error or a refused unsafe invocation (destination equals/nests with the source, missing
-source, existing destination DBs without `--overwrite`). It never writes to the source, so it
-is safe against a running server. Also back up the `/home/node` volume (`~/.claude*`) if the
+source, existing destination DBs without `--overwrite`, or `--overwrite` onto a destination DB
+that another process still has open). It never writes to the source, so it is safe against a
+running server. With `--overwrite` it deletes the destination DB's stale `-wal`/`-shm`/`-journal`
+files after the new copy is verified and before the atomic rename (a leftover `-wal` next to a
+replaced `.db` could otherwise be replayed onto it); **stop the `api` before replacing DB
+files** — the copier refuses if it detects the destination open, but that check is a
+safeguard, not a substitute for stopping the service. Also back up the `/home/node` volume (`~/.claude*`) if the
 credentials matter.
 
 ### Migrating an existing deployment (minimal downtime)
@@ -1215,6 +1220,7 @@ into the volume, blobs included, home directory included:
 
 ```bash
 npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; prints the blobs rsync
+#   (re-running into a populated /srv/stage needs --overwrite; the api must be stopped)
 sudo rsync -a --chown=1000:1000 --exclude /blobs /srv/stage/ "$VOL/"
 sudo rsync -a --chown=1000:1000 /path/to/snapshot/data/blobs/ "$VOL/blobs/"
 # ~/.claude and ~/.claude.json -> the home volume, then create/merge settings.json (see Volumes)
@@ -1225,8 +1231,8 @@ sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
 **2. Pre-flight on loopback.** `docker compose up -d`, then on `127.0.0.1:${ROUTER_PORT}` run
 `npm run e2e:container` (separate throwaway stack) or your own probes, and a Google sign-in
 (the session cookie carries `Secure`). Rehearse the membership bootstrap (below). Then
-`docker compose stop api` before the window: a running `api` leaves `-wal`/`-shm` files that
-must not sit next to a replaced `.db`.
+`docker compose stop api` before the window and keep it stopped until step 3e: a running `api`
+leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 
 **3. Cutover window (downtime starts).**
 
@@ -1234,8 +1240,9 @@ must not sit next to a replaced `.db`.
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
 # b. on OLD, from its checkout, WAL-safe copy of every DB into a staging directory
 ssh OLD 'cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts OLD_DATA /srv/stage-final'
-# c. ship the verified DB copies over the seeded ones; --delete also drops stale -wal/-shm
-#    and pre-flight-created sessions; blobs/ and tmp/ are excluded (protected from --delete)
+# c. ship the verified DB copies over the seeded ones (api is stopped). --delete drops the
+#    pre-flight api run's stale -wal/-shm and pre-flight-created sessions (defence in depth: the
+#    staged copy never contains sidecars); blobs/ and tmp/ are excluded (protected from --delete)
 sudo rsync -a --delete --chown=1000:1000 --exclude /blobs --exclude /tmp OLD:/srv/stage-final/ "$VOL/"
 # d. blob delta, mirroring deletions
 sudo rsync -a --delete --chown=1000:1000 OLD:OLD_DATA/blobs/ "$VOL/blobs/"
