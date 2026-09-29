@@ -13,20 +13,20 @@
 
 ## 1. Plan of record
 
-- [ ] 1.1 Make the gated OpenSpec artifacts the branch's first commit, before any dispatch:
+- [x] 1.1 Make the gated OpenSpec artifacts the branch's first commit, before any dispatch:
       `docs(openspec): propose containerized-dev-env`.
 
 ## 2. Env-file hygiene
 
-- [ ] 2.1 `.gitignore`: add `.env.*` and `!*.example`. Verify:
+- [x] 2.1 `.gitignore`: add `.env.*` and `!*.example`. Verify:
       - `git check-ignore .env .env.dev .env.stage` reports all three as ignored;
       - `docker/.env.example`, `docker/.env.dev.example`, `docker/.env.stage.example`, and
         `server/.env.example` are not ignored.
-- [ ] 2.2 `docker/.env.example`:
+- [x] 2.2 `docker/.env.example`:
       - Rewrite the closing note: `PUBLIC_BASE_URL` **must** be set here, because compose
         interpolates it. The other pinned keys have no effect here.
       - Add `# e.g. WEB_TAG=6ca18cd906f8 (12-char SHA from make prod-push)`.
-- [ ] 2.3 Add `docker/.env.dev.example` (copied to `.env.dev`). It lists:
+- [x] 2.3 Add `docker/.env.dev.example` (copied to `.env.dev`). It lists:
       - optional `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED`, `AI_V2_ENABLED`,
         `AI_V2_API_KEY`, and `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`;
       - `DEV_PORT` and `DEV_COMPANION_PORT`.
@@ -40,7 +40,7 @@
         host file dev mounts);
       - the warning never to use prod secrets, and to use low-limit keys;
       - the posture keys that compose pins.
-- [ ] 2.4 Add `docker/.env.stage.example` (copied to `.env.stage`). It lists:
+- [x] 2.4 Add `docker/.env.stage.example` (copied to `.env.stage`). It lists:
       - `STAGE_PORT=8788`;
       - the dev OAuth client id and secret;
       - distinct `API_TOKEN` and `ADMIN_TOKEN`;
