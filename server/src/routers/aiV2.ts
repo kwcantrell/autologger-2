@@ -159,6 +159,10 @@ const PRIMARY_DASHBOARD_ID = 'primary';
  * bypassing per-user studio scoping, so only `user === null &&
  * apiTokenAuth` is refused.
  *
+ * NOTE (containerize-split-images): `API_TOKEN` is now scoped to `/api/companion/*` in
+ * `authContext`, so `apiTokenAuth` is never true on the AI v2 routes and the refusal below is
+ * unreachable over HTTP. It is kept as defence in depth in case the scope ever widens.
+ *
  * Returns the (possibly still-null, for the permitted anonymous case)
  * `AuthUser`; callers that need a guaranteed non-null principal (the answer
  * route, which has no legitimate anonymous-answer path) re-check.
@@ -270,7 +274,8 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // is recorded too, not just session access. `requireIndividualPrincipal`
   // above already refused the API_TOKEN/device-token case (`user === null
   // && apiTokenAuth`) with a 404 before this line, so THAT path can no
-  // longer reach here principal-less (Phase-3 fix wave) — but `user` can
+  // longer reach here principal-less (Phase-3 fix wave; defence in depth now
+  // that API_TOKEN is Companion-scoped and cannot reach this route) — but `user` can
   // still legitimately be `null` for plain anonymous dev-mode access
   // (`REQUIRE_LOGIN=0`, no credentials at all; see the helper's doc
   // comment), which is why `principalUserId` keeps its `string | null`
@@ -436,7 +441,8 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 
   // 6. The remaining principal-less case: plain anonymous access with no
   // credentials at all (`user === null`, `apiTokenAuth` false — step 3
-  // above only refuses the DEVICE-TOKEN case). `resolveAnswer` needs a
+  // above only refuses the DEVICE-TOKEN case, itself unreachable over HTTP now that
+  // API_TOKEN is Companion-scoped; kept as defence in depth). `resolveAnswer` needs a
   // concrete principal id to match against the turn's recorded initiator,
   // and no anonymous caller can ever legitimately equal it (a `null`
   // initiator, e.g. an anonymous `/design` turn, is itself unanswerable by

@@ -582,40 +582,62 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
 
 // ── Phase-3 fix wave — Fix 1: principal-less (device-token) refusal (design D7) ──
 
-describe('ai/v2/design — principal-less (device-token) refusal (404, design D7, Phase-3 fix wave)', () => {
-  it('a device token (API_TOKEN, user===null) gets 404, masked as "Session not found", spawning nothing', async () => {
-    const s = seededSession().sessionId;
-    const res = await post(
-      s,
-      { message: 'hi' },
+// API_TOKEN authenticates only /api/companion/* (containerize-split-images task 2.2, design D10):
+// on every AI v2 route the bearer is inert, so a token-only request is handled exactly as an
+// anonymous one. The principal-less refusal in `requireIndividualPrincipal` therefore cannot fire
+// over HTTP any more (no AI v2 route lives under /api/companion/); it stays as defence in depth.
+describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, design D10)', () => {
+  it('a token-only request behaves as an anonymous one: same status as no Authorization header', async () => {
+    const tokenEnv = () =>
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
         REQUIRE_LOGIN: '0',
         AI_V2_API_KEY: '',
         API_TOKEN: 'device-secret',
-      }),
-      { ...J, Authorization: 'Bearer device-secret' },
-    );
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
-    expect(spawnSpy).not.toHaveBeenCalled();
+      });
+    const anon = await post(seededSession().sessionId, { message: 'hi' }, tokenEnv());
+    await anon.text();
+    spawnSpy.mockClear();
+    const res = await post(seededSession().sessionId, { message: 'hi' }, tokenEnv(), {
+      ...J,
+      Authorization: 'Bearer device-secret',
+    });
+    await res.text();
+    expect(res.status).toBe(anon.status);
+    expect(res.status).toBe(200);
   });
 
-  it('a device token is refused with 404 BEFORE the config gate — masks whether AI v2 is even configured', async () => {
+  it('a token-only request hits the config gate like anonymous (503 when AI v2 is unconfigured)', async () => {
     const s = seededSession().sessionId;
     const res = await post(
       s,
       { message: 'hi' },
       envWith({
-        AI_V2_ENABLED: '', // unconfigured — would otherwise 503
+        AI_V2_ENABLED: '', // unconfigured
         HOST: '127.0.0.1',
         REQUIRE_LOGIN: '0',
         API_TOKEN: 'device-secret',
       }),
       { ...J, Authorization: 'Bearer device-secret' },
     );
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(503);
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it('under REQUIRE_LOGIN=1 a token-only request is 401 "Login required." and spawns nothing', async () => {
+    const s = seededSession().sessionId;
+    const res = await post(
+      s,
+      { message: 'hi' },
+      loopbackEnv({ REQUIRE_LOGIN: '1', API_TOKEN: 'device-secret' }),
+      {
+        ...J,
+        Authorization: 'Bearer device-secret',
+      },
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
@@ -935,7 +957,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
 // ── task 3.1/3.2/3.3 — gate-intent verification (design D7's hard constraints) ──
 
 describe('ai/v2/answer — principal binding: access to the session is not enough (design D7)', () => {
-  it('(c) a device token (API_TOKEN, user===null) cannot answer even a genuinely pending, correctly-addressed question', async () => {
+  it('(c) a token-only request is inert: it cannot answer a pending question (401 under REQUIRE_LOGIN=1), which stays pending', async () => {
     const { sessionId: s } = seededSession();
     const initiator = seedUser({}); // the real principal that "started" the turn
     aiV2PendingQuestions.register(
@@ -952,44 +974,37 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
+        REQUIRE_LOGIN: '1',
         AI_V2_API_KEY: '',
         API_TOKEN: 'device-secret',
       }),
       { ...J, Authorization: 'Bearer device-secret' },
     );
 
-    expect(res.status).toBe(404);
-    // Refused structurally, before/regardless of the registry lookup — the
-    // question is still pending, provably not consumed by this attempt.
+    expect(res.status).toBe(401);
+    // Refused before the registry lookup — the question is provably not consumed.
     expect(aiV2PendingQuestions.has({ sessionId: s, turnId: 'turn-1', requestId: 'req-1' })).toBe(
       true,
     );
-    // /answer never spawns regardless, but the shared guard is proven not to
-    // open any path that could (task 3.1/3.2's SPAWN BOUNDARY still holds).
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it(
-    "(c') a device token is refused with 404 BEFORE the config gate on /answer too — masks configuration " +
-      'state (Phase-3 fix wave, matching the /design route)',
-    async () => {
-      const s = seededSession().sessionId;
-      const res = await postAnswer(
-        s,
-        { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
-        envWith({
-          AI_V2_ENABLED: '', // unconfigured — would otherwise 503
-          HOST: '127.0.0.1',
-          REQUIRE_LOGIN: '0',
-          API_TOKEN: 'device-secret',
-        }),
-        { ...J, Authorization: 'Bearer device-secret' },
-      );
-      expect(res.status).toBe(404);
-      expect(spawnSpy).not.toHaveBeenCalled();
-    },
-  );
+  it("(c') under REQUIRE_LOGIN=0 a token-only answer is handled as anonymous: the config gate answers first (503 when unconfigured)", async () => {
+    const s = seededSession().sessionId;
+    const res = await postAnswer(
+      s,
+      { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
+      envWith({
+        AI_V2_ENABLED: '', // unconfigured
+        HOST: '127.0.0.1',
+        REQUIRE_LOGIN: '0',
+        API_TOKEN: 'device-secret',
+      }),
+      { ...J, Authorization: 'Bearer device-secret' },
+    );
+    expect(res.status).toBe(503);
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
 
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
     const { sessionId: s, studioId } = seededSession();
@@ -1290,20 +1305,20 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     expect(res.status).toBe(503);
   });
 
-  it('a device token (API_TOKEN, user===null) is masked 404 on GET, same as the design/answer routes', async () => {
+  it('a token-only GET is inert: identical to the same request with no Authorization (design D10)', async () => {
     const s = seededSession().sessionId;
-    const res = await getDashboard(
-      s,
+    const e = () =>
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
         REQUIRE_LOGIN: '0',
         API_TOKEN: 'device-secret',
-      }),
-      { ...J, Authorization: 'Bearer device-secret' },
-    );
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
+      });
+    const anon = await getDashboard(s, e());
+    const tok = await getDashboard(s, e(), { ...J, Authorization: 'Bearer device-secret' });
+    expect(tok.status).toBe(anon.status);
+    expect(tok.status).toBe(200);
+    expect(await tok.json()).toEqual(await anon.json());
   });
 
   it('GET still works on a non-loopback, no-allowlist bind (NOT gated by open-network refusal, unlike design/answer)', async () => {
@@ -1336,20 +1351,20 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(res.status).toBe(404);
   });
 
-  it('a device token is masked 404 on PUT/DELETE too, and nothing is stored', async () => {
+  it('a token-only PUT/DELETE under REQUIRE_LOGIN=1 is 401 and nothing is stored', async () => {
     const s = seededSession().sessionId;
     const deviceEnv = envWith({
       AI_V2_ENABLED: '1',
       HOST: '127.0.0.1',
-      REQUIRE_LOGIN: '0',
+      REQUIRE_LOGIN: '1',
       API_TOKEN: 'device-secret',
     });
     const headers = { ...J, Authorization: 'Bearer device-secret' };
     const putRes = await putDashboard(s, VALID_DASHBOARD, deviceEnv, headers);
-    expect(putRes.status).toBe(404);
+    expect(putRes.status).toBe(401);
     const delRes = await deleteDashboard(s, deviceEnv, headers);
-    expect(delRes.status).toBe(404);
-    // Confirm nothing was stored despite the device token's attempt.
+    expect(delRes.status).toBe(401);
+    // Confirm nothing was stored despite the token's attempt.
     const getRes = await getDashboard(s);
     expect(await getRes.json()).toEqual({ config: null });
   });

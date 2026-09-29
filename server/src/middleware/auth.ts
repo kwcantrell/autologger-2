@@ -21,11 +21,19 @@ export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   const user = await resolveSessionUser(c.env.ports.kv, catalog, cookie);
   c.set('user', user);
 
-  const apiTokenAuth = requestHasValidApiToken(c.req.raw, c.env.config.API_TOKEN);
+  // API_TOKEN authenticates only the Companion surface (api-contract-freeze
+  // "API_TOKEN authenticates only the Companion surface"; design D10). Outside
+  // /api/companion/ a token-only request is treated as carrying no credential.
+  // This is the single place the scope is decided; every reader of
+  // `apiTokenAuth` (the login gate below and the AI v2 principal-less refusal) sees it;
+  // requireSession and the WS upgrade path do not read it.
+  const path = new URL(c.req.url).pathname;
+  const apiTokenAuth =
+    path.startsWith('/api/companion/') &&
+    requestHasValidApiToken(c.req.raw, c.env.config.API_TOKEN);
   c.set('apiTokenAuth', apiTokenAuth);
 
   if (requireLoginEnabled(c.env.config)) {
-    const path = new URL(c.req.url).pathname;
     const method = c.req.method.toUpperCase();
     if (apiRequestRequiresLogin(path, method) && !user && !apiTokenAuth) {
       return c.json({ detail: 'Login required.' }, 401);

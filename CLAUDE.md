@@ -23,6 +23,12 @@ validation + **jose** for Google ID-token verify, on:
   Replaces the Durable Object.
 - **`@hono/node-ws`** for WebSocket upgrades, served by **`@hono/node-server`**.
 
+**Split-container topology** (`containerize-split-images`): besides the single process, the repo
+builds two images from `docker/Dockerfile` (`web` = Next standalone, `api` = the server in
+API-only mode) behind an internal Caddy `router` (`compose.yaml`, `docker-bake.hcl`,
+`docker/Caddyfile`); `API_TOKEN` authenticates only `/api/companion/*`. Deploy, migration,
+and rollback procedures are in README "Container deployment".
+
 **Runs anywhere Node 22 runs.** No cloud account, no login, no remote provisioning — a single
 Node process, state on local disk under `DATA_DIR`. Transcript generation
 (`…/transcript-words/generate`) is configuration-gated: `503` unless `DEEPGRAM_API_KEY` is
@@ -54,6 +60,8 @@ npm run build && npm run start                 # production: server serves web/.
 npm run typecheck                              # server + web + e2e
 npm test                                       # server vitest (unit + integration)
 npm run e2e                                    # Playwright smoke (hermetic server on :8791)
+npm run e2e:container                          # split-stack routing/differential e2e (builds images; needs docker;
+                                               #   `container_name` clashes with a running prod stack) — see README
 npm run lint                                   # biome, REPORT-ONLY: web/src, e2e/,
                                                #   playwright.config.ts, companion/src, server/src, packages/
 npm run lint:fix                               # same paths, with --write (never run this as a gate)

@@ -1,0 +1,139 @@
+# AutoLogger internal router (containerize-split-images, design D2 / D7; spec
+# "Internal router preserves the single-origin disposition matrix").
+#
+# Image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+# (caddy:2, v2.11.4) -- pinned in compose.yaml, not here.
+#
+# This router writes NO response of its own (except `abort`, which writes nothing). Every 404
+# the single-process server pins is still produced by the server. Invariants a future reader
+# must not "helpfully" undo:
+#   * NO `encode` directive anywhere: /api compression is server-owned (api-contract-freeze).
+#   * NO Caddy `path` / `path_regexp` matcher, and no {http.request.uri.path} /
+#     {http.request.orig_uri.path}: those are percent-DECODED (and `path` is case-INSENSITIVE),
+#     so /sessions/a%2F, /API/x and %2e%2e traversal would flip layers. Every rule below matches
+#     {http.request.uri} (raw, escaped, case-preserved, includes ?query) with CEL .matches()
+#     (RE2, case-sensitive). `reverse_proxy` forwards the request-target byte for byte.
+#   * Every reverse_proxy sets `transport http { compression off }`. Caddy's default upstream
+#     transport (Go net/http) silently adds `Accept-Encoding: gzip` to requests that had none and
+#     transparently DEcompresses the answer, which turns an identity `Content-Length` response
+#     into a chunked one and makes the api compress work nobody asked for. With compression off
+#     the request's Accept-Encoding and the upstream's Content-Encoding/Content-Length/Vary pass
+#     through exactly as emitted (found by the container e2e encoding-parity test, task 5.4).
+#   * Site-level `header { -Server -Via }`: reverse_proxy adds `Via`, and header_down cannot
+#     remove it; the router must add no headers.
+#
+# Each rule mirrors ITS OWN server check (locate by content, not line number):
+#   - HTTP routing: Hono `getPath` (node_modules/hono/dist/utils/url.js) applies a
+#     %25-protected decodeURI to the raw path: /%61pi/x IS /api/x, %2F/%5C/%3F stay encoded,
+#     letter case and `//` are preserved. server/src/app.ts bridge catch-all: `path !== '/' &&
+#     path.endsWith('/')` -> notFound; `path === '/api' | '/auth' | startsWith('/api/' | '/auth/')`
+#     -> notFound. Node's WHATWG URL parser collapses `.`/`..`/%2e%2e segments BEFORE Hono
+#     sees them, hence rule 1.
+#   - Upgrade dispatch: server/src/upgradeDispatch.ts routes on the UNDECODED WHATWG pathname:
+#     only literal /api (or /api/...) is admitted; everything else is destroyed (no response).
+
+{
+	auto_https off
+	# Loopback-only admin: used solely by the compose healthcheck (`wget http://127.0.0.1:2019/config/`).
+	# It is unreachable from either compose network. persist_config off: no autosave file, so the
+	# container can run non-root with a read-only root filesystem.
+	admin 127.0.0.1:2019
+	persist_config off
+
+	servers {
+		# Trust forwarded headers ONLY from the pinned gateways (front + back bridge gateways in
+		# compose.yaml; the host's Newt/Pangolin arrives NAT'd from the bridge gateway).
+		# Strict: walk X-Forwarded-For right-to-left, stop at the first untrusted hop, so a
+		# client-forged X-Forwarded-For is never adopted. `header_up X-Forwarded-For {client_ip}`
+		# below then hands api exactly ONE value (TRUST_PROXY=1 on the api side).
+		trusted_proxies static 172.28.10.1 172.28.11.1
+		trusted_proxies_strict
+	}
+}
+
+:8080 {
+	header {
+		-Server
+		-Via
+	}
+
+	# All matchers below are CEL expressions over {http.request.uri} (raw path + ?query). In the
+	# /api|/auth prefix regexp each letter may be literal or %XX (hex case-insensitive; letters
+	# themselves case-sensitive) and must be followed by `/`, `?` or end -- `%2F` after the prefix
+	# is NOT a `/` (decodeURI leaves it encoded), so /api%2Fx is not a prefix match.
+
+	# ---- Rule 1: traversal-shaped raw targets -> rewrite to a fixed non-inventory path ------------
+	# (a) a `.`/`..` segment in any %2e/%2E/literal mix, (b) an empty segment `//` in the path
+	# part, (c) under /api or /auth: encoded `/` or `\` in any hex case. The rewrite keeps the
+	# query and lands outside /api and /auth, so the server's own notFound() answers, for every
+	# method, exactly as it would for any unknown non-API path.
+	@traversal expression `{http.request.uri}.matches("(?i)^[^?]*/(\\.|%2e){1,2}(/|\\?|$)") || {http.request.uri}.matches("^[^?]*//") || ({http.request.uri}.matches("^/(a|%61)(p|%70)(i|%69)(/|\\?|$)|^/(a|%61)(u|%75)(t|%74)(h|%68)(/|\\?|$)") && {http.request.uri}.matches("^[^?]*(%2[fF]|%5[cC])"))`
+	handle @traversal {
+		rewrite * /__autologger_rejected
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# ---- Rule 2: Upgrade outside literal /api -> abort (close, write nothing) ---------------------
+	# Reproduces upgradeDispatch's socket destroy, for exactly what Node's http server calls an
+	# upgrade: a non-empty `Upgrade` header AND a `Connection` header carrying the `upgrade` token
+	# (case-insensitive, comma list; Caddy joins repeated Connection headers with ", "). An
+	# `Upgrade` header without that token is an ordinary request in Node and is passed on.
+	# Applies to /auth and to /%61pi/... too: the server's upgrade path uses the undecoded
+	# pathname, so encoded letters are not /api there.
+	@upgradeOutsideApi expression `{http.request.header.Upgrade} != "" && {http.request.header.Connection}.matches("(?i)(^|,)[ \\t]*upgrade[ \\t]*(,|$)") && !{http.request.uri}.matches("^/api(/|\\?|$)")`
+	handle @upgradeOutsideApi {
+		abort
+	}
+
+	# ---- Rule 3: /api, /auth (and below) -> api; WebSocket upgrades on /api proxy through ---------
+	# Caddy's reverse_proxy handles the Upgrade handshake natively. Streaming: response bodies
+	# with Content-Type text/event-stream are flushed immediately by Caddy (it enables an
+	# immediate-flush path for SSE), so flush_interval is left at its default rather than -1.
+	@apiPrefix expression `{http.request.uri}.matches("^/(a|%61)(p|%70)(i|%69)(/|\\?|$)|^/(a|%61)(u|%75)(t|%74)(h|%68)(/|\\?|$)")`
+	handle @apiPrefix {
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# ---- Rule 4: anything but GET/HEAD -> api (the API-only bridge answers 404 for non-API) -------
+	@nonRead not method GET HEAD
+	handle @nonRead {
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# ---- Rule 5: raw path other than `/` ending in `/` -> api (bridge: trailing slash -> 404) ----
+	# Raw `%2F` at the end is not a trailing slash (Hono keeps it encoded), so /sessions/a%2F
+	# falls through to web, as in the single-process server.
+	@trailing expression `{http.request.uri}.matches("^[^?]+/(\\?|$)") && !{http.request.uri}.matches("^/(\\?|$)")`
+	handle @trailing {
+		reverse_proxy api:8787 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				compression off
+			}
+		}
+	}
+
+	# ---- Rule 6: everything else -> web ----------------------------------------------------------
+	handle {
+		reverse_proxy web:3000 {
+			transport http {
+				compression off
+			}
+		}
+	}
+}

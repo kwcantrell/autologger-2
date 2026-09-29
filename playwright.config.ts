@@ -31,7 +31,7 @@ const FAKE_CLAUDE_CLI = join(here, 'packages', 'ai-runtime', 'fixtures', 'fake-c
 // notes and e2e/ai-v2-dashboards.spec.ts for the driving test.
 const FAKE_AI_V2_AGENT = join(here, 'server', 'src', 'test', 'fixtures', 'ai-v2-fake-agent.mjs');
 
-export default defineConfig({
+const config = defineConfig({
   testDir: './e2e',
   use: {
     baseURL: 'http://127.0.0.1:8791',
@@ -150,7 +150,12 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { browserName: 'chromium' },
-      testIgnore: [/visual\.spec\.ts/, /companion\.e2e\.spec\.ts/, /login-gate\.spec\.ts/],
+      testIgnore: [
+        /visual\.spec\.ts/,
+        /companion\.e2e\.spec\.ts/,
+        /login-gate\.spec\.ts/,
+        /container-routing\.spec\.ts/,
+      ],
     },
     {
       name: 'login-gate',
@@ -174,6 +179,22 @@ export default defineConfig({
       // admin-UI flow that follows.
       timeout: 60_000,
       use: { browserName: 'chromium' },
+    },
+    {
+      // containerize-split-images (task 5.4): the split-topology suite. It targets an ALREADY
+      // RUNNING compose stack through the router (ROUTER_URL) -- no webServer for it -- plus a
+      // single-process reference server for the differential (SINGLE_PROCESS_URL). Neither is
+      // started by Playwright: run it with `npm run e2e:container` (e2e/container/run.sh), which
+      // builds and starts both, runs this project and tears them down. It is deliberately NOT in
+      // `npm run e2e`'s --project list, and it collects no tests unless ROUTER_URL is set, so a
+      // bare `playwright test` is unaffected. Runs serially: the docker-level cases mutate the
+      // stack (the wrapper also passes --workers=1).
+      name: 'container',
+      testMatch: process.env.ROUTER_URL
+        ? [/serving-contract\.spec\.ts/, /container-routing\.spec\.ts/]
+        : /(?!)/,
+      fullyParallel: false,
+      use: { browserName: 'chromium', baseURL: process.env.ROUTER_URL },
     },
     {
       name: 'visual-desktop',
@@ -205,3 +226,10 @@ export default defineConfig({
     },
   ],
 });
+
+// The hermetic single-process servers above belong to the other projects. When the `container`
+// project is being run (ROUTER_URL set) Playwright must not boot them: it would build nothing
+// useful and would fight over ports for no reason.
+if (process.env.ROUTER_URL) config.webServer = [];
+
+export default config;

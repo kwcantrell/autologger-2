@@ -23,6 +23,7 @@
     "lint": "npm run lint -w web && biome check --error-on-warnings e2e playwright.config.ts companion/src server/src packages",
     "lint:fix": "npm run lint:fix -w web && biome check --write e2e playwright.config.ts companion/src server/src packages",
     "e2e": "npm run build -w web && playwright test --project=chromium --project=login-gate",
+    "e2e:container": "bash e2e/container/run.sh",
     "e2e:visual": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile",
     "e2e:visual:update": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile --update-snapshots"
   },

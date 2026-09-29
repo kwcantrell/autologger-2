@@ -222,7 +222,9 @@ reads TTL from the injected `Clock`. No module-level mutable singleton SHALL bac
 ### Requirement: Authentication and authorization are distinct, single seams
 
 Request **authentication** (resolving identity from session cookie or `API_TOKEN`) SHALL be
-performed once in middleware. Resource **authorization** (existence + studio-membership +
+performed once in middleware; `API_TOKEN` SHALL be honoured only on paths under
+`/api/companion/` (see `api-contract-freeze` "API_TOKEN authenticates only the Companion
+surface"). Resource **authorization** (existence + studio-membership +
 admin-token checks) SHALL be consolidated behind `requireSession`/`authorize` rather than
 re-deriving the login decision. The login-required check SHALL NOT be duplicated between
 middleware and per-route helpers. The consolidation SHALL preserve these exact behaviors,
@@ -235,8 +237,12 @@ so its default-deny requirements are out of scope for this capability.)
 - **THEN** the unauthenticated-401 decision is made exactly once, and `requireSession` performs only resolve + authorize
 
 #### Scenario: API_TOKEN machine clients bypass studio membership
-- **WHEN** a request authenticated by `API_TOKEN` (no user) accesses a session in any studio under `REQUIRE_LOGIN=1`
+- **WHEN** a request authenticated by `API_TOKEN` (no user) on a path under `/api/companion/` resolves a session in any studio under `REQUIRE_LOGIN=1`
 - **THEN** it is allowed after an existence check, with no membership scoping applied — the Companion machine path is unchanged
+
+#### Scenario: API_TOKEN is not an identity outside the Companion surface
+- **WHEN** a request bearing only a valid `API_TOKEN` accesses a session-scoped route outside `/api/companion/` under `REQUIRE_LOGIN=1`
+- **THEN** it is rejected by the single middleware login decision with `401`, and `requireSession` is never reached
 
 #### Scenario: Cross-studio access is masked as 404, not 403
 - **WHEN** an authenticated user who is not a member of a session's studio requests that session

@@ -6,7 +6,13 @@
 
 import { describe, expect, it } from 'vitest';
 import { app, envWith } from '../test/harness';
-import { loginCookie, seededSession, seedStudio, seedUser } from '../test/helpers';
+import {
+  loginCookie,
+  seededSession,
+  seedStudio,
+  seedUser,
+  setCompanionPresence,
+} from '../test/helpers';
 
 const withLogin = envWith({ REQUIRE_LOGIN: '1' });
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
@@ -14,32 +20,40 @@ const bearer = (token: string): Record<string, string> => ({ Authorization: `Bea
 describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   it('reaches a session in a studio it is not a member of, under REQUIRE_LOGIN=1', async () => {
     const { sessionId: session } = seededSession();
+    setCompanionPresence('authz-c1', session);
     // Machine client: bearer API_TOKEN, no cookie, no user, no membership anywhere.
     const res = await app.request(
-      `/api/sessions/${session}/status`,
+      '/api/companion/state',
       { method: 'GET', headers: bearer('test-api-token') },
       withLogin,
     );
-    expect(res.status).toBe(200); // existence check only; membership scoping not applied
+    expect(res.status).toBe(200); // no membership scoping applied on the Companion path
+    const body = (await res.json()) as { session: { id: string } | null };
+    expect(body.session?.id).toBe(session);
   });
 
   it('a wrong API token is NOT authenticated: 401 under REQUIRE_LOGIN=1', async () => {
-    const { sessionId: session } = seededSession();
     const res = await app.request(
-      `/api/sessions/${session}/status`,
+      '/api/companion/state',
       { method: 'GET', headers: bearer('wrong-token') },
       withLogin,
     );
     expect(res.status).toBe(401);
   });
 
-  it('still 404s for a nonexistent session (existence check retained)', async () => {
-    const res = await app.request(
-      '/api/sessions/no-such-session/status',
-      { method: 'GET', headers: bearer('test-api-token') },
-      withLogin,
-    );
-    expect(res.status).toBe(404);
+  it('is not an identity outside /api/companion/: 401 on a session-scoped route (api-contract-freeze)', async () => {
+    const { sessionId: session } = seededSession();
+    for (const id of [session, 'no-such-session']) {
+      const res = await app.request(
+        `/api/sessions/${id}/status`,
+        { method: 'GET', headers: bearer('test-api-token') },
+        withLogin,
+      );
+      // Rejected by the single middleware login decision — requireSession is never reached,
+      // so an existing and a nonexistent session are indistinguishable.
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ detail: 'Login required.' });
+    }
   });
 });
 

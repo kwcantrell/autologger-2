@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedContainerSession } from './containerHarness';
 import { CHROMIUM_DATA_DIR, injectSessionCookie, seedSession } from './seededSession';
 
 // serving-contract.spec.ts (nextjs-frontend-migration, task 4.1)
@@ -120,6 +121,37 @@ test.describe('shell routing contract (raw HTTP, anonymous)', () => {
   });
 });
 
+// containerize-split-images (task 3.1): pins the single-process asset and non-GET
+// dispositions BEFORE `output: 'standalone'` lands (task 3.2), so the "Standalone output
+// leaves single-process serving unchanged" scenario has an executable witness.
+test.describe('assets and non-GET dispositions (single-process bridge)', () => {
+  test('a /_next/static asset referenced by the shell is served 200 with a JS content-type', async ({
+    request,
+  }) => {
+    const shell = await (await request.get('/teams')).text();
+    const match = shell.match(/\/_next\/static\/[^"'\s\\]+\.js/);
+    expect(match, 'shell HTML should reference a /_next/static/*.js chunk').not.toBeNull();
+    const res = await request.get(match?.[0] as string);
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-type'] ?? '').toContain('javascript');
+  });
+
+  test('a public/ file (/static/logo-autologger-app.png) is served 200', async ({ request }) => {
+    const res = await request.get('/static/logo-autologger-app.png');
+    expect(res.status()).toBe(200);
+    expect((res.headers()['content-type'] ?? '').startsWith('image/')).toBe(true);
+  });
+
+  test('non-GET requests to shell and asset paths stay 404 from the server', async ({
+    request,
+  }) => {
+    for (const path of ['/teams', '/sessions/abc', '/admin/users', '/_next/static/x.js']) {
+      const res = await request.post(path, { data: {}, maxRedirects: 0 });
+      expect(res.status(), `POST ${path}`).toBe(404);
+    }
+  });
+});
+
 test.describe('no existence oracle (api-contract-freeze delta)', () => {
   // Seeds a session in each of the four states the delta names — existing,
   // deleted (ui_hidden), a foreign team's session, and a random nonexistent
@@ -148,8 +180,23 @@ test.describe('no existence oracle (api-contract-freeze delta)', () => {
     request,
     browser,
     baseURL,
-  }) => {
+  }, testInfo) => {
     test.skip(!baseURL, 'baseURL is required (set by the chromium project)');
+
+    // containerize-split-images (task 5.4): the `container` project runs this same spec against
+    // the compose stack, which is REQUIRE_LOGIN=1 with its catalog in a docker volume. There the
+    // anonymous seeding below cannot work, so the "existing"/"deleted" sessions are created by a
+    // seeded admin (login-session row written inside the api container -- containerHarness.ts)
+    // and the foreign-team user is seeded the same way. Assertions are identical.
+    const inContainer = testInfo.project.name === 'container';
+    const ownerContext = await browser.newContext();
+    if (inContainer) {
+      const owner = seedContainerSession('oracle-owner', [
+        { studioId: 'test-studios', role: 'admin' },
+      ]);
+      await injectSessionCookie(ownerContext, baseURL as string, owner.token);
+    }
+    const seedRequest = inContainer ? ownerContext.request : request;
 
     const unique = crypto.randomUUID().replace(/-/g, '').slice(0, 10);
     const EXISTING_TITLE = `E2E-ORACLE-EXISTING-${unique}`;
@@ -160,24 +207,24 @@ test.describe('no existence oracle (api-contract-freeze delta)', () => {
     // ('test-studios') studio — the chromium project's server has OAuth off,
     // so anonymous show/session creation is permitted (showsRouter/sessionsRouter
     // only gate on `user !== null` membership checks).
-    const showRes = await request.post('/api/shows', {
+    const showRes = await seedRequest.post('/api/shows', {
       data: { studio_id: 'test-studios', name: `E2E Oracle Show ${unique}` },
     });
     expect(showRes.ok(), await showRes.text()).toBe(true);
     const { show } = (await showRes.json()) as { show: { id: string } };
 
-    const existingCreateRes = await request.post('/api/sessions', {
+    const existingCreateRes = await seedRequest.post('/api/sessions', {
       data: { show_id: show.id, title: EXISTING_TITLE, frame_rate: 24, start_offset_frames: 0 },
     });
     expect(existingCreateRes.ok(), await existingCreateRes.text()).toBe(true);
     const existingId = ((await existingCreateRes.json()) as { id: string }).id;
 
-    const deletedCreateRes = await request.post('/api/sessions', {
+    const deletedCreateRes = await seedRequest.post('/api/sessions', {
       data: { show_id: show.id, title: DELETED_TITLE, frame_rate: 24, start_offset_frames: 0 },
     });
     expect(deletedCreateRes.ok(), await deletedCreateRes.text()).toBe(true);
     const deletedId = ((await deletedCreateRes.json()) as { id: string }).id;
-    const delRes = await request.delete(`/api/sessions/${deletedId}`);
+    const delRes = await seedRequest.delete(`/api/sessions/${deletedId}`);
     expect(delRes.ok(), await delRes.text()).toBe(true);
 
     // --- foreign-team: a session under 'test-studio-2' (the OTHER built-in
@@ -192,11 +239,14 @@ test.describe('no existence oracle (api-contract-freeze delta)', () => {
     const foreignContext = await browser.newContext();
     let foreignId = '';
     try {
-      const seeded = await seedSession({
-        dataDir: CHROMIUM_DATA_DIR,
-        label: `oracle-foreign-${unique}`,
-        memberships: [{ studioId: 'test-studio-2', role: 'admin' }],
-      });
+      const foreignMemberships = [{ studioId: 'test-studio-2', role: 'admin' as const }];
+      const seeded = inContainer
+        ? seedContainerSession(`oracle-foreign-${unique}`, foreignMemberships)
+        : await seedSession({
+            dataDir: CHROMIUM_DATA_DIR,
+            label: `oracle-foreign-${unique}`,
+            memberships: foreignMemberships,
+          });
       await injectSessionCookie(foreignContext, baseURL as string, seeded.token);
 
       const foreignShowRes = await foreignContext.request.post('/api/shows', {
@@ -219,6 +269,7 @@ test.describe('no existence oracle (api-contract-freeze delta)', () => {
       await foreignContext.close();
     }
     expect(foreignId, 'foreign-team session must have been created').not.toBe('');
+    await ownerContext.close();
 
     const randomId = `e2e-oracle-random-${crypto.randomUUID()}`;
 

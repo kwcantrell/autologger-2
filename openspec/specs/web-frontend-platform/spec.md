@@ -4,7 +4,8 @@
 
 How the web frontend is built, served, and booted — everything below the application's own
 screens. This capability owns the Next.js (App Router) frontend compiled from `web/` and served
-by the single Hono process through a catch-all bridge: the bridge's request handoff and its
+by the single Hono process through a catch-all bridge (or, in the split-container topology,
+by Next's standalone server behind an internal router): the bridge's request handoff and its
 `404`/fallback boundaries, the WebSocket upgrade dispatch that must not be swallowed by it,
 API-only fallback mode and boot ordering, shell routing derived from the shared route
 definition, the client-island rendering split, the server-rendered document shell (its static
@@ -21,8 +22,11 @@ of being a valid Companion target.
 
 
 ### Requirement: Next.js frontend served through the Hono bridge
-The web frontend SHALL be a Next.js (App Router) application compiled from `web/`, served
-by the existing Hono server process through a bridge catch-all: **GET** requests matching
+The web frontend SHALL be a Next.js (App Router) application compiled from `web/`. It SHALL
+be servable in either of two topologies: the **single-process topology** specified by this
+requirement, and the **split-container topology** specified by "Split-container serving
+topology". In the single-process topology the frontend SHALL be served by the existing Hono
+server process through a bridge catch-all: **GET** requests matching
 no mounted route SHALL be handed to Next's request handler via the raw Node
 request/response objects and answered by Next; the Hono handler SHALL signal the
 already-sent response (`RESPONSE_ALREADY_SENT`) rather than composing a second response.
@@ -34,15 +38,15 @@ SHALL respond with the server's own `404` instead of invoking Next. A rejection 
 frontend handler after response bytes have been written SHALL NOT result in a second
 response being composed onto the connection.
 `/api/*` and `/auth/*` routes SHALL be mounted before the bridge and can never reach it.
-The bridge SHALL run after the IP-allowlist and auth-context middleware, so page and
-asset requests retain exactly the middleware coverage they have today. The server SHALL
-NOT import any module under `web/src/**`, and the Next compilation graph SHALL NOT
-include any module under `server/src/**` or `packages/**`.
+The bridge SHALL run after the IP-allowlist and auth-context middleware, so in the
+single-process topology page and asset requests retain exactly the middleware coverage
+they have today. The server SHALL NOT import any module under `web/src/**`, and the Next
+compilation graph SHALL NOT include any module under `server/src/**` or `packages/**`.
 
 In production the set of non-`/api`/`/auth` path families answered with anything other
-than `404` SHALL be closed and enumerated: the four shell routes, `/_next/static/*`,
-`public/`-served files (including `/static/*`), the not-found document, and the
-framework's flight/RSC variants of the shell routes. The image optimizer endpoint
+than `404` SHALL be closed and enumerated, in both topologies: the four shell routes,
+`/_next/static/*`, `public/`-served files (including `/static/*`), the not-found document,
+and the framework's flight/RSC variants of the shell routes. The image optimizer endpoint
 (`/_next/image`) SHALL NOT be served (`images.unoptimized`), and the framework's
 `X-Powered-By` header and build/dev telemetry egress SHALL be disabled.
 
@@ -52,7 +56,8 @@ framework's flight/RSC variants of the shell routes. The image optimizer endpoin
   invoked for it
 
 #### Scenario: Page requests pass through server middleware
-- **WHEN** an `IP_ALLOWLIST` is configured and a non-allowlisted client requests `/`
+- **WHEN** the single-process topology is running, an `IP_ALLOWLIST` is configured, and a
+  non-allowlisted client requests `/`
 - **THEN** the request is rejected by the allowlist middleware before the bridge runs,
   exactly as it is for API routes
 
@@ -78,7 +83,6 @@ framework's flight/RSC variants of the shell routes. The image optimizer endpoin
   requested in production
 - **THEN** the optimizer endpoint is not served (the response is a `404` or the
   framework's disabled-optimizer error status — never an optimized image)
-
 
 ### Requirement: WebSocket upgrade dispatch
 The single HTTP server SHALL dispatch `upgrade` events by path: upgrades under `/api/`
@@ -427,3 +431,48 @@ as evidence that a main-thread cadence is sufficient.
   asynchronously
 - **THEN** reporting continues on a main-thread timer, and the sub-window guarantee is recorded
   as not holding on that path rather than being claimed
+
+### Requirement: Split-container serving topology
+The Next build SHALL also emit standalone server output (`output: 'standalone'`, traced from
+the repository root). That output SHALL be able to serve the frontend with no Hono process
+present, and SHALL serve the same routes, page components, and closed path-family set as the
+bridge. Enabling standalone output SHALL NOT change how the single-process topology behaves.
+
+In the split-container topology, the standalone server SHALL sit behind the internal router
+specified by the `container-deployment` capability. The router SHALL send to the server
+(running API-only) every request that the bridge would have answered with the server's own
+`404`:
+- all `/api*` and `/auth*` paths;
+- all non-GET/HEAD methods;
+- trailing-slash paths other than `/`.
+
+The router SHALL close stray non-`/api` `Upgrade` requests with no response written. Its path
+matching SHALL use the raw, case-sensitive request path, exactly as the bridge's checks do.
+
+As a result, the following dispositions SHALL hold unchanged at the public origin:
+- "API routes never reach the frontend bridge"
+- "Non-GET unmatched requests keep the server's 404"
+- "Trailing slash stays 404"
+- "Non-API upgrade in production"
+
+**Carve-out:** in this topology, shell and asset requests do not reach the server, so the
+"Page requests pass through server middleware" guarantee is **not guaranteed** for them.
+Access control for shell and asset requests is the upstream proxy's responsibility, and the
+deployment documentation SHALL say so.
+
+#### Scenario: Standalone output leaves single-process serving unchanged
+- **WHEN** `npm run build && npm run start` runs after standalone output is enabled
+- **THEN** the single-process server serves the shell, assets, and API exactly as before,
+  and the existing e2e suites pass
+
+#### Scenario: Same shell from both topologies
+- **WHEN** `GET /sessions/abc` is requested from the single-process server and, for the
+  same build, through the split topology's router
+- **THEN** both respond `200` with the index shell from the same page component and no
+  `Set-Cookie`
+
+#### Scenario: Server middleware coverage of shell requests is not guaranteed in split topology
+- **WHEN** the split topology is running with `IP_ALLOWLIST` set on the server and a
+  non-allowlisted client requests `/` through the router
+- **THEN** no requirement guarantees the request is rejected, while that client's `/api/*`
+  requests are still rejected by the server
