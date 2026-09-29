@@ -1,0 +1,65 @@
+# Dev Host/Origin gate (containerized-dev-env, design D3 / D9; spec "local-container-environments").
+#
+# Image: caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+# (pinned in docker/compose.dev.yaml). One file serves the dev app gate and the dev Companion
+# gate; it is parameterized ONLY by environment (nothing else may be edited per use):
+#   LISTEN_PORT      container-side listen port (the target of the service's published mapping)
+#   GATE_PORT        the HOST port the browser uses (the 127.0.0.1:<port> in the published
+#                    mapping), so the browser's `Host: 127.0.0.1:<GATE_PORT>` / `localhost:<GATE_PORT>`
+#                    is allowed
+#   UPSTREAM_PORT    the port the gated process binds on 127.0.0.1 (shared network namespace)
+#   GATE_EXTRA_HOST  OPTIONAL one extra allowed Host (e.g. `app:8787`, the name dev Companion uses)
+#
+# Rejections use `abort` (close the connection, write nothing), like the prod router's Rule 2.
+# A rejected request never reaches the upstream.
+#
+# Invariants a future reader must not "helpfully" undo:
+#   * NO `encode`: compression is upstream-owned (api-contract-freeze).
+#   * The Host allowlist is a CEL expression, and the optional extra host is guarded by an
+#     explicit `"{$GATE_EXTRA_HOST}" != ""` term. Caddy substitutes {$VAR} textually, so an
+#     empty/unset GATE_EXTRA_HOST would otherwise become `host == ""` and admit an empty Host.
+#     With the guard, empty/unset contributes nothing and cannot widen the allowlist.
+#   * Host is matched on {http.request.hostport} (host:port as sent); {http.request.header.Host} is
+#     always empty in Caddy (Go moves Host out of r.Header) and would reject everything.
+#   * Origin is checked on non-GET/HEAD requests and on ANY request carrying `Upgrade` (WebSocket
+#     handshakes are GETs, immune to CORS). An ABSENT Origin passes (dev Companion sends none);
+#     a PRESENT Origin (incl. `null`, or a repeated header joined with ", ") must equal
+#     http://127.0.0.1:<GATE_PORT> or http://localhost:<GATE_PORT> exactly.
+#   * The gate shares the gated process's network namespace (network_mode: service:...) and is
+#     the only listener on its external interfaces; the upstream binds 127.0.0.1 only.
+
+{
+	auto_https off
+	# No admin endpoint: the gate is not health-checked and must expose nothing else in the
+	# shared namespace. persist_config off: no autosave file (non-root, read-only rootfs).
+	admin off
+	persist_config off
+}
+
+:{$LISTEN_PORT} {
+	header {
+		-Server
+		-Via
+	}
+
+	@badHost expression `!({http.request.hostport} in ["127.0.0.1:{$GATE_PORT}", "localhost:{$GATE_PORT}"] || ("{$GATE_EXTRA_HOST}" != "" && {http.request.hostport} == "{$GATE_EXTRA_HOST}"))`
+	handle @badHost {
+		abort
+	}
+
+	@badOrigin expression `({http.request.method} != "GET" && {http.request.method} != "HEAD" || {http.request.header.Upgrade} != "") && {http.request.header.Origin} != "" && !({http.request.header.Origin} in ["http://127.0.0.1:{$GATE_PORT}", "http://localhost:{$GATE_PORT}"])`
+	handle @badOrigin {
+		abort
+	}
+
+	# WebSocket upgrades (Next HMR /_next/webpack-hmr, the session WS) pass through natively.
+	# Host is forwarded unchanged. compression off matches the prod router (no transparent
+	# gzip added or removed).
+	handle {
+		reverse_proxy 127.0.0.1:{$UPSTREAM_PORT} {
+			transport http {
+				compression off
+			}
+		}
+	}
+}
