@@ -942,6 +942,365 @@ curl $B/api/shows
 # PUBLIC_BASE_URL registered as an authorized callback URI.
 ```
 
+## Container deployment
+
+The single-process path above (`npm run build && npm run start`) is unchanged. In addition the
+repo builds **two independent images from one multistage `docker/Dockerfile`** and runs them
+behind a small internal router (OpenSpec change `containerize-split-images`; specs
+`container-deployment` and `api-contract-freeze`). Everything is driven from the repo root by
+`compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
+`docker/.env.example`.
+
+### Topology
+
+```
+ browser / Companion
+        │ HTTPS
+        ▼
+ Pangolin (SSO, TLS)  ── Bypass Auth: the 5 exact Companion paths only
+        │
+        ▼
+ Newt tunnel (on the deploy host)
+        │ http://127.0.0.1:${ROUTER_PORT:-8080}      ← the ONLY host port, loopback-bound
+        ▼
+ ┌──────────── router (Caddy, non-root, read-only rootfs) ────────────┐
+ │ network `front` 172.28.10.0/24        network `back` 172.28.11.0/24 │
+ └────────┬───────────────────────────────────────────┬───────────────┘
+          ▼ everything not below                       ▼ /api*, /auth*, non-GET/HEAD,
+   web  (Next standalone, :3000)                        trailing-slash paths, traversal rejects
+   no API code, no SQLite, no binaries                 api (server API-only, :8787, single replica)
+                                                        volumes: /data (DATA_DIR), /home/node
+```
+
+- **`web`** runs Next's standalone server (`output: 'standalone'`); **`api`** is the unchanged
+  server booted in its API-only mode (no `web/.next`, so the bridge answers `404` for
+  non-API paths). `npm run dev` / `npm run start` keep the in-process bridge.
+- **`web` and `api` sit on separate networks** and only `router` joins both, so `web` cannot
+  reach `api`. `api` has a fixed `container_name: autologger-api`, so
+  `docker compose up --scale api=2` is refused (the SessionHub is single-process).
+- **The router never authors a response** (except `abort`, which writes nothing): every
+  `404`/status the single-process server pins is still produced by the server. Rules, in
+  order, on the *raw, escaped, case-sensitive* request path: (1) traversal-shaped targets
+  (`.`/`..` segments in any encoding, empty segments, encoded `/` or `\` under `/api`/`/auth`)
+  are rewritten to the non-inventory path `/__autologger_rejected` so the server's own `404`
+  answers; (2) an upgrade request (`Upgrade` + `Connection: upgrade`) outside literal `/api` is
+  aborted (connection closed, no bytes); (3) `/api*` and `/auth*` (prefix letters may be
+  percent-encoded, as Hono decodes them) go to `api`; (4) non-GET/HEAD go to `api`; (5) any
+  other path ending in `/` goes to `api`; (6) the rest goes to `web`. The header comments in
+  `docker/Caddyfile` list the invariants not to undo: no `encode` directive, no Caddy
+  `path`/`path_regexp` matcher (they decode and ignore case), `transport http { compression
+  off }` on every proxy, and `-Server -Via` at site level.
+- **Known router edges** (fail closed, accepted): a literal `\` in the path (server serves
+  `/api\profile`, the router sends it to `web` → `404`); `OPTIONS *` gets Caddy's empty `200`
+  (the server returns `400`); a ~60k-character `/api` path yields an empty reply instead of the
+  server's `431`; an Upgrade on `/api/x/../y` is rejected (`502`) where the server would admit
+  it.
+- **Caddy admin API** listens on `127.0.0.1:2019` *inside* the router container and exists only
+  for its healthcheck; it is unreachable from either compose network.
+
+### Build, push, and pin images
+
+Images are named `ghcr.io/kwcantrell/autologger-web` and `…/autologger-api`, tagged with a git
+SHA (never `latest`), in a **private** GHCR namespace. `docker-bake.hcl` builds both targets
+for `linux/amd64` and `linux/arm64`.
+
+```bash
+# One-time on the build host: a docker-container builder + QEMU/binfmt for the non-native arch
+# (a privileged host change; amd64 on an arm64 host, or vice versa, runs under QEMU).
+docker run --privileged --rm tonistiigi/binfmt --install all
+docker buildx create --name autologger-multiarch --driver docker-container --use
+docker buildx inspect --bootstrap
+
+# Log in to GHCR with a PAT that has write:packages (classic PAT; keep it out of shell history).
+docker login ghcr.io -u <github-user>
+
+# Build + push both images, both architectures. The tag is what compose will pin.
+GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake --push
+```
+
+- Bake tags with `GIT_SHA` only, so a dirty working tree still gets a clean-looking SHA: build
+  from a clean checkout. The QEMU-emulated build is slow; `better-sqlite3` uses prebuilds.
+- **Deploy host:** `docker login ghcr.io` with a PAT that has **`read:packages`** only. An
+  anonymous pull of the private images must be refused.
+- `docker compose build` builds the images for the *native* architecture only (local runs,
+  `npm run e2e:container`); it does not push.
+- **Pin the tags** in the compose `.env` (`WEB_TAG=<sha>`, `API_TAG=<sha>`). The compose
+  interpolation (`${WEB_TAG:?…}`) refuses an *unset* tag but does **not** reject the literal
+  value `latest`; the operator must not use it.
+- **Build-time egress:** the Docker build downloads from Docker Hub (base images, Caddy),
+  the npm registry (`npm ci`, the pinned `@anthropic-ai/claude-code`), and GitHub releases
+  (the pinned `yt-dlp` and `deno` binaries).
+- **Rebuilding when `yt-dlp` / `deno` go stale.** YouTube changes break pinned extractors. In
+  `docker/Dockerfile` bump `YTDLP_VERSION` together with **both** `YTDLP_SHA256_AMD64` /
+  `YTDLP_SHA256_ARM64` (from the release's `SHA2-256SUMS`), and `DENO_VERSION` together with
+  `DENO_SHA256_AMD64` / `DENO_SHA256_ARM64` (the release's `.zip.sha256sum` files). A version
+  without its matching sums fails the build's `sha256sum -c`. Then bake with a new `GIT_SHA`,
+  push, and roll out per *Update order* below. `CLAUDE_CODE_VERSION` is pinned the same way.
+- **Image sizes.** `web` is ~300 MB. `api` is ~1.29 GB because it carries the Node runtime with
+  the server's production dependencies (including `next`, which the server requires lazily for
+  the bridge and which the API-only mode never loads), the pinned `claude` CLI and Agent SDK
+  platform binaries, and `yt-dlp` + `deno` in `/opt/ytdlp`. It carries no `ffmpeg` (the server
+  selects a single `bestaudio` format and never merges).
+
+### Configuration
+
+```bash
+cp docker/.env.example .env        # repo root; gitignored — never commit it
+$EDITOR .env
+docker compose up -d
+```
+
+Compose reads `.env` for interpolation and passes it to `api` as `env_file`. It is separate
+from `server/.env` (single-process runs); `compose.yaml` is authoritative for containers.
+
+| Var | Required | Why |
+|-----|----------|-----|
+| `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
+| `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in; with `REQUIRE_LOGIN=1` there is no other way in for people. |
+| `API_TOKEN` | if Companion is used | Companion bearer token, **≥ 32 random bytes**. Authenticates **only** `/api/companion/*`. |
+| `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
+| `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
+| `DEEPGRAM_API_KEY` | optional | Enables transcript generation (else `503`). **Sends recorded audio to DeepGram's cloud STT and spends money.** |
+| `AI_V2_API_KEY` | leave unset | AI v2 stays **off**; see security notes. |
+
+The compose `environment` block fixes `REQUIRE_LOGIN=1`, `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
+`PUBLIC_BASE_URL` — values there take precedence over `env_file`, so the env file cannot switch
+login off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
+`PORT=8787`, `YTDLP_PATH=/opt/ytdlp/yt-dlp` and `CLAUDE_CLI_PATH`, so YouTube import and the
+Claude-CLI features (AI chat, topics, event generation) are *available*; `REQUIRE_LOGIN=1` is what
+satisfies their open-network refusal. `IP_ALLOWLIST` is not set by default.
+
+Every service has `restart: unless-stopped`, `init: true`, json-file log rotation (10 MB × 5)
+and a healthcheck that needs no extra tools (`api`: `GET /api/profile`, `web`: `GET /`, `router`:
+the loopback Caddy admin endpoint). Both bridge subnets are pinned in `compose.yaml`
+(`172.28.10.0/24` front, `172.28.11.0/24` back) and their gateways (`172.28.10.1`,
+`172.28.11.1`) appear in `docker/Caddyfile` `trusted_proxies`: **if you must change a subnet,
+change it in both files together.**
+
+**Runtime egress** from `api`: DeepGram (audio, if configured), YouTube and the media hosts
+`yt-dlp` fetches (import), Anthropic (the `claude` CLI), Google (JWKS, OAuth, Sheets import).
+The image fetches nothing else at runtime; the Claude CLI auto-updater is disabled.
+
+### Volumes
+
+| Volume (compose name) | Mount in `api` | Holds |
+|-----------------------|----------------|-------|
+| `autologger_autologger-data` | `/data` (`DATA_DIR`) | `catalog.db`, `sessions/*.db`, `blobs/`, `tmp/` |
+| `autologger_autologger-home` | `/home/node` | `~/.claude/` **and** `~/.claude.json` (subscription credentials and CLI config) |
+
+Both are owned by uid 1000 (`node`); a fresh named volume inherits that from the image. State
+survives `docker compose up -d` recreation onto a new image tag.
+
+**Auto-updater on a pre-existing home volume.** The image bakes `~/.claude/settings.json`
+with `{"env":{"DISABLE_AUTOUPDATER":"1"}}`, but a volume that already has content shadows the
+baked file. When you seed or reuse a `/home/node` volume, create (or merge into) that file
+yourself, owned by uid 1000:
+
+```json
+{ "env": { "DISABLE_AUTOUPDATER": "1" } }
+```
+
+(The server strips unlisted variables from the CLI child's environment, so the setting must
+live in `settings.json`, not the container env.)
+
+### Pangolin target and the Companion bypass
+
+1. In Pangolin, point the resource's target at the host's **Newt** and from there to
+   `http://127.0.0.1:${ROUTER_PORT}` (default `127.0.0.1:8080`). Use a **single** target for
+   the domain: Pangolin issue fosrl/pangolin#2294 makes multiple targets on one domain
+   load-balance and ignore path rules, and all routing lives in the repo's router anyway.
+2. Keep SSO on the resource, and add **Bypass Auth** (Accept) rules for **exactly these five
+   paths**, no wildcards:
+
+   ```
+   /api/companion/state
+   /api/companion/categories
+   /api/companion/log
+   /api/companion/transport
+   /api/companion/command
+   ```
+
+   These are the only routes the Companion module calls. **Do not use `/api/companion/*`.**
+   Two reasons: (a) a wildcard lets a crafted target such as
+   `/api/companion/%2e%2e/sessions/x` slip through the proxy's SSO wall and be normalized to
+   `/api/sessions/x` by the server's URL parser — the router rewrites dot-segment and
+   encoded-slash targets to a `404`, but the proxy rule should not rely on that alone; and (b)
+   the token scope is enforced server-side (`API_TOKEN` is honoured only under
+   `/api/companion/*`), but the extra routes under that prefix (`commands/wait`,
+   `commands/:commandId/ack`) are not used by the module and need no anonymous exposure.
+3. Reconfigure each Companion install with the server URL and the new `API_TOKEN`.
+
+### Google OAuth client
+
+In Google Cloud Console → *APIs & Services* → *Credentials* → *Create credentials* → *OAuth
+client ID* → application type **Web application**. Add the **authorized redirect URI**
+`${PUBLIC_BASE_URL}/auth/google/callback` (e.g. `https://autologger.nrvo.ai/auth/google/callback`).
+If the OAuth consent screen is in **Testing** mode, add every intended user's Google account
+under *Test users* — anyone else is refused by Google. Put the client ID/secret in `.env`. The OAuth client must exist and be ready *before* cutover.
+Note that the redirect URI is always `${PUBLIC_BASE_URL}/auth/google/callback`: a sign-in
+started on the loopback pre-flight port is sent back to the **public** origin by Google, so the
+full round trip (and the `Secure` session cookie) can only be proven end to end once Pangolin
+points at the stack. The loopback pre-flight proves the sign-in start and the stack's health;
+the post-repoint "verify from outside" list proves the callback.
+
+### Security notes for this topology
+
+- **`API_TOKEN` is not a general credential.** It authenticates only `/api/companion/*`
+  (the session WebSocket, other `/api/*`, `/auth/*`, `/api/admin/*` ignore it). Use a token of
+  ≥ 32 random bytes and rotate it by editing `.env`, recreating `api`, and updating the
+  Companion installs. Any external script that used it against `/api/sessions` etc. must use a
+  real login session instead.
+- **Subscription credentials (accepted risk, owner ruling G5).** AI chat, topics and event
+  generation run the `claude` CLI with the *mounted* `~/.claude` subscription login, so every
+  signed-in user's AI turns spend the owner's personal claude.ai subscription; the codebase
+  itself flags this as a policy problem. The refresh token also lives in the same container
+  that runs `yt-dlp` on user-chosen media. This is accepted for this deployment.
+- **AI v2 is off.** Its non-interactive path needs `AI_V2_API_KEY` (a login-fallback is
+  loopback-only). Do not set it unless you intend to enable AI v2 and accept the cost.
+- **Shell and asset requests are not guaranteed `IP_ALLOWLIST` coverage.** In this topology
+  requests routed to `web` (HTML shells, `/_next/*`, `public/`) never reach the server's
+  allowlist middleware; only `api` traffic does. They carry no data and sit behind SSO. Do not
+  rely on `IP_ALLOWLIST` to hide the frontend.
+- **Host-local reach.** Any process on the deploy host can reach `127.0.0.1:${ROUTER_PORT}`
+  without going through Pangolin/SSO (Docker blocks LAN access to loopback-published ports).
+  The host is assumed single-tenant. A host-local caller that sends its own
+  `X-Forwarded-For` is also trusted by the router (the host arrives as the trusted bridge
+  gateway) — a documented limitation, not reachable from outside.
+- **Forwarded headers.** The router trusts `X-Forwarded-For` only from the pinned gateways,
+  resolves the client as the rightmost untrusted address, and sends `api` exactly one value
+  (`TRUST_PROXY=1`). This only protects you if **your reverse proxy overwrites or appends** to
+  `X-Forwarded-For` rather than passing the client's header through untouched. Verify against
+  your Pangolin: from outside send `curl -H 'X-Forwarded-For: 1.2.3.4' …` to an endpoint that
+  reports the client IP (or check server logs) and confirm `1.2.3.4` is **not** what `api`
+  sees.
+- **Anonymous-era data.** Moving from `REQUIRE_LOGIN=0` to `1` means existing sessions and
+  teams become visible to a signed-in user only after memberships are granted (below).
+- **Registry credentials.** Never commit `.env`, PATs, or tokens; the images are built with a
+  root `.dockerignore` that excludes `**/data`, `**/.env*` and other secret-shaped files.
+
+### Backup
+
+Use the WAL-safe copier from a repo checkout on the host (it needs `tsx` and `better-sqlite3`,
+which the checkout has; it is not in the image). It opens every `*.db` read-only, copies a
+single consistent snapshot with SQLite's online-backup API, then runs `PRAGMA integrity_check`
+and a per-table row-count comparison on the copy, and swaps it in atomically.
+
+```bash
+VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   # usually needs sudo to read
+npx tsx server/scripts/copyDataDir.ts "$VOL" /backups/autologger-$(date +%F) [--overwrite] [--dry-run]
+sudo rsync -a --delete "$VOL/blobs/" /backups/autologger-$(date +%F)/blobs/    # blobs are plain files
+```
+
+Exit codes: `0` ok, `1` copy or verification failure (integrity, row counts, corrupt DB), `2`
+usage error or a refused unsafe invocation (destination equals/nests with the source, missing
+source, existing destination DBs without `--overwrite`). It never writes to the source, so it
+is safe against a running server. Also back up the `/home/node` volume (`~/.claude*`) if the
+credentials matter.
+
+### Migrating an existing deployment (minimal downtime)
+
+The goal is to seed the volume while the old server keeps running and do only the final
+database copy and a blob delta inside the maintenance window. Below, `OLD` is the old host and
+`OLD_DATA` its `DATA_DIR`; `VOL` is the `autologger_autologger-data` mountpoint (as above).
+
+**Preconditions.** The OAuth client exists and is verified (see above); `.env` is filled in
+(Google credentials, `API_TOKEN` ≥ 32 bytes, `ADMIN_TOKEN`, `DEEPGRAM_API_KEY`; no
+`AI_V2_API_KEY`); the images are pushed with pinned tags; this host has run `docker login
+ghcr.io` with a `read:packages` PAT; `docker compose up --no-start` has created the volumes.
+
+**1. Pre-seed (no downtime; api stopped on this host, old server still running elsewhere).**
+Take a WAL-safe copy of a point-in-time `DATA_DIR` snapshot into a staging directory and load it
+into the volume, blobs included, home directory included:
+
+```bash
+npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; prints the blobs rsync
+sudo rsync -a --chown=1000:1000 --exclude /blobs /srv/stage/ "$VOL/"
+sudo rsync -a --chown=1000:1000 /path/to/snapshot/data/blobs/ "$VOL/blobs/"
+# ~/.claude and ~/.claude.json -> the home volume, then create/merge settings.json (see Volumes)
+HOMEVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-home)
+sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
+```
+
+**2. Pre-flight on loopback.** `docker compose up -d`, then on `127.0.0.1:${ROUTER_PORT}` run
+`npm run e2e:container` (separate throwaway stack) or your own probes, and a Google sign-in
+(the session cookie carries `Secure`). Rehearse the membership bootstrap (below). Then
+`docker compose stop api` before the window: a running `api` leaves `-wal`/`-shm` files that
+must not sit next to a replaced `.db`.
+
+**3. Cutover window (downtime starts).**
+
+```bash
+# a. stop the old server on OLD; api here is already stopped (docker compose stop api)
+# b. on OLD, from its checkout, WAL-safe copy of every DB into a staging directory
+ssh OLD 'cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts OLD_DATA /srv/stage-final'
+# c. ship the verified DB copies over the seeded ones; --delete also drops stale -wal/-shm
+#    and pre-flight-created sessions; blobs/ and tmp/ are excluded (protected from --delete)
+sudo rsync -a --delete --chown=1000:1000 --exclude /blobs --exclude /tmp OLD:/srv/stage-final/ "$VOL/"
+# d. blob delta, mirroring deletions
+sudo rsync -a --delete --chown=1000:1000 OLD:OLD_DATA/blobs/ "$VOL/blobs/"
+# e. integrity + row-count: the copier on OLD already ran integrity_check and per-table row counts
+#    (copy vs the source snapshot) before exiting 0. Re-check the shipped files (needs the
+#    sqlite3 CLI) before starting:
+for f in "$VOL"/catalog.db "$VOL"/sessions/*.db; do
+  [ "$(sudo sqlite3 "file:$f?mode=ro" 'PRAGMA integrity_check')" = ok ] || echo "BAD $f"; done
+docker compose up -d api
+# f. re-run the membership bootstrap (below)
+# g. repoint the Pangolin target at Newt -> 127.0.0.1:${ROUTER_PORT}
+# h. add the 5 exact-path Companion bypass rules
+# i. reconfigure the Companion installs with API_TOKEN
+```
+
+Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companion `state`,
+`log`, `command`; traversal through a bypass path (`/api/companion/%2e%2e/sessions/x`) returns
+`404`; a non-Companion `/api` path returns the Pangolin SSO `302`; a live session WebSocket
+connects; a forged `X-Forwarded-For` is not adopted.
+
+### Membership bootstrap (re-runnable)
+
+`server/scripts/bootstrapMemberships.example.ts` is a **template**: copy it, and write a
+memberships JSON file (`{ "teams": [{id, display_name}], "memberships": [{email, team,
+role?}] }`; not committed). It drives only the existing `ADMIN_TOKEN` endpoints and is
+idempotent: existing teams are skipped, a member already in a team with no `role` given is a
+no-op, a given `role` is re-applied.
+
+```bash
+ADMIN_TOKEN=<from .env> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
+    [--base-url http://127.0.0.1:8080] [--dry-run]
+```
+
+The token comes only from the `ADMIN_TOKEN` environment variable and is never printed. Users
+exist only after their first Google sign-in, so an unknown email is reported `PENDING`
+(exit `3`); re-run after they sign in. Exit codes: `0` done, `1` error, `2` usage, `3` pending.
+Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
+
+### Update order and rollback
+
+- **Update order: `api` first, then `web`.** Set the new `API_TAG` in `.env`, then
+  `docker compose pull api && docker compose up -d api`, wait for `healthy`; then the same
+  for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
+  safe. Volumes carry state across recreation.
+- **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
+  migration ran in between (migrations are forward-only, `packages/storage/src/migrate.ts`);
+  otherwise restore a backup taken before the upgrade. Repointing Pangolin at the *old host*
+  drops every write made since cutover (they exist only in the volume) — take a final backup
+  first if you might want them.
+- **One host, two stacks.** `api` has a fixed `container_name`, so `npm run e2e:container` (compose
+  project `alg-e2e`) and a production stack cannot coexist on the same Docker host; the e2e
+  script refuses to run if its project already has containers, and will fail on the name
+  clash while production is up. Run it elsewhere or stop production first.
+
+### Verifying the container topology
+
+`npm run e2e:container` builds the web bundle and both images from the current tree, starts a
+single-process reference server and the compose stack (test-only `e2e/container/compose.e2e.yaml`,
+random throwaway secrets), runs the Playwright `container` project (a differential matrix
+between the router and the single-process server, raw-socket upgrade checks, traversal,
+encoding parity, session WebSocket, token scope, plus `serving-contract.spec.ts`), and tears
+everything down. It is excluded from the default `npm run e2e`. Not covered locally and owed at
+cutover: the forged-`X-Forwarded-For` check through your real Pangolin, and the amd64 image's
+behaviour under QEMU.
+
 ## Frontend (web/ workspace)
 
 The React frontend lives in `web/` (Next.js 15 App Router + React 19, Tailwind v4) and is
@@ -1218,11 +1577,17 @@ curl -sSi https://autologger.example.com/api/companion/state | grep -i '^locatio
 # location: https://<proxy-auth-host>/auth/resource/...?redirect=...   ← proxy SSO wall
 ```
 
-**Fix it at the proxy, not in AutoLogger:** add a rule that lets the `/api/companion/*` paths
-**bypass the proxy's SSO**, then rely on AutoLogger's own `API_TOKEN` (+ optionally
-`IP_ALLOWLIST`) to secure them — that is exactly the auth model the module is built for. Keep
-the rest of the app behind SSO. (In Pangolin: the resource's **Rules** tab → match path
-`/api/companion/*` → **Accept**.) Making the whole resource public also works for Companion, but drops
+**Fix it at the proxy, not in AutoLogger:** add proxy rules that let **exactly the five paths
+the module calls** bypass the proxy's SSO — `/api/companion/state`, `/api/companion/categories`,
+`/api/companion/log`, `/api/companion/transport`, `/api/companion/command` — then rely on
+AutoLogger's own `API_TOKEN` (+ optionally `IP_ALLOWLIST`) to secure them, which is exactly the
+auth model the module is built for. Keep the rest of the app behind SSO. (In Pangolin: the
+resource's **Rules** tab → one **Accept** rule per path above.) **Do not use a wildcard such as
+`/api/companion/*`**: a proxy that matches the raw path lets a crafted target like
+`/api/companion/%2e%2e/sessions/x` past the SSO wall, and the server's URL parser then
+normalizes it to `/api/sessions/x`; exact paths cannot be traversed into, and the token is
+in any case honoured only under `/api/companion/*`. See **Container deployment** for the router
+that also rejects such targets. Making the whole resource public also works for Companion, but drops
 SSO from the browser flow too — and `API_TOKEN` no longer authenticates anything outside
 `/api/companion/*`, so the rest of the app still needs a real login. Header/resource-token auth on
 the proxy generally won't work: the module sends only `Authorization: Bearer <API_TOKEN>` and
