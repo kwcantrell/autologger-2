@@ -603,3 +603,17 @@ Current state). The remaining hits are deliberate negations or history.
 - **Satellite ports 16622/16623:** these are hard-bound on `0.0.0.0` in Companion 4.3.4 and stay host-reachable via the container IP (not from the LAN). The owner **accepted this as a residual**. It was rated Low: presses reach only the dev `/api/companion/log|transport|command`, with no spend and no secrets.
 - **Rejected alternative:** an isolated-gateway network plus a forwarder container, proven live by the reviewer. It was rejected because it cuts Companion's internet and LAN access and adds a container.
 - **Also residual:** Companion sends Sentry error reports by default. Only the user-config key `detailed_data_collection` controls this, and it is not seeded. Documented in 8.1.
+
+**2026-09-29 — phase-7 review.** The review found three Important items; two fix waves closed them, and each fix shipped with a demonstrated red→green run plus a re-executed mutation (`a6ebbb4`, `9550092`, `4959dd4`):
+- **I1:** a `COMPOSE_PROJECT_NAME` in an env file could re-target dev or stage onto the prod project.
+- **I2:** the port guard failed open on `export`, indentation, `X = Y`, and shell-env forms.
+- **I3 + N1:** home and ancestor bind sources, including non-normalized spellings, escaped invariant 8.
+
+The `make-guards.sh envfile` guard now checks the *resolved* config (project name, loopback ports, numeric ports that are not 8080, no `COMPOSE_*` keys). `check-envs.sh` normalizes bind sources lexically; symlinks are not resolved.
+
+**Accepted residual (N2, outside the spec's invariants):** the check does not enforce any of the following. Adding them would need a spec change.
+- a service allowlist for stage;
+- `cap_add`, `pid: host`, or `devices` on any service;
+- a bind of `/var/run/docker.sock`.
+
+Dev does enforce an exact four-service set, plus no `network_mode: host` and no `privileged`.

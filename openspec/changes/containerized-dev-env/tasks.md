@@ -191,11 +191,11 @@
 
 ## 7. Makefile and invariant check
 
-- [ ] 7.1 Write `docker/scripts/check-envs.sh`, per D11 and all 13 of the spec's invariants.
+- [x] 7.1 Write `docker/scripts/check-envs.sh`, per D11 and all 13 of the spec's invariants.
       It resolves with `--no-env-resolution` and placeholder `--env-file`s in a temp dir,
       and never reads the real env files. It takes an optional argument (`dev`, `stage`,
       `prod`, `all`).
-- [ ] 7.2 Write the root `Makefile`, per spec, D1, and D14:
+- [x] 7.2 Write the root `Makefile`, per spec, D1, and D14:
       - `help` is the default goal;
       - named targets: `dev-build`, `dev-up`, `dev-down`, `dev-logs`, `dev-shell`,
         `dev-reset`; `stage-build`, `stage-up`, `stage-down`, `stage-logs`,
@@ -222,7 +222,7 @@
 
       Verify with `make -n` on each target, and a plain `make` that prints help and starts
       nothing.
-- [ ] 7.3 Mutation-check `check-envs.sh`. Each broken copy must fail naming its invariant,
+- [x] 7.3 Mutation-check `check-envs.sh`. Each broken copy must fail naming its invariant,
       and the clean tree must pass:
       1. dev port on `0.0.0.0`
       2. dev mount `./server:/app/server`
