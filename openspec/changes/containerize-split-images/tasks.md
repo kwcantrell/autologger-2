@@ -173,9 +173,8 @@
       - preconditions (OAuth client, secrets, pushed tags, and `docker login ghcr.io` with a
         `read:packages` PAT on this host);
       - pre-seed the volume while the old server runs;
-      - the loopback pre-flight, including a Google sign-in whose session cookie carries
-        `Secure` and whose redirect URI is `${PUBLIC_BASE_URL}/auth/google/callback`
-        (scenario "Session cookie is Secure");
+      - the loopback pre-flight: the container e2e project only, because OAuth can't
+        complete on loopback;
       - a rehearsal of the membership bootstrap script;
       - the cutover window: stop the old server on the other machine, run the WAL-safe copy of
         every DB there and rsync it here, run the blob delta from the old host, integrity and
@@ -183,5 +182,8 @@
         `DATA_DIR` path);
       - the Pangolin repoint with exact-path bypass rules;
       - Companion reconfiguration;
-      - outside verification (OAuth, Companion, traversal `404`, SSO `302` on other `/api`,
+      - outside verification, including a Google sign-in through the public origin whose
+        session cookie carries `Secure` and whose redirect URI is
+        `${PUBLIC_BASE_URL}/auth/google/callback` (scenario "Session cookie is Secure"), and
+        re-running the bootstrap for users who were PENDING (OAuth, Companion, traversal `404`, SSO `302` on other `/api`,
         session WS, forged `X-Forwarded-For`).

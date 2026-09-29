@@ -386,13 +386,19 @@ maintenance window.
    - Copy `~/.claude` and `~/.claude.json` into the `/home/node` volume.
    - Set ownership to UID 1000.
 3. **Pre-flight on loopback, against the seeded copy:**
-   - Run `docker compose up -d`, then the `container` e2e project, then a Google sign-in on
-     `127.0.0.1:${ROUTER_PORT}`.
+   - Run `docker compose up -d`, then the `container` e2e project. **No Google sign-in on
+     loopback:** the OAuth callback always returns to `PUBLIC_BASE_URL`, so a sign-in can only
+     complete through the public origin, after step 5 (found during apply, task 7.1).
    - **Rehearse the membership bootstrap (G6) as a script.** It inspects users, memberships,
      and studio-less sessions, then grants via the `ADMIN_TOKEN` endpoints. It must be a
-     re-runnable script, because step 4 replaces the catalog and its grants.
+     re-runnable script, because step 4 replaces the catalog and its grants. Users who have
+     never signed in don't exist yet; the script reports them as PENDING (exit 3), and it is
+     re-run after they first sign in.
 4. **Cutover window (downtime starts):**
-   1. Stop the old server **on the other machine**, and run `docker compose stop api`.
+   1. Stop the old server **on the other machine**, and run `docker compose stop api`. The
+      api must be stopped whenever DB files in the volume are replaced. `copyDataDir.ts
+      --overwrite` removes stale `-wal`/`-shm`/`-journal` siblings of each replaced DB, so a
+      log left by the pre-flight can never be replayed onto the new file.
    2. On the old host, run `copyDataDir.ts` from its checkout against its live `DATA_DIR`
       into a staging directory. That gives a WAL-safe copy of every `*.db` with integrity and
       row-count checks. `rsync` the staging directory here, overwriting the seeded DB copies
@@ -402,7 +408,8 @@ maintenance window.
    4. Run `PRAGMA integrity_check` on every DB copy, and compare per-table row counts with
       the source.
    5. Run `docker compose up -d api`.
-   6. Re-run the membership bootstrap script.
+   6. Re-run the membership bootstrap script. It re-runs after cutover as users sign in for
+      the first time and leave PENDING.
    7. Repoint the Pangolin target to Newt → `127.0.0.1:${ROUTER_PORT}`.
    8. Add the 5 exact-path Companion bypass rules.
    9. Reconfigure the Companion installs with `API_TOKEN`.
