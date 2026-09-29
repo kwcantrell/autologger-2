@@ -1,7 +1,7 @@
 #!/bin/sh
 # docker/scripts/make-guards.sh -- guard logic for the root Makefile (containerized-dev-env, task 7.2).
 #
-#   make-guards.sh envfile dev|stage      env file present (names the template) + port keys valid
+#   make-guards.sh envfile dev|stage      env file present (names the template) + resolved config safe
 #   make-guards.sh urls dev|stage         print the URLs to use after `up`
 #   make-guards.sh creds-exists           host ~/.claude/.credentials.json must exist (dev bind)
 #   make-guards.sh creds-inode            WARN (exit 0) if host and running dev container inodes differ
@@ -12,8 +12,8 @@
 #   make-guards.sh prod-builder BUILDER   buildx builder lists linux/amd64 and linux/arm64
 #   make-guards.sh native-platform        print linux/arm64 or linux/amd64 (the docker server's arch)
 #
-# Run from the repo root (the Makefile does). POSIX sh. It reads ONLY named port / tag keys from
-# env files with grep+sed; it never sources or prints an env file, and never reads the contents
+# Run from the repo root (the Makefile does). POSIX sh. It reads ONLY tag keys (and COMPOSE_ key
+# names) from env files with grep+sed, and validates the rest through compose config; it never sources or prints an env file, and never reads the contents
 # of ~/.claude/.credentials.json (inode only).
 set -eu
 
@@ -25,36 +25,57 @@ cd "$ROOT"
 die() { echo "make: $*" >&2; exit 1; }
 
 # key_of FILE KEY: last KEY=value line's value, trailing whitespace/CR stripped, may be empty.
+# (Used only for the prod .env tags and the post-`up` URL hints; the dev/stage port and project
+# guards validate the RESOLVED compose config instead, see envfile.)
 key_of() {
   grep -E "^$2=" "$1" 2>/dev/null | tail -n 1 | sed -e "s/^$2=//" -e 's/[[:space:]]*$//' || true
 }
 
-# port_ok KEYNAME VALUE: empty (compose default) or a plain decimal 1-65535, and not 8080.
-port_ok() {
-  case "$2" in
-    '') return 0 ;;
-    *[!0-9]*) die "$1=$2 is not a plain decimal port (empty means the default)" ;;
-    0) die "$1=0 is not a valid port" ;;
-    0*) die "$1=$2 must not have a leading zero" ;;
-  esac
-  [ "$2" -le 65535 ] || die "$1=$2 is above 65535"
-  [ "$2" != 8080 ] || die "$1=8080 is production's router port; pick another"
-}
-
+# envfile dev|stage: the env file exists (names the template) and the config compose will
+# actually run is safe. Validation is on the RESOLVED config (`config --no-env-resolution
+# --format json`, which never inlines env_file contents), so it sees the env file, the process
+# environment (`DEV_PORT=8080 make dev-up`) and compose's own parsing (`export X=`, indentation,
+# `X = y`) exactly as `up` will. It prints ONLY a problem description, never the JSON (which
+# holds interpolated values). Also rejects any COMPOSE_* key by name: those re-target compose
+# itself (COMPOSE_PROJECT_NAME onto prod's volumes) and have no place in a dev/stage env file.
+# TEST HOOK: an optional 2nd argument names the env file to validate, honored only when
+# AUTOLOGGER_TEST=1 (so dev cases can be exercised without touching the operator's .env.dev).
 envfile() {
   case "$1" in
-    dev)   f=.env.dev;   t=docker/.env.dev.example ;;
-    stage) f=.env.stage; t=docker/.env.stage.example ;;
+    dev)   f=.env.dev;   t=docker/.env.dev.example;   fn=compose_dev;   want=autologger-dev ;;
+    stage) f=.env.stage; t=docker/.env.stage.example; fn=compose_stage; want=autologger-stage ;;
     *) die "envfile: dev|stage" ;;
   esac
+  if [ "${AUTOLOGGER_TEST:-}" = 1 ] && [ -n "${2:-}" ]; then f=$2; fi
   [ -f "$f" ] || die "$f is missing. Create it from the template:  cp $t $f   (then fill in values)"
-  if [ "$1" = dev ]; then
-    dp=$(key_of "$f" DEV_PORT); cp=$(key_of "$f" DEV_COMPANION_PORT)
-    port_ok DEV_PORT "$dp"; port_ok DEV_COMPANION_PORT "$cp"
-    [ "${dp:-8787}" != "${cp:-8000}" ] || die "DEV_PORT and DEV_COMPANION_PORT must differ"
-  else
-    port_ok STAGE_PORT "$(key_of "$f" STAGE_PORT)"
+  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?COMPOSE_' "$f"; then
+    die "$f sets a COMPOSE_* variable; remove it (COMPOSE_* re-targets the compose project/files and is not allowed in $1 env files)"
   fi
+  json=$("$fn" "$f" config --no-env-resolution --format json 2>/dev/null) ||
+    die "compose could not resolve the $1 config with $f (bad port value?); run the compose config by hand to see why"
+  if [ "$1" = dev ]; then
+    flt='.name==$want
+         and ([.services[]|(.ports//[])[]]|length==2)
+         and ([.services[]|(.ports//[])[]|select(.host_ip!="127.0.0.1")]|length==0)
+         and ([.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535) and .!="8080"))
+         and (.services.app.ports[0].published!=.services.companion.ports[0].published)'
+  else
+    flt='.name==$want
+         and ([.services[]|(.ports//[])[]]|length==1)
+         and ([.services[]|(.ports//[])[]|select(.host_ip!="127.0.0.1")]|length==0)
+         and ([.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535) and .!="8080"))'
+  fi
+  # Diagnose which property failed without echoing any value except the project name and 8080.
+  printf '%s' "$json" | jq -e --arg want "$want" ".name==\$want" >/dev/null ||
+    die "refusing: compose resolves the $1 project to a name other than '$want' (a COMPOSE_PROJECT_NAME override?)"
+  printf '%s' "$json" | jq -e '[.services[]|(.ports//[])[]|select(.host_ip!="127.0.0.1")]|length==0' >/dev/null ||
+    die "refusing: a published $1 port is not bound to 127.0.0.1"
+  printf '%s' "$json" | jq -e '[.services[]|(.ports//[])[]|.published|tostring]|any(.=="8080")|not' >/dev/null ||
+    die "refusing: a published $1 port is 8080 (production's router port); pick another (check the env file AND your shell environment)"
+  printf '%s' "$json" | jq -e '[.services[]|(.ports//[])[]|.published|tostring]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535))' >/dev/null ||
+    die "refusing: a published $1 port is not a plain number 1-65535"
+  printf '%s' "$json" | jq -e --arg want "$want" "$flt" >/dev/null ||
+    die "refusing: the resolved $1 ports are not the expected set (dev: app and Companion on distinct ports; stage: the router only)"
 }
 
 urls() {
@@ -81,9 +102,13 @@ creds_exists() {
 creds_inode() {
   c=autologger-dev-app
   [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || true)" = true ] || return 0
-  # TEST-ONLY override (default = the real host file): lets the mismatch branch be exercised
-  # against a scratch file without touching ~/.claude/.credentials.json. Stat only, never read.
-  hi=$(stat -c %i "${AUTOLOGGER_TEST_HOST_CREDS:-$HOME/.claude/.credentials.json}" 2>/dev/null || true)
+  # TEST-ONLY override, honored only when AUTOLOGGER_TEST=1 is also set (an ambient
+  # AUTOLOGGER_TEST_HOST_CREDS alone can no longer mask the warning). Lets the mismatch branch
+  # be exercised against a scratch file without touching ~/.claude/.credentials.json.
+  # Stat only, never read.
+  hc=$HOME/.claude/.credentials.json
+  if [ "${AUTOLOGGER_TEST:-}" = 1 ] && [ -n "${AUTOLOGGER_TEST_HOST_CREDS:-}" ]; then hc=$AUTOLOGGER_TEST_HOST_CREDS; fi
+  hi=$(stat -c %i "$hc" 2>/dev/null || true)
   ci=$(docker exec "$c" stat -c %i /home/node/.claude/.credentials.json 2>/dev/null || true)
   [ -n "$hi" ] && [ -n "$ci" ] || return 0
   if [ "$hi" != "$ci" ]; then
@@ -145,7 +170,7 @@ native_platform() {
 
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
-  envfile) envfile "${1:-}" ;;
+  envfile) envfile "${1:-}" "${2:-}" ;;
   urls) urls "${1:-}" ;;
   creds-exists) creds_exists ;;
   creds-inode) creds_inode ;;

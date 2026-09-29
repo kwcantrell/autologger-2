@@ -91,8 +91,8 @@ prod-build: ## Native-arch build of both images, tagged :local only (no SHA tag,
 
 prod-push: ## Clean main only: multi-arch bake + push, tagged with the 12-char HEAD SHA
 	@$(G) prod-git
-	@$(G) prod-builder $(BUILDER)
-	@GIT_SHA=$$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder $(BUILDER) --push
+	@$(G) prod-builder "$(BUILDER)"
+	@GIT_SHA=$$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl --builder "$(BUILDER)" --push
 
 prod-pull: ## Clean main only: pull the tags pinned in .env
 	@$(G) prod-git
