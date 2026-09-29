@@ -132,7 +132,7 @@
 
 ## 7. Documentation
 
-- [ ] 7.1 Add a README "Container deployment" section covering:
+- [x] 7.1 Add a README "Container deployment" section covering:
       - the topology (Pangolin → Newt → router → web/api);
       - bake, push, and compose, with tag pinning;
       - the env reference, stating what is required and why;
@@ -148,11 +148,11 @@
       - the re-runnable membership bootstrap script, the update order, and rollback with
         forward-only migrations;
       - rebuilding when yt-dlp or deno go stale.
-- [ ] 7.2 Add a brief mention of the split topology to `CLAUDE.md`'s Setup & commands and
+- [x] 7.2 Add a brief mention of the split topology to `CLAUDE.md`'s Setup & commands and
       project overview, pointing to the README and noting the `API_TOKEN` scope. Do not
       duplicate the README.
 
-- [ ] 7.3 Add `server/scripts/copyDataDir.ts`, a WAL-safe DATA_DIR copier used both to
+- [x] 7.3 Add `server/scripts/copyDataDir.ts`, a WAL-safe DATA_DIR copier used both to
       pre-seed and in the cutover window. For every `*.db` it runs `better-sqlite3`
       `db.backup()` into the destination, then `PRAGMA integrity_check` and a per-table
       row-count comparison, and it exits non-zero on any mismatch. Blobs stay a documented
@@ -182,8 +182,9 @@
         `DATA_DIR` path);
       - the Pangolin repoint with exact-path bypass rules;
       - Companion reconfiguration;
-      - outside verification, including a Google sign-in through the public origin whose
-        session cookie carries `Secure` and whose redirect URI is
-        `${PUBLIC_BASE_URL}/auth/google/callback` (scenario "Session cookie is Secure"), and
-        re-running the bootstrap for users who were PENDING (OAuth, Companion, traversal `404`, SSO `302` on other `/api`,
-        session WS, forged `X-Forwarded-For`).
+      - outside verification: a Google sign-in through the public origin whose session
+        cookie carries `Secure` and whose redirect URI is
+        `${PUBLIC_BASE_URL}/auth/google/callback` (scenario "Session cookie is Secure");
+        Companion calls; traversal returns `404`; SSO `302` on other `/api` paths; the session
+        WebSocket; a forged `X-Forwarded-For` through Pangolin;
+      - re-run the membership bootstrap for users who were PENDING, after they first sign in.
