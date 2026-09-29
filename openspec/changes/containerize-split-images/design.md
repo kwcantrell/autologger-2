@@ -637,3 +637,53 @@ maintenance window.
 
   The task 6.1 private-pull check stays a task-only verification, with no spec scenario.
   Accepted as residual.
+- **Task 5.1 raw-path spike, 2026-09-28. Verdict: PASS (proceed with D2 as designed).**
+  Spike files lived in the session scratchpad only; containers and network were removed.
+  - *Image:* `caddy:2` = Caddy **v2.11.4**, pinned
+    `caddy@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52`
+    (task 5.2 reuses this pin). Upstream was a `node:22` echo server printing its request line.
+  - *Q1 — which placeholder sees the raw path:* **`{http.request.uri}`** (equally
+    `{http.request.orig_uri}`). It is `RequestURI`-shaped: still percent-encoded, case kept, no
+    dot-segment removal, no `//` merge, and it includes `?query`, so a rule must anchor with
+    `[^?]*` / `(/|\?|$)`. **Not usable:** `{http.request.uri.path}` and
+    `{http.request.orig_uri.path}` are Go's *decoded* `URL.Path` (`/sessions/a%2Fb` shows as
+    `/sessions/a/b`; `%2e%2e` as `..`; `/%61pi/x` as `/api/x`).
+  - *Q2 — case-sensitive raw matcher:* CEL `expression` with `.matches()` (RE2) on
+    `{http.request.uri}` is case-sensitive and raw: `/api/x` matched, `/API/x` and `/Api` did not,
+    `/%61pi/x` did not. The stock `path` matcher matched `/API/x` and `/%61pi/x`; `path_regexp`
+    matched `/%61pi/x` (decoded input), so both stay banned, as D2 says. Raw expressions also
+    detected: encoded `/` or `\` (`^[^?]*%(2[fF]|5[cC])`), dot-segments in any encoding
+    (`(?i)^[^?]*/(\.|%2e){1,2}(/|\?|$)`), empty segment (`^[^?]*//`), trailing slash.
+  - *Q3 — `reverse_proxy` forwards the raw request-target unchanged:* upstream request lines
+    were byte-identical for `/sessions/a%2Fb`, `/sessions/a%2F`, `/API/x`,
+    `/api/companion/%2e%2e/x` (with no rewrite rule present), `/sessions/%41%2f%5c`,
+    `/%61pi/x`, and `/api/x?q=%2F&A=b`. Raw-socket `GET /A%2fb/%2E/c//d?x=%2F` was also
+    forwarded verbatim when routed to the default handler.
+  - *Q4 — `rewrite * /__autologger_rejected` then `reverse_proxy`:* works; upstream saw
+    `GET /__autologger_rejected` for `%2e%2e`, `%2E%2e`, `./`, `//`. The query string is kept
+    (`?x=%2F` survived), which is harmless for a path that 404s.
+  - *Q5 — `abort` on `Upgrade` outside `/api`:*
+    `printf 'GET /teams HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n' | nc localhost 18080 | wc -c` printed `0`;
+    `curl` exited 52 (empty reply). An `Upgrade` on `/api/x` was proxied.
+  - *Q6 — headers:* `header { -Server  -Via }` at site level removes both. `Server: Caddy` was
+    absent from every response, and an upstream-set `Server` was removed too. **`Via: 1.1 Caddy`
+    is added by `reverse_proxy` and is *not* removed by `header_down -Via`; only the site-level
+    `header -Via` removes it.** No `Alt-Svc` appeared (`auto_https off`, HTTP only). `Date`
+    passes through. No `Accept-Encoding` rewrite or compression happened without `encode`.
+  - *Surprises to carry into 5.2/5.3:*
+    1. Hono's `c.req.path` uses `decodeURI`, so `/%61pi/x` becomes `/api/x` and is served by the
+       API in single-origin, while `/api%2Fx` stays `/api%2Fx` and `/%41pi` becomes `/Api`
+       (verified against the installed Hono 4.12.29). A purely literal `^/api(/|$)` rule would
+       send `/%61pi/x` to `web` (a layer flip). The router's api-prefix and Upgrade-exemption
+       rules therefore allow a percent-encoded lowercase letter in each prefix letter:
+       `^/(a|%61)(p|%70)(i|%69)(/|\?|$)` and `^/(a|%61)(u|%75)(t|%74)(h|%68)(/|\?|$)`. Add a
+       differential-e2e row for `/%61pi/x`.
+    2. Bytes outside the ASCII request-target (raw UTF-8) are re-encoded lowercase by Caddy
+       (`ü` → `%c3%bc`). Browsers never send that form; not an issue.
+    3. Caddy adds a sniffed `Content-Type: text/plain; charset=utf-8` when the upstream sends a
+       body without one (the echo server did; a `204`/empty body gets none). The API and Next set
+       their own types, so this is expected to be inert; the 5.3 differential should include a
+       body-without-type check only if the server has such a route.
+    4. A real WebSocket handshake through Caddy was not exercised here (the echo upstream is not
+       a WS server); that belongs to 5.3's differential e2e.
+  - Full evidence and a recommended Caddyfile: `.apply/task-5.1-report.md`.
