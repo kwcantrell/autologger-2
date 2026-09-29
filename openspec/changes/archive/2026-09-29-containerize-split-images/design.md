@@ -725,3 +725,25 @@ maintenance window.
     4. A real WebSocket handshake through Caddy was not exercised here (the echo upstream is not
        a WS server); that belongs to 5.3's differential e2e.
   - Full evidence and a recommended Caddyfile: `.apply/task-5.1-report.md`.
+
+- *Archive, 2026-09-29.* Archived with task 8.3 (the owner-run live cutover) intentionally open.
+  This follows an owner decision: merge and archive now, then start the follow-on change
+  `containerized-dev-env`. Images are pushed at `6ca18cd906f8` (private GHCR, amd64 + arm64).
+  **Checks the owner still owes at cutover:**
+  - migrate `DATA_DIR` using the README runbook;
+  - Pangolin: repoint to Newt → `127.0.0.1:8080` and set the 5 exact bypass paths;
+  - a forged `X-Forwarded-For` through Pangolin is not adopted, and exactly one XFF value
+    reaches the api;
+  - `%2e%2e` sent through a bypass path returns `404`;
+  - Google sign-in through the public origin sets a `Secure` cookie, and the bootstrap is
+    re-run for PENDING users;
+  - `claude --version` on a real amd64 host;
+  - `npm run e2e:visual` on the baseline host.
+
+  **Follow-ups:**
+  - a CI multi-arch matrix and bake cache;
+  - audit M2, M3 and M8;
+  - copier hardening (`-s` guard, prune count or warning);
+  - fix the misleading PUBLIC_BASE_URL note in `docker/.env.example` (it must be set in
+    `.env`) and add an example tag comment.
+
