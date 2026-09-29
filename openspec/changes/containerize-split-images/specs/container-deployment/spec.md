@@ -89,16 +89,21 @@ The rules SHALL be evaluated in this order:
    `/api` or `/auth`) contains `%2f`, `%2F`, `%5c`, or `%5C`, SHALL be forwarded to `api`
    with its path replaced by a fixed path outside the inventory and outside `/api` and
    `/auth`. The server's own `404` then answers it (see the `api-contract-freeze` delta).
-2. A request carrying an `Upgrade` header whose path is not `/api` or under `/api/` SHALL be
-   aborted: the connection is closed with no HTTP response written.
-3. Requests whose path is `/api`, `/auth`, or starts with `/api/` or `/auth/` SHALL go to
-   `api`, WebSocket upgrades included.
+2. An upgrade request (Node's definition: an `Upgrade` header together with a `Connection`
+   header containing the `upgrade` token, case-insensitive) SHALL be aborted if its raw
+   path is not literally `/api` or under `/api/`. Aborting closes the connection with no
+   HTTP response written.
+3. Requests whose path is `/api` or `/auth`, or starts with `/api/` or `/auth/`, SHALL go to
+   `api`, WebSocket upgrades included. Prefix letters may be percent-encoded, per the HTTP
+   rule above.
 4. Requests with a method other than `GET` or `HEAD` SHALL go to `api`.
 5. Paths other than `/` that end in `/` SHALL go to `api`.
 6. All remaining requests SHALL go to `web`.
 
 The router SHALL NOT compress, recompress, cache, or buffer responses. It SHALL NOT add,
-remove, or alter response headers, except for removing the `Server` and `Via` headers it would otherwise add.
+remove, or alter response headers, except for removing the `Server` and `Via` headers it would otherwise add, and the
+normal proxy handling of hop-by-hop headers (`Connection`, `Keep-Alive`) and header-name
+case.
 `Content-Encoding`, `Content-Length`, `Vary`, `Content-Range`, and streamed
 (`text/event-stream`, chunked) bodies SHALL pass through exactly as the upstream emitted
 them.

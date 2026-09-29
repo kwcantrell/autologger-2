@@ -125,9 +125,11 @@ escaped, case-sensitive** request path (`container-deployment` spec):
    - a `.`/`..` segment in any encoding;
    - an empty segment;
    - an encoded `/` or `\` under `/api` or `/auth`.
-2. An `Upgrade` request outside `/api` → `abort`. The connection closes with no response
-   written, which reproduces the server's socket destroy.
-3. `/api`, `/api/…`, `/auth`, `/auth/…` → `api`.
+2. An upgrade request (`Upgrade` + `Connection: upgrade`, as Node defines it) outside the
+   literal raw `/api` → `abort`. The connection closes with no response written, which
+   reproduces the server's socket destroy.
+3. `/api`, `/api/…`, `/auth`, `/auth/…` (prefix letters may be percent-encoded; HTTP only)
+   → `api`.
 4. Non-GET/HEAD → `api`.
 5. Trailing slash (not `/`) → `api`.
 6. Everything else → `web`.

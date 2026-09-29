@@ -71,12 +71,12 @@
 
 ## 5. Router and compose (frozen contract surface; phase review required)
 
-- [ ] 5.1 **Spike (stop-gate).** Confirm which Caddy placeholder or matcher sees the raw,
+- [x] 5.1 **Spike (stop-gate).** Confirm which Caddy placeholder or matcher sees the raw,
       escaped, case-preserved request path, and that `reverse_proxy` forwards the raw path
       unmodified. Test `/sessions/a%2Fb`, `/sessions/a%2F`, `/API/x`, and
       `/api/companion/%2e%2e/x`. Record the result in the design's Panel & review log.
       If neither holds, stop and re-gate G1 (design Risks).
-- [ ] 5.2 Add `docker/Caddyfile` with the ordered rules of design D2:
+- [x] 5.2 Add `docker/Caddyfile` with the ordered rules of design D2:
       - traversal is rewritten to `/__autologger_rejected` and sent to `api`;
       - a non-`/api` `Upgrade` gets `abort`;
       - `/api` and `/auth` go to `api`;
@@ -84,9 +84,12 @@
       - trailing-slash paths go to `api`;
       - everything else goes to `web`.
 
-      Also: `auto_https off`, no `encode`, `-Server`, `trusted_proxies_strict` on the pinned
-      subnet, and `header_up X-Forwarded-For {client_ip}`. Pin the Caddy image by digest.
-- [ ] 5.3 Add `compose.yaml` (design D7, D11) and a tracked `docker/.env.example` with no real
+      Also: `auto_https off`, no `encode`, a site-level `header { -Server -Via }`,
+      `transport http { compression off }` on every upstream, the per-rule path semantics of
+      design D2 (the HTTP prefix rule accepts percent-encoded letters; the upgrade rule matches
+      the literal raw `/api`), `trusted_proxies_strict` on the pinned subnets, and
+      `header_up X-Forwarded-For {client_ip}`. Pin the Caddy image by digest.
+- [x] 5.3 Add `compose.yaml` (design D7, D11) and a tracked `docker/.env.example` with no real
       values. It includes:
       - the `front`/`back` networks with `ipam` pins, and only the router published, on
         `127.0.0.1:${ROUTER_PORT:-8080}`;
@@ -96,7 +99,7 @@
       - `container_name` on `api`;
       - restart policy, `init`, node-based healthchecks, log rotation, and the
         `WEB_TAG`/`API_TAG` image references.
-- [ ] 5.4 Add a Playwright `container` project (`baseURL=ROUTER_URL`, no `webServer`,
+- [x] 5.4 Add a Playwright `container` project (`baseURL=ROUTER_URL`, no `webServer`,
       excluded from the default run) running `serving-contract.spec.ts` and a new
       `e2e/container-routing.spec.ts`. The new spec covers every `container-deployment`
       router scenario:
@@ -115,7 +118,7 @@
       - the Companion token scope;
       - `--scale api=2` refused;
       - `web` unable to reach `api`.
-- [ ] 5.5 Prove that the container project catches a regression. Temporarily route non-GET
+- [x] 5.5 Prove that the container project catches a regression. Temporarily route non-GET
       requests to `web`, confirm the project fails and names `POST /sessions/abc`, then
       revert.
 
