@@ -79,9 +79,13 @@
 	}
 
 	# ---- Rule 2: Upgrade outside literal /api -> abort (close, write nothing) ---------------------
-	# Reproduces upgradeDispatch's socket destroy. Applies to /auth and to /%61pi/... too: the
-	# server's upgrade path uses the undecoded pathname, so encoded letters are not /api there.
-	@upgradeOutsideApi expression `{http.request.header.Upgrade} != "" && !{http.request.uri}.matches("^/api(/|\\?|$)")`
+	# Reproduces upgradeDispatch's socket destroy, for exactly what Node's http server calls an
+	# upgrade: a non-empty `Upgrade` header AND a `Connection` header carrying the `upgrade` token
+	# (case-insensitive, comma list; Caddy joins repeated Connection headers with ", "). An
+	# `Upgrade` header without that token is an ordinary request in Node and is passed on.
+	# Applies to /auth and to /%61pi/... too: the server's upgrade path uses the undecoded
+	# pathname, so encoded letters are not /api there.
+	@upgradeOutsideApi expression `{http.request.header.Upgrade} != "" && {http.request.header.Connection}.matches("(?i)(^|,)[ \\t]*upgrade[ \\t]*(,|$)") && !{http.request.uri}.matches("^/api(/|\\?|$)")`
 	handle @upgradeOutsideApi {
 		abort
 	}
