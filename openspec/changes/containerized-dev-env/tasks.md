@@ -270,11 +270,11 @@
 
 ## 9. Final gates
 
-- [ ] 9.1 Run `npm run typecheck` and `npm test` for branch completion. Expected to be
+- [x] 9.1 Run `npm run typecheck` and `npm test` for branch completion. Expected to be
       unchanged, since no source changed.
-- [ ] 9.2 Run `npm run e2e` and `npm run e2e:visual`. The latter is a known host-baseline
+- [x] 9.2 Run `npm run e2e` and `npm run e2e:visual`. The latter is a known host-baseline
       failure (40/4/4 at `aa05a05`): record the counts versus main and do not re-bless.
-- [ ] 9.3 Re-run on the final tree:
+- [x] 9.3 Re-run on the final tree:
       - `make check`;
       - `npm run e2e:container` (prod stack not running);
       - the smokes from 4.4, 4.5, 5.2, and 6.2.
