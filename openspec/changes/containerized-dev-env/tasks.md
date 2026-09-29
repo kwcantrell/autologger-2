@@ -171,7 +171,7 @@
 
 ## 6. Stage environment (phase review, together with phase 3)
 
-- [ ] 6.1 Add `docker/compose.stage.yaml`, with `name: autologger-stage`, per D5–D6. Verify
+- [x] 6.1 Add `docker/compose.stage.yaml`, with `name: autologger-stage`, per D5–D6. Verify
       with `docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file
       <placeholder> config --no-env-resolution`. The resolved config must show:
       - `REQUIRE_LOGIN=1`, `TRUST_PROXY=1`, `COOKIE_SECURE=0`;
@@ -180,14 +180,14 @@
       - the router on `127.0.0.1:8788`;
       - no host-home binds;
       - project `autologger-stage` without `-p`.
-- [ ] 6.2 Live smoke, with the prod-shaped project up alongside if images are available
+- [x] 6.2 Live smoke, with the prod-shaped project up alongside if images are available
       (otherwise note it):
       - stage starts with no pool or name conflict;
       - `/` returns `200`, anonymous `/api/sessions` returns `401`, `/teams/` returns `404`;
       - the stage `API_TOKEN` through the router gets `200` on `/api/companion/state` and
         `401` on `/api/sessions`;
       - with `AI_V2_ENABLED=1` and no key, AI v2 is refused.
-- [ ] 6.3 Phase review over the phase 3 and phase 6 diffs and their evidence.
+- [x] 6.3 Phase review over the phase 3 and phase 6 diffs and their evidence.
 
 ## 7. Makefile and invariant check
 
