@@ -1182,6 +1182,27 @@ the post-repoint "verify from outside" list proves the callback.
 - **Registry credentials.** Never commit `.env`, PATs, or tokens; the images are built with a
   root `.dockerignore` that excludes `**/data`, `**/.env*` and other secret-shaped files.
 
+### Blob sync guard (used by every `rsync --delete` below)
+
+Every blob mirror below uses `rsync --delete`. A missing or accidentally empty source (a
+mistyped path, an unmounted disk, a failed earlier hop) would otherwise wipe the destination.
+`BLOBSYNC` refuses that: the source directory must exist, and an **empty source is refused
+whenever the destination has files**. An empty source onto an empty destination is allowed, so a
+brand-new install with no blobs still works. To empty a populated destination deliberately, run
+`rsync` by hand. Define it once in the shell you run the blocks below from (the cutover block
+checks it is set):
+
+```bash
+BLOBSYNC='set -eu
+src=$1; dst=$2; own=${3:-}
+[ -d "$src" ] || { echo "blob source $src missing - refusing --delete" >&2; exit 1; }
+if [ -z "$(ls -A "$src")" ] && [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
+  echo "blob source $src is empty but $dst has files - refusing --delete" >&2; exit 1; fi
+mkdir -p "$dst"
+rsync -a --delete ${own:+--chown="$own"} "$src"/ "$dst"/'
+# usage: sudo bash -c "$BLOBSYNC" _ <src-dir> <dst-dir> [uid:gid]
+```
+
 ### Backup
 
 Use the WAL-safe copier from a repo checkout on the host (it needs `tsx` and `better-sqlite3`,
@@ -1194,7 +1215,7 @@ VOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-data)   #
 BK=/backups/autologger-$(date +%F)
 # $VOL is unreadable to your user, so the copier runs as root; root's PATH usually lacks node
 sudo env "PATH=$PATH" npx tsx server/scripts/copyDataDir.ts "$VOL" "$BK" [--overwrite] [--dry-run]
-sudo rsync -a --delete "$VOL/blobs/" "$BK/blobs/"     # blobs are plain files
+sudo bash -c "$BLOBSYNC" _ "$VOL/blobs" "$BK/blobs"    # blobs are plain files; guarded (above)
 ```
 
 Run it from the repo checkout (`sudo` there needs the checkout's `node_modules` readable, which
@@ -1233,14 +1254,21 @@ into the volume, blobs included, home directory included:
 npx tsx server/scripts/copyDataDir.ts /path/to/snapshot/data /srv/stage      # DBs only; prints the blobs rsync
 #   (re-running into a populated /srv/stage needs --overwrite; the api must be stopped)
 sudo rsync -a --chown=1000:1000 --exclude /blobs /srv/stage/ "$VOL/"
-sudo rsync -a --chown=1000:1000 /path/to/snapshot/data/blobs/ "$VOL/blobs/"
+# Blobs: as YOUR user (ssh agent intact) into a persistent user-owned mirror, then root copies
+# locally. Keep the mirror: the cutover delta (step 3d) reuses it, so it stays small.
+BMIRROR=$HOME/autologger-blob-mirror; mkdir -p "$BMIRROR"
+rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/     # or a local snapshot's blobs/
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000
 # ~/.claude and ~/.claude.json -> the home volume, then create/merge settings.json (see Volumes)
 HOMEVOL=$(docker volume inspect -f '{{.Mountpoint}}' autologger_autologger-home)
 sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
 ```
 
 **2. Pre-flight on loopback.** `docker compose up -d`, then on `127.0.0.1:${ROUTER_PORT}` run
-`npm run e2e:container` (separate throwaway stack) or your own probes. **Do not attempt a
+your own probes. **Do not run `npm run e2e:container` now:** it uses the same compose file, so
+the fixed `autologger-api` container name and the pinned `172.28.10.0/24`/`172.28.11.0/24`
+subnets clash with the running production stack. Run it on another host, or before you bring
+production up (`docker compose down` first if it is up). **Do not attempt a
 Google sign-in on loopback:** the OAuth callback always returns to `PUBLIC_BASE_URL`, so it can
 only complete through the public origin. The sign-in and `Secure` session-cookie check happens
 only in the outside verification after the Pangolin repoint. Rehearse the membership bootstrap
@@ -1253,8 +1281,10 @@ leaves `-wal`/`-shm` files that must not sit next to a replaced `.db`.
 
 ```bash
 # a. stop the old server on OLD; api here is already stopped (docker compose stop api)
+: "${BLOBSYNC:?define BLOBSYNC first (Blob sync guard section)}" &&
+BMIRROR=${BMIRROR:-$HOME/autologger-blob-mirror} &&
 # b. on OLD, from its checkout, WAL-safe copy of every DB into a FRESH staging directory
-STAGE=$(ssh OLDHOST 'mktemp -d')          # fresh and empty: never reuse a previous stage
+STAGE=$(ssh OLDHOST 'mktemp -d') &&       # fresh and empty: never reuse a previous stage
 ssh OLDHOST "cd /path/to/autologger && npx tsx server/scripts/copyDataDir.ts /path/to/DATA_DIR $STAGE" &&
 # c. bring the stage here as your user (no root ssh agent needed), into a fresh local dir, then
 #    let the copier replace the volume's DBs. It refuses an in-use destination DB, verifies
@@ -1278,8 +1308,12 @@ sudo env VOL="$VOL" LSTAGE="$LSTAGE" bash -c 'set -euo pipefail
     rm -f "$VOL/$f" "$VOL/$f-wal" "$VOL/$f-shm" "$VOL/$f-journal"; done' &&
 #    the copier ran as root: give the DB files back to uid 1000 (blobs/ untouched here)
 sudo find "$VOL" -path "$VOL/blobs" -prune -o -exec chown -h 1000:1000 {} + &&
-# d. blob delta, mirroring deletions
-sudo rsync -a --delete --chown=1000:1000 OLDHOST:/path/to/DATA_DIR/blobs/ "$VOL/blobs/" &&
+# d. blob delta, mirroring deletions: rsync from OLD as YOUR user (ssh agent and ~/.ssh/config
+#    intact) into the user-owned mirror seeded in step 1, then root copies locally, guarded
+#    against an empty/missing source (see Blob sync guard).
+mkdir -p "$BMIRROR" &&
+rsync -a --delete OLDHOST:/path/to/DATA_DIR/blobs/ "$BMIRROR"/ &&
+sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000 &&
 # e. integrity: the copier already ran integrity_check + per-table row counts (copy vs source)
 #    before exiting 0. Re-check the shipped files, entirely as root (needs the sqlite3 CLI);
 #    prints "<result>  <file>" per DB and exits non-zero if any is not "ok":
@@ -1308,8 +1342,8 @@ Notes on step 3c:
 - **`sudo rsync … OLDHOST:` may not carry your ssh agent.** Under `sudo` `SSH_AUTH_SOCK` is
   dropped by default; either `sudo -E` (or `sudo env SSH_AUTH_SOCK="$SSH_AUTH_SOCK" …`), or, as
   above, rsync as your own user into a user-owned directory and let root copy locally. The blob
-  delta in step 3d runs as root and needs the agent forwarded this way (or rsync the blobs into a
-  user-owned directory first, then `sudo rsync -a --delete --chown=1000:1000` from there).
+  delta in step 3d does exactly that: `rsync` from `OLDHOST` as your user into `$BMIRROR`, then
+  a local guarded `sudo` copy into `$VOL/blobs`. Never put `sudo` in front of an `OLDHOST:` rsync.
 
 Downtime ends after (i). **Verify from outside:** the OAuth round trip; Companion `state`,
 `log`, `command`; traversal through a bypass path (`/api/companion/%2e%2e/sessions/x`) returns
