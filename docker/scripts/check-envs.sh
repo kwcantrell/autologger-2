@@ -44,11 +44,23 @@ fail() { # invariant-number message
   echo "FAIL [invariant $1] $2" >&2
 }
 
+# Lexical path normalizer (jq), prepended to every filter. Compose does NOT clean an absolute
+# bind source (it emits "/home/", "//home", "/./home", "//" verbatim, though it does absolutize
+# and clean relative ones), yet Docker binds the same directory, so every comparison on a bind
+# source (invariants 4 and 8) runs on the normalized form: split on "/", drop "" and ".",
+# resolve ".." by popping (never above "/"), rejoin with a leading "/". A relative source is
+# anchored at $root first. $home and $root are rebound to their normalized forms. Lexical only
+# (no symlink resolution).
+JQ_NORM='def norm: (if startswith("/") then . else $root+"/"+. end)
+  | split("/") | reduce .[] as $p ([]; if $p=="" or $p=="." then . elif $p==".." then .[:-1] else .+[$p] end)
+  | "/"+join("/");
+  ($root|norm) as $root | ($home|norm) as $home | '
+
 # jq_ok INV MESSAGE JSONFILE FILTER [jq args...]: FILTER must evaluate to true.
 jq_ok() {
   _inv=$1; _msg=$2; _file=$3; _flt=$4
   shift 4
-  if ! jq -e --arg home "$HOME" --arg root "$ROOT" "$@" "$_flt" "$_file" >/dev/null 2>"$TMP/jq.err"; then
+  if ! jq -e --arg home "$HOME" --arg root "$ROOT" "$@" "$JQ_NORM $_flt" "$_file" >/dev/null 2>"$TMP/jq.err"; then
     fail "$_inv" "$_msg"
     if [ -s "$TMP/jq.err" ]; then sed 's/^/    jq: /' "$TMP/jq.err" >&2; fi
   fi
@@ -205,7 +217,7 @@ check_dev() {
   # 4: bind mounts. Read-only sources must sit under an allowed source subtree (or be the gate
   # Caddyfile), never repo root / a data segment / a .env file; the ONLY rw bind is the Claude
   # credentials file. DATA_DIR and the runtime home are named volumes.
-  BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:.source,tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
+  BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
   ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile)(/.*)?$'
@@ -213,7 +225,7 @@ check_dev() {
     "$BINDS | map(select(.ro)) | all(.src | startswith(\$root+\"/\") and (ltrimstr(\$root+\"/\") | test(\"$ALLOW\") and (test(\"(^|/)(data|\\\\.\\\\.|\\\\.)(/|\$)\")|not) and (test(\"(^|/)\\\\.env[^/]*\$\")|not)))"
   jq_ok 4 "dev: the gate Caddyfile bind is not read-only" "$D" \
     "$BINDS | map(select(.src|endswith(\"/docker/dev-gate.Caddyfile\"))) | length==2 and all(.ro)"
-  jq -r --arg root "$ROOT" "$BINDS | map(select(.ro)) | .[].src" "$D" >"$TMP/ro-sources.txt"
+  jq -r --arg root "$ROOT" --arg home "$HOME" "$JQ_NORM $BINDS | map(select(.ro)) | .[].src" "$D" >"$TMP/ro-sources.txt"
   while IFS= read -r p; do
     [ -e "$p" ] || fail 4 "dev: read-only source mount names a path that does not exist: ${p#"$ROOT"/}"
   done <"$TMP/ro-sources.txt"
@@ -289,7 +301,7 @@ check_stage() {
   # not under the repo root (the repo's own docker/Caddyfile is the one bind, and the repo root
   # may itself be under $HOME).
   jq_ok 8 "stage: a bind mount sources / , the home directory or one of its ancestors, a host path under the home directory (outside the repo), or a .claude path" "$SC" \
-    '[.services[]|(.volumes//[])[]|select(.type=="bind")|.source]
+    '[.services[]|(.volumes//[])[]|select(.type=="bind")|.source|norm]
      | all(. as $s
            | ($s=="/" or $s==$home or ($home|startswith($s+"/"))
               or ($s|startswith($home+"/")) and ($s|startswith($root+"/")|not)
