@@ -124,7 +124,7 @@
 
 ## 6. Multi-arch build
 
-- [ ] 6.1 Set up the buildx `docker-container` builder and binfmt. Run
+- [x] 6.1 Set up the buildx `docker-container` builder and binfmt. Run
       `docker buildx bake --push` for `linux/amd64` and `linux/arm64` to GHCR. Run the task
       4.3 binary checks inside the amd64 `api` variant under QEMU. Images go to **private**
       `ghcr.io/kwcantrell/autologger-{web,api}`; confirm an anonymous pull is refused and an
