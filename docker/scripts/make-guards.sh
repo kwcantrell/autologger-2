@@ -34,6 +34,7 @@ port_ok() {
   case "$2" in
     '') return 0 ;;
     *[!0-9]*) die "$1=$2 is not a plain decimal port (empty means the default)" ;;
+    0) die "$1=0 is not a valid port" ;;
     0*) die "$1=$2 must not have a leading zero" ;;
   esac
   [ "$2" -le 65535 ] || die "$1=$2 is above 65535"
