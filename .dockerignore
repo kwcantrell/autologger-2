@@ -48,3 +48,10 @@
 **/playwright-report
 **/fixtures
 **/src/test
+
+# credential-shaped files that must never reach a build context (task 4 review m7)
+**/.npmrc
+**/*.pem
+**/*.key
+**/id_rsa*
+**/credentials*.json
