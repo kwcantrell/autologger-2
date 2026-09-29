@@ -18,7 +18,8 @@
 //      included, and the copy is exactly the snapshot the counts came from;
 //   4. runs `PRAGMA integrity_check` on the copy and compares its per-table row
 //      counts (and table set) with the snapshot counts;
-//   5. only if all of that passes, atomically renames the temp file over the
+//   5. only if all of that passes, removes the destination's stale -wal/-shm/
+//      -journal, then atomically renames the temp file over the
 //      final path. A failed copy never replaces an existing (seeded) copy.
 // Because counts and backup share one snapshot, a count mismatch is ALWAYS a
 // real error, even while the old server keeps writing (pre-seed); no
@@ -29,7 +30,8 @@
 // Blobs are NOT copied here; the exact `rsync -a --delete` command is printed.
 //
 // Exit codes: 0 ok | 1 copy/verification failure (integrity, counts, backup
-// error, corrupt source db) | 2 usage error or refused unsafe invocation.
+// error, corrupt source db) | 2 usage error or refused unsafe invocation (incl.
+// --overwrite onto a destination db that another process has open).
 
 import Database from 'better-sqlite3';
 import {
@@ -136,6 +138,28 @@ function tableCounts(db: Database.Database): Map<string, number> {
   return m;
 }
 
+/** True when another connection/process holds `path` open. Under an exclusive
+ * locking_mode a WAL db cannot be read while any other connection has it open
+ * (the -shm locks are held), so this fails fast with SQLITE_BUSY. Any other
+ * error (e.g. not a database) is not "in use": the file is about to be replaced. */
+function isInUse(path: string): boolean {
+  let probe: Database.Database | undefined;
+  try {
+    probe = new Database(path, { fileMustExist: true, timeout: 250 });
+    probe.pragma('locking_mode = EXCLUSIVE');
+    probe.exec('BEGIN EXCLUSIVE');
+    probe.exec('ROLLBACK');
+    return false;
+  } catch (e) {
+    const code = (e as { code?: string }).code ?? '';
+    return code.startsWith('SQLITE_BUSY') || code.startsWith('SQLITE_LOCKED');
+  } finally {
+    try {
+      probe?.close();
+    } catch {}
+  }
+}
+
 function removeIfExists(p: string): void {
   rmSync(p, { force: true });
 }
@@ -183,7 +207,10 @@ async function copyOne(
     for (const s of ['-wal', '-shm', '-journal']) {
       if (existsSync(tmp + s)) throw new Error(`stray ${basename(tmp)}${s} after verification`);
     }
-    // Drop any stale sidecars of a previous copy, then swap in atomically.
+    // The temp copy is fully verified. Only now drop the destination's stale
+    // -wal/-shm/-journal (left by an earlier api run): if they survived the
+    // rename, SQLite could replay that old WAL onto the new file and silently
+    // corrupt it. Then swap in atomically. (Never touches the source.)
     for (const s of ['-wal', '-shm', '-journal']) removeIfExists(dstPath + s);
     renameSync(tmp, dstPath);
   } catch (e) {
@@ -227,6 +254,15 @@ export async function copyDataDir(
     return refuse(
       `${clashes.length} destination db file(s) already exist (e.g. ${clashes[0]}); pass --overwrite to replace them`,
     );
+  }
+
+  if (opts.overwrite && !opts.dryRun) {
+    const busy = clashes.filter((rel) => isInUse(join(dst, rel)));
+    if (busy.length > 0) {
+      return refuse(
+        `destination db in use by another process (e.g. ${busy[0]}); stop the api (docker compose stop api) before replacing DB files`,
+      );
+    }
   }
 
   log(`source:      ${src}`);

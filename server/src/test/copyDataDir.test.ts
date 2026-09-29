@@ -4,6 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -162,6 +163,59 @@ describe('copyDataDir', () => {
     const c = new Database(join(dst, 'catalog.db'), { readonly: true });
     expect((c.prepare('SELECT count(*) n FROM items').get() as { n: number }).n).toBe(51);
     c.close();
+  });
+
+  it('overwrite removes stale -wal/-shm/-journal siblings of the destination (no WAL replay onto the new file)', async () => {
+    const { src, dst } = fixture();
+    mkdirSync(join(dst, 'sessions'), { recursive: true });
+    // Realistic stale state: a destination db that a since-stopped api left with an
+    // uncheckpointed -wal. Snapshot db+wal while the writer is live, then close it.
+    const old = walDb(join(dst, 'catalog.db'), 7);
+    for (const s of ['', '-wal'])
+      copyFileSync(join(dst, `catalog.db${s}`), join(root, `stale.db${s}`));
+    old.close();
+    rmSync(join(dst, 'catalog.db-wal'), { force: true });
+    rmSync(join(dst, 'catalog.db-shm'), { force: true });
+    copyFileSync(join(root, 'stale.db'), join(dst, 'catalog.db'));
+    copyFileSync(join(root, 'stale.db-wal'), join(dst, 'catalog.db-wal'));
+    writeFileSync(join(dst, 'catalog.db-shm'), Buffer.alloc(32768));
+    writeFileSync(join(dst, 'catalog.db-journal'), 'stale');
+    copyFileSync(join(src, 'sessions', 's1.db'), join(dst, 'sessions', 's1.db')); // clash, plain seed
+    expect(statSync(join(dst, 'catalog.db-wal')).size).toBeGreaterThan(0);
+
+    const res = await copyDataDir(src, dst, { ...quiet, overwrite: true });
+    expect(res.exitCode).toBe(EXIT_OK);
+    for (const s of ['-wal', '-shm', '-journal']) {
+      expect(existsSync(join(dst, `catalog.db${s}`))).toBe(false);
+    }
+    const c = new Database(join(dst, 'catalog.db'));
+    expect(c.pragma('integrity_check', { simple: true })).toBe('ok');
+    const rows = c.prepare('SELECT v FROM items ORDER BY id').all() as Array<{ v: string }>;
+    expect(rows.length).toBe(50); // the source's rows, not the stale 7 replayed on top
+    expect(rows.every((r, i) => r.v === `row-${i}`)).toBe(true);
+    c.close();
+    // source untouched by the copier's sidecar cleanup
+    expect(existsSync(join(src, 'catalog.db-wal'))).toBe(true);
+  });
+
+  it('overwrite refuses (exit 2, nothing written) while the destination db is open by another connection', async () => {
+    const { src, dst } = fixture();
+    mkdirSync(dst, { recursive: true });
+    const inUse = walDb(join(dst, 'catalog.db'), 3); // stays open: a running api
+    const before = readFileSync(join(dst, 'catalog.db'));
+    const errs: string[] = [];
+    const res = await copyDataDir(src, dst, {
+      ...quiet,
+      overwrite: true,
+      err: (l) => errs.push(l),
+    });
+    expect(res.exitCode).toBe(EXIT_UNSAFE);
+    expect(errs.join('\n')).toMatch(/in use.*stop the api/i);
+    expect(readFileSync(join(dst, 'catalog.db')).equals(before)).toBe(true);
+    expect(existsSync(join(dst, 'sessions'))).toBe(false);
+    inUse.close();
+    // once the holder is gone, the same invocation succeeds
+    expect((await copyDataDir(src, dst, { ...quiet, overwrite: true })).exitCode).toBe(EXIT_OK);
   });
 
   it('exits non-zero and keeps the prior destination when verification fails', async () => {
