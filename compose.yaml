@@ -58,6 +58,8 @@ services:
       target: web
     restart: unless-stopped
     init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     networks: [front]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -77,11 +79,21 @@ services:
     container_name: autologger-api
     restart: unless-stopped
     init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     networks: [back]
     # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...). Values in
-    # `environment` below take precedence over this file, so it cannot flip the posture.
+    # `environment` below take precedence over this file, so it cannot flip the posture or
+    # relocate the paths the image is built around (a copied server/.env.example line such as
+    # `DATA_DIR=./data` or an empty `YTDLP_PATH=` is overridden here).
     env_file: .env
     environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "8787"
+      YTDLP_PATH: /opt/ytdlp/yt-dlp
+      CLAUDE_CLI_PATH: /usr/local/bin/claude
       REQUIRE_LOGIN: "1"
       TRUST_PROXY: "1"
       COOKIE_SECURE: "1"
