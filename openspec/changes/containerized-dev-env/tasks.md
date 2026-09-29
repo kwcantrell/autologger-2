@@ -278,6 +278,6 @@
       - `make check`;
       - `npm run e2e:container` (prod stack not running);
       - the smokes from 4.4, 4.5, 5.2, and 6.2.
-- [ ] 9.4 Owner-run: a stage Google sign-in round-trip on `http://localhost:8788`, and
+- [x] 9.4 Owner-run: a stage Google sign-in round-trip on `http://localhost:8788`, and
       optionally a dev one on `http://localhost:8787`.
 - [x] 9.5 Whole-branch layered scoped audit, per the apply skill.

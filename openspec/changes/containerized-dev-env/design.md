@@ -649,3 +649,10 @@ Invariants the merge must not disturb:
 - Dev posture pins stay literals.
 - The only rw bind is `~/.claude/.credentials.json`.
 - `server/data` is never mounted.
+
+**2026-09-29 — owner verification (task 9.4).** The owner reports that every check passed:
+- stage Google sign-in round-trip on `http://localhost:8788` (callback, session cookie, `/api/profile`);
+- dev Companion driven by hand;
+- DeepGram transcript generation in dev with a configured key.
+
+This closes the "owner-verified only" residual for sign-in and DeepGram.
