@@ -1,0 +1,50 @@
+# Build-context exclusions (containerize-split-images, task 4.1).
+# Every pattern is `**/`-anchored so it holds at any depth; a bare `data` would only match the
+# context root and let server/data (live SQLite + audio) into the daemon.
+
+# VCS metadata
+**/.git
+**/.gitignore
+
+# dependencies and build output are always produced inside the image
+**/node_modules
+**/.next
+**/dist
+**/*.tsbuildinfo
+
+# live data (DATA_DIR content) and its e2e cousins
+**/data
+**/.data*
+**/blobs
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite*
+
+# secrets: every env file except the committed example
+**/.env
+**/.env.*
+!**/.env.example
+
+# workspaces and trees that never ship in either image
+**/companion
+**/e2e
+**/openspec
+**/docs
+**/scripts
+**/.claude
+**/.codegraph
+**/.agents
+**/.cursor
+**/.impeccable
+**/.graphify*
+**/graphify-out
+**/.mcp.json
+**/skills-lock.json
+
+# tests and test artifacts
+**/*.test.*
+**/test-results
+**/playwright-report
+**/fixtures
+**/src/test
