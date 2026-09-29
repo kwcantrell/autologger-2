@@ -344,8 +344,12 @@ Alternatives considered:
    then `companion/`: `package.json`, `tsconfig.json`, `src/`, `scripts/`, `companion/`.
 2. `npm ci --workspace=companion --include-workspace-root=false`.
 3. `npm run build -w companion`, then `npm run package -w companion`.
-4. Extract `pkg/` to `/module/autologger`, and add an empty `node_modules/` so the
-   entrypoint skips its yarn install; the bundle is self-contained.
+4. Extract `pkg/` to `/module/autologger`. Copy `@companion-module/base` (1.14.x, asserted)
+   into `/module/autologger/node_modules/`. Companion 4.3.4 treats `--extra-module-path`
+   modules as unpackaged, and reads the module API version from
+   `@companion-module/base/package.json`; an empty `node_modules/` fails with "Cannot find
+   module" (found at task 5.2). The non-empty directory also makes the entrypoint skip its
+   yarn install.
 5. Assert the packaged manifest's `runtime.apiVersion` starts with `1.14.`.
 
 **Runtime stage:** `FROM ghcr.io/bitfocus/companion/companion:v4.3.4@sha256:7fdd…`, and
