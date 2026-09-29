@@ -48,7 +48,7 @@
 		# below then hands api exactly ONE value (TRUST_PROXY=1 on the api side).
 		# The gateways come from ROUTER_FRONT_GW / ROUTER_BACK_GW, defaulting (only when UNSET;
 		# an empty value is not defaulted) to prod's addresses. Only a non-prod stack's env file
-		# may set them; compose.yaml must never set ROUTER_*. Each value must be a single dotted
+		# may set them; compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW. Each value must be a single dotted
 		# IPv4 address (docker/scripts/check-envs.sh enforces this).
 		trusted_proxies static {$ROUTER_FRONT_GW:172.28.10.1} {$ROUTER_BACK_GW:172.28.11.1}
 		trusted_proxies_strict

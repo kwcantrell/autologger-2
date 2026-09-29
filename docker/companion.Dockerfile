@@ -10,7 +10,7 @@ COPY . /ctx
 RUN set -eu; find /ctx -type f | sort > /ctx-listing.txt; \
     echo "=== build-context listing ==="; cat /ctx-listing.txt; echo "=== end listing ==="; \
     if grep -Ev '^/ctx/(package\.json|package-lock\.json|companion/.*)$' /ctx-listing.txt; then echo "file outside allowlist entered the context" >&2; exit 1; fi; \
-    if grep -E '/(node_modules|dist|pkg)/|\.tgz$|/\.env' /ctx-listing.txt; then echo "excluded path entered the context" >&2; exit 1; fi
+    if grep -E '/(node_modules|dist|pkg)/|\.tgz$|/\.env|\.pem$|\.key$|/id_|/\.npmrc|/\.git' /ctx-listing.txt; then echo "excluded path entered the context" >&2; exit 1; fi
 
 # ---- module: build and package the module ----
 # Deviation from design D9 step 4 (an EMPTY node_modules/): Companion treats extra-module-path
