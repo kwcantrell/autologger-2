@@ -28,9 +28,9 @@
     "e2e:visual:update": "npm run build -w web && playwright test --workers=1 --project=visual-desktop --project=visual-mobile --update-snapshots"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.0.0",
-    "@playwright/test": "^1.61.1",
-    "@types/node": "^26.1.1",
+    "@biomejs/biome": "^2.5.14",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.3",
     "typescript": "^5.7.2"
   },
   "overrides": {
