@@ -8,8 +8,13 @@ repos:
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
     hooks:
       - id: check-yaml
-        # Syntax only: compose files use custom tags (!override, !reset). Owner, 2026-09-30.
+        exclude: &compose_yaml ^(compose\.yaml|docker/compose\.[a-z]+\.yaml|docker/secrets-env\.yaml|e2e/container/compose\.e2e\.yaml)$
+      - id: check-yaml
+        name: check yaml (compose files, syntax only)
+        # Compose files use custom tags (!override, !reset); only they skip the safe loader.
+        # Owner, 2026-09-30 (infisical-secrets 3.6). Every other YAML keeps duplicate-key checks.
         args: [--unsafe]
+        files: *compose_yaml
       - id: check-json
       - id: end-of-file-fixer
       - id: trailing-whitespace

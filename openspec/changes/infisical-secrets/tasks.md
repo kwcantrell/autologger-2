@@ -109,13 +109,14 @@ written to print names or exit codes only. The agent records that output and nev
   | H11: a step word with a quote, `$` or `;` | Refused |
   | `resolved` / `urls` / `prod-tags` / `reset` | The same outcomes as the shell guards they replace: a wrong project name, a non-loopback port, 8080, or dev 80/443 is refused; `API_TAG=latest` is refused; `reset` without `CONFIRM=yes` is refused before any request |
   Evidence: before the wrapper existed, `node --test docker/scripts/compose-run.test.mjs` -> `✖ docker/scripts/compose-run.test.mjs ... 'test failed'` (module missing); the first real run -> 35 pass, 1 fail (`SIGTERM is forwarded ...`: `'' !== 'TERM'`, because `sh` forked docker). Fix: `compose-env.sh` `al_compose` execs when the wrapper sets the unexported `AL_EXEC=1` (H9 implementation detail; `check-envs.sh` and `make-guards.sh` keep forking). After: `node --test --test-reporter=spec docker/scripts/compose-run.test.mjs` -> `ℹ tests 36 ... ℹ pass 36 ℹ fail 0`; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`; `sh docker/scripts/test_check_envs.sh` -> `5 passed, 0 failed`; `grep -rn compose-run.sh compose.yaml docker/` -> no matches; root `test` script now starts with `node --test docker/scripts/compose-run.test.mjs`.
-- [ ] 3.3 Mark `envfile`, `urls`, `reset` and `prod-tags` in `make-guards.sh` as superseded by the
+- [x] 3.3 Mark `envfile`, `urls`, `reset` and `prod-tags` in `make-guards.sh` as superseded by the
   wrapper, with a header note; they are left in place, to be deleted by `node-stack-tooling`
   (design Risks: size). Update the `compose-env.sh` header comment: ambient overrides no longer
   apply, and the wrapper is the only caller besides `check-envs.sh`. Check:
   - `grep -n 'make-guards.sh \(envfile\|urls\|reset\|prod-tags\)' Makefile` returns nothing;
   - `make check` still passes.
-- [ ] 3.4 Rewrite the Makefile targets as single `node docker/scripts/compose-run.mjs` calls, and
+  Evidence: `grep -n 'make-guards.sh \(envfile\|urls\|reset\|prod-tags\)\|$(G) \(envfile\|urls\|reset\|prod-tags\)' Makefile` -> rc=1 (no match); `make-guards.sh` header now marks the four as superseded; `compose-env.sh` header says ambient overrides no longer apply; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`
+- [x] 3.4 Rewrite the Makefile targets as single `node docker/scripts/compose-run.mjs` calls, and
   add `prod-check`.
   Each call is `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$HOME" TERM="$TERM" … node …`
   (H1). `dev-reset` and `stage-reset` pass `CONFIRM` through. Check:
@@ -123,17 +124,19 @@ written to print names or exit codes only. The agent records that output and nev
   - `grep -n 'env_file\|\.env\.dev\|\.env\.stage\|compose_\(dev\|stage\|prod\) \.env' Makefile docker/scripts/make-guards.sh`
     returns nothing;
   - `make -n dev-restart` shows a single `compose-run.mjs` call with the four restart steps.
-- [ ] 3.5 Add `docker/infisical-credentials.example`. Check:
+  Evidence: `make help` lists every target incl. `prod-check  Dry run (any branch): ...`; `make -n dev-restart` -> one `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=... TERM=... <node> docker/scripts/compose-run.mjs dev 'compose restart app' 'compose restart app-gate' 'compose restart companion' 'compose restart companion-gate'`; with no credentials, `make dev-down` -> `compose-run: .env.infisical.dev is missing. Create it from docker/infisical-credentials.example ...`; `make dev-reset` -> `refusing: 'make dev-reset' deletes the autologger-dev volumes. Re-run with CONFIRM=yes.`; `NODE_OPTIONS=--no-warnings NODE_TLS_REJECT_UNAUTHORIZED=0 make prod-check` -> reaches the credentials check (the variables were stripped by `env -i`). node is resolved from the caller's PATH (`NODE := $(shell command -v node)`) because nvm installs are not on the fixed PATH.
+- [x] 3.5 Add `docker/infisical-credentials.example`. Check:
   - `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` lists all
     five;
   - `git check-ignore docker/infisical-credentials.example` lists nothing.
-- [ ] 3.6 Owner-approved scope addition (2026-09-30): `.pre-commit-config.yaml` runs
+  Evidence: `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` -> all five printed; `git check-ignore docker/infisical-credentials.example` -> rc=1
+- [x] 3.6 Owner-approved scope addition (2026-09-30): `.pre-commit-config.yaml` runs
   `check-yaml --unsafe` for the compose files only (a second entry with `files:`), and plain
   `check-yaml` excludes them. So committing `docker/compose.stage.yaml` (`!override`) works, and
   every other YAML file keeps duplicate-key detection. Check: a commit touching
   `docker/compose.stage.yaml` passes, and `pre-commit run check-yaml --files` on a scratch
   duplicate-key file outside the compose set fails.
-
+  Evidence: `pre-commit run check-yaml --files dup-probe.yaml docker/compose.stage.yaml compose.yaml` (dup-probe = `a: 1\na: 2`) -> `check yaml....Failed  found duplicate key "a"` and `check yaml (compose files, syntax only)....Passed`
 ## 4. Docs
 
 - [ ] 4.1 In the README container sections, the cutover/rollback runbook and the dev/stage
