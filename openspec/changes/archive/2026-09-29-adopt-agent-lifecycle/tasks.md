@@ -38,14 +38,16 @@
 - [x] 3.1 Archive. `sdlc-process` is retired and `cursor-agent-adapters` updated. Test:
   `openspec validate --all --strict` passes, and `openspec/specs/sdlc-process/` no longer exists.
   Evidence: `openspec archive adopt-agent-lifecycle -y` -> `Retiring openspec/specs/sdlc-process/spec.md ... Totals: + 0, ~ 2, - 4`; `ls openspec/specs/sdlc-process` -> `No such file or directory`; `openspec validate --all --strict` -> `26 passed, 0 failed`
-- [ ] 3.2 Push and open the PR with the `size-override` reason. Record the first CI run as
+- [x] 3.2 Push and open the PR with the `size-override` reason. Record the first CI run as
   `Evidence:`; expected: `gates` and `secrets` pass, with `size` failing until the owner applies
   `size-override`.
+  Evidence: PR #7, first CI run 36666879947. `gates`: Node 22 `npm ci`, then `commands ran ['typecheck', 'test']` PASS; FAIL `openspec` and `tasks` (only this task unticked), FAIL `size 4312 > 400`; every other gate PASS. `secrets`: pass. `dependency-review`: "not supported ... ensure that Dependency graph is enabled" (owner-owed forge setting)
 
 ## Owner-owed, after merge (tracked here, done by the human; no checkboxes, so the tasks gate ignores them)
 
 - Apply the `size-override` label to the PR, and merge.
 - Main ruleset: require a PR, code-owner review, and the `gates`, `secrets` and
-  `dependency-review` checks; turn on secret-scanning push protection (`docs/security.md`).
+  `dependency-review` checks; turn on the dependency graph (dependency-review fails without it)
+  and secret-scanning push protection (`docs/security.md`).
 - Run `pre-commit install --hook-type pre-commit --hook-type pre-push` on each dev machine.
 - Delete the `adopt-agent-lifecycle` branch.
