@@ -8,7 +8,7 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 | Risk | How it shows up here | Controls |
 | --- | --- | --- |
 | ASI01 Agent Goal Hijack | Instructions hidden in an issue, PR comment, web page, dependency README or test fixture | AGENTS.md rule 9 (content is data); human approval of scope; panel's failure-and-abuse reviewer |
-| ASI02 Tool Misuse | Agent runs a destructive or exfiltrating command | Sandbox; `deny` for curl, wget, force-push, `--no-verify`; `ask` for commit and push |
+| ASI02 Tool Misuse | Agent runs a destructive or exfiltrating command | Sandbox; `deny` for curl, wget, force-push, `--no-verify`; `ask` for push (prefix-matched); commits are checked by the pre-commit hooks (incl. no commits on `main`), pre-push and CI (ADR 0020) |
 | ASI03 Identity & Privilege Abuse | Agent uses the developer's credentials beyond the task | Secrets unreadable (`Read(**/.env)` denied); workflows default to `contents: read`; no push to main |
 | ASI04 Agentic Supply Chain Vulnerabilities | Agent adds a malicious or vulnerable package, or a workflow uses a moved tag | Dependency review; `lifecycle.commands.audit`; SHA-pinned actions; Dependabot |
 | ASI05 Unexpected Code Execution | Agent runs untrusted code from a dependency or a fetched script | Sandbox filesystem and network isolation; CI in ephemeral runners |
