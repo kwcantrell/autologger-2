@@ -29,4 +29,5 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+        verbose: true  # show the size warning even when the push passes
   # Add your stack's linters here (ruff, eslint, hadolint, ...).

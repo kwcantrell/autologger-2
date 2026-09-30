@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -31,10 +32,10 @@ CHANGES = "openspec/changes"
 ARCHIVE = "openspec/changes/archive"
 
 STAGES = {
-    "commit": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
-    "hook": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
-             "evidence", "commands"],
-    "pr": ["openspec", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+    "commit": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
+    "hook": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
+             "evidence", "size", "commands"],
+    "pr": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
            "approval", "panel", "tasks", "evidence", "artifacts-first", "tests-with-code",
            "size", "commands", "audit"],
 }
@@ -76,6 +77,7 @@ class Context:
     pr_body: str = ""
     labels: set[str] = field(default_factory=set)
     in_ci: bool = False
+    stage: str = "pr"
     change_dir: Path | None = None
     tier: int | None = None
     grandfathered: bool = False
@@ -140,14 +142,43 @@ def resolve_base(explicit: str | None) -> str | None:
 
 
 def changed_files(base: str | None) -> list[str]:
+    # NUL-separated so a path is read whole; --no-renames so a move lists its old path too.
     files: set[str] = set()
     if base:
-        files.update(git("diff", "--name-only", base).split())
+        files.update(git("diff", "--name-only", "--no-renames", "-z", base).split("\0"))
     else:  # no base (fresh repo): everything tracked counts as changed
-        files.update(git("ls-files").split())
-    files.update(git("diff", "--name-only", "--cached").split())
-    files.update(git("ls-files", "--others", "--exclude-standard").split())
+        files.update(git("ls-files", "-z").split("\0"))
+    files.update(git("diff", "--name-only", "--no-renames", "-z", "--cached").split("\0"))
+    files.update(git("ls-files", "--others", "--exclude-standard", "-z").split("\0"))
     return sorted(f for f in files if f)
+
+
+ARCHIVE_NAME = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*")
+
+
+def exempt_archives(base: str | None) -> set[str]:
+    """Archived change dirs on the merge-base whose only difference is an in-place tasks.md edit.
+
+    Those edits maintain history; they are not the branch's change. Read from raw records so a
+    move, a type change or a whitespace-laden name can't pass for a tasks.md edit.
+    """
+    if not base:
+        return set()
+    records: dict[str, list[tuple[str, str, str, str]]] = {}
+    fields = git("diff", "--raw", "--no-renames", "-z", base).split("\0")
+    for meta, path in zip(fields[0::2], fields[1::2]):
+        old_mode, new_mode, _, _, status = meta.lstrip(":").split(" ")
+        parts = path.split("/")
+        if path.startswith(ARCHIVE + "/") and len(parts) > 4:
+            records.setdefault("/".join(parts[:4]), []).append((status, path, old_mode, new_mode))
+    untracked = git("ls-files", "--others", "--exclude-standard", "-z").split("\0")
+    exempt = set()
+    for d, recs in records.items():
+        if (ARCHIVE_NAME.fullmatch(d.split("/")[-1]) and on_base(base, d)
+                and recs == [("M", f"{d}/tasks.md", "100644", "100644")]
+                and not any(f.startswith(d + "/") for f in untracked)):
+            exempt.add(d)
+    return exempt
 
 
 def pr_event() -> tuple[str, set[str]]:
@@ -177,6 +208,14 @@ def item_blocks(text: str) -> list[tuple[str, str]]:
 # Each check returns (status, message); status is PASS, FAIL, WARN or SKIP.
 
 def check_change(ctx: Context):
+    exempt = exempt_archives(ctx.base)
+    status, msg = _check_change(ctx, exempt)
+    if exempt:  # on every result, so a reviewer always sees history edits
+        msg += f"; not counted: tasks.md-only edits to existing archive(s) {sorted(exempt)}"
+    return status, msg
+
+
+def _check_change(ctx: Context, exempt: set[str]):
     dirs = set()
     for f in ctx.changed:
         parts = f.split("/")
@@ -184,7 +223,7 @@ def check_change(ctx: Context):
             dirs.add("/".join(parts[:4]))
         elif f.startswith(CHANGES + "/") and len(parts) > 3 and parts[2] != "archive":
             dirs.add("/".join(parts[:3]))
-    dirs = {d for d in dirs if (ROOT / d).is_dir()}
+    dirs = {d for d in dirs if (ROOT / d).is_dir()} - exempt
     if len(dirs) > 1:
         return "FAIL", f"one change per branch; found {sorted(dirs)}"
     if dirs:
@@ -319,7 +358,7 @@ def check_artifacts_first(ctx: Context):
     commits = git("rev-list", "--topo-order", "--reverse", "--no-merges", f"{ctx.base}..HEAD").split()
     if not commits:
         return "SKIP", "no commits on branch"
-    first = git("diff-tree", "--no-commit-id", "--name-only", "-r", commits[0]).split()
+    first = [f for f in git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", commits[0]).split("\0") if f]
     stray = [f for f in first if not f.startswith(CHANGES + "/")]
     if stray:
         return "FAIL", f"first commit must hold only the approved artifacts; also has {stray[:3]}"
@@ -345,6 +384,55 @@ def check_tests_with_code(ctx: Context):
     return "PASS", f"{len(source)} source / {len(tests)} test file(s)"
 
 
+def untracked_lines(path: Path, cap: int) -> int:
+    """Lines as git numstat counts them for a new file; 0 for binary or non-regular; stops past cap."""
+    if path.is_symlink():
+        return 1  # git counts a symlink's target path as one line
+    try:
+        if not stat.S_ISREG(path.stat().st_mode):
+            return 0
+        with open(path, "rb") as f:
+            head = f.read(8000)
+            if b"\0" in head:
+                return 0  # binary, as git decides it
+            count, last, chunk = 0, b"", head
+            while chunk:
+                count += chunk.count(b"\n")
+                last = chunk
+                if count > cap:
+                    return count
+                chunk = f.read(1 << 20)
+            return count + (1 if last and not last.endswith(b"\n") else 0)
+    except OSError:
+        return 0
+
+
+def committed_lines(base: str, exclude: list[str]) -> int:
+    """Changed lines against base, every count git's own. A move between two counted paths costs
+    its edits; any other move keeps its delete + add counts, so it's priced by where it lands."""
+    def cost(added: str, deleted: str) -> int:
+        return 0 if added == "-" else int(added) + int(deleted)  # binary counts 0
+
+    plain: dict[str, int] = {}
+    for rec in git("diff", "--numstat", "-z", "--no-renames", base).split("\0"):
+        if rec:
+            added, deleted, path = rec.split("\t", 2)
+            plain[path] = cost(added, deleted)
+    total = sum(n for path, n in plain.items() if not matches(path, exclude))
+    fields = git("diff", "--numstat", "-z", "-M", base).split("\0")  # -M: whatever diff.renames says
+    i = 0
+    while i < len(fields) and fields[i]:
+        added, deleted, path = fields[i].split("\t", 2)
+        if path:  # plain record
+            i += 1
+            continue
+        old, new = fields[i + 1], fields[i + 2]  # rename record: empty path, then old and new
+        i += 3
+        if not matches(old, exclude) and not matches(new, exclude):
+            total += cost(added, deleted) - plain.get(old, 0) - plain.get(new, 0)
+    return total
+
+
 def check_size(ctx: Context):
     if not ctx.base:
         return "SKIP", "no base to diff against"
@@ -353,17 +441,94 @@ def check_size(ctx: Context):
         return "SKIP", "no size_budget"
     exclude = ((ctx.cfg.get("size_exclude") or []) + (ctx.cfg.get("test_globs") or [])
                + (ctx.cfg.get("managed_paths") or []) + ["openspec/**"])
-    total = 0
-    for line in git("diff", "--numstat", ctx.base).splitlines():
-        added, deleted, path = line.split("\t", 2)
-        if added == "-" or matches(path, exclude):
-            continue
-        total += int(added) + int(deleted)
+    total = committed_lines(ctx.base, exclude)
+    if not ctx.in_ci:  # CI counts committed diffs only; locally, new files count before commit
+        for path in git("ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+            if path and not matches(path, exclude):
+                total += untracked_lines(ROOT / path, budget - total)
     if total > budget:
         if overridden(ctx, "size_budget"):
             return "WARN", f"{total} changed lines > {budget} (overridden)"
+        if ctx.stage == "hook":
+            return "WARN", (f"{total} changed lines > budget {budget}; the PR gate will fail: split, "
+                            "or ask the human for `size-override`")
         return "FAIL", f"{total} changed lines > budget {budget}; split the change"
     return "PASS", f"{total}/{budget} changed lines"
+
+
+class TolerantLoader(yaml.SafeLoader):
+    """SafeLoader that reads unknown `!tags` (CloudFormation, Ansible) as plain values.
+
+    `!!python/...` tags resolve to tag:yaml.org,2002:python/*, not `!`, so they stay rejected.
+    """
+
+
+def _any_tag(loader: yaml.SafeLoader, suffix: str, node: yaml.Node):
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_scalar(node)
+
+
+TolerantLoader.add_multi_constructor("!", _any_tag)
+YAML_MAX_BYTES = 1 << 20
+
+
+def yaml_problem(path: Path, rel: str) -> str | None:
+    """None if the file parses (and, for the pre-commit config, has a loadable shape)."""
+    try:
+        docs = list(yaml.load_all(path.read_text(encoding="utf-8"), Loader=TolerantLoader))
+    except yaml.MarkedYAMLError as e:
+        mark = e.problem_mark or e.context_mark
+        line = f":{mark.line + 1}" if mark else ""
+        return f"{rel}{line}: {e.problem or e.context}"
+    except Exception as e:  # constructor errors, RecursionError, UnicodeDecodeError, ...
+        return f"{rel}: {type(e).__name__}: {str(e)[:120]}"
+    if rel == ".pre-commit-config.yaml":
+        cfg = docs[0] if docs else None
+        repos = cfg.get("repos") if isinstance(cfg, dict) else None
+        if not isinstance(repos, list):
+            return f"{rel}: pre-commit needs a top-level `repos` list"
+        for i, repo in enumerate(repos):
+            if not (isinstance(repo, dict) and "repo" in repo and isinstance(repo.get("hooks"), list)):
+                return f"{rel}: repos[{i}] needs `repo` and a `hooks` list"
+            if not all(isinstance(h, dict) and "id" in h for h in repo["hooks"]):
+                return f"{rel}: every hook in repos[{i}] needs an `id`"
+    return None
+
+
+def check_yaml(ctx: Context):
+    spec = ["--", "*.yml", "*.yaml"]
+    paths = git("ls-files", "-z", *spec).split("\0")
+    if not ctx.in_ci:  # locally, new files are checked before they're committed
+        paths += git("ls-files", "-z", "--others", "--exclude-standard", *spec).split("\0")
+    problems, skipped, too_big, checked = [], 0, [], 0
+    for rel in sorted(set(filter(None, paths))):
+        path = ROOT / rel
+        if path.is_symlink() or not path.is_file():
+            skipped += 1
+            continue
+        if path.stat().st_size > YAML_MAX_BYTES:
+            too_big.append(rel)
+            continue
+        checked += 1
+        problem = yaml_problem(path, rel)
+        if problem:
+            problems.append((rel, problem))
+    strict = ctx.stage not in ("commit", "hook")  # pr, CI and --only: any broken file fails
+    touched = [p for rel, p in problems if strict or rel in ctx.changed]
+    untouched = [p for rel, p in problems if not (strict or rel in ctx.changed)]
+    if touched:
+        return "FAIL", "; ".join(touched[:5]) + (f" (+{len(touched) - 5} more)" if len(touched) > 5 else "")
+    notes = []
+    if untouched:
+        notes.append("pre-existing broken YAML, fix in its own change: " + "; ".join(untouched[:5]))
+    if too_big:
+        notes.append(f"too large to check (> 1 MiB): {too_big[:5]}")
+    if notes:
+        return "WARN", " | ".join(notes)
+    return "PASS", f"{checked} YAML file(s) parse" + (f"; {skipped} symlink/non-file skipped" if skipped else "")
 
 
 def check_workflows(ctx: Context):
@@ -448,6 +613,7 @@ CHECKS = {
     "tests-with-code": check_tests_with_code,
     "size": check_size,
     "workflows": check_workflows,
+    "yaml": check_yaml,
     "skills-sync": check_skills_sync,
     "guide-size": check_guide_size,
     "openspec": check_openspec,
@@ -484,6 +650,7 @@ def main() -> int:
     body, labels = pr_event()
     ctx = Context(cfg=load_config(), base=resolve_base(args.base), changed=[], pr_body=body,
                   labels=labels, in_ci=bool(os.environ.get("CI")))
+    ctx.stage = "custom" if args.only else args.stage
     ctx.cfg = with_base_exemptions(ctx.cfg, ctx.base)
     ctx.changed = changed_files(ctx.base)
     # Local override, e.g. LIFECYCLE_OVERRIDE="size_budget: generated client"; CI uses PR labels.
@@ -506,7 +673,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL":
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml")):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 

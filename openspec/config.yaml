@@ -51,6 +51,7 @@ lifecycle:
   - scripts/check-change.sh
   - scripts/sync-skills.sh
   - scripts/lib/check_change.py
+  - scripts/lib/adopt.py
   - .claude/hooks/guard-approval.sh
   - .claude/hooks/stop-check.sh
   grandfathered_changes: []

@@ -52,6 +52,18 @@ These live in the forge, not the repo, so the template can't apply them:
   no size cap. High-risk paths it touches only warn. Any `archive/<date>-<id>` for a listed id
   qualifies while main still has the id. The controls are human review, the
   `Grandfathered: <id>` line in the PR, and the rule that the change must already be on main.
+  A tasks.md-only edit to such an archive is exempt like any other (next point) and needs no
+  `Grandfathered:` line.
+- A tasks.md-only edit to an archive already on the base branch is not a change (ADR 0016). A tier 0 PR can
+  therefore tick archived tasks that weren't done, or drop their `Evidence:` lines. The controls
+  are the `change` message, which names every such archive, CODEOWNERS on `openspec/changes/`
+  (a repo that keeps its own CODEOWNERS must add it), and human review.
+- Adopting into a repo with its own settings leaves the lifecycle hooks unwired until a human
+  merges `.lifecycle-adoption/settings.json` (ADR 0015). Until then, the Stop and approval hooks
+  don't run there.
+- The adoption blocks' precedence line ("the lifecycle gates win") is advisory text. Codex reads
+  AGENTS.md but not `@` imports. An agent could apply the proposals despite the README telling
+  it not to; the install PR's human review is the control.
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).
