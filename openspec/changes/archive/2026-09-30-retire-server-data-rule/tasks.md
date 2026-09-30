@@ -23,11 +23,13 @@ only, so no failing test comes first. Each task gives the check that shows it is
   prints 7, and `grep -n '0018' docs/decisions/0022-retire-server-data-rule.md` shows the supersede
   note.
   Evidence: `grep -c -E '^(- Date|...)' docs/decisions/0022-retire-server-data-rule.md` -> `7`; `grep -n 0018 ...` -> `4:- Status: Accepted (supersedes ADR 0018's ...`
-- [ ] 1.4 Run `scripts/check-change.sh --stage pr --base main` and record it as `Evidence:`.
+- [x] 1.4 Run `scripts/check-change.sh --stage pr --base main` and record it as `Evidence:`.
   Expected: every gate passes except `tasks`, until this task is ticked. `approval` and `panel`
   pass because `Approved-by:` is in proposal.md and panel.md has no open `[critical]`.
-- [ ] 1.5 Archive (`skip_specs`). Check: `openspec validate --all --strict` and
+  Evidence: `--stage pr --base main` -> PASS openspec, yaml (59), workflows, skills-sync, guide-size (98/150), change (tier 2), risk-floor, approval, panel (17, no open criticals), evidence, artifacts-first, tests-with-code, size (8/400), commands (typecheck, test), audit; FAIL only `tasks` (2 unticked: 1.4 and 1.5)
+- [x] 1.5 Archive (`skip_specs`). Check: `openspec validate --all --strict` and
   `openspec validate --archived --no-interactive` pass.
+  Evidence: `openspec archive retire-server-data-rule -y` -> archived as `2026-09-30-retire-server-data-rule` (skip_specs); `openspec validate --all --strict` -> `26 passed, 0 failed`; `openspec validate --archived --no-interactive` -> `52 passed, 0 failed` (after this tick; before it, the only failure was this task)
 
 ## At PR (no checkbox)
 
