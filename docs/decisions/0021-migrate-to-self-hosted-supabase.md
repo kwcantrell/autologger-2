@@ -72,8 +72,9 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
   - Slices are PRs into a `supabase-migration` branch, each under 400 lines. `main` is frozen
     for the duration.
   - Cutover is one PR into `main` with a whole-branch audit, followed by a downtime window.
-  - The owner runs the SQLite-to-Postgres import against `server/data`, followed by a parity
-    check.
+  - The SQLite-to-Postgres import and parity check are rehearsed on dev against the disposable
+    `server/data` copy (ADR 0022). At cutover, the owner runs them on the deploy host against
+    the prod container volume.
 
 Slice order:
 1. Compose stack, migrations scaffold, backup, Infisical, dev only through compose.
@@ -95,6 +96,8 @@ Slice order:
 - `packages/catalog/migrations/0004_team_roles_and_invites.sql` has only `admin` and `member`
   roles and studio-level invites. `owner` and per-show grants are new.
 - The owner's answers in the 2026-09-30 migration interview.
+- ADR 0022: `server/data` is a disposable copy, usable for rehearsals and for timing
+  auto-generate runs to set the lease TTL.
 
 ## Consequences
 
