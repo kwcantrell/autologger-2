@@ -50,7 +50,13 @@ al_compose_guard() {
   fi
 }
 
+# AL_EXEC=1 (set by docker/scripts/compose-run.mjs only) execs instead of forking, so the
+# wrapper's child IS docker and a forwarded SIGTERM/SIGHUP reaches it (infisical-secrets H9).
 al_compose() {
+  if [ "${AL_EXEC:-}" = 1 ]; then
+    exec env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR -u COMPOSE_PROFILES \
+      -u COMPOSE_ENV_FILES -u COMPOSE_DISABLE_ENV_FILE "$@"
+  fi
   env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR -u COMPOSE_PROFILES \
     -u COMPOSE_ENV_FILES -u COMPOSE_DISABLE_ENV_FILE "$@"
 }

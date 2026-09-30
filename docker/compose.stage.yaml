@@ -2,7 +2,7 @@
 # An overlay on the production compose.yaml: same images' build, same routing, same posture
 # (REQUIRE_LOGIN=1, TRUST_PROXY=1), served on plain http://localhost:${STAGE_PORT:-8788}.
 #
-# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.sh), as:
+# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
 #   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file /dev/null ...
 # The three exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose

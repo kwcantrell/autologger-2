@@ -1,7 +1,7 @@
 # AutoLogger DEV environment (containerized-dev-env, design D2 / D3 / D4 / D13).
 #   Browser -> 127.0.0.1:${DEV_PORT} -> app-gate (Host/Origin gate) -> app (127.0.0.1:8786)
 #
-# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.sh), as:
+# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   docker compose --project-directory . --env-file /dev/null -f docker/compose.dev.yaml ...
 # with the Infisical `dev` environment injected, so every relative path below is
 # repo-root-relative. Secrets reach `app` only through docker/secrets-env.yaml.

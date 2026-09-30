@@ -1,7 +1,7 @@
 # AutoLogger split deployment (containerize-split-images, design D7 / D11).
 #   Pangolin -> Newt (host) -> 127.0.0.1:${ROUTER_PORT} -> router -> web | api
 #
-#   make prod-up     # runs docker/scripts/compose-run.sh: secrets come from Infisical `prod`
+#   make prod-up     # runs docker/scripts/compose-run.mjs: secrets come from Infisical `prod`
 #
 # A hand-typed `docker compose up` fails on purpose (docker/secrets-env.yaml's AUTOLOGGER_STACK
 # guard). See docs/infisical-secrets.md.

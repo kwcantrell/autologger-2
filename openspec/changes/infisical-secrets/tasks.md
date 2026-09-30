@@ -70,7 +70,7 @@ written to print names or exit codes only. The agent records that output and nev
   - a hand-typed `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q`
     fails naming the Makefile.
   Evidence: `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`; `sh docker/scripts/test_check_envs.sh` -> `5 passed, 0 failed`; `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q` -> `required variable AUTOLOGGER_STACK is missing a value: run compose through make (docker/scripts/compose-run.sh) ...` rc=1
-- [ ] 3.2 Add `docker/scripts/compose-run.mjs` (design D1 and H1 to H12: Node, `node:` modules
+- [x] 3.2 Add `docker/scripts/compose-run.mjs` (design D1 and H1 to H12: Node, `node:` modules
   only). Delete the draft `compose-run.sh` and `test_compose_run.sh`. Add
   `node --test docker/scripts/compose-run.test.mjs` to the root `npm test`. Replace
   `compose-run.sh` with `compose-run.mjs` in the committed comments and sentinel
@@ -108,7 +108,7 @@ written to print names or exit codes only. The agent records that output and nev
   | H10: hooks without `AUTOLOGGER_TEST=1`, a relative hook path, or hooks with `prod` | Ignored or refused; banner when active |
   | H11: a step word with a quote, `$` or `;` | Refused |
   | `resolved` / `urls` / `prod-tags` / `reset` | The same outcomes as the shell guards they replace: a wrong project name, a non-loopback port, 8080, or dev 80/443 is refused; `API_TAG=latest` is refused; `reset` without `CONFIRM=yes` is refused before any request |
-
+  Evidence: before the wrapper existed, `node --test docker/scripts/compose-run.test.mjs` -> `✖ docker/scripts/compose-run.test.mjs ... 'test failed'` (module missing); the first real run -> 35 pass, 1 fail (`SIGTERM is forwarded ...`: `'' !== 'TERM'`, because `sh` forked docker). Fix: `compose-env.sh` `al_compose` execs when the wrapper sets the unexported `AL_EXEC=1` (H9 implementation detail; `check-envs.sh` and `make-guards.sh` keep forking). After: `node --test --test-reporter=spec docker/scripts/compose-run.test.mjs` -> `ℹ tests 36 ... ℹ pass 36 ℹ fail 0`; `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`; `sh docker/scripts/test_check_envs.sh` -> `5 passed, 0 failed`; `grep -rn compose-run.sh compose.yaml docker/` -> no matches; root `test` script now starts with `node --test docker/scripts/compose-run.test.mjs`.
 - [ ] 3.3 Mark `envfile`, `urls`, `reset` and `prod-tags` in `make-guards.sh` as superseded by the
   wrapper, with a header note; they are left in place, to be deleted by `node-stack-tooling`
   (design Risks: size). Update the `compose-env.sh` header comment: ambient overrides no longer
