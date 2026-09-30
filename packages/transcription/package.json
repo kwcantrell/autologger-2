@@ -15,7 +15,7 @@
     "@autologger/domain": "*",
     "@autologger/ports": "*",
     "@autologger/session-core": "*",
-    "mediabunny": "^1.50.8",
+    "mediabunny": "^1.60.0",
     "undici": "^7.30.0"
   },
   "devDependencies": {
