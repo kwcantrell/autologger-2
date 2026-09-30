@@ -1,7 +1,7 @@
 # 0021: Migrate storage from better-sqlite3 to self-hosted Supabase
 
 - Date: 2026-09-30
-- Status: Proposed
+- Status: Accepted
 - Rule: none. This records a direction; each slice below is its own tier 2 OpenSpec change.
 
 ## Context
