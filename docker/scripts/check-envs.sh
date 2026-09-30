@@ -1,14 +1,15 @@
 #!/bin/sh
 # docker/scripts/check-envs.sh -- static invariant check for the dev / stage / prod compose
-# projects (containerized-dev-env, design D11, spec "Static invariant check", 13 invariants).
+# projects (containerized-dev-env, design D11; infisical-secrets D5; spec "Static invariant
+# check", 15 invariants).
 #
 #   docker/scripts/check-envs.sh [dev|stage|prod|all]      (default: all)
 #
 # Needs only docker (compose v2 plugin), jq and a POSIX sh (verified with dash). Every project is
 # resolved with `docker compose config --no-env-resolution` (never inlines env_file contents)
 # through docker/scripts/compose-env.sh, the same helper the Makefile uses (seam S2), with
-# placeholder --env-file files written to a temp dir. It NEVER reads, opens or prints .env,
-# .env.dev or .env.stage. Failures are reported as "FAIL [invariant N] ..." on stderr; the exit
+# placeholder --env-file files written to a temp dir. It NEVER contacts Infisical and NEVER reads,
+# opens or prints .env, .env.dev, .env.stage or any .env.infisical.* file. Failures are reported as "FAIL [invariant N] ..." on stderr; the exit
 # status is non-zero if any invariant failed.
 #
 # Run from anywhere; the script cd's to the repo root.
@@ -27,6 +28,16 @@ cd "$ROOT"
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
   WEB_TAG API_TAG PUBLIC_BASE_URL E2E_ENV_FILE E2E_IP_ALLOWLIST HOST REQUIRE_LOGIN TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
+
+# The shared allowlist (infisical-secrets D2): every key a container may receive, one null
+# passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
+# the D4 sentinel gets a fixed placeholder so a hand-typed-compose refusal never trips the check.
+ALLOWLIST=docker/secrets-env.yaml
+allowlist_keys() { grep -E '^      [A-Z][A-Z0-9_]*:[[:space:]]*$' "$ALLOWLIST" | sed -E 's/^ *([A-Z0-9_]+):.*/\1/'; }
+if [ -f "$ALLOWLIST" ]; then
+  for k in $(allowlist_keys); do unset "$k"; done
+fi
+AUTOLOGGER_STACK=check; export AUTOLOGGER_STACK
 
 WHAT=${1:-all}
 case "$WHAT" in
@@ -50,8 +61,10 @@ fail() { # invariant-number message
 # source (invariants 4 and 8) runs on the normalized form: split on "/", drop "" and ".",
 # resolve ".." by popping (never above "/"), rejoin with a leading "/". A relative source is
 # anchored at $root first. $home and $root are rebound to their normalized forms. Lexical only
-# (no symlink resolution).
-JQ_NORM='def norm: (if startswith("/") then . else $root+"/"+. end)
+# (no symlink resolution). envmap: a raw (--no-interpolate) environment is an array once
+# `extends`/an overlay is involved (bare "KEY" = null passthrough, "KEY=v" = literal); map it back.
+JQ_NORM='def envmap: if type=="array" then map(if test("=") then {key:(split("=")[0]),value:sub("^[^=]*=";"")} else {key:.,value:null} end)|from_entries else (.//{}) end;
+  def norm: (if startswith("/") then . else $root+"/"+. end)
   | split("/") | reduce .[] as $p ([]; if $p=="" or $p=="." then . elif $p==".." then .[:-1] else .+[$p] end)
   | "/"+join("/");
   ($root|norm) as $root | ($home|norm) as $home | '
@@ -136,14 +149,25 @@ check_name() { # json label expected
   jq_ok 9 "$2: resolves without -p to a project name other than \"$3\"" "$1" '.name==$n' --arg n "$3"
 }
 
-# Invariant 6 (dev, stage, prod): the env_file wiring is pinned. Exactly one service (SVC) has an
-# env_file and it is exactly the one file FILE at the repo root (paths normalized like bind
-# sources), so a mutation pointing it at server/.env, or adding one to another service, is caught.
-check_env_file() { # json label service file
-  jq_ok 6 "$2: env_file wiring is not exactly service $3 -> $ROOT/$4 (no other service may have an env_file)" "$1" \
-    '([.services|to_entries[]|select((.value.env_file//[])|length>0)|.key])==[$svc]
-     and ((.services[$svc].env_file)|map(if type=="object" then .path else . end|norm))==[$root+"/"+$f]' \
-    --arg svc "$3" --arg f "$4"
+# Invariant 14 (dev, stage, prod; the prod + e2e overlay is exempt): no service has an env_file.
+# Secrets reach compose from Infisical and containers through the shared allowlist.
+check_no_env_file() { # json label
+  jq_ok 14 "$2: a service has an env_file (secrets come from Infisical through $ALLOWLIST)" "$1" \
+    '[.services|to_entries[]|select((.value.env_file//[])|length>0)|.key]|length==0'
+}
+
+# Invariant 15: the allowlist file's keys equal the service's null passthroughs, less the keys the
+# service pins with a literal. RAW is a --no-interpolate resolve (both shapes, see envmap).
+check_allowlist() { # rawjson label service
+  if [ ! -f "$ALLOWLIST" ]; then fail 15 "$2: $ALLOWLIST is missing"; return 0; fi
+  allowlist_keys | jq -R . | jq -s . >"$TMP/allow.json"
+  jq_ok 15 "$2: $3's null-passthrough names differ from the keys in $ALLOWLIST (less its literal pins)" "$1" \
+    '$allowf[0] as $allow
+     | (.services[$svc].environment|envmap) as $e
+     | ([$e|to_entries[]|select(.value==null)|.key]) as $p
+     | ([$e|to_entries[]|select(.value!=null)|.key]) as $l
+     | ($p - $allow == []) and ($allow - $p - $l == [])' \
+    --arg svc "$3" --slurpfile allowf "$TMP/allow.json"
 }
 
 # Invariant 6 (dev, stage): a container_name that other tooling hard-codes (make-guards.sh
@@ -205,7 +229,7 @@ check_dev() {
   jq_ok 3 "dev: gate LISTEN_PORT/UPSTREAM_PORT are not the literals app-gate 8787/8786, companion-gate 8001/8000" "$R" \
     '(.services["app-gate"].environment|.LISTEN_PORT=="8787" and .UPSTREAM_PORT=="8786")
      and (.services["companion-gate"].environment|.LISTEN_PORT=="8001" and .UPSTREAM_PORT=="8000")
-     and .services.app.environment.PORT=="8786"'
+     and (.services.app.environment|envmap|.PORT=="8786")'
   jq_ok 6 "dev: a gate GATE_PORT is not exactly \${DEV_PORT:-8787} / \${DEV_COMPANION_PORT:-8000}, or another gate env value is not a literal" "$R" \
     '(.services["app-gate"].environment|.GATE_PORT=="${DEV_PORT:-8787}" and ([to_entries[]|select(.key!="GATE_PORT")|.value|contains("$")]|any|not))
      and (.services["companion-gate"].environment|.GATE_PORT=="${DEV_COMPANION_PORT:-8000}" and ([to_entries[]|select(.key!="GATE_PORT")|.value|contains("$")]|any|not))'
@@ -215,7 +239,8 @@ check_dev() {
   jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate" "$D" \
     '(.services|keys|sort)==["app","app-gate","companion","companion-gate"]'
   check_no_host_priv "$D" dev
-  check_env_file "$D" dev app .env.dev                                 # 6 (env_file pinned)
+  check_no_env_file "$D" dev                                           # 14
+  check_allowlist "$R" dev app                                         # 15
   check_container_name "$D" dev app autologger-dev-app                 # 6 (container name pinned)
   # 3 (seam S1): the app gate's extra allowed Host is "app:" + its LISTEN_PORT (resolved, both
   # default and custom-port configs), so the Companion -> app container-network path is admitted.
@@ -224,13 +249,15 @@ check_dev() {
       '.services["app-gate"].environment|.GATE_EXTRA_HOST==("app:"+.LISTEN_PORT)'
   done
 
-  # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL may hold a variable),
+  # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL and the D4
+  # AUTOLOGGER_STACK sentinel may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
   jq_ok 6 "dev: a posture pin (HOST/REQUIRE_LOGIN/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
-    '.services.app.environment
+    '.services.app.environment|envmap
      | .HOST=="127.0.0.1" and .REQUIRE_LOGIN=="0" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
        and .PUBLIC_BASE_URL=="http://localhost:${DEV_PORT:-8787}"
-       and ([to_entries[]|select(.key!="PUBLIC_BASE_URL")|.value|tostring|contains("$")]|any|not)'
+       and (.AUTOLOGGER_STACK//""|startswith("${AUTOLOGGER_STACK:?"))
+       and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK")|.value|tostring|contains("$")]|any|not)'
   for f in "$D" "$C"; do
     jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 REQUIRE_LOGIN=0 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
       '.services.app.environment
@@ -302,7 +329,7 @@ check_stage() {
 
   check_name "$S" stage autologger-stage                               # 9
   check_no_host_priv "$S" stage                                        # 6
-  check_env_file "$S" stage api .env.stage                             # 6 (env_file pinned)
+  check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
@@ -352,14 +379,16 @@ check_prod() {
   echo "== prod (autologger)"
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
   resolve "$TMP/prod-e2e.json" "prod + e2e overlay" compose_prod_e2e "$TMP/prod.env" || return 0
+  resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
+  check_allowlist "$TMP/prod-raw.json" prod api                        # 15
   for pair in "$TMP/prod.json:prod" "$TMP/prod-e2e.json:prod+e2e"; do
     f=${pair%%:*}; l=${pair#*:}
     check_name "$f" "$l" autologger                                    # 9
     check_loopback_ports "$f" "$l"                                     # 1
     check_posture_prodlike "$f" "$l"                                   # 7
     check_gw_values "$f" "$l"                                          # 10
-    # The e2e overlay deliberately swaps api's env_file for a throwaway one, so pin plain prod only.
-    if [ "$l" = prod ]; then check_env_file "$f" "$l" api .env; fi     # 6 (env_file pinned)
+    # The e2e overlay keeps a throwaway env_file (out of scope, ADR 0021), so only plain prod.
+    if [ "$l" = prod ]; then check_no_env_file "$f" "$l"; fi           # 14
     jq_ok 10 "$l: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
       '.services.router.environment==null'
   done

@@ -18,8 +18,9 @@ written to print names or exit codes only. The agent records that output and nev
 
 ## 1. Owner prerequisites
 
-- [ ] 1.1 **(owner)** Install the Infisical CLI (arm64) on this host. Check: `infisical --version`
+- [x] 1.1 **(owner)** Install the Infisical CLI (arm64) on this host. Check: `infisical --version`
   prints a version.
+  Evidence: `command -v infisical; infisical --version` -> `/usr/bin/infisical`, `infisical version 0.43.138`
 - [ ] 1.2 **(owner)** Create the Infisical environments `dev`, `stage` and `prod`, and one
   universal-auth machine identity per environment, set up as in design D6:
   - read-only on its own environment;
@@ -37,23 +38,25 @@ written to print names or exit codes only. The agent records that output and nev
 
 ## 2. Static invariants first (`check-envs.sh`)
 
-- [ ] 2.1 Invariant 14: no `env_file` in the dev, stage or prod projects; prod plus the e2e
+- [x] 2.1 Invariant 14: no `env_file` in the dev, stage or prod projects; prod plus the e2e
   overlay is exempt. Test first: a `test_check_envs.sh` case runs the check on the current files
   and expects a failure naming invariant 14 for dev `app` and prod `api`. A second case expects
   the prod plus e2e resolve not to be flagged.
-- [ ] 2.2 Invariant 15: the line-matched keys of `docker/secrets-env.yaml` equal the
+  Evidence: before 3.1, `sh docker/scripts/check-envs.sh all` -> `FAIL [invariant 14] dev: a service has an env_file ...` (also stage, prod), prod+e2e not flagged; after 3.1, `sh docker/scripts/test_check_envs.sh` -> `ok   env_file on prod api is caught`, `ok   env_file on dev app is caught`, `ok   clean tree passes (prod + e2e overlay env_file exempt)`
+- [x] 2.2 Invariant 15: the line-matched keys of `docker/secrets-env.yaml` equal the
   null-passthrough names of the resolved prod `api` and dev `app`, excluding each service's
   literal pins. It is read with `--no-interpolate`, and handles both the map form and the array
   form. Test first: a case adds a passthrough directly to a scratch copy of `compose.yaml` `api`
   and expects a failure naming invariant 15.
-- [ ] 2.3 Remove the `env_file` bookkeeping from invariant 6. Strip the allowlist keys and
+  Evidence: before 3.1 -> `FAIL [invariant 15] dev: docker/secrets-env.yaml is missing` (and prod); after, `test_check_envs.sh` -> `ok   passthrough added outside the allowlist is caught`, `ok   dev app without the allowlist is caught`
+- [x] 2.3 Remove the `env_file` bookkeeping from invariant 6. Strip the allowlist keys and
   `AUTOLOGGER_STACK` from the check's environment and give them placeholders. Add
   `.env.infisical.*` to the never-read list. Check: `grep -n env_file docker/scripts/check-envs.sh`
   shows only invariant 14.
-
+  Evidence: `grep -n env_file docker/scripts/check-envs.sh` -> only the header comment and invariant 14 (`check_no_env_file`, lines 150-154, 242, 332, 390-391); header now names `.env.infisical.*`; allowlist keys unset and `AUTOLOGGER_STACK=check` exported before resolving
 ## 3. Allowlist, compose files, wrapper, Makefile
 
-- [ ] 3.1 Add `docker/secrets-env.yaml` (design D2, plus the D4 `AUTOLOGGER_STACK` sentinel).
+- [x] 3.1 Add `docker/secrets-env.yaml` (design D2, plus the D4 `AUTOLOGGER_STACK` sentinel).
   In `compose.yaml` `api` and `docker/compose.dev.yaml` `app`, add `extends` and remove
   `env_file`. Remove the stage `env_file: !override`. Fix the comments and `:?` messages that name
   `.env` (for example `compose.yaml:4,73`, `compose.dev.yaml:5-10`, `compose.stage.yaml:7-10`).
@@ -61,6 +64,7 @@ written to print names or exit codes only. The agent records that output and nev
   - `make check` passes invariants 1 to 15 and the 2.x test cases pass;
   - a hand-typed `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q`
     fails naming the Makefile.
+  Evidence: `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`; `sh docker/scripts/test_check_envs.sh` -> `5 passed, 0 failed`; `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q` -> `required variable AUTOLOGGER_STACK is missing a value: run compose through make (docker/scripts/compose-run.sh) ...` rc=1
 - [ ] 3.2 Add `docker/scripts/compose-run.sh` (design D1). Write these `test_compose_run.sh` cases
   first, using the stub `infisical`:
 

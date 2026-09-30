@@ -1,15 +1,15 @@
 # AutoLogger DEV environment (containerized-dev-env, design D2 / D3 / D4 / D13).
 #   Browser -> 127.0.0.1:${DEV_PORT} -> app-gate (Host/Origin gate) -> app (127.0.0.1:8786)
 #
-# Always invoked from the repo root as (the Makefile does this):
-#   docker compose --project-directory . --env-file .env.dev -f docker/compose.dev.yaml ...
-# so every relative path below is repo-root-relative. `.env.dev` is copied from
-# docker/.env.dev.example and is gitignored.
+# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.sh), as:
+#   docker compose --project-directory . --env-file /dev/null -f docker/compose.dev.yaml ...
+# with the Infisical `dev` environment injected, so every relative path below is
+# repo-root-relative. Secrets reach `app` only through docker/secrets-env.yaml.
 #
 # Invariants a future reader must not "helpfully" undo:
-#   * The posture keys under `environment:` are LITERALS. They win over `.env.dev`, so the env
-#     file cannot flip the loopback bind or the anonymous/no-proxy posture. The only permitted
-#     variable is PUBLIC_BASE_URL (built from DEV_PORT).
+#   * The posture keys under `environment:` are LITERALS. They win over the allowlist, so no
+#     Infisical value can flip the loopback bind or the anonymous/no-proxy posture. The only
+#     permitted variable is PUBLIC_BASE_URL (built from DEV_PORT).
 #   * The source mounts are a per-subtree allowlist (the data-and-secret fence). NEVER replace
 #     them with a whole-repo mount: that would expose server/data and server/.env. Every
 #     packages/* has a mount (docker/scripts/check-envs.sh asserts it).
@@ -41,9 +41,8 @@ services:
     init: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    env_file:
-      - path: .env.dev
-        required: true
+    # Resolved against --project-directory . (the repo root), like the binds below.
+    extends: { file: docker/secrets-env.yaml, service: secrets }
     environment:
       NODE_ENV: development
       DATA_DIR: /data
