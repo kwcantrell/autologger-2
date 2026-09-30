@@ -84,7 +84,7 @@ Every Makefile target that touches a compose project calls this wrapper once, as
      "trust the Infisical CA (INFISICAL_CA_FILE)". It never suggests plain HTTP or disabling
      verification.
    - `rejectUnauthorized` is never set to false.
-3. **Fetch.** `GET {domain}/api/v4/secrets?projectId=…&environment=ENV&secretPath=/&expandSecretReferences=false&includeImports=false&recursive=false`
+3. **Fetch.** `GET {domain}/api/v4/secrets?projectId=…&environment=ENV&secretPath=/&expandSecretReferences=false&includeImports=false&recursive=false&viewSecretValue=true`
    with `Authorization: Bearer <token>`.
    - The response must be JSON with a `secrets` array.
    - The token is dropped after this call.
@@ -98,8 +98,9 @@ Every Makefile target that touches a compose project calls this wrapper once, as
 
    On any violation it refuses, printing only offending names that are valid identifiers, a
    count of the others, and a reason word. Values never appear in a message.
-5. **Build the child environment explicitly.** It starts from a fresh object, not `process.env`:
-   - `PATH=/usr/local/bin:/usr/bin:/bin` and `HOME`;
+5. **Build the child environment explicitly** (H6, H12). It starts from `Object.create(null)`,
+   not `process.env`:
+   - `PATH=/usr/local/bin:/usr/bin:/bin`, `HOME` and `TERM`;
    - the validated secrets;
    - `AUTOLOGGER_STACK=ENV` (D4).
 
@@ -120,7 +121,7 @@ Every Makefile target that touches a compose project calls this wrapper once, as
    - **`prod-tags`** checks `WEB_TAG` and `API_TAG` from the validated secrets.
    - **`urls`** prints the published ports from the resolved config.
    - **`reset`** requires `CONFIRM=yes` in the operator's environment, read before any fetch, and
-     the resolved project name.
+     the resolved project name. It is refused for `prod` (H8).
 7. **Exit** with the first failing step's status. Node has no core-dump-on-crash by default, and
    the process exits when the steps finish.
 
@@ -128,11 +129,75 @@ Every Makefile target that touches a compose project calls this wrapper once, as
 `creds-inode`, `prod-git`, `prod-builder` and `native-platform`. `envfile`, `urls`, `reset` and
 `prod-tags` move into the wrapper.
 
-**Tests** are `docker/scripts/compose-run.test.mjs`, run with Node's built-in `node --test`. It is
-added to the root `npm test` script, so CI runs it. The tests:
-- start a local HTTPS server with a throwaway self-signed CA to stand in for Infisical, so the
-  real TLS path and the CA handling are exercised;
-- put a stub `docker` first on `PATH` that records argv, env and stdin.
+**Hardening rules** (re-panel of v3, 2026-09-30). Each has a test row in task 3.2.
+
+- **H1. The Makefile starts Node with a clean environment.** It runs
+  `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$HOME" TERM="$TERM" [CONFIRM=…] [AUTOLOGGER_TEST*=…] node docker/scripts/compose-run.mjs …`.
+  - So none of these can change the wrapper's own behaviour: `NODE_OPTIONS` (a `--require`
+    preload would see the token), `NODE_DEBUG=http` (logs `Authorization`),
+    `NODE_TLS_REJECT_UNAUTHORIZED=0`, `NODE_EXTRA_CA_CERTS` or `NODE_USE_ENV_PROXY`/`HTTPS_PROXY`.
+  - The wrapper checks itself at start-up: it refuses if any `NODE_*` variable or
+    `HTTP(S)_PROXY` is present, as a second line of defence.
+  - It also refuses a Node version below 22.12, naming the fix.
+- **H2. TLS.** Every request sets `rejectUnauthorized: true` explicitly (this also defeats a stray
+  `NODE_TLS_REJECT_UNAUTHORIZED=0`), plus `ca` from the CA file only.
+  - The domain is parsed with `new URL`. It must be `https:`, with no username, password,
+    search or hash, and pathname `/`. Requests are built from `hostname` and `port`, never by
+    string concatenation.
+- **H3. Responses.**
+  - The status must be exactly 200; redirects are never followed (`node:https` doesn't follow
+    them, and `fetch` isn't used).
+  - Timeouts are 15 s to connect and 30 s in total.
+  - Bodies are capped at 1 MiB, with no decompression (no `accept-encoding` sent).
+- **H4. No secret in any output.**
+  - Every `JSON.parse` is in a `try`/`catch` that prints a fixed message. A parse error message
+    quotes about 10 characters of the input, so it is never printed.
+  - A `process.on('uncaughtException')` and an `unhandledRejection` handler print a fixed
+    string and exit 1. Node's default crash printer shows the offending source line, which for a
+    JSON body is the secrets.
+  - On an Infisical error, only the status is printed, plus `message` if it is a string, with
+    control characters stripped and cut to 200 characters. A 422 array prints only its issues'
+    `path`/`code`.
+- **H5. Hidden values.** The fetch sends `viewSecretValue=true`, and any secret with
+  `secretValueHidden !== false` is refused, naming the key. An identity without ReadValue gets
+  `"<hidden-by-infisical>"` as the value (backend `secret-fns.ts`).
+- **H6. Prototype-safe collections.**
+  - The allowlist and the duplicate check use a `Set`, because `"constructor" in {}` is true.
+  - The child env is built on `Object.create(null)`. Node's `spawn` copies inherited enumerable
+    properties.
+  - `__proto__` and `constructor` are test cases.
+- **H7. File integrity.** The credentials file decides where secrets go, so it is checked with
+  `lstat`:
+  - a regular file (no symlink), owned by the current user, mode `& 0o077 === 0`;
+  - the CA file: a regular file, not group- or other-writable, at most 64 KiB, read only once.
+- **H8. Steps stop at the first failure.** No later step runs.
+  - `reset` is refused for `prod`, keeping `make-guards.sh`'s old `dev|stage` rule.
+  - `reset` also needs `CONFIRM=yes` and the resolved project name, both checked before the
+    destructive compose step.
+- **H9. Signals.** While a child runs, the wrapper ignores SIGINT (the terminal delivers it to the
+  whole process group, so compose gets it directly) and forwards SIGTERM and SIGHUP to the child.
+  It exits with the child's status.
+- **H10. Test hooks.** They are honored only with `AUTOLOGGER_TEST=1`.
+  - `AUTOLOGGER_TEST_PATH` and `AUTOLOGGER_TEST_CRED_DIR` must be absolute.
+  - Both are refused for `prod`.
+  - When they are active, a banner goes to stderr.
+- **H11. Step syntax.** A compose step is split on spaces only, with no quoting.
+  - Allowed words match `/^[A-Za-z0-9@%+=:,./_-]+$/`, which is enough for every Makefile target.
+  - Anything else is refused.
+  - No value from Infisical is ever part of a step.
+- **H12. Child environment** is `PATH`, `HOME`, `TERM` (not a secret; keeps `dev-shell`
+  usable), `AUTOLOGGER_STACK` and the validated keys. The compose step's `sh` adds only `PWD`,
+  and stage's `compose-env.sh` adds its placeholders. The test asserts the environment the
+  wrapper spawns with.
+
+**Tests** are `docker/scripts/compose-run.test.mjs`, run with
+`node --test docker/scripts/compose-run.test.mjs`, which is added to the root `npm test`.
+- The file is named explicitly: `node --test docker/scripts/` fails ("Cannot find module"), and a
+  bare `node --test` would also pick up `server/src/test/fixtures/*.mjs`.
+- The stand-in for Infisical is a local HTTPS server bound to `127.0.0.1` only, with a
+  throwaway CA and server certificate generated by `openssl` into a temp directory at test time.
+  No key is committed (gitleaks).
+- A stub `docker` first on `PATH` records argv, env and stdin.
 
 **Why not `infisical run`.** It builds its child's environment from the caller's plus every
 secret, then starts the child. The dynamic loader reads `LD_PRELOAD` as that child starts, before
@@ -203,8 +268,9 @@ environment. `compose-run.mjs` holds the latter as constants:
   (`^      [A-Z][A-Z0-9_]*:$`). A static invariant keeps that line match equal to the resolved
   passthrough names (D5).
 - There is no second list: `docs/infisical-secrets.md` documents the keys and points at the file.
-- Ambient overrides such as `DEV_PORT=9000 make dev-up` stop working. `env -i` drops them, and
-  the Infisical CLI would override them anyway. To change a port, set it in Infisical. README and
+- Ambient overrides such as `DEV_PORT=9000 make dev-up` stop working. The Makefile's `env -i`
+  and the wrapper's explicit child environment drop them (H1, H12). To change a port, set it in
+  Infisical. README and
   the `compose-env.sh` header comment say so.
 
 ### D4. Hand-typed compose fails loudly
@@ -290,8 +356,8 @@ Each machine identity:
    - `--expand` defaults to true.
 7. **TLS.** From the panel: `openssl s_client -connect 192.168.0.100:443 | openssl x509 -ext
    subjectAltName` gave `IP Address:192.168.0.100`, issuer "Caddy Local Authority - ECC
-   Intermediate", `Verify return code: 0`. The CA is already in this host's system store, so
-   `INFISICAL_CA_FILE` is optional.
+   Intermediate", `Verify return code: 0`. The CA is in this host's system store, but Node doesn't
+   use that store (assumption 14), so `INFISICAL_CA_FILE` is required.
 8. **Environment.** `uname -m` gave `aarch64`, and `docker compose version` gave `v5.2.0`. After
    owner task 1.1, `command -v infisical; infisical --version` gave `/usr/bin/infisical` and
    `infisical version 0.43.138`.
@@ -333,12 +399,29 @@ Each machine identity:
     - `GET /api/v4/secrets?projectId=x&environment=dev` gave `401 {"message":"Token missing"}`;
     - `POST /api/v1/auth/universal-auth/login` with `{}` gave `422` (a validation error on the
       body).
-14. **Node doesn't use the host's system trust store by default.**
+14. **Node doesn't use the host's system trust store by default.** `--use-system-ca` exists in Node
+    24 (the panel: a fetch returned 200 with it), but not on the 22.12 floor. Pinning one CA file
+    is also stricter than trusting the whole system store.
     `node -e 'fetch("https://192.168.0.100/api/status")…'` with no CA setting gave
     `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, though `openssl` verifies against the system store
     (assumption 7). Hence `INFISICAL_CA_FILE` is required, passed as `ca` to `node:https`.
 15. **Node version.** The root `package.json` has `"engines": {"node": ">=22.12"}`, and this host
     runs `v24.21.0`. `node:test`, `node:https` and `node:child_process` are built in.
+
+16. **Re-panel v3 checks (panel):**
+    - `ca` replaces the default roots, and `NODE_EXTRA_CA_CERTS` doesn't widen it: the wrong CA
+      gave `UNABLE_TO_VERIFY_LEAF_SIGNATURE`;
+    - `NODE_TLS_REJECT_UNAUTHORIZED=0` defeats the default, and an explicit
+      `rejectUnauthorized:true` restores the check;
+    - a `spawn` `env` adds nothing, and dash adds only `PWD`;
+    - Node throws on NUL in env values, but not on odd keys, so the key regex is load-bearing;
+    - `sh -c '. f && "$@"' sh fn …` passes args verbatim;
+    - `stdio:'inherit'` gives a TTY;
+    - the v4 router accepts `viewSecretValue` and returns `secretValueHidden`;
+    - `includeImports=false` returns `imports: []`;
+    - the login path works with or without a trailing slash.
+17. **Test tooling.** `node:crypto` has no certificate generator (only `X509Certificate`), so the
+    tests call `openssl`. It is present on this host and on `ubuntu-latest`.
 
 Assumptions 5, 6, 8 (the CLI) and 10 and 11 (`export` and the loader) describe the superseded v1
 and v2 designs. They are kept for the record: 11 is why `infisical run` was rejected.
@@ -366,9 +449,20 @@ and v2 designs. They are kept for the record: 11 is why `infisical run` was reje
   Infisical (task 3.2).
 - **[Dependency] Node ≥22.12 is required on every host that runs `make`,** including the deploy
   host. The owner checks it in task 1.1.
-- **[Size] The estimate is now about 380 to 450 counted lines.** If task 5.3's `size` gate goes
-  over 400, the owner chooses between a `size-override` and splitting the Makefile and template
-  tasks (3.4, 3.5) into a second PR.
+- **[Size] About 520 to 580 counted lines, over the 400 budget:**
+  - 168 already committed;
+  - about 300 for the hardened wrapper;
+  - about 60 for the Makefile;
+  - about 20 for the README pointer;
+  - about 15 for templates.
+
+  The pieces can't land separately: the committed `AUTOLOGGER_STACK` sentinel already breaks
+  the old Makefile until 3.4 lands. To limit the count:
+  - the four superseded `make-guards.sh` functions stay as dead code, and `node-stack-tooling`
+    deletes them;
+  - the README sections become a pointer to `docs/infisical-secrets.md`, which is excluded.
+
+  The PR needs the owner's `size-override` label. That is the owner's decision at task 5.3.
 - **[Tooling] `check-yaml --unsafe` is scoped** to the compose files only (a second hook entry
   with `files:`). Every other YAML file keeps duplicate-key and multi-document detection. The
   lifecycle `yaml` gate (ADR 0017) is unchanged.

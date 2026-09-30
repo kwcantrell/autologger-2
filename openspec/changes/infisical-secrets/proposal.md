@@ -127,8 +127,10 @@ None.
   - `compose.yaml`, `docker/compose.dev.yaml`, `docker/compose.stage.yaml`;
   - the new `docker/infisical-credentials.example`;
   - README, `docs/infisical-secrets.md`, `docs/security.md`, ADR 0021.
-- **Size:** estimated at about 350 counted lines, which fits the 400-line budget. `docs/**`
-  and `openspec/**` are excluded. The template deletions are deferred.
+- **Size:** about 520 to 580 counted lines, over the 400 budget. The pieces can't land
+  separately without breaking `make`, so the PR needs the owner's `size-override` label (decided
+  at task 5.3). Trimmed where possible: superseded guards are left for `node-stack-tooling` to
+  delete, and README points to `docs/infisical-secrets.md`.
 - **Operators:**
   - have Node ≥22.12 on each host that runs `make`, including the deploy host;
   - configure the identities (read-only, short TTL, Trusted IPs);
