@@ -1507,8 +1507,9 @@ loopback-only login rule both pass with no server change.
   not supported). A dependency-manifest, lockfile or config change needs `make dev-build`.
 - The `dev-next` (Next cache) volume survives `make dev-build`; if a Next upgrade misbehaves,
   `make dev-reset CONFIRM=yes`.
-- **Protect `server/data`**: it is the live-data copy on this host. It is never mounted, and
-  never used as `DATA_DIR`. Dev data lives in the `dev-data` volume (`/data`).
+- **`server/data` stays out of the stacks**: it is a disposable copy of a backup kept elsewhere,
+  not live data. It is never mounted, and never used as `DATA_DIR`. Dev data lives in the
+  `dev-data` volume (`/data`).
 - The gate shares the app's namespace, so a bare `docker restart` of `app` kills the gate. Use
   **`make dev-restart`** (app then gate, Companion then its gate). Dev and stage `up`/`restart`
   are whole-project only; do not `up -d --build companion` alone (its gate would sit on a stale
