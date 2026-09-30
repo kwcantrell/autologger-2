@@ -2,25 +2,10 @@
 
 ## Purpose
 
-Governs the Cursor-side agent surface (`.cursor/**`, `AGENTS.md`, `.cursorrules`) as the
-`sdlc-process` capability's bounded pointer-adapter allowance: content-free instruction
-files that route a Cursor session to the repo's normative SDLC encodings (`CLAUDE.md`,
-`.claude/skills/openspec-*/SKILL.md`, `openspec/config.yaml`) rather than restating their
-procedure or rule content. Reinstated 2026-08-06 (change `cursor-sdlc-adapters`) after the
-prior Cursor artifact set — a drifting `AGENTS.md` copy of `CLAUDE.md` and stock opsx
-command bodies that actively contradicted the SDLC (inline implementation loops, gate-skip
-prompts) — was ruled a forbidden parallel process rulebook and deleted (commits `0a13b54`,
-re-applied as `ed43b29`). A prior routing-only rule (`openspec-sdlc.mdc`, `0c1d213`) was
-live during a recorded compliance failure (the PR #3 deviation window), so this capability
-does not claim routing alone produces compliance; its enforceable content is (a) removing
-contradicting stock bodies from every surface Cursor injects, including the routed
-targets, (b) a closed-world CI drift guard that fails on any unenumerated or
-budget/phrase-violating file under the surface, and (c) designed stop/handoff points for
-the process steps a Cursor session cannot execute natively (apply; the fact-check +
-adversarial panel absent real independent-subagent dispatch). The guard is a
-conspicuousness tripwire against drift-by-accident and stock regeneration, not proof of
-content-freedom — paraphrase, splitting, and instruction negation remain a review-time
-concern.
+Governs the two remaining Cursor-side files: the untracked `.cursor/mcp.json` with its
+tracked portable example, and the `restart-server-yourself` rule. Cursor and Codex agents read the
+lifecycle from `AGENTS.md`; the former pointer adapters and their drift guard were retired by
+`adopt-agent-lifecycle`.
 
 ## Requirements
 

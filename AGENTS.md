@@ -81,3 +81,20 @@ Stack commands (test, lint, typecheck, audit) live under `lifecycle.commands` in
 - `docs/decisions/`: ADRs.
 - `docs/security.md`: agent threat model.
 - `docs/templates/`: release, rollback and postmortem templates.
+
+## This repo (autologger)
+
+- **`server/data` is live production data.** Never read, copy into, mount, or point
+  `DATA_DIR` at it. `server/.env.example` sets `DATA_DIR=./data`, which is `server/data`, so set
+  `DATA_DIR` to a scratch path before starting the server.
+- **The HTTP/WS contract is frozen:**
+  - the README endpoint table is the route list;
+  - JSON shapes, status codes, export bodies, header and range semantics, and WebSocket
+    messages are all fixed.
+
+  An observable change needs an OpenSpec change whose delta amends `api-contract-freeze`, and
+  `packages/contract/**` and `server/src/routers/**` force tier 2.
+- **Keep dev on loopback.** `npm run dev` binds `127.0.0.1`. Test LAN devices against
+  `npm run build && npm run start` instead.
+- **`npm run e2e:container` uses fixed container names** and clashes with a running prod stack.
+  Check `docker ps` first.

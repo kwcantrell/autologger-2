@@ -35,6 +35,13 @@ jobs:
           npm install --global @fission-ai/openspec@1.13.2
           python3 -m pip install pyyaml==6.0.2
       # Stack setup: install the toolchain your lifecycle.commands need (see openspec/config.yaml).
+      # Node 22 ships npm 10, which runs better-sqlite3's install script (ADR 0018).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the stack
+        run: npm ci
       - name: Run lifecycle gates
         run: scripts/check-change.sh --stage ${{ github.event_name == 'pull_request' && 'pr' || 'commit' }}
 

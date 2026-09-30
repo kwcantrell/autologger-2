@@ -31,8 +31,6 @@ lifecycle:
     lint: ''
     typecheck: npm run typecheck
     audit: ''
-    build: npm run build
-  release_artifacts: dist/*
   source_globs:
   - server/src/**
   - web/src/**
@@ -71,6 +69,8 @@ lifecycle:
   - openspec/config.yaml
   - '**/auth/**'
   - '**/migrations/**'
+  - packages/contract/**
+  - server/src/routers/**
   agent_guide_max_lines: 150
   override_labels:
     tests_with_code: no-test-needed
