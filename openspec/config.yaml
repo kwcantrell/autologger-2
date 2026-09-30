@@ -30,7 +30,7 @@ lifecycle:
     test: npm test
     lint: ''
     typecheck: npm run typecheck
-    audit: ''
+    audit: npm audit --audit-level=high
   source_globs:
   - server/src/**
   - web/src/**

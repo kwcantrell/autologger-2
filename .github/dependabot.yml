@@ -8,4 +8,11 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # Add one entry per stack ecosystem (npm, pip, docker, gomod, ...).
+  # npm: minor and patch updates grouped weekly; security updates come as their own PRs (ADR 0019).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
