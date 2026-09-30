@@ -17,8 +17,9 @@ dev or stage files never resolves to the prod project.
 
 Every target that touches a compose project SHALL:
 - log in to Infisical once;
-- run its guards and its compose commands in a single `infisical run` for its environment,
-  under a clean environment that contains only a fixed base plus that environment's secrets;
+- fetch its environment's secrets once, check every name before any program is started with
+  them, and run its guards and its compose commands in one clean environment that contains only
+  a fixed base plus those secrets;
 - pass an explicit empty `--env-file`, so compose never reads the root `.env` or any other env
   file for interpolation.
 

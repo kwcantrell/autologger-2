@@ -22,9 +22,10 @@ never into env files:
 - **Secret delivery (BREAKING for operators).**
   - Every Makefile target that touches a compose project goes through one wrapper,
     `docker/scripts/compose-run.sh`.
-  - The wrapper logs in to Infisical once per target. It runs the guards and compose in a single
-    `infisical run` for the Infisical environment `dev`, `stage` or `prod`, under a clean
-    environment, with `--env-file /dev/null`.
+  - The wrapper logs in to Infisical once per target and fetches that environment (`dev`,
+    `stage` or `prod`) into memory with `infisical export`. One jq program checks every name and
+    value and writes the exports. Only then does the wrapper run the guards and compose, in a
+    clean environment with `--env-file /dev/null`.
   - `env_file:` is removed from dev `app` and prod and stage `api`.
 - **A single allowlist.**
   - A new `docker/secrets-env.yaml` lists every key an app container may receive, as null
@@ -61,7 +62,13 @@ never into env files:
 - **The Infisical instance already runs** in Docker at `https://192.168.0.100`, from
   `~/infisical`, with Caddy's internal CA. It stays there for the whole migration and may move
   afterwards.
-- **Delivery is `infisical run`,** not an agent that renders env files.
+- **Delivery is `infisical export` into memory,** not an agent that renders env files. The owner
+  changed this from `infisical run` on 2026-09-30, after implementation showed `run` lets
+  `LD_PRELOAD` act before any check.
+- **Pre-commit `check-yaml` runs with `--unsafe`** (syntax only) for the compose files, so files
+  with `!override` can be committed. Owner, 2026-09-30. This is a scope addition. The re-panel
+  scoped it to compose files: every other YAML keeps duplicate-key detection, and the lifecycle
+  `yaml` gate (ADR 0017) still enforces its rule.
 - **One machine identity per environment.** A dev identity must not be able to read stage or prod.
 - **Slice 1 is split four ways,** in the order 1.1 Infisical, 1.2 Supabase stack, 1.3 backups, 1.4
   retiring host dev. The order is the agent's recommendation.
@@ -100,7 +107,7 @@ None.
 ## Impact
 
 - **Files:**
-  - `Makefile`;
+  - `Makefile`, `.pre-commit-config.yaml` (`check-yaml --unsafe`);
   - the new `docker/scripts/compose-run.sh`;
   - `docker/scripts/compose-env.sh`, `docker/scripts/make-guards.sh`,
     `docker/scripts/check-envs.sh`;

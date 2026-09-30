@@ -75,14 +75,18 @@ written to print names or exit codes only. The agent records that output and nev
   | Credentials file with mode 644 | Non-zero; names the mode |
   | CLI missing from `PATH` | Non-zero; names the install docs |
   | Stub login fails with a TLS error | Message says to trust the CA, and does not mention `http` or skipping verification |
-  | Stub injects `LD_PRELOAD` | Non-zero; prints `LD_PRELOAD`, not its value; no `docker` call |
-  | Stub injects a name that is not a valid identifier | Only a count is printed |
-  | Success | Recorded argv has no client secret or token; `run` got `INFISICAL_DOMAIN` and `--expand=false`; the child env has no `INFISICAL_*`, no `SSL_CERT_FILE`, and no ambient `API_TOKEN` exported by the test |
+  | Stub `export` returns `LD_PRELOAD` | Non-zero; prints the name, not the value; no loader message; no `docker` call |
+  | Stub `export` returns an array, object or null value, a `Key`-cased field, a duplicate key, a NUL in a key or value, or a key that is not a valid identifier | Non-zero; names-only message; nothing exported, and no `docker` call |
+  | Stub `export` returns non-JSON output, or `[]`/`null` | Non-zero; nothing is exported |
+  | Stub login returns an empty token | Non-zero before `export` is called |
+  | `--fetch` called directly without file descriptor 3 | Non-zero; the stub is never called |
+  | Success | Recorded argv has no client secret or token; `export` got `INFISICAL_DOMAIN`, `--format=json` and `--expand=false`; `export` got `--include-imports=false`; the child env has no `INFISICAL_*`, `SSL_CERT_FILE`, `AL_*` or `LOG_*`, and no ambient `API_TOKEN` exported by the test; the child `PATH` is the fixed base (plus the test path); a value containing a quote, a `$` and a newline arrives intact |
   | Multi-step call | Exactly one login |
+  | `compose exec` step | The stub docker reads the caller's stdin (kept for `dev-shell`) |
 
 - [ ] 3.3 Update `make-guards.sh`:
-  - `envfile` becomes `resolved`, run inside the inner stage;
-  - `urls` and `reset` resolve with `/dev/null` inside the inner stage;
+  - `envfile` becomes `resolved`, run inside the fetch stage;
+  - `urls` and `reset` resolve with `/dev/null` inside the fetch stage;
   - `prod-tags` reads the environment.
 
   Update the `compose-env.sh` header comment: ambient overrides no longer apply. Test first, with
@@ -99,6 +103,12 @@ written to print names or exit codes only. The agent records that output and nev
   - `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` lists all
     five;
   - `git check-ignore docker/infisical-credentials.example` lists nothing.
+- [ ] 3.6 Owner-approved scope addition (2026-09-30): `.pre-commit-config.yaml` runs
+  `check-yaml --unsafe` for the compose files only (a second entry with `files:`), and plain
+  `check-yaml` excludes them. So committing `docker/compose.stage.yaml` (`!override`) works, and
+  every other YAML file keeps duplicate-key detection. Check: a commit touching
+  `docker/compose.stage.yaml` passes, and `pre-commit run check-yaml --files` on a scratch
+  duplicate-key file outside the compose set fails.
 
 ## 4. Docs
 
