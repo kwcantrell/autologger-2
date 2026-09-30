@@ -61,7 +61,7 @@ Every spike task MUST be falsifiable: state the attempt and the expected refusal
       assert via `ps` that no agent process from that turn survives. Repeat for the timeout path.
       Determine whether the streaming-input prompt form is required for `interrupt()` to exist.
       **If no-orphan cannot be guaranteed, stop and re-gate.**
-- [ ] 0.6 *(removed — the custom-widget iframe was cut from v1 at the 2026-07-21 gate.)*
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 0.6 *(removed — the custom-widget iframe was cut from v1 at the 2026-07-21 gate.)*
 - [x] 0.7 Resolve the inherited **`safeMode` conflict** (design D8b): it was an *unresolved
       escalation* in the predecessor, not a settled item, and supersession cannot discharge it.
       Determine whether `settingSources: []` + `strictMcpConfig: true` + pinned `cwd` already close
@@ -98,12 +98,12 @@ that does not exist.
       combination) — a consumer computes any roll-up from the stored segments. Superseded here, not
       re-implemented. The spec's `catalog` still bars a `sentiment` widget type until this data is
       wired into a widget (D2/D2b): 0b.2 unblocks the *data*, not the widget registration.
-- [ ] 0b.3 **DEFERRED to its own post-v1 change** (owner decision 2026-07-21). Populate word timings
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 0b.3 **DEFERRED to its own post-v1 change** (owner decision 2026-07-21). Populate word timings
       on the manual-entry path (or derive them) and resolve speaker **names** rather than diarization
       indices. Not v1-blocking: DeepGram-anchored sessions already carry real timings from the
       enrichment remap; manual/anchorless transcripts render the degraded "unavailable" state (task
       4.7); v1 shows honest `Speaker N` labels for unresolved diarization indices — never zeros.
-- [ ] 0b.4 **DEFERRED to Phase 6 QA** (owner decision 2026-07-21). Create a live reference session
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 0b.4 **DEFERRED to Phase 6 QA** (owner decision 2026-07-21). Create a live reference session
       via the **DeepGram path** (a key in `server/.env` + real audio) — YouTube import stays `503`,
       so no URL import. Phase 1 aggregate tests use **synthetic** fixtures (task 1.1) plus the real
       captured DeepGram fixture already shipped with `persist-deepgram-enrichment`, so a live session

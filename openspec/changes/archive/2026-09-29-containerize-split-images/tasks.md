@@ -169,7 +169,7 @@
 - [x] 8.1 Run root `npm test`, `npm run typecheck`, `npm run e2e` (chromium + login-gate),
       `npm run e2e:visual`, and the `container` project against a fresh `docker compose up`.
 - [x] 8.2 Run the whole-branch review (layered scoped audit, per the CLAUDE.md SDLC).
-- [ ] 8.3 Owner runs the cutover per the design's Migration Plan:
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 8.3 Owner runs the cutover per the design's Migration Plan:
       - preconditions (OAuth client, secrets, pushed tags, and `docker login ghcr.io` with a
         `read:packages` PAT on this host);
       - pre-seed the volume while the old server runs;

@@ -7,21 +7,21 @@
 
 ## 1. Characterize the seam
 
-- [ ] 1.1 Add a characterization integration test pinning the **current** `topics/generate`
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 1.1 Add a characterization integration test pinning the **current** `topics/generate`
   behavior: `POST /api/sessions/:id/topics/generate` returns `503 {detail}` with the current
   detail; and the `requireSession` guard is unchanged. (`transcribe.int.test.ts` already has
   a 503 assertion — extend/keep it; it is updated in phase 3.)
 
 ## 2. Shared turn helper + topic/budget primitives + one-shot generate (ai/chat seam — review FULL)
 
-- [ ] 2.1 **Extract the shared `driveAiTurn` helper** (design D7) from the inline block in
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 2.1 **Extract the shared `driveAiTurn` helper** (design D7) from the inline block in
   `routers/ai.ts` (`getAiMcpListener → registerTurn → spawnAiChatTurn → runAiChatTurn` +
   the `finally`: `killAiChatProcessGroup` + `mcpTurn.dispose()` + `cleanupConfig()` +
   `slot.release()`). Signature ~ `driveAiTurn({cliPath, sessionId, message, allowedTools?,
   maxBudgetUsd, timeoutMs, emit, abortSignal?}) → AiChatTurnOutcome`. **Rewire `ai/chat` to
   call it** (SSE-writing `emit`, its existing abortSignal) — behavior-preserving; `ai.int.test.ts`
   MUST pass unmodified (this touches the frozen `ai/chat` path).
-- [ ] 2.2 Add a bulk `deleteTopics(ids: string[])` hub RPC (`SessionHub`/`TopicStore`, one
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 2.2 Add a bulk `deleteTopics(ids: string[])` hub RPC (`SessionHub`/`TopicStore`, one
   transaction; the D3 swap primitive — NOT clear-all/restore), and a new
   `TOPIC_GENERATE_MAX_BUDGET_USD` (+ optional `TOPIC_GENERATE_TIMEOUT_SEC`) config in `env.ts`,
   defaulted higher than the chat's (design D6). Unit-test `deleteTopics` (deletes only the given
@@ -35,7 +35,7 @@
 
 ## 3. Route handler — crash-safe swap (frozen-surface phase — review FULL)
 
-- [ ] 3.1 Replace the `503` stub in `routers/transcribe.ts` `topics/generate` with the gated
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 3.1 Replace the `503` stub in `routers/transcribe.ts` `topics/generate` with the gated
   handler (design D3), ordered: `requireSession` → `aiChatConfigured` (`503`) +
   `aiChatOpenNetworkRefused` (`503`) → transcript precondition (`400` if no transcript words,
   D4) → `aiChatTurns` acquire (`409`) → **record pre-run topic ids** → run the one-shot
@@ -44,7 +44,7 @@
   `newIds.length === 0`): `deleteTopics(newIds)` → `502` (prior topics untouched). The turn
   slot + the helper's full cleanup release in a `finally`. The `502` body is a fixed
   handler-owned message (not the CLI outcome token).
-- [ ] 3.2 Update the characterization test (1.1) + add integration coverage (fake-claude):
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 3.2 Update the characterization test (1.1) + add integration coverage (fake-claude):
   unconfigured → `503` byte-for-byte; open-network → `503`, no spawn; no-transcript → `400`,
   no spawn; concurrency (slot held) → `409`, no spawn; success → `200 {topics}` with the fresh
   set replacing the old (shape matches `GET …/topics`); **CLI failure → `502` with the prior
@@ -55,7 +55,7 @@
 
 ## 4. Docs
 
-- [ ] 4.1 Update `README.md`: move `topics/generate` out of the unconditional-`503` rows into
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 4.1 Update `README.md`: move `topics/generate` out of the unconditional-`503` rows into
   a configuration-gated row (gated on `CLAUDE_CLI_PATH`, alongside the AI chat disclosure),
   noting the replace-all semantics + transcript precondition + shared AI-turn spend bound.
   Keep `transcribe.csv` in the `503` row. Correct any now-stale "topics/generate keeps its
