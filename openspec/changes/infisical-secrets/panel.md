@@ -93,3 +93,5 @@ Superseded mechanisms: the v1 and v2 resolutions above that cite `infisical run`
 - [x] [minor] Assumption 14's reasoning was incomplete (`--use-system-ca` exists in Node 24, not on 22.12). Resolved: assumption 14 now states that, and why pinning one CA is stricter.
 - [ ] [minor] `test_check_envs.sh` (invariants 14 and 15) is not in CI. It needs a Docker daemon and pulls the Caddy image; it runs via `make check`. `node-stack-tooling` moves it into `node --test`. Accepted for now.
 - [ ] [minor] With `HOME` passed, docker resolves CLI plugins and `currentContext` from `~/.docker`, which could point at a remote daemon; this is the operator's own trust boundary. Recorded in the ASI03 exposure note (task 4.3).
+
+Re-approval: the owner re-approved v3 in chat on 2026-09-30, after the v3 re-panel (the `Approved-by:` date is unchanged, same day).
