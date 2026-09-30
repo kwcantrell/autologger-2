@@ -17,3 +17,8 @@ No critical findings. Three decisions went to the owner (2026-09-29): add a loca
 - [x] [minor] F-8 / S-5 / S-6 / A-7 (F, S, A): the tasks' tests were loose. Resolved: task 1.1 is a failing-first hook test; task 1.2 checks the exact ask and deny entries; the settings edit is marked human-authored.
 - [x] [minor] S-4 (S): an ADR is warranted; keep it short. Resolved: task 1.3 names the headers and the evidence.
 - [x] [minor] A-5 / A-6 / S-7 (A, S): hook coverage is as stated, `docs/security.md:11` is the only stale doc, and ADR 0020 is free. Informational.
+
+## Consistency read 2026-09-29
+Reader: a separate Sonnet subagent, read-only, before archive. Documents read: proposal, panel, tasks, .openspec.yaml, the full `git diff main` of the five implementation files, ADR 0018 (lines 40-46), AGENTS.md rules 1-11, and the CLAUDE.md Claude specifics.
+Edits since approval: tasks.md only (1.1-1.4 ticked with `Evidence:`). Scope change: no.
+- [x] [minor] The proposal said "about 40 lines"; the diff adds about 66, 56 of them in ADR 0020. Accepted: well under the size budget (8 counted), and no process effect.
