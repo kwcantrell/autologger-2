@@ -1,32 +1,76 @@
+# Merged by agent-lifecycle-template scripts/init.sh. See AGENTS.md.
 schema: spec-driven
+rules:
+  proposal:
+  - 'First line after the title is `Tier: 0`, `Tier: 1` or `Tier: 2`, set with the risk-tier skill.'
+  - Include a Non-goals section. Scope is fixed once approved.
+  - Leave `Approved-by:` for the human; never write it yourself.
+  design:
+  - List every assumption with the command that tests it and the observed output.
+  tasks:
+  - Tasks are the only plan of record. Each task names the test written first.
+  - 'Tick a task only with evidence: the command run and a short excerpt of its output.'
+  - Keep the change inside the size budget (lifecycle.size_budget below); split it if not.
+operations:
+  apply:
+    guidance:
+    - Write the failing test first, then the code, then run scripts/check-change.sh.
+    - If the spec proves wrong, stop, update the artifacts, re-review the delta and ask for re-approval.
+  archive:
+    guidance:
+    - Archive only when check-change.sh passes and every task is ticked with evidence.
+    - After archiving a new capability, replace the placeholder `## Purpose` in openspec/specs/<capability>/spec.md.
+context: 'This repo follows the agent lifecycle in AGENTS.md. Every change declares a risk tier
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+  (0, 1 or 2) in proposal.md; the tier decides which phases run. tasks.md is the only plan.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
-
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  '
+lifecycle:
+  commands:
+    test: npm test
+    lint: ''
+    typecheck: npm run typecheck
+    audit: ''
+    build: npm run build
+  release_artifacts: dist/*
+  source_globs:
+  - server/src/**
+  - web/src/**
+  - packages/**
+  - companion/src/**
+  - server/scripts/**
+  test_globs:
+  - '**/test/**'
+  - '**/tests/**'
+  - '**/__tests__/**'
+  - '**/*_test.*'
+  - '**/*.test.*'
+  - '**/*.spec.*'
+  - '**/test_*'
+  managed_paths:
+  - scripts/check-change.sh
+  - scripts/sync-skills.sh
+  - scripts/lib/check_change.py
+  - .claude/hooks/guard-approval.sh
+  - .claude/hooks/stop-check.sh
+  grandfathered_changes: []
+  size_budget: 400
+  size_exclude:
+  - '**/*.lock'
+  - '**/package-lock.json'
+  - '**/pnpm-lock.yaml'
+  - '**/go.sum'
+  - docs/**
+  high_risk_paths:
+  - AGENTS.md
+  - CLAUDE.md
+  - .claude/**
+  - .github/**
+  - scripts/**
+  - openspec/config.yaml
+  - '**/auth/**'
+  - '**/migrations/**'
+  agent_guide_max_lines: 150
+  override_labels:
+    tests_with_code: no-test-needed
+    size_budget: size-override
