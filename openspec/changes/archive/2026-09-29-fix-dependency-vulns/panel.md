@@ -26,3 +26,10 @@ No critical findings. Four decisions went to the owner (2026-09-29):
 - [x] [minor] S-9 (S): the counts had no derivations. Resolved: the proposal's Why carries the commands.
 - [x] [minor] S-10 (S): `sharp` 0.35 compatibility. Resolved: `next@15.5.26` accepts `^0.35.4`; the image build at `prod-push` exercises it.
 - [x] [minor] F-UUID-FUTURE (F): a `high`-level gate won't surface a `uuid` regression. Accepted by the owner (the `uuid` decision); recorded as a residual (design 6).
+
+## Consistency read 2026-09-29
+Reader: a separate Sonnet subagent, read-only, after archive. It ran late; the archive commit was held until it finished. Documents read: the five archived files, ADR 0019, the seven implementation diffs, the lockfile (key versions), ADR 0018 and config.yaml.
+Edits since approval: tasks.md only (1.1-3.1 ticked with `Evidence:`; former task 3.2 moved to the untracked PR/after-merge list, because its evidence can only exist after a push and the pre-commit archive check rejects an unticked task). Scope change: no.
+- [x] [minor] Task 2.5's text names the Playwright image; the evidence records running in `node:22` instead (the image ships Node 24). Accepted: the deviation and its reason are in the evidence line.
+- [x] [minor] The moved 3.2 lost its expected CI outcome. Resolved: the bullet restores it, including the `no-test-needed` label that task 2.6 needs.
+- [x] [minor] "Removes 5" in the proposal against 6 removed lock entries. Accepted: the sixth is `next/node_modules/postcss` 8.4.31, removed by the override, not by the eslint family.

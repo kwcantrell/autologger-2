@@ -35,13 +35,16 @@
 
 ## 3. Archive and PR
 
-- [ ] 3.1 Archive. There are no spec deltas (`skip_specs`). Test: `openspec validate --all --strict`
+- [x] 3.1 Archive. There are no spec deltas (`skip_specs`). Test: `openspec validate --all --strict`
   passes.
-- [ ] 3.2 Push and open the PR, stating the image exposure window. Record the first CI run as
-  `Evidence:`. Expected: `gates` (with `audit`), `secrets` and `dependency-review` pass.
+  Evidence: `openspec archive fix-dependency-vulns -y` -> archived as `2026-09-29-fix-dependency-vulns` (no spec deltas); `openspec validate --all --strict` -> `26 passed, 0 failed`
 
-## Owner and Claude, after merge (no checkboxes, so the tasks gate ignores them)
+## Owner and Claude, at PR and after merge (no checkboxes, so the tasks gate ignores them)
 
+- Claude: push and open the PR, stating the image exposure window. The first CI run is recorded in
+  the PR (formerly task 3.2: its evidence can only exist after a push, and the pre-commit archive
+  check rejects an unticked task). Expected: `gates` (with `audit`), `secrets` and `dependency-review`
+  pass, with `tests-with-code` needing the owner's `no-test-needed` label (task 2.6).
 - Claude: run `make prod-push` from clean `main`, and report the new `WEB_TAG` and `API_TAG`
   (design 8).
 - Owner: deploy the new images, and dismiss the two `uuid` and `exceljs` Dependabot alerts as
