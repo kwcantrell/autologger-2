@@ -139,12 +139,13 @@ written to print names or exit codes only. The agent records that output and nev
   Evidence: `pre-commit run check-yaml --files dup-probe.yaml docker/compose.stage.yaml compose.yaml` (dup-probe = `a: 1\na: 2`) -> `check yaml....Failed  found duplicate key "a"` and `check yaml (compose files, syntax only)....Passed`
 ## 4. Docs
 
-- [ ] 4.1 In the README container sections, the cutover/rollback runbook and the dev/stage
+- [x] 4.1 In the README container sections, the cutover/rollback runbook and the dev/stage
   sections: replace env-file setup and hand-typed `docker compose` steps with `make` targets or
   `compose-run.mjs`, and link to `docs/infisical-secrets.md`. Check:
   `grep -n 'cp docker/\.env\|env_file\|docker compose up -d api\|docker compose pull' README.md`
   returns only lines that go through `compose-run.mjs`, plus migration notes.
-- [ ] 4.2 Add `docs/infisical-secrets.md`. It covers:
+  Evidence: `grep -n 'cp docker/\.env\|env_file\|docker compose up -d api\|docker compose pull\|\.env\.dev\b\|\.env\.stage\b\|in \`\.env\`' README.md` -> no output; `git diff --stat README.md` -> `42 insertions(+), 51 deletions(-)`; the Configuration, cutover (`make prod-up`), update-order (`make prod-pull prod-up`), targets (`prod-check` row), comparison (Secrets row) and setup sections now point at Infisical and `docs/infisical-secrets.md`
+- [x] 4.2 Add `docs/infisical-secrets.md`. It covers:
   - Node ≥22.12, and the CA file (required, because Node doesn't use the system store);
   - the credentials file;
   - the allowed names per environment, and the `WEB_TAG`/`API_TAG` format;
@@ -155,7 +156,8 @@ written to print names or exit codes only. The agent records that output and nev
   - break-glass (D7).
 
   Check: `grep -c '^## ' docs/infisical-secrets.md` shows every section.
-- [ ] 4.3 Update `docs/security.md` ASI03 with:
+  Evidence: `grep -c '^## ' docs/infisical-secrets.md` -> `7` (Requirements on each host, The credentials file, What goes in each Infisical environment, Identity hardening, Commands, What the wrapper protects against, Break-glass)
+- [x] 4.3 Update `docs/security.md` ASI03 with:
   - Infisical, one read-only identity per environment, short TTL and Trusted IPs;
   - the residuals: credentials readable with `Bash` `cat`, container env through `docker
     inspect`/`exec`, and `/proc/*/environ`. The Read deny rule is not the boundary.
@@ -165,7 +167,7 @@ written to print names or exit codes only. The agent records that output and nev
   amends the "Static invariant check" tooling clause, and moves `test_check_envs.sh` into
   `node --test`. Check: `grep -n -i infisical
   docs/security.md` shows the row, and `grep -n '1\.1' docs/decisions/0021-*.md` shows the split.
-
+  Evidence: `grep -n -i infisical docs/security.md` -> line 12 (ASI03 row with the identities, TTL, Trusted IPs and the residuals: Bash `cat`, `docker inspect`/`exec`, `/proc/*/environ`, `~/.docker`); `grep -n '1\.1' docs/decisions/0021-*.md` -> line 82 (the 1.1-1.4 split and `node-stack-tooling`)
 ## 5. Verify
 
 - [ ] 5.1 **(owner)** Fill the Infisical `dev` environment from `.env.dev` (plus `DEV_PORT` and

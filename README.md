@@ -949,7 +949,8 @@ repo builds **two independent images from one multistage `docker/Dockerfile`** a
 behind a small internal router (OpenSpec change `containerize-split-images`; specs
 `container-deployment` and `api-contract-freeze`). Everything is driven from the repo root by
 `compose.yaml`, `docker-bake.hcl`, `docker/Dockerfile`, `docker/Caddyfile` and
-`docker/.env.example`. For a hot-reload dev environment, a locally built stage, and
+`docker/secrets-env.yaml`, with secrets from Infisical (see
+[docs/infisical-secrets.md](docs/infisical-secrets.md)). For a hot-reload dev environment, a locally built stage, and
 `make` entry points for all three, see [Local container environments](#local-container-environments).
 
 ### Topology
@@ -1048,16 +1049,13 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
 
 ### Configuration
 
-```bash
-cp docker/.env.example .env        # repo root; gitignored — never commit it
-$EDITOR .env
-docker compose up -d
-```
+Secrets and settings live in the Infisical `prod` environment; `make prod-up` fetches them
+(`docker/scripts/compose-run.mjs`) and passes `api` only the keys listed in
+`docker/secrets-env.yaml`. Setup: [docs/infisical-secrets.md](docs/infisical-secrets.md). A
+hand-typed `docker compose up` fails on purpose. This is separate from `server/.env`
+(single-process runs).
 
-Compose reads `.env` for interpolation and passes it to `api` as `env_file`. It is separate
-from `server/.env` (single-process runs); `compose.yaml` is authoritative for containers.
-
-| Var | Required | Why |
+| Infisical `prod` key | Required | Why |
 |-----|----------|-----|
 | `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
@@ -1069,8 +1067,8 @@ from `server/.env` (single-process runs); `compose.yaml` is authoritative for co
 | `AI_V2_API_KEY` | leave unset | AI v2 stays **off**; see security notes. |
 
 The compose `environment` block fixes `REQUIRE_LOGIN=1`, `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
-`PUBLIC_BASE_URL` — values there take precedence over `env_file`, so the env file cannot switch
-login off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
+`PUBLIC_BASE_URL` — literals there take precedence over the allowlist, so no Infisical value can
+switch login off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
 `PORT=8787`, `YTDLP_PATH=/opt/ytdlp/yt-dlp` and `CLAUDE_CLI_PATH`, so YouTube import and the
 Claude-CLI features (AI chat, topics, event generation) are *available*; `REQUIRE_LOGIN=1` is what
 satisfies their open-network refusal. `IP_ALLOWLIST` is not set by default.
@@ -1141,7 +1139,7 @@ In Google Cloud Console → *APIs & Services* → *Credentials* → *Create cred
 client ID* → application type **Web application**. Add the **authorized redirect URI**
 `${PUBLIC_BASE_URL}/auth/google/callback` (e.g. `https://autologger.nrvo.ai/auth/google/callback`).
 If the OAuth consent screen is in **Testing** mode, add every intended user's Google account
-under *Test users* — anyone else is refused by Google. Put the client ID/secret in `.env`. The OAuth client must exist and be ready *before* cutover.
+under *Test users* — anyone else is refused by Google. Put the client ID/secret in Infisical `prod`. The OAuth client must exist and be ready *before* cutover.
 Note that the redirect URI is always `${PUBLIC_BASE_URL}/auth/google/callback`: a sign-in
 started on the loopback pre-flight port is sent back to the **public** origin by Google, so the
 full round trip (and the `Secure` session cookie) can only be proven end to end once Pangolin
@@ -1321,7 +1319,7 @@ sudo bash -c "$BLOBSYNC" _ "$BMIRROR" "$VOL/blobs" 1000:1000 &&
 sudo sh -c 'rc=0; for f in "$1"/catalog.db "$1"/sessions/*.db; do
     r=$(sqlite3 "file:$f?mode=ro" "PRAGMA integrity_check" 2>&1 | head -1)
     echo "$r  $f"; [ "$r" = ok ] || rc=1; done; exit $rc' _ "$VOL" &&
-docker compose up -d api ||
+make prod-up ||
   echo "CUTOVER STEP FAILED (see output above) - stop here; do not continue past the failed command"
 # f. re-run the membership bootstrap (below)
 # g. repoint the Pangolin target at Newt -> 127.0.0.1:${ROUTER_PORT}
@@ -1374,9 +1372,8 @@ Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
 
 ### Update order and rollback
 
-- **Update order: `api` first, then `web`.** Set the new `API_TAG` in `.env`, then
-  `docker compose pull api && docker compose up -d api`, wait for `healthy`; then the same
-  for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
+- **Update order: `api` first, then `web`.** Set the new `API_TAG` in Infisical `prod`, then
+  `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
   safe. Volumes carry state across recreation.
 - **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
   migration ran in between (migrations are forward-only, `packages/storage/src/migrate.ts`);
@@ -1403,8 +1400,9 @@ behaviour under QEMU.
 
 Three container environments, driven by a root `Makefile` (OpenSpec change
 `containerized-dev-env`; spec `local-container-environments`). Run `make` (or `make help`) for
-the target list. Each environment is its own compose project, and every dev and stage target
-passes its own `--env-file`, so prod's root `.env` is never read for them. Prod is the stack
+the target list. Each environment is its own compose project, and every target fetches its own
+Infisical environment (`dev`, `stage` or `prod`) through `docker/scripts/compose-run.mjs` and
+passes `--env-file /dev/null`, so no env file is ever read. Prod is the stack
 documented under [Container deployment](#container-deployment); this section adds a hot-reload
 **dev** and a locally built **stage**. No HTTP/WS contract changes: the environments only set
 existing configuration.
@@ -1428,7 +1426,8 @@ existing configuration.
 | `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes |
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
-| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in `.env` |
+| `make prod-check` | Any branch: Infisical `prod` login, guards and compose config; starts nothing |
+| `make prod-pull` / `make prod-up` | Clean `main` only: pull / start prod with the tags pinned in Infisical `prod` |
 | `make prod-down` / `make prod-logs` | Stop and remove prod containers (volumes kept) / follow logs |
 
 ### Dev, stage and prod compared
@@ -1437,7 +1436,7 @@ existing configuration.
 |---|---|---|---|
 | Compose project | `autologger-dev` | `autologger-stage` | `autologger` |
 | Files | `docker/compose.dev.yaml` | `compose.yaml` + `docker/compose.stage.yaml` | `compose.yaml` |
-| Env file | `.env.dev` | `.env.stage` | root `.env` |
+| Secrets | Infisical `dev` | Infisical `stage` | Infisical `prod` |
 | Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally | split, pinned registry images |
 | Login | anonymous (`REQUIRE_LOGIN=0`); Google sign-in optional | `REQUIRE_LOGIN=1`, Google sign-in | `REQUIRE_LOGIN=1` |
 | Host port (`127.0.0.1`) | app gate `DEV_PORT` (8787), Companion gate `DEV_COMPANION_PORT` (8000) | router `STAGE_PORT` (8788) | router `ROUTER_PORT` (8080) |
@@ -1454,37 +1453,29 @@ another compose project that lands in that range will clash. Dev's 8787 collides
 
 ### Setup
 
-```bash
-cp docker/.env.dev.example .env.dev        # then fill in values (dev)
-cp docker/.env.stage.example .env.stage    # then fill in values (stage)
-make dev-up                                # or: make stage-up
-```
-
-Both files are gitignored (`.env.*`, except `*.example`). **Never put production secrets in
-them**: use separate, low-limit keys, and a separate dev OAuth client. A compromised dependency
-inside a dev container can read the mounted Claude login and `.env.dev`, and egress is
-unrestricted. Only the variables the templates list matter; the security-relevant ones (`HOST`,
-`REQUIRE_LOGIN`, `TRUST_PROXY`, `IP_ALLOWLIST`, `DATA_DIR`, `PUBLIC_BASE_URL`, ...) are pinned in
-compose and cannot be set from the env file.
+Create `.env.infisical.dev` / `.env.infisical.stage` from `docker/infisical-credentials.example`
+(`chmod 600`) and fill the Infisical environments; see
+[docs/infisical-secrets.md](docs/infisical-secrets.md). Then `make dev-up` (or `make stage-up`).
+**Never put production secrets in dev or stage**: use separate, low-limit keys and a separate dev
+OAuth client. A compromised dependency inside a dev container can read the mounted Claude login
+and the dev secrets, and egress is unrestricted. Only the keys in `docker/secrets-env.yaml` reach
+a container; the security-relevant ones (`HOST`, `REQUIRE_LOGIN`, `TRUST_PROXY`, `IP_ALLOWLIST`,
+`DATA_DIR`, `PUBLIC_BASE_URL`, ...) are pinned in compose. Ports (`DEV_PORT`, `STAGE_PORT`) are
+set in Infisical; `DEV_PORT=9000 make dev-up` no longer overrides them.
 
 `make dev-up` and `make stage-up` first run `make check` for that environment; `dev-up` also
 requires the host `~/.claude/.credentials.json` to exist.
 
-**Env-file guard.** Before touching an environment, the Makefile validates the *resolved*
+**Resolved-config guard.** Before touching an environment, `compose-run.mjs` validates the *resolved*
 compose config, not just the file: the project name must be `autologger-dev`/`autologger-stage`,
 every published port must be on `127.0.0.1`, a plain number 1-65535, and not 8080 (prod's router
-port). So a shell `DEV_PORT=...`/`STAGE_PORT=...` counts as much as a file entry, port values must
-be plain numbers (no quotes, ranges or leading zeros), and any `COMPOSE_*` key in an env file
-is rejected (they would re-target compose, e.g. onto prod's project). Dev additionally refuses
-ports 80 and 443 (browsers omit the default port from `Host`/`Origin`, so the dev gate would
-reject every request); stage has no Host allowlist, so `STAGE_PORT=80` is accepted. The shell
-`COMPOSE_*` variables that re-target the project, files or env file (`COMPOSE_PROJECT_NAME`,
-`COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROFILES`, `COMPOSE_ENV_FILES`,
-`COMPOSE_DISABLE_ENV_FILE`) are stripped from the environment the Makefile hands compose. The
-env-file guard is run by the dev and stage `build`, `up`, `down` and `logs` targets and by `dev-restart` and `dev-shell`;
-`check`, `dev-check`, `stage-claude-login`, the `prod-*` targets and `help` do not run
-it (`dev-reset`/`stage-reset` do their own `CONFIRM=yes` and project-name check, and the `prod-*`
-targets have their own git and tag guards).
+port). Port values come from Infisical and must be plain numbers (no quotes, ranges or leading
+zeros); an Infisical key outside `docker/secrets-env.yaml` plus the environment's compose keys
+(for example any `COMPOSE_*` or `LD_*` name) is refused before anything runs. Dev additionally
+refuses ports 80 and 443 (browsers omit the default port from `Host`/`Origin`, so the dev gate
+would reject every request); stage has no Host allowlist, so `STAGE_PORT=80` is accepted. The
+guard runs in the `build` and `up` targets and `prod-check`/`prod-up`; `dev-reset`/`stage-reset`
+check `CONFIRM=yes` and the project name, and the `prod-*` targets also check git and tags.
 
 ### Dev posture
 
@@ -1569,20 +1560,20 @@ Notes:
 
 ### Optional dev sign-in
 
-Set both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.dev` (a dev-only OAuth client,
+Set both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Infisical `dev` (a dev-only OAuth client,
 never production's) and register the redirect URI
 `http://localhost:8787/auth/google/callback` (your `DEV_PORT`). Open dev at
 `http://localhost:<DEV_PORT>/`. Caveat: **while OAuth is configured, anonymous requests see an
 empty show list**; sign in to see shows. Leave both empty for anonymous dev.
 
-Other integrations are off unless set in `.env.dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
+Other integrations are off unless set in Infisical `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
 `yt-dlp` baked into the dev image.
 
 ### Stage
 
 Stage is an overlay on `compose.yaml`, built locally for your native architecture, behaving as
-prod: `REQUIRE_LOGIN=1` and real Google sign-in. Fill `.env.stage` (`STAGE_PORT`, OAuth client,
+prod: `REQUIRE_LOGIN=1` and real Google sign-in. Fill Infisical `stage` (`STAGE_PORT`, OAuth client,
 `API_TOKEN`, `ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
 for AI chat.
 
@@ -1592,7 +1583,7 @@ for AI chat.
 - `API_TOKEN`/`ADMIN_TOKEN` must **differ from prod's** (`openssl rand -hex 32`). `API_TOKEN`
   authenticates only `/api/companion/*`; there is no Companion in stage, so test it with `curl`.
 - The overlay changes only: project name, container name, subnets and gateways, image names,
-  env file, `PUBLIC_BASE_URL`, `COOKIE_SECURE=0`, `SESSION_COOKIE`, and the loopback port. The
+  `PUBLIC_BASE_URL`, `COOKIE_SECURE=0`, `SESSION_COOKIE`, and the loopback port. The
   router's trusted-proxy gateways are `ROUTER_FRONT_GW`/`ROUTER_BACK_GW` placeholders in
   `docker/Caddyfile` whose defaults are prod's (checked byte-identical against a committed
   baseline), so stage and prod can run side by side.
@@ -1618,7 +1609,7 @@ for AI chat.
   `linux/amd64` and `linux/arm64` (a one-time privileged binfmt setup; the target prints the
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
   tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
-  `API_TAG` pinned in `.env`.
+  `API_TAG` pinned in Infisical `prod`.
 - `npm run e2e:container` still conflicts with a running prod stack (fixed `container_name`, prod
   subnets); a follow-up.
 
