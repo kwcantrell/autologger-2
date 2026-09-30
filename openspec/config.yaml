@@ -1,38 +1,77 @@
+# Merged by agent-lifecycle-template scripts/init.sh. See AGENTS.md.
 schema: spec-driven
-
-# Shown to AI when creating change artifacts (proposal/spec/design/tasks).
-context: |
-  Portable TypeScript/Node backend + React frontend (web/) + Bitfocus Companion module
-  (companion/), all in-repo. Originally a faithful port of the Python AutoLogger backend;
-  this repo is now the canonical implementation. The published HTTP/WS contract is FROZEN
-  (capability spec api-contract-freeze; CLAUDE.md Invariants): the README endpoint table is
-  the normative route inventory, and JSON shapes, status codes, export bodies, header/range
-  semantics, and WS emission semantics may not change without an authorizing delta spec —
-  consumers (web/, Companion, e2e/) are the rationale for the freeze, not its measuring
-  stick. Permanent invariant: single Node process, state on local disk under DATA_DIR — no
-  cloud account, no clustering. Stack: Hono + Zod + jose + better-sqlite3. Conventional
-  commits (type(scope): summary). Branch off main; never use git worktrees. Commit/push only
-  when asked. Changes ship with tests (npm test + npm run typecheck).
-
-# Per-artifact rules — applied at artifact generation. These encode the repo SDLC
-# (see CLAUDE.md "How we work"). The adversarial panel + human gate remain a manual overlay:
-# tasks.md is provisional until the panel on proposal+spec+design has passed its gate.
 rules:
   proposal:
-    - Include an explicit Non-Goals / out-of-scope section
-    - State the contract impact — the HTTP/WS contract is frozen, so call out any observable HTTP/WS/JSON change (usually "none")
+  - 'First line after the title is `Tier: 0`, `Tier: 1` or `Tier: 2`, set with the risk-tier skill.'
+  - Include a Non-goals section. Scope is fixed once approved.
+  - Leave `Approved-by:` for the human; never write it yourself.
   design:
-    - Record each key decision with alternatives considered + rationale
-    - Include a "Panel & review log" section with three buckets — blockers/majors fixed in place, findings escalated to the gate (with the decision), minors accepted as residual
-    - The Panel & review log also carries the pre-panel fact-check entry — required on process changes only, per CLAUDE.md "Adversarial review of the spec" (dated; claims checked / corrected / left unverified, with per-claim method and evidence) — and the post-gate consistency read's outcome line (dated; "clean" naming the documents read, or findings + fixes)
-    - Note deliberate invariants a future reader might "helpfully" undo (e.g. the synchronous-hub / single-process posture)
-  specs:
-    - Normative SHALL/MUST, avoid should/may; every requirement has at least one WHEN/THEN scenario using exactly four hashtags
-    - Any seam without covering tests gets a characterization test before it is reshaped ("existing suites pass" is not sufficient for an untested seam)
+  - List every assumption with the command that tests it and the observed output.
   tasks:
-    - This is the plan of record — group by phase, order by dependency, each task independently verifiable
-    - Each reshape/commit is gated by npm run typecheck + npm test; keep pure renames in separate commits from semantic reshapes
-    - The final-gates task runs npm run e2e (chromium + login-gate projects) AND npm run e2e:visual — baselines are current as of 2026-07-14, so visual diffs are branch-induced signal; a change that legitimately alters UI re-blesses baselines in its own diff instead of deferring drift
-    - Docs-only changes state explicitly which final gates are skipped and why (no runtime surface) — proportionality is declared, never silently assumed
-    - A change that edits machine-parsed governance files (openspec/config.yaml, skill frontmatter) includes a parse/load verification step — these are tooling inputs, and a malformed edit fails silently, not visibly
-    - file:line anchors are orientation only — locate code by content before editing
+  - Tasks are the only plan of record. Each task names the test written first.
+  - 'Tick a task only with evidence: the command run and a short excerpt of its output.'
+  - Keep the change inside the size budget (lifecycle.size_budget below); split it if not.
+operations:
+  apply:
+    guidance:
+    - Write the failing test first, then the code, then run scripts/check-change.sh.
+    - If the spec proves wrong, stop, update the artifacts, re-review the delta and ask for re-approval.
+  archive:
+    guidance:
+    - Archive only when check-change.sh passes and every task is ticked with evidence.
+    - After archiving a new capability, replace the placeholder `## Purpose` in openspec/specs/<capability>/spec.md.
+context: 'This repo follows the agent lifecycle in AGENTS.md. Every change declares a risk tier
+
+  (0, 1 or 2) in proposal.md; the tier decides which phases run. tasks.md is the only plan.
+
+  '
+lifecycle:
+  commands:
+    test: npm test
+    lint: ''
+    typecheck: npm run typecheck
+    audit: ''
+  source_globs:
+  - server/src/**
+  - web/src/**
+  - packages/**
+  - companion/src/**
+  - server/scripts/**
+  test_globs:
+  - '**/test/**'
+  - '**/tests/**'
+  - '**/__tests__/**'
+  - '**/*_test.*'
+  - '**/*.test.*'
+  - '**/*.spec.*'
+  - '**/test_*'
+  managed_paths:
+  - scripts/check-change.sh
+  - scripts/sync-skills.sh
+  - scripts/lib/check_change.py
+  - scripts/lib/adopt.py
+  - .claude/hooks/guard-approval.sh
+  - .claude/hooks/stop-check.sh
+  grandfathered_changes: []
+  size_budget: 400
+  size_exclude:
+  - '**/*.lock'
+  - '**/package-lock.json'
+  - '**/pnpm-lock.yaml'
+  - '**/go.sum'
+  - docs/**
+  high_risk_paths:
+  - AGENTS.md
+  - CLAUDE.md
+  - .claude/**
+  - .github/**
+  - scripts/**
+  - openspec/config.yaml
+  - '**/auth/**'
+  - '**/migrations/**'
+  - packages/contract/**
+  - server/src/routers/**
+  agent_guide_max_lines: 150
+  override_labels:
+    tests_with_code: no-test-needed
+    size_budget: size-override

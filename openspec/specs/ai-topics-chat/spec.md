@@ -1,7 +1,8 @@
 # ai-topics-chat Specification
 
 ## Purpose
-TBD - created by archiving change ai-topics-chat. Update Purpose after archive.
+Defines the per-session AI chat: a `CLAUDE_CLI_PATH`-gated `POST /api/sessions/:sessionId/ai/chat` endpoint that runs a locked-down `claude` CLI subprocess with a session-scoped MCP toolset and streams the reply as SSE. It also covers multi-turn continuity bound to the autologger session, ephemeral history, spend, concurrency and lifecycle bounds, open-network refusal, and the AI tab in the web client.
+
 ## Requirements
 ### Requirement: Configuration-gated AI chat endpoint
 The AI chat SHALL be gated on a `CLAUDE_CLI_PATH` environment variable naming the

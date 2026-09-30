@@ -1,7 +1,8 @@
 # live-recording-chunks Specification
 
 ## Purpose
-TBD - created by archiving change chunked-live-recording. Update Purpose after archive.
+Defines how the web client records live audio in chunks: capture rolls over on a fixed cadence so each chunk is a small, self-contained segment uploaded through the existing audio-segments endpoint. It covers recording ordinals, one lease and one event pair per recording, single-flight ordered uploads, visible and recoverable upload failures, and rescue that survives component lifecycle.
+
 ## Requirements
 
 

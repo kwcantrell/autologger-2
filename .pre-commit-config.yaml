@@ -1,0 +1,33 @@
+# Install: pipx install pre-commit && pre-commit install --hook-type pre-commit --hook-type pre-push
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1
+    hooks:
+      - id: gitleaks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+  - repo: local
+    hooks:
+      - id: lifecycle-commit
+        name: lifecycle gates (commit stage)
+        entry: scripts/check-change.sh --stage commit --quiet
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: lifecycle-push
+        name: "lifecycle gates (hook stage: tests, lint, typecheck)"
+        entry: scripts/check-change.sh --stage hook --quiet
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+        verbose: true  # show the size warning even when the push passes
+  # Add your stack's linters here (ruff, eslint, hadolint, ...).

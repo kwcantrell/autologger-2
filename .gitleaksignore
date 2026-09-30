@@ -1,0 +1,7 @@
+# Historical false positives (ADR 0018). Fingerprints are commit:file:rule:line.
+# RFC 6455's sample Sec-WebSocket-Key ("the sample nonce", base64) in WS upgrade tests:
+956114c00496f8be55d3c362d33e79af178efdfe:server/src/routers/apiToken.int.test.ts:generic-api-key:122
+83094b9066979f52d8d381ae0a6790ba6445a675:e2e/containerHarness.ts:generic-api-key:139
+4ba309c2c24327843d05771fad2cdd4425aee0c8:server/src/upgradeDispatch.int.test.ts:generic-api-key:94
+# Placeholder image tag (WEB_TAG=abcdef123456) in the env-check fixture:
+78231a41443ffa56ff6c97bf307515c95f3c8ae3:docker/scripts/check-envs.sh:generic-api-key:91

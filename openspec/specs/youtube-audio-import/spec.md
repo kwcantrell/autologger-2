@@ -1,7 +1,8 @@
 # youtube-audio-import Specification
 
 ## Purpose
-TBD - created by archiving change youtube-audio-import. Update Purpose after archive.
+Defines `youtube-import`: a configuration-gated endpoint that uses an operator-provided `yt-dlp` to download a video's audio and attach it to a session as a single supported-container segment and timeline-anchored take. It covers URL validation, open-network refusal, a bounded and isolated external fetch, global and per-session concurrency limits, atomic failure with no orphaned segment, recording-ordinal assignment, and the optional publish-date write to the episode date.
+
 ## Requirements
 ### Requirement: Configuration gating
 

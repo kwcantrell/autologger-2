@@ -1,0 +1,11 @@
+# Humans own the lifecycle. With "Require review from Code Owners" on in the main ruleset,
+# an agent can't merge changes to its own guardrails. Rendered by agent-lifecycle-template init.sh.
+/AGENTS.md              @kwcantrell
+/CLAUDE.md              @kwcantrell
+/.claude/               @kwcantrell
+/.agents/               @kwcantrell
+/.github/               @kwcantrell
+/scripts/               @kwcantrell
+/openspec/config.yaml   @kwcantrell
+/openspec/changes/      @kwcantrell
+/docs/decisions/        @kwcantrell

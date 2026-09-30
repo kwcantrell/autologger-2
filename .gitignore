@@ -38,3 +38,6 @@ playwright-report/
 
 # TypeScript incremental build info (composite tsconfig.node.json projects)
 *.tsbuildinfo
+
+# Pre-template lifecycle files, kept locally for reference
+old-lifecycle/

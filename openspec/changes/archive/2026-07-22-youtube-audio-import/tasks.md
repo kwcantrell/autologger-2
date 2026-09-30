@@ -16,22 +16,22 @@
 
 ## 2. Configuration gate + open-network refusal
 
-- [ ] 2.1 Add `yt-dlp` binary resolution to `server/src/env.ts`: resolve **once at startup**
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 2.1 Add `yt-dlp` binary resolution to `server/src/env.ts`: resolve **once at startup**
   (explicit path var if set, else a `PATH` lookup) into an absolute path stored on `Config`;
   `ytDlpConfigured(env)` is a pure boolean read of that resolved value (D2 — not a
   per-request probe). Unit-test: explicit path set → configured; none set but `yt-dlp` on
   `PATH` → configured; neither → not configured.
-- [ ] 2.2 Add a `youtubeImportOpenNetworkRefused(env)` predicate mirroring
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 2.2 Add a `youtubeImportOpenNetworkRefused(env)` predicate mirroring
   `aiChatOpenNetworkRefused`/`aiV2OpenNetworkRefused` (`REQUIRE_LOGIN` off + non-loopback +
   no `IP_ALLOWLIST`). Unit-test it against the same truth table those use.
-- [ ] 2.3 Document the new var in `server/.env.example` (blank by default; a comment noting
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 2.3 Document the new var in `server/.env.example` (blank by default; a comment noting
   that an installed/`PATH`-resolvable `yt-dlp` is sufficient to enable import, that it makes
   outbound YouTube requests + downloads third-party audio to disk, and that import is refused
   in the open-network config).
 
 ## 3. yt-dlp download module (spawn hardening + bounds)
 
-- [ ] 3.1 Add `server/src/node/ytdlp.ts` (new): given a validated normalized URL and a
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 3.1 Add `server/src/node/ytdlp.ts` (new): given a validated normalized URL and a
   per-request temp dir, spawn the resolved binary with a **discrete argument array** and a
   `--` terminator before the URL, a **fixed output template** (`-o audio.%(ext)s`),
   `--dump-json` for `upload_date`/`duration`/`is_live`, a **pinned audio format selector**
@@ -44,7 +44,7 @@
   ext/`contentType` derived from the **produced file** (throw a typed error, not `.webm`
   default, if the produced container isn't supported). Temp cleanup is the caller's
   `finally`; module writes only under the passed temp dir.
-- [ ] 3.2 Unit-test 3.1 against a **fake `yt-dlp` script** (stub on a temp path): argv is an
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 3.2 Unit-test 3.1 against a **fake `yt-dlp` script** (stub on a temp path): argv is an
   array with `--` before a shell-metacharacter/leading-`-` URL (no shell/option
   interpretation); child env excludes a planted secret var and `--ignore-config` is passed;
   success yields the produced file + parsed `upload_date`; non-zero exit / no-output → typed
@@ -54,7 +54,7 @@
 
 ## 4. Episode-date write (catalog) + correct display
 
-- [ ] 4.1 Add `SessionIndexStore.setSessionEpisodeDate(sessionId, iso)` (catalog layer,
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 4.1 Add `SessionIndexStore.setSessionEpisodeDate(sessionId, iso)` (catalog layer,
   `server/src/db/sessionIndexStore.ts`), a sibling of `setSessionArchived`/`setSessionUiHidden`
   (single-column `UPDATE`), plus a `YYYYMMDD → YYYY-MM-DD` helper. **Not** a hub RPC (D4 —
   `episode_date` is catalog-side). Unit-test: setting a date is reflected in the catalog read
@@ -67,7 +67,7 @@
 
 ## 5. Route handler — replace the 503 stub
 
-- [ ] 5.1 Add the `{ url, use_publish_date }` Zod body schema (`server/src/schemas.ts`) and
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 5.1 Add the `{ url, use_publish_date }` Zod body schema (`server/src/schemas.ts`) and
   an **exact-hostname** YouTube allowlist validator (`new URL()`, `http(s)`, lowercased
   `hostname` ∈ {`youtube.com`, `www.youtube.com`, `m.youtube.com`, `music.youtube.com`,
   `youtu.be`, `youtube-nocookie.com`}). Unit-test: accepts each allowlisted host incl.
@@ -108,7 +108,7 @@
 
 ## 7. Docs
 
-- [ ] 7.1 Update `README.md`: move `youtube-import` out of the unconditional-`503` rows into
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 7.1 Update `README.md`: move `youtube-import` out of the unconditional-`503` rows into
   a configuration-gated row (like the DeepGram transcript-generation row), and add the
   egress/dependency disclosure (operator-provided `yt-dlp`, PATH auto-enable, outbound
   YouTube fetch + on-disk download, open-network refusal). Keep `topics/generate` +

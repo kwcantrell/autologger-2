@@ -1,7 +1,8 @@
 # session-title-suffix Specification
 
 ## Purpose
-TBD - created by archiving change session-title-suffix. Update Purpose after archive.
+Defines the per-show `title_suffix` preference (`date` or `episode`) and how it drives session naming: create-session title derivation, the New Session modal, the session meta line showing the session title instead of "Episode N", and the wire `deck_title` carrying the session name.
+
 ## Requirements
 
 

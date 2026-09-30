@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Keeps SHA-pinned actions current; Dependabot updates the SHA and the version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  # Add one entry per stack ecosystem (npm, pip, docker, gomod, ...).

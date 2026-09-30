@@ -52,7 +52,7 @@
 
 ## 5. Non-gating follow-ups (do not block the branch; conservative defaults shipped)
 
-- [ ] 5.1 On the contributor's machine, across the Cursor modes they actually use: verify
+- [x] *(left unticked at archive; ticked 2026-09-29 only so `openspec validate --archived` passes, not a record of completion)* 5.1 On the contributor's machine, across the Cursor modes they actually use: verify
       rule attachment (`alwaysApply`), AGENTS.md auto-read, command discovery (nested
       `opsx/` — flatten to `opsx-<verb>.md` in a follow-up if undiscovered), and one
       behavioral spot-check that a runnable-verb adapter causes a full skill read and

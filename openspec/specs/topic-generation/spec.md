@@ -1,7 +1,8 @@
 # topic-generation Specification
 
 ## Purpose
-TBD - created by archiving change topic-generation. Update Purpose after archive.
+Defines `topics/generate`: a `CLAUDE_CLI_PATH`-gated, one-shot, non-streaming endpoint that reuses the AI-chat CLI and MCP machinery to derive a session's topics from its transcript. The replace-all is crash-safe (prior topics are untouched until the new set exists), with single-flight, spend and time bounds, a transcript precondition, paged snapshot-stable transcript delivery, and a defined failure mapping.
+
 ## Requirements
 ### Requirement: Configuration-gated generation
 
