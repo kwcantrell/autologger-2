@@ -84,7 +84,7 @@ That work is on the unmerged branch `adopt-agent-lifecycle`, and this change lan
   - no `server/data` deny rule, since the `AGENTS.md` rule covers it;
   - the `impeccable` plugin setting is not restored.
 - **Forge settings:** the ruleset, required checks, secret scanning and code-owner review. These,
-  and `pre-commit install`, are owner-owed; see tasks 4.x.
+  and `pre-commit install`, are owner-owed; see the owner-owed list in tasks.md.
 - **Sandbox tuning,** the single-process rule in `AGENTS.md`, and making `npm run lint` and
   `npm audit` gates.
 - **The rest of the old `CLAUDE.md`,** such as the source layout and the SDLC history. It is

@@ -28,3 +28,11 @@ No critical findings. Four decisions went to the owner (2026-09-29):
 - [x] [minor] A-6 (A): a stale comment mentions `cursorAdapters.repo.test.ts` in `server/src/packageBoundaries.repo.test.ts:41`. Accepted: harmless prose.
 - [x] [minor] F-ci-fork-safe / F-cherrypick-ok (F): informational, checked. Fork PRs get no secrets; the replay assumption holds.
 - [x] [minor] F-size-override-routine / F-codeowners-single-owner / F-stop-hook-cost / F-old-lifecycle-loss (F): accepted as residuals (design "Accepted residuals").
+
+## Consistency read 2026-09-29
+Reader: a separate Sonnet subagent, read-only, before archive. Documents read: proposal.md, design.md, panel.md, tasks.md, both spec deltas, .openspec.yaml, AGENTS.md, openspec/config.yaml, .gitleaksignore, lifecycle.yml, ADR 0018, the cursor-agent-adapters main spec, .cursor/, .gitignore.
+Edits since approval: tasks.md only (1.1-2.6 ticked with `Evidence:`; one blank line removed in 2.2 so its evidence is read). Scope change: no.
+- [x] [minor] ADR 0018 said "12 majors", but panel.md has 7 major entries. Resolved: the ADR now says 7 major entries (12 raw findings, deduplicated).
+- [x] [minor] The proposal pointed at "tasks 4.x", which isn't numbered. Resolved: it now says "the owner-owed list in tasks.md".
+- [x] [minor] The size and risk-floor figures differ across artifacts. Accepted: 4,332 (proposal, design 5) and 32 were measured before this change's own edits. After removing `release.yml` and adding this change's files, the gate reads 4,312 and 31. The evidence lines record the figure at their own time.
+- [x] [minor] Nit: proposal item 2 lists `build: npm run build`, which this change later removes. Accepted: it is accurate as history of the replayed commit.

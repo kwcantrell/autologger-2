@@ -47,7 +47,7 @@ top:
 
 ## Evidence
 
-- The adopt-agent-lifecycle panel: 3 reviewers, 12 majors, all resolved or decided by the owner.
+- The adopt-agent-lifecycle panel: 3 reviewers; 7 major entries (12 raw findings, deduplicated), all resolved or decided by the owner.
 - A Docker node:22 run of `npm ci`, typecheck, test and build: all pass, in about 2 min.
 - gitleaks v8.30.1 over 846 commits: 4 hits without the ignore file, none with it.
 
