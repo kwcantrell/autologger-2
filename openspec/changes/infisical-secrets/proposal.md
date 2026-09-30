@@ -21,11 +21,14 @@ never into env files:
 
 - **Secret delivery (BREAKING for operators).**
   - Every Makefile target that touches a compose project goes through one wrapper,
-    `docker/scripts/compose-run.sh`.
-  - The wrapper logs in to Infisical once per target and fetches that environment (`dev`,
-    `stage` or `prod`) into memory with `infisical export`. One jq program checks every name and
-    value and writes the exports. Only then does the wrapper run the guards and compose, in a
-    clean environment with `--env-file /dev/null`.
+    `docker/scripts/compose-run.mjs`. It is plain Node with no npm packages.
+  - The wrapper logs in to Infisical's HTTP API once per target, fetches that environment
+    (`dev`, `stage` or `prod`) into memory, and checks every name and value. It then runs the
+    guards and compose with an environment object built from only the validated keys, and passes
+    `--env-file /dev/null`.
+  - The secret-bearing guards (resolved config, prod tags, URLs, reset) move from
+    `make-guards.sh` into the wrapper.
+  - Tests run with `node --test`, as part of `npm test`, so CI runs them.
   - `env_file:` is removed from dev `app` and prod and stage `api`.
 - **A single allowlist.**
   - A new `docker/secrets-env.yaml` lists every key an app container may receive, as null
@@ -41,7 +44,7 @@ never into env files:
   - the machine identity's client id and secret;
   - the project id;
   - the `https://` Infisical URL;
-  - optionally, a CA file.
+  - the CA file path, which is required because Node doesn't use the system trust store.
 
   The Infisical host is configuration, not a repo constant, so moving Infisical later means
   editing these files only. The client secret and token never appear on a command line or on disk.
@@ -62,9 +65,15 @@ never into env files:
 - **The Infisical instance already runs** in Docker at `https://192.168.0.100`, from
   `~/infisical`, with Caddy's internal CA. It stays there for the whole migration and may move
   afterwards.
-- **Delivery is `infisical export` into memory,** not an agent that renders env files. The owner
-  changed this from `infisical run` on 2026-09-30, after implementation showed `run` lets
-  `LD_PRELOAD` act before any check.
+- **Delivery is a Node wrapper calling Infisical's HTTP API directly** (no CLI, no SDK), not an
+  agent that renders env files. The owner decided this on 2026-09-30, after these steps:
+  - `infisical run` let `LD_PRELOAD` act before any check (found in implementation);
+  - shell `export`/`eval` had quoting bypasses (found in the re-panel);
+  - the owner chose Node, and chose the direct API over `@infisical/sdk` because of its large
+    dependency tree.
+- **All the stack's shell tooling moves to Node** (owner, 2026-09-30). Because of the 400-line
+  budget, this change converts only the wrapper and the secret-bearing guards. A follow-up change,
+  `node-stack-tooling`, ports `check-envs.sh`, `compose-env.sh` and the rest of `make-guards.sh`.
 - **Pre-commit `check-yaml` runs with `--unsafe`** (syntax only) for the compose files, so files
   with `!override` can be committed. Owner, 2026-09-30. This is a scope addition. The re-panel
   scoped it to compose files: every other YAML keeps duplicate-key detection, and the lifecycle
@@ -101,6 +110,8 @@ None.
 - Entering any secret value or configuring identities. The owner does this.
 - Deleting the old env files and `docker/.env*.example` templates. That is owner-owed after
   cutover.
+- Porting `check-envs.sh`, `compose-env.sh`, and the secret-free `make-guards.sh` guards to Node.
+  That is the follow-up change `node-stack-tooling`.
 - Deploying to prod. Prod targets still require `main`, so prod switches over at the ADR 0021
   cutover.
 
@@ -108,7 +119,8 @@ None.
 
 - **Files:**
   - `Makefile`, `.pre-commit-config.yaml` (`check-yaml --unsafe`);
-  - the new `docker/scripts/compose-run.sh`;
+  - the new `docker/scripts/compose-run.mjs` and `docker/scripts/compose-run.test.mjs`, and the
+    root `package.json` `test` script;
   - `docker/scripts/compose-env.sh`, `docker/scripts/make-guards.sh`,
     `docker/scripts/check-envs.sh`;
   - the new `docker/secrets-env.yaml`;
@@ -118,7 +130,7 @@ None.
 - **Size:** estimated at about 350 counted lines, which fits the 400-line budget. `docs/**`
   and `openspec/**` are excluded. The template deletions are deferred.
 - **Operators:**
-  - install the Infisical CLI on each host;
+  - have Node ≥22.12 on each host that runs `make`, including the deploy host;
   - configure the identities (read-only, short TTL, Trusted IPs);
   - copy the env file values into Infisical;
   - put the credentials files in place;

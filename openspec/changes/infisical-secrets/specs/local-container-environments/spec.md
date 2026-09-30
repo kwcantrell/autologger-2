@@ -349,7 +349,7 @@ The per-host credentials for an environment SHALL live in an untracked file
 - the machine identity's client id and client secret;
 - the project id;
 - the Infisical URL, which SHALL use `https://`;
-- optionally, the path of the CA certificate that Infisical's TLS chains to.
+- the path of the CA certificate that Infisical's TLS chains to.
 
 The Infisical URL and CA path SHALL NOT be written in any tracked file other than examples and
 documentation, so moving Infisical to another host needs no code change. The tracked template
@@ -372,7 +372,7 @@ ignored by git, and the tracked templates SHALL NOT be.
 
 **Failures.** A compose target SHALL fail before starting anything, with a message that names
 the fix and prints no secret value, when:
-- the Infisical CLI is not installed;
+- Node older than 22.12 is running the wrapper;
 - the environment's credentials file is missing, lacks a key, names a missing CA file, uses a
   non-`https` URL, or is readable by group or others;
 - login fails, including a TLS verification failure. The message SHALL NOT suggest disabling
@@ -381,8 +381,11 @@ the fix and prints no secret value, when:
   offending names that are valid identifiers.
 
 **Secret handling.** The client secret and the access token SHALL NOT appear on any command line
-and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be injected
-without reference expansion.
+and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be fetched
+without reference expansion and without imports. Every secret key and value SHALL be a string,
+and the fetch SHALL be refused as a whole if any secret fails validation.
+
+**Tooling.** The compose targets SHALL need Node 22.12 or newer on the host and no npm packages.
 
 #### Scenario: Credentials and old env files are ignored, templates are not
 - **WHEN** `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` is run
@@ -401,6 +404,11 @@ without reference expansion.
 - **WHEN** the Infisical `dev` environment holds a key named `LD_PRELOAD` or `DOCKER_HOST`, and
   `make dev-up` runs
 - **THEN** it exits non-zero naming that key, prints no value, and runs no docker command
+
+#### Scenario: A malformed secret list is refused as a whole
+- **WHEN** Infisical returns a secret whose value is not a string, a duplicate key, or no
+  secrets at all, and `make dev-up` runs
+- **THEN** it exits non-zero, prints no value, and runs no docker command
 
 #### Scenario: Secrets stay off the process list
 - **WHEN** `make dev-up` is running and `ps -eo args` is captured

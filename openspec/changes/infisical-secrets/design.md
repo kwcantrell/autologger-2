@@ -46,111 +46,97 @@ e2e-harness change.
 
 ## Decisions
 
-### D1. One wrapper: `docker/scripts/compose-run.sh ENV STEP...`
+### D1. One wrapper: `docker/scripts/compose-run.mjs ENV STEP...` (Node, no packages)
 
-Every Makefile target that touches a compose project calls this wrapper once. It replaces the
-separate `$(G) envfile` and `$(DEV) …` calls. It has two stages. (Re-panel 2026-09-30: the first
-version used `infisical run`, whose injected variables take effect when the child program starts,
-before any check. See "Why not `infisical run`" below.)
+Every Makefile target that touches a compose project calls this wrapper once, as
+`node docker/scripts/compose-run.mjs ENV STEP...`. It replaces the separate `$(G) envfile` and
+`$(DEV) …` calls.
 
-**Outer stage** (runs with the operator's shell environment):
+**Revision history.** Re-panel 2026-09-30, then owner decision 2026-09-30:
+1. v1 used `infisical run`, whose injected variables take effect when the child program starts
+   (see "Why not `infisical run`").
+2. v2 used `infisical export` plus jq plus `eval` in shell. Reviewers found quoting and NUL
+   bypasses.
+3. v3 moves the wrapper to Node and calls Infisical's HTTP API directly with Node's built-in
+   HTTPS client. Secrets are strings in an object; no shell ever parses them, and no Infisical
+   CLI or npm package is needed.
 
-1. `set +x`.
-2. Read `.env.infisical.<ENV>` from the repo root. It reads only these keys, with `grep`/`sed`,
-   and never sources or prints the file:
+**Steps, all in one Node process:**
+
+1. **Read the credentials file.** It reads `.env.infisical.<ENV>` from the repo root as plain
+   `KEY=value` lines. It is never sourced or printed. The keys are:
    - `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`;
    - `INFISICAL_PROJECT_ID`, `INFISICAL_DOMAIN`;
-   - optionally `INFISICAL_CA_FILE`.
+   - `INFISICAL_CA_FILE`, which is now **required**. Node doesn't trust the host's system store
+     by default: without it, a fetch failed with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (see the
+     assumptions).
 
    It refuses when:
-   - a required key is missing;
-   - `INFISICAL_DOMAIN` doesn't start with `https://`;
-   - the CA file is named but missing;
-   - the file is group- or world-readable;
-   - the CLI is not installed.
-3. Start the fetch stage under a clean environment, with a **fixed** base:
-   `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$HOME" AL_PROJECT=… AL_DOMAIN=… AL_CA=… AL_CONFIRM=… sh compose-run.sh --fetch ENV STEP...`.
-   - The operator's `PATH` is not used, so the operator's shell doesn't choose which `docker`,
-     `jq` or `infisical` sees the secrets. The CLI is at `/usr/bin/infisical`.
-     - Test hook: with `AUTOLOGGER_TEST=1`, the outer stage puts `AUTOLOGGER_TEST_PATH` first on
-       that `PATH`. The outer stage reads only the operator's own environment, so Infisical can't
-       set this.
-   - Nothing else crosses: no `LOG_DESTINATION`, `LOG_FORMAT`, `INFISICAL_*`, `DOCKER_*` or
-     `COMPOSE_*`.
-   - The client id and secret go to it through a **pipe** on file descriptor 3. `printf` is a
-     shell builtin; a here-doc isn't used because some shells back it with a temp file. So they
-     are never on argv and never on disk.
-   - The caller's stdin is kept on file descriptor 4 for interactive steps (`dev-shell`).
-   - `CONFIRM` is read here and passed on as `AL_CONFIRM`.
-   - `--fetch` refuses to run unless file descriptor 3 is readable and yields both lines. A
-     direct call fails closed.
+   - a key is missing or empty;
+   - `INFISICAL_DOMAIN` isn't an `https:` URL;
+   - the CA file doesn't exist;
+   - the credentials file is readable by group or others.
+2. **Log in.** `POST {domain}/api/v1/auth/universal-auth/login` with the JSON body
+   `{clientId, clientSecret}`, over `node:https` with `ca` set to the CA file's contents only.
+   - The response must be JSON with a non-empty string `accessToken`; otherwise the wrapper
+     refuses.
+   - On failure it prints the HTTP status and Infisical's `message` field only. A TLS error adds
+     "trust the Infisical CA (INFISICAL_CA_FILE)". It never suggests plain HTTP or disabling
+     verification.
+   - `rejectUnauthorized` is never set to false.
+3. **Fetch.** `GET {domain}/api/v4/secrets?projectId=…&environment=ENV&secretPath=/&expandSecretReferences=false&includeImports=false&recursive=false`
+   with `Authorization: Bearer <token>`.
+   - The response must be JSON with a `secrets` array.
+   - The token is dropped after this call.
+4. **Validate, all or nothing.** Each secret must be an object whose `secretKey` and
+   `secretValue` are strings (the CLI's own model: `json:"secretKey"`, `json:"secretValue"`).
+   Beyond that:
+   - each key must match `/^[A-Za-z_][A-Za-z0-9_]*$/` (JS `$` doesn't match before a trailing
+     newline without the `m` flag) and be an exact member of the allowed set (D3);
+   - there must be no duplicate keys and no NUL in any value;
+   - at least one secret must be returned.
 
-**Fetch stage** (clean base environment; one process from login to the last step; `ulimit -c 0`
-so a crash can't dump secrets):
+   On any violation it refuses, printing only offending names that are valid identifiers, a
+   count of the others, and a reason word. Values never appear in a message.
+5. **Build the child environment explicitly.** It starts from a fresh object, not `process.env`:
+   - `PATH=/usr/local/bin:/usr/bin:/bin` and `HOME`;
+   - the validated secrets;
+   - `AUTOLOGGER_STACK=ENV` (D4).
 
-1. Log in: `infisical login --method=universal-auth --silent --plain`.
-   - The id and secret go in its environment as command prefixes, never on argv, and never
-     prefixed onto a builtin.
-   - `INFISICAL_DOMAIN` and, if set, `SSL_CERT_FILE` go in too.
-   - The token is kept in a shell variable. **An empty token is refused.** With an empty
-     `INFISICAL_TOKEN`, `export` falls back to the interactive user login, which writes under
-     `~/.infisical` and can write a secrets backup.
-   - On failure it prints the CLI's last error line only. A TLS failure adds "trust the Infisical
-     CA (INFISICAL_CA_FILE)". It never suggests plain HTTP or skipping verification.
-2. Fetch into a variable, with the exit status checked:
+   Nothing from the operator's shell crosses. No `LD_*`, `DOCKER_*`, `COMPOSE_*`, `INFISICAL_*` or
+   `LOG_*` value can appear, because only validated allowlist names are copied in.
+   - Test hook: `AUTOLOGGER_TEST=1` plus `AUTOLOGGER_TEST_PATH` puts a stub directory first on
+     that `PATH`, and `AUTOLOGGER_TEST_CRED_DIR` moves the credentials file. These are read from
+     the operator's environment, never from Infisical.
+6. **Run the steps in order, each child spawned with that environment,** using argv arrays (no
+   shell string is built from any value):
+   - **`compose ARGS…`** spawns
+     `sh -c '. docker/scripts/compose-env.sh && "$@"' sh compose_ENV /dev/null ARGS…`. That keeps
+     seam S2 (`check-envs.sh` still sources the same file) until the follow-up change ports it.
+     `stdio: 'inherit'`, so `dev-shell` and `logs -f` are interactive.
+   - **`resolved`** resolves the same compose config as JSON, in memory, and applies the checks
+     `make-guards.sh envfile` did: project name, loopback, numeric ports, no 8080, no 80 or 443 in
+     dev, and the expected port set. The JSON inlines passthrough values, so it is never printed.
+   - **`prod-tags`** checks `WEB_TAG` and `API_TAG` from the validated secrets.
+   - **`urls`** prints the published ports from the resolved config.
+   - **`reset`** requires `CONFIRM=yes` in the operator's environment, read before any fetch, and
+     the resolved project name.
+7. **Exit** with the first failing step's status. Node has no core-dump-on-crash by default, and
+   the process exits when the steps finish.
 
-   ```
-   json=$(INFISICAL_TOKEN=… infisical export --env=ENV --projectId=… --format=json --expand=false --include-imports=false --silent)
-   ```
+**`make-guards.sh`** keeps only the guards that never touch secrets: `creds-exists`,
+`creds-inode`, `prod-git`, `prod-builder` and `native-platform`. `envfile`, `urls`, `reset` and
+`prod-tags` move into the wrapper.
 
-   - The output goes to stdout only (`export.go`: no file unless `--output-file`).
-   - Imports are off, so a secret imported from another environment can't arrive under an
-     allowed name.
-   - The token variable is cleared right after.
-3. **Validate and generate in one jq program**, before anything uses the values:
+**Tests** are `docker/scripts/compose-run.test.mjs`, run with Node's built-in `node --test`. It is
+added to the root `npm test` script, so CI runs it. The tests:
+- start a local HTTPS server with a throwaway self-signed CA to stand in for Infisical, so the
+  real TLS path and the CA handling are exercised;
+- put a stub `docker` first on `PATH` that records argv, env and stdin.
 
-   ```
-   exports=$(printf '%s' "$json" | jq -r --argjson ok "$allowed" "$PROG" 2>/dev/null) || die …
-   ```
-
-   `PROG`:
-   - maps `null` to `[]` (Go marshals an empty slice as `null`);
-   - requires an array of objects whose `key` and `value` are **strings**. The field names are
-     lowercase: `models/cli.go` has `Key string json:"key"` and `Value string json:"value"`;
-   - requires each key to match `\A[A-Za-z_][A-Za-z0-9_]*\z` and to be an exact member of the
-     allowed set (`$ok|index([$k])`);
-   - requires no duplicate keys, no NUL in any value, and at least one secret;
-   - on any violation, prints a single line, `#refused <valid-identifier names>|<count of
-     others>|<reason word>`, and nothing else;
-   - otherwise prints only `export NAME='…'` lines, built with `@sh` from the same validated key
-     and string value.
-
-   The shell then:
-   - fails with a names-only message on a non-zero status (invalid JSON) or a `#refused` line;
-   - otherwise runs `eval "$exports"`. `exports` was assigned first, so a jq failure can't be
-     hidden by `eval`.
-   - clears `json` and `exports`.
-
-   The key checked is the key emitted, and a value is always one quoted word. So `LD_PRELOAD`,
-   `DOCKER_HOST`, `BASH_ENV`, `IFS`, `PATH`, `COMPOSE_*`, `CONFIRM` and `AUTOLOGGER_TEST` can't be
-   set, and none reaches a program start.
-4. Unset `INFISICAL_DOMAIN`, `SSL_CERT_FILE` and every `AL_*`, then export `AUTOLOGGER_STACK=ENV`
-   (D4).
-5. Run the guard steps and the compose steps in order, in this same process:
-   - `resolved`: the existing checks on the resolved config, moved from `envfile`: project name,
-     loopback, numeric ports, no 8080, no 80 or 443 in dev.
-   - `prod-tags`: `WEB_TAG` and `API_TAG` set, and not `latest`.
-   - `compose <args>`: `compose_<ENV> /dev/null <args>`.
-   - `urls`: the printed URLs.
-   - `reset`: the confirmation check.
-
-   The resolved JSON inlines passthrough values, so it is only ever piped into `jq -e`, never
-   printed.
-
-**Why not `infisical run`.** `infisical run` builds its child's environment from the caller's plus
-every secret, then starts the child. The dynamic loader reads `LD_PRELOAD` (and `LD_LIBRARY_PATH`)
-as that child starts, before any shell code can inspect the environment. So a check inside the
-child is too late. Observed:
+**Why not `infisical run`.** It builds its child's environment from the caller's plus every
+secret, then starts the child. The dynamic loader reads `LD_PRELOAD` as that child starts, before
+any code can inspect the environment. Observed:
 
 ```
 LD_PRELOAD=/tmp/evil-value.so sh -c 'echo inner-ran'
@@ -158,24 +144,22 @@ LD_PRELOAD=/tmp/evil-value.so sh -c 'echo inner-ran'
    inner-ran
 ```
 
-The loader acts first. Fetching into memory and validating before any program is started with the
-values is the only order that closes this.
+**Why not `infisical export` plus shell `eval` (v2).** A non-string value made `@sh` emit several
+words, so a validated key set an unvalidated variable (`export API_TOKEN='x'
+'LD_PRELOAD=…'`). `eval "$(…)"` also hid jq failures. Building the environment as a JS object
+removes the whole class.
+
+**Why not the Infisical Node SDK.** `@infisical/sdk` 5.0.2 pulls in
+`@aws-sdk/credential-providers`, the `@smithy/*` packages and `typescript` at runtime. That is a
+large supply-chain surface for two HTTPS calls (owner, 2026-09-30).
 
 **Makefile shape.** Examples:
-- `dev-up: ; @sh docker/scripts/compose-run.sh dev resolved 'compose up -d --build' urls`
-- `dev-restart` passes its four `compose restart X` steps in one call, so there is one login and
-  a single environment.
-- There is no `$(DEV)` variable and no `sh -c` inside make, which avoids the `$@` / `$$@`
-  quoting trap.
-- `CONFIRM` is read in the outer stage, before `env -i`, and passed on as a flag.
+- `dev-up: ; @node docker/scripts/compose-run.mjs dev resolved 'compose up -d --build' urls`
+- `dev-restart` passes its four `compose restart X` steps in one call, so one login and one
+  environment.
 
-**Alternatives rejected:**
-- A Makefile-level `sh -c '. compose-env.sh && compose_dev …'`: fragile quoting, one login per
-  call, and a separate guard fetch (a time-of-check to time-of-use gap).
-- An Infisical Agent rendering env files: writes secrets to disk.
-- `infisical run` (the approved v1): see "Why not `infisical run`" above.
-- `infisical export` to a file or `--format=dotenv` and `set -a; .`: writes to disk, or runs
-  values through shell parsing without quoting.
+Every compose target needs Node ≥22.12 on the host (the repo's `engines`). No `npm ci` is needed:
+the wrapper imports only `node:` modules.
 
 ### D2. The containers' allowlist lives in one file
 
@@ -207,7 +191,7 @@ handled by the consistency read.
 ### D3. The allowed Infisical names per environment
 
 The allowed set is the allowlist keys from D2, plus the compose-interpolation keys for that
-environment. `compose-run.sh` holds the latter as constants:
+environment. `compose-run.mjs` holds the latter as constants:
 
 | Environment | Compose-interpolation keys |
 | --- | --- |
@@ -226,7 +210,7 @@ environment. `compose-run.sh` holds the latter as constants:
 ### D4. Hand-typed compose fails loudly
 
 - The allowlist file also carries `AUTOLOGGER_STACK: ${AUTOLOGGER_STACK:?run compose through make
-  (docker/scripts/compose-run.sh); secrets come from Infisical}`.
+  (docker/scripts/compose-run.mjs); secrets come from Infisical}`.
 - Without that variable, a hand-typed `docker compose up` stops with that message instead of
   starting `api` with no secrets.
 - `check-envs.sh` supplies a placeholder value. The value is non-secret (`dev`, `stage` or
@@ -268,7 +252,7 @@ Each machine identity:
 - **Backup before deletion.** Deleting them also requires a verified Infisical backup and a
   restore test, because the owner's `~/infisical/README.md` says the `.env` holding
   `ENCRYPTION_KEY` must be kept off-host.
-- **Prod dry run.** `make prod-check` runs `compose-run.sh prod resolved prod-tags 'compose config
+- **Prod dry run.** `make prod-check` runs `compose-run.mjs prod resolved prod-tags 'compose config
   --quiet'`. It has no `main` requirement, so the deploy host can dry-run it before cutover.
 - **Break-glass** is documented in `docs/infisical-secrets.md`, for when Infisical is down:
   - stop prod with `docker stop autologger-api autologger-web autologger-router`, which needs no
@@ -337,6 +321,28 @@ Each machine identity:
       critical), hence the string-type requirement.
 11. **The loader applies `LD_PRELOAD` before the child's code runs.** See the D1 excerpt.
 
+12. **The HTTP API (v3 design), from `Infisical/cli packages/api/model.go`:**
+    - `UniversalAuthLoginRequest{clientSecret, clientId}`;
+    - `UniversalAuthLoginResponse{accessToken, expiresIn, tokenType, accessTokenMaxTTL}`;
+    - `GetSecretsV4Response{secrets[{_id, version, type, environment, secretKey, secretValue, secretComment, secretPath, …}], imports[…]}`;
+    - `api.go` calls `POST /v1/auth/universal-auth/login/` and `GET /v4/secrets` with
+      `projectId`, `environment`, `secretPath`, `includeImports`, `recursive` and
+      `expandSecretReferences`.
+13. **The owner's server (v0.165.16) serves both endpoints.** A Node `fetch` with no credentials
+    and `NODE_EXTRA_CA_CERTS=~/infisical/infisical-root-ca.crt`:
+    - `GET /api/v4/secrets?projectId=x&environment=dev` gave `401 {"message":"Token missing"}`;
+    - `POST /api/v1/auth/universal-auth/login` with `{}` gave `422` (a validation error on the
+      body).
+14. **Node doesn't use the host's system trust store by default.**
+    `node -e 'fetch("https://192.168.0.100/api/status")…'` with no CA setting gave
+    `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, though `openssl` verifies against the system store
+    (assumption 7). Hence `INFISICAL_CA_FILE` is required, passed as `ca` to `node:https`.
+15. **Node version.** The root `package.json` has `"engines": {"node": ">=22.12"}`, and this host
+    runs `v24.21.0`. `node:test`, `node:https` and `node:child_process` are built in.
+
+Assumptions 5, 6, 8 (the CLI) and 10 and 11 (`export` and the loader) describe the superseded v1
+and v2 designs. They are kept for the record: 11 is why `infisical run` was rejected.
+
 ## Risks / Trade-offs
 
 - **[Availability] Infisical is on the start path of every stack.**
@@ -355,8 +361,11 @@ Each machine identity:
 - **[Drift] An allowlist miss silently drops a key.** The owner's name check (task 1.3) compares
   today's env-file key names with the allowed set before cutover.
 - **[Behaviour change] Ambient overrides no longer work** (D3). This is documented.
-- **[Complexity] One ~170-line wrapper** replaces the per-call Makefile layering. It is tested with
-  a stub `infisical` (tasks 3.x).
+- **[Complexity] One ~250-line Node wrapper** replaces the per-call Makefile layering and the
+  secret-bearing guards. It is tested with `node --test` against a local HTTPS stand-in for
+  Infisical (task 3.2).
+- **[Dependency] Node ≥22.12 is required on every host that runs `make`,** including the deploy
+  host. The owner checks it in task 1.1.
 - **[Size] The estimate is now about 380 to 450 counted lines.** If task 5.3's `size` gate goes
   over 400, the owner chooses between a `size-override` and splitting the Makefile and template
   tasks (3.4, 3.5) into a second PR.

@@ -3,14 +3,14 @@
 The first commit on `supabase-1.1-infisical` is `openspec/changes/infisical-secrets/` only, staged
 by path (AGENTS.md rule 6). The PR targets `supabase-migration`, not `main`.
 
-**Tests.** These are shell scripts and compose files. The regression tests are new committed
-scripts, `docker/scripts/test_compose_run.sh` and `docker/scripts/test_check_envs.sh`. They
-match `test_globs`, so they don't count toward the size budget. They use:
-- a stub `infisical` on `PATH` that records its argv and environment to a scratch file;
-- an `AUTOLOGGER_TEST=1` hook that points the credentials file and the repo root at a scratch
-  directory.
+**Tests.** The regression tests are committed:
+- `docker/scripts/test_check_envs.sh` (shell, the static check);
+- `docker/scripts/compose-run.test.mjs` (`node --test`, part of `npm test`, so CI runs it).
 
-Each task names the test case that is written first and seen failing.
+They don't count toward the size budget. The Node tests use a local HTTPS stand-in for Infisical
+(throwaway CA) and a stub `docker` on `PATH` that records argv, env and stdin. Test hooks are
+honored only with `AUTOLOGGER_TEST=1`. Each task names the case that is written first and seen
+failing.
 
 **Owner tasks.** Tasks marked **(owner)** need credentials or values. The owner runs them, for
 example with `! make dev-up`, so the output lands in the session. Every owner command is
@@ -18,18 +18,21 @@ written to print names or exit codes only. The agent records that output and nev
 
 ## 1. Owner prerequisites
 
-- [x] 1.1 **(owner)** Install the Infisical CLI (arm64) on this host. Check: `infisical --version`
-  prints a version.
-  Evidence: `command -v infisical; infisical --version` -> `/usr/bin/infisical`, `infisical version 0.43.138`
+- [ ] 1.1 **(owner)** Confirm Node ≥22.12 is on `PATH` for `make` on this host and on the deploy
+  host. Put `~/infisical/infisical-root-ca.crt` (or a copy of it) where `INFISICAL_CA_FILE` will
+  point. Check: `node --version` on each host.
+  (The Infisical CLI installed earlier is no longer needed by this design.)
 - [ ] 1.2 **(owner)** Create the Infisical environments `dev`, `stage` and `prod`, and one
   universal-auth machine identity per environment, set up as in design D6:
   - read-only on its own environment;
   - access-token TTL 15 minutes, maximum TTL 1 hour;
   - Trusted IPs on the client secret and on the token.
 
-  Check that the dev identity can't read prod:
-  `infisical export --env=prod --projectId=… >/dev/null 2>&1; echo "exit=$?"`, logged in as the
-  dev identity. Paste only the `exit=` line. It must be non-zero.
+  Check that the dev identity can't read prod. Once task 3.2 exists:
+  1. Copy `.env.infisical.dev` into a scratch directory as `.env.infisical.prod` (mode 600).
+  2. Run `AUTOLOGGER_TEST=1 AUTOLOGGER_TEST_CRED_DIR=<scratch> node docker/scripts/compose-run.mjs prod prod-tags`.
+  3. It must fail at the fetch with a `403` status and message, and print no values. Paste only
+     that line, then delete the scratch copy.
 - [ ] 1.3 **(owner)** List today's key names without values:
   `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env.dev | sort`, then the same for `.env.stage`. Compare
   them with the allowed names in `docs/infisical-secrets.md` (written in 4.2). Record a decision
@@ -65,40 +68,40 @@ written to print names or exit codes only. The agent records that output and nev
   - a hand-typed `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q`
     fails naming the Makefile.
   Evidence: `sh docker/scripts/check-envs.sh all` -> `check-envs: ok (all)`; `sh docker/scripts/test_check_envs.sh` -> `5 passed, 0 failed`; `WEB_TAG=x API_TAG=x PUBLIC_BASE_URL=x docker compose -f compose.yaml --env-file /dev/null config -q` -> `required variable AUTOLOGGER_STACK is missing a value: run compose through make (docker/scripts/compose-run.sh) ...` rc=1
-- [ ] 3.2 Add `docker/scripts/compose-run.sh` (design D1). Write these `test_compose_run.sh` cases
-  first, using the stub `infisical`:
+- [ ] 3.2 Add `docker/scripts/compose-run.mjs` (design D1: Node, `node:` modules only), delete the
+  draft `compose-run.sh` and `test_compose_run.sh`, and add `node --test docker/scripts/` to the
+  root `npm test`. Write these `docker/scripts/compose-run.test.mjs` cases first. They run
+  against a local HTTPS stand-in for Infisical with a throwaway CA, and a stub `docker` on
+  `PATH`:
 
   | Case | Expected |
   | --- | --- |
   | No credentials file | Non-zero; names `docker/infisical-credentials.example` |
-  | `http://` domain | Non-zero; the stub is never called |
+  | `http://` domain | Non-zero; the stand-in gets no request |
   | Credentials file with mode 644 | Non-zero; names the mode |
-  | CLI missing from `PATH` | Non-zero; names the install docs |
-  | Stub login fails with a TLS error | Message says to trust the CA, and does not mention `http` or skipping verification |
-  | Stub `export` returns `LD_PRELOAD` | Non-zero; prints the name, not the value; no loader message; no `docker` call |
-  | Stub `export` returns an array, object or null value, a `Key`-cased field, a duplicate key, a NUL in a key or value, or a key that is not a valid identifier | Non-zero; names-only message; nothing exported, and no `docker` call |
-  | Stub `export` returns non-JSON output, or `[]`/`null` | Non-zero; nothing is exported |
-  | Stub login returns an empty token | Non-zero before `export` is called |
-  | `--fetch` called directly without file descriptor 3 | Non-zero; the stub is never called |
-  | Success | Recorded argv has no client secret or token; `export` got `INFISICAL_DOMAIN`, `--format=json` and `--expand=false`; `export` got `--include-imports=false`; the child env has no `INFISICAL_*`, `SSL_CERT_FILE`, `AL_*` or `LOG_*`, and no ambient `API_TOKEN` exported by the test; the child `PATH` is the fixed base (plus the test path); a value containing a quote, a `$` and a newline arrives intact |
-  | Multi-step call | Exactly one login |
-  | `compose exec` step | The stub docker reads the caller's stdin (kept for `dev-shell`) |
+  | A missing key, or a missing CA file | Non-zero; names the key |
+  | The stand-in's certificate is not signed by `INFISICAL_CA_FILE` | Message says to trust the Infisical CA; no mention of `http` or disabling verification |
+  | Login returns 401, or JSON without a string `accessToken` | Non-zero; prints only the status and message; no fetch |
+  | Secrets contain `LD_PRELOAD` or `DOCKER_HOST` | Non-zero; prints the name, not the value; no `docker` call |
+  | Secrets contain a non-string value, a duplicate key, a NUL, an invalid identifier (only counted), `[]`, or no `secrets` array | Non-zero; nothing spawned |
+  | Fetch query | Has `expandSecretReferences=false`, `includeImports=false`, the `projectId` and `environment` |
+  | Success | The stand-in saw the client secret only in the login body; the token only in `Authorization`; stub docker's argv has no secret or token; stub docker's env is exactly `PATH`, `HOME`, `AUTOLOGGER_STACK` and the validated keys (no ambient `API_TOKEN` set by the test, no `INFISICAL_*`, no `LD_*`); a value with a quote, `$`, a backtick and a newline arrives intact |
+  | Multi-step call | Exactly one login and one fetch; the four `compose restart` calls run in order |
+  | `compose exec` step | The stub docker reads the test's stdin (inherited) |
+  | `resolved` / `urls` / `prod-tags` / `reset` | The same outcomes as the shell guards they replace: a wrong project name, a non-loopback port, 8080, or dev 80/443 is refused; `API_TAG=latest` is refused; `reset` without `CONFIRM=yes` is refused before any request |
 
-- [ ] 3.3 Update `make-guards.sh`:
-  - `envfile` becomes `resolved`, run inside the fetch stage;
-  - `urls` and `reset` resolve with `/dev/null` inside the fetch stage;
-  - `prod-tags` reads the environment.
-
-  Update the `compose-env.sh` header comment: ambient overrides no longer apply. Test first, with
-  the stub: `API_TAG=latest` fails `prod-tags`, and `urls` prints the Infisical-provided
-  `DEV_PORT`.
-- [ ] 3.4 Rewrite the Makefile targets as single `compose-run.sh` calls, and add `prod-check`.
+- [ ] 3.3 Remove `envfile`, `urls`, `reset` and `prod-tags` from `make-guards.sh` (they moved into
+  the wrapper) and update its header. Update the `compose-env.sh` header comment: ambient
+  overrides no longer apply, and the wrapper is the only caller besides `check-envs.sh`. Check:
+  `grep -n 'envfile\|prod_tags\|^urls\|^reset' docker/scripts/make-guards.sh` returns nothing, and
+  `make check` still passes.
+- [ ] 3.4 Rewrite the Makefile targets as single `node docker/scripts/compose-run.mjs` calls, and
+  add `prod-check`.
   `dev-reset` and `stage-reset` read `CONFIRM` in the outer stage. Check:
   - `make help` lists every target, including `prod-check`;
   - `grep -n 'env_file\|\.env\.dev\|\.env\.stage\|compose_\(dev\|stage\|prod\) \.env' Makefile docker/scripts/make-guards.sh`
     returns nothing;
-  - a test case runs `make dev-restart` with the stub and records one login and four
-    `compose restart` calls, in order.
+  - `make -n dev-restart` shows a single `compose-run.mjs` call with the four restart steps.
 - [ ] 3.5 Add `docker/infisical-credentials.example`. Check:
   - `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` lists all
     five;
@@ -114,9 +117,9 @@ written to print names or exit codes only. The agent records that output and nev
 
 - [ ] 4.1 In the README container sections, the cutover/rollback runbook and the dev/stage
   sections: replace env-file setup and hand-typed `docker compose` steps with `make` targets or
-  `compose-run.sh`, and link to `docs/infisical-secrets.md`. Check:
+  `compose-run.mjs`, and link to `docs/infisical-secrets.md`. Check:
   `grep -n 'cp docker/\.env\|env_file\|docker compose up -d api\|docker compose pull' README.md`
-  returns only lines that go through `compose-run.sh`, plus migration notes.
+  returns only lines that go through `compose-run.mjs`, plus migration notes.
 - [ ] 4.2 Add `docs/infisical-secrets.md`. It covers:
   - installing the CLI and trusting the CA;
   - the credentials file;
