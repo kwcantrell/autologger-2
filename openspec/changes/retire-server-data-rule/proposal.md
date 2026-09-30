@@ -22,7 +22,7 @@ for dev.
   the live copy. It keeps the facts that are still true: the dev stack never mounts it and never
   uses it as `DATA_DIR`, and dev data lives in the `dev-data` volume. The dev-mount list at about
   line 1609 stays as it is.
-- **ADR 0021** records:
+- **ADR 0022** records:
   - the retirement, superseding ADR 0018's "`server/data` is live production data" Decision bullet
     and its "retire once a deny rule exists" Consequence;
   - that the owner chose not to replace the rule with a settings rule (see Decisions);
@@ -65,6 +65,6 @@ out of images and mounts (`container-deployment`, `local-container-environments`
 ## Impact
 
 - Three files: `AGENTS.md` (3 lines removed), `README.md` (one note reworded) and a new
-  `docs/decisions/0021-retire-server-data-rule.md`. About 40 lines. No code, specs or contract change.
+  `docs/decisions/0022-retire-server-data-rule.md`. About 40 lines. No code, specs or contract change.
 - Agents are no longer told to stay out of a directory that holds a copy of real user data
-  (sessions, transcripts, audio). The owner accepts this. ADR 0021 records the residual risks.
+  (sessions, transcripts, audio). The owner accepts this. ADR 0022 records the residual risks.

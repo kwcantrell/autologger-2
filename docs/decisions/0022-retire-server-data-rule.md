@@ -1,4 +1,4 @@
-# 0021: Retire the `server/data` rule; agents may use the local copy
+# 0022: Retire the `server/data` rule; agents may use the local copy
 
 - Date: 2026-09-30
 - Status: Accepted (supersedes ADR 0018's "`server/data` is live production data" Decision bullet and its "retire once a deny rule exists" Consequence)

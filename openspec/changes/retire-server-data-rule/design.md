@@ -25,7 +25,7 @@ deny rule existed. The owner has decided to retire it without a replacement.
   - a one-line prose rule calling it a backup and saying not to read it.
 
   The owner wants agents to be able to read and edit the backup, so both were rejected.
-- **ADR 0021 amends ADR 0018 rather than editing it.** ADRs are append-only records. 0021 names the
+- **ADR 0022 amends ADR 0018 rather than editing it.** ADRs are append-only records. 0022 names the
   0018 line it supersedes, as ADR 0020 did.
 - **README keeps the fence facts.** The note still says the dev stack never mounts `server/data` or
   uses it as `DATA_DIR`, because `check-envs.sh` and the `local-container-environments` spec still
@@ -50,10 +50,10 @@ deny rule existed. The owner has decided to retire it without a replacement.
 ## Risks / Trade-offs
 
 - **Personal data reaches the agent.** Real user data an agent reads lands in tool output, model
-  context and subagent reports. Accepted by the owner and recorded in ADR 0021, so a later owner
+  context and subagent reports. Accepted by the owner and recorded in ADR 0022, so a later owner
   can restore the rule or add a deny rule.
 - **Prompt injection.** Transcripts and session titles are user-written text, now readable by
-  agents. Under AGENTS.md rule 9, agents treat them as data, never instructions. ADR 0021 records
+  agents. Under AGENTS.md rule 9, agents treat them as data, never instructions. ADR 0022 records
   this as residual risk.
 - **Edits or deletes.** Nothing mechanical stops an agent changing `server/data`, and it is
   gitignored, so git can't restore it. The owner accepts this because it is a disposable copy.
