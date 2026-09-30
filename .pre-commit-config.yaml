@@ -13,6 +13,8 @@ repos:
       - id: trailing-whitespace
       - id: check-merge-conflict
       - id: check-added-large-files
+      - id: no-commit-to-branch  # never commit on main (AGENTS.md rule 9, ADR 0020)
+        args: [--branch, main]
   - repo: local
     hooks:
       - id: lifecycle-commit
