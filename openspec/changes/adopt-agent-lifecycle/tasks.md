@@ -14,7 +14,6 @@
 - [x] 2.2 In `openspec/config.yaml`:
   - add `packages/contract/**` and `server/src/routers/**` to `high_risk_paths`;
   - remove `release_artifacts` and `commands.build`.
-
   Delete `.github/workflows/release.yml`. Test: after a scratch edit to
   `packages/contract/src/schemas.ts`, `scripts/check-change.sh --only risk-floor` names it and
   requires tier 2 (then revert). `--only yaml,workflows` passes.
