@@ -142,12 +142,21 @@ Logs: keep the full output of every test and gate run under the session scratchp
     - the `roles.sql` follow-up;
     - the 4c items (NUL bytes, NOCASE, int8 parsing, rotation and boot order).
 
-- [ ] 5.2 Live on dev, after the owner runs `supabase-keys.mjs dev --writer …`:
+- [x] 5.2 Live on dev, after the owner runs `supabase-keys.mjs dev --writer …`:
+  Evidence: `4a-5.2-devup.log`: `applied 20261001000000`, `1 applied`, `app role password set`;
+  `4a-5.2-live.log`: client on `autologger-dev_catalog` as autologger_app -> `autologger_app|2`,
+  `catalog`; wrong password -> `FATAL:  password authentication failed`; app -> `rest:3000`,
+  `auth:9999` -> `unreachable: EAI_AGAIN`; db -> gate `Host: app:8787` -> no response (aborted),
+  companion control -> `status 200`; `test_gateway (dev): 45 passed, 0 failed`; anon
+  `/rest/v1/users` -> `404`; host `/api/profile` -> `200`. The app image has no postgres.js yet
+  (4b/4c), so the connect check ran from a throwaway client on the catalog network with the app's
+  password passed by environment.
   - `make dev-up` applies the migration and prints "app role password set";
   - from the `app` container, a Node one-liner as `autologger_app` selects from `shows`;
   - from the `app` container, `rest:3000` does not resolve or connect;
   - from the `db` container, the gate's port is refused;
   - `sh docker/supabase/test_gateway.sh dev` passes;
   - the app still boots on SQLite (`GET /api/profile` 200).
-- [ ] 5.3 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green,
+- [x] 5.3 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green,
+  Evidence: `4a-5.3-hook.log`: all PASS incl. `size 348/400 changed lines`, `commands ran ['typecheck', 'test']`; `4a-5.3-npmtest.log`: `npm test` rc=0; consistency read appended to panel.md.
   with the counted size recorded. Then the consistency read.

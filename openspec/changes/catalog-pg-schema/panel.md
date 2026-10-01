@@ -36,3 +36,18 @@ All three reviewers found the first item independently; it is listed once.
 - [x] [minor] A cold CI pull of the image is about 367 MB, with no explicit pull or timeout. Resolved: an explicit `docker pull` with a 10-minute timeout (D6).
 - [ ] [minor] Running 4d before 4c would keep the branch from ever running live Postgres with known races. Open for the owner: the approved plan orders 4a-4e and allows this swap at approval.
 - [x] [minor] Keep the `pg_stat_statements` step and running migrate twice. These are confirmations, not defects: A7, A8 and A1 show why. No change needed.
+
+## Consistency read 2026-10-01
+Edits since approval:
+- design.md D3: the role block refuses SUPERUSER/REPLICATION instead of resetting them, and LOGIN is left to the runner;
+- design.md D5: the gate's `GATE_DENY_SUBNET` default and its `make check` assertion, and invariant 6 admitting `PGPASSWORD`;
+- catalog-database spec: the role-attribute wording;
+- local-container-environments spec: the pinned-block variables and the gate-subnet check;
+- tasks.md: evidence.
+
+Scope change: no. Each edit follows from approved decisions (D3's role hardening, D5's `PG*` literals and gate refusal), forced by what PG 17 and the existing invariant 6 allow. None widens what the role or the app can do.
+- [x] [minor] PG 17 refuses `ALTER ROLE … NOSUPERUSER/NOREPLICATION` by `postgres` (`permission denied to alter role`, `4a-2.2-green.log`). Resolved: the migration raises if the role is a superuser or replication role. Same guarantee, recorded in D3 and the spec.
+- [x] [minor] Invariant 6 refused any variable in the dev app's environment other than `PUBLIC_BASE_URL`/`AUTOLOGGER_STACK`, which contradicts D5's `PGPASSWORD` literal. Resolved: it admits only `PGPASSWORD` starting `${APP_DB_PASSWORD:?`, with `PGHOST=db` and `PGUSER=autologger_app` pinned. Spec "Dev app binds loopback…" amended.
+- [x] [minor] The gate's catalog-subnet refusal had no static guard. Resolved: `make check` asserts `GATE_DENY_SUBNET` equals the catalog subnet, with a `test_check_envs.sh` case.
+- [ ] [minor] The "refuse a superuser or replication role" branch has no automated test: the test setup can't create such a role as `postgres`. Checked by reading the migration's `DO` block only.
+- Requirement → task → test: schema/role/exposure → 2.1-2.2 (`catalogSchema.pg.test.ts`); test Postgres → 1.1-1.2 (`globalSetup.test.ts`, `harness.pg.test.ts`); runner → 3.1-3.2 (`test_migrate.sh`); keys/scope/invariants/gate → 4.1-4.3 (Node tests, `test_check_envs.sh`) and 5.2 live. No task touches a non-goal (no adapter, no app wiring, no RLS).
