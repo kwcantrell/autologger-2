@@ -16,7 +16,8 @@ counts only, never a value.
 
 ## 1. Wrapper: keys, formats, JWT consistency, confinement, ports
 
-- [ ] 1.1 Change `compose-run.mjs` (design D4):
+- [x] 1.1 Change `compose-run.mjs` (design D4):
+  Evidence: tests first: `node --test docker/scripts/compose-run.test.mjs` -> `SyntaxError: … does not provide an export named 'checkSupabaseKeys'` (`ℹ fail 1`); after -> `ℹ tests 43` / `ℹ pass 43` / `ℹ fail 0` (new: each format refuses without printing; swapped, foreign-secret, expired, `alg: none`, duplicate and missing keys refused; under-90-day warning; ANON_KEY in api, POSTGRES_PASSWORD in rest, SERVICE_ROLE_KEY in realtime refused). Sequencing: the port counts and the `urls()` Supabase line need `supabase-gw` in the compose files, so they land and are tested in task 3.3.
   - the seven keys in `COMPOSE_KEYS` and their formats;
   - JWT consistency;
   - `SECRET_SCOPE` replacing `PG_SERVICES`;
@@ -37,7 +38,8 @@ counts only, never a value.
 
 ## 2. Generator
 
-- [ ] 2.1 Extend `supabase-keys.mjs` (design D5). Tests first:
+- [x] 2.1 Extend `supabase-keys.mjs` (design D5). Tests first:
+  Evidence: tests first: `node --test docker/scripts/supabase-keys.test.mjs` -> `✖ existing keys are kept…`, `✖ all missing keys are created in one batch…`, `✖ a partial JWT trio is refused…` (`ℹ pass 6` / `ℹ fail 3`); after -> `ℹ tests 9` / `ℹ pass 9` / `ℹ fail 0` (one batch POST; each value in its format; ANON/SERVICE keys verify by HMAC against the batch's JWT_SECRET with role, `iss: supabase`, `exp - iat = 5y`; partial trios refused with no batch; no value in the output).
   1. a fresh environment gets all missing keys in exactly one batch POST, each in its format;
   2. `ANON_KEY` and `SERVICE_ROLE_KEY` verify against the generated `JWT_SECRET`, with the right
      `role`, `iss`, and a 5-year `exp`;
@@ -46,11 +48,13 @@ counts only, never a value.
   5. no value appears in the output.
 
   Check: `npm test`.
-- [ ] 2.2 Run the generator for dev and stage with the bootstrap identity, and set
+- [x] 2.2 Run the generator for dev and stage with the bootstrap identity, and set
+  Evidence: `node docker/scripts/supabase-keys.mjs {dev,stage} --writer ~/.infisical-bootstrap` -> `kept POSTGRES_PASSWORD`, `created SUPABASE_ROLES_PASSWORD`, `created JWT_SECRET`, `created SECRET_KEY_BASE`, `created REALTIME_DB_ENC_KEY`, `created ANON_KEY`, `created SERVICE_ROLE_KEY`, rc=0 (both); scratch `set-port.mjs` -> `dev SUPABASE_PORT 8790 -> 200`, `stage SUPABASE_PORT 8791 -> 200`; rerun -> `7 kept` (both); `compose-run.mjs {dev,stage} resolved` -> rc=0 (formats and the JWT consistency check pass on the real values).
   `SUPABASE_PORT` (dev 8790, stage 8791) with a scratch script that prints statuses only.
   - Check: `created` for each new key, and `kept POSTGRES_PASSWORD`. A rerun prints only `kept`.
     `compose-run.mjs {dev,stage} resolved` exits 0.
-- [ ] 2.3 Update `docs/infisical-secrets.md` (the keys, formats, scopes, generator and prod
+- [x] 2.3 Update `docs/infisical-secrets.md` (the keys, formats, scopes, generator and prod
+  Evidence: `grep -c` per key in docs/infisical-secrets.md -> POSTGRES_PASSWORD 1, SUPABASE_ROLES_PASSWORD 1, JWT_SECRET 5, ANON_KEY 2, SERVICE_ROLE_KEY 2, SECRET_KEY_BASE 1, REALTIME_DB_ENC_KEY 1, SUPABASE_PORT 4 (the "Supabase keys" table: format and services; generator; cutover-only prod; rotation pointer; break-glass); `grep -c 'untrusted data' docs/security.md` -> 1 (ASI06 row).
   ordering) and `docs/security.md` (container logs are untrusted data).
   - Check: `grep` each key name.
 

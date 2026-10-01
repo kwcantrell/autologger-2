@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const GEN = join(ROOT, 'docker/scripts/supabase-keys.mjs');
 const SECRET = 'wsec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
+const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY'];
+const FORMAT = {
+  POSTGRES_PASSWORD: /^[0-9a-f]{32}$/,
+  SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32}$/,
+  JWT_SECRET: /^[A-Za-z0-9_-]{43}$/,
+  SECRET_KEY_BASE: /^[A-Za-z0-9_-]{86}$/,
+  REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
+  ANON_KEY: /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+  SERVICE_ROLE_KEY: /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+};
 
 let T;
 let server;
@@ -110,20 +121,21 @@ beforeEach(() => {
 });
 
 describe('supabase-keys.mjs (supabase-db D5)', () => {
-  it('an existing key is kept: no write request', async () => {
+  it('existing keys are kept: no write request', async () => {
+    const w = writeFiles();
+    handler = standIn({ keys: ALL });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    for (const k of ALL) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
+    assert.deepEqual(seen.map((s) => s.method), ['POST', 'GET']);
+  });
+
+  it('all missing keys are created in one batch, each in its format, and never printed', async () => {
     const w = writeFiles();
     handler = standIn({ keys: ['POSTGRES_PASSWORD'] });
     const r = await run(['dev', '--writer', w]);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /^kept POSTGRES_PASSWORD$/m);
-    assert.deepEqual(seen.map((s) => s.method), ['POST', 'GET']);
-  });
-
-  it('a missing key is created once with 32 lowercase hex characters that are never printed', async () => {
-    const w = writeFiles();
-    const r = await run(['dev', '--writer', w]);
-    assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /^created POSTGRES_PASSWORD$/m);
     const posts = seen.filter((s) => s.url === '/api/v4/secrets/batch');
     assert.equal(posts.length, 1);
     assert.equal(posts[0].method, 'POST');
@@ -131,12 +143,39 @@ describe('supabase-keys.mjs (supabase-db D5)', () => {
     assert.equal(b.projectId, 'proj-1');
     assert.equal(b.environment, 'dev');
     assert.equal(b.secretPath, '/');
-    assert.equal(b.secrets.length, 1);
-    assert.equal(b.secrets[0].secretKey, 'POSTGRES_PASSWORD');
-    assert.match(b.secrets[0].secretValue, /^[0-9a-f]{32}$/);
-    assert.ok(!r.out.includes(b.secrets[0].secretValue));
+    const got = Object.fromEntries(b.secrets.map((x) => [x.secretKey, x.secretValue]));
+    assert.deepEqual(Object.keys(got).sort(), ALL.filter((k) => k !== 'POSTGRES_PASSWORD').sort());
+    for (const [k, v] of Object.entries(got)) {
+      assert.match(v, FORMAT[k], k);
+      assert.ok(!r.out.includes(v), k);
+      assert.match(r.out, new RegExp(`^created ${k}$`, 'm'));
+    }
     assert.ok(!r.out.includes(SECRET) && !r.out.includes(TOKEN));
     assert.equal(posts[0].headers.authorization, `Bearer ${TOKEN}`);
+    // The two API keys are HS256 JWTs signed with the JWT_SECRET of the same batch.
+    const now = Math.floor(Date.now() / 1000);
+    for (const [k, role] of [['ANON_KEY', 'anon'], ['SERVICE_ROLE_KEY', 'service_role']]) {
+      const [h, p, sig] = got[k].split('.');
+      assert.equal(createHmac('sha256', got.JWT_SECRET).update(`${h}.${p}`).digest('base64url'), sig, k);
+      assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url')), { alg: 'HS256', typ: 'JWT' });
+      const pl = JSON.parse(Buffer.from(p, 'base64url'));
+      assert.equal(pl.role, role);
+      assert.equal(pl.iss, 'supabase');
+      assert.ok(Math.abs(pl.iat - now) < 60);
+      assert.equal(pl.exp - pl.iat, 5 * 365 * 86400);
+    }
+  });
+
+  it('a partial JWT trio is refused before any write, naming the missing keys', async () => {
+    const w = writeFiles();
+    for (const have of [['JWT_SECRET'], ['ANON_KEY', 'SERVICE_ROLE_KEY']]) {
+      seen = [];
+      handler = standIn({ keys: have });
+      const r = await run(['dev', '--writer', w]);
+      assert.notEqual(r.code, 0, have.join());
+      assert.match(r.out, /JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY/);
+      assert.equal(seen.filter((s) => s.url.startsWith('/api/v4/secrets/batch')).length, 0);
+    }
   });
 
   it('lists names with the same scope as compose-run and without values', async () => {
@@ -159,7 +198,7 @@ describe('supabase-keys.mjs (supabase-db D5)', () => {
       handler = standIn({ create: status });
       const r = await run(['dev', '--writer', w]);
       assert.notEqual(r.code, 0, String(status));
-      assert.match(r.out, new RegExp(`POSTGRES_PASSWORD.*HTTP ${status}`));
+      assert.match(r.out, new RegExp(`creating .*HTTP ${status}`));
       assert.equal(seen.filter((s) => s.url.startsWith('/api/v4/secrets/batch')).length, 1);
       assert.equal(seen.filter((s) => s.method === 'PATCH').length, 0);
     }
