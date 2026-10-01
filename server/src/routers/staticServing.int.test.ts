@@ -111,9 +111,9 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
   });
 
   it('real vs. nonexistent session id both bridge (dispatch never depends on session/catalog data)', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const sessionId = seedSession({ showId: show });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const sessionId = await seedSession({ showId: show });
 
     await app.request(`/sessions/${sessionId}`, {}, envWithIO());
     expect(stub.handle).toHaveBeenCalledTimes(1);

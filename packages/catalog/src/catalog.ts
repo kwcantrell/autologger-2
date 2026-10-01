@@ -1,8 +1,8 @@
 // Catalog — thin facade over the catalog domain stores (studioRegistry / authStore /
 // showsStore / sessionIndexStore / profileAssembler). Preserves the per-request
-// `new Catalog(db)` + init() lifecycle that routers reach via c.get('catalog');
-// the `readonly` store fields are the sole API surface (callers use
-// catalog.shows.x() etc.). KV login sessions + OAuth CSRF live in auth/identity.ts.
+// `new Catalog(db)` + init() lifecycle that routers reach via c.get('catalog'). The `readonly`
+// store fields are the API surface (callers use catalog.shows.x() etc.), plus the lifecycle
+// members init() and tx() (async-catalog-stores D3). KV login sessions + OAuth CSRF live in auth/identity.ts.
 
 import type { CatalogDb } from '@autologger/ports';
 import { AuthStore, type AuthStoreFacade } from './authStore';
@@ -33,7 +33,9 @@ export interface CatalogFacade {
   readonly auth: AuthStoreFacade;
   readonly sessions: SessionIndexStoreFacade;
   readonly profile: ProfileAssemblerFacade;
-  init: () => void;
+  init: () => Promise<void>;
+  /** Runs `fn` on a Catalog bound to one catalog transaction (async-catalog-stores D3). */
+  tx: <T>(fn: (cat: CatalogFacade) => Promise<T>) => Promise<T>;
 }
 
 export class Catalog implements CatalogFacade {
@@ -42,9 +44,13 @@ export class Catalog implements CatalogFacade {
   readonly auth: AuthStore;
   readonly sessions: SessionIndexStore;
   readonly profile: ProfileAssembler;
+  /** Private (`#`), so the stores stay the only enumerable fields. */
+  readonly #db: CatalogDb;
 
-  constructor(db: CatalogDb) {
-    this.studios = new StudioRegistry(db);
+  /** `studios` lets a transaction-bound Catalog carry the request's registry snapshot. */
+  constructor(db: CatalogDb, studios?: StudioRegistry) {
+    this.#db = db;
+    this.studios = studios ?? new StudioRegistry(db);
     this.shows = new ShowsStore(db);
     this.auth = new AuthStore(db);
     this.sessions = new SessionIndexStore(db, this.studios, this.shows);
@@ -52,7 +58,13 @@ export class Catalog implements CatalogFacade {
   }
 
   /** Refresh the studio registry; must run once per request before registry reads. */
-  init(): void {
-    this.studios.init();
+  async init(): Promise<void> {
+    await this.studios.init();
+  }
+
+  /** The body runs on stores bound to the transaction handle, with a copy of this catalog's
+   * registry snapshot (no query); a store transaction inside it joins it. */
+  tx<T>(fn: (cat: CatalogFacade) => Promise<T>): Promise<T> {
+    return this.#db.tx(async (t) => fn(new Catalog(t, this.studios.withDb(t))));
   }
 }

@@ -24,7 +24,16 @@ if (refusal) {
 
 let created: ReturnType<typeof createBindings>;
 try {
-  created = createBindings(process.env);
+  created = createBindings(process.env, {
+    // async-catalog-stores D5: a failed ROLLBACK leaves the catalog connection inside a dead
+    // transaction. Stop through the graceful path with a non-zero exit so the supervisor
+    // (restart: unless-stopped) brings up a fresh process.
+    onBroken: () => {
+      console.error('[catalog] connection broken after a failed ROLLBACK; shutting down');
+      process.exitCode = 1;
+      process.kill(process.pid, 'SIGTERM');
+    },
+  });
 } catch (e) {
   // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
   if (e instanceof DataDirLockedError) {
@@ -133,7 +142,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // Neither input rejects: serverClosed only resolves, frontendClosed catches.
     void Promise.all([serverClosed, frontendClosed]).then(() => {
       close();
-      process.exit(0);
+      // exitCode is 1 when shutdown was triggered by a broken catalog connection.
+      process.exit();
     });
   });
 }

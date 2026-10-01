@@ -12,7 +12,6 @@ import {
   acquireDataDirLock,
   applyMigrations,
   BlobStore,
-  CatalogDb,
   KvStore,
   openCatalogDb,
 } from '@autologger/storage';
@@ -22,7 +21,12 @@ import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from 
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 
-export function createBindings(procEnv: Record<string, string | undefined>): {
+export function createBindings(
+  procEnv: Record<string, string | undefined>,
+  /** `onBroken`: called once if a failed ROLLBACK leaves the catalog connection unusable
+   * (async-catalog-stores D5). Only `main.ts` passes one; tests never do. */
+  opts: { onBroken?: () => void } = {},
+): {
   bindings: Bindings;
   close(): void;
 } {
@@ -42,9 +46,10 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
   applyMigrations(catalog, CATALOG_MIGRATIONS_DIR);
   const clock = systemClock;
-  // KV shares the catalog connection, so it goes through the async adapter's lock
-  // (async-catalog-adapter D5); the stores stay on the synchronous CatalogDb until 3d.
-  const kv = new KvStore(new AsyncSqliteCatalogDb(catalog), clock);
+  // One adapter for the catalog stores and KV, so every statement on the connection goes
+  // through its lock (async-catalog-stores D1).
+  const catalogDb = new AsyncSqliteCatalogDb(catalog, { onBroken: opts.onBroken });
+  const kv = new KvStore(catalogDb, clock);
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
@@ -57,7 +62,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     ports: {
       clock,
       identity: new GoogleIdentityVerifier(clock),
-      catalog: new CatalogDb(catalog),
+      catalog: catalogDb,
       kv,
       sessions: registry,
       audio: audioBlobStore,

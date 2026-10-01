@@ -16,56 +16,62 @@ export type TeamRole = 'admin' | 'member';
  * Property-style function types (design D3 — contravariant `implements`
  * checking under `strictFunctionTypes`). */
 export interface AuthStoreFacade {
-  authGetUserByGoogleSub: (googleSub: string) => Row | null;
-  authGetUserByGoogleSubAny: (googleSub: string) => Row | null;
-  authGetUserById: (userId: string) => Row | null;
+  authGetUserByGoogleSub: (googleSub: string) => Promise<Row | null>;
+  authGetUserByGoogleSubAny: (googleSub: string) => Promise<Row | null>;
+  authGetUserById: (userId: string) => Promise<Row | null>;
   authCreateUserGoogle: (opts: {
     googleSub: string;
     email: string;
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }) => string;
+  }) => Promise<string>;
   authUpdateUserProfile: (
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
-  ) => boolean;
-  authUpdateUserNames: (userId: string, givenName: string, familyName: string) => boolean;
-  authUserHasStudio: (userId: string, studioId: string) => boolean;
-  authListStudioIdsForUser: (userId: string) => string[];
-  authAddMemberships: (userId: string, studioIds: string[]) => void;
-  authGetPrefs: (userId: string) => Row | null;
-  authEnsurePrefsRow: (userId: string) => void;
-  authSetPrefs: (userId: string, activeStudioId: string, activeShowId: string) => void;
-  authSeedPrefsFromGlobals: (userId: string, activeStudioId: string, activeShowId: string) => void;
-  authListUsersAdmin: () => Row[];
-  authGetUserRowAny: (userId: string) => Row | null;
-  authSetUserDisabled: (userId: string, disabled: boolean) => void;
-  authRemoveMembership: (userId: string, studioId: string) => boolean;
-  authAddMembershipWithRole: (userId: string, studioId: string, role: TeamRole) => void;
-  authUpsertMembershipRole: (userId: string, studioId: string, role: TeamRole) => void;
-  authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => number;
-  authGetMembershipRole: (userId: string, studioId: string) => TeamRole | null;
-  authCountEnabledAdmins: (studioId: string) => number;
-  authListTeamMembers: (studioId: string) => Array<{
+  ) => Promise<boolean>;
+  authUpdateUserNames: (userId: string, givenName: string, familyName: string) => Promise<boolean>;
+  authUserHasStudio: (userId: string, studioId: string) => Promise<boolean>;
+  authListStudioIdsForUser: (userId: string) => Promise<string[]>;
+  authAddMemberships: (userId: string, studioIds: string[]) => Promise<void>;
+  authGetPrefs: (userId: string) => Promise<Row | null>;
+  authEnsurePrefsRow: (userId: string) => Promise<void>;
+  authSetPrefs: (userId: string, activeStudioId: string, activeShowId: string) => Promise<void>;
+  authSeedPrefsFromGlobals: (userId: string, activeStudioId: string, activeShowId: string) => Promise<void>;
+  authListUsersAdmin: () => Promise<Row[]>;
+  authGetUserRowAny: (userId: string) => Promise<Row | null>;
+  authSetUserDisabled: (userId: string, disabled: boolean) => Promise<void>;
+  authRemoveMembership: (userId: string, studioId: string) => Promise<boolean>;
+  authAddMembershipWithRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
+  authUpsertMembershipRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
+  authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
+  authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authCountEnabledAdmins: (studioId: string) => Promise<number>;
+  authListTeamMembers: (studioId: string) => Promise<Array<{
     id: string;
     email: string;
     given_name: string;
     family_name: string;
     role: TeamRole;
-  }>;
-  authUpsertInvite: (studioId: string, emailNorm: string, invitedByUserId: string) => void;
-  authListInvitesForTeam: (studioId: string) => Row[];
-  authDeleteInvite: (studioId: string, emailNorm: string) => number;
-  authCountPendingInvites: (studioId: string) => number;
-  authConsumeInvitesForEmail: (emailNorm: string) => Row[];
-  authListUsersByEmailNorm: (emailNorm: string) => Row[];
+  }>>;
+  authUpsertInvite: (studioId: string, emailNorm: string, invitedByUserId: string) => Promise<void>;
+  authListInvitesForTeam: (studioId: string) => Promise<Row[]>;
+  authDeleteInvite: (studioId: string, emailNorm: string) => Promise<number>;
+  authCountPendingInvites: (studioId: string) => Promise<number>;
+  authConsumeInvitesForEmail: (emailNorm: string) => Promise<Row[]>;
+  authListUsersByEmailNorm: (emailNorm: string) => Promise<Row[]>;
 }
 
 export class AuthStore implements AuthStoreFacade {
   constructor(private db: CatalogDb) {}
 
-  authGetUserByGoogleSub(googleSub: string): Row | null {
+  /** The same store over another handle, so a transaction body runs on it
+   * (async-catalog-stores D3). */
+  withDb(db: CatalogDb): AuthStore {
+    return new AuthStore(db);
+  }
+
+  async authGetUserByGoogleSub(googleSub: string): Promise<Row | null> {
     return this.db.first<Row>(
       'SELECT * FROM users WHERE google_sub = ? AND disabled_at_utc IS NULL',
       googleSub,
@@ -77,26 +83,26 @@ export class AuthStore implements AuthStoreFacade {
    * existing/new split so a disabled match can redirect (account_disabled)
    * instead of falling into the new-user branch and tripping the unique
    * `google_sub` constraint (the former latent 500). */
-  authGetUserByGoogleSubAny(googleSub: string): Row | null {
+  async authGetUserByGoogleSubAny(googleSub: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM users WHERE google_sub = ?', googleSub);
   }
 
-  authGetUserById(userId: string): Row | null {
+  async authGetUserById(userId: string): Promise<Row | null> {
     return this.db.first<Row>(
       'SELECT * FROM users WHERE id = ? AND disabled_at_utc IS NULL',
       userId,
     );
   }
 
-  authCreateUserGoogle(opts: {
+  async authCreateUserGoogle(opts: {
     googleSub: string;
     email: string;
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }): string {
+  }): Promise<string> {
     const uid = crypto.randomUUID();
-    this.db.run(
+    await this.db.run(
       `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       uid,
@@ -110,20 +116,20 @@ export class AuthStore implements AuthStoreFacade {
     return uid;
   }
 
-  authUpdateUserProfile(
+  async authUpdateUserProfile(
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
-  ): boolean {
+  ): Promise<boolean> {
     // Read-modify-write: the merge reads the current row, so the pair runs in
-    // one transaction (CatalogDb.tx nests as a savepoint under outer tx()).
-    return this.db.tx(() => {
-      const row = this.authGetUserById(userId);
+    // one transaction (joins an enclosing one; async-catalog-stores D3).
+    return this.db.tx(async (t) => {
+      const row = await this.withDb(t).authGetUserById(userId);
       if (row === null) return false;
       const em = fields.email ?? String(row.email);
       const gn = fields.givenName ?? String(row.given_name);
       const fn = fields.familyName ?? String(row.family_name);
       const pic = fields.pictureUrl ?? String(row.picture_url);
-      this.db.run(
+      await t.run(
         'UPDATE users SET email = ?, given_name = ?, family_name = ?, picture_url = ? WHERE id = ?',
         em,
         gn,
@@ -135,12 +141,12 @@ export class AuthStore implements AuthStoreFacade {
     });
   }
 
-  authUpdateUserNames(userId: string, givenName: string, familyName: string): boolean {
+  async authUpdateUserNames(userId: string, givenName: string, familyName: string): Promise<boolean> {
     return this.authUpdateUserProfile(userId, { givenName, familyName });
   }
 
-  authUserHasStudio(userId: string, studioId: string): boolean {
-    const row = this.db.first<Row>(
+  async authUserHasStudio(userId: string, studioId: string): Promise<boolean> {
+    const row = await this.db.first<Row>(
       'SELECT 1 FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
       userId,
       studioId,
@@ -148,8 +154,8 @@ export class AuthStore implements AuthStoreFacade {
     return row !== null;
   }
 
-  authListStudioIdsForUser(userId: string): string[] {
-    const results = this.db.all<Row>(
+  async authListStudioIdsForUser(userId: string): Promise<string[]> {
+    const results = await this.db.all<Row>(
       'SELECT studio_id FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
       userId,
     );
@@ -159,8 +165,8 @@ export class AuthStore implements AuthStoreFacade {
   /** All (studio_id, role) pairs for a user, one query — the profile assembler's
    * `auth.user.teams[].role` field (teams-self-serve) needs role alongside id/name
    * without an N+1 over authGetMembershipRole per team. */
-  authListMembershipsForUser(userId: string): Array<{ studioId: string; role: TeamRole }> {
-    const results = this.db.all<Row>(
+  async authListMembershipsForUser(userId: string): Promise<Array<{ studioId: string; role: TeamRole }>> {
+    const results = await this.db.all<Row>(
       'SELECT studio_id, role FROM user_studio_memberships WHERE user_id = ? ORDER BY studio_id',
       userId,
     );
@@ -170,12 +176,12 @@ export class AuthStore implements AuthStoreFacade {
     }));
   }
 
-  authAddMemberships(userId: string, studioIds: string[]): void {
+  async authAddMemberships(userId: string, studioIds: string[]): Promise<void> {
     const ids = studioIds.filter((sid) => sid);
     if (!ids.length) return;
-    this.db.tx(() => {
+    await this.db.tx(async (t) => {
       for (const sid of ids) {
-        this.db.run(
+        await t.run(
           'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
           userId,
           sid,
@@ -184,24 +190,27 @@ export class AuthStore implements AuthStoreFacade {
     });
   }
 
-  authGetPrefs(userId: string): Row | null {
+  async authGetPrefs(userId: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM user_prefs WHERE user_id = ?', userId);
   }
 
-  authEnsurePrefsRow(userId: string): void {
-    const row = this.db.first<Row>('SELECT 1 FROM user_prefs WHERE user_id = ?', userId);
-    if (row === null) {
-      this.db.run(
-        "INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, '', '')",
-        userId,
-      );
-    }
+  async authEnsurePrefsRow(userId: string): Promise<void> {
+    // Check and insert share one transaction (async-catalog-stores D2).
+    await this.db.tx(async (t) => {
+      const row = await t.first<Row>('SELECT 1 FROM user_prefs WHERE user_id = ?', userId);
+      if (row === null) {
+        await t.run(
+          "INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, '', '')",
+          userId,
+        );
+      }
+    });
   }
 
-  authSetPrefs(userId: string, activeStudioId: string, activeShowId: string): void {
+  async authSetPrefs(userId: string, activeStudioId: string, activeShowId: string): Promise<void> {
     // Single upsert (user_prefs has no other columns to preserve), replacing
     // the former ensure-row + UPDATE pair — same authUpsertMembershipRole idiom.
-    this.db.run(
+    await this.db.run(
       `INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET
          active_studio_id = excluded.active_studio_id,
@@ -212,16 +221,20 @@ export class AuthStore implements AuthStoreFacade {
     );
   }
 
-  authSeedPrefsFromGlobals(userId: string, activeStudioId: string, activeShowId: string): void {
-    const row = this.authGetPrefs(userId);
-    if (row !== null && String(row.active_studio_id ?? '').trim()) return;
-    this.authEnsurePrefsRow(userId);
-    this.authSetPrefs(userId, activeStudioId, activeShowId);
+  async authSeedPrefsFromGlobals(userId: string, activeStudioId: string, activeShowId: string): Promise<void> {
+    // Read, then write, in one transaction (async-catalog-stores D2).
+    await this.db.tx(async (t) => {
+      const a = this.withDb(t);
+      const row = await a.authGetPrefs(userId);
+      if (row !== null && String(row.active_studio_id ?? '').trim()) return;
+      await a.authEnsurePrefsRow(userId);
+      await a.authSetPrefs(userId, activeStudioId, activeShowId);
+    });
   }
 
   // -- admin: users ------------------------------------------------------------
 
-  authListUsersAdmin(): Row[] {
+  async authListUsersAdmin(): Promise<Row[]> {
     return this.db.all<Row>(
       `SELECT id, google_sub, email, given_name, family_name, picture_url,
               created_at_utc, disabled_at_utc
@@ -230,20 +243,20 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   /** Fetch a user row including disabled accounts (admin). */
-  authGetUserRowAny(userId: string): Row | null {
+  async authGetUserRowAny(userId: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM users WHERE id = ?', userId);
   }
 
-  authSetUserDisabled(userId: string, disabled: boolean): void {
+  async authSetUserDisabled(userId: string, disabled: boolean): Promise<void> {
     if (disabled) {
-      this.db.run('UPDATE users SET disabled_at_utc = ? WHERE id = ?', nowIso(), userId);
+      await this.db.run('UPDATE users SET disabled_at_utc = ? WHERE id = ?', nowIso(), userId);
     } else {
-      this.db.run('UPDATE users SET disabled_at_utc = NULL WHERE id = ?', userId);
+      await this.db.run('UPDATE users SET disabled_at_utc = NULL WHERE id = ?', userId);
     }
   }
 
-  authRemoveMembership(userId: string, studioId: string): boolean {
-    const res = this.db.run(
+  async authRemoveMembership(userId: string, studioId: string): Promise<boolean> {
+    const res = await this.db.run(
       'DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
       userId,
       studioId,
@@ -256,8 +269,8 @@ export class AuthStore implements AuthStoreFacade {
   /** Create a membership with an explicit role. No-op (role preserved) if the
    * membership already exists — used by team creation (never conflicts) and
    * invite grants (an existing member is left untouched, per D2). */
-  authAddMembershipWithRole(userId: string, studioId: string, role: TeamRole): void {
-    this.db.run(
+  async authAddMembershipWithRole(userId: string, studioId: string, role: TeamRole): Promise<void> {
+    await this.db.run(
       'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?)',
       userId,
       studioId,
@@ -268,8 +281,8 @@ export class AuthStore implements AuthStoreFacade {
   /** Insert-or-update a membership's role: creates the membership if absent,
    * otherwise updates its role. Used by the admin rescue path (support-plane
    * add-membership with an explicit role) and promote/demote. */
-  authUpsertMembershipRole(userId: string, studioId: string, role: TeamRole): void {
-    this.db.run(
+  async authUpsertMembershipRole(userId: string, studioId: string, role: TeamRole): Promise<void> {
+    await this.db.run(
       `INSERT INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?)
        ON CONFLICT (user_id, studio_id) DO UPDATE SET role = excluded.role`,
       userId,
@@ -281,10 +294,10 @@ export class AuthStore implements AuthStoreFacade {
   /** Count of teams the user admins, excluding the given studio ids (the
    * built-ins) — a single indexed query for the self-serve creation cap
    * (phase-2 review: avoids an N+1 over every membership the user holds). */
-  authCountAdminTeams(userId: string, excludeStudioIds: string[]): number {
+  async authCountAdminTeams(userId: string, excludeStudioIds: string[]): Promise<number> {
     const placeholders = excludeStudioIds.map(() => '?').join(', ');
     const exclude = excludeStudioIds.length > 0 ? `AND studio_id NOT IN (${placeholders})` : '';
-    const row = this.db.first<Row>(
+    const row = await this.db.first<Row>(
       `SELECT COUNT(*) AS n FROM user_studio_memberships
        WHERE user_id = ? AND role = 'admin' ${exclude}`,
       userId,
@@ -294,8 +307,8 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   /** Role of (user, team), or null if no membership. */
-  authGetMembershipRole(userId: string, studioId: string): TeamRole | null {
-    const row = this.db.first<Row>(
+  async authGetMembershipRole(userId: string, studioId: string): Promise<TeamRole | null> {
+    const row = await this.db.first<Row>(
       'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
       userId,
       studioId,
@@ -305,8 +318,8 @@ export class AuthStore implements AuthStoreFacade {
 
   /** Count of ENABLED admins for a team — the last-admin-protection invariant is
    * over enabled admins only (a disabled admin row must not satisfy it). */
-  authCountEnabledAdmins(studioId: string): number {
-    const row = this.db.first<Row>(
+  async authCountEnabledAdmins(studioId: string): Promise<number> {
+    const row = await this.db.first<Row>(
       `SELECT COUNT(*) AS n
        FROM user_studio_memberships m
        JOIN users u ON u.id = m.user_id
@@ -317,10 +330,12 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   /** Members of a team joined with user fields, for the team detail endpoint. */
-  authListTeamMembers(
+  async authListTeamMembers(
     studioId: string,
-  ): Array<{ id: string; email: string; given_name: string; family_name: string; role: TeamRole }> {
-    const rows = this.db.all<Row>(
+  ): Promise<
+    Array<{ id: string; email: string; given_name: string; family_name: string; role: TeamRole }>
+  > {
+    const rows = await this.db.all<Row>(
       `SELECT u.id AS id, u.email AS email, u.given_name AS given_name,
               u.family_name AS family_name, m.role AS role
        FROM user_studio_memberships m
@@ -344,8 +359,8 @@ export class AuthStore implements AuthStoreFacade {
 
   /** Idempotent upsert of a pending invite (one row per team+email; re-inviting
    * refreshes invited_by/invited_at). */
-  authUpsertInvite(studioId: string, emailNorm: string, invitedByUserId: string): void {
-    this.db.run(
+  async authUpsertInvite(studioId: string, emailNorm: string, invitedByUserId: string): Promise<void> {
+    await this.db.run(
       `INSERT INTO team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
        VALUES (?, ?, ?, ?)
        ON CONFLICT (studio_id, email_norm) DO UPDATE SET
@@ -359,7 +374,7 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   /** Pending invites for a team, for the admin-only pending-invite list. */
-  authListInvitesForTeam(studioId: string): Row[] {
+  async authListInvitesForTeam(studioId: string): Promise<Row[]> {
     return this.db.all<Row>(
       'SELECT * FROM team_invites WHERE studio_id = ? ORDER BY email_norm ASC',
       studioId,
@@ -367,17 +382,18 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   /** Delete one invite (idempotent — returns whether a row was actually removed). */
-  authDeleteInvite(studioId: string, emailNorm: string): number {
-    return this.db.run(
+  async authDeleteInvite(studioId: string, emailNorm: string): Promise<number> {
+    const res = await this.db.run(
       'DELETE FROM team_invites WHERE studio_id = ? AND email_norm = ?',
       studioId,
       emailNorm,
-    ).changes;
+    );
+    return res.changes;
   }
 
   /** Count of pending invites for a team, for the 200-per-team cap. */
-  authCountPendingInvites(studioId: string): number {
-    const row = this.db.first<Row>(
+  async authCountPendingInvites(studioId: string): Promise<number> {
+    const row = await this.db.first<Row>(
       'SELECT COUNT(*) AS n FROM team_invites WHERE studio_id = ?',
       studioId,
     );
@@ -386,14 +402,16 @@ export class AuthStore implements AuthStoreFacade {
 
   /** Sign-in materialization consumer: select then delete every pending invite
    * for a normalized email, returning the consumed rows (their studio_ids are
-   * what the caller grants membership to). Plain synchronous statements — no
-   * internal tx() — so it composes inside the router's outer catalog.tx(...). */
-  authConsumeInvitesForEmail(emailNorm: string): Row[] {
-    const rows = this.db.all<Row>('SELECT * FROM team_invites WHERE email_norm = ?', emailNorm);
-    if (rows.length > 0) {
-      this.db.run('DELETE FROM team_invites WHERE email_norm = ?', emailNorm);
-    }
-    return rows;
+   * what the caller grants membership to). Select and delete share one
+   * transaction, which joins the sign-up route's catalog.tx(...). */
+  async authConsumeInvitesForEmail(emailNorm: string): Promise<Row[]> {
+    return this.db.tx(async (t) => {
+      const rows = await t.all<Row>('SELECT * FROM team_invites WHERE email_norm = ?', emailNorm);
+      if (rows.length > 0) {
+        await t.run('DELETE FROM team_invites WHERE email_norm = ?', emailNorm);
+      }
+      return rows;
+    });
   }
 
   // -- teams-self-serve: user lookup by email (design D2 multi-match) ----------
@@ -403,9 +421,8 @@ export class AuthStore implements AuthStoreFacade {
    * membership is inert while disabled, and invite-matching must still see them
    * (D2). Matching is done in JS (never SQL lower()), same as invite/sign-in
    * normalization. */
-  authListUsersByEmailNorm(emailNorm: string): Row[] {
-    return this.db
-      .all<Row>('SELECT * FROM users')
-      .filter((u) => normalizeEmail(String(u.email)) === emailNorm);
+  async authListUsersByEmailNorm(emailNorm: string): Promise<Row[]> {
+    const users = await this.db.all<Row>('SELECT * FROM users');
+    return users.filter((u) => normalizeEmail(String(u.email)) === emailNorm);
   }
 }

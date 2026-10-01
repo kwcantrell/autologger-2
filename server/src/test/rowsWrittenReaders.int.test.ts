@@ -14,7 +14,7 @@ function json(method: string, body: unknown): RequestInit {
 
 describe('affected-row-count readers (characterization)', () => {
   it('waveform PUT on a missing segment → 404 and NO audio.changed broadcast', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const sent: string[] = [];
     env.ports.sessions.get(s).attachSocket({ send: (d: string) => sent.push(d) }, 'browser');
 
@@ -28,7 +28,7 @@ describe('affected-row-count readers (characterization)', () => {
   });
 
   it('waveform PUT on an existing segment → 200 {ok:true} and one audio.changed broadcast', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const up = await app.request(
       `/api/sessions/${s}/audio/segments`,
       { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: new Uint8Array([1, 2]) },
@@ -51,7 +51,7 @@ describe('affected-row-count readers (characterization)', () => {
   });
 
   it('DELETE topic: missing id → 404, existing id → 204', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const miss = await app.request(
       `/api/sessions/${s}/topics/no-such-topic`,
       { method: 'DELETE' },
@@ -75,7 +75,7 @@ describe('affected-row-count readers (characterization)', () => {
   });
 
   it('DELETE transcript word: missing id → 404, existing id → 204', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const miss = await app.request(
       `/api/sessions/${s}/transcript-words/no-such-word`,
       { method: 'DELETE' },

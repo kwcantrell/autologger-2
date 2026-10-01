@@ -147,7 +147,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     const { port, close } = await bootDispatcherServer({ dev: true, frontend: stubFrontend() });
     closeServer = close;
 
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const ws = await connectSessionWs(port, s);
     const got = nextMessage(ws);
     setCompanionPresence('c1', s);
@@ -214,7 +214,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     });
     closeServer = close;
 
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     // A dispatcher-level destroy() and Hono's own 403 handshake close look
     // identical to a WebSocket client (both surface as a rejected `open`),
     // so asserting only `rejects` can't distinguish "routed into the Hono

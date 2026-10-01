@@ -27,7 +27,7 @@ describe('GET /api/sessions', () => {
 
 describe('POST /api/sessions', () => {
   it('creates a session under the active studio’s show', async () => {
-    const show = seedShow({ studioId: await activeStudioId() });
+    const show = await seedShow({ studioId: await activeStudioId() });
     const res = await app.request(
       '/api/sessions',
       {
@@ -60,8 +60,8 @@ describe('POST /api/sessions', () => {
 // newly created shows default to Date); tests that need Episode-suffix flip
 // the column directly via raw SQL, mirroring what Settings will do once the
 // Unit B wire lands.
-function setTitleSuffix(showId: string, suffix: 'date' | 'episode'): void {
-  env.ports.catalog.run('UPDATE shows SET title_suffix = ? WHERE id = ?', suffix, showId);
+async function setTitleSuffix(showId: string, suffix: 'date' | 'episode'): Promise<void> {
+  await env.ports.catalog.run('UPDATE shows SET title_suffix = ? WHERE id = ?', suffix, showId);
 }
 
 /** Test oracle for the UTC calendar date the server's own clock read will
@@ -94,7 +94,7 @@ async function postSession(
 describe('POST /api/sessions — title derivation (session-title-suffix)', () => {
   it('Date suffix: first untitled session of the UTC day gets the bare CODE_YYMMDD title', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'HD' });
+    const show = await seedShow({ studioId: studio, code: 'HD' });
     const stamp = utcDateStamp();
     const { status, json } = await postSession({ show_id: show });
     expect(status).toBe(200);
@@ -104,7 +104,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Date suffix: a second untitled session the same day collides to _002', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'HD2' });
+    const show = await seedShow({ studioId: studio, code: 'HD2' });
     const stamp = utcDateStamp();
     const first = await postSession({ show_id: show });
     const second = await postSession({ show_id: show });
@@ -114,23 +114,23 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Date suffix: allocation uses max-occupied-slot + 1 across a gap left by a rename', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'HD3' });
+    const show = await seedShow({ studioId: studio, code: 'HD3' });
     const stamp = utcDateStamp();
     const base = `HD3_${stamp}`;
     // Seed the bare base and a _003 directly (simulating a rename that left
     // a gap) rather than via three sequential creates.
-    seedSession({ showId: show, title: base });
-    seedSession({ showId: show, title: `${base}_003` });
+    await seedSession({ showId: show, title: base });
+    await seedSession({ showId: show, title: `${base}_003` });
     const { json } = await postSession({ show_id: show });
     expect(json.title).toBe(`${base}_004`);
   });
 
   it('Date suffix collision considers ui_hidden rows too', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'HD4' });
+    const show = await seedShow({ studioId: studio, code: 'HD4' });
     const stamp = utcDateStamp();
     const base = `HD4_${stamp}`;
-    const hiddenId = seedSession({ showId: show, title: base });
+    const hiddenId = await seedSession({ showId: show, title: base });
     await app.request(`/api/sessions/${hiddenId}`, { method: 'DELETE' }, { ...env }); // ui_hidden
     const { json } = await postSession({ show_id: show });
     expect(json.title).toBe(`${base}_002`);
@@ -142,10 +142,10 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
   // (as opposed to ui_hidden, above) through the real archive endpoint.
   it('Date suffix collision considers archived rows too', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'HD5' });
+    const show = await seedShow({ studioId: studio, code: 'HD5' });
     const stamp = utcDateStamp();
     const base = `HD5_${stamp}`;
-    const archivedId = seedSession({ showId: show, title: `${base}_002` });
+    const archivedId = await seedSession({ showId: show, title: `${base}_002` });
     const archiveRes = await app.request(
       `/api/sessions/${archivedId}/archive`,
       { method: 'POST' },
@@ -158,8 +158,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Episode suffix: numeric episode is zero-padded to width 4 in the title, stored as sent', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'EP' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: 'EP' });
+    await setTitleSuffix(show, 'episode');
     const { status, json } = await postSession({ show_id: show, episode: '7' });
     expect(status).toBe(200);
     expect(json.title).toBe('EP_0007');
@@ -168,8 +168,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Episode suffix: non-numeric episode is used unchanged (no padding)', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'EP2' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: 'EP2' });
+    await setTitleSuffix(show, 'episode');
     const { status, json } = await postSession({ show_id: show, episode: 'Pilot' });
     expect(status).toBe(200);
     expect(json.title).toBe('EP2_Pilot');
@@ -177,8 +177,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Episode suffix: blank/omitted episode without an explicit title is 400', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'EP3' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: 'EP3' });
+    await setTitleSuffix(show, 'episode');
     const { status, json } = await postSession({ show_id: show });
     expect(status).toBe(400);
     expect(typeof json.detail).toBe('string');
@@ -186,8 +186,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Episode suffix: an explicit non-blank title bypasses the episode requirement', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'EP4' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: 'EP4' });
+    await setTitleSuffix(show, 'episode');
     const { status, json } = await postSession({ show_id: show, title: '  Custom Title  ' });
     expect(status).toBe(200);
     expect(json.title).toBe('Custom Title');
@@ -195,7 +195,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Date suffix: an explicit title bypasses derivation and does not require a show code', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: '   ' }); // trims to blank show_code
+    const show = await seedShow({ studioId: studio, code: '   ' }); // trims to blank show_code
     const { status, json } = await postSession({ show_id: show, title: 'Explicit' });
     expect(status).toBe(200);
     expect(json.title).toBe('Explicit');
@@ -203,7 +203,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Date suffix: a blank trimmed show code fails derivation with 400', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: '   ' }); // trims to blank show_code
+    const show = await seedShow({ studioId: studio, code: '   ' }); // trims to blank show_code
     const { status, json } = await postSession({ show_id: show });
     expect(status).toBe(400);
     expect(typeof json.detail).toBe('string');
@@ -211,8 +211,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('Episode suffix: a blank trimmed show code fails derivation with 400', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: '   ' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: '   ' });
+    await setTitleSuffix(show, 'episode');
     const { status, json } = await postSession({ show_id: show, episode: '1' });
     expect(status).toBe(400);
     expect(typeof json.detail).toBe('string');
@@ -220,10 +220,10 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('does not bump shows.next_episode on create (D1 — no counter writer left)', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'NB' });
-    setTitleSuffix(show, 'episode');
+    const show = await seedShow({ studioId: studio, code: 'NB' });
+    await setTitleSuffix(show, 'episode');
     await postSession({ show_id: show, episode: '9' });
-    const row = env.ports.catalog.first<{ next_episode: number }>(
+    const row = await env.ports.catalog.first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -237,8 +237,8 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
   // caller that posts both fields explicit and together (task 3.1).
   it('batch-import-shaped create (explicit title + episode, no derivation) stores both verbatim and does not bump the counter', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'BI' });
-    const before = env.ports.catalog.first<{ next_episode: number }>(
+    const show = await seedShow({ studioId: studio, code: 'BI' });
+    const before = await env.ports.catalog.first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -250,7 +250,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
     expect(status).toBe(200);
     expect(json.title).toBe('clip_003');
     expect(json.episode).toBe('clip_003');
-    const after = env.ports.catalog.first<{ next_episode: number }>(
+    const after = await env.ports.catalog.first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       show,
     );
@@ -259,7 +259,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
   it('concurrent same-clock creates for the same show never duplicate a title', async () => {
     const studio = await activeStudioId();
-    const show = seedShow({ studioId: studio, code: 'CC' });
+    const show = await seedShow({ studioId: studio, code: 'CC' });
     const stamp = utcDateStamp();
     const base = `CC_${stamp}`;
     const [a, b] = await Promise.all([
@@ -276,7 +276,7 @@ describe('POST /api/sessions — title derivation (session-title-suffix)', () =>
 
 describe('session lifecycle (PUT / archive / restore / delete)', () => {
   it('PUT renames and updates the start offset', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${session}`,
       {
@@ -293,7 +293,7 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('archive then restore toggles the flag', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const a = await app.request(`/api/sessions/${session}/archive`, { method: 'POST' }, { ...env });
     expect(a.status).toBe(200);
     expect((await a.json()) as { archived: boolean }).toMatchObject({ archived: true });
@@ -302,14 +302,14 @@ describe('session lifecycle (PUT / archive / restore / delete)', () => {
   });
 
   it('DELETE hides the session', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const res = await app.request(`/api/sessions/${session}`, { method: 'DELETE' }, { ...env });
     expect(res.status).toBe(200);
     expect((await res.json()) as { hidden: boolean }).toMatchObject({ hidden: true });
   });
 
   it('youtube-import is 503 with the current unconditional-refusal detail body', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST' },
@@ -335,7 +335,7 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
       { ...env },
     );
 
-    const hiddenSession = seededSession().sessionId;
+    const hiddenSession = (await seededSession()).sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}/youtube-import`,
@@ -343,11 +343,11 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
       { ...env },
     );
 
-    const studioA = seedStudio();
-    const studioB = seedStudio();
-    const showB = seedShow({ studioId: studioB });
-    const foreignSession = seedSession({ showId: showB });
-    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showB = await seedShow({ studioId: studioB });
+    const foreignSession = await seedSession({ showId: showB });
+    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
     const foreign = await app.request(
       `/api/sessions/${foreignSession}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
@@ -361,10 +361,10 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
   });
 
   it('a member of the session’s studio still reaches the 503 stub (guard passes through)', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const session = seedSession({ showId: show });
-    const cookie = await loginCookie(seedUser({ studios: [studio] }));
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const session = await seedSession({ showId: show });
+    const cookie = await loginCookie(await seedUser({ studios: [studio] }));
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
@@ -379,9 +379,9 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
 
 describe('tenancy', () => {
   it('the session WebSocket gate 404s a logged-in non-member before upgrading (async-session-callers 3.1)', async () => {
-    const studioA = seedStudio();
-    const session = seedSession({ showId: seedShow({ studioId: seedStudio() }) });
-    const outsider = await loginCookie(seedUser({ studios: [studioA] }));
+    const studioA = await seedStudio();
+    const session = await seedSession({ showId: await seedShow({ studioId: await seedStudio() }) });
+    const outsider = await loginCookie(await seedUser({ studios: [studioA] }));
     const res = await app.request(
       `/api/sessions/${session}/ws`,
       { headers: { Cookie: outsider } },
@@ -391,11 +391,11 @@ describe('tenancy', () => {
   });
 
   it('404 on PUT for a logged-in non-member', async () => {
-    const studioA = seedStudio();
-    const studioB = seedStudio();
-    const show = seedShow({ studioId: studioB });
-    const session = seedSession({ showId: show });
-    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const show = await seedShow({ studioId: studioB });
+    const session = await seedSession({ showId: show });
+    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
     const res = await app.request(
       `/api/sessions/${session}`,
       {
@@ -414,11 +414,11 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     // A logged-in user with explicit active prefs, so the list scope is
     // deterministic regardless of other tests' shared anonymous-mode
     // app_settings active-show state.
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const session = seedSession({ showId: show, episode: '042' });
-    const userId = seedUser({ studios: [studio] });
-    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const session = await seedSession({ showId: show, episode: '042' });
+    const userId = await seedUser({ studios: [studio] });
+    await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
 
@@ -442,13 +442,13 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('200 for an authorized session outside the requester’s active show/studio prefs', async () => {
-    const studioA = seedStudio();
-    const studioB = seedStudio();
-    const showA = seedShow({ studioId: studioA });
-    const showB = seedShow({ studioId: studioB });
-    const session = seedSession({ showId: showA });
-    const userId = seedUser({ studios: [studioA, studioB] });
-    catalogFor().auth.authSetPrefs(userId, studioB, showB);
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showA = await seedShow({ studioId: studioA });
+    const showB = await seedShow({ studioId: studioB });
+    const session = await seedSession({ showId: showA });
+    const userId = await seedUser({ studios: [studioA, studioB] });
+    await catalogFor().auth.authSetPrefs(userId, studioB, showB);
     const cookie = await loginCookie(userId);
 
     const res = await app.request(
@@ -463,7 +463,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
   });
 
   it('200 for an archived session, reflecting its archived state', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const archiveRes = await app.request(
       `/api/sessions/${session}/archive`,
       { method: 'POST' },
@@ -485,7 +485,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
       { ...env },
     );
 
-    const hiddenSession = seededSession().sessionId;
+    const hiddenSession = (await seededSession()).sessionId;
     await app.request(`/api/sessions/${hiddenSession}`, { method: 'DELETE' }, { ...env });
     const hidden = await app.request(
       `/api/sessions/${hiddenSession}`,
@@ -493,11 +493,11 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
       { ...env },
     );
 
-    const studioA = seedStudio();
-    const studioB = seedStudio();
-    const showB = seedShow({ studioId: studioB });
-    const foreignSession = seedSession({ showId: showB });
-    const cookie = await loginCookie(seedUser({ studios: [studioA] }));
+    const studioA = await seedStudio();
+    const studioB = await seedStudio();
+    const showB = await seedShow({ studioId: studioB });
+    const foreignSession = await seedSession({ showId: showB });
+    const cookie = await loginCookie(await seedUser({ studios: [studioA] }));
     const foreign = await app.request(
       `/api/sessions/${foreignSession}`,
       { method: 'GET', headers: { Cookie: cookie } },
@@ -523,11 +523,11 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     // above) — the list endpoint scopes to ONE active show, and a fresh
     // studio's default active-show setting is otherwise not guaranteed to
     // resolve to the show seeded below.
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio, code: 'HD' });
-    const session = seedSession({ showId: show, episode: '7', title: 'HD_260802' });
-    const userId = seedUser({ studios: [studio] });
-    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio, code: 'HD' });
+    const session = await seedSession({ showId: show, episode: '7', title: 'HD_260802' });
+    const userId = await seedUser({ studios: [studio] });
+    await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
 
@@ -558,11 +558,11 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
   });
 
   it('falls back to "—" for a blank stored title, even with a show code present', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio, code: 'HD' });
-    const session = seedSession({ showId: show, episode: '7', title: '' });
-    const userId = seedUser({ studios: [studio] });
-    catalogFor().auth.authSetPrefs(userId, studio, show);
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio, code: 'HD' });
+    const session = await seedSession({ showId: show, episode: '7', title: '' });
+    const userId = await seedUser({ studios: [studio] });
+    await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
 

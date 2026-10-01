@@ -3,7 +3,7 @@ import { app, env } from './harness';
 
 describe('harness smoke', () => {
   it('migrations applied: a migrated table is queryable', async () => {
-    const r = env.ports.catalog.first<{ n: number }>(
+    const r = await env.ports.catalog.first<{ n: number }>(
       'SELECT COUNT(*) AS n FROM studio_definitions',
     );
     expect(typeof r?.n).toBe('number');

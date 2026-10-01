@@ -101,7 +101,7 @@ async function seedEvents(sessionId: string): Promise<void> {
 
 describe('API compression (app-level /api/* compress middleware)', () => {
   it('gzips transcript-words when Accept-Encoding allows; payload equals the un-encoded body', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     await seedWords(session);
 
     const plain = await app.request(
@@ -138,7 +138,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     // to make compress()'s 1024-byte threshold inert: this 14-byte body gzipped
     // to a LARGER one. measureCompressibleBody stamps the length so the
     // threshold can actually fire.
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
 
     const res = await app.request(
       `/api/sessions/${session}/transcript-words`,
@@ -176,7 +176,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
   });
 
   it('leaves audio 206 range responses uncompressed with range headers intact', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     const up = await app.request(
       `/api/sessions/${session}/audio/segments`,
@@ -215,7 +215,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     //
     // Highly compressible and comfortably over compress()'s 1KB threshold, so
     // a regression here gzips rather than silently squeaking under it.
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array(4096).fill(0x41);
     const up = await app.request(
       `/api/sessions/${session}/audio/segments`,
@@ -254,7 +254,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     // `video/mp4` never matched the compressible filter (no `video/` branch,
     // no structured suffix). The clamp is now the negation of the hazard, so
     // this round-trips while the identity/206 guarantee below still holds.
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array(4096).fill(0x41);
     const up = await app.request(
       `/api/sessions/${session}/local-audio-import?duration_s=10`,
@@ -289,7 +289,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
   });
 
   it('leaves full-body audio downloads uncompressed with content-length intact', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     const up = await app.request(
       `/api/sessions/${session}/audio/segments`,
@@ -308,7 +308,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
   });
 
   it('gzips export.csv and export.jsonl (jsonl proves the x-ndjson filter)', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     await seedEvents(session);
 
     const plainCsv = await app.request(
@@ -362,7 +362,7 @@ describe('API compression (app-level /api/* compress middleware)', () => {
     // fixture (the same env ai.int.test.ts's streaming test uses) because
     // that is the only way to reach a genuine streaming response through the
     // shared app: the middleware pair only wraps routes wireApp mounted.
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     sseSessionIds.push(session);
 
     const res = await app.request(

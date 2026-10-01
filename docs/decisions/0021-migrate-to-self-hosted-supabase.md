@@ -121,25 +121,29 @@ Slice order:
      per connection, a transaction-scoped handle, a nested `tx` joins the enclosing transaction,
      any error fails the whole transaction, a 10-second deadline, misuse rejects). `KvStore`
      moved onto it, so KV waits for an open transaction instead of joining it;
-   - 3d: the stores move to it, and the sync port is deleted. It inherits these from 3c
-     (async-catalog-adapter design D6):
-     - transaction bodies run on stores bound to the handle, through a facade `tx` that builds a
-       `Catalog` over it; it decides how that catalog's registry snapshot is initialised;
-     - the promise-hygiene test extends to `packages/catalog/src`;
-     - transaction bodies await only the handle;
-     - an adapter `close()` for shutdown, and `CatalogAdapterBrokenError` made fatal;
-     - a retype probe measures the size first, and the slice splits if it is over budget;
-     - **prerequisite:** the OAuth state take becomes atomic before or with 3d (the owner
-       decides how). Once a transaction holds the lock across awaits, two callbacks with one
-       state can both read it before either deletes it.
+   - 3d `async-catalog-stores`: the five stores run on the adapter (`CatalogFacade.tx` binds a
+     body's stores to the transaction; store transactions join it), and the synchronous port is
+     deleted. Owner decisions (2026-10-01):
+     - one atomic PR with the `size-override` label (about 650-750 counted lines);
+     - the OAuth state is consumed with `KvStore.take` (one `DELETE … RETURNING`);
+     - test seed helpers become async and call the real stores (reversing the slice 3
+       decision, since slice 4's async-only driver forces it).
 
-   **Slice 4 hazards** (async-session-callers design D6, async-catalog-callers design D6). These
-   are harmless while storage is synchronous and real once it does I/O:
-   1. the OAuth state get-then-delete needs an atomic take (auth: the owner decides). Moved
-      earlier: it is now a 3d prerequisite (see 3d above);
+     A failed `ROLLBACK` stops the server with exit code 1. The adapter `close()` is deferred to
+     slice 4. Slice 3 is done.
+
+   **Slice 4 hazards** (async-session-callers design D6, async-catalog-callers design D6,
+   async-catalog-stores design A7). These stay latent through slice 3. The SQLite adapter yields
+   only microtasks, so in a running server a request's chain of catalog awaits still finishes
+   before another request's I/O callback runs (measured in 3d: 0 interleavings across 200
+   concurrent HTTP requests). They go live with slice 4's real I/O. The concurrency tests that
+   force interleaving (same tick, or a held transaction) guard that future, not today's
+   behaviour.
+   1. ~~the OAuth state get-then-delete needs an atomic take~~ Done in 3d (`KvStore.take`);
    2. the Companion ack's read-modify-write needs one conditional update;
    3. projection mirror writes can land out of order (guard on `events_stream_revision`);
-   4. re-audit the events generate `finally` (release, then mirror);
+   4. re-audit the events generate `finally` (release, then mirror; still safe while the adapter
+      yields only microtasks);
    5. sessions' active-show read-then-write and show-check-then-create need transactions or
       constraints;
    6. the log-import job uses the request's catalog handle inside a detached job;
@@ -152,12 +156,16 @@ Slice order:
    10. the pending-invite cap is count-then-upsert (a transaction or a constraint);
    11. a role promotion reads the current role, then writes (a conditional update);
    12. member removal checks existence outside the guarded transaction (move it inside);
-   13. team delete counts shows outside its transaction while show create checks the studio, then
-       creates (count inside the delete transaction, or a foreign key);
+   13. team delete versus show create: 3d moved the delete's show count inside its transaction;
+       show create still checks the studio, then creates (a transaction or a foreign key);
    14. the registry getters need `init()` first, and the snapshot goes stale across awaits within
        one request (refresh after writes, or read names in the response query);
-   15. concurrent first Google sign-ins with one `sub` hit the unique constraint as a 500 (catch
-       the conflict and retry the lookup).
+   15. concurrent first Google sign-ins with one `sub` hit the unique constraint as a 500. Under
+       the transaction contract (any error fails the transaction) the remedy must run outside the
+       transaction (catch the conflict, then retry the lookup) or use
+       `INSERT … ON CONFLICT DO NOTHING`;
+   16. `/auth/google/start` writes one KV row per hit, and expired rows are purged only at boot or
+       on read, so a flood grows the `kv` table until restart (a periodic purge or a rate limit).
 4. Catalog schema and the postgres.js adapter.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
 6. RLS for the permission model above.

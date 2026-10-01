@@ -5,9 +5,8 @@
 The normative contract for the domain core and its adapter boundaries: the port ledger
 (the true ports SessionRuntime, Clock, IdentityVerifier; CatalogStore as a
 reshape-not-swap seam) and the concrete-only edges (BlobStore, KvStore,
-PresenceRegistry); a synchronous session hub (until ADR 0021 slice 7), with the catalog,
-key/value and presence ports converging on asynchronous APIs (ADR 0021 slice 3) and no
-Cloudflare-shaped APIs; the composition-root
+PresenceRegistry); a synchronous session hub (until ADR 0021 slice 7), with asynchronous
+catalog, key/value and presence ports (ADR 0021 slice 3) and no Cloudflare-shaped APIs; the composition-root
 Ports/Config split; and the auth split (authentication in middleware, authorization
 consolidated behind `requireSession`). Established by the `de-cloudflare-strong-core`
 change (archived 2026-07-14), which retired the departed Cloudflare platform's names and
@@ -73,29 +72,47 @@ session-internal types into the ports package for no consumer benefit.
 - **WHEN** a test constructs `SessionCore` with an in-memory SQL + fake sockets + fake clock
 - **THEN** it exercises the domain stores without a real database, socket, or wall-clock
 
-### Requirement: Catalog persistence is synchronous with no Cloudflare-shaped API
+### Requirement: Catalog persistence is asynchronous with no Cloudflare-shaped API
 
-The catalog persistence seam SHALL expose a synchronous `all()` / `run()` / `tx()` surface
-and SHALL NOT expose D1's `prepare().bind().all()/first()/run()` shape. Catalog store
-methods SHALL NOT declare `async`/return promises for persistence that is synchronous.
-`run()` SHALL return an affected-row count (`{ changes }`) for callers that detect changes.
+The catalog persistence seam SHALL be the asynchronous `CatalogDb` port: promise-returning
+`all()`, `first()`, `run()` and `tx()`, under the catalog transaction contract. It SHALL NOT
+expose D1's `prepare().bind().all()/first()/run()` shape. `run()` SHALL return an affected-row
+count (`{ changes }`) for callers that detect changes.
+
+Every catalog store method that reaches the database SHALL return a promise, and every internal
+call SHALL await it. The studio registry's memory-only getters (`studioNamesDict`,
+`studioOrderTuple`, `isKnownStudio`, `listStudiosBrief`, `listStudiosBriefAllowed`) SHALL stay
+synchronous, and are correct only after the catalog's `init()` has been awaited.
+
+A store method or route that reads and then writes, or writes several rows, SHALL do so inside
+one `tx()`. Its body SHALL run on stores bound to the transaction handle, so a store transaction
+inside a route transaction joins it.
 
 #### Scenario: No async costume in catalog stores
 - **WHEN** the catalog stores in `@autologger/catalog` (`packages/catalog/src/`) are inspected
-- **THEN** they contain no `await` on synchronous persistence, expose `all()/run()/tx()` rather than `prepare().bind()`, and their methods are synchronous
+- **THEN** they reach the database only through the promise-returning `CatalogDb` port, never wrap a synchronous call in `async` themselves, expose `all()/first()/run()/tx()` rather than `prepare().bind()`, and no synchronous catalog adapter remains in production code
 
 #### Scenario: Change-detecting callers still work
 - **WHEN** a catalog operation that detects modification (removed membership, archived session) runs
 - **THEN** it reads the affected-row count from `run()` and behaves identically to before
 
 #### Scenario: Atomic multi-statement writes use tx()
-- **WHEN** a catalog operation performs multiple writes atomically (formerly `batch()`)
-- **THEN** it runs them inside a single `tx()` implemented via `better-sqlite3`'s `db.transaction()` (not raw `BEGIN/COMMIT`), with all-or-nothing semantics preserved under a mid-write failure
+- **WHEN** a catalog operation performs multiple writes atomically, or writes based on what it just read
+- **THEN** it runs them inside a single `tx()`, with all-or-nothing semantics preserved under a mid-write failure
+
+#### Scenario: A store transaction composes inside a route transaction
+- **WHEN** a route's catalog transaction calls a store method that has its own transaction, and the route body then fails
+- **THEN** the store method's writes are rolled back with the route's
+
+#### Scenario: Concurrent first reads do not collide
+- **WHEN** two calls that create a row only if it is missing (a user's preferences row, a new team) run interleaved
+- **THEN** both complete without a constraint error, and exactly one row exists
 
 ### Requirement: Catalog facade exposes only role-scoped stores
 
 The `Catalog` type SHALL expose its domain stores (`shows`, `studios`, `auth`,
-`sessions`, `profile`) as the sole API surface. The flat delegate methods that forward to
+`sessions`, `profile`) as its API surface, plus two lifecycle members: `init()`, which loads the
+studio registry, and `tx()`, which runs a body on a `Catalog` bound to one catalog transaction. The flat delegate methods that forward to
 those stores SHALL be removed, and callers SHALL reach behavior through the store fields.
 
 #### Scenario: Delegate shim removed
@@ -526,6 +543,10 @@ The `KvStore` and `PresenceRegistry` port operations SHALL return promises, so a
 backend can replace the embedded one without changing call sites. Every caller SHALL await them,
 including the adapters' own internal calls.
 
+The `KvStore` port SHALL offer `take(key)`, which removes and returns a live entry in one atomic
+step and returns nothing for a missing or expired one. A one-shot credential, such as the OAuth
+CSRF state, SHALL be consumed with `take`, so of several concurrent consumers exactly one succeeds.
+
 The startup purge of expired key/value entries SHALL be attempted before the server accepts
 connections. A failed purge SHALL be logged and SHALL NOT prevent boot, because reads still
 treat expired entries as absent.
@@ -542,9 +563,18 @@ treat expired entries as absent.
 - **WHEN** a key/value entry's expiry has passed and it is read
 - **THEN** the read returns no value and the entry is removed
 
+#### Scenario: Concurrent takes of one entry
+- **WHEN** two callers take the same live key/value entry concurrently
+- **THEN** exactly one receives its value, the other receives nothing, and the entry is gone
+
+#### Scenario: A replayed OAuth state is refused under concurrency
+- **WHEN** two OAuth callbacks carrying the same valid state arrive concurrently
+- **THEN** at most one proceeds to sign-in and the other is redirected with `login_error=state_invalid`
+
 ### Requirement: Server code never drops or misuses a promise
 
-Production code under `server/src` SHALL NOT leave a promise unconsumed. Every promise-returning
+Production code under `server/src` and `packages/catalog/src` SHALL NOT leave a promise
+unconsumed. Every promise-returning
 call SHALL be awaited, returned, or explicitly discarded with `void`.
 
 No code SHALL:
@@ -555,16 +585,19 @@ No code SHALL:
   value. Such a callback's work would silently escape the caller's control, for example a write
   running after the transaction it was meant to be inside.
 
+A server test SHALL NOT pass a promise to an assertion except through `.resolves` or `.rejects`,
+so a missed `await` cannot make an assertion pass vacuously.
+
 A documented await-free window (a section of a request handler that relies on no other request
 interleaving) SHALL contain no storage call. Data the window needs from storage SHALL be read
 before it opens.
 
 #### Scenario: A dropped or misused promise fails the build
-- **WHEN** server production code drops a promise-returning call, including one made through a port interface or a local alias, or uses a promise as a condition, a comparison operand or a response value
+- **WHEN** server or catalog-package production code drops a promise-returning call, including one made through a port interface or a local alias, or uses a promise as a condition, a comparison operand or a response value
 - **THEN** a repository test fails and names the file and line
 
 #### Scenario: An async callback where no value is expected fails the build
-- **WHEN** server production code passes an async function to a parameter typed as a function returning no value, such as a mutation run inside a catalog transaction
+- **WHEN** server or catalog-package production code passes an async function to a parameter typed as a function returning no value, such as a mutation run inside a catalog transaction
 - **THEN** a repository test fails and names the file and line
 
 #### Scenario: Event-generation word snapshot stays await-free
@@ -582,6 +615,10 @@ before it opens.
 #### Scenario: Responses are unchanged
 - **WHEN** the existing route and WebSocket test suites run after this change
 - **THEN** they pass with no change to expected status codes, bodies, headers or frames
+
+#### Scenario: A test asserting on an unawaited promise fails the build
+- **WHEN** a server test passes a promise-typed value to `expect()` without `.resolves` or `.rejects`
+- **THEN** a repository test fails and names the file and line
 
 ### Requirement: The catalog transaction contract
 
@@ -641,8 +678,12 @@ The adapter SHALL also:
 - after a rollback fails, refuse every later call instead of serving a connection that is still
   inside a transaction.
 
-`KvStore` SHALL use this adapter, so key/value writes wait for an open catalog transaction instead
-of joining it.
+The catalog stores and `KvStore` SHALL share one instance of this adapter over the catalog
+connection, so no statement on that connection bypasses the lock and a key/value call never joins
+a catalog transaction.
+
+In a supervised deployment (production and stage), a failed rollback SHALL stop the server with a
+non-zero exit status, so its supervisor restarts it.
 
 #### Scenario: Outside statements wait for an open transaction
 - **WHEN** a root statement is issued while another transaction is awaiting
@@ -663,3 +704,7 @@ of joining it.
 #### Scenario: A failed rollback stops the adapter
 - **WHEN** a rollback fails and the connection is still inside the transaction
 - **THEN** the failing call rejects with its own first error, every later or queued call rejects with a broken-adapter error, and none writes to the connection
+
+#### Scenario: A broken connection stops a supervised server
+- **WHEN** a rollback fails and the adapter marks its connection broken in a supervised deployment
+- **THEN** the server logs the failure at error level and shuts down through its graceful path with a non-zero exit status

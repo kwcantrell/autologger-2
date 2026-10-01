@@ -37,13 +37,10 @@ export async function putOauthState(kv: KvStore, state: string, ttlSeconds = 180
   await kv.put(`${CSRF_PREFIX}${state}`, '1', { expirationTtl: ttlSeconds });
 }
 
-/** Delete and return true if the state existed (one-shot). */
+/** Delete and return true if the state existed (one-shot). One atomic take, so of two
+ * concurrent callbacks carrying the same state exactly one succeeds (async-catalog-stores D4). */
 export async function takeOauthState(kv: KvStore, state: string): Promise<boolean> {
-  const key = `${CSRF_PREFIX}${state}`;
-  const v = await kv.get(key);
-  if (v === null) return false;
-  await kv.delete(key);
-  return true;
+  return (await kv.take(`${CSRF_PREFIX}${state}`)) !== null;
 }
 
 export function newOauthState(): string {

@@ -77,8 +77,35 @@ describe('OAuth callback happy path (spike)', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
     expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
-    const user = catalogFor().auth.authGetUserByGoogleSub('sub-spike');
+    const user = await catalogFor().auth.authGetUserByGoogleSub('sub-spike');
     expect(user).not.toBeNull();
+  });
+});
+
+// async-catalog-stores D4: the state is consumed with one atomic take, so a replay is refused
+// even when two callbacks interleave (same-tick requests interleave at every await).
+describe('callback -- concurrent replay of one state', () => {
+  it('exactly one of two concurrent callbacks proceeds; the other gets state_invalid', async () => {
+    const idToken = await mintIdToken({
+      privateKey: KP.privateKey,
+      kid: KP.kid,
+      audience: CLIENT,
+      claims: { sub: 'sub-replay', email: 'replay@b.com', given_name: 'A', family_name: 'B' },
+    });
+    mockGoogleToken({ id_token: idToken });
+    mockGoogleToken({ id_token: idToken });
+    mockGoogleJwks(KP.publicJwk);
+    await putOauthState(env.ports.kv, 'state-replay');
+    const callback = () =>
+      app.request(
+        '/auth/google/callback?code=abc&state=state-replay',
+        { method: 'GET' },
+        OAUTH_ENV,
+      );
+    const locations = (await Promise.all([callback(), callback()])).map((r) =>
+      r.headers.get('location'),
+    );
+    expect(locations.sort()).toEqual(['/', '/?login_error=state_invalid']);
   });
 });
 
@@ -106,10 +133,10 @@ describe('GET /auth/google/start', () => {
 describe('callback -- existing user', () => {
   it('updates (does not duplicate) a user with a known google sub', async () => {
     const sub = 'sub-existing';
-    const seededId = seedUser({ sub });
+    const seededId = await seedUser({ sub });
     const res = await runCallback({ sub });
     expect(res.status).toBe(302);
-    const user = catalogFor().auth.authGetUserByGoogleSub(sub);
+    const user = await catalogFor().auth.authGetUserByGoogleSub(sub);
     expect(user).not.toBeNull();
     expect(String(user?.id)).toBe(seededId);
   });
@@ -335,8 +362,8 @@ describe('callback -- error branches', () => {
 
 describe('callback -- invite materialization (task 3.1, design D2)', () => {
   it('materializes a pending invite into a member membership, consuming it (case-insensitive match)', async () => {
-    const teamId = seedStudio();
-    catalogFor().auth.authUpsertInvite(teamId, 'new.person@example.com', 'seed-inviter');
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(teamId, 'new.person@example.com', 'seed-inviter');
 
     const res = await runCallback({
       sub: 'sub-invited',
@@ -348,14 +375,18 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
     const cat = catalogFor();
-    const uid = String(cat.auth.authGetUserByGoogleSub('sub-invited')?.id);
-    expect(cat.auth.authGetMembershipRole(uid, teamId)).toBe('member');
-    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(0);
+    const uid = String((await cat.auth.authGetUserByGoogleSub('sub-invited'))?.id);
+    expect(await cat.auth.authGetMembershipRole(uid, teamId)).toBe('member');
+    expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(0);
   });
 
   it('email_verified: false -- user is created, invite remains, no membership', async () => {
-    const teamId = seedStudio();
-    catalogFor().auth.authUpsertInvite(teamId, 'unverified-false@example.com', 'seed-inviter');
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(
+      teamId,
+      'unverified-false@example.com',
+      'seed-inviter',
+    );
 
     const res = await runCallback({
       sub: 'sub-unverified-false',
@@ -366,15 +397,19 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
     expect(res.status).toBe(302);
     const cat = catalogFor();
-    const user = cat.auth.authGetUserByGoogleSub('sub-unverified-false');
+    const user = await cat.auth.authGetUserByGoogleSub('sub-unverified-false');
     expect(user).not.toBeNull();
-    expect(cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
-    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+    expect(await cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
   });
 
   it('email_verified absent -- user is created, invite remains, no membership', async () => {
-    const teamId = seedStudio();
-    catalogFor().auth.authUpsertInvite(teamId, 'unverified-absent@example.com', 'seed-inviter');
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(
+      teamId,
+      'unverified-absent@example.com',
+      'seed-inviter',
+    );
 
     const res = await runCallback({
       sub: 'sub-unverified-absent',
@@ -385,16 +420,16 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
     expect(res.status).toBe(302);
     const cat = catalogFor();
-    const user = cat.auth.authGetUserByGoogleSub('sub-unverified-absent');
+    const user = await cat.auth.authGetUserByGoogleSub('sub-unverified-absent');
     expect(user).not.toBeNull();
-    expect(cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
-    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+    expect(await cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
   });
 
   it('a revoked invite never materializes', async () => {
-    const teamId = seedStudio();
-    catalogFor().auth.authUpsertInvite(teamId, 'revoked@example.com', 'seed-inviter');
-    catalogFor().auth.authDeleteInvite(teamId, 'revoked@example.com');
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(teamId, 'revoked@example.com', 'seed-inviter');
+    await catalogFor().auth.authDeleteInvite(teamId, 'revoked@example.com');
 
     const res = await runCallback({
       sub: 'sub-revoked',
@@ -405,15 +440,15 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
     expect(res.status).toBe(302);
     const cat = catalogFor();
-    const uid = String(cat.auth.authGetUserByGoogleSub('sub-revoked')?.id);
-    expect(cat.auth.authGetMembershipRole(uid, teamId)).toBeNull();
+    const uid = String((await cat.auth.authGetUserByGoogleSub('sub-revoked'))?.id);
+    expect(await cat.auth.authGetMembershipRole(uid, teamId)).toBeNull();
   });
 
   it('an existing user sign-in does not re-scan invites seeded after their account existed', async () => {
-    const teamId = seedStudio();
+    const teamId = await seedStudio();
     const sub = 'sub-existing-rescan';
-    const existingId = seedUser({ sub, email: 'existing@example.com' });
-    catalogFor().auth.authUpsertInvite(teamId, 'existing@example.com', 'seed-inviter');
+    const existingId = await seedUser({ sub, email: 'existing@example.com' });
+    await catalogFor().auth.authUpsertInvite(teamId, 'existing@example.com', 'seed-inviter');
 
     const res = await runCallback({
       sub,
@@ -424,8 +459,8 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
     expect(res.status).toBe(302);
     const cat = catalogFor();
-    expect(cat.auth.authGetMembershipRole(existingId, teamId)).toBeNull();
-    expect(cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+    expect(await cat.auth.authGetMembershipRole(existingId, teamId)).toBeNull();
+    expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
   });
 
   it('NEW_USER_ALL_TEAMS=1 grants nothing to a new user with no pending invites (design D5)', async () => {
@@ -435,15 +470,15 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
       NEW_USER_ALL_TEAMS: '1',
     });
-    seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
+    await seedStudio(); // a studio exists -- the deprecated grant, if it fired, would add it
     const res = await runCallback(
       { sub: 'sub-no-blanket-grant', email: 'no-invites@example.com', state: 'state-all-teams-1' },
       allTeamsEnv,
     );
     expect(res.status).toBe(302);
     const cat = catalogFor();
-    const uid = String(cat.auth.authGetUserByGoogleSub('sub-no-blanket-grant')?.id);
-    expect(cat.auth.authListStudioIdsForUser(uid)).toHaveLength(0);
+    const uid = String((await cat.auth.authGetUserByGoogleSub('sub-no-blanket-grant'))?.id);
+    expect(await cat.auth.authListStudioIdsForUser(uid)).toHaveLength(0);
     // Note: the one-time startup deprecation warning (design D5) fires from
     // node/config.ts's createBindings() at process boot, not per-request --
     // this envWith() overlay never calls createBindings, so the warning
@@ -453,9 +488,9 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
 
   it('a disabled account signing in is redirected without a cookie or any write (design D11)', async () => {
     const sub = 'sub-disabled';
-    const userId = seedUser({ sub, email: 'disabled@example.com' });
-    catalogFor().auth.authSetUserDisabled(userId, true);
-    const before = catalogFor().auth.authGetUserRowAny(userId);
+    const userId = await seedUser({ sub, email: 'disabled@example.com' });
+    await catalogFor().auth.authSetUserDisabled(userId, true);
+    const before = await catalogFor().auth.authGetUserRowAny(userId);
 
     const res = await runCallback({
       sub,
@@ -466,13 +501,13 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/?login_error=account_disabled');
     expect(res.headers.get('set-cookie')).toBeNull();
-    const after = catalogFor().auth.authGetUserRowAny(userId);
+    const after = await catalogFor().auth.authGetUserRowAny(userId);
     expect(after).toEqual(before); // no writes -- profile untouched
   });
 
   it('atomicity: a throw mid-materialization rolls back user creation (no user row persists)', async () => {
-    const teamId = seedStudio();
-    catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
+    const teamId = await seedStudio();
+    await catalogFor().auth.authUpsertInvite(teamId, 'atomic@example.com', 'seed-inviter');
     const spy = vi
       .spyOn(AuthStore.prototype, 'authConsumeInvitesForEmail')
       .mockImplementationOnce(() => {
@@ -495,20 +530,22 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     } finally {
       spy.mockRestore();
     }
-    const user = catalogFor().auth.authGetUserByGoogleSub('sub-atomic-fail');
+    const user = await catalogFor().auth.authGetUserByGoogleSub('sub-atomic-fail');
     expect(user).toBeNull(); // creation rolled back with the failed materialization
+    // async-catalog-stores 1.4: the invite is still pending and nobody joined the team.
+    expect(await catalogFor().auth.authListInvitesForTeam(teamId)).toHaveLength(1);
+    expect(await catalogFor().auth.authListTeamMembers(teamId)).toEqual([]);
     // Structural note: this proves the tx boundary in practice for this one
     // injection point. The router-level shape (create + seed-prefs +
-    // materialize all run inside one `c.env.ports.catalog.tx(...)` call in
-    // auth.ts, with no nested tx() in authConsumeInvitesForEmail /
-    // authAddMembershipWithRole) is the general guarantee; this test
+    // materialize all run inside one `catalog.tx(...)` call in auth.ts, whose
+    // store transactions join it) is the general guarantee; this test
     // exercises it via the one realistic throw site the real store exposes.
   });
 });
 
 describe('logout', () => {
   it('GET clears the session cookie and redirects', async () => {
-    const cookie = await loginCookie(seedUser({}));
+    const cookie = await loginCookie(await seedUser({}));
     const res = await app.request(
       '/auth/logout',
       { method: 'GET', headers: { Cookie: cookie } },

@@ -639,10 +639,12 @@ packages/                 Source-only npm workspace packages (no build step; ser
     migrate.ts               openCatalogDb + the directory-generic applyMigrations (filename-
                              ordered .sql, transactional) — takes any migrations dir, wired to
                              the catalog package's CATALOG_MIGRATIONS_DIR by node/config.ts
-    catalogStore.ts          CatalogDb — better-sqlite3-backed catalog query layer (the port
-                             implementation catalog/ speaks to, never imports)
+    asyncCatalogStore.ts     AsyncSqliteCatalogDb — the CatalogDb port over better-sqlite3: one
+                             FIFO lock per connection, transaction-scoped handles, misuse
+                             guards (the implementation catalog/ speaks to, never imports)
     kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion presence) on
-                             the catalog DB; clock is a required constructor parameter
+                             the catalog adapter (atomic take for OAuth state); clock is a
+                             required constructor parameter
     blobStore.ts             Filesystem blob store: atomic put, range get, list, traversal
                              guard; exports InvalidRangeError, mapped to 416 by instanceof at
                              app.ts and routers/audio.ts

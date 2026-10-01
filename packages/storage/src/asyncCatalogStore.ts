@@ -6,7 +6,7 @@
 // in Postgres), and misuse rejects instead of deadlocking or leaking writes.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { AsyncCatalogDb } from '@autologger/ports';
+import type { CatalogDb } from '@autologger/ports';
 import type { Database } from 'better-sqlite3';
 
 /** The root handle used inside an open transaction, a handle used after its transaction ended,
@@ -30,6 +30,8 @@ interface Connection {
   /** Settles when the last acquirer releases; never rejects. */
   tail: Promise<void>;
   broken: boolean;
+  /** Called once when the connection is marked broken (async-catalog-stores D5). */
+  onBroken?: () => void;
 }
 
 /** One lock per connection, shared by every adapter over it (design D2). */
@@ -62,19 +64,20 @@ function handled<T>(p: Promise<T>): Promise<T> {
 
 const DEFAULT_TX_TIMEOUT_MS = 10_000;
 
-export class AsyncSqliteCatalogDb implements AsyncCatalogDb {
+export class AsyncSqliteCatalogDb implements CatalogDb {
   private readonly conn: Connection;
   private readonly txTimeoutMs: number;
 
   constructor(
     private readonly db: Database,
-    opts: { txTimeoutMs?: number } = {},
+    opts: { txTimeoutMs?: number; onBroken?: () => void } = {},
   ) {
     let conn = connections.get(db);
     if (!conn) {
       conn = { tail: Promise.resolve(), broken: false };
       connections.set(db, conn);
     }
+    if (opts.onBroken) conn.onBroken = opts.onBroken;
     this.conn = conn;
     this.txTimeoutMs = opts.txTimeoutMs ?? DEFAULT_TX_TIMEOUT_MS;
   }
@@ -91,7 +94,7 @@ export class AsyncSqliteCatalogDb implements AsyncCatalogDb {
     return this.root(() => ({ changes: this.db.prepare(sql).run(...binds).changes }));
   }
 
-  async tx<T>(fn: (t: AsyncCatalogDb) => Promise<T>): Promise<T> {
+  async tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
     this.guardRoot();
     const release = await this.acquire();
     try {
@@ -158,7 +161,7 @@ export class AsyncSqliteCatalogDb implements AsyncCatalogDb {
     }
   }
 
-  private async transaction<T>(fn: (t: AsyncCatalogDb) => Promise<T>): Promise<T> {
+  private async transaction<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
     const state: TxState = { open: true, failed: false, error: undefined, joined: 0 };
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -220,13 +223,27 @@ export class AsyncSqliteCatalogDb implements AsyncCatalogDb {
     } catch {
       // checked below
     }
-    if (this.db.inTransaction) this.conn.broken = true;
+    if (this.db.inTransaction && !this.conn.broken) {
+      this.conn.broken = true;
+      const onBroken = this.conn.onBroken;
+      // Deferred and contained: the failing call rejects with its own error first, and a
+      // throwing callback can never reach this rollback path.
+      if (onBroken) {
+        setImmediate(() => {
+          try {
+            onBroken();
+          } catch (error) {
+            console.error('[catalog] onBroken callback failed', error);
+          }
+        });
+      }
+    }
   }
 }
 
 /** The handle a transaction body receives. Its statements run at call time: the transaction
  * already holds the lock. */
-class TxHandle implements AsyncCatalogDb {
+class TxHandle implements CatalogDb {
   constructor(
     private readonly db: Database,
     private readonly state: TxState,
@@ -245,7 +262,7 @@ class TxHandle implements AsyncCatalogDb {
   }
 
   /** Joins the enclosing transaction; its error fails the whole transaction. */
-  tx<T>(fn: (t: AsyncCatalogDb) => Promise<T>): Promise<T> {
+  tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
     return handled(
       (async () => {
         this.checkUsable();

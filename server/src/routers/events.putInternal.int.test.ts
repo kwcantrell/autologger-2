@@ -76,9 +76,11 @@ async function putEvent(
 
 describe('PUT event update — profile-defined internal category (frozen edge)', () => {
   it('strips category UI snapshots when the profile defines id `internal`', async () => {
-    const session = seededSession({
-      categoriesJson: categoriesJsonWithInternal('internal'),
-    }).sessionId;
+    const session = (
+      await seededSession({
+        categoriesJson: categoriesJsonWithInternal('internal'),
+      })
+    ).sessionId;
     const ev = await postEvent(session, 'cam');
     expect(ev.metadata[UI_SNAPSHOT_LABEL_KEY]).toBe('Camera');
     expect(ev.metadata[UI_SNAPSHOT_COLOR_KEY]).toBe('#112233');
@@ -95,9 +97,11 @@ describe('PUT event update — profile-defined internal category (frozen edge)',
   });
 
   it('strips snapshots for any letter case of the profile-defined id', async () => {
-    const session = seededSession({
-      categoriesJson: categoriesJsonWithInternal('Internal'),
-    }).sessionId;
+    const session = (
+      await seededSession({
+        categoriesJson: categoriesJsonWithInternal('Internal'),
+      })
+    ).sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'Internal',
@@ -112,7 +116,7 @@ describe('PUT event update — profile-defined internal category (frozen edge)',
 
 describe('PUT event update — non-profile category rejected (frozen asymmetry)', () => {
   it('400s on `internal` when the profile does not define it (default seed profile)', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'internal',
@@ -123,7 +127,7 @@ describe('PUT event update — non-profile category rejected (frozen asymmetry)'
   });
 
   it('400s on any other non-profile category', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const ev = await postEvent(session, 'cam');
     const res = await putEvent(session, ev.event_id, {
       category: 'nope',
@@ -133,7 +137,7 @@ describe('PUT event update — non-profile category rejected (frozen asymmetry)'
   });
 
   it('POST (asymmetrically) admits the built-in `internal` even off-profile', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const ev = await postEvent(session, 'internal');
     expect(ev.category).toBe('internal');
   });

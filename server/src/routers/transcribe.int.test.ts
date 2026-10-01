@@ -29,7 +29,7 @@ const J = { 'content-type': 'application/json' };
 
 describe('unavailable endpoints (503)', () => {
   it('transcribe.csv, transcript-words/generate, topics/generate are 503', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     for (const path of [
       `/api/sessions/${s}/transcribe.csv`,
       `/api/sessions/${s}/transcript-words/generate`,
@@ -42,7 +42,7 @@ describe('unavailable endpoints (503)', () => {
   });
 
   it('unconfigured generate is byte-identical to the pre-change frozen response', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/generate`,
       { method: 'POST' },
@@ -60,7 +60,7 @@ describe('unavailable endpoints (503)', () => {
   // with that change, not before.
 
   it('topics/generate is byte-identical to the pre-change frozen 503', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/topics/generate`,
       { method: 'POST' },
@@ -135,8 +135,8 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     await __resetAiMcpListenerForTests();
   });
 
-  function newSession(): string {
-    const s = seededSession().sessionId;
+  async function newSession(): Promise<string> {
+    const s = (await seededSession()).sessionId;
     seededIds.push(s);
     return s;
   }
@@ -228,7 +228,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   }
 
   it('unconfigured: 503 byte-identical to the pre-change detail, no spawn (configured-vs-unconfigured contrast)', async () => {
-    const s = newSession();
+    const s = await newSession();
     const res = await generateReq(s, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
@@ -238,7 +238,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('open-network + configured: 503 with a distinct detail, no spawn', async () => {
-    const s = newSession();
+    const s = await newSession();
     seedTranscript(s);
     const res = await generateReq(
       s,
@@ -257,7 +257,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('configured + no transcript words: 400, no spawn', async () => {
-    const s = newSession();
+    const s = await newSession();
     // Deliberately no seedTranscript(s) call.
     const res = await generateReq(s, claudeConfiguredEnv(SUCCESS_STREAM_FIXTURE));
     expect(res.status).toBe(400);
@@ -267,7 +267,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   });
 
   it('configured + concurrency: a turn already holding the session slot → 409, no spawn', async () => {
-    const s = newSession();
+    const s = await newSession();
     seedTranscript(s);
     const slot = aiChatTurns.tryAcquire(s, 2);
     expect(slot.ok).toBe(true);
@@ -286,7 +286,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     'configured + MULTI-PAGE transcript + success: 200 {topics} — the OLD topics are gone, the ' +
       'fresh set (real create_topic calls) replaces them, and the shape matches GET …/topics',
     async () => {
-      const s = newSession();
+      const s = await newSession();
       seedMultiPageTranscript(s);
       const oldA = seedTopic(s, 'Old topic A');
       const oldB = seedTopic(s, 'Old topic B');
@@ -361,7 +361,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       'prior topics are BYTE-FOR-BYTE unchanged — deleteTopics(newIds) removes only the topics THIS ' +
       'run created, proven against real create_topic calls made before the failure',
     async () => {
-      const s = newSession();
+      const s = await newSession();
       seedTranscript(s);
       const oldA = seedTopic(s, 'Old topic A');
       const oldB = seedTopic(s, 'Old topic B');
@@ -398,7 +398,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       '502, prior topics intact — the simulated fake-claude.mjs success stream never makes a real ' +
       'MCP call, so newIds.length === 0 even though outcome.ok is true',
     async () => {
-      const s = newSession();
+      const s = await newSession();
       seedTranscript(s);
       const old = seedTopic(s, 'Only old topic');
       const preRunSnapshot = currentTopics(s);
@@ -428,7 +428,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       const injected: Clock = { now: () => Date.now() };
       const spy = vi.spyOn(topicGenerateModule, 'generateTopicsTurn');
       try {
-        const s = newSession();
+        const s = await newSession();
         seedTranscript(s);
         // SUCCESS_STREAM_FIXTURE never makes a real MCP call (see the
         // zero-topics-created test above), so this always resolves 502 —
@@ -449,7 +449,7 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
   );
 
   it('transcribe.csv stays frozen 503 even on a fully configured deployment', async () => {
-    const s = newSession();
+    const s = await newSession();
     const res = await app.request(
       `/api/sessions/${s}/transcribe.csv`,
       { method: 'GET' },
@@ -511,8 +511,8 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
       }) as unknown as ReturnType<typeof vi.spyOn>;
   }
 
-  function seedForGenerate(): { sessionId: string; priorIds: string[] } {
-    const sessionId = seededSession().sessionId;
+  async function seedForGenerate(): Promise<{ sessionId: string; priorIds: string[] }> {
+    const sessionId = (await seededSession()).sessionId;
     const hub = env.ports.sessions.get(sessionId);
     hub.insertTranscriptWord({ session_time: '00:00:01', speaker: 'Host', word: 'hello' });
     const priorIds = ['Old topic A', 'Old topic B'].map(
@@ -541,7 +541,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
   for (const [label, pageCoverage] of partials) {
     it(`${label}: 502 with the existing detail, prior topics byte-for-byte intact, fresh rows removed`, async () => {
-      const { sessionId, priorIds } = seedForGenerate();
+      const { sessionId, priorIds } = await seedForGenerate();
       const before = env.ports.sessions.get(sessionId).listTopics();
       stubTurn(pageCoverage);
 
@@ -560,7 +560,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
   }
 
   it('every page served: 200 {topics} — the prior set is replaced by the fresh one', async () => {
-    const { sessionId, priorIds } = seedForGenerate();
+    const { sessionId, priorIds } = await seedForGenerate();
     stubTurn({ totalPages: 4, servedPages: 4 });
 
     const res = await generateReq(sessionId);
@@ -576,7 +576,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     // whose registration carries no snapshot: no coverage claim ⇒ the gate
     // cannot fail the run. (The real-fixture success test above exercises the
     // same property end to end, through a genuine CLI turn.)
-    const { sessionId } = seedForGenerate();
+    const { sessionId } = await seedForGenerate();
     stubTurn({ totalPages: 0, servedPages: 0 });
 
     const res = await generateReq(sessionId);
@@ -586,7 +586,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
   });
 
   it('coverage complete but ZERO topics created: still the existing 502 + restore', async () => {
-    const { sessionId } = seedForGenerate();
+    const { sessionId } = await seedForGenerate();
     const before = env.ports.sessions.get(sessionId).listTopics();
     stubTurn({ totalPages: 2, servedPages: 2 }, 0);
 
@@ -599,7 +599,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
 
 describe('transcript-words CRUD', () => {
   it('create → list → patch → delete', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const create = await app.request(
       `/api/sessions/${s}/transcript-words`,
       { method: 'POST', headers: J, body: JSON.stringify({ speaker: 'Host', word: 'hello' }) },
@@ -632,7 +632,7 @@ describe('transcript-words CRUD', () => {
   });
 
   it('404 patching an unknown word', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-words/nope`,
       { method: 'PATCH', headers: J, body: JSON.stringify({ word: 'x' }) },
@@ -644,7 +644,7 @@ describe('transcript-words CRUD', () => {
 
 describe('topics CRUD', () => {
   it('create → list → patch → delete', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const create = await app.request(
       `/api/sessions/${s}/topics`,
       { method: 'POST', headers: J, body: JSON.stringify({ summary: 'Intro', topic_level: 1 }) },
@@ -672,7 +672,7 @@ describe('topics CRUD', () => {
   });
 
   it('404 deleting an unknown topic', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/topics/nope`,
       { method: 'DELETE' },
@@ -765,7 +765,7 @@ describe('transcript generation', () => {
   });
 
   it('200 {words}: session_time/speaker strings, start_sec/end_sec, contiguous ordinals, ordinal order', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
 
@@ -816,7 +816,7 @@ describe('transcript generation', () => {
   });
 
   it('400 no-audio: a session with zero audio segments', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await generate(s);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { detail: string };
@@ -824,20 +824,20 @@ describe('transcript generation', () => {
   });
 
   it('400 all-unreadable: segments exist but none is readable (distinct detail from no-audio)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, CORRUPT);
 
     const res = await generate(s);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { detail: string };
 
-    const noAudioRes = await generate(seededSession().sessionId);
+    const noAudioRes = await generate((await seededSession()).sessionId);
     const noAudioBody = (await noAudioRes.json()) as { detail: string };
     expect(body.detail).not.toBe(noAudioBody.detail);
   });
 
   it('400 zero-word result does not wipe the transcript (gate decision 2)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'existing');
 
@@ -856,7 +856,7 @@ describe('transcript generation', () => {
   });
 
   it('abandons the run without provider spend when the request is already aborted', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
 
     const fetchMock = vi.fn(
@@ -875,7 +875,7 @@ describe('transcript generation', () => {
   });
 
   it('409 concurrent: a second run is rejected with no additional provider spend', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
 
     const release: { fn: (() => void) | null } = { fn: null };
@@ -913,7 +913,7 @@ describe('transcript generation', () => {
     // test here is followed by this suite's unconditional afterEach reset, so
     // dropping that `finally` would wedge the lock without failing any of them.
     // This test asserts release BEFORE any reset runs.
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     // Zero audio segments → the run fails (400 no_audio) AFTER acquiring the
     // process-wide slot.
     const res = await generate(s);
@@ -928,16 +928,16 @@ describe('transcript generation', () => {
 
   it('409 concurrent: the enriched detail is redacted for a logged-in non-member of the holding session’s studio', async () => {
     // Holder: a session in a studio the requester does NOT belong to.
-    const holderStudio = seedStudio();
-    const holderShow = seedShow({ studioId: holderStudio });
-    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
+    const holderStudio = await seedStudio();
+    const holderShow = await seedShow({ studioId: holderStudio });
+    const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
 
     // Requester: member of their own session's studio only.
-    const myStudio = seedStudio();
-    const myShow = seedShow({ studioId: myStudio });
-    const mySession = seedSession({ showId: myShow });
-    const cookie = await loginCookie(seedUser({ studios: [myStudio] }));
+    const myStudio = await seedStudio();
+    const myShow = await seedShow({ studioId: myStudio });
+    const mySession = await seedSession({ showId: myShow });
+    const cookie = await loginCookie(await seedUser({ studios: [myStudio] }));
 
     const res = await generate(
       mySession,
@@ -955,13 +955,13 @@ describe('transcript generation', () => {
   });
 
   it('409 concurrent: redaction checks the holder the detail names, even if the lock changes hands (async-session-callers D5)', async () => {
-    const holderStudio = seedStudio();
-    const holderShow = seedShow({ studioId: holderStudio });
-    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Swapped Title' });
+    const holderStudio = await seedStudio();
+    const holderShow = await seedShow({ studioId: holderStudio });
+    const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Swapped Title' });
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
-    const myStudio = seedStudio();
-    const mySession = seedSession({ showId: seedShow({ studioId: myStudio }) });
-    const cookie = await loginCookie(seedUser({ studios: [myStudio] }));
+    const myStudio = await seedStudio();
+    const mySession = await seedSession({ showId: await seedShow({ studioId: myStudio }) });
+    const cookie = await loginCookie(await seedUser({ studios: [myStudio] }));
     // The detail is built from the real (foreign) holder; any later lock read sees the
     // requester's own session, as if the lock changed hands meanwhile.
     const real = transcriptGenerationLock.getLock.bind(transcriptGenerationLock);
@@ -985,17 +985,17 @@ describe('transcript generation', () => {
   });
 
   it('409 concurrent: a logged-in member of the holding session’s studio keeps the enriched detail', async () => {
-    const holderStudio = seedStudio();
-    const holderShow = seedShow({ studioId: holderStudio });
-    const holderSession = seedSession({ showId: holderShow, title: 'Visible Holder Title' });
+    const holderStudio = await seedStudio();
+    const holderShow = await seedShow({ studioId: holderStudio });
+    const holderSession = await seedSession({ showId: holderShow, title: 'Visible Holder Title' });
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
 
     // Requester: member of BOTH studios — their own (to pass requireSession)
     // and the holder's (to see its identifiers).
-    const myStudio = seedStudio();
-    const myShow = seedShow({ studioId: myStudio });
-    const mySession = seedSession({ showId: myShow });
-    const cookie = await loginCookie(seedUser({ studios: [myStudio, holderStudio] }));
+    const myStudio = await seedStudio();
+    const myShow = await seedShow({ studioId: myStudio });
+    const mySession = await seedSession({ showId: myShow });
+    const cookie = await loginCookie(await seedUser({ studios: [myStudio, holderStudio] }));
 
     const res = await generate(
       mySession,
@@ -1008,7 +1008,7 @@ describe('transcript generation', () => {
   });
 
   it('502 upstream failure preserves existing words', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'existing');
 
@@ -1047,7 +1047,7 @@ describe('transcript generation', () => {
   // through the app, not a unit-level throw).
   describe('cross-package instanceof pin: TranscriptGenerateError -> {502,409} through the real app (task 4.5, design D6)', () => {
     it('an "upstream" TranscriptGenerateError matches :157 (false) then :59 (true) -> exact frozen 502 {detail}', async () => {
-      const s = seededSession().sessionId;
+      const s = (await seededSession()).sessionId;
       await uploadSegment(s, SEG1);
 
       vi.stubGlobal(
@@ -1065,15 +1065,18 @@ describe('transcript generation', () => {
     });
 
     it('an "in_flight" TranscriptGenerateError matches :157 (true) then, for a visible holder, falls through to :59 (true) -> exact frozen 409 {detail}', async () => {
-      const holderStudio = seedStudio();
-      const holderShow = seedShow({ studioId: holderStudio });
-      const holderSession = seedSession({ showId: holderShow, title: 'Instanceof Pin Holder' });
+      const holderStudio = await seedStudio();
+      const holderShow = await seedShow({ studioId: holderStudio });
+      const holderSession = await seedSession({
+        showId: holderShow,
+        title: 'Instanceof Pin Holder',
+      });
       expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
 
-      const myStudio = seedStudio();
-      const myShow = seedShow({ studioId: myStudio });
-      const mySession = seedSession({ showId: myShow });
-      const cookie = await loginCookie(seedUser({ studios: [myStudio, holderStudio] }));
+      const myStudio = await seedStudio();
+      const myShow = await seedShow({ studioId: myStudio });
+      const mySession = await seedSession({ showId: myShow });
+      const cookie = await loginCookie(await seedUser({ studios: [myStudio, holderStudio] }));
 
       const res = await generate(
         mySession,
@@ -1110,7 +1113,7 @@ describe('transcript generation', () => {
   }
 
   it('persists real-fixture enrichment and reads it back in ordinal order (anchored)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
     stubFetchWithFixture();
@@ -1143,7 +1146,7 @@ describe('transcript generation', () => {
   });
 
   it('anchorless-group enrichment reads back with NULL start/end, not zeros', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     // No "Recording N Started" event logged — the segment's group resolves
     // no recording-start anchor (3-step chain step 3: anchorless).
     await uploadSegment(s, SEG1);
@@ -1166,7 +1169,7 @@ describe('transcript generation', () => {
   });
 
   it('a never-generated session reads listTranscriptEnrichment as empty arrays', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     expect(env.ports.sessions.get(s).listTranscriptEnrichment()).toEqual({
       paragraphs: [],
       sentiment: [],
@@ -1174,7 +1177,7 @@ describe('transcript generation', () => {
   });
 
   it('GET transcript-words shape is unchanged after enrichment is persisted', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await logRecordingStarted(s, 1);
     await uploadSegment(s, SEG1, { recordingOrdinal: 1 });
     stubFetchWithFixture();
@@ -1200,7 +1203,7 @@ describe('transcript generation', () => {
   });
 
   it('no transcript-enrichment HTTP route exists (in-process read only, design D5)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/transcript-enrichment`,
       { method: 'GET' },
@@ -1210,7 +1213,7 @@ describe('transcript generation', () => {
   });
 
   it('replace-on-rerun: a successful run replaces prior words atomically', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await uploadSegment(s, SEG1);
     await addManualWord(s, 'stale');
 
@@ -1249,8 +1252,8 @@ describe('transcript generation lock status', () => {
   });
 
   it('busy: names the holder with catalog title and started_at', async () => {
-    const { sessionId } = seededSession();
-    const title = String(catalogFor().sessions.getSessionIndexRow(sessionId)?.title ?? '');
+    const { sessionId } = await seededSession();
+    const title = String((await catalogFor().sessions.getSessionIndexRow(sessionId))?.title ?? '');
     const startedAtMs = 1_700_000_000_000;
     expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
 
@@ -1287,14 +1290,14 @@ describe('transcript generation lock status', () => {
   // (REQUIRE_LOGIN=0, user === null) full-detail behavior.
 
   it('busy for a logged-in NON-member of the holder’s studio: identifiers are null, busy-ness truthful', async () => {
-    const holderStudio = seedStudio();
-    const holderShow = seedShow({ studioId: holderStudio });
-    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
+    const holderStudio = await seedStudio();
+    const holderShow = await seedShow({ studioId: holderStudio });
+    const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
     const startedAtMs = 1_700_000_000_000;
     expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
 
-    const otherStudio = seedStudio();
-    const cookie = await loginCookie(seedUser({ studios: [otherStudio] }));
+    const otherStudio = await seedStudio();
+    const cookie = await loginCookie(await seedUser({ studios: [otherStudio] }));
 
     const res = await app.request(
       '/api/transcript-generation/status',
@@ -1311,13 +1314,13 @@ describe('transcript generation lock status', () => {
   });
 
   it('busy for a logged-in MEMBER of the holder’s studio: full identifiers', async () => {
-    const holderStudio = seedStudio();
-    const holderShow = seedShow({ studioId: holderStudio });
-    const holderSession = seedSession({ showId: holderShow, title: 'Member-Visible Title' });
+    const holderStudio = await seedStudio();
+    const holderShow = await seedShow({ studioId: holderStudio });
+    const holderSession = await seedSession({ showId: holderShow, title: 'Member-Visible Title' });
     const startedAtMs = 1_700_000_000_000;
     expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
 
-    const cookie = await loginCookie(seedUser({ studios: [holderStudio] }));
+    const cookie = await loginCookie(await seedUser({ studios: [holderStudio] }));
 
     const res = await app.request(
       '/api/transcript-generation/status',

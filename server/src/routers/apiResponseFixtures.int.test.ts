@@ -84,9 +84,9 @@ const CATEGORIES_JSON = JSON.stringify(CATEGORIES);
  * which a freshly constructed `Catalog` populates only on `.init()` (normally
  * done per request by `authContext`) — the `initedCatalog()` idiom from
  * `teams.int.test.ts`. */
-function initedCatalog() {
+async function initedCatalog() {
   const cat = catalogFor();
-  cat.init();
+  await cat.init();
   return cat;
 }
 
@@ -100,13 +100,13 @@ async function anonymousStudioId(): Promise<string> {
  * `GET /api/sessions` and every per-session route need. */
 async function seedActiveChain(): Promise<{ studioId: string; showId: string; sessionId: string }> {
   const studioId = await anonymousStudioId();
-  const showId = seedShow({
+  const showId = await seedShow({
     studioId,
     name: 'All The Smoke',
     code: 'ATS',
     categoriesJson: CATEGORIES_JSON,
   });
-  const sessionId = seedSession({ showId, episode: '002', title: 'ATS - 2' });
+  const sessionId = await seedSession({ showId, episode: '002', title: 'ATS - 2' });
   return { studioId, showId, sessionId };
 }
 
@@ -117,26 +117,26 @@ async function seedActiveChain(): Promise<{ studioId: string; showId: string; se
 describe('GET /api/admin/users', () => {
   it('matches the captured fixture', async () => {
     const token = 'fixture-admin-token';
-    const teamA = seedStudio({ id: 'my-crew', name: 'My Crew' });
-    seedStudio({ id: 'ymhs', name: 'YMHS' });
-    seedUser({ email: 'ann@example.com', sub: 'sub-ann', studios: [teamA] });
+    const teamA = await seedStudio({ id: 'my-crew', name: 'My Crew' });
+    await seedStudio({ id: 'ymhs', name: 'YMHS' });
+    await seedUser({ email: 'ann@example.com', sub: 'sub-ann', studios: [teamA] });
     // `authListUsersAdmin` orders by `created_at_utc DESC`, which is
     // millisecond-precision — two users minted in the same millisecond would
     // tie and the row order would be arbitrary, making the fixture flaky.
     await new Promise((resolve) => setTimeout(resolve, 2));
-    seedUser({ email: 'bo@example.com', sub: 'sub-bo' }); // no memberships → `studios: []`
+    await seedUser({ email: 'bo@example.com', sub: 'sub-bo' }); // no memberships → `studios: []`
     await new Promise((resolve) => setTimeout(resolve, 2));
     // A membership row pointing at a studio id with no catalog entry —
     // `authAddMemberships` has no FK check, so this is reachable in production
     // whenever a team is deleted out from under a member. Captures admin.ts's
     // `names[m] ?? m` fallback, i.e. a membership whose `name` equals its
     // `id` (the `web-admin-users` spec scenario; task 4.4).
-    seedUser({ email: 'cleo@example.com', sub: 'sub-cleo', studios: ['ghost-team'] });
+    await seedUser({ email: 'cleo@example.com', sub: 'sub-cleo', studios: ['ghost-team'] });
     await new Promise((resolve) => setTimeout(resolve, 2));
     // A member of every studio in the catalog, including both built-ins —
     // captures the add-membership control's "offered nothing" branch
     // (task 4.4).
-    seedUser({
+    await seedUser({
       email: 'dee@example.com',
       sub: 'sub-dee',
       studios: ['test-studios', 'test-studio-2', 'my-crew', 'ymhs'],
@@ -161,12 +161,17 @@ describe('GET /api/admin/users', () => {
 describe('GET /api/profile', () => {
   it('anonymous (oauth unconfigured) matches the captured fixture', async () => {
     const studioId = await anonymousStudioId();
-    initedCatalog().studios.saveStudioSettingsBlob(studioId, {
+    await (await initedCatalog()).studios.saveStudioSettingsBlob(studioId, {
       categories: CATEGORIES,
       show_title_format: 'ATS',
       default_frame_rate: 24,
     });
-    seedShow({ studioId, name: 'All The Smoke', code: 'ATS', categoriesJson: CATEGORIES_JSON });
+    await seedShow({
+      studioId,
+      name: 'All The Smoke',
+      code: 'ATS',
+      categoriesJson: CATEGORIES_JSON,
+    });
 
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     await expectCapturedResponse(
@@ -181,23 +186,23 @@ describe('GET /api/profile', () => {
   });
 
   it('authenticated matches the captured fixture', async () => {
-    const teamA = seedStudio({ id: 'my-crew', name: 'My Crew' });
-    const teamB = seedStudio({ id: 'ymhs', name: 'YMHS' });
-    initedCatalog().studios.saveStudioSettingsBlob(teamA, {
+    const teamA = await seedStudio({ id: 'my-crew', name: 'My Crew' });
+    const teamB = await seedStudio({ id: 'ymhs', name: 'YMHS' });
+    await (await initedCatalog()).studios.saveStudioSettingsBlob(teamA, {
       categories: CATEGORIES,
       show_title_format: 'ATS',
       default_frame_rate: 24,
     });
-    const showId = seedShow({
+    const showId = await seedShow({
       studioId: teamA,
       name: 'All The Smoke',
       code: 'ATS',
       categoriesJson: CATEGORIES_JSON,
     });
-    const userId = seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
-    catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
-    catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
-    catalogFor().auth.authSetPrefs(userId, teamA, showId);
+    const userId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
+    await catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
+    await catalogFor().auth.authSetPrefs(userId, teamA, showId);
 
     const res = await app.request(
       '/api/profile',
@@ -249,7 +254,12 @@ describe('GET /api/profile', () => {
 describe('GET /api/shows?studio_id=…', () => {
   it('matches the captured fixture', async () => {
     const studioId = await anonymousStudioId();
-    seedShow({ studioId, name: 'All The Smoke', code: 'ATS', categoriesJson: CATEGORIES_JSON });
+    await seedShow({
+      studioId,
+      name: 'All The Smoke',
+      code: 'ATS',
+      categoriesJson: CATEGORIES_JSON,
+    });
     const res = await app.request(
       `/api/shows?studio_id=${studioId}`,
       { method: 'GET' },
@@ -270,7 +280,7 @@ describe('GET /api/shows?studio_id=…', () => {
 describe('GET /api/shows/:showId', () => {
   it('matches the captured fixture', async () => {
     const studioId = await anonymousStudioId();
-    const showId = seedShow({
+    const showId = await seedShow({
       studioId,
       name: 'All The Smoke',
       code: 'ATS',
@@ -340,7 +350,7 @@ describe('GET /api/sessions/:id/show-categories', () => {
 describe('sessions', () => {
   it('GET /api/sessions matches the captured fixture (active + archived)', async () => {
     const { showId, sessionId } = await seedActiveChain();
-    const archived = seedSession({ showId, episode: '001', title: 'ATS - 1' });
+    const archived = await seedSession({ showId, episode: '001', title: 'ATS - 1' });
     await app.request(`/api/sessions/${archived}/archive`, { method: 'POST' }, { ...env });
     expect(sessionId).toBeTruthy();
 
@@ -372,7 +382,7 @@ describe('sessions', () => {
 
   it('POST /api/sessions matches the captured fixture', async () => {
     const studioId = await anonymousStudioId();
-    const showId = seedShow({
+    const showId = await seedShow({
       studioId,
       name: 'All The Smoke',
       code: 'ATS',
@@ -382,7 +392,11 @@ describe('sessions', () => {
     // captured title is deterministic (`ATS_0002`) rather than embedding
     // today's UTC date — the Date-suffix derivation path has its own
     // dedicated, non-fixture coverage in sessions.int.test.ts.
-    env.ports.catalog.run('UPDATE shows SET title_suffix = ? WHERE id = ?', 'episode', showId);
+    await env.ports.catalog.run(
+      'UPDATE shows SET title_suffix = ? WHERE id = ?',
+      'episode',
+      showId,
+    );
     const res = await app.request(
       '/api/sessions',
       {
@@ -719,15 +733,15 @@ describe('topics', () => {
 // ---------------------------------------------------------------------------
 
 async function seedTeam(): Promise<{ team: string; adminId: string; adminCookie: string }> {
-  const team = seedStudio({ id: 'my-crew', name: 'My Crew' });
-  const adminId = seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
-  catalogFor().auth.authAddMembershipWithRole(adminId, team, 'admin');
+  const team = await seedStudio({ id: 'my-crew', name: 'My Crew' });
+  const adminId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
+  await catalogFor().auth.authAddMembershipWithRole(adminId, team, 'admin');
   return { team, adminId, adminCookie: await loginCookie(adminId) };
 }
 
 describe('teams', () => {
   it('POST /api/teams matches the captured fixture', async () => {
-    const cookie = await loginCookie(seedUser({ email: 'ann@example.com', sub: 'sub-ann' }));
+    const cookie = await loginCookie(await seedUser({ email: 'ann@example.com', sub: 'sub-ann' }));
     const res = await app.request(
       '/api/teams',
       {
@@ -745,8 +759,8 @@ describe('teams', () => {
 
   it('GET /api/teams/:id as an admin matches the captured fixture (carries `invites`)', async () => {
     const { team, adminCookie } = await seedTeam();
-    const memberId = seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
-    catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
     await app.request(
       `/api/teams/${team}/invites`,
       {
@@ -776,8 +790,8 @@ describe('teams', () => {
 
   it('GET /api/teams/:id as a member matches the captured fixture (no `invites` key)', async () => {
     const { team, adminCookie } = await seedTeam();
-    const memberId = seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
-    catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
     await app.request(
       `/api/teams/${team}/invites`,
       {
@@ -826,8 +840,8 @@ describe('teams', () => {
 
   it('POST …/members/:uid/role matches the captured fixture', async () => {
     const { team, adminCookie } = await seedTeam();
-    const memberId = seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
-    catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
     const res = await app.request(
       `/api/teams/${team}/members/${memberId}/role`,
       {
@@ -880,9 +894,9 @@ describe('GET /api/transcript-generation/status', () => {
     // (same key set — see transcribe.int.test.ts), so the web tier covers it
     // type-level off this same fixture with a nulled spread rather than a
     // second capture.
-    const studioId = seedStudio();
-    const showId = seedShow({ studioId });
-    const sessionId = seedSession({ showId, episode: '002', title: 'ATS - 2' });
+    const studioId = await seedStudio();
+    const showId = await seedShow({ studioId });
+    const sessionId = await seedSession({ showId, episode: '002', title: 'ATS - 2' });
     // Fixed acquisition instant — redacted to `#`s anyway, but deterministic.
     expect(transcriptGenerationLock.tryAcquire(sessionId, 1_700_000_000_000)).toBe(true);
     try {
@@ -917,8 +931,8 @@ describe('GET /api/transcript-generation/status', () => {
 
 describe('log-import', () => {
   it('POST /api/shows/:showId/log-import and GET /api/log-import/:jobId (terminal) match the captured fixtures', async () => {
-    const studioId = seedStudio();
-    const showId = seedShow({ studioId });
+    const studioId = await seedStudio();
+    const showId = await seedShow({ studioId });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),

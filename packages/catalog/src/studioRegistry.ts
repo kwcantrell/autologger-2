@@ -27,14 +27,14 @@ import type { CatalogDb } from '@autologger/ports';
  * Property-style function types (design D3 — contravariant `implements`
  * checking under `strictFunctionTypes`). */
 export interface StudioRegistryFacade {
-  adminCreateStudio: (studioId: string, displayName: string) => void;
-  adminDeleteStudio: (studioId: string) => void;
-  getSetting: (key: string, def?: string | null) => string | null;
+  adminCreateStudio: (studioId: string, displayName: string) => Promise<void>;
+  adminDeleteStudio: (studioId: string) => Promise<void>;
+  getSetting: (key: string, def?: string | null) => Promise<string | null>;
   isKnownStudio: (studioId: string) => boolean;
   listStudiosBrief: () => Array<{ id: string; name: string }>;
-  renameStudio: (studioId: string, displayName: string) => void;
-  saveStudioSettingsBlob: (studioId: string, blob: Record<string, unknown>) => void;
-  setSetting: (key: string, value: string) => void;
+  renameStudio: (studioId: string, displayName: string) => Promise<void>;
+  saveStudioSettingsBlob: (studioId: string, blob: Record<string, unknown>) => Promise<void>;
+  setSetting: (key: string, value: string) => Promise<void>;
   studioNamesDict: () => Record<string, string>;
   studioOrderTuple: () => string[];
 }
@@ -45,18 +45,27 @@ export class StudioRegistry implements StudioRegistryFacade {
 
   constructor(private db: CatalogDb) {}
 
+  /** The same registry over another handle, carrying this snapshot, so a transaction body runs
+   * on it without re-querying (async-catalog-stores D3). */
+  withDb(db: CatalogDb): StudioRegistry {
+    const bound = new StudioRegistry(db);
+    bound.order = this.order;
+    bound.names = this.names;
+    return bound;
+  }
+
   /** Must run once per request before reads that depend on the studio registry. */
-  init(): void {
-    this.refreshStudioRegistry();
+  async init(): Promise<void> {
+    await this.refreshStudioRegistry();
   }
 
   // -- Studio registry (built-ins merged with studio_definitions rows) ---------
 
-  refreshStudioRegistry(): void {
+  async refreshStudioRegistry(): Promise<void> {
     const names: Record<string, string> = { ...BUILTIN_STUDIO_NAMES };
     const order: string[] = [...BUILTIN_STUDIO_ORDER];
     const builtin = new Set(BUILTIN_STUDIO_ORDER);
-    const results = this.db.all<Row>(
+    const results = await this.db.all<Row>(
       'SELECT id, display_name, sort_order FROM studio_definitions ORDER BY sort_order ASC, id ASC',
     );
     const extras: Array<[string, string, number]> = [];
@@ -86,13 +95,13 @@ export class StudioRegistry implements StudioRegistryFacade {
 
   // -- app_settings ------------------------------------------------------------
 
-  getSetting(key: string, def: string | null = null): string | null {
-    const row = this.db.first<Row>('SELECT value FROM app_settings WHERE key = ?', key);
+  async getSetting(key: string, def: string | null = null): Promise<string | null> {
+    const row = await this.db.first<Row>('SELECT value FROM app_settings WHERE key = ?', key);
     return row ? String(row.value) : def;
   }
 
-  setSetting(key: string, value: string): void {
-    this.db.run(
+  async setSetting(key: string, value: string): Promise<void> {
+    await this.db.run(
       'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       key,
       value,
@@ -101,54 +110,61 @@ export class StudioRegistry implements StudioRegistryFacade {
 
   // -- studio settings blobs ---------------------------------------------------
 
-  getStudioSettingsBlob(studioIdIn: string): Record<string, unknown> {
+  async getStudioSettingsBlob(studioIdIn: string): Promise<Record<string, unknown>> {
     let studioId = studioIdIn;
     if (!this.isKnownStudio(studioId)) studioId = DEFAULT_STUDIO_ID;
     // Self-healing read (deliberate, ported behavior): a missing/corrupt blob
-    // is rewritten with defaults during the read.
-    const resetToDefault = (): Record<string, unknown> => {
-      const blob = defaultSettingsBlob(studioId);
-      this.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
-      return blob as unknown as Record<string, unknown>;
-    };
-    const raw = this.getSetting(studioConfigKey(studioId));
-    if (!raw) return resetToDefault();
-    let data: unknown;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return resetToDefault();
-    }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return resetToDefault();
-    const base = defaultSettingsBlob(studioId);
-    const merged: Record<string, unknown> = { ...base, ...(data as Record<string, unknown>) };
-    const dataCats = (data as Record<string, unknown>).categories;
-    if (!Array.isArray(dataCats)) merged.categories = base.categories;
-    return merged;
+    // is rewritten with defaults during the read. Read and rewrite share one
+    // transaction, so a concurrent first save is never clobbered
+    // (async-catalog-stores D2).
+    return this.db.tx(async (t) => {
+      const r = this.withDb(t);
+      const resetToDefault = async (): Promise<Record<string, unknown>> => {
+        const blob = defaultSettingsBlob(studioId);
+        await r.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
+        return blob as unknown as Record<string, unknown>;
+      };
+      const raw = await r.getSetting(studioConfigKey(studioId));
+      if (!raw) return resetToDefault();
+      let data: unknown;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        return resetToDefault();
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return resetToDefault();
+      const base = defaultSettingsBlob(studioId);
+      const merged: Record<string, unknown> = { ...base, ...(data as Record<string, unknown>) };
+      const dataCats = (data as Record<string, unknown>).categories;
+      if (!Array.isArray(dataCats)) merged.categories = base.categories;
+      return merged;
+    });
   }
 
-  saveStudioSettingsBlob(studioId: string, blob: Record<string, unknown>): void {
+  async saveStudioSettingsBlob(studioId: string, blob: Record<string, unknown>): Promise<void> {
     const normalized = validateSettingsBlob(blob, studioId, this.isKnownStudio);
-    this.setSetting(studioConfigKey(studioId), JSON.stringify(normalized));
+    await this.setSetting(studioConfigKey(studioId), JSON.stringify(normalized));
   }
 
-  loadStudioProfile(studioId: string): StudioProfile {
-    const blob = this.getStudioSettingsBlob(studioId);
+  async loadStudioProfile(studioId: string): Promise<StudioProfile> {
+    const blob = await this.getStudioSettingsBlob(studioId);
     const name = this.names[studioId] ?? studioId;
     return blobToProfile(studioId, name, blob as unknown as SettingsBlob);
   }
 
-  resolveActiveStudio(): StudioProfile {
-    const raw = this.getSetting(SETTING_ACTIVE_STUDIO);
+  async resolveActiveStudio(): Promise<StudioProfile> {
+    const raw = await this.getSetting(SETTING_ACTIVE_STUDIO);
     if (raw && this.isKnownStudio(raw)) return this.loadStudioProfile(raw);
     return this.loadStudioProfile(DEFAULT_STUDIO_ID);
   }
 
-  allStudioSettingsForAllowedStudios(allowedIds: Set<string> | null): Record<string, SettingsBlob> {
+  async allStudioSettingsForAllowedStudios(
+    allowedIds: Set<string> | null,
+  ): Promise<Record<string, SettingsBlob>> {
     const out: Record<string, SettingsBlob> = {};
     for (const sid of this.order) {
       if (allowedIds !== null && !allowedIds.has(sid)) continue;
-      const b = this.getStudioSettingsBlob(sid);
+      const b = await this.getStudioSettingsBlob(sid);
       try {
         out[sid] = validateSettingsBlob(b, sid, this.isKnownStudio);
       } catch {
@@ -178,7 +194,7 @@ export class StudioRegistry implements StudioRegistryFacade {
   private static readonly STUDIO_ID_SLUG_RE = /^[a-z][a-z0-9-]{1,62}$/;
 
   /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
-  adminCreateStudio(studioId: string, displayName: string): void {
+  async adminCreateStudio(studioId: string, displayName: string): Promise<void> {
     const sid = (studioId || '').trim();
     const disp = (displayName || '').trim();
     if (!sid || !disp) throw new ValidationError('Team id and display name are required.');
@@ -191,44 +207,49 @@ export class StudioRegistry implements StudioRegistryFacade {
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('That team id is reserved for a built-in team.');
     }
-    const existing = this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
-    if (existing !== null) throw new ValidationError('A team with that id already exists.');
-    this.db.run(
-      'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
-      sid,
-      disp,
-      nowIso(),
-    );
-    this.refreshStudioRegistry();
+    // Existence check and insert share one transaction (async-catalog-stores D2).
+    await this.db.tx(async (t) => {
+      const existing = await t.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
+      if (existing !== null) throw new ValidationError('A team with that id already exists.');
+      await t.run(
+        'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
+        sid,
+        disp,
+        nowIso(),
+      );
+    });
+    await this.refreshStudioRegistry();
   }
 
   /** admin_delete_studio — remove a user-defined team (blocks if shows exist).
    * Shared by BOTH the admin plane (admin.ts) and the self-serve teams router
    * (teams.ts, design D4) so both cascades stay identical — including
    * team_invites, which the admin plane previously didn't know about. */
-  adminDeleteStudio(studioId: string): void {
+  async adminDeleteStudio(studioId: string): Promise<void> {
     const sid = (studioId || '').trim();
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('Cannot delete a built-in team.');
     }
-    const cntRow = this.db.first<Row>('SELECT COUNT(*) AS c FROM shows WHERE studio_id = ?', sid);
-    const nshows = Number(cntRow?.c ?? 0);
-    if (nshows > 0) {
-      throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
-    }
-    this.db.tx(() => {
-      this.db.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
-      this.db.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
-      this.db.run('DELETE FROM studio_definitions WHERE id = ?', sid);
-      this.db.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
+    // The show count runs inside the delete's transaction (async-catalog-stores D2; closes the
+    // delete half of ADR 0021 hazard 13).
+    await this.db.tx(async (t) => {
+      const cntRow = await t.first<Row>('SELECT COUNT(*) AS c FROM shows WHERE studio_id = ?', sid);
+      const nshows = Number(cntRow?.c ?? 0);
+      if (nshows > 0) {
+        throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
+      }
+      await t.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
+      await t.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
+      await t.run('DELETE FROM studio_definitions WHERE id = ?', sid);
+      await t.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
     });
-    this.refreshStudioRegistry();
+    await this.refreshStudioRegistry();
   }
 
   /** teams-self-serve (design D4): display-name-only rename, sharing
    * `adminCreateStudio`'s display-name validation. Ids are immutable after
    * creation — this never touches `studio_definitions.id`. */
-  renameStudio(studioId: string, displayName: string): void {
+  async renameStudio(studioId: string, displayName: string): Promise<void> {
     const sid = (studioId || '').trim();
     const disp = (displayName || '').trim();
     if (!disp) throw new ValidationError('Display name is required.');
@@ -236,7 +257,7 @@ export class StudioRegistry implements StudioRegistryFacade {
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('Cannot rename a built-in team.');
     }
-    this.db.run('UPDATE studio_definitions SET display_name = ? WHERE id = ?', disp, sid);
-    this.refreshStudioRegistry();
+    await this.db.run('UPDATE studio_definitions SET display_name = ? WHERE id = ?', disp, sid);
+    await this.refreshStudioRegistry();
   }
 }

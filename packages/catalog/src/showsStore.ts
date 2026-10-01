@@ -133,8 +133,8 @@ export function showCategoriesApiShape(rawCategories: unknown): Array<Record<str
  * `strictFunctionTypes` checks members contravariantly — a concrete signature
  * that drifts (e.g. a narrowed parameter type) fails `tsc --noEmit`. */
 export interface ShowsStoreFacade {
-  getShowRow: (showId: string) => Row | null;
-  listShowsForStudio: (studioId: string) => Row[];
+  getShowRow: (showId: string) => Promise<Row | null>;
+  listShowsForStudio: (studioId: string) => Promise<Row[]>;
   createShow: (opts: {
     studioId: string;
     name: string;
@@ -142,7 +142,7 @@ export interface ShowsStoreFacade {
     categoriesJson: string;
     paletteJson: string;
     paletteCustomJson: string;
-  }) => string;
+  }) => Promise<string>;
   updateShowFields: (
     showId: string,
     fields: {
@@ -157,38 +157,44 @@ export interface ShowsStoreFacade {
       event_palette_preset?: string;
       event_palette_custom_json?: string;
     },
-  ) => boolean;
+  ) => Promise<boolean>;
 }
 
 export class ShowsStore implements ShowsStoreFacade {
   constructor(private db: CatalogDb) {}
 
-  getShowRow(showId: string): Row | null {
+  /** The same store over another handle, so a transaction body runs on it
+   * (async-catalog-stores D3). */
+  withDb(db: CatalogDb): ShowsStore {
+    return new ShowsStore(db);
+  }
+
+  async getShowRow(showId: string): Promise<Row | null> {
     return this.db.first<Row>('SELECT * FROM shows WHERE id = ?', showId);
   }
 
-  listShowsForStudio(studioId: string): Row[] {
+  async listShowsForStudio(studioId: string): Promise<Row[]> {
     return this.db.all<Row>(
       'SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC',
       studioId,
     );
   }
 
-  createShow(opts: {
+  async createShow(opts: {
     studioId: string;
     name: string;
     showCode: string;
     categoriesJson: string;
     paletteJson: string;
     paletteCustomJson: string;
-  }): string {
+  }): Promise<string> {
     const sid = crypto.randomUUID();
     // next_episode is soft-retained but UNUSED as of session-title-suffix
     // (design D1, gate ruling 2026-08-02) — left at its column default (1)
     // and never bumped (see sessionIndexStore.ts createSessionIndex). The
     // INSERT omits title_suffix so newly created shows pick up the column
     // default 'date' (0005_show_title_suffix.sql, design D7).
-    this.db.run(
+    await this.db.run(
       `INSERT INTO shows
          (id, studio_id, name, show_code, next_episode, categories_json,
           event_palette_json, event_palette_preset, event_palette_custom_json, created_at_utc)
@@ -205,7 +211,7 @@ export class ShowsStore implements ShowsStoreFacade {
     return sid;
   }
 
-  updateShowFields(
+  async updateShowFields(
     showId: string,
     fields: {
       name?: string;
@@ -220,11 +226,11 @@ export class ShowsStore implements ShowsStoreFacade {
       event_palette_preset?: string;
       event_palette_custom_json?: string;
     },
-  ): boolean {
+  ): Promise<boolean> {
     // Read-modify-write: the merge reads the current row, so the pair runs in
-    // one transaction (CatalogDb.tx nests as a savepoint under outer tx()).
-    return this.db.tx(() => {
-      const row = this.getShowRow(showId);
+    // one transaction (joins an enclosing one; async-catalog-stores D3).
+    return this.db.tx(async (t) => {
+      const row = await this.withDb(t).getShowRow(showId);
       if (row === null) return false;
       // fields.next_episode (below) is soft-retained but UNUSED as of
       // session-title-suffix (design D1, gate ruling 2026-08-02) — the
@@ -255,7 +261,7 @@ export class ShowsStore implements ShowsStoreFacade {
               .trim()
               .toLowerCase() || 'custom';
       const pcj = fields.event_palette_custom_json ?? String(row.event_palette_custom_json ?? '[]');
-      this.db.run(
+      await t.run(
         `UPDATE shows
            SET name = ?, show_code = ?, next_episode = ?, title_suffix = ?, categories_json = ?,
                event_palette_json = ?, event_palette_preset = ?, event_palette_custom_json = ?

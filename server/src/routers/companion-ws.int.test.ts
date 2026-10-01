@@ -57,7 +57,7 @@ function nextMessage(ws: WebSocket, ms = 3000): Promise<string> {
 
 describe('companion WebSocket relay (Node)', () => {
   it('delivers a posted command over the session WebSocket', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const ws = await connect(s);
     const got = nextMessage(ws);
     setCompanionPresence('c1', s);
@@ -72,7 +72,7 @@ describe('companion WebSocket relay (Node)', () => {
   });
 
   it('re-broadcasts a command sent BY a connected client', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const sender = await connect(s);
     const receiver = await connect(s);
     const got = nextMessage(receiver);

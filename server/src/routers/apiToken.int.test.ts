@@ -74,7 +74,7 @@ describe('AI v2 dashboard with an API_TOKEN bearer', () => {
     envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: login });
 
   it('REQUIRE_LOGIN=0: token-only is inert — identical to the same request with no Authorization', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const tok = await app.request(dash(s), { headers: bearer }, aiEnv('0'));
     const anon = await app.request(dash(s), {}, aiEnv('0'));
     expect(anon.status).toBe(200);
@@ -83,14 +83,14 @@ describe('AI v2 dashboard with an API_TOKEN bearer', () => {
   });
 
   it('REQUIRE_LOGIN=1: token-only is 401 "Login required." like anonymous', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(dash(s), { headers: bearer }, aiEnv('1'));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('REQUIRE_LOGIN=1: anonymous is 401', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(dash(s), {}, aiEnv('1'));
     expect(res.status).toBe(401);
   });
@@ -142,17 +142,17 @@ describe('session WebSocket upgrade with an API_TOKEN bearer, REQUIRE_LOGIN=1', 
   }
 
   it('anonymous companion-role upgrade is refused 401 (baseline)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     expect(await attempt(s, 'companion', {})).toBe(401);
   });
 
   it('token-only companion-role upgrade is refused exactly as for anonymous (401)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     expect(await attempt(s, 'companion', bearer)).toBe(401);
   });
 
   it('token-only browser-role upgrade is refused (401)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     expect(await attempt(s, 'browser', bearer)).toBe(401);
   });
 });
