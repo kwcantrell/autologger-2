@@ -264,3 +264,69 @@ describe('role change and removal (#11, #12)', () => {
     expect([second.status, (await first).status].sort()).toEqual([200, 404]);
   });
 });
+
+describe('show create and admin membership add vs team delete (#13, #14)', () => {
+  it('a show create racing the team delete gets 400 Unknown studio id. and no show exists', async () => {
+    const { team, cookies } = await teamWithAdmins(2);
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/^SELECT 1 FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/);
+    const create = send('POST', '/api/shows', cookies[0] as string, { studio_id: team, name: 'Late Show', show_code: 'LS' }, envWith({}, { catalog: gated }));
+    await h.reached;
+    expect((await send('DELETE', `/api/teams/${team}`, cookies[1] as string)).status).toBe(200);
+    h.release();
+    const res = await create;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
+    const n = await env.ports.catalog.first<{ n: number }>('SELECT COUNT(*) AS n FROM shows WHERE studio_id = ?', team);
+    expect(Number(n?.n)).toBe(0);
+  });
+
+  it('an admin-plane membership add racing the team delete is refused and leaves no row', async () => {
+    const { team, cookies } = await teamWithAdmins(1);
+    const target = await seedUser();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/^SELECT \* FROM users WHERE id = \?$/);
+    const add = app.request(
+      `/api/admin/users/${target}/memberships`,
+      { method: 'POST', headers: ADMIN_H, body: JSON.stringify({ studio_id: team }) },
+      envWith({ ADMIN_TOKEN }, { catalog: gated }),
+    );
+    await h.reached;
+    expect((await send('DELETE', `/api/teams/${team}`, cookies[0] as string)).status).toBe(200);
+    h.release();
+    expect((await add).status).toBe(400);
+    expect(await members(team)).toEqual([]);
+  });
+});
+
+describe('cross-team independence (D12)', () => {
+  const INSERT_DEFINITION = /^INSERT INTO studio_definitions/;
+
+  it('creates of two different teams by two users both succeed', async () => {
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(INSERT_DEFINITION);
+    const a = send('POST', '/api/teams', await loginCookie(await seedUser()), { id: 'indep-a', display_name: 'A' }, envWith({}, { catalog: gated }));
+    await h.reached;
+    const b = await send('POST', '/api/teams', await loginCookie(await seedUser()), { id: 'indep-b', display_name: 'B' });
+    h.release();
+    expect([b.status, (await a).status]).toEqual([200, 200]);
+    // On tables this small SERIALIZABLE tracks reads by whole index page (or table, when the
+    // planner picks a sequential scan), so the two creates may still conflict once; the retry
+    // absorbs it. The per-team indexes (D12) keep that from scaling with the number of teams.
+    expect(gated.count(INSERT_DEFINITION)).toBeLessThanOrEqual(2);
+  });
+
+  it('invites in two different teams both succeed', async () => {
+    const t1 = await teamWithAdmins(1);
+    const t2 = await teamWithAdmins(1);
+    const UPSERT_INVITE = /^INSERT INTO team_invites/;
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(UPSERT_INVITE);
+    const a = send('POST', `/api/teams/${t1.team}/invites`, t1.cookies[0] as string, { email: 'x1@example.com' }, envWith({}, { catalog: gated }));
+    await h.reached;
+    const b = await send('POST', `/api/teams/${t2.team}/invites`, t2.cookies[0] as string, { email: 'x2@example.com' });
+    h.release();
+    expect([b.status, (await a).status]).toEqual([200, 200]);
+    expect(gated.count(UPSERT_INVITE)).toBeLessThanOrEqual(2);
+  });
+});

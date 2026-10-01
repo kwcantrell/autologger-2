@@ -92,12 +92,24 @@ in-transaction role read.
   Evidence: `server/src/routers/admin.ts:94-112` has no last-admin check (support plane, by
   spec), so the raced outcome equals the serial order. Re-panel recorded in `panel.md` (owner
   re-approved 2026-10-01).
-- [ ] 2.6 Show create (#13, #14). Test first: a held show create racing a team delete gets
+- [x] 2.6 Show create (#13, #14). Test first: a held show create racing a team delete gets
   `400 Unknown studio id.`, and no show; an admin-plane membership add for a deleted team is
   refused. Red, then D3. Green.
-- [ ] 2.7 Cross-team. Test first: two creates of different teams by different users, and two
+  Evidence: `4d-2.6-red.log` (`-t "show create"`) -> `AssertionError: expected 200 to be 400` ×2
+  (an orphan show; an orphan membership). Added `studioExists` (registry facade), the show
+  create transaction, and the admin-plane membership-add transaction. `4d-2.6-green.log`: race +
+  `shows-profile` + `admin` + fixtures + `nulText` + `crossPackageErrorIdentity` -> `Tests  87
+  passed (87)`; `npm run typecheck -w server` is clean.
+- [x] 2.7 Cross-team. Test first: two creates of different teams by different users, and two
   invites in different teams, all with `Promise.all` and held to overlap, all succeed. Red
   without 1.2's migration (record it), green with it.
+  Evidence: this test can't be red. With the index migration moved out, the template rebuilt
+  and the test asserting "no retry" (`4d-2.7-red.log`), and also with the index
+  (`4d-2.7-green.log`, first run), the held create showed `expected 2 to be 1`: on tables this
+  small SERIALIZABLE tracks reads by index page (or table), so a create in another team still
+  conflicts once. The invite pair didn't conflict. The test now asserts the spec outcome: both
+  succeed, at most one retry. It is a regression pin; the index is proved by 1.2. Design D12 and
+  R2 are corrected to say this. `4d-2.7-green.log` -> `Tests  15 passed (15)`.
 
 ## 3. Sign-in and settings (design D4, D5)
 

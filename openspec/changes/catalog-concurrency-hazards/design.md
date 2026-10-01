@@ -215,8 +215,11 @@ Recorded in ADR 0021's follow-ups:
 - `create index … on catalog.user_studio_memberships (studio_id)`;
 - `create index … on catalog.shows (studio_id)`.
 
-`team_invites` is already keyed by `studio_id` first (A21). With these, per-team reads lock
-only the rows they touch, and writes in different teams no longer conflict (A15). The index is
+`team_invites` is already keyed by `studio_id` first (A21). With these, per-team reads lock an
+index range rather than the whole table (A15). Measured in task 2.7: on tables this small,
+SERIALIZABLE still tracks reads by whole index page (and the planner may pick a sequential scan),
+so two creates in different teams can conflict once. The retry absorbs it and both succeed, as
+the spec requires. The index keeps that from growing with the number of teams. The index is
 additive. A matching SQLite migration (`0006_team_indexes.sql`) keeps the catalog-database
 requirement that the Postgres schema's indexes match the SQLite catalog true until 4e (found in
 task 1.2).
@@ -226,8 +229,10 @@ task 1.2).
 - **R1. Re-checks rely on every team-plane membership write being in a transaction.** → The
   D1 tests pin each route. The admin-plane writes stay root writes by design (D2, A20). Foreign
   keys are on the revisit list.
-- **R2. More transactions mean more retries under contention.** → D12 removes cross-team
-  conflicts. An invite still reads all of `users` and can conflict with a concurrent first
+- **R2. More transactions mean more retries under contention.** → D12 keeps cross-team
+  conflicts from scaling with the table. On small tables, page-level tracking can still make
+  writes in different teams retry once (task 2.7). A sustained flood of team writes could still
+  exhaust the 3 runs; the revisit list (D11) has the rate-limit item. An invite still reads all of `users` and can conflict with a concurrent first
   sign-in; the retry absorbs it, and D11 lists an indexed lookup.
 - **R3. The mirror is in-process.** → One server per `DATA_DIR`. Slice 8 revisits it.
 - **R4. A failed mirror stays stale until the session's next change.** → Owner-accepted. A

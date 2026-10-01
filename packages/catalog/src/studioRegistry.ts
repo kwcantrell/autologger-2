@@ -30,6 +30,7 @@ export interface StudioRegistryFacade {
   adminCreateStudio: (studioId: string, displayName: string) => Promise<void>;
   insertStudioDefinition: (sid: string, disp: string) => Promise<void>;
   validateNewStudio: (studioId: string, displayName: string) => { sid: string; disp: string };
+  studioExists: (studioId: string) => Promise<boolean>;
   adminDeleteStudio: (studioId: string) => Promise<void>;
   getSetting: (key: string, def?: string | null) => Promise<string | null>;
   isKnownStudio: (studioId: string) => boolean;
@@ -216,6 +217,14 @@ export class StudioRegistry implements StudioRegistryFacade {
       throw new ValidationError('That team id is reserved for a built-in team.');
     }
     return { sid, disp };
+  }
+
+  /** Whether the team exists now (a built-in or a definition row), read through this registry's
+   * handle; the per-request snapshot can be stale, so writes that need the team re-check here,
+   * inside their transaction (catalog-concurrency-hazards D3). */
+  async studioExists(studioId: string): Promise<boolean> {
+    if (BUILTIN_STUDIO_ORDER.includes(studioId)) return true;
+    return (await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', studioId)) !== null;
   }
 
   /** Insert a validated team's definition on this registry's handle (inside the caller's

@@ -39,7 +39,11 @@ class Gates {
     return { reached, release: open };
   }
 
+  /** Every statement sent through the gated catalog, in order (a body re-run shows up twice). */
+  readonly log: string[] = [];
+
   async pass(sql: string, after = false): Promise<void> {
+    if (!after) this.log.push(sql);
     const p = this.holds.find((h) => h.armed && h.after === after && h.pattern.test(sql));
     if (!p) return;
     p.armed = false;
@@ -94,5 +98,10 @@ export class GatedCatalog extends GatedHandle {
    * returns to the caller, until `release()`. */
   holdAfter(pattern: RegExp): Hold {
     return this.gates.hold(pattern, true);
+  }
+
+  /** How many statements matching `pattern` have been sent so far. */
+  count(pattern: RegExp): number {
+    return this.gates.log.filter((sql) => pattern.test(sql)).length;
   }
 }
