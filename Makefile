@@ -36,11 +36,11 @@ dev-check: ## Dev invariants + credentials-inode drift warning
 dev-build: ## Rebuild the dev image (needed after dependency/lockfile/config changes)
 	$(RUN) dev resolved 'compose build'
 
-dev-up: ## Check, then build and start the whole dev project (app, gate, Companion, Supabase) and migrate
+dev-up: ## Check, migrate the dev Postgres, then build and start the whole dev project (app, gate, Companion, Supabase)
 	@$(G) creds-exists
 	@sh docker/scripts/check-envs.sh dev
 	@$(G) creds-inode
-	$(RUN) dev resolved 'compose up -d --build' 'compose run --rm migrate' urls
+	$(RUN) dev resolved 'compose run --rm migrate' 'compose up -d --build' urls
 
 dev-down: ## Stop and remove dev containers (volumes kept)
 	$(RUN) dev 'compose down'
@@ -66,9 +66,9 @@ dev-reset: ## DESTROY dev volumes, incl. Postgres and Supabase storage (needs CO
 stage-build: ## Build the stage images (native arch, docker compose build)
 	$(RUN) stage resolved 'compose build'
 
-stage-up: ## Check, then build and start the whole stage stack (incl. Supabase) and migrate its Postgres
+stage-up: ## Check, migrate the stage Postgres, then build and start the whole stage stack (incl. Supabase)
 	@sh docker/scripts/check-envs.sh stage
-	$(RUN) stage resolved 'compose up -d --build' 'compose run --rm migrate' urls
+	$(RUN) stage resolved 'compose run --rm migrate' 'compose up -d --build' urls
 
 stage-down: ## Stop and remove stage containers (volumes kept)
 	$(RUN) stage 'compose down'

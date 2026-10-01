@@ -16,7 +16,6 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - no `catalog.db` is created;
   - `close()` returns a promise;
   - the lock still refuses a second server.
-
   Red: today `PG*` is ignored and `catalog.db` is created.
   Evidence: `4c-1.1-red.log`: `npx vitest run --project unit src/node/config.test.ts` ->
   `× refuses each missing PG* setting by name…`, `× opens no catalog.db, and close() returns a
@@ -31,14 +30,12 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - make `resetTestEnv`/`teardownTestEnv` async with a clone per test;
   - adapt `migrations.int.test.ts` (SQLite runner only) and the youtube-import reboot test
     (async, awaits `close()`).
-
   Green:
   - 1.1 passes;
   - `npx vitest run --project integration` passes every file (record the wall time against
     A8's 6.6 s);
   - `npx vitest run --project pg` still passes (`rolconnlimit: 20`);
   - `npm run typecheck` is clean.
-
   Evidence: the first run, `npx vitest run --project integration` -> `Tests  125 failed | 471
   passed (596)`. JSON reporter: 100 failures are `PostgresError: syntax error at or near "OR"`
   (seeding memberships), and 25 are 500s logged as `42704 collation "nocase"`, i.e. task 3.1's
@@ -65,7 +62,6 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - a failure on every attempt rejects at the 30 s budget;
   - an attempt that never settles is cut off at the remaining budget;
   - each distinct code is logged once, with no message text.
-
   Red, then implement. Green.
   Evidence: `4c-2.2-red.log` -> `Error: Cannot find module './waitForCatalog'`, `Tests  no tests`.
   `4c-2.2-green.log` -> `Tests  4 passed (4)` (vitest fake timers).
@@ -73,7 +69,6 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - await `waitForCatalog` before `purgeExpiredAtBoot`, and exit 1 if it rejects;
   - remove `onBroken`;
   - shutdown awaits `close()`.
-
   Test first, in `bootOrder.int.test.ts`: `PGHOST=127.0.0.1` with a closed port exits 1 without
   ever listening (about 30 s, timeout 45 s). Red (today the server listens on SQLite), green
   after.
@@ -89,7 +84,6 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - shows `b`, `A`, `a` list as `A`, `a`, `b` (red: `42704 collation "nocase"`);
   - re-adding an existing membership through `authAddMemberships`, and through the invite
     path, succeeds with no duplicate (red: syntax error at `OR`).
-
   Then rewrite `showsStore.ts:178` and `authStore.ts:185,274`. Green on Postgres, and the
   `packages/catalog` tests stay green on SQLite.
   Evidence: `4c-3.1-red.log`: `npx vitest run --project integration
@@ -120,13 +114,11 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - an OAuth callback with `state=a%00b` gives `state_invalid`;
   - first sign-in with a NUL `email` gives `token_invalid` and no user;
   - with a NUL `given_name`, the user is created and the stored name is stripped.
-
   Red, then:
   - add the `app.onError` mapping;
   - refuse NUL in the presence route;
   - refuse NUL in `takeOauthState`;
   - add the claim checks in `auth.ts`.
-
   Green.
   Evidence: `4c-4.2-red.log`: `npx vitest run --project integration
   src/routers/nulText.int.test.ts` -> `Tests  8 failed (8)`: `expected 500 to be 400` ×3,
@@ -151,25 +143,38 @@ Logs: keep the full output of every test and gate run under the session scratchp
 
 ## 5. Ops, docs and the retry note (design D3, D7)
 
-- [ ] 5.1 Reorder `dev-up` and `stage-up` in the `Makefile`. Document the rotation (D3) in
+- [x] 5.1 Reorder `dev-up` and `stage-up` in the `Makefile`. Document the rotation (D3) in
   `docs/supabase.md`. Verify with `make -n dev-up` and `make -n stage-up`: the migrate step
   comes before `up`.
-- [ ] 5.2 Doc comments: `Catalog.tx` and the port's `tx` (the body may re-run and must stay
+  Evidence: `make -n dev-up` -> `… compose-run.mjs dev resolved 'compose run --rm migrate' 'compose
+  up -d --build' urls`; `make -n stage-up` -> `… stage resolved 'compose run --rm migrate' 'compose
+  up -d --build' urls`. `make check` -> `check-envs: ok (all)`. The rotation and the server's
+  catalog boot behaviour are in `docs/supabase.md` "The catalog schema"; the test section names
+  the integration project and its connection-limit raise.
+- [x] 5.2 Doc comments: `Catalog.tx` and the port's `tx` (the body may re-run and must stay
   database-only), plus the `harness.ts`, `config.ts` and `auth.int.test.ts:521` comments.
   Update the `catalog.db` lines in `README.md`. In ADR 0021, record:
   - the 4c items closed;
   - start empty;
   - the hazards live on dev and stage;
   - hazards 17-20 added to 4d.
-
   Verify with `grep -n "catalog\.db" README.md` (only the slice 11 import and legacy
   mentions remain) and
   `grep -n "start empty\|live on dev and stage\|17\.\|20\." docs/decisions/0021-*.md`.
+  Evidence: `grep -n "start empty\|live on dev and stage\|   17\.\|   20\." docs/decisions/0021-*.md`
+  -> `169: 17. handlers commit to the session hub…`, `178: 20. getStudioSettingsBlob…`, `181: Since 4c
+  these hazards are live on dev and stage…`, `215: - start empty (owner, 2026-10-01)…`.
+  `grep -n "catalog\.db" README.md` -> 81 (pre-4c history), 477 (legacy file, not opened), 883
+  (legacy file untouched), and 1079-1356 (prod host backup and cutover runbook; prod runs `main` on
+  SQLite until cutover). `Catalog.tx` notes the re-run rule (the port already had it from 4b).
+  Comments are refreshed in `auth.int.test.ts` and `startupPurge.ts`.
 
 ## 6. Integration checks
 
-- [ ] 6.1 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green,
+- [x] 6.1 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green,
   including size (the panel estimates 180-260 counted lines).
+  Evidence: `4c-6.1-hook.log` -> exit 0; `PASS  risk-floor  8 high-risk path(s) touched`, `PASS
+  evidence`, `PASS  size  248/400 changed lines`, `PASS  commands  ran ['typecheck', 'test']`.
 - [ ] 6.2 Dev stack:
   - Record `catalog.db`'s mtime and size first, then run `make dev-up` (migrate first, image
     rebuilt).

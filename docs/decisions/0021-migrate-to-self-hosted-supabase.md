@@ -165,7 +165,20 @@ Slice order:
        transaction (catch the conflict, then retry the lookup) or use
        `INSERT … ON CONFLICT DO NOTHING`;
    16. `/auth/google/start` writes one KV row per hit, and expired rows are purged only at boot or
-       on read, so a flood grows the `kv` table until restart (a periodic purge or a rate limit).
+       on read, so a flood grows the `kv` table until restart (a periodic purge or a rate limit);
+   17. handlers commit to the session hub, then mirror into the catalog; a failed mirror write
+       now returns 500 for work already saved, and a client retry repeats it (Companion toggle,
+       log events, youtube anchor). Catch and log after the hub commit, or re-derive (4c panel;
+       owner: 4d);
+   18. team ids are reusable and memberships/invites have no foreign key to the team, so a delete
+       racing an invite can leave rows that a later team with the same id inherits (a foreign
+       key with cascade, or a purge on create) (4c panel; owner: 4d);
+   19. root (non-transaction) statements have no client-side deadline, so a paused db stalls
+       every request up to the role's 30 s `statement_timeout` (4c panel);
+   20. `getStudioSettingsBlob` writes a default while reading, inside SERIALIZABLE; concurrent
+       first loads on an empty catalog conflict and can exhaust the retries (4c panel).
+
+   Since 4c these hazards are live on dev and stage (real I/O); prod is on hold until cutover.
 4. Catalog schema and the postgres.js adapter. Split (owner, 2026-10-01) into:
    - 4a `catalog-pg-schema`:
      - the catalog in Postgres schema `catalog` (not `public`, which the image grants to the API
@@ -185,17 +198,23 @@ Slice order:
      clients the adapter manages, because postgres.js 3.4.9's `reserve()` and `begin()` crash the
      process after a lost connection (4b design A5-A7). A `COMMIT` with no reply raises
      `CatalogCommitUnknownError`;
-   - 4c `catalog-on-postgres`: the wiring. Its open items:
-     - first, audit the 16 `tx` bodies for effects outside the database, because a retry re-runs
-       them (4b);
-     - text containing a NUL byte (Postgres refuses it): 400 or strip;
-     - `ORDER BY … COLLATE NOCASE` has no Postgres equivalent;
-     - `SUM`/`AVG` over `bigint` return `numeric`, which comes back as a string (4b);
-     - map `CatalogCommitUnknownError` to a response (4b);
-     - drop the `onBroken` wiring: the Postgres adapter retires a bad connection instead (4b);
-     - one adapter per process, shared by the catalog stores and `KvStore` (4b);
-     - the boot order (migrate before the app) and password rotation (migrate, then recreate
-       the app);
+   - 4c `catalog-on-postgres`: the wiring. Done (2026-10-01):
+     - the server's catalog stores and `KvStore` share one `PostgresCatalogDb` built from the
+       compose `PG*` env; no SQLite catalog is opened or migrated, and `onBroken` is gone;
+     - the 16 `tx` bodies are audited as database-only, so a retry is safe;
+     - NUL (owner, after the panel): one rule, 400 for any NUL that reaches a catalog statement;
+       presence refuses a NUL `session_id`; the OAuth state with NUL is `state_invalid`; NUL in
+       the Google `sub` or `email` is `token_invalid`, and name/picture claims are stripped;
+     - `ORDER BY lower(name), name` replaces `COLLATE NOCASE`; `ON CONFLICT DO NOTHING` replaces
+       `INSERT OR IGNORE`; no store uses `SUM`/`AVG`;
+     - `CatalogCommitUnknownError` reaches the generic 500; that handler now logs a Postgres
+       error by code, constraint and table only;
+     - `start_offset_frames` is capped at `Number.MAX_SAFE_INTEGER` (422);
+     - boot: `migrate` runs before the app in `make dev-up`/`stage-up`; the server waits up to
+       30 s for the catalog, then exits 1; rotation is `make <env>-up` after the Infisical change;
+     - start empty (owner, 2026-10-01): dev and stage begin with only the migration's seed shows;
+       the old `catalog.db` and `sessions/*.db` stay untouched for the slice 11 import;
+     - the server integration suite runs on a Postgres clone per test;
    - 4d `catalog-concurrency-hazards`: the hazards listed under slice 3. The owner may swap 4c
      and 4d;
    - 4e `retire-sqlite-catalog`.
