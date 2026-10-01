@@ -32,12 +32,14 @@
 #     /dev/null as the env file and an environment built from the stack's Infisical secrets, so
 #     ambient overrides such as `DEV_PORT=9000 make dev-up` no longer apply: set the value in
 #     Infisical. check-envs.sh strips the caller's variables itself.
-#   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_STAGE_FILES,
+#   * All three also add -f docker/supabase-db.yaml (supabase-db D1: db and migrate).
+#   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_DB_FILE, AL_STAGE_FILES,
 #     AL_PROD_FILE, AL_E2E_OVERLAY, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
 
 # shellcheck disable=SC2034  # the AL_* variables are consumed by the sourcing script
 AL_DEV_FILE=docker/compose.dev.yaml
 AL_PROD_FILE=compose.yaml
+AL_DB_FILE=docker/supabase-db.yaml
 AL_STAGE_OVERLAY=docker/compose.stage.yaml
 AL_STAGE_FILES="$AL_PROD_FILE $AL_STAGE_OVERLAY"
 AL_E2E_OVERLAY=e2e/container/compose.e2e.yaml
@@ -66,7 +68,7 @@ al_compose() {
 compose_dev() {
   al_compose_guard || return $?
   _al_env=$1; shift
-  al_compose docker compose --project-directory . --env-file "$_al_env" -f "$AL_DEV_FILE" "$@"
+  al_compose docker compose --project-directory . --env-file "$_al_env" -f "$AL_DEV_FILE" -f "$AL_DB_FILE" "$@"
 }
 
 compose_stage() {
@@ -74,11 +76,11 @@ compose_stage() {
   _al_env=$1; shift
   al_compose env WEB_TAG="$AL_STAGE_WEB_TAG" API_TAG="$AL_STAGE_API_TAG" \
     PUBLIC_BASE_URL="$AL_STAGE_PUBLIC_BASE_URL" \
-    docker compose -f "$AL_PROD_FILE" -f "$AL_STAGE_OVERLAY" --env-file "$_al_env" "$@"
+    docker compose -f "$AL_PROD_FILE" -f "$AL_DB_FILE" -f "$AL_STAGE_OVERLAY" --env-file "$_al_env" "$@"
 }
 
 compose_prod() {
   al_compose_guard || return $?
   _al_env=$1; shift
-  al_compose docker compose -f "$AL_PROD_FILE" --env-file "$_al_env" "$@"
+  al_compose docker compose -f "$AL_PROD_FILE" -f "$AL_DB_FILE" --env-file "$_al_env" "$@"
 }

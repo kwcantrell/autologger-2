@@ -49,3 +49,7 @@ networks:
       config:
         - subnet: 172.28.21.0/24
           gateway: 172.28.21.1
+  db:
+    ipam: !override
+      config:
+        - subnet: 172.28.22.0/24

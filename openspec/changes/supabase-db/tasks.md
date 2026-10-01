@@ -72,7 +72,8 @@ shows names, statuses and counts only.
 
 ## 2. The `db` service in every stack
 
-- [ ] 2.1 Add the invariant 16 and invariant 4 cases to `test_check_envs.sh` (design D7), test
+- [x] 2.1 Add the invariant 16 and invariant 4 cases to `test_check_envs.sh` (design D7), test
+  Evidence: cases first, against the old check: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 0 passed, 17 failed` (the clean tree too: the old check had no db/migrate or sentinel); after implementing -> `check-envs: ok (all)` and 17 lines `ok   …` (e.g. `ok   companion joined to the db network is caught`, `ok   the password in a prod api label is caught`, `ok   the migrations directory mounted outside migrate is caught`), `test_check_envs: 17 passed, 0 failed`.
   first, and watch them fail. Then implement in `check-envs.sh`:
   - `--profile '*'`;
   - the dev service set;
@@ -81,7 +82,8 @@ shows names, statuses and counts only.
   - invariant 16.
 
   Check: `bash docker/scripts/test_check_envs.sh` passes, with each case naming its invariant.
-- [ ] 2.2 Write `docker/supabase-db.yaml` (`db`, both volumes), the `db` network in the three base
+- [x] 2.2 Write `docker/supabase-db.yaml` (`db`, both volumes), the `db` network in the three base
+  Evidence: `make dev-up` -> `Container autologger-dev-db-1 Started`; `docker inspect` -> `health=healthy ports={"5432/tcp":null} caps=["CAP_DAC_READ_SEARCH","CAP_SETGID","CAP_SETUID"]`; `docker network inspect autologger-dev_db` -> `internal=true subnet=172.28.31.0/24 opts={…gateway_mode_ipv4:isolated…ipv6:isolated}`; host `echo > /dev/tcp/172.28.31.1/5432` -> `HOST_CANNOT_CONNECT`, `ip addr | grep -c 172.28.31` -> `0`; password count in `docker logs` (value piped from `printenv`, never printed) -> `0`. A7 cap set `[DAC_READ_SEARCH, SETUID, SETGID]`: empty volume healthy; `compose stop db`/`start db` -> `restart: status=running health=healthy`; `up -d --force-recreate db` -> `recreate: status=running health=healthy`, `init-scripts` lines after recreate -> `0`; volumes `autologger-dev_supabase-db`, `autologger-dev_supabase-db-config`. `make check` -> `check-envs: ok (all)`.
   files (internal, gateway isolation, pinned subnet), and the extra `-f` in `compose-env.sh`
   (design D1, D2).
   - Choose `cap_add` by testing an empty volume, `make dev-down && make dev-up`, and a
@@ -93,7 +95,8 @@ shows names, statuses and counts only.
     - `bash -c 'echo > /dev/tcp/<db-ip>/5432'` from the host fails;
     - `docker logs` of `db` with `grep -cF` of the password value gives 0. Run this inside the
       wrapper's child, so the value is never printed.
-- [ ] 2.3 Bring up stage beside the running dev stack.
+- [x] 2.3 Bring up stage beside the running dev stack.
+  Evidence: `make stage-up` with dev up -> `Container autologger-stage-db-1 Started`, `stage db health=healthy ports={"5432/tcp":null}`; `autologger-dev_db internal=true 172.28.31.0/24`, `autologger-stage_db internal=true 172.28.22.0/24`; from stage db `pg_isready -h 172.28.31.1` -> `no response` (rc=2); `sh docker/scripts/check-envs.sh prod` -> `check-envs: ok (prod)`.
   - Check: `make stage-up` is healthy, and `docker network inspect` shows the .31 and .22 `db`
     subnets.
   - Prod is checked statically only: `sh docker/scripts/check-envs.sh prod` passes.
