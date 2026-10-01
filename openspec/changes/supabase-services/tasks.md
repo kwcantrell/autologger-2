@@ -78,12 +78,14 @@ counts only, never a value.
   - over the `db` network, the service roles log in with `SUPABASE_ROLES_PASSWORD`, and
     `supabase_admin` fails with it;
   - each service is still healthy after `up --force-recreate`.
-- [ ] 3.3 Write `docker/supabase/test_gateway.sh` first (design D7) and see it fail against a
+- [x] 3.3 Write `docker/supabase/test_gateway.sh` first (design D7) and see it fail against a
+  Evidence: test first, against the placeholder gateway (`respond 200`): `sh docker/supabase/test_gateway.sh dev` -> `test_gateway (dev): 14 passed, 31 failed` (the 14 include the real host-unreachability cases). With `docker/supabase-gw.Caddyfile` (`caddy validate` -> `Valid configuration`; gateway `healthy`) -> `test_gateway (dev): 45 passed, 0 failed`, e.g. `ok   evil Host refused (403)`, `ok   foreign Origin refused (403)`, `ok   rest root trick /rest/v1/%2F with the anon key (403)`, `ok   realtime tenant API /realtime/v1/api/%2Ftenants with the service key (403)`, `ok   a client token is passed through (anon apikey, service bearer) (200)`, `ok   an empty Authorization is treated as absent (service apikey) (200)`, `ok   realtime broadcast with the anon key (202)`, `ok   realtime websocket join with the anon key (ok)`, `ok   storage upload with the service key (200)`, `ok   host to rest directly (unreachable)`, `ok   rest down gives 502 through the gateway (502)`, `ok   API keys in the gateway log (0)`. One expectation was corrected: GoTrue itself answers 403 (not 401) to the anon key on its admin API, so the case checks that auth refuses it.
   gateway that only answers 200. Then write `docker/supabase-gw.Caddyfile` and the `supabase-gw`
   service.
   - Check: `sh docker/supabase/test_gateway.sh dev` passes every case, including the host
     unreachability case, the `502` log-count case, and the storage upload.
-- [ ] 3.4 Run a supabase-js smoke script (scratch, `@supabase/supabase-js` in a temp dir) against
+- [x] 3.4 Run a supabase-js smoke script (scratch, `@supabase/supabase-js` in a temp dir) against
+  Evidence: scratch `smoke.mjs` with `@supabase/supabase-js` 2.117.2 against `http://localhost:8790` -> `rest: 404 PGRST205`, `storage: buckets=[]`, `signup: 422 signup_disabled`, `realtime: SUBSCRIBED send=ok`. Then the 7 secret values (piped from the containers' env, never printed) counted with `grep -cF` in every `autologger-dev-*` container's logs -> 0 for each of 10 containers, `total 0`.
   dev. It checks:
   - `from('x').select()` gives `PGRST205`, not 401;
   - `storage.listBuckets()` gives `[]`;
