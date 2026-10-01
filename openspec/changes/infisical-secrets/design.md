@@ -327,9 +327,13 @@ Each machine identity:
   LAN host until it expires or is revoked.
 
 The owner's **bootstrap identity** (`~/.infisical-bootstrap`, organization access) created the
-projects, so it is a member of each. The owner removes it from all three projects and revokes it
-**before the prod project is filled and before archive** (task 1.4, checked by the agent: its login
-fails and it is in no `autologger-*` project).
+projects, so it is a member of each. The owner is now admin of all three projects too (task 1.4).
+**Accepted risk (owner, 2026-09-30):** the bootstrap identity stays, with org access and admin on
+all three projects including prod, until the Supabase migration is complete, because later slices
+add secrets. Until it is revoked, any process running as the owner on this host, agents included,
+can administer `autologger-prod`. That covers reading its secrets once filled, minting client
+secrets and deleting the project. It is removed from the projects and revoked at the ADR 0021
+cutover (owner-owed).
 
 ### D7. Cutover, rollback and break-glass
 

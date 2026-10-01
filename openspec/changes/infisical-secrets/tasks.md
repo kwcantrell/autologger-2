@@ -45,12 +45,10 @@ written to print names or exit codes only. The agent records that output and nev
   for each name that isn't allowed: add it (a scope edit handled by the consistency read) or drop
   it. Check: the name lists and the decisions are pasted.
   Evidence: `copy-secrets.mjs` (names only) -> dev: copy `AI_V2_ENABLED DEEPGRAM_API_KEY`, empty skipped `AI_V2_API_KEY DEV_COMPANION_PORT DEV_PORT GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SHEETS_LOG_IMPORT_ENABLED`, NOT allowed `(0)`; stage: copy `ADMIN_TOKEN API_TOKEN DEEPGRAM_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET STAGE_PORT`, empty `AI_V2_API_KEY`, NOT allowed `(0)`. No allowlist decision needed. `--apply` -> dev `created 2: HTTP 200`, stage `created 6: HTTP 200`.
-- [ ] 1.4 **(owner, verified by the agent)** Remove the bootstrap identity from
-  `autologger-dev`, `autologger-stage` and `autologger-prod` (first add yourself as admin of each),
-  revoke it, then delete `~/.infisical-bootstrap`. The agent deletes its scratch setup scripts.
-  Check: a login with the old bootstrap credentials fails (401 or 403), and the agent's own
-  dev/stage wrapper runs still pass. Must be done before the prod project is filled and before
-  6.1.
+- [x] 1.4 **(owner, verified by the agent)** Add the owner as admin of `autologger-dev`,
+  `autologger-stage` and `autologger-prod`, so the projects don't depend on the bootstrap
+  identity. Check: the project member listing shows the owner as admin of each.
+  Evidence: `members.mjs` (emails and roles only) -> `autologger-dev 200 cantrell.kalen@gmail.com[admin]`, `autologger-stage 200 ...[admin]`, `autologger-prod 200 ...[admin]`. Removing and revoking the bootstrap identity is deferred by the owner to the end of the migration (accepted risk, design D6; Owner-owed list).
 - [x] 1.5 Rotate the dev and stage client secrets to a 1-year TTL, cap the maximum token TTL at
   900 s, and check isolation between all environment pairs (re-panel of the setup delta). Check:
   the wrapper works with the new secrets, the old secrets are revoked, and cross-project fetches
@@ -215,13 +213,14 @@ written to print names or exit codes only. The agent records that output and nev
 ## Owner-owed after merge (no checkbox)
 
 - **Before cutover:** fill the Infisical `prod` project, confirm Node ≥22.12 on the deploy host, create the prod identity's client secret there, and put
-  `.env.infisical.prod` on the deploy host, and run `make prod-check` there. Fill prod only after
-  task 1.4 (the bootstrap identity is revoked).
+  `.env.infisical.prod` on the deploy host, and run `make prod-check` there. Until the bootstrap
+  identity is revoked, prod's secrets are readable through it (accepted risk, D6).
 - **After this reaches `main` at cutover,** and only after a verified Infisical backup and a
   restore test: delete `.env.dev`, `.env.stage` and prod's `.env`, and remove the
   `docker/.env*.example` templates in a tier 0 commit.
-- Reduce or revoke the bootstrap identity's organization access (`~/.infisical-bootstrap`), then
-  delete the file.
+- **At the end of the migration (ADR 0021 cutover):** remove the bootstrap identity from
+  `autologger-dev`, `autologger-stage` and `autologger-prod`, revoke it, and delete
+  `~/.infisical-bootstrap`. Then check that a login with it fails.
 - Delete the old, unused `autologger` Infisical project. The bootstrap identity got 403 on it,
   so this is done in the web UI.
 - Push the branch and open the PR into `supabase-migration` when asked, with the `size-override`
