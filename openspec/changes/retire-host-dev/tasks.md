@@ -68,9 +68,11 @@ The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supabase-mi
 
 ## 4. Verify
 
-- [ ] 4.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
+- [x] 4.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
   - Check: green, with size within the budget.
-- [ ] 4.2 Do the consistency read, appended to `panel.md`.
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS`, including `PASS  size             304/400 changed lines`.
+- [x] 4.2 Do the consistency read, appended to `panel.md`.
+  Evidence: `git diff <approval> -- openspec/changes/retire-host-dev/` -> tasks.md only (`12 insertions(+), 6 deletions(-)`), so no scope change; `panel.md` `## Consistency read 2026-10-01`, 3 minor items, all resolved.
 - [ ] 4.3 Archive with `/opsx:archive retire-host-dev`.
   - Check: `openspec validate --all --strict`.
 

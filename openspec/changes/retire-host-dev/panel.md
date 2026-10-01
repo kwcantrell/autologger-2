@@ -58,3 +58,10 @@ Resolutions point to the v2 artifacts. Findings raised by two or more reviewers 
 
 ## Approval 2026-09-30
 The owner approved v2 (lock fixes, one effective host, LAN unavailable, single-process production to follow-up).
+
+## Consistency read 2026-10-01
+Edits since approval: tasks.md (ticks and evidence only).
+Scope change: no
+- [x] [minor] File location: design D1 named `server/src/node/bootGuard*.ts`, but `packageBoundaries.repo.test.ts` allows only four production files in `node/`. Resolved: the guard, its CLI and tests live in `server/src/`. Behaviour is unchanged (task 1.1 evidence).
+- [x] [minor] `main.ts` also catches `DataDirLockedError` and exits 1 with the message, because the first live run printed a raw stack trace. Resolved: this matches the spec ("exits non-zero before …"); it is a presentation fix, not new scope.
+- [x] [minor] Every delta scenario has a check: host boot (`bootOrder.int.test.ts` and the live host run), no implicit `DATA_DIR` (`bootGuard.test.ts`, `config.test.ts`, `bootOrder.int.test.ts`), second server (the `config.test.ts` ordering test and the live tsx and `npm run dev` runs), no `server/.env` (`hostDev.repo.test.ts`), loopback (`config.test.ts` effective-host test), the Cursor rule (read back), and package-architecture dev loop (the dev stack is healthy). Non-goals hold: single-process production and LAN via the proxy are not touched. Size 304/400.
