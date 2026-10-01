@@ -93,5 +93,3 @@ Stack commands (test, lint, typecheck, audit) live under `lifecycle.commands` in
   `packages/contract/**` and `server/src/routers/**` force tier 2.
 - **Keep dev on loopback.** `npm run dev` binds `127.0.0.1`. Test LAN devices against
   `npm run build && npm run start` instead.
-- **`npm run e2e:container` uses fixed container names** and clashes with a running prod stack.
-  Check `docker ps` first.

@@ -36,8 +36,9 @@ gates run with `GITHUB_BASE_REF=supabase-migration`.
 
 ## 3. Docs
 
-- [ ] 3.1 Update the README and AGENTS.md (design D6), and the ADR 0021 slice list (split,
+- [x] 3.1 Update the README and AGENTS.md (design D6), and the ADR 0021 slice list (split,
   exception, order).
+  Evidence: README: the e2e smoke and visual sections are replaced by "Browser e2e (retired)", "Verifying the container topology" now describes `test_router.sh stage`, and the `e2e:container` warnings (pre-flight, one host two stacks, the prod follow-up), the Companion `npm run e2e` line, the `typecheck` comment and the fixtures-tree `playwright.config.ts` mention are removed. AGENTS.md: `e2e:container` bullet deleted. ADR 0021: 1.4 is split into 1.4a/1.4b, run before 1.3, with the 1.4a size exception recorded. `grep -nE "e2e|playwright" AGENTS.md` -> none; README -> only the retirement lines (1386-1387, 1705, 1770-1772, 1880); `scripts/check-change.sh --only guide-size` -> `PASS  guide-size       AGENTS.md 95/150 lines`.
   - Check: `grep -nE "e2e|playwright" README.md AGENTS.md` shows only the new retirement line;
     `scripts/check-change.sh --only guide-size` passes.
 
