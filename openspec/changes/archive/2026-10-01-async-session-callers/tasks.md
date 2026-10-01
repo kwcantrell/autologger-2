@@ -86,11 +86,12 @@ only. The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supab
 - [x] 4.1 ADR 0021: record the slice 3 scope (catalog, KV, presence; the session hub in slice 7),
   the 3a-3d split, and the slice 4 hazard list (design D6).
   Evidence: `docs/decisions/0021-migrate-to-self-hosted-supabase.md` slice 3 entry now lists the scope, 3a-3d and seven slice 4 hazards.
-- [ ] 4.2 At archive, change the `core-ports-architecture` Purpose from
+- [x] 4.2 At archive, change the `core-ports-architecture` Purpose from
   "synchronous-hub / synchronous-catalog posture (embedded-only, no Cloudflare-shaped or
   async-costume APIs)" to: "synchronous session hub (until ADR 0021 slice 7); catalog, key/value
   and presence ports converging on asynchronous APIs (ADR 0021 slice 3); no Cloudflare-shaped
   APIs".
+  Evidence: `openspec/specs/core-ports-architecture/spec.md` Purpose now reads "a synchronous session hub (until ADR 0021 slice 7), with the catalog, key/value and presence ports converging on asynchronous APIs (ADR 0021 slice 3) and no Cloudflare-shaped APIs".
 - [x] 4.3 Run `npm run typecheck`, `npm test` and
   `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
   Evidence: hook stage -> all PASS, `size  370/400 changed lines`, `risk-floor  15 high-risk path(s) touched`, `commands  ran ['typecheck', 'test']`; `npx biome check server/src packages` -> `Found 2 warnings` (the same 2 as the base, in `compression.int.test.ts`).
@@ -104,4 +105,5 @@ only. The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supab
   - `GET /api/companion/state` with the token;
   - a session WebSocket connects.
   Evidence: `make dev-restart`; via `127.0.0.1:8787`: `GET /api/sessions 200`, unknown session `404`, `GET /api/companion/state 200` (token piped from the container env, never printed); a scratch show and session created through the API, then detail `200`, `export.csv 200`, events `200`, `ws open`.
-- [ ] 4.5 Consistency read, archive (sync specs), commit.
+- [x] 4.5 Consistency read, archive (sync specs), commit.
+  Evidence: consistency read appended to `panel.md` (no scope change; one recorded deviation: `primarySession` stays sync over one snapshot). Specs synced: the two ADDED requirements are appended to `openspec/specs/core-ports-architecture/spec.md` and the Purpose is reworded; `openspec validate --all --strict` passes; the change moved to `archive/2026-10-01-async-session-callers`.

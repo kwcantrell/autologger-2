@@ -25,3 +25,9 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [minor] No WebSocket test covers a non-member upgrade. Resolved: a test is added in task 3.1.
 - [x] [minor] The boot-order source-inspection test is optional. Resolved: replaced by a boot-helper test (task 2.3).
 - [x] [minor] `update`'s return value was unspecified. Resolved: moot, since `update` is cut.
+
+## Consistency read 2026-10-01
+Edits since approval: tasks.md (evidence only).
+Scope change: no.
+- [x] [minor] Proposal and design D4 list `primarySession` among the helpers that become async. The implementation keeps it synchronous over one awaited presence snapshot (`primarySession(await presence.list())`), which also gives `/state` its single snapshot. The behaviour and the spec are unchanged. Resolved: recorded here. The spec delta names no helper.
+- [x] [minor] Coverage check: every requirement has a test. KV and presence promises: `kvStore.test.ts`, `presence.test.ts`. Startup purge order and failure: `startupPurge.test.ts`. Expired reads: `kvStore.test.ts`. Dropped and misused promises: `promiseHygiene.repo.test.ts`. Await-free window: `eventsGenerateWindow.test.ts`. Store before broadcast: `companion.int.test.ts`. Named-holder redaction: `transcribe.int.test.ts` and `generateTranscript.inflight.test.ts`. Responses unchanged: route suites with no expectation edits. Non-goals hold: no diff in `identity.ts`, `packages/catalog`, `packages/session-core`, or the teams, admin, profile, shows, auth or middleware files. Resolved: no action needed.
