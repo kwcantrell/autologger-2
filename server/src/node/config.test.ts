@@ -106,7 +106,9 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
 describe('createBindings -- DATA_DIR is required and absolute (retire-host-dev D1)', () => {
   it('throws without DATA_DIR, with an empty one, or with a relative one', () => {
     for (const v of [undefined, '', 'data', './data']) {
-      expect(() => createBindings({ ...freshProcEnv(), DATA_DIR: v }), String(v)).toThrow(/DATA_DIR/);
+      expect(() => createBindings({ ...freshProcEnv(), DATA_DIR: v }), String(v)).toThrow(
+        /DATA_DIR/,
+      );
     }
   });
 });

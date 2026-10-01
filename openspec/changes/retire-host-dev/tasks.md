@@ -54,7 +54,7 @@ The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supabase-mi
 
 ## 3. Live verification
 
-- [ ] 3.1 Rebuild and restart dev and stage.
+- [x] 3.1 Rebuild and restart dev and stage.
   - Check:
     - all containers are healthy;
     - `make dev-restart` works;
@@ -64,6 +64,7 @@ The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supabase-mi
     - only then, `npx tsx src/main.ts` in the container exits 1 naming the lock, and so does a
       second `npm run dev`;
     - the dev app keeps serving, and the `tmp/` listing is unchanged.
+  Evidence: `make dev-up` (rebuilt) -> app `healthy`, `/data/.server.lock` present (0 bytes, owner node). Data-free probe first: `acquireDataDirLock('/data')` in the container -> `refused: DataDirLockedError`. Second server via `npx tsx src/main.ts` -> `rc=1`, `autologger: another AutoLogger server holds /data; refusing …`, 0 stack-trace lines (main.ts now catches `DataDirLockedError`; the first run printed a raw stack trace, so I added the catch). Second `npm run dev` -> `autologger: another AutoLogger server holds /data…`, `npm error code 1`. `/data/tmp` listing md5 unchanged; dev app via gate `200`. `make dev-restart` -> app `healthy`; `test_gateway (dev): 45 passed, 0 failed`. `make stage-up` (rebuilt api with the guard) -> 0 unhealthy; `test_router: 67 passed, 0 failed`; `test_gateway (stage): 45 passed, 0 failed`. After biome import fixes: `npm test` rc=0, `npm run typecheck` rc=0, lint only the 2 existing `compression.int.test.ts` warnings.
 
 ## 4. Verify
 

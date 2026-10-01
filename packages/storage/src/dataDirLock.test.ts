@@ -20,12 +20,28 @@ function holder(d: string, gc = false) {
     ${gc ? 'globalThis.gc(); globalThis.gc();' : ''}
     console.log('LOCKED'); setInterval(() => {}, 1000);`;
   // One process (node with the tsx loader), so SIGKILL hits the lock holder itself.
-  const c = spawn(process.execPath, ['--import', 'tsx', ...(gc ? ['--expose-gc'] : []), '--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
-  return new Promise<typeof c>((ok) => c.stdout.on('data', (b) => String(b).includes('LOCKED') && ok(c)));
+  const c = spawn(
+    process.execPath,
+    ['--import', 'tsx', ...(gc ? ['--expose-gc'] : []), '--input-type=module', '-e', code],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  return new Promise<typeof c>((ok) =>
+    c.stdout.on('data', (b) => String(b).includes('LOCKED') && ok(c)),
+  );
 }
 const tryLockElsewhere = (d: string) =>
-  spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', `import { acquireDataDirLock } from ${JSON.stringify(SELF)};
-    try { acquireDataDirLock(${JSON.stringify(d)}); console.log('ACQUIRED'); } catch (e) { console.log(e.name); }`], { encoding: 'utf8' }).stdout.trim();
+  spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `import { acquireDataDirLock } from ${JSON.stringify(SELF)};
+    try { acquireDataDirLock(${JSON.stringify(d)}); console.log('ACQUIRED'); } catch (e) { console.log(e.name); }`,
+    ],
+    { encoding: 'utf8' },
+  ).stdout.trim();
 
 describe('acquireDataDirLock', () => {
   it('refuses a second holder in the same process quickly, and frees on release', () => {

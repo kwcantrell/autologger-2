@@ -2,13 +2,14 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DataDirLockedError } from '@autologger/storage';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
-import { loopbackHostname, requireLoginEnabled } from './env';
 import { checkBootEnv } from './bootGuard';
+import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
@@ -20,7 +21,18 @@ if (refusal) {
   process.exit(1);
 }
 
-const { bindings, close } = createBindings(process.env);
+let created: ReturnType<typeof createBindings>;
+try {
+  created = createBindings(process.env);
+} catch (e) {
+  // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
+  if (e instanceof DataDirLockedError) {
+    console.error(`autologger: ${e.message}`);
+    process.exit(1);
+  }
+  throw e;
+}
+const { bindings, close } = created;
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 

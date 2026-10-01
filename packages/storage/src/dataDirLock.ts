@@ -13,7 +13,9 @@ import Database from 'better-sqlite3';
 
 export class DataDirLockedError extends Error {
   constructor(dir: string) {
-    super(`another AutoLogger server holds ${dir}; refusing to start a second one on the same data directory`);
+    super(
+      `another AutoLogger server holds ${dir}; refusing to start a second one on the same data directory`,
+    );
     this.name = 'DataDirLockedError';
   }
 }

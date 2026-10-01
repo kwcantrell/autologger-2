@@ -10,7 +10,8 @@ const ok = { AUTOLOGGER_STACK: 'dev', DATA_DIR: '/data' };
 
 describe('checkBootEnv', () => {
   it('accepts every stack with an absolute DATA_DIR', () => {
-    for (const s of ['dev', 'stage', 'prod']) expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: s })).toBeNull();
+    for (const s of ['dev', 'stage', 'prod'])
+      expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: s })).toBeNull();
   });
   it('refuses a missing, empty or unknown stack sentinel, naming make dev-up', () => {
     for (const v of [undefined, '', 'x', 'DEV', 'check']) {
@@ -31,7 +32,9 @@ describe('checkBootEnv', () => {
   });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');
-    const envs = JSON.parse((src.match(/const ENVS = (\[[^\]]*\]);/)?.[1] ?? '[]').replace(/'/g, '"'));
+    const envs = JSON.parse(
+      (src.match(/const ENVS = (\[[^\]]*\]);/)?.[1] ?? '[]').replace(/'/g, '"'),
+    );
     expect([...STACKS].sort()).toEqual([...envs].sort());
   });
 });
