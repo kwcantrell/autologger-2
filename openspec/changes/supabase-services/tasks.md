@@ -60,10 +60,12 @@ counts only, never a value.
 
 ## 3. Services, networks, gateway, checks
 
-- [ ] 3.1 Add the `test_check_envs.sh` cases first (design D7) and see them fail. Then implement
+- [x] 3.1 Add the `test_check_envs.sh` cases first (design D7) and see them fail. Then implement
+  Evidence: cases first: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 0 passed, 27 failed` (the old check couldn't resolve the new files); after -> `check-envs: ok (all)` and `test_check_envs: 27 passed, 0 failed` (new: superuser password in rest, gateway on db, rest on edge, non-internal supabase, unpinned auth, storage port, edge subnet drift, anon key in api -> invariant 16; gateway Caddyfile and init SQL binds outside their service -> invariant 4).
   `check-envs.sh`.
   - Check: every case passes, naming its invariant, and `make check` passes.
-- [ ] 3.2 Write:
+- [x] 3.2 Write:
+  Evidence: `make dev-down`; `docker volume rm autologger-dev_supabase-db autologger-dev_supabase-db-config`; `make dev-up` (after the owner stopped a vLLM container holding :8000, and after changing storage's healthcheck to `127.0.0.1`, since it listens on IPv4 only) -> `0 applied`, `Supabase:       http://localhost:8790`; every dev container `(healthy)`. `dev-data` CreatedAt `2026-09-30T20:08:17-07:00` before and after. Over the `db` network: `authenticator`/`supabase_auth_admin`/`supabase_storage_admin` with the roles password -> `login OK`; `supabase_admin` with it -> `login FAILED`; `authenticator` with the superuser password -> `login FAILED`. `up -d --force-recreate auth rest realtime storage` -> all `(healthy)`; `auth user=supabase`, `rest user=1000`, `realtime user=65534:65534`, `storage user=` (root), all `capadd=null capdrop=["ALL"]`. Wrapper port counts and `Supabase:` URL (moved from 1.1): `compose-run.test.mjs` red first (`✖ dev needs app, Companion and the gateway…`, `✖ resolved passes and urls…`), then both files `ℹ tests 53` / `ℹ pass 53`.
   - `docker/supabase-services.yaml` (four services);
   - the `supabase` and `edge` networks in the three base files;
   - the init SQL and its `db` mounts, and `SUPABASE_ROLES_PASSWORD` on `db`;

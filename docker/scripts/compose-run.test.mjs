@@ -36,6 +36,16 @@ const REAL_DOCKER = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'ut
 const SECRET = 'csec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (supabase-db D4)
+// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all.
+const SB_JS = 'j'.repeat(43);
+const sbJwt = (role) => {
+  const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role, iss: 'supabase', exp: Math.floor(Date.now() / 1000) + 365 * 86400 })}`;
+  return `${hp}.${createHmac('sha256', SB_JS).update(hp).digest('base64url')}`;
+};
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('JWT_SECRET', SB_JS),
+  secret('ANON_KEY', sbJwt('anon')), secret('SERVICE_ROLE_KEY', sbJwt('service_role')), secret('SECRET_KEY_BASE', 's'.repeat(64)),
+  secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
 
 let T; // temp dir
 let server;
@@ -177,7 +187,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -413,7 +423,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, fetches with the right query, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787'), ...sbSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.equal(seen.length, 2);
@@ -438,7 +448,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'TERM']);
+    assert.deepEqual(names, ['ANON_KEY', 'AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a multi-step call logs in once and runs the steps in order', async () => {
@@ -474,11 +484,12 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const r = await run(['dev', 'resolved', 'urls']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /127\.0\.0\.1:18787/);
+    assert.match(r.out, /Supabase: +http:\/\/localhost:18790/);
   });
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('DEV_PORT', p), secret('POSTGRES_PASSWORD', PGPW)]);
+      handler = standIn([secret('DEV_PORT', p), ...sbSecrets()]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -505,7 +516,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('DEV_PORT', '8080'), secret('POSTGRES_PASSWORD', PGPW)]);
+    handler = standIn([secret('DEV_PORT', '8080'), ...sbSecrets()]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
@@ -543,7 +554,7 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
     assert.equal(r.code, 0, r.out);
   });
   it('resolved refuses a config where the password value appears outside db and migrate', () => {
-    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
+    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
     const secrets = new Map([['POSTGRES_PASSWORD', PGPW]]);
     assert.doesNotThrow(() => checkResolved('prod', ok, secrets));
     for (const leak of [{ labels: { x: `pw=${PGPW}` } }, { environment: { DATABASE_URL: `postgres://u:${PGPW}@db/x` } }, { build: { args: { P: PGPW } } }]) {
@@ -612,7 +623,7 @@ describe('Supabase keys (supabase-services D4)', () => {
     assert.deepEqual(checkSupabaseKeys(new Map([['POSTGRES_PASSWORD', PGPW]])), []);
   });
   it('resolved refuses a secret value outside its allowed services', () => {
-    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, realtime: { environment: { ANON: ANON, DB: PGPW } }, storage: { environment: { A: ANON, S: SVC } }, 'supabase-gw': { environment: { A: ANON, S: SVC } } } };
+    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, realtime: { environment: { ANON: ANON, DB: PGPW } }, storage: { environment: { A: ANON, S: SVC } }, 'supabase-gw': { environment: { A: ANON, S: SVC }, ports: [{ host_ip: '127.0.0.1', published: '8790' }] } } };
     const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['ANON_KEY', ANON], ['SERVICE_ROLE_KEY', SVC]]);
     assert.doesNotThrow(() => checkResolved('prod', base, secrets));
     for (const [svc, k, v] of [['api', 'ANON_KEY', ANON], ['rest', 'POSTGRES_PASSWORD', PGPW], ['realtime', 'SERVICE_ROLE_KEY', SVC]]) {
@@ -623,5 +634,16 @@ describe('Supabase keys (supabase-services D4)', () => {
       assert.match(msg, new RegExp(`${k}.*${svc}`), `${k} in ${svc}`);
       assert.ok(!msg.includes(v));
     }
+  });
+});
+
+describe('published ports with the Supabase gateway (supabase-services D4)', () => {
+  const port = (n) => ({ ports: [{ host_ip: '127.0.0.1', published: String(n) }] });
+  it('dev needs app, Companion and the gateway on distinct ports; stage and prod the router and the gateway', () => {
+    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }));
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8787) } }), /expected set/);
+    assert.doesNotThrow(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788), 'supabase-gw': port(8791) } }));
+    assert.throws(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788) } }), /expected set/);
   });
 });

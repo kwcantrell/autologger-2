@@ -397,13 +397,15 @@ export function checkResolved(env, cfg, secrets = new Map()) {
   if (env === 'dev' && pub.some((p) => p === '80' || p === '443')) {
     refuse('refusing: a published dev port is 80 or 443; browsers omit the default port from Host/Origin so the dev gate would reject every request');
   }
-  const want = env === 'dev' ? 2 : 1;
-  if (ports.length !== want || (env === 'dev' && pub[0] === pub[1])) {
-    refuse(`refusing: the resolved ${env} ports are not the expected set (dev: app and Companion on distinct ports; stage/prod: the router only)`);
+  const want = env === 'dev' ? ['app', 'companion', 'supabase-gw'] : ['router', 'supabase-gw'];
+  const owners = Object.entries(cfg.services ?? {}).filter(([, s]) => (s.ports ?? []).length).map(([n]) => n).sort();
+  if (ports.length !== want.length || owners.join() !== want.join() || new Set(pub).size !== pub.length) {
+    refuse(`refusing: the resolved ${env} ports are not the expected set (${want.join(', ')}, one each, on distinct ports)`);
   }
 }
 
 function urls(env, cfg) {
+  const sb = cfg.services['supabase-gw']?.ports?.[0]?.published;
   if (env === 'dev') {
     process.stdout.write(`dev app:        http://127.0.0.1:${cfg.services.app.ports[0].published}\n`);
     process.stdout.write(`dev Companion:  http://127.0.0.1:${cfg.services.companion.ports[0].published}\n`);
@@ -413,6 +415,7 @@ function urls(env, cfg) {
   } else {
     process.stdout.write(`prod router:    http://127.0.0.1:${cfg.services.router.ports[0].published}\n`);
   }
+  if (sb) process.stdout.write(`Supabase:       http://localhost:${sb}   (API gateway: /auth/v1, /rest/v1, /realtime/v1, /storage/v1)\n`);
 }
 
 // ------------------------------------------------------------------------ main ------------

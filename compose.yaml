@@ -132,6 +132,20 @@ networks:
     ipam:
       config:
         - subnet: 172.28.12.0/24
+  # Supabase services (docker/supabase-services.yaml): internal and host-isolated; only the gateway
+  # also joins `edge`, which exists to publish its port.
+  supabase:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.13.0/24
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.14.0/24
 
 volumes:
   autologger-data:

@@ -1,0 +1,4 @@
+# Placeholder until supabase-services task 3.3.
+:8000 {
+	respond 200
+}
