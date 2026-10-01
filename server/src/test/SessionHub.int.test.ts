@@ -13,7 +13,7 @@ import { SEED_CATEGORY_ID, seededSession } from './helpers';
 
 describe('hub ↔ catalog projection', () => {
   it('logging an event bumps the projected event_count on the catalog row', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -24,7 +24,7 @@ describe('hub ↔ catalog projection', () => {
       env,
     );
     expect(res.status).toBe(200);
-    const row = env.ports.catalog.first<{ event_count: number }>(
+    const row = await env.ports.catalog.first<{ event_count: number }>(
       'SELECT event_count FROM sessions WHERE id = ?',
       s,
     );
@@ -32,7 +32,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('start/stop take round-trips is_rolling through hub and projection', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const start = await app.request(`/api/sessions/${s}/transport/start`, { method: 'POST' }, env);
     expect(start.status).toBe(200);
     const startBody = (await start.json()) as { started: boolean; is_rolling: boolean };
@@ -42,7 +42,7 @@ describe('hub ↔ catalog projection', () => {
     const status = await app.request(`/api/sessions/${s}/status`, {}, env);
     expect(((await status.json()) as { is_rolling: boolean }).is_rolling).toBe(true);
 
-    const rowWhileRolling = env.ports.catalog.first<{ is_rolling: number }>(
+    const rowWhileRolling = await env.ports.catalog.first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );
@@ -54,7 +54,7 @@ describe('hub ↔ catalog projection', () => {
     expect(stopBody.stopped).toBe(true);
     expect(stopBody.is_rolling).toBe(false);
 
-    const rowAfterStop = env.ports.catalog.first<{ is_rolling: number }>(
+    const rowAfterStop = await env.ports.catalog.first<{ is_rolling: number }>(
       'SELECT is_rolling FROM sessions WHERE id = ?',
       s,
     );
@@ -62,7 +62,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('hub state persists across registry eviction (reopen from disk)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -79,7 +79,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('recording lease claim/conflict/release over HTTP', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const claim = (cid: string) =>
       app.request(
         `/api/sessions/${s}/audio-recording-lease`,
@@ -106,7 +106,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('status payload exposes event counts, revision, and lease fields (old-suite parity)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await app.request(
       `/api/sessions/${s}/events`,
       {
@@ -133,7 +133,7 @@ describe('hub ↔ catalog projection', () => {
   });
 
   it('audio segment add/list round-trips through the hub over HTTP (add→list; delete has no HTTP route)', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     const bytes = new Uint8Array([9, 8, 7]);
     const up = await app.request(
       `/api/sessions/${s}/audio/segments`,

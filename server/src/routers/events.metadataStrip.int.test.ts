@@ -67,7 +67,7 @@ async function putEvent(
 
 describe('POST events — reserved auto-generation metadata keys are stripped', () => {
   it('strips auto_generated/auto_generate_run_id, keeps other keys, 200', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     const { status, json } = await postEvent(sessionId, {
       category: 'cam',
       message: 'm',
@@ -88,7 +88,7 @@ describe('POST events — reserved auto-generation metadata keys are stripped', 
   });
 
   it('strips regardless of the values sent (value-independent)', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     const { status, json } = await postEvent(sessionId, {
       category: 'cam',
       message: 'm',
@@ -101,7 +101,7 @@ describe('POST events — reserved auto-generation metadata keys are stripped', 
   });
 
   it('strips unconditionally on the internal-category path too', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     const { status, json } = await postEvent(sessionId, {
       category: 'internal',
       message: 'm',
@@ -115,7 +115,7 @@ describe('POST events — reserved auto-generation metadata keys are stripped', 
   });
 
   it('leaves ordinary metadata (no reserved keys) byte-identical', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     const metadata = { note: 'keep', nested: { x: 1 }, n: 3 };
     const { status, json } = await postEvent(sessionId, {
       category: 'cam',
@@ -131,7 +131,7 @@ describe('POST events — reserved auto-generation metadata keys are stripped', 
   });
 
   it('has_auto_generated stays false after a stamping POST (delta scenario)', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     const { status } = await postEvent(sessionId, {
       category: 'cam',
       message: 'm',
@@ -145,7 +145,7 @@ describe('POST events — reserved auto-generation metadata keys are stripped', 
 
 describe("PUT event update — preserves an existing auto row's attribution", () => {
   it('an edited generation-created row still matches the auto predicate', async () => {
-    const { sessionId } = seededSession();
+    const { sessionId } = await seededSession();
     // Simulate a row the generation run wrote (server-side create_event
     // merge — never reachable through the POST route): stamped directly at
     // the hub, same as aiMcpServer.ts's create_event tool does.

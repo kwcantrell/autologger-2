@@ -40,44 +40,54 @@ afterEach(() => {
 });
 
 describe('catalog migrations via the real composition root (package-architecture spec)', () => {
-  it('fresh DATA_DIR migrates the full ordered set via the package path, recording the same name set/order and producing the same schema', () => {
+  it('fresh DATA_DIR migrates the full ordered set via the package path, recording the same name set/order and producing the same schema', async () => {
     const dir = tempDir('autologger-catmig-');
     const { bindings, close } = createBindings({ DATA_DIR: dir });
     try {
-      const byName = bindings.ports.catalog
-        .all<{ name: string }>('SELECT name FROM _migrations ORDER BY name')
-        .map((r) => r.name);
+      const byName = (
+        await bindings.ports.catalog.all<{ name: string }>(
+          'SELECT name FROM _migrations ORDER BY name',
+        )
+      ).map((r) => r.name);
       expect(byName).toEqual([...REAL_MIGRATION_NAMES].sort());
 
       // Application order: rowid reflects insertion order (the table has no
       // other ordering key), proving the set applied in filename order, not
       // just that the same five names eventually landed.
-      const byRowid = bindings.ports.catalog
-        .all<{ name: string }>('SELECT name FROM _migrations ORDER BY rowid')
-        .map((r) => r.name);
+      const byRowid = (
+        await bindings.ports.catalog.all<{ name: string }>(
+          'SELECT name FROM _migrations ORDER BY rowid',
+        )
+      ).map((r) => r.name);
       expect(byRowid).toEqual(REAL_MIGRATION_NAMES);
 
       // Resulting schema: one artifact from each migration is present.
-      expect(() => bindings.ports.catalog.all('SELECT * FROM users LIMIT 1')).not.toThrow();
-      expect(() => bindings.ports.catalog.all('SELECT * FROM kv LIMIT 1')).not.toThrow();
-      expect(() => bindings.ports.catalog.all('SELECT * FROM team_invites LIMIT 1')).not.toThrow();
-      const membershipCols = bindings.ports.catalog
-        .all<{ name: string }>('PRAGMA table_info(user_studio_memberships)')
-        .map((c) => c.name);
+      await expect(
+        bindings.ports.catalog.all('SELECT * FROM users LIMIT 1'),
+      ).resolves.not.toThrow();
+      await expect(bindings.ports.catalog.all('SELECT * FROM kv LIMIT 1')).resolves.not.toThrow();
+      await expect(
+        bindings.ports.catalog.all('SELECT * FROM team_invites LIMIT 1'),
+      ).resolves.not.toThrow();
+      const membershipCols = (
+        await bindings.ports.catalog.all<{ name: string }>(
+          'PRAGMA table_info(user_studio_memberships)',
+        )
+      ).map((c) => c.name);
       expect(membershipCols).toContain('role');
-      const showCols = bindings.ports.catalog
-        .all<{ name: string }>('PRAGMA table_info(shows)')
-        .map((c) => c.name);
+      const showCols = (
+        await bindings.ports.catalog.all<{ name: string }>('PRAGMA table_info(shows)')
+      ).map((c) => c.name);
       expect(showCols).toContain('title_suffix');
     } finally {
       close();
     }
   });
 
-  it('already-migrated DATA_DIR is untouched by a second boot', () => {
+  it('already-migrated DATA_DIR is untouched by a second boot', async () => {
     const dir = tempDir('autologger-catmig-');
     const first = createBindings({ DATA_DIR: dir });
-    const firstRows = first.bindings.ports.catalog.all<{
+    const firstRows = await first.bindings.ports.catalog.all<{
       name: string;
       applied_at_utc: string;
     }>('SELECT name, applied_at_utc FROM _migrations ORDER BY name');
@@ -88,7 +98,7 @@ describe('catalog migrations via the real composition root (package-architecture
     // (no throw), and no migration re-applies — same rows, same timestamps.
     const second = createBindings({ DATA_DIR: dir });
     try {
-      const secondRows = second.bindings.ports.catalog.all<{
+      const secondRows = await second.bindings.ports.catalog.all<{
         name: string;
         applied_at_utc: string;
       }>('SELECT name, applied_at_utc FROM _migrations ORDER BY name');

@@ -47,7 +47,7 @@ async function listSegments(session: string): Promise<SegmentDict[]> {
 
 describe('multi-chunk live recording segment uploads (task 6.1)', () => {
   it('two chunks sharing recording_ordinal both appear with correct metadata in capture order', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const chunk1 = await uploadSegment(session, {
       recordingOrdinal: 1,
       startedAtUtc: '2026-08-12T10:00:00.000Z',
@@ -96,7 +96,7 @@ describe('multi-chunk live recording segment uploads (task 6.1)', () => {
     // create a duplicate row if the client ever DID re-POST — i.e. the
     // client-side check is load-bearing, not a redundant belt-and-suspenders
     // guard against a server that already refuses duplicates.
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const startedAtUtc = '2026-08-12T11:00:00.000Z';
     const endedAtUtc = '2026-08-12T11:00:05.000Z';
 

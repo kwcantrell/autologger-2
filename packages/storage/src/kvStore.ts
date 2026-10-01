@@ -12,11 +12,11 @@
 // clock explicitly (systemClock), so the only call site that needed updating
 // was this package's own test.
 
-import type { AsyncCatalogDb, Clock, KvStore as KvStorePort } from '@autologger/ports';
+import type { CatalogDb, Clock, KvStore as KvStorePort } from '@autologger/ports';
 
 export class KvStore implements KvStorePort {
   constructor(
-    private db: AsyncCatalogDb,
+    private db: CatalogDb,
     private clock: Clock,
   ) {}
 
@@ -49,6 +49,18 @@ export class KvStore implements KvStorePort {
 
   async delete(key: string): Promise<void> {
     await this.db.run('DELETE FROM kv WHERE key = ?', key);
+  }
+
+  /** One statement, so it is atomic on any engine: of concurrent takes of one key, exactly one
+   * sees the value (async-catalog-stores D4). An expired entry is removed and reads as absent. */
+  async take(key: string): Promise<string | null> {
+    const row = await this.db.first<{ value: string; expires_at: number | null }>(
+      'DELETE FROM kv WHERE key = ? RETURNING value, expires_at',
+      key,
+    );
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= this.clock.now()) return null;
+    return row.value;
   }
 
   async purgeExpired(): Promise<void> {

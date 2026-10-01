@@ -192,20 +192,20 @@ authRouter.get('/auth/google/callback', async (c) => {
   } else {
     // Design D2: the whole new-user branch -- creation, pref seeding, and
     // invite materialization + consumption -- runs inside one catalog
-    // transaction (CatalogDb.tx nests as savepoints; every store call below
-    // is synchronous). The async KV login-session write below stays outside.
-    uid = c.env.ports.catalog.tx(() => {
-      const newUid = catalog.auth.authCreateUserGoogle({
+    // transaction, on stores bound to it (store transactions join it;
+    // async-catalog-stores D3). The KV login-session write below stays outside.
+    uid = await catalog.tx(async (cat) => {
+      const newUid = await cat.auth.authCreateUserGoogle({
         googleSub,
         email: email || `${googleSub}@users.noreply.invalid`,
         givenName: gn,
         familyName: fn,
         pictureUrl: pic,
       });
-      catalog.auth.authSeedPrefsFromGlobals(
+      await cat.auth.authSeedPrefsFromGlobals(
         newUid,
-        catalog.studios.getSetting(SETTING_ACTIVE_STUDIO) || DEFAULT_STUDIO_ID,
-        catalog.studios.getSetting(SETTING_ACTIVE_SHOW) || '',
+        (await cat.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
+        (await cat.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
       );
       // Materialize pending invites ONLY when the id_token asserts a
       // verified email (team-management delta, "Email invites") -- the
@@ -215,9 +215,9 @@ authRouter.get('/auth/google/callback', async (c) => {
       // `<sub>@users.noreply.invalid` address can never be normalized into
       // a match.
       if (emailVerified && email) {
-        const consumed = catalog.auth.authConsumeInvitesForEmail(normalizeEmail(email));
+        const consumed = await cat.auth.authConsumeInvitesForEmail(normalizeEmail(email));
         for (const invite of consumed) {
-          catalog.auth.authAddMembershipWithRole(newUid, String(invite.studio_id), 'member');
+          await cat.auth.authAddMembershipWithRole(newUid, String(invite.studio_id), 'member');
         }
       }
       return newUid;

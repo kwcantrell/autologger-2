@@ -159,8 +159,8 @@ afterEach(() => {
 });
 
 /** Shared seed chain + this file's cwd-cleanup registration. */
-function seededSession(): string {
-  const { sessionId } = seedSessionChain();
+async function seededSession(): Promise<string> {
+  const { sessionId } = await seedSessionChain();
   seededSessionIds.push(sessionId);
   return sessionId;
 }
@@ -207,7 +207,7 @@ function post(
 
 describe('ai/chat — auth gate (first)', () => {
   it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     // fixtureEnv (not loopbackEnv's bogus CLI): a real, resolvable CLI, so
     // `neverSpawned` genuinely proves the auth guard — not a misconfigured
     // path — is what stopped the subprocess (see SPAWN OBSERVATION note).
@@ -227,9 +227,9 @@ describe('ai/chat — session resolution masks before 503/409', () => {
   });
 
   it('404 for an out-of-studio session — never 503/409 — even unconfigured with a turn in flight', async () => {
-    const outsiderStudio = seedStudio();
-    const s = seededSession();
-    const outsider = seedUser({ studios: [outsiderStudio] });
+    const outsiderStudio = await seedStudio();
+    const s = await seededSession();
+    const outsider = await seedUser({ studios: [outsiderStudio] });
     // A turn is "in flight" for this session AND the feature is unconfigured: if
     // the config/single-flight gates ran before session scoping we'd see 503/409.
     aiChatTurns.tryAcquire(s, 2);
@@ -248,7 +248,7 @@ describe('ai/chat — session resolution masks before 503/409', () => {
 
 describe('ai/chat — configuration gate (503)', () => {
   it('503 not-configured when CLAUDE_CLI_PATH is unset', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(((await res.json()) as { detail: string }).detail).toMatch(/not configured/i);
@@ -257,7 +257,7 @@ describe('ai/chat — configuration gate (503)', () => {
   });
 
   it('503 not-configured when CLAUDE_CLI_PATH is whitespace-only', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, { message: 'hi' }, loopbackEnv({ CLAUDE_CLI_PATH: '   ' }));
     expect(res.status).toBe(503);
     expect(((await res.json()) as { detail: string }).detail).toMatch(/not configured/i);
@@ -268,7 +268,7 @@ describe('ai/chat — configuration gate (503)', () => {
 
 describe('ai/chat — open-network refusal (503)', () => {
   it('503 for anonymous + non-loopback + no allowlist, with a distinct detail, spawning nothing', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     // fixture-backed (not CLI's bogus path) — see the header note: a real,
     // resolvable CLI path is what makes `neverSpawned` prove THIS guard
     // stopped the subprocess, not just that a bogus path never resolves.
@@ -341,7 +341,7 @@ describe('ai/chat — open-network refusal (503)', () => {
   });
 
   it('loopback-bound anonymous dev still serves (guards pass → 200 SSE, real relay spawns)', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     // Accept-Encoding is deliberate: the /api/* compress middleware must skip
     // SSE (Transfer-Encoding: chunked + text/event-stream, both excluded) even
     // when the client advertises gzip.
@@ -376,7 +376,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
       'ai.ts-level pin: this argv is identical whether ai.ts passes the tools explicitly or ' +
       'omits and falls back to the runner default, so it alone cannot distinguish the two)',
     async () => {
-      const s = seededSession();
+      const s = await seededSession();
       const res = await post(s, { message: 'hi' }, fixtureEnv());
       expect(res.status).toBe(200);
       await res.text(); // drain the SSE stream so the turn completes
@@ -407,7 +407,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
     async () => {
       const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
       try {
-        const s = seededSession();
+        const s = await seededSession();
         const res = await post(s, { message: 'hi' }, fixtureEnv());
         expect(res.status).toBe(200);
         await res.text(); // drain the SSE stream so the turn completes
@@ -435,7 +435,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
       const injected: Clock = { now: () => Date.now() };
       const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
       try {
-        const s = seededSession();
+        const s = await seededSession();
         const res = await post(s, { message: 'hi' }, fixtureEnv({}, { clock: injected }));
         expect(res.status).toBe(200);
         await res.text(); // drain the SSE stream so the turn completes
@@ -457,7 +457,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
       // call time, regardless of when the app-singleton listener was built.
       const spy = vi.spyOn(AiMcpListener.prototype, 'registerTurn');
       try {
-        const s = seededSession();
+        const s = await seededSession();
         const res = await post(s, { message: 'hi' }, fixtureEnv());
         expect(res.status).toBe(200);
         await res.text();
@@ -473,7 +473,7 @@ describe('ai/chat — tool surface pinned explicitly (auto-generate-event-logs D
 
 describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
   it('422 when message is missing', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, {}, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -481,7 +481,7 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
   });
 
   it('422 when message is whitespace-only (trimmed to empty)', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, { message: '   ' }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -489,14 +489,14 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
   });
 
   it('422 when message exceeds 8000 chars', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, { message: 'x'.repeat(8001) }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(neverSpawned(s)).toBe(true);
   });
 
   it('422 when claude_session_id is an empty string', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, { message: 'hi', claude_session_id: '' }, fixtureEnv());
     expect(res.status).toBe(422);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -504,7 +504,7 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
   });
 
   it('400 on malformed JSON, spawning nothing', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(s, 'not json{', fixtureEnv());
     expect(res.status).toBe(400);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -514,7 +514,7 @@ describe('ai/chat — body validation (422 / 400), spawning nothing', () => {
 
 describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, before single-flight/spawn)', () => {
   it('422 for a claude_session_id never issued to any session — no spawn', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const res = await post(
       s,
       { message: 'hi', claude_session_id: 'never-issued-id' },
@@ -529,8 +529,8 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
     '422 for a claude_session_id issued to a DIFFERENT session (foreign) — no spawn, ' +
       "session A's conversation is never resumed under session B",
     async () => {
-      const sessionA = seededSession();
-      const sessionB = seededSession();
+      const sessionA = await seededSession();
+      const sessionB = await seededSession();
 
       // Turn one on session A issues (and this relay records) the fixture's
       // default claude_session_id.
@@ -556,7 +556,7 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
   );
 
   it('same-session resume: an id issued for THIS session is accepted and passed as --resume', async () => {
-    const s = seededSession();
+    const s = await seededSession();
 
     const first = await post(s, { message: 'start' }, fixtureEnv());
     expect(first.status).toBe(200);
@@ -590,7 +590,7 @@ describe('ai/chat — multi-turn continuity: claude_session_id ownership (422, b
 
 describe('ai/chat — single-flight & concurrency (409)', () => {
   it('409 when a turn is already in flight for the same session (session-busy)', async () => {
-    const s = seededSession();
+    const s = await seededSession();
     const slot = aiChatTurns.tryAcquire(s, 2);
     expect(slot.ok).toBe(true);
     try {
@@ -605,8 +605,8 @@ describe('ai/chat — single-flight & concurrency (409)', () => {
   });
 
   it('409 when the process-wide ceiling is reached, with a distinct detail', async () => {
-    const other = seededSession();
-    const s = seededSession();
+    const other = await seededSession();
+    const s = await seededSession();
     // Ceiling of 1, already consumed by a different session.
     const slot = aiChatTurns.tryAcquire(other, 1);
     expect(slot.ok).toBe(true);
@@ -628,7 +628,7 @@ describe('ai/chat — guaranteed turn timeout kills the subprocess (task 3.4, sp
     'an impossibly-short AI_CHAT_TIMEOUT_SEC forces termination even though the CLI would otherwise ' +
       'succeed, ending the stream with EXACTLY ONE error{timeout} event and cleaning up every resource',
     async () => {
-      const s = seededSession();
+      const s = await seededSession();
       // A real OS process spawn (fork+exec+Node startup) cannot complete within
       // 10ms — measured on this machine at ~25-40ms even for the trivial fixture
       // — so this timeout deterministically wins the race against the (fast)
@@ -666,7 +666,7 @@ describe('ai/chat — best-effort client disconnect kills the subprocess (task 3
     'an already-aborted request signal kills the spawned CLI process group and cleans up every ' +
       'resource, ending the stream with NO terminal event (nobody is listening)',
     async () => {
-      const s = seededSession();
+      const s = await seededSession();
       const controller = new AbortController();
       controller.abort(); // simulates the client having already disconnected
       const res = await post(s, { message: 'hi' }, fixtureEnv(), J, controller.signal);
@@ -696,7 +696,7 @@ describe('ai/chat — setup failures never leak the raw exception (task 3.4 conc
     'when spawnAiChatTurn itself throws (a real, hermetic failure — not a mock), the client ' +
       "sees the SCRUBBED internal-error detail, never the raw exception's text or paths",
     async () => {
-      const s = seededSession();
+      const s = await seededSession();
       // A REAL, hermetic way to force spawnAiChatTurn's mkdirSync to throw
       // (EEXIST) — no mocking of shared infra: pre-occupy the exact path
       // `stableSessionCwd(s)` with a FILE instead of a directory, so

@@ -625,8 +625,9 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // hub re-acquire/ensure() or the catalog UPDATE below must never leak the
     // per-session slot — a leaked slot wedges every later AI turn for this
     // session behind a 409 until restart. Releasing before the mirror is safe
-    // while the catalog is synchronous: the mirror call runs before its await
-    // yields. Re-audit when the catalog does I/O (async-session-callers D6.4).
+    // while the catalog adapter yields only microtasks (async-catalog-stores
+    // A7): no other request runs before the mirror's UPDATE. Re-audit when the
+    // catalog does real I/O (ADR 0021 slice 4 hazard 4).
     slot.release();
     // Post-run catalog mirror on success AND failure paths (spec "the run
     // SHALL leave the catalog projection current by the time the route

@@ -157,12 +157,14 @@ afterEach(async () => {
   }
 });
 
-function newSession(opts: { categoriesJson?: string } = {}): {
+async function newSession(opts: { categoriesJson?: string } = {}): Promise<{
   studioId: string;
   showId: string;
   sessionId: string;
-} {
-  const chain = seedSessionChain({ categoriesJson: opts.categoriesJson ?? GEN_CATEGORIES_JSON });
+}> {
+  const chain = await seedSessionChain({
+    categoriesJson: opts.categoriesJson ?? GEN_CATEGORIES_JSON,
+  });
   seededIds.push(chain.sessionId);
   return chain;
 }
@@ -248,8 +250,8 @@ function listEvents(sessionId: string) {
   return env.ports.sessions.get(sessionId).listEvents({ limit: 1000, offset: 0 }).events;
 }
 
-function catalogEventCount(sessionId: string): number {
-  const row = catalogFor().sessions.getSessionIndexRow(sessionId);
+async function catalogEventCount(sessionId: string): Promise<number> {
+  const row = await catalogFor().sessions.getSessionIndexRow(sessionId);
   return Number(row?.event_count ?? -1);
 }
 
@@ -321,7 +323,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('2. CLAUDE_CLI_PATH unset → 503 with an actionable detail, no spawn, no MCP registration', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
@@ -330,7 +332,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('3. open-network refusal → 503 BEFORE the transcript guard (no transcript seeded, still 503)', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     // Deliberately NO transcript: if the anchored-transcript 400 ran first
     // we would see 400 here instead of the open-network 503.
     const res = await generateReq(
@@ -352,7 +354,7 @@ describe('events/generate — guard ladder', () => {
   it('4a. empty transcript → 400 BEFORE the no-instructions guard (instruction-less show, still the transcript detail)', async () => {
     // Show WITHOUT instructions AND no transcript: the transcript 400 must
     // win, pinning transcript-before-instructions order.
-    const { sessionId } = newSession({
+    const { sessionId } = await newSession({
       categoriesJson: JSON.stringify([
         {
           id: 'cam',
@@ -374,7 +376,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('4b. transcript with no session-time anchors → 400 naming the missing anchors', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchorlessTranscript(sessionId);
     const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
     expect(res.status).toBe(400);
@@ -383,7 +385,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('5. no instruction-bearing button → 400 naming the missing instructions', async () => {
-    const { sessionId } = newSession({
+    const { sessionId } = await newSession({
       categoriesJson: JSON.stringify([
         {
           id: 'cam',
@@ -404,7 +406,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('6a. aggregate instruction BYTES over the bound → 400 naming the bound, no spawn', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     const res = await generateReq(
       sessionId,
@@ -419,7 +421,7 @@ describe('events/generate — guard ladder', () => {
 
   it('6b. aggregate instruction ENTRY COUNT over the bound → 400 (bearing categories + bearing options counted)', async () => {
     // 3 entries: slate button + mic button-level + Lav option-level.
-    const { sessionId } = newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
+    const { sessionId } = await newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
     seedAnchoredTranscript(sessionId);
     const over = await generateReq(
       sessionId,
@@ -431,7 +433,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('6→7 order: an aggregate-bound 400 leaves the slot FREE — the next request is not 409-busy', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     const over = await generateReq(
       sessionId,
@@ -448,7 +450,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('7. shared AI slot held → 409 naming the full holder set incl. event generation, no spawn', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     const slot = aiChatTurns.tryAcquire(sessionId, 2);
     expect(slot.ok).toBe(true);
@@ -465,8 +467,8 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('7b. process-wide ceiling reached → 409 with the distinct at-capacity detail naming event generation', async () => {
-    const other = newSession().sessionId;
-    const { sessionId } = newSession();
+    const other = (await newSession()).sessionId;
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     const slot = aiChatTurns.tryAcquire(other, 1);
     expect(slot.ok).toBe(true);
@@ -486,7 +488,7 @@ describe('events/generate — guard ladder', () => {
   });
 
   it('cross-direction: ai/chat blocked while the slot is held names event generation among possible holders', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     // A generate run in flight is indistinguishable from any other holder at
     // the registry — the CHAT route's reworded shared detail must name event
     // generation so a user who pressed AUTO GENERATE understands the 409.
@@ -514,7 +516,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   it('absent body remains Generate All and returns the legacy success shape', async () => {
     const spy = mockSuccessfulTurn();
     try {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
@@ -530,7 +532,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   it('keeps the legacy category-plus-options bound for Generate All but counts only a custom option', async () => {
     const spy = mockSuccessfulTurn();
     try {
-      const { sessionId } = newSession({
+      const { sessionId } = await newSession({
         categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
       });
       seedAnchoredTranscript(sessionId);
@@ -566,7 +568,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   });
 
   it('treats an empty selection as Generate All for the legacy category-plus-options bound', async () => {
-    const { sessionId } = newSession({
+    const { sessionId } = await newSession({
       categoriesJson: GEN_OPTION_ONLY_DROPDOWN_CATEGORIES_JSON,
     });
     seedAnchoredTranscript(sessionId);
@@ -587,7 +589,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   it('{regenerate:false} preserves existing auto rows and omits deleted', async () => {
     const spy = mockSuccessfulTurn();
     try {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       seedAutoSlateEvent(sessionId);
 
@@ -613,7 +615,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   // mocked outcome (mockSuccessfulTurn is reserved above for tests unrelated
   // to the delete decision itself).
   it('regenerate + zero-created success keeps the prior set: 200 {created:0, cap_hit:false, deleted:0}', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     seedManualSlateEvent(sessionId);
     seedAutoSlateEvent(sessionId);
@@ -627,13 +629,13 @@ describe('events/generate — optional body, regenerate, and selection', () => {
     const events = listEvents(sessionId);
     expect(events.some((event) => event.message === 'Old generated slate')).toBe(true);
     expect(events.some((event) => event.message === 'Pre-existing slate')).toBe(true);
-    expect(catalogEventCount(sessionId)).toBe(2);
+    expect(await catalogEventCount(sessionId)).toBe(2);
   });
 
   it('mixed selection filters snapshot, prompt, and aggregate bound to the button plus one option', async () => {
     const spy = mockSuccessfulTurn();
     try {
-      const { sessionId } = newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
+      const { sessionId } = await newSession({ categoriesJson: GEN_DROPDOWN_CATEGORIES_JSON });
       seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(
@@ -681,7 +683,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   });
 
   it('unmatched selection returns 400 before slot acquisition and deletes nothing', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     seedAutoSlateEvent(sessionId);
     const slot = aiChatTurns.tryAcquire(sessionId, 2);
@@ -704,7 +706,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   });
 
   it('regenerate plus non-empty selection returns 400 before guards and deletes nothing', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAutoSlateEvent(sessionId);
 
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }), {
@@ -720,7 +722,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   });
 
   it('malformed JSON returns 400', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     const res = await app.request(
       `/api/sessions/${sessionId}/events/generate`,
       {
@@ -736,7 +738,7 @@ describe('events/generate — optional body, regenerate, and selection', () => {
   });
 
   it('over-bound selection (501 entries) returns 400 before any delete/spawn (D5)', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     seedAutoSlateEvent(sessionId);
     const selection = Array.from({ length: 501 }, (_, i) => ({ category_id: `c${i}` }));
@@ -759,7 +761,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       'supplied timecodes; catalog projection fresh with NO manual write; slot released; ' +
       'prompt embeds the existing events as the dedup basis',
     async () => {
-      const { studioId, showId, sessionId } = newSession();
+      const { studioId, showId, sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       seedManualSlateEvent(sessionId);
 
@@ -796,8 +798,8 @@ describe('events/generate — configured behavior (real create_event MCP round t
       // catalog projection was mirrored by the ROUTE — no manual write — so
       // GET /api/sessions serves the updated event_count.
       const cat = catalogFor();
-      cat.studios.setSetting(SETTING_ACTIVE_STUDIO, studioId);
-      cat.studios.setSetting(SETTING_ACTIVE_SHOW, showId);
+      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, studioId);
+      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, showId);
       const listRes = await app.request('/api/sessions', { method: 'GET' }, { ...env });
       expect(listRes.status).toBe(200);
       const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };
@@ -840,7 +842,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
     'regenerate success: deletes exactly the pre-run snapshot after success, keeps manual + new ' +
       'rows, and excludes the old auto row (but not the manual row) from the prompt',
     async () => {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       seedManualSlateEvent(sessionId);
       seedAutoSlateEvent(sessionId);
@@ -858,7 +860,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       expect(manual).toBeDefined();
       const generated = events.filter((e) => e.message === 'SLATE');
       expect(generated).toHaveLength(3);
-      expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 3 generated, old auto gone
+      expect(await catalogEventCount(sessionId)).toBe(4); // 1 manual + 3 generated, old auto gone
 
       // Prompt exclusion (D3): the doomed old-auto row never reached the
       // model's dedup basis, but the manual row still did.
@@ -875,7 +877,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
   // (the existing append-failure semantics, unaffected by delete-after-
   // success).
   it('failed regenerate preserves the prior auto row AND the partial inserts (502, no delete)', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
     seedManualSlateEvent(sessionId);
     seedAutoSlateEvent(sessionId);
@@ -893,12 +895,12 @@ describe('events/generate — configured behavior (real create_event MCP round t
     expect(events.some((e) => e.message === 'Pre-existing slate')).toBe(true);
     const partial = events.filter((e) => e.message === 'SLATE');
     expect(partial).toHaveLength(2); // EVENTS_PARTIAL_FAIL_FIXTURE's EVENT_COUNT
-    expect(catalogEventCount(sessionId)).toBe(4); // 1 manual + 1 old-auto + 2 partial
+    expect(await catalogEventCount(sessionId)).toBe(4); // 1 manual + 1 old-auto + 2 partial
     expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
   });
 
   it('cap: EVENT_GENERATE_MAX_CREATED_EVENTS=2 → the third call is refused at the tool; 200 {created:2, cap_hit:true}', async () => {
-    const { sessionId } = newSession();
+    const { sessionId } = await newSession();
     seedAnchoredTranscript(sessionId);
 
     const res = await generateReq(
@@ -919,7 +921,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       'created-count anywhere), the partial events REMAIN persisted, and the catalog ' +
       'projection is still current on the failure path',
     async () => {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
 
       const res = await generateReq(sessionId, configuredEnv(EVENTS_PARTIAL_FAIL_FIXTURE));
@@ -934,7 +936,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       const generated = listEvents(sessionId).filter((e) => e.message === 'SLATE');
       expect(generated).toHaveLength(2);
       // ...and the catalog mirror ran on the failure path too.
-      expect(catalogEventCount(sessionId)).toBe(2);
+      expect(await catalogEventCount(sessionId)).toBe(2);
       expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
     },
   );
@@ -947,14 +949,14 @@ describe('events/generate — configured behavior (real create_event MCP round t
     async () => {
       const spy = vi.spyOn(aiTurnModule, 'driveAiTurn');
       try {
-        const { sessionId } = newSession();
+        const { sessionId } = await newSession();
         seedAnchoredTranscript(sessionId);
         // Distinctive PAST session start, distinct from any run-clock value —
         // the snapshot's startedAtUtc must be the catalog row's
         // started_at_utc, never `new Date()` at run time (design D4: on a
         // zero-anchor session the run clock would misplace every event).
         const startedAtUtc = '2019-03-07T04:05:06.789Z';
-        env.ports.catalog.run(
+        await env.ports.catalog.run(
           'UPDATE sessions SET started_at_utc = ? WHERE id = ?',
           startedAtUtc,
           sessionId,
@@ -1032,7 +1034,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
     'finally-block ordering pin: slot release happens BEFORE the post-run catalog ' +
       'projection, so a throw from the projection does not leave the AI slot stuck in flight',
     async () => {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       const spy = vi
         .spyOn(SessionIndexStore.prototype, 'projectSessionLive')
@@ -1066,7 +1068,7 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
     'mid-run GET …/events still returns the prior auto row (has_auto_generated true) while ' +
       'paused; after resume, success deletes exactly that row',
     async () => {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       seedManualSlateEvent(sessionId);
       seedAutoSlateEvent(sessionId);
@@ -1111,7 +1113,7 @@ describe('events/generate — mid-run interleaving (real HTTP requests during a 
     'mid-run manual DELETE of the only snapshotted id leaves deleted:0 after resume — the run’s ' +
       'own created rows and the manual row persist',
     async () => {
-      const { sessionId } = newSession();
+      const { sessionId } = await newSession();
       seedAnchoredTranscript(sessionId);
       seedManualSlateEvent(sessionId);
       seedAutoSlateEvent(sessionId);

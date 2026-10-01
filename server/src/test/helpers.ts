@@ -13,22 +13,26 @@ const uid = (p: string): string => {
   return `${p}-${counter}`;
 };
 
-export function seedStudio(opts: { id?: string; name?: string } = {}): string {
+// Seed helpers are async and call the real store methods (async-catalog-stores D7), so the
+// seeded rows are exactly what the stores write, on any engine.
+export async function seedStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
   const id = opts.id ?? uid('studio');
-  catalogFor().studios.adminCreateStudio(id, opts.name ?? `Studio ${id}`);
+  await catalogFor().studios.adminCreateStudio(id, opts.name ?? `Studio ${id}`);
   return id;
 }
 
-export function seedUser(opts: { email?: string; sub?: string; studios?: string[] } = {}): string {
+export async function seedUser(
+  opts: { email?: string; sub?: string; studios?: string[] } = {},
+): Promise<string> {
   const cat = catalogFor();
-  const id = cat.auth.authCreateUserGoogle({
+  const id = await cat.auth.authCreateUserGoogle({
     email: opts.email ?? `${uid('user')}@example.com`,
     googleSub: opts.sub ?? uid('sub'),
     givenName: 'Test',
     familyName: 'User',
     pictureUrl: '',
   });
-  if (opts.studios?.length) cat.auth.authAddMemberships(id, opts.studios);
+  if (opts.studios?.length) await cat.auth.authAddMemberships(id, opts.studios);
   return id;
 }
 
@@ -47,12 +51,12 @@ const SEED_CATEGORIES_JSON = JSON.stringify([
   },
 ]);
 
-export function seedShow(opts: {
+export async function seedShow(opts: {
   studioId: string;
   name?: string;
   code?: string;
   categoriesJson?: string;
-}): string {
+}): Promise<string> {
   return catalogFor().shows.createShow({
     studioId: opts.studioId,
     name: opts.name ?? 'Test Show',
@@ -63,12 +67,12 @@ export function seedShow(opts: {
   });
 }
 
-export function seedSession(opts: {
+export async function seedSession(opts: {
   showId: string;
   episode?: string;
   title?: string;
   frameRate?: number;
-}): string {
+}): Promise<string> {
   const now = new Date().toISOString();
   return catalogFor().sessions.createSessionIndex({
     showId: opts.showId,
@@ -88,15 +92,15 @@ export function seedSession(opts: {
  * (most want `.sessionId`; cross-studio tests also read `.studioId`).
  * Options pass through to the underlying seed helpers — parameterized, not
  * normalized, so files whose assertions depend on specific categories keep
- * their exact fixture semantics. Synchronous like the seed primitives. */
-export function seededSession(opts: { categoriesJson?: string } = {}): {
+ * their exact fixture semantics. Async like the seed primitives. */
+export async function seededSession(opts: { categoriesJson?: string } = {}): Promise<{
   studioId: string;
   showId: string;
   sessionId: string;
-} {
-  const studioId = seedStudio();
-  const showId = seedShow({ studioId, categoriesJson: opts.categoriesJson });
-  const sessionId = seedSession({ showId });
+}> {
+  const studioId = await seedStudio();
+  const showId = await seedShow({ studioId, categoriesJson: opts.categoriesJson });
+  const sessionId = await seedSession({ showId });
   return { studioId, showId, sessionId };
 }
 

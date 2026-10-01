@@ -21,11 +21,11 @@ describe('GET /api/studio + /api/profile', () => {
   });
 
   it('auth.user.teams[] entries carry role (teams-self-serve, task 4.1)', async () => {
-    const teamA = seedStudio();
-    const teamB = seedStudio();
-    const userId = seedUser({});
-    catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
-    catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
+    const teamA = await seedStudio();
+    const teamB = await seedStudio();
+    const userId = await seedUser({});
+    await catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
     const cookie = await loginCookie(userId);
 
     const res = await app.request(
@@ -46,10 +46,10 @@ describe('GET /api/studio + /api/profile', () => {
   // task 2.7 / finding 5.7): the shows fetched once for the active studio must
   // still land in shows[] exactly once, with active_show_id resolved from them.
   it('logged-in: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
-    const studio = seedStudio();
-    const showId = seedShow({ studioId: studio, name: 'Pinned Show', code: 'PS' });
-    const userId = seedUser({ studios: [studio] });
-    catalogFor().auth.authSetPrefs(userId, studio, showId);
+    const studio = await seedStudio();
+    const showId = await seedShow({ studioId: studio, name: 'Pinned Show', code: 'PS' });
+    const userId = await seedUser({ studios: [studio] });
+    await catalogFor().auth.authSetPrefs(userId, studio, showId);
     const cookie = await loginCookie(userId);
 
     const res = await app.request(
@@ -77,7 +77,7 @@ describe('GET /api/studio + /api/profile', () => {
 
   it('anonymous: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
+    const showId = await seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
 
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
@@ -97,7 +97,7 @@ describe('GET /api/studio + /api/profile', () => {
   // every show in every reachable studio.
   it('shows[] entries are brief: exactly the five identity/selection keys', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Brief Show', code: 'BS' });
+    const showId = await seedShow({ studioId: sid, name: 'Brief Show', code: 'BS' });
 
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
@@ -114,9 +114,9 @@ describe('GET /api/studio + /api/profile', () => {
   });
 
   it('logged-in shows[] entries are brief too (both fan-out loops)', async () => {
-    const studio = seedStudio();
-    const showId = seedShow({ studioId: studio, name: 'Brief Show', code: 'BS' });
-    const userId = seedUser({ studios: [studio] });
+    const studio = await seedStudio();
+    const showId = await seedShow({ studioId: studio, name: 'Brief Show', code: 'BS' });
+    const userId = await seedUser({ studios: [studio] });
 
     const res = await app.request(
       '/api/profile',
@@ -189,7 +189,7 @@ describe('shows', () => {
   // profile-shows-slimming, now that `/api/profile` carries brief entries.
   it('GET /api/shows/:showId returns the FULL show config', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Detail Show', code: 'DS' });
+    const showId = await seedShow({ studioId: sid, name: 'Detail Show', code: 'DS' });
 
     const res = await app.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
@@ -216,9 +216,9 @@ describe('shows', () => {
   });
 
   it('GET /api/shows/:showId 404s for a logged-in non-member (no existence oracle)', async () => {
-    const otherStudio = seedStudio();
-    const showId = seedShow({ studioId: otherStudio, name: 'Private Show', code: 'PV' });
-    const outsider = seedUser({ studios: [seedStudio()] });
+    const otherStudio = await seedStudio();
+    const showId = await seedShow({ studioId: otherStudio, name: 'Private Show', code: 'PV' });
+    const outsider = await seedUser({ studios: [await seedStudio()] });
 
     const res = await app.request(
       `/api/shows/${showId}`,
@@ -237,9 +237,9 @@ describe('shows', () => {
   });
 
   it('GET /api/shows/:showId 200s for a member of the show’s studio', async () => {
-    const studio = seedStudio();
-    const showId = seedShow({ studioId: studio, name: 'Member Show', code: 'MS' });
-    const member = seedUser({ studios: [studio] });
+    const studio = await seedStudio();
+    const showId = await seedShow({ studioId: studio, name: 'Member Show', code: 'MS' });
+    const member = await seedUser({ studios: [studio] });
 
     const res = await app.request(
       `/api/shows/${showId}`,
@@ -252,7 +252,7 @@ describe('shows', () => {
 
   it('GET /api/shows/:showId 404s for an anonymous caller when OAuth is configured', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
+    const showId = await seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
 
     const res = await app.request(
       `/api/shows/${showId}`,
@@ -302,7 +302,7 @@ describe('session-title-suffix — show wire', () => {
 
   it('GET /api/shows omits next_episode and includes title_suffix for every entry', async () => {
     const sid = await activeStudioId();
-    seedShow({ studioId: sid, name: 'Wire Show', code: 'WS' });
+    await seedShow({ studioId: sid, name: 'Wire Show', code: 'WS' });
     const res = await app.request(`/api/shows?studio_id=${sid}`, { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
@@ -315,7 +315,7 @@ describe('session-title-suffix — show wire', () => {
 
   it('GET /api/profile: every shows[] entry omits next_episode and includes title_suffix', async () => {
     const sid = await activeStudioId();
-    seedShow({ studioId: sid, name: 'Profile Show', code: 'PW' });
+    await seedShow({ studioId: sid, name: 'Profile Show', code: 'PW' });
     const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { shows: Array<Record<string, unknown>> };
@@ -328,7 +328,7 @@ describe('session-title-suffix — show wire', () => {
 
   it('PUT /api/profile show_updates[].title_suffix round-trips through a subsequent read', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Suffix Show', code: 'SF' });
+    const showId = await seedShow({ studioId: sid, name: 'Suffix Show', code: 'SF' });
 
     const putRes = await app.request(
       '/api/profile',
@@ -352,8 +352,8 @@ describe('session-title-suffix — show wire', () => {
 
   it('legacy next_episode on a show_updates entry is ignored: 200, no 400, no counter written', async () => {
     const sid = await activeStudioId();
-    const showId = seedShow({ studioId: sid, name: 'Legacy Show', code: 'LG' });
-    const before = env.ports.catalog.first<{ next_episode: number }>(
+    const showId = await seedShow({ studioId: sid, name: 'Legacy Show', code: 'LG' });
+    const before = await env.ports.catalog.first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       showId,
     );
@@ -381,7 +381,7 @@ describe('session-title-suffix — show wire', () => {
     expect('next_episode' in (show ?? {})).toBe(false);
 
     // The soft-retained SQL column itself never moved off its pre-update value.
-    const after = env.ports.catalog.first<{ next_episode: number }>(
+    const after = await env.ports.catalog.first<{ next_episode: number }>(
       'SELECT next_episode FROM shows WHERE id = ?',
       showId,
     );

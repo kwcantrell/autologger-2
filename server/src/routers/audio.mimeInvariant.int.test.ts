@@ -46,7 +46,7 @@ describe('audio segment mime normalization', () => {
     'audio/mp4',
     'audio/wav',
   ])('stores and serves the producer mime %s unchanged', async (mime) => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const seg = await upload(session, mime);
     expect(seg.mime_type).toBe(mime);
 
@@ -66,7 +66,7 @@ describe('audio segment mime normalization', () => {
     'video/webm',
     'application/ogg',
   ])('stores and serves the batch-import container mime %s unchanged', async (mime) => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const seg = await upload(session, mime);
     expect(seg.mime_type).toBe(mime);
 
@@ -80,7 +80,7 @@ describe('audio segment mime normalization', () => {
     'text/plain;charset=UTF-8',
     'image/svg+xml',
   ])('degrades the compressible content-type %s to audio/webm rather than rejecting the upload', async (mime) => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const seg = await upload(session, mime);
     expect(seg.mime_type).toBe('audio/webm');
 
@@ -90,7 +90,7 @@ describe('audio segment mime normalization', () => {
   });
 
   it('keeps the pre-existing audio/webm default when no content-type is sent', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const seg = await upload(session, null);
     expect(seg.mime_type).toBe('audio/webm');
   });

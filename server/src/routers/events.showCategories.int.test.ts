@@ -68,7 +68,7 @@ async function getShowCategories(sessionId: string): Promise<Record<string, unkn
 
 describe('GET /api/sessions/:id/show-categories — auto_instructions_present', () => {
   it('is true for an option-only DROPDOWN, with no instruction fields on the entries', async () => {
-    const { sessionId } = seededSession({ categoriesJson: OPTION_ONLY_DROPDOWN_JSON });
+    const { sessionId } = await seededSession({ categoriesJson: OPTION_ONLY_DROPDOWN_JSON });
     const body = await getShowCategories(sessionId);
     expect(body.auto_instructions_present).toBe(true);
 
@@ -93,13 +93,13 @@ describe('GET /api/sessions/:id/show-categories — auto_instructions_present', 
   });
 
   it('is false when no category carries an instruction', async () => {
-    const { sessionId } = seededSession(); // default seed: one plain BUTTON
+    const { sessionId } = await seededSession(); // default seed: one plain BUTTON
     const body = await getShowCategories(sessionId);
     expect(body.auto_instructions_present).toBe(false);
   });
 
   it('is false when only an ON_OFF carries a stale instruction', async () => {
-    const { sessionId } = seededSession({ categoriesJson: ON_OFF_STALE_JSON });
+    const { sessionId } = await seededSession({ categoriesJson: ON_OFF_STALE_JSON });
     const body = await getShowCategories(sessionId);
     expect(body.auto_instructions_present).toBe(false);
   });

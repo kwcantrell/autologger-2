@@ -3,7 +3,8 @@
 // A Promise-typed expression statement must be awaited, voided, returned or given a rejection
 // handler; a promise must never be a condition, a `!` operand, a comparison operand, a template
 // value or a `c.json(...)` body or field; and an async function must never go where a callback
-// returning no value is expected. Biome's noFloatingPromises misses calls through
+// returning no value is expected. The scan covers `packages/catalog/src` too, and test files may
+// not pass a promise to `expect()` (async-catalog-stores D6). Biome's noFloatingPromises misses calls through
 // `@autologger/ports` interfaces and `!promise`, so this uses the TypeScript type checker over the
 // real program.
 import { join, relative } from 'node:path';
@@ -11,6 +12,7 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const SERVER = join(__dirname, '..');
+const CATALOG_SRC = join(SERVER, '..', 'packages', 'catalog', 'src');
 
 function isPromiseLike(checker: ts.TypeChecker, type: ts.Type): boolean {
   if (type.isUnion()) return type.types.some((t) => isPromiseLike(checker, t));
@@ -144,6 +146,44 @@ function findPromiseMisuse(program: ts.Program, files: readonly ts.SourceFile[])
   return [...out];
 }
 
+/** `expect(x)` where `x` is promise-like, unless the chain continues with `.resolves`/`.rejects`
+ * or asserts `.toBeInstanceOf(Promise)` (async-catalog-stores D6): a missed `await` on a catalog read would otherwise make
+ * `expect(row).not.toBeNull()` pass vacuously. */
+function findUnawaitedExpect(program: ts.Program, files: readonly ts.SourceFile[]): string[] {
+  const checker = program.getTypeChecker();
+  const out = new Set<string>();
+  for (const sf of files) {
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'expect' &&
+        node.arguments.length > 0 &&
+        isPromiseLike(checker, checker.getTypeAtLocation(node.arguments[0]))
+      ) {
+        const parent = node.parent;
+        const member =
+          ts.isPropertyAccessExpression(parent) && parent.expression === node ? parent : null;
+        const isPromiseCheck =
+          member?.name.text === 'toBeInstanceOf' &&
+          ts.isCallExpression(member.parent) &&
+          member.parent.arguments.length === 1 &&
+          ts.isIdentifier(member.parent.arguments[0]) &&
+          member.parent.arguments[0].text === 'Promise';
+        const chained =
+          member?.name.text === 'resolves' || member?.name.text === 'rejects' || isPromiseCheck;
+        if (!chained) {
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          out.add(`${relative(SERVER, sf.fileName)}:${line + 1} promise passed to expect()`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return [...out];
+}
+
 function fixtureProgram(source: string): { program: ts.Program; file: ts.SourceFile } {
   const name = join(SERVER, 'src/__fixture.ts');
   const options: ts.CompilerOptions = {
@@ -171,6 +211,7 @@ declare function each(f: (x: string) => void): void;
 declare function inTx(mutate: (k: Kv) => undefined): void;
 async function requireSession(id: string): Promise<{ id: string }> { return { id }; }
 async function canView(id: string): Promise<boolean> { return id !== ''; }
+declare function expect(x: unknown): { resolves: { toBe(v: unknown): Promise<void> }; rejects: { toThrow(): Promise<void> }; toBe(v: unknown): void; toBeInstanceOf(c: unknown): void; not: { toBeNull(): void } };
 `;
 
 describe('promise hygiene', () => {
@@ -273,6 +314,24 @@ export async function h() {
     expect(findPromiseMisuse(program, [file])).toEqual([]);
   });
 
+  it('flags expect(promise) and accepts awaited, .resolves and .rejects', () => {
+    const bad = fixtureProgram(
+      `${PRELUDE}export async function t() { const row = kv.get('k'); expect(row).not.toBeNull(); }`,
+    );
+    const found = findUnawaitedExpect(bad.program, [bad.file]);
+    expect(found.length, found.join('\n')).toBe(1);
+    expect(found[0]).toContain('promise passed to expect()');
+    const good = fixtureProgram(
+      `${PRELUDE}export async function t() {
+  expect(await kv.get('k')).toBe(null);
+  await expect(kv.get('k')).resolves.toBe(null);
+  await expect(kv.put('a', 'b')).rejects.toThrow();
+  expect(kv.get('k')).toBeInstanceOf(Promise);
+}`,
+    );
+    expect(findUnawaitedExpect(good.program, [good.file])).toEqual([]);
+  });
+
   it('server production code drops and misuses no promise', () => {
     const parsed = ts.getParsedCommandLineOfConfigFile(
       join(SERVER, 'tsconfig.json'),
@@ -286,15 +345,21 @@ export async function h() {
     );
     if (!parsed) throw new Error('server/tsconfig.json did not parse');
     const program = ts.createProgram(parsed.fileNames, parsed.options);
-    const files = program
-      .getSourceFiles()
-      .filter(
-        (sf) =>
-          sf.fileName.startsWith(join(SERVER, 'src')) &&
-          !/\.test\.ts$/.test(sf.fileName) &&
-          !sf.fileName.includes('/src/test/'),
-      );
+    const isTest = (f: string) => /\.test\.ts$/.test(f) || f.includes('/src/test/');
+    const sources = program.getSourceFiles();
+    // async-catalog-stores D6: the catalog stores hold most transaction bodies.
+    const files = sources.filter(
+      (sf) =>
+        (sf.fileName.startsWith(join(SERVER, 'src')) || sf.fileName.startsWith(CATALOG_SRC)) &&
+        !isTest(sf.fileName),
+    );
     expect(files.length).toBeGreaterThan(30);
+    expect(files.some((sf) => sf.fileName.startsWith(CATALOG_SRC))).toBe(true);
     expect(findPromiseMisuse(program, files)).toEqual([]);
+    const tests = sources.filter(
+      (sf) => sf.fileName.startsWith(join(SERVER, 'src')) && isTest(sf.fileName),
+    );
+    expect(tests.length).toBeGreaterThan(30);
+    expect(findUnawaitedExpect(program, tests)).toEqual([]);
   }, 120_000);
 });

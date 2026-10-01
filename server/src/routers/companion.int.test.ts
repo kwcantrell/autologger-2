@@ -16,7 +16,7 @@ async function state(): Promise<Record<string, unknown>> {
 
 describe('presence + state', () => {
   it('a registered presence surfaces in state', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s, { visible: true });
     const body = await state();
     expect(Number(body.connected_clients)).toBeGreaterThanOrEqual(1);
@@ -30,18 +30,18 @@ describe('presence + state', () => {
   // is the third of the three frozen emitters (list/detail/status are
   // covered in sessions.int.test.ts).
   it('deck_title equals the stored title, not CODE - episode', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio, code: 'HD' });
-    const s = seedSession({ showId: show, episode: '7', title: 'HD_260802' });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio, code: 'HD' });
+    const s = await seedSession({ showId: show, episode: '7', title: 'HD_260802' });
     await setCompanionPresence('c1', s, { visible: true });
     const body = await state();
     expect((body.session as { deck_title: string }).deck_title).toBe('HD_260802');
   });
 
   it('deck_title falls back to "—" for a blank stored title, even with a show code present', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio, code: 'HD' });
-    const s = seedSession({ showId: show, episode: '7', title: '' });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio, code: 'HD' });
+    const s = await seedSession({ showId: show, episode: '7', title: '' });
     await setCompanionPresence('c1', s, { visible: true });
     const body = await state();
     expect((body.session as { title: string }).title).toBe('');
@@ -49,7 +49,7 @@ describe('presence + state', () => {
   });
 
   it('POST presence with closing:true removes it', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     await app.request(
       '/api/companion/presence',
@@ -62,7 +62,7 @@ describe('presence + state', () => {
 
 describe('log', () => {
   it('logs an event by category_id for the active session', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request(
       '/api/companion/log',
@@ -82,7 +82,7 @@ describe('log', () => {
   });
 
   it('400 on an unknown category', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request(
       '/api/companion/log',
@@ -95,7 +95,7 @@ describe('log', () => {
 
 describe('transport', () => {
   it('start then stop flips is_rolling', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const start = await app.request(
       '/api/companion/transport',
@@ -118,7 +118,7 @@ describe('transport', () => {
 
 describe('command + ack', () => {
   it('records last_command and acks by id', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const cmd = await app.request(
       '/api/companion/command',
@@ -147,7 +147,7 @@ describe('command + ack', () => {
 
 describe('categories + commands/wait', () => {
   it('returns the active session show categories', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const res = await app.request('/api/companion/categories', { method: 'GET' }, { ...env });
     expect(res.status).toBe(200);
@@ -160,7 +160,7 @@ describe('categories + commands/wait', () => {
     // `auto_instruction` values, the Companion response has no
     // `auto_instructions_present` boolean and its category/option entries
     // carry no instruction fields — exact body equality, not key sampling.
-    const { sessionId, showId } = seededSession({
+    const { sessionId, showId } = await seededSession({
       categoriesJson: JSON.stringify([
         {
           id: 'mic',
@@ -215,8 +215,8 @@ describe('categories + commands/wait', () => {
 
 describe('primarySession is global / unscoped (current behavior)', () => {
   it('selects the visibly-fresher session regardless of studio', async () => {
-    const sA = seededSession().sessionId;
-    const sB = seededSession().sessionId;
+    const sA = (await seededSession()).sessionId;
+    const sB = (await seededSession()).sessionId;
     await setCompanionPresence('cA', sA, { visible: false });
     await setCompanionPresence('cB', sB, { visible: true });
     expect((await state()).active_session_id).toBe(sB);
@@ -225,7 +225,7 @@ describe('primarySession is global / unscoped (current behavior)', () => {
 
 describe('ordering on async storage (async-session-callers D4/D5)', () => {
   it('/command stores last_command before broadcasting it', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const hub = env.ports.sessions.get(s);
     let storedAtBroadcast: Promise<string | null> | null = null;
@@ -249,7 +249,7 @@ describe('ordering on async storage (async-session-callers D4/D5)', () => {
   });
 
   it('/state takes one presence snapshot', async () => {
-    const s = seededSession().sessionId;
+    const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
     const spy = vi.spyOn(env.ports.presence, 'list');
     try {

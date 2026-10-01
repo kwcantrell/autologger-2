@@ -35,10 +35,10 @@ export function normalizeUploadDate(raw: string | null | undefined): string | nu
  * (design D3 — contravariant `implements` checking under
  * `strictFunctionTypes`). */
 export interface SessionIndexStoreFacade {
-  getSessionStudioId: (sessionId: string) => string | null;
-  getSessionIndexRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Row | null;
-  getSessionJoinedRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Row | null;
-  listSessionsForShow: (showId: string) => Row[];
+  getSessionStudioId: (sessionId: string) => Promise<string | null>;
+  getSessionIndexRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Promise<Row | null>;
+  getSessionJoinedRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Promise<Row | null>;
+  listSessionsForShow: (showId: string) => Promise<Row[]>;
   createSessionIndex: (opts: {
     showId: string;
     title: string;
@@ -48,7 +48,7 @@ export interface SessionIndexStoreFacade {
     notes: string;
     startedAtUtc: string;
     createdAtUtc: string;
-  }) => string;
+  }) => Promise<string>;
   createSessionForShow: (opts: {
     showId: string;
     showCode: string;
@@ -61,14 +61,14 @@ export interface SessionIndexStoreFacade {
     startedAtUtc: string;
     createdAtUtc: string;
     nowMs: number;
-  }) => { id: string; title: string; episode: string };
+  }) => Promise<{ id: string; title: string; episode: string }>;
   updateSessionIndex: (
     sessionId: string,
     fields: { title?: string; startOffsetFrames?: number },
-  ) => Row | null;
-  setSessionArchived: (sessionId: string, archived: boolean) => boolean;
-  setSessionEpisodeDate: (sessionId: string, iso: string | null | undefined) => boolean;
-  setSessionUiHidden: (sessionId: string, hidden: boolean) => boolean;
+  ) => Promise<Row | null>;
+  setSessionArchived: (sessionId: string, archived: boolean) => Promise<boolean>;
+  setSessionEpisodeDate: (sessionId: string, iso: string | null | undefined) => Promise<boolean>;
+  setSessionUiHidden: (sessionId: string, hidden: boolean) => Promise<boolean>;
   projectSessionLive: (
     sessionId: string,
     p: {
@@ -79,11 +79,11 @@ export interface SessionIndexStoreFacade {
       transport_elapsed_frames: number;
       roll_started_at_utc: string | null;
     },
-  ) => void;
+  ) => Promise<void>;
   getSessionShowCategories: (
     sessionId: string,
-  ) => { categories: unknown[]; showName: string; showCode: string } | null;
-  studioProfileForSession: (sessionId: string) => StudioProfile;
+  ) => Promise<{ categories: unknown[]; showName: string; showCode: string } | null>;
+  studioProfileForSession: (sessionId: string) => Promise<StudioProfile>;
 }
 
 export class SessionIndexStore implements SessionIndexStoreFacade {
@@ -93,8 +93,14 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     private shows: ShowsStore,
   ) {}
 
-  getSessionStudioId(sessionId: string): string | null {
-    const r = this.db.first<Row>(
+  /** The same store over another handle, with its studio and show dependencies rebound too, so
+   * a transaction body never reaches the root handle (async-catalog-stores D3). */
+  withDb(db: CatalogDb): SessionIndexStore {
+    return new SessionIndexStore(db, this.studios.withDb(db), this.shows.withDb(db));
+  }
+
+  async getSessionStudioId(sessionId: string): Promise<string | null> {
+    const r = await this.db.first<Row>(
       `SELECT sh.studio_id AS studio_id FROM sessions s
        LEFT JOIN shows sh ON sh.id = s.show_id WHERE s.id = ?`,
       sessionId,
@@ -104,21 +110,21 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     return sid || null;
   }
 
-  getSessionIndexRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Row | null {
+  async getSessionIndexRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Promise<Row | null> {
     let q = 'SELECT * FROM sessions WHERE id = ?';
     if (!opts.includeHidden) q += ' AND COALESCE(ui_hidden, 0) = 0';
     return this.db.first<Row>(q, sessionId);
   }
 
   /** Joined index row carrying show_code / show_name for deck titles. */
-  getSessionJoinedRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Row | null {
+  async getSessionJoinedRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Promise<Row | null> {
     let q = `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
              FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id WHERE s.id = ?`;
     if (!opts.includeHidden) q += ' AND COALESCE(s.ui_hidden, 0) = 0';
     return this.db.first<Row>(q, sessionId);
   }
 
-  listSessionsForShow(showId: string): Row[] {
+  async listSessionsForShow(showId: string): Promise<Row[]> {
     return this.db.all<Row>(
       `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
        FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id
@@ -128,7 +134,7 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     );
   }
 
-  createSessionIndex(opts: {
+  async createSessionIndex(opts: {
     showId: string;
     title: string;
     frameRate: number;
@@ -137,10 +143,10 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     notes: string;
     startedAtUtc: string;
     createdAtUtc: string;
-  }): string {
+  }): Promise<string> {
     const id = crypto.randomUUID();
-    this.db.tx(() => {
-      this.db.run(
+    await this.db.tx(async (t) => {
+      await t.run(
         `INSERT INTO sessions
            (id, show_id, title, archived, ui_hidden, frame_rate, start_offset_frames,
             episode, notes, started_at_utc, created_at_utc,
@@ -170,15 +176,13 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
    * title/episode derivation, run inside ONE catalog transaction so the
    * Date-mode collision read (existing titles for the show) and the session
    * INSERT can never observe/produce a duplicate title under concurrent
-   * same-tick creates: `CatalogDb.tx` wraps a real `better-sqlite3`
-   * transaction, and — because the whole catalog is a single synchronous,
-   * single-process SQLite handle (project invariant) — nothing else can run
-   * between the SELECT and the INSERT below regardless of how many requests
-   * are in flight. Throws `ValidationError` (mapped to `400` by the router)
+   * same-tick creates: both run inside one `CatalogDb.tx`, which holds the
+   * connection's lock across its awaits (async-catalog-stores D3), so nothing
+   * else can run between the SELECT and the INSERT below. Throws `ValidationError` (mapped to `400` by the router)
    * for the two derivation-time rejections named in the spec: a blank
    * trimmed show code, and a blank episode under Episode-suffix derivation.
    */
-  createSessionForShow(opts: {
+  async createSessionForShow(opts: {
     showId: string;
     showCode: string;
     /** Raw `shows.title_suffix` column value; anything other than exactly
@@ -196,8 +200,9 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     /** The SAME create-path clock read used for startedAtUtc/createdAtUtc
      * (design D2) — callers must not take a second clock read for this. */
     nowMs: number;
-  }): { id: string; title: string; episode: string } {
-    return this.db.tx(() => {
+  }): Promise<{ id: string; title: string; episode: string }> {
+    return this.db.tx(async (t) => {
+      const s = this.withDb(t);
       let title: string;
       let episode: string;
       if (opts.explicitTitle) {
@@ -224,9 +229,9 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
           // Full inventory for the show, INCLUDING archived/ui_hidden rows
           // (D3) — never SQL LIKE/GLOB (see sessionTitleDerivation.ts for
           // why); matching happens in JS over the plain title strings.
-          const existingTitles = this.db
-            .all<Row>('SELECT title FROM sessions WHERE show_id = ?', opts.showId)
-            .map((r) => String(r.title ?? ''));
+          const existingTitles = (
+            await t.all<Row>('SELECT title FROM sessions WHERE show_id = ?', opts.showId)
+          ).map((r) => String(r.title ?? ''));
           title = allocateTitleForBase(existingTitles, base);
           // Under Date derivation the stored episode is ALWAYS '' — a
           // non-blank request episode is never retained as a fake episode
@@ -234,7 +239,7 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
           episode = '';
         }
       }
-      const id = this.createSessionIndex({
+      const id = await s.createSessionIndex({
         showId: opts.showId,
         title,
         frameRate: opts.frameRate,
@@ -249,30 +254,34 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
   }
 
   /** update_session — title + start_offset_frames. Throws ValidationError on empty title. */
-  updateSessionIndex(
+  async updateSessionIndex(
     sessionId: string,
     fields: { title?: string; startOffsetFrames?: number },
-  ): Row | null {
-    const row = this.getSessionIndexRow(sessionId, { includeHidden: true });
-    if (row === null) return null;
-    const newTitle = fields.title !== undefined ? fields.title.trim() : String(row.title);
-    if (!newTitle) throw new ValidationError('title must not be empty');
-    const newOffset =
-      fields.startOffsetFrames !== undefined
-        ? fields.startOffsetFrames
-        : Number(row.start_offset_frames ?? 0);
-    if (newOffset < 0) throw new ValidationError('start_offset_frames must be >= 0');
-    this.db.run(
-      'UPDATE sessions SET title = ?, start_offset_frames = ? WHERE id = ?',
-      newTitle,
-      newOffset,
-      sessionId,
-    );
-    return this.getSessionIndexRow(sessionId, { includeHidden: true });
+  ): Promise<Row | null> {
+    // Read-merge-write in one transaction (async-catalog-stores D2).
+    return this.db.tx(async (t) => {
+      const s = this.withDb(t);
+      const row = await s.getSessionIndexRow(sessionId, { includeHidden: true });
+      if (row === null) return null;
+      const newTitle = fields.title !== undefined ? fields.title.trim() : String(row.title);
+      if (!newTitle) throw new ValidationError('title must not be empty');
+      const newOffset =
+        fields.startOffsetFrames !== undefined
+          ? fields.startOffsetFrames
+          : Number(row.start_offset_frames ?? 0);
+      if (newOffset < 0) throw new ValidationError('start_offset_frames must be >= 0');
+      await t.run(
+        'UPDATE sessions SET title = ?, start_offset_frames = ? WHERE id = ?',
+        newTitle,
+        newOffset,
+        sessionId,
+      );
+      return s.getSessionIndexRow(sessionId, { includeHidden: true });
+    });
   }
 
-  setSessionArchived(sessionId: string, archived: boolean): boolean {
-    const res = this.db.run(
+  async setSessionArchived(sessionId: string, archived: boolean): Promise<boolean> {
+    const res = await this.db.run(
       'UPDATE sessions SET archived = ? WHERE id = ?',
       archived ? 1 : 0,
       sessionId,
@@ -289,15 +298,15 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
    * runs, returns `false`) since a missing publish date must never fail the
    * import.
    */
-  setSessionEpisodeDate(sessionId: string, iso: string | null | undefined): boolean {
+  async setSessionEpisodeDate(sessionId: string, iso: string | null | undefined): Promise<boolean> {
     const value = (iso ?? '').trim();
     if (!value) return false;
-    const res = this.db.run('UPDATE sessions SET episode_date = ? WHERE id = ?', value, sessionId);
+    const res = await this.db.run('UPDATE sessions SET episode_date = ? WHERE id = ?', value, sessionId);
     return res.changes > 0;
   }
 
-  setSessionUiHidden(sessionId: string, hidden: boolean): boolean {
-    const res = this.db.run(
+  async setSessionUiHidden(sessionId: string, hidden: boolean): Promise<boolean> {
+    const res = await this.db.run(
       'UPDATE sessions SET ui_hidden = ? WHERE id = ?',
       hidden ? 1 : 0,
       sessionId,
@@ -306,7 +315,7 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
   }
 
   /** Mirror the hub's live projection onto the catalog sessions row for cheap listing. */
-  projectSessionLive(
+  async projectSessionLive(
     sessionId: string,
     p: {
       event_count: number;
@@ -316,8 +325,8 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
       transport_elapsed_frames: number;
       roll_started_at_utc: string | null;
     },
-  ): void {
-    this.db.run(
+  ): Promise<void> {
+    await this.db.run(
       `UPDATE sessions SET event_count = ?, max_timecode_total_frames = ?,
          is_rolling = ?, current_take = ?, transport_elapsed_frames = ?, roll_started_at_utc = ?
        WHERE id = ?`,
@@ -332,14 +341,14 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
   }
 
   /** get_session_show_categories — categories list + names from the session's show. */
-  getSessionShowCategories(
+  async getSessionShowCategories(
     sessionId: string,
-  ): { categories: unknown[]; showName: string; showCode: string } | null {
-    const row = this.getSessionIndexRow(sessionId, { includeHidden: true });
+  ): Promise<{ categories: unknown[]; showName: string; showCode: string } | null> {
+    const row = await this.getSessionIndexRow(sessionId, { includeHidden: true });
     if (row === null) return null;
     const showId = String(row.show_id ?? '').trim();
     if (!showId) return null;
-    const show = this.shows.getShowRow(showId);
+    const show = await this.shows.getShowRow(showId);
     if (show === null) return null;
     let cats: unknown[] = [];
     try {
@@ -356,10 +365,10 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
   }
 
   /** studio_profile_for_session — categories from the session's show, else active studio. */
-  studioProfileForSession(sessionId: string): StudioProfile {
-    const raw = this.getSessionShowCategories(sessionId);
-    let stu = this.getSessionStudioId(sessionId);
-    if (!stu || !this.studios.isKnownStudio(stu)) stu = this.studios.resolveActiveStudio().id;
+  async studioProfileForSession(sessionId: string): Promise<StudioProfile> {
+    const raw = await this.getSessionShowCategories(sessionId);
+    let stu = await this.getSessionStudioId(sessionId);
+    if (!stu || !this.studios.isKnownStudio(stu)) stu = (await this.studios.resolveActiveStudio()).id;
     if (raw === null) return this.studios.loadStudioProfile(stu);
     const name = this.studios.studioNamesDict()[stu] ?? stu;
     return blobToProfile(stu, name, {

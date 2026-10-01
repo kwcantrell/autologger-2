@@ -81,6 +81,57 @@ describe('KvStore', () => {
   });
 });
 
+// async-catalog-stores D4: take() is one atomic DELETE … RETURNING (OAuth state is single-use).
+describe('KvStore.take', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('returns a live value once and removes it', async () => {
+    const s = store();
+    await s.put('k', 'v');
+    expect(await s.take('k')).toBe('v');
+    expect(await s.take('k')).toBeNull();
+    expect(await s.get('k')).toBeNull();
+  });
+
+  it('returns null for a missing key', async () => {
+    expect(await store().take('nope')).toBeNull();
+  });
+
+  it('returns null for an expired entry and removes it', async () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
+    const s = new KvStore(new AsyncSqliteCatalogDb(db), { now: () => Date.now() });
+    await s.put('k', 'v', { expirationTtl: 1 });
+    vi.advanceTimersByTime(2_000);
+    expect(await s.take('k')).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM kv').get()).toEqual({ n: 0 });
+  });
+});
+
+describe('KvStore.take under contention', () => {
+  it('two takes queued behind a held transaction: exactly one gets the value', async () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
+    const catalog = new AsyncSqliteCatalogDb(db);
+    const s = new KvStore(catalog, { now: () => Date.now() });
+    await s.put('state', '1');
+    let open!: () => void;
+    const held = new Promise<void>((r) => {
+      open = r;
+    });
+    const txp = catalog.tx(async () => {
+      await held;
+    });
+    // Issued from the test's own context, so they queue behind the held transaction.
+    const takes = Promise.all([s.take('state'), s.take('state')]);
+    await new Promise((r) => setTimeout(r, 10));
+    open();
+    await txp;
+    expect((await takes).sort()).toEqual(['1', null].sort());
+  });
+});
+
 // async-catalog-adapter D5: KV shares the catalog connection, so it waits for an open adapter
 // transaction instead of joining it.
 describe('KvStore on the async catalog adapter', () => {

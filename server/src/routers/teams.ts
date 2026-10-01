@@ -97,17 +97,17 @@ async function countOwnedNonBuiltinTeams(catalog: CatalogFacade, userId: string)
  * delta) — true when `targetUserId` currently holds the team's ONLY enabled
  * admin seat (a disabled admin row never counts, so demoting/removing one is
  * always safe). */
-function wouldStripLastEnabledAdmin(
+async function wouldStripLastEnabledAdmin(
   catalog: CatalogFacade,
   teamId: string,
   targetUserId: string,
-): boolean {
-  if (catalog.auth.authGetMembershipRole(targetUserId, teamId) !== 'admin') return false;
-  const row: Row | null = catalog.auth.authGetUserRowAny(targetUserId);
+): Promise<boolean> {
+  if ((await catalog.auth.authGetMembershipRole(targetUserId, teamId)) !== 'admin') return false;
+  const row: Row | null = await catalog.auth.authGetUserRowAny(targetUserId);
   if (row === null) return false;
   const disabled = row.disabled_at_utc !== null && row.disabled_at_utc !== undefined;
   if (disabled) return false;
-  return catalog.auth.authCountEnabledAdmins(teamId) <= 1;
+  return (await catalog.auth.authCountEnabledAdmins(teamId)) <= 1;
 }
 
 const LAST_ADMIN_MESSAGE = 'This would leave the team with no enabled admin.';
@@ -115,24 +115,19 @@ const LAST_ADMIN_MESSAGE = 'This would leave the team with no enabled admin.';
 /** Runs `mutate` inside ONE catalog transaction together with the
  * last-enabled-admin count check (normative — team-management delta: "the
  * admin count and the mutation SHALL execute within a single catalog
- * transaction"). Shared by demote / remove / leave. `mutate` returns
- * `undefined`, not `void`, so an async callback (whose write would land after
- * COMMIT) does not typecheck; this stays synchronous until the catalog
- * transaction goes async (async-catalog-callers D2). */
-function guardedAgainstLastAdmin(
+ * transaction"). Shared by demote / remove / leave. Both run on the
+ * transaction-bound catalog, and `mutate` is awaited inside the transaction
+ * (async-catalog-stores D3). */
+async function guardedAgainstLastAdmin(
   c: Context<AppEnv>,
   teamId: string,
   targetUserId: string,
-  mutate: (catalog: CatalogFacade) => undefined,
-): void {
-  const catalog = c.get('catalog');
-  let blocked = false;
-  c.env.ports.catalog.tx(() => {
-    if (wouldStripLastEnabledAdmin(catalog, teamId, targetUserId)) {
-      blocked = true;
-      return;
-    }
-    mutate(catalog);
+  mutate: (catalog: CatalogFacade) => Promise<void>,
+): Promise<void> {
+  const blocked = await c.get('catalog').tx(async (cat) => {
+    if (await wouldStripLastEnabledAdmin(cat, teamId, targetUserId)) return true;
+    await mutate(cat);
+    return false;
   });
   if (blocked) throw new ApiError(409, LAST_ADMIN_MESSAGE);
 }
@@ -280,8 +275,8 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   if (currentRole === body.role) return c.json({ ok: true, role: body.role }); // idempotent
 
   if (body.role === 'member') {
-    guardedAgainstLastAdmin(c, teamId, targetUserId, (cat) => {
-      cat.auth.authUpsertMembershipRole(targetUserId, teamId, 'member');
+    await guardedAgainstLastAdmin(c, teamId, targetUserId, async (cat) => {
+      await cat.auth.authUpsertMembershipRole(targetUserId, teamId, 'member');
     });
   } else {
     await catalog.auth.authUpsertMembershipRole(targetUserId, teamId, 'admin');
@@ -299,8 +294,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
   if ((await catalog.auth.authGetMembershipRole(targetUserId, teamId)) === null) {
     throw new ApiError(404, 'Member not found');
   }
-  guardedAgainstLastAdmin(c, teamId, targetUserId, (cat) => {
-    cat.auth.authRemoveMembership(targetUserId, teamId);
+  await guardedAgainstLastAdmin(c, teamId, targetUserId, async (cat) => {
+    await cat.auth.authRemoveMembership(targetUserId, teamId);
   });
   return c.json({ ok: true });
 });
@@ -310,8 +305,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
 teamsRouter.post('/api/teams/:id/leave', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user } = await requireTeamMember(c, teamId);
-  guardedAgainstLastAdmin(c, teamId, user.id, (cat) => {
-    cat.auth.authRemoveMembership(user.id, teamId);
+  await guardedAgainstLastAdmin(c, teamId, user.id, async (cat) => {
+    await cat.auth.authRemoveMembership(user.id, teamId);
   });
   return c.json({ ok: true });
 });

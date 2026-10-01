@@ -16,7 +16,7 @@ async function logEvent(session: string, message: string): Promise<Response> {
 
 describe('events flow', () => {
   it('logs an event then lists it', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     expect((await logEvent(session, 'Cut to 2')).status).toBe(200);
     const list = await app.request(
       `/api/sessions/${session}/events`,
@@ -31,7 +31,7 @@ describe('events flow', () => {
 
 describe('audio flow (blob-store round-trip)', () => {
   it('uploads a segment, stores bytes in the blob store, and downloads them back', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     const up = await app.request(
       `/api/sessions/${session}/audio/segments`,
@@ -46,7 +46,7 @@ describe('audio flow (blob-store round-trip)', () => {
   });
 
   it('rejects an empty audio body with 400', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const res = await app.request(
       `/api/sessions/${session}/audio/segments`,
       { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: new Uint8Array(0) },
@@ -56,7 +56,7 @@ describe('audio flow (blob-store round-trip)', () => {
   });
 
   it('returns 416 (not 500) for a suffix Range against a zero-byte blob', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     // Zero-byte blobs can't arrive via upload (empty bodies are 400); they
     // reach the store the way they do in the field — bytes already on disk,
     // registered via sync-from-disk.
@@ -96,7 +96,7 @@ describe('audio flow (blob-store round-trip)', () => {
   });
 
   it('serves a satisfiable suffix Range against a non-empty blob unchanged', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     const bytes = new Uint8Array([1, 2, 3, 4, 5]);
     const up = await app.request(
       `/api/sessions/${session}/audio/segments`,
@@ -119,7 +119,7 @@ describe('audio flow (blob-store round-trip)', () => {
 
 describe('exports flow', () => {
   it('returns CSV and JSONL after an event is logged', async () => {
-    const session = seededSession().sessionId;
+    const session = (await seededSession()).sessionId;
     await logEvent(session, 'm');
     const csv = await app.request(
       `/api/sessions/${session}/export.csv`,

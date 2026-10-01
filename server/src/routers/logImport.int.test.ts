@@ -53,16 +53,16 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('503s when SHEETS_LOG_IMPORT_ENABLED is unset, even for an existing show', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
     const res = await postImport(show, env);
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
   });
 
   it('503s with the open-network detail when configured but REQUIRE_LOGIN is off on a non-loopback bind', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
     const openNetwork = envWith({
       SHEETS_LOG_IMPORT_ENABLED: '1',
       REQUIRE_LOGIN: '0',
@@ -75,8 +75,8 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('a deployment that is BOTH unconfigured AND open-network-refused returns the NOT_CONFIGURED detail (config gate first)', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
     const bothConditions = envWith({ REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' });
     const res = await postImport(show, bothConditions);
     expect(res.status).toBe(503);
@@ -84,18 +84,18 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('404s (uniform "not found") when an authenticated non-member POSTs to another tenant’s show', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const otherStudio = seedStudio();
-    const outsider = seedUser({ studios: [otherStudio] });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const otherStudio = await seedStudio();
+    const outsider = await seedUser({ studios: [otherStudio] });
     const res = await postImport(show, enabledEnv(), { cookie: await loginCookie(outsider) });
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ detail: SHOW_NOT_FOUND_DETAIL });
   });
 
   it('returns a job_id and eventually fails when fetch is not xlsx', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
@@ -123,9 +123,9 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('POST succeeds for a studio member with the gate configured, and the creator can poll the job', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const member = seedUser({ studios: [studio] });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const member = await seedUser({ studios: [studio] });
     const memberCookie = await loginCookie(member);
     vi.stubGlobal(
       'fetch',
@@ -148,10 +148,10 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('GET job 404s for an authenticated non-creator (same 404 as an unknown id)', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
-    const creator = seedUser({ studios: [studio] });
-    const otherMember = seedUser({ studios: [studio] });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const creator = await seedUser({ studios: [studio] });
+    const otherMember = await seedUser({ studios: [studio] });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
@@ -177,10 +177,10 @@ describe('log-import job HTTP surface', () => {
   // transcript sync (syncLogRowsToSeams) → category mapping → event creation.
 
   it('success path: a matched sheet syncs against the transcript and creates real events with the expected timecodes and categories', async () => {
-    const studio = seedStudio();
+    const studio = await seedStudio();
     // mapLogCategory requires an OTHER category; 'Camera' exercises the
     // type-cell → category match, '' the OTHER fallback.
-    const show = seedShow({
+    const show = await seedShow({
       studioId: studio,
       categoriesJson: JSON.stringify([
         {
@@ -203,7 +203,7 @@ describe('log-import job HTTP surface', () => {
         },
       ]),
     });
-    const session = seedSession({ showId: show, title: 'EP 12' }); // 24 fps
+    const session = await seedSession({ showId: show, title: 'EP 12' }); // 24 fps
 
     // Real audio + seam metadata: one 1800 s imported take through the actual
     // local-audio-import route (what the batch importer calls), which persists
@@ -304,8 +304,8 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('anonymous GET still works in dev mode (user resolves to null, matching sibling-route scoping)', async () => {
-    const studio = seedStudio();
-    const show = seedShow({ studioId: studio });
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
@@ -387,10 +387,10 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     'a "no_audio" TranscriptGenerateError (non-retryable) matches the FINAL catch\'s instanceof ' +
       '-> exact frozen-wrapped job line, no DeepGram call made',
     async () => {
-      const studio = seedStudio();
-      const show = seedShow({ studioId: studio });
+      const studio = await seedStudio();
+      const show = await seedShow({ studioId: studio });
       const title = 'No Audio Session';
-      seedSession({ showId: show, title });
+      await seedSession({ showId: show, title });
       const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
 
       vi.stubGlobal(
@@ -426,10 +426,10 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     'an "upstream" TranscriptGenerateError retries once, hitting BOTH the retry-check and ' +
       'retry-failure instanceof sites -> exact frozen-wrapped job lines, DeepGram called twice',
     async () => {
-      const studio = seedStudio();
-      const show = seedShow({ studioId: studio });
+      const studio = await seedStudio();
+      const show = await seedShow({ studioId: studio });
       const title = 'Upstream Retry Session';
-      const session = seedSession({ showId: show, title });
+      const session = await seedSession({ showId: show, title });
 
       const seg1 = readFileSync(join(TRANSCRIPTION_FIXTURES_DIR, 'audio', 'seg1.webm'));
       const uploadRes = await app.request(

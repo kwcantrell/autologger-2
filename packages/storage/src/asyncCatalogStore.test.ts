@@ -8,7 +8,6 @@ import {
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
 } from './asyncCatalogStore';
-import { CatalogDb } from './catalogStore';
 
 function raw(): Database.Database {
   const r = new Database(':memory:');
@@ -70,14 +69,15 @@ afterEach(async () => {
 });
 
 describe('AsyncSqliteCatalogDb: statements', () => {
-  it('all, first and run match the synchronous adapter', async () => {
+  it('all, first and run match better-sqlite3', async () => {
     const r = raw();
     const a = new AsyncSqliteCatalogDb(r);
-    const s = new CatalogDb(r);
     expect((await a.run('INSERT INTO t (k, v) VALUES (?, ?)', 'a', 1)).changes).toBe(1);
     expect((await a.run('UPDATE t SET v = 9 WHERE k = ?', 'missing')).changes).toBe(0);
     await a.run('INSERT INTO t (k, v) VALUES (?, ?)', 'b', 2);
-    expect(await a.all('SELECT * FROM t ORDER BY k')).toEqual(s.all('SELECT * FROM t ORDER BY k'));
+    expect(await a.all('SELECT * FROM t ORDER BY k')).toEqual(
+      r.prepare('SELECT * FROM t ORDER BY k').all(),
+    );
     expect(await a.first('SELECT * FROM t WHERE k = ?', 'b')).toEqual({ k: 'b', v: 2 });
     expect(await a.first('SELECT * FROM t WHERE k = ?', 'nope')).toBeNull();
   });
@@ -501,6 +501,52 @@ describe('AsyncSqliteCatalogDb: broken connection', () => {
     g.open();
     await expect(failing).rejects.toThrow('body failed');
     await expect(prompt(queued)).rejects.toBeInstanceOf(CatalogAdapterBrokenError);
+    it.return?.();
+  });
+});
+
+describe('AsyncSqliteCatalogDb: onBroken (async-catalog-stores D5)', () => {
+  it('is called once, after the failing call rejects with its own error', async () => {
+    const r = raw();
+    r.exec("INSERT INTO t (k, v) VALUES ('seed', 0)");
+    const events: string[] = [];
+    const a = new AsyncSqliteCatalogDb(r, { onBroken: () => events.push('broken') });
+    let it!: IterableIterator<unknown>;
+    const failing = a
+      .tx(async () => {
+        it = r.prepare('SELECT * FROM t').iterate();
+        it.next(); // keeps the connection busy, so ROLLBACK fails
+        throw new Error('body failed');
+      })
+      .catch((e: Error) => {
+        events.push(`rejected: ${e.message}`);
+      });
+    await failing;
+    await new Promise((res) => setImmediate(res));
+    await a.all('SELECT 1').catch(() => {});
+    await new Promise((res) => setImmediate(res));
+    expect(events).toEqual(['rejected: body failed', 'broken']);
+    it.return?.();
+  });
+
+  it('a throwing onBroken does not affect the adapter', async () => {
+    const r = raw();
+    r.exec("INSERT INTO t (k, v) VALUES ('seed', 0)");
+    const a = new AsyncSqliteCatalogDb(r, {
+      onBroken: () => {
+        throw new Error('callback blew up');
+      },
+    });
+    let it!: IterableIterator<unknown>;
+    await expect(
+      a.tx(async () => {
+        it = r.prepare('SELECT * FROM t').iterate();
+        it.next();
+        throw new Error('body failed');
+      }),
+    ).rejects.toThrow('body failed');
+    await new Promise((res) => setImmediate(res));
+    await expect(prompt(a.all('SELECT 1'))).rejects.toBeInstanceOf(CatalogAdapterBrokenError);
     it.return?.();
   });
 });
