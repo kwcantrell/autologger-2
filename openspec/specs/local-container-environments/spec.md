@@ -24,6 +24,7 @@ The capability also owns:
 It changes no HTTP/WS behaviour of the server.
 
 ## Requirements
+
 ### Requirement: Makefile entry points per environment
 The repository root SHALL have a `Makefile` with one target family per environment:
 `dev-*`, `stage-*`, and `prod-*`. Each target wraps `docker compose` and/or
@@ -35,12 +36,22 @@ dev or stage files never resolves to the prod project.
 
 | Environment | `name:` | Compose files | Invocation |
 |---|---|---|---|
-| dev | `autologger-dev` | `docker/compose.dev.yaml` | `--project-directory .`, `--env-file .env.dev` |
-| stage | `autologger-stage` | `compose.yaml` + `docker/compose.stage.yaml` | the overlay's `name:` wins; `--env-file .env.stage` |
-| prod | `autologger` | `compose.yaml` | root `.env`, exactly as README "Container deployment" documents |
+| dev | `autologger-dev` | `docker/compose.dev.yaml` | `--project-directory .`, Infisical environment `dev` |
+| stage | `autologger-stage` | `compose.yaml` + `docker/compose.stage.yaml` | the overlay's `name:` wins; Infisical environment `stage` |
+| prod | `autologger` | `compose.yaml` | Infisical environment `prod`, exactly as README "Container deployment" documents |
 
-Every dev and stage target SHALL pass its `--env-file`, so compose's default interpolation
-file (the root `.env`, which is prod's) is never read for dev or stage.
+Every target that touches a compose project SHALL:
+- log in to Infisical once;
+- fetch its environment's secrets once, check every name before any program is started with
+  them, and run its guards and its compose commands in one clean environment that contains only
+  a fixed base plus those secrets;
+- pass an explicit empty `--env-file`, so compose never reads the root `.env` or any other env
+  file for interpolation.
+
+Variables in the operator's shell SHALL NOT reach compose or any container. Ports and tags are
+set in Infisical. A `docker compose` command typed by hand against these files, outside the
+Makefile, SHALL fail with a message naming the Makefile, rather than start a service without
+its secrets.
 
 The Makefile SHALL also provide:
 - `help`, as the default goal;
@@ -73,6 +84,19 @@ No target SHALL remove a prod volume or run `docker volume prune` or
 - **WHEN** the Makefile is searched for `down -v`, `--volumes`, `volume rm`, or `prune`
 - **THEN** each use belongs to `dev-reset` or `stage-reset`, behind both guards
 
+#### Scenario: A stray root .env is ignored
+- **WHEN** a root `.env` exists that sets `DEV_PORT` or a secret key, and `make dev-up` runs
+- **THEN** the resolved dev config takes neither value from that file
+
+#### Scenario: Shell variables do not leak into a stack
+- **WHEN** the operator's shell exports `API_TOKEN=weak`, the Infisical `stage` environment
+  has no `API_TOKEN`, and `make stage-up` runs
+- **THEN** the stage `api` container has no `API_TOKEN`
+
+#### Scenario: Hand-typed compose refuses to start
+- **WHEN** `docker compose -f compose.yaml up -d` is run by hand with the prod tags exported
+- **THEN** it fails before creating a container, with a message naming the Makefile
+
 ### Requirement: Dev environment runs the hot-reload single process with every integration
 The dev environment SHALL run the repo's single-process `npm run dev` in a container built
 from a `dev` target of `docker/Dockerfile`. The image SHALL include:
@@ -85,7 +109,7 @@ without an image rebuild. Every `packages/*` directory SHALL have its `src` moun
 missing mount SHALL fail the dev check. A dependency-manifest, lockfile, or config change
 SHALL require `make dev-build`, and the documentation SHALL say so.
 
-The following SHALL be settable through the dev env file:
+The following SHALL be settable through the Infisical `dev` environment:
 - `DEEPGRAM_API_KEY`
 - `SHEETS_LOG_IMPORT_ENABLED`
 - `AI_V2_ENABLED`
@@ -113,8 +137,8 @@ Sign-in is optional:
 - **WHEN** all of the following hold:
   - the dev environment is up;
   - the host `~/.claude/.credentials.json` holds a Claude login;
-  - `.env.dev` sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`, and
-    `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`
+  - the Infisical `dev` environment sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`,
+    and `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`
 - **THEN** none of these is answered with its "not configured", open-network-refusal, or
   credentials-refusal `503`:
   - AI chat;
@@ -126,7 +150,7 @@ Sign-in is optional:
   - transcript generation.
 
 #### Scenario: Optional sign-in
-- **WHEN** `.env.dev` sets a Google OAuth client whose redirect URI is
+- **WHEN** the Infisical `dev` environment sets a Google OAuth client whose redirect URI is
   `http://localhost:<DEV_PORT>/auth/google/callback`, and a user signs in at
   `http://localhost:<DEV_PORT>/`
 - **THEN** the callback completes on that origin, and `/api/profile` reports the user
@@ -199,15 +223,17 @@ Bind mounts:
 - No bind mount SHALL be any of the following:
   - the repository root;
   - a path with a `data` segment;
-  - a `.env` file;
+  - a `.env` file, including an Infisical credentials file;
   - any other path under the host home directory, which includes `~/.claude` as a directory
     and `~/.claude.json`.
 
 The runtime user's home SHALL be a named volume of the dev project (`dev-home`). The CLI's
 session store, its `~/.claude.json`, and its history live there, never on the host.
 
-The env file SHALL be read only through compose `env_file`. The documentation SHALL state
-the accepted residuals of the credentials mount:
+The dev `app` container SHALL receive secrets only as the variables named in the shared
+allowlist file, each passed through from the Infisical `dev` environment. It SHALL have no `env_file`, and
+SHALL NOT receive the Infisical access token or machine-identity credentials. The
+documentation SHALL state the accepted residuals of the credentials mount:
 - the container can read the operator's Claude login;
 - the OAuth token may be refreshed, and the file rewritten, by either the container or host
   Claude Code sessions.
@@ -229,6 +255,12 @@ the accepted residuals of the credentials mount:
 - **THEN** an AI chat turn succeeds without any login step inside the container
 - **AND** nothing is written under the host `~/.claude` other than that file
 
+#### Scenario: Unnamed Infisical secrets stay out of the container
+- **WHEN** dev is up
+- **THEN** `env` inside the `app` container shows no variable outside the allowlist, the pins,
+  and the image's own environment
+- **AND** it shows no `INFISICAL_*` variable and no `SSL_CERT_FILE`
+
 ### Requirement: Stage behaves as production, with local sign-in
 The stage environment SHALL run `compose.yaml` with `docker/compose.stage.yaml` layered
 over it. Its `web` and `api` images SHALL be built locally from the same `docker/Dockerfile`
@@ -239,11 +271,13 @@ At the compose level, the overlay SHALL differ from production only in:
 - `api` `container_name`;
 - network subnets, and the router gateway variables that match them;
 - image names and tags;
-- the `api` env file;
 - `PUBLIC_BASE_URL=http://localhost:${STAGE_PORT:-8788}`;
 - `COOKIE_SECURE=0`;
 - `SESSION_COOKIE=autologger_stage_sid`;
 - the router's published port, `127.0.0.1:${STAGE_PORT:-8788}` via `ports: !override`.
+
+Stage SHALL take its secrets from the Infisical `stage` environment, through the same
+allowlist as production.
 
 Things stage keeps from production:
 - The api home, which holds the Claude login, SHALL remain a named volume of the stage
@@ -340,34 +374,6 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - **THEN** the adapted JSON equals the pre-change adapted JSON, and `npm run e2e:container`
   passes, including the forged `X-Forwarded-For` case
 
-### Requirement: Env files are untracked and templated
-The files `.env`, `.env.dev`, and `.env.stage` SHALL be ignored by git.
-
-The tracked templates are `docker/.env.example`, `docker/.env.dev.example`, and
-`docker/.env.stage.example`. They SHALL:
-- not be ignored;
-- contain no real values;
-- each name the path it is copied to;
-- warn against reusing prod secrets.
-
-`docker/.env.example` SHALL:
-- state that `PUBLIC_BASE_URL` must be set there, because compose interpolates it into the
-  `api` environment;
-- show the `WEB_TAG`/`API_TAG` format: the 12-character git SHA that `prod-push` produces.
-
-A dev or stage target SHALL fail when its env file is missing, with a message naming the
-template.
-
-#### Scenario: Env files are ignored
-- **WHEN** `git check-ignore .env .env.dev .env.stage` is run
-- **THEN** all three are ignored, and none of the three `docker/*.example` templates is
-  ignored
-
-#### Scenario: Missing env file
-- **WHEN** `make stage-up` runs with no `.env.stage`
-- **THEN** it exits non-zero with a message naming `docker/.env.stage.example`, and starts
-  nothing
-
 ### Requirement: Prod targets are explicit and bound to committed content
 `prod-push` and `prod-up` SHALL refuse to run unless both hold:
 - `git status --porcelain` is empty (this covers untracked, non-ignored files);
@@ -382,9 +388,14 @@ template.
 - tag them `:local`, never with a git SHA.
 
 `prod-up` SHALL:
-- use `compose.yaml` and `.env` exactly as README "Container deployment" documents, with no
-  overlay;
-- fail if `WEB_TAG` or `API_TAG` is unset.
+- use `compose.yaml` with the Infisical `prod` environment exactly as README "Container
+  deployment" documents, with no overlay;
+- fail if `WEB_TAG` or `API_TAG` is unset, empty, or `latest` in the Infisical `prod`
+  environment.
+
+`prod-check` SHALL run the prod guards and resolve the prod config through Infisical `prod`
+without starting anything and without the `main` requirement. This lets a deploy host dry-run
+the Infisical path before cutover.
 
 #### Scenario: Dirty or untracked tree refuses push
 - **WHEN** a tracked file is modified, or an untracked source file exists, and
@@ -400,10 +411,20 @@ template.
 - **THEN** the loaded images are tagged `:local`, and no image tagged with the current git
   SHA is created or overwritten
 
+#### Scenario: Unpinned prod tag refuses start
+- **WHEN** the Infisical `prod` environment has `API_TAG=latest` and `make prod-up` runs on a
+  clean `main`
+- **THEN** it exits non-zero naming `API_TAG`, and starts nothing
+
+#### Scenario: Prod dry run starts nothing
+- **WHEN** `make prod-check` runs on any branch with valid prod credentials
+- **THEN** it exits zero and no container of project `autologger` is created or recreated
+
 ### Requirement: Static invariant check
 `docker/scripts/check-envs.sh` SHALL resolve each environment with
 `docker compose config --no-env-resolution`, using placeholder `--env-file`s it writes to a
-temporary directory. It SHALL never read or print `.env`, `.env.dev`, or `.env.stage`.
+temporary directory. It SHALL never contact Infisical, and SHALL never read or print `.env`,
+`.env.dev`, `.env.stage`, or any `.env.infisical.*` file.
 
 It SHALL fail, naming the violated invariant, when any of the following holds:
 1. A published port in any project is not bound to `127.0.0.1`.
@@ -421,6 +442,10 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
 11. `docker/.env` exists.
 12. The companion ignore file does not begin with an exclude-all line.
 13. The Caddyfile adapted with no gateway variables differs from the committed baseline.
+14. Any service in the dev, stage, or prod project has an `env_file`. The prod project
+    combined with the `e2e:container` overlay is exempt.
+15. The key names listed in the shared allowlist file differ from the null-passthrough names
+    of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
 
 It SHALL need only `docker`, `jq`, and a POSIX shell.
 
@@ -432,7 +457,95 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 - **WHEN** the dev compose file is edited to `HOST: ${DEV_HOST:-127.0.0.1}`
 - **THEN** `make check` exits non-zero and names the non-literal pin
 
+#### Scenario: A reintroduced env file is caught
+- **WHEN** `env_file: .env` is added back to the prod `api` service
+- **THEN** `make check` exits non-zero and names invariant 14
+
+#### Scenario: Allowlist drift is caught
+- **WHEN** a passthrough key is added directly to the prod `api` service instead of the shared
+  allowlist file
+- **THEN** `make check` exits non-zero and names invariant 15
+
 #### Scenario: Clean tree passes
 - **WHEN** `make check` runs on the committed files
 - **THEN** it exits zero
 
+### Requirement: Secrets come from Infisical, one environment per stack
+Each stack SHALL read its secrets and its compose interpolation values from one Infisical
+environment (`dev`, `stage`, or `prod`), held in its own Infisical project. Each environment SHALL
+be read with its own machine identity, which SHALL have no access to the other environments'
+projects.
+
+The per-host credentials for an environment SHALL live in an untracked file
+`.env.infisical.<env>` at the repository root. The file SHALL hold:
+- the machine identity's client id and client secret;
+- the project id of that environment's project;
+- the Infisical URL, which SHALL use `https://`;
+- the path of the CA certificate that Infisical's TLS chains to.
+
+The Infisical URL and CA path SHALL NOT be written in any tracked file other than examples and
+documentation, so moving Infisical to another host needs no code change. The tracked template
+SHALL be `docker/infisical-credentials.example`, with keys and no values.
+
+**Git ignore rules.** The files `.env`, `.env.dev`, `.env.stage`, and `.env.infisical.*` SHALL be
+ignored by git, and the tracked templates SHALL NOT be.
+
+**Allowed names.** Every Infisical key an environment may hold SHALL be either:
+- listed in the shared allowlist file, which lists the keys containers may receive; or
+- one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
+  `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
+  and `PUBLIC_BASE_URL` for prod.
+
+**Documentation.** The documentation SHALL:
+- list those keys;
+- state the `WEB_TAG`/`API_TAG` format (the 12-character git SHA that `prod-push` produces);
+- warn against reusing prod secrets in dev or stage;
+- describe a break-glass procedure for when Infisical is unreachable.
+
+**Failures.** A compose target SHALL fail before starting anything, with a message that names
+the fix and prints no secret value, when:
+- Node older than 22.12 is running the wrapper;
+- the environment's credentials file is missing, lacks a key, names a missing CA file, uses a
+  non-`https` URL, or is readable by group or others;
+- login fails, including a TLS verification failure. The message SHALL NOT suggest disabling
+  verification or using plain HTTP;
+- the environment injects any name outside its allowed names. The message SHALL list only
+  offending names that are valid identifiers.
+
+**Secret handling.** The client secret and the access token SHALL NOT appear on any command line
+and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be fetched
+without reference expansion and without imports. Every secret key and value SHALL be a string,
+and the fetch SHALL be refused as a whole if any secret fails validation.
+
+**Tooling.** The compose targets SHALL need Node 22.12 or newer on the host and no npm packages.
+
+#### Scenario: Credentials and old env files are ignored, templates are not
+- **WHEN** `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` is run
+- **THEN** all five are ignored, and `docker/infisical-credentials.example` is not
+
+#### Scenario: Missing credentials file
+- **WHEN** `make stage-up` runs with no `.env.infisical.stage`
+- **THEN** it exits non-zero with a message naming `docker/infisical-credentials.example`,
+  and starts nothing
+
+#### Scenario: Plain HTTP is refused
+- **WHEN** `.env.infisical.dev` sets an `http://` Infisical URL and `make dev-up` runs
+- **THEN** it exits non-zero before contacting Infisical, and starts nothing
+
+#### Scenario: A hostile secret name is refused
+- **WHEN** the Infisical `dev` environment holds a key named `LD_PRELOAD` or `DOCKER_HOST`, and
+  `make dev-up` runs
+- **THEN** it exits non-zero naming that key, prints no value, and runs no docker command
+
+#### Scenario: A malformed secret list is refused as a whole
+- **WHEN** Infisical returns a secret whose value is not a string, a duplicate key, or no
+  secrets at all, and `make dev-up` runs
+- **THEN** it exits non-zero, prints no value, and runs no docker command
+
+#### Scenario: One environment's identity cannot read another's
+- **WHEN** the dev credentials are pointed at the stage or prod project
+- **THEN** the fetch is refused with an HTTP 403, and no value is printed
+
+#### Scenario: Secrets stay off the process list
+- **WHEN** `make dev-up` is running and `ps -eo args` is captured
+- **THEN** no captured argument contains the client secret or the access token

@@ -206,10 +206,10 @@ written to print names or exit codes only. The agent records that output and nev
   Evidence: owner chose `size-override` (2026-09-30); locally `LIFECYCLE_OVERRIDE="size_budget: owner size-override ..." scripts/check-change.sh --stage pr --base supabase-migration` -> PASS openspec, yaml (61), workflows, skills-sync, guide-size (97/150), change (tier 2), risk-floor (3 high-risk paths: the owner's guardrail commit 29aed0e), approval, panel (80, no open criticals), evidence, artifacts-first, tests-with-code, commands (typecheck, test incl. `compose-run.test.mjs` 36/36), audit; WARN size `888 changed lines > 400 (overridden)`; FAIL only `tasks` (5.3, 6.1 unticked). On GitHub the PR needs the existing `size-override` label and its reason in the body. The hook test `test hooks without AUTOLOGGER_TEST=1 are ignored` was switched to `prod` so a real `.env.infisical.dev` on the host can't change its outcome.
 ## 6. Archive
 
-- [ ] 6.1 Run the consistency read (tier 2) if any artifact changed after approval, then
+- [x] 6.1 Run the consistency read (tier 2) if any artifact changed after approval, then
   `/opsx:archive`. Check: `openspec validate --all --strict` and
   `openspec validate --archived --no-interactive` pass.
-
+  Evidence: consistency reads logged in panel.md (the last one, "final, before archive", found no scope change); `openspec archive infisical-secrets -y` -> `container-deployment: ~ 1 modified`, `local-container-environments: + 1 added, ~ 6 modified, - 1 removed`, `archived as '2026-09-30-infisical-secrets'`; main spec greps -> "Secrets come from Infisical, one environment per stack" 1, "Env files are untracked and templated" 0, "held in its own Infisical project" 1, cross-project 403 scenario 1, container-deployment "shared allowlist file" 1; `openspec validate --all --strict` -> `26 passed, 0 failed`; `openspec validate --archived --no-interactive` -> `52 passed, 1 failed` before this tick (the only failure was this task).
 ## Owner-owed after merge (no checkbox)
 
 - **Before cutover:** fill the Infisical `prod` project, confirm Node ≥22.12 on the deploy host, create the prod identity's client secret there, and put

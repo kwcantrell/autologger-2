@@ -185,9 +185,12 @@ A `compose.yaml` SHALL define `router`, `web`, and `api` services, with these pr
   one replica.
 - **Volumes:** `api` SHALL mount persistent volumes for `DATA_DIR` and for the runtime
   user's home directory, which holds `~/.claude/` and `~/.claude.json`.
-- **Secrets:** secrets SHALL come from an env file that is not tracked in git.
-- **Posture:** `REQUIRE_LOGIN=1` SHALL be set in the compose `environment` block, not in the
-  env file, so the env file cannot turn it off.
+- **Secrets:** secrets SHALL come from the Infisical `prod` environment, injected into the
+  compose process at start. No service SHALL use `env_file`. `api` SHALL receive only the
+  variables named in a shared allowlist file, as null passthroughs. No secret value SHALL
+  appear in any tracked file.
+- **Posture:** `REQUIRE_LOGIN=1` SHALL be set as a literal in the compose `environment` block,
+  so no Infisical value can turn it off.
 - **Operability:** every service SHALL have
   - a restart policy;
   - a healthcheck that needs no tools beyond the image's runtime (for `api`,
@@ -210,6 +213,10 @@ A `compose.yaml` SHALL define `router`, `web`, and `api` services, with these pr
 #### Scenario: A second api replica is refused
 - **WHEN** `docker compose up --scale api=2` is run
 - **THEN** compose refuses to create a second `api` container
+
+#### Scenario: Posture cannot be flipped from Infisical
+- **WHEN** the Infisical `prod` environment sets `REQUIRE_LOGIN=0`
+- **THEN** the running `api` still has `REQUIRE_LOGIN=1`
 
 ### Requirement: Deployment behind a TLS-terminating proxy is configured explicitly
 The compose defaults and deployment documentation SHALL set:
