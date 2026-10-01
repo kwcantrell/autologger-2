@@ -12,15 +12,19 @@ const TSX = join(SERVER, '../node_modules/.bin/tsx');
 let cwd: string;
 afterEach(() => cwd && rmSync(cwd, { recursive: true, force: true }));
 
-function boot(env: Record<string, string>) {
+function boot(
+  env: Record<string, string> | ((cwd: string) => Record<string, string>),
+  timeout = 30_000,
+) {
   cwd = mkdtempSync(join(tmpdir(), 'autologger-boot-'));
+  const extra = typeof env === 'function' ? env(cwd) : env;
   const r = spawnSync(TSX, [join(SERVER, 'src/main.ts')], {
     cwd,
-    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: cwd, ...env },
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: cwd, ...extra },
     encoding: 'utf8',
-    timeout: 30_000,
+    timeout,
   });
-  return { status: r.status, stderr: r.stderr, files: readdirSync(cwd) };
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, files: readdirSync(cwd) };
 }
 
 describe('main.ts boot order', () => {
@@ -37,4 +41,36 @@ describe('main.ts boot order', () => {
     expect(r.stderr).toMatch(/DATA_DIR/);
     expect(r.files).toEqual([]);
   }, 40_000);
+  it('with the sentinel and DATA_DIR but no PGPASSWORD: exits 1 naming it, creating nothing (catalog-on-postgres D2)', () => {
+    const r = boot((dir) => ({
+      AUTOLOGGER_STACK: 'dev',
+      DATA_DIR: join(dir, 'data'),
+      PGHOST: '127.0.0.1',
+      PGPORT: '1',
+      PGUSER: 'autologger_app',
+      PGDATABASE: 'postgres',
+    }));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/PGPASSWORD/);
+    expect(r.files).toEqual([]);
+  }, 40_000);
+  it('with an unreachable catalog: exits 1 after the readiness wait, never listening (catalog-on-postgres D2)', () => {
+    const r = boot(
+      (dir) => ({
+        AUTOLOGGER_STACK: 'dev',
+        DATA_DIR: join(dir, 'data'),
+        PORT: '0',
+        PGHOST: '127.0.0.1',
+        PGPORT: '1', // nothing listens on port 1
+        PGUSER: 'autologger_app',
+        PGPASSWORD: 'unused',
+        PGDATABASE: 'postgres',
+      }),
+      45_000,
+    );
+    expect(r.status).toBe(1);
+    expect(r.stdout).not.toMatch(/listening/);
+    expect(r.stderr).toMatch(/catalog not ready/);
+    expect(r.stderr).not.toMatch(/unused/);
+  }, 60_000);
 });

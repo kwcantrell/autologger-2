@@ -51,17 +51,25 @@ Logs: keep the full output of every test and gate run under the session scratchp
 
 ## 2. Boot (design D2)
 
-- [ ] 2.1 Test first, in `bootGuard.test.ts` and `bootOrder.int.test.ts`: a valid stack and
+- [x] 2.1 Test first, in `bootGuard.test.ts` and `bootOrder.int.test.ts`: a valid stack and
   `DATA_DIR` with `PGPASSWORD` unset exits 1, naming `PGPASSWORD`, printing no value, and
   creating nothing. Red, then add the `PG*` check to `checkBootEnv`. Green.
-- [ ] 2.2 Test first, in `server/src/waitForCatalog.test.ts` (fake clock and fake db):
+  Evidence: `4c-2.1-red.log`: `npx vitest run --project unit src/bootGuard.test.ts` -> `× refuses
+  each missing or empty catalog connection setting…`, `Tests  1 failed | 5 passed (6)`. The
+  `bootOrder` PGPASSWORD case already passed (`Tests  3 passed (3)`), because task 1.2's
+  `createBindings` refuses before the lock. `4c-2.1-green.log` -> `Tests  17 passed (17)`
+  (bootGuard + config), `Tests  3 passed (3)` (bootOrder). `CATALOG_PG_VARS` now lives in
+  `bootGuard.ts`, and `config.ts` imports it.
+- [x] 2.2 Test first, in `server/src/waitForCatalog.test.ts` (fake clock and fake db):
   - `ECONNREFUSED`, `42P01`, then success resolves;
   - a failure on every attempt rejects at the 30 s budget;
   - an attempt that never settles is cut off at the remaining budget;
   - each distinct code is logged once, with no message text.
 
   Red, then implement. Green.
-- [ ] 2.3 `main.ts`:
+  Evidence: `4c-2.2-red.log` -> `Error: Cannot find module './waitForCatalog'`, `Tests  no tests`.
+  `4c-2.2-green.log` -> `Tests  4 passed (4)` (vitest fake timers).
+- [x] 2.3 `main.ts`:
   - await `waitForCatalog` before `purgeExpiredAtBoot`, and exit 1 if it rejects;
   - remove `onBroken`;
   - shutdown awaits `close()`.
@@ -69,6 +77,11 @@ Logs: keep the full output of every test and gate run under the session scratchp
   Test first, in `bootOrder.int.test.ts`: `PGHOST=127.0.0.1` with a closed port exits 1 without
   ever listening (about 30 s, timeout 45 s). Red (today the server listens on SQLite), green
   after.
+  Evidence: `4c-2.3-red.log`: `npx vitest run --project integration src/bootOrder.int.test.ts -t
+  unreachable` -> `AssertionError: expected +0 to be 1` (45270 ms). `4c-2.3-green.log` -> `Tests  4
+  passed (4)`, `tests 34.53s` (the 30 s wait plus spawn). `onBroken` is removed and shutdown
+  awaits `close()` (done in 1.2). `npx vitest run --project unit src/startupPurge.test.ts` ->
+  `Tests  3 passed (3)`.
 
 ## 3. Store dialect (design D4)
 

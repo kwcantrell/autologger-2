@@ -13,14 +13,11 @@ import {
   PostgresCatalogDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
+import { CATALOG_PG_VARS } from '../bootGuard';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
-
-/** The compose stacks pass these (docker/compose*.yaml); the catalog has no other home
- * (catalog-on-postgres D1). */
-export const CATALOG_PG_VARS = ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE'] as const;
 
 export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;
