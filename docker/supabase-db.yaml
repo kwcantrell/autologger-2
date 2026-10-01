@@ -1,0 +1,75 @@
+# Supabase Postgres for every stack (supabase-db, design D1-D3). Added by
+# docker/scripts/compose-env.sh to dev, stage and prod; each base file declares the `db` network
+# (internal, host-isolated, pinned subnet). Paths are repo-root-relative.
+#
+# Invariant 16 (make check): db/migrate publish no port and join only `db`; no other service
+# joins `db`; both images are digest-pinned; the POSTGRES_PASSWORD value appears in no other
+# service. The two volumes are one unit: back up, restore and delete them together.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-image: &image supabase/postgres:17.6.1.136@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+
+services:
+  db:
+    image: *image
+    restart: unless-stopped
+    init: true
+    # Upstream's command; log_min_messages=fatal also keeps failed-auth text out of the logs.
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_DB: postgres
+      POSTGRES_PORT: "5432"
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      JWT_EXP: "3600"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+    volumes:
+      - supabase-db:/var/lib/postgresql/data
+      - supabase-db-config:/etc/postgresql-custom
+    networks: [db]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  # One-shot migrations runner (design D3): `compose run --rm migrate`; `up` never starts it.
+  migrate:
+    image: *image
+    profiles: [tools]
+    restart: "no"
+    init: true
+    user: postgres
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["sh", "/migrate.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+    volumes:
+      - ./supabase/migrations:/migrations:ro
+      - ./docker/supabase/migrate.sh:/migrate.sh:ro
+    networks: [db]
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  supabase-db:
+  supabase-db-config:

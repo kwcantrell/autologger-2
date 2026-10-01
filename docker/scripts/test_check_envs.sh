@@ -1,7 +1,7 @@
 #!/bin/sh
 # docker/scripts/test_check_envs.sh -- regression cases for check-envs.sh invariants 14 and 15
-# (infisical-secrets tasks 2.1, 2.2). Each case copies the working tree (tracked + untracked,
-# git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
+# (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1).
+# Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
 #   sh docker/scripts/test_check_envs.sh
@@ -50,6 +50,56 @@ d=$SCRATCH/dropped; snapshot "$d"
 # A dev literal pin that shadows an allowlist key is fine; dropping extends is not.
 sed -i '/extends: { file: docker\/secrets-env.yaml, service: secrets }/d' "$d/docker/compose.dev.yaml"
 expect "dev app without the allowlist is caught" "$d" fail "invariant 15] dev"
+
+# ---- supabase-db (invariant 16, invariant 4 exceptions)
+DBF=docker/supabase-db.yaml
+d=$SCRATCH/dbport; snapshot "$d"
+sed -i 's/^    restart: unless-stopped$/    restart: unless-stopped\n    ports: ["127.0.0.1:5432:5432"]/' "$d/$DBF"
+expect "a published db port is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/dbnet; snapshot "$d"
+sed -i '0,/^    networks: \[db\]$/s//    networks: [db, default]/' "$d/$DBF"
+expect "db on a second network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/compdb; snapshot "$d"
+sed -i '147s/networks: \[dev\]/networks: [dev, db]/' "$d/docker/compose.dev.yaml"
+expect "companion joined to the db network is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/dbinternal; snapshot "$d"
+sed -i 's/^    internal: true$/    internal: false/' "$d/compose.yaml"
+expect "a non-internal db network is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/dbgw; snapshot "$d"
+sed -i '/gateway_mode_ipv4: isolated/d' "$d/docker/compose.dev.yaml"
+expect "a db network without host isolation is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/dbsubnet; snapshot "$d"
+sed -i 's/172\.28\.22\.0/172.28.23.0/' "$d/docker/compose.stage.yaml"
+expect "a db network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
+
+d=$SCRATCH/dbimg; snapshot "$d"
+sed -i '0,/^    image: \*image$/s//    image: supabase\/postgres:17.6.1.136/' "$d/$DBF"
+expect "an unpinned db image is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/migimg; snapshot "$d"
+sed -i '/^  migrate:$/,/image:/s/^    image: \*image$/    image: supabase\/postgres:17.6.1.136/' "$d/$DBF"
+expect "an unpinned migrate image is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/dburl; snapshot "$d"
+sed -i '50s/^      PORT: "8786"$/      PORT: "8786"\n      DATABASE_URL: postgres:\/\/postgres:${POSTGRES_PASSWORD}@db\/postgres/' "$d/docker/compose.dev.yaml"
+expect "the password embedded in a dev app DATABASE_URL is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/pwlabel; snapshot "$d"
+sed -i 's/^    container_name: autologger-api$/    container_name: autologger-api\n    labels: { pw: "${POSTGRES_PASSWORD}" }/' "$d/compose.yaml"
+expect "the password in a prod api label is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/dockerbind; snapshot "$d"
+sed -i 's#^      - ./docker/supabase/migrate.sh:/migrate.sh:ro$#&\n      - ./docker/Caddyfile:/x:ro#' "$d/$DBF"
+expect "a docker/ bind outside the exceptions is caught" "$d" fail "invariant 4] dev"
+
+d=$SCRATCH/migbind; snapshot "$d"
+sed -i 's#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./supabase/migrations:/m:ro#' "$d/docker/compose.dev.yaml"
+expect "the migrations directory mounted outside migrate is caught" "$d" fail "invariant 4] dev"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

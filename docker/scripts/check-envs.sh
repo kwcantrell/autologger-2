@@ -1,7 +1,7 @@
 #!/bin/sh
 # docker/scripts/check-envs.sh -- static invariant check for the dev / stage / prod compose
 # projects (containerized-dev-env, design D11; infisical-secrets D5; spec "Static invariant
-# check", 15 invariants).
+# check", 16 invariants; supabase-db D7).
 #
 #   docker/scripts/check-envs.sh [dev|stage|prod|all]      (default: all)
 #
@@ -28,6 +28,8 @@ cd "$ROOT"
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
   WEB_TAG API_TAG PUBLIC_BASE_URL E2E_ENV_FILE E2E_IP_ALLOWLIST HOST REQUIRE_LOGIN TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
+# supabase-db D4: a sentinel for the Postgres password, so invariant 16 can find its value anywhere.
+PGPW_SENTINEL=pgpwsentinel7f3c0d1e2a; POSTGRES_PASSWORD=$PGPW_SENTINEL; export POSTGRES_PASSWORD
 
 # The shared allowlist (infisical-secrets D2): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
@@ -90,7 +92,7 @@ compose_prod_e2e() {
 resolve() {
   _out=$1; _label=$2; _fn=$3; _envf=$4
   shift 4
-  if ! "$_fn" "$_envf" config --no-env-resolution --format json "$@" >"$_out" 2>"$TMP/resolve.err"; then
+  if ! "$_fn" "$_envf" --profile '*' config --no-env-resolution --format json "$@" >"$_out" 2>"$TMP/resolve.err"; then
     fail 0 "could not resolve $_label with compose config:"
     sed 's/^/    /' "$TMP/resolve.err" >&2
     return 1
@@ -185,6 +187,26 @@ check_gw_values() { # json label
     "[.services[]|(.environment//{})|to_entries[]|select(.key|test(\"^ROUTER_(FRONT|BACK)_GW\$\"))|.value]|all(type==\"string\" and test(\"$IPV4\") and .!=\"0.0.0.0\")"
 }
 
+# Invariant 16 (dev, stage, prod; supabase-db D1-D4): Postgres is isolated and its password stays in
+# db/migrate. The value check covers every string in a service (env, command, labels, build args).
+check_db() { # json label subnet
+  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins a network other than db" "$1" \
+    '(.services.db and .services.migrate)
+     and ([.services.db,.services.migrate]|all(((.ports//[])|length==0) and ((.networks//{})|keys==["db"])))'
+  jq_ok 16 "$2: a service other than db and migrate joins the db network" "$1" \
+    '[.services|to_entries[]|select(.key!="db" and .key!="migrate")|select((.value.networks//{})|has("db"))]|length==0'
+  jq_ok 16 "$2: the db network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $3" "$1" \
+    '.networks.db|.internal==true
+     and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
+     and .driver_opts["com.docker.network.bridge.gateway_mode_ipv6"]=="isolated"
+     and .ipam.config==[{"subnet":$sn}]' --arg sn "$3"
+  jq_ok 16 "$2: the db or migrate image is not pinned by @sha256: digest" "$1" \
+    '[.services.db.image,.services.migrate.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
+  jq_ok 16 "$2: the POSTGRES_PASSWORD value appears in a service other than db and migrate" "$1" \
+    '[.services|to_entries[]|select(.key!="db" and .key!="migrate")|select([.value|..|strings|contains($pw)]|any)]|length==0' \
+    --arg pw "$PGPW_SENTINEL"
+}
+
 # ---------------------------------------------------------------- DEV ------------------------
 check_dev() {
   echo "== dev (autologger-dev)"
@@ -236,8 +258,9 @@ check_dev() {
   jq_ok 6 "dev: companion command is not exactly [\"--admin-address\",\"127.0.0.1\"]" "$D" \
     '.services.companion.command==["--admin-address","127.0.0.1"]'
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
-  jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate" "$D" \
-    '(.services|keys|sort)==["app","app-gate","companion","companion-gate"]'
+  jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate, db, migrate" "$D" \
+    '(.services|keys|sort)==["app","app-gate","companion","companion-gate","db","migrate"]'
+  check_db "$D" dev 172.28.31.0/24                                     # 16
   check_no_host_priv "$D" dev
   check_no_env_file "$D" dev                                           # 14
   check_allowlist "$R" dev app                                         # 15
@@ -272,11 +295,13 @@ check_dev() {
   BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
-  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile)(/.*)?$'
-  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, packages/catalog/migrations or docker/dev-gate.Caddyfile (or names repo root, a data segment, .. or a .env file)" "$D" \
+  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations)(/.*)?$'
+  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, packages/catalog/migrations, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh or supabase/migrations (or names repo root, a data segment, .. or a .env file)" "$D" \
     "$BINDS | map(select(.ro)) | all(.src | startswith(\$root+\"/\") and (ltrimstr(\$root+\"/\") | test(\"$ALLOW\") and (test(\"(^|/)(data|\\\\.\\\\.|\\\\.)(/|\$)\")|not) and (test(\"(^|/)\\\\.env[^/]*\$\")|not)))"
   jq_ok 4 "dev: the gate Caddyfile bind is not read-only" "$D" \
     "$BINDS | map(select(.src|endswith(\"/docker/dev-gate.Caddyfile\"))) | length==2 and all(.ro)"
+  jq_ok 4 "dev: docker/supabase/migrate.sh or supabase/migrations is mounted into a service other than migrate" "$D" \
+    "$BINDS | map(select(.src==(\$root+\"/docker/supabase/migrate.sh\") or (.src|startswith(\$root+\"/supabase/migrations\")))) | all(.s==\"migrate\")"
   jq -r --arg root "$ROOT" --arg home "$HOME" "$JQ_NORM $BINDS | map(select(.ro)) | .[].src" "$D" >"$TMP/ro-sources.txt"
   while IFS= read -r p; do
     [ -e "$p" ] || fail 4 "dev: read-only source mount names a path that does not exist: ${p#"$ROOT"/}"
@@ -331,6 +356,7 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
+  check_db "$S" stage 172.28.22.0/24                                   # 16
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -381,6 +407,7 @@ check_prod() {
   resolve "$TMP/prod-e2e.json" "prod + e2e overlay" compose_prod_e2e "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
+  check_db "$TMP/prod.json" prod 172.28.12.0/24                        # 16
   for pair in "$TMP/prod.json:prod" "$TMP/prod-e2e.json:prod+e2e"; do
     f=${pair%%:*}; l=${pair#*:}
     check_name "$f" "$l" autologger                                    # 9

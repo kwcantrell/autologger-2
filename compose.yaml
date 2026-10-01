@@ -123,6 +123,15 @@ networks:
       config:
         - subnet: 172.28.11.0/24
           gateway: 172.28.11.1
+  # Supabase Postgres (docker/supabase-db.yaml): internal, and the host gets no address on it.
+  db:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.12.0/24
 
 volumes:
   autologger-data:

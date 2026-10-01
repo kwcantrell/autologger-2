@@ -20,6 +20,7 @@ import {
   checkCaFile,
   checkCredFile,
   checkNodeVersion,
+  checkResolved,
   httpsJson,
   parseDomain,
   sanitizeMessage,
@@ -32,6 +33,7 @@ const WRAPPER = join(ROOT, 'docker/scripts/compose-run.mjs');
 const REAL_DOCKER = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'utf8' }).stdout.trim();
 const SECRET = 'csec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
+const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (supabase-db D4)
 
 let T; // temp dir
 let server;
@@ -173,7 +175,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787')]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -409,7 +411,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, fetches with the right query, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787')]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.equal(seen.length, 2);
@@ -434,7 +436,8 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'PATH', 'PWD', 'TERM']);
+    assert.deepEqual(names, ['AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'TERM']);
+    assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a multi-step call logs in once and runs the steps in order', async () => {
     writeCreds('dev');
@@ -473,7 +476,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('DEV_PORT', p)]);
+      handler = standIn([secret('DEV_PORT', p), secret('POSTGRES_PASSWORD', PGPW)]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -500,9 +503,54 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('DEV_PORT', '8080')]);
+    handler = standIn([secret('DEV_PORT', '8080'), secret('POSTGRES_PASSWORD', PGPW)]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
+  });
+});
+
+describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
+  const allowed = new Set(['POSTGRES_PASSWORD']);
+  it('POSTGRES_PASSWORD must be at least 32 lowercase hex characters; the value is never printed', () => {
+    for (const v of ['-e', 'a'.repeat(31), 'A'.repeat(32), `${PGPW}\n`, `${PGPW} `, 'g'.repeat(32)]) {
+      let msg = '';
+      try { validateSecrets({ secrets: [secret('POSTGRES_PASSWORD', v)] }, allowed); } catch (e) { msg = e.message; }
+      assert.match(msg, /POSTGRES_PASSWORD.*bad-format/, JSON.stringify(v));
+      if (v.length > 2) assert.ok(!msg.includes(v.trim()), JSON.stringify(v));
+    }
+    assert.equal(validateSecrets({ secrets: [secret('POSTGRES_PASSWORD', PGPW)] }, allowed).get('POSTGRES_PASSWORD'), PGPW);
+  });
+  it('a weak password from Infisical stops the target before docker runs', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', '-e')]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /POSTGRES_PASSWORD/);
+    assert.equal(log('argv'), '');
+  });
+  it('prod refuses compose run and exec before any request', async () => {
+    for (const step of ['compose run --rm migrate', 'compose exec db psql -U postgres', 'compose --profile tools run migrate']) {
+      const r = await run(['prod', step], { env: { AUTOLOGGER_TEST: '' } });
+      assert.notEqual(r.code, 0, step);
+      assert.match(r.out, /prod.*(run|exec)|(run|exec).*prod/, step);
+    }
+    assert.equal(seen.length, 0);
+    writeCreds('dev');
+    const r = await run(['dev', 'compose run --rm migrate']);
+    assert.equal(r.code, 0, r.out);
+  });
+  it('resolved refuses a config where the password value appears outside db and migrate', () => {
+    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
+    const secrets = new Map([['POSTGRES_PASSWORD', PGPW]]);
+    assert.doesNotThrow(() => checkResolved('prod', ok, secrets));
+    for (const leak of [{ labels: { x: `pw=${PGPW}` } }, { environment: { DATABASE_URL: `postgres://u:${PGPW}@db/x` } }, { build: { args: { P: PGPW } } }]) {
+      const cfg = structuredClone(ok);
+      cfg.services.api = leak;
+      let msg = '';
+      try { checkResolved('prod', cfg, secrets); } catch (e) { msg = e.message; }
+      assert.match(msg, /POSTGRES_PASSWORD.*api|api.*POSTGRES_PASSWORD/, JSON.stringify(leak));
+      assert.ok(!msg.includes(PGPW));
+    }
   });
 });
