@@ -272,7 +272,7 @@ The shared file holds no per-environment value. A3 shows that the resolved binds
 | A11 | Without isolated gateway mode, the host can reach a container on an internal bridge | panel: internal net + postgres, then `echo > /dev/tcp/<ip>/5432` from the host | `HOST_CAN_CONNECT`; with `gateway_mode_ipv4=isolated`: `NO_HOST_IP`, `HOST_CANNOT_CONNECT`, and peer `pg_isready` accepting |
 | A12 | Upstream `roles.sql` without `webhooks.sql` fails initdb | panel: roles/jwt/realtime mounted on an empty volume | `ERROR: role "supabase_functions_admin" does not exist`; adding `98-webhooks.sql` gives healthy |
 | A13 | The CLI history table shape | Supabase CLI `history.go` | `version text NOT NULL PRIMARY KEY, statements text[], name text` |
-| A14 | psql `:'var'` quotes arbitrary text as a literal, and backtick `\set` reads a file | task 3.1 case: a file containing `'`, `$$` and `:foo` | PENDING (task 3.1) |
+| A14 | psql `:'var'` quotes arbitrary text as a literal, and backtick `\set` reads a file | `test_migrate.sh` case 6: a file containing `'`, `$$`, `:foo` and `:'bar'` | `ok   the record holds the file exactly` (byte-for-byte `od -c` compare; a trailing `printf x` keeps the file's final newline) |
 | A15 | `GET /api/v4/secrets` (`viewSecretValue=false`) and `POST /api/v4/secrets/batch` work on this Infisical | 1.1 setup (`copy-secrets.mjs`, names only) | `created 14: HTTP 200`; the listing returned names without values |
 
 ## Risks / Trade-offs

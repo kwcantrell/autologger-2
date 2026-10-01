@@ -150,7 +150,8 @@ shows names, statuses and counts only.
 - [x] 4.1 Run `scripts/check-change.sh --stage hook --base origin/supabase-migration`.
   Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS`, including `PASS  size             386/400 changed lines`, `PASS  evidence         every ticked task cites evidence`, `PASS  commands         ran ['typecheck', 'test']; not configured: ['lint']`.
   - Check: it is green, and size is 400 or under.
-- [ ] 4.2 Do the tier 2 consistency read, appended to `panel.md`.
+- [x] 4.2 Do the tier 2 consistency read, appended to `panel.md`.
+  Evidence: `git diff 4b83b5e -- openspec/changes/supabase-db/` -> `tasks.md | 36 +++…` only (ticks and evidence), so no scope change; `panel.md` `## Consistency read 2026-09-30` with 5 minor items, all resolved.
 - [ ] 4.3 Archive with `/opsx:archive supabase-db`, which syncs the specs.
   - Check: `openspec validate --all --strict` passes.
 

@@ -59,3 +59,12 @@ merged and say so.
 
 ## Approval 2026-09-30
 The owner approved v2 (with the panel resolutions above), including the agent decisions in the proposal: init SQL moves to 1.2b, and the prod key waits for cutover.
+
+## Consistency read 2026-09-30
+Edits since approval: tasks.md (ticks and evidence only); design.md (A14 row: PENDING -> the test_migrate.sh result).
+Scope change: no
+- [x] [minor] Every spec requirement and scenario is covered: the topology and isolation clauses by invariant 16 (17 test_check_envs.sh cases) plus the live host-connect check (2.2); the runner by 19 test_migrate.sh cases plus `make dev-migrate`/reset runs (3.3); Allowed names, the prod run/exec refusal and the leak rule by compose-run.test.mjs (1.1); the generator by supabase-keys.test.mjs and the real runs (1.2, 1.3). Resolved: no gap found.
+- [x] [minor] Non-goals hold: no init SQL, no prod migrate or psql target (the grep is empty and the wrapper refuses it), no host port, no stage-migrate, prod key not created.
+- [x] [minor] Implementation goes slightly beyond the design in two places, both stricter than the spec: migrate.sh also refuses `ABORT`/`RELEASE` lines, and the generator honors the compose-run test hooks (refused for prod). Resolved: recorded here. Neither widens scope.
+- [x] [minor] Design A14 was still PENDING. Resolved: the row now cites the test_migrate.sh case.
+- [x] [minor] The documented `\password` rotation was exercised through its non-interactive `ALTER ROLE ... PASSWORD :'pw'` equivalent, not the interactive prompt. Resolved: recorded in the task 3.4 evidence.
