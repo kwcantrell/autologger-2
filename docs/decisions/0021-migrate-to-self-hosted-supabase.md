@@ -58,6 +58,7 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
     holder leaves.
 - **Live updates:** Supabase Realtime replaces the WebSocket protocol. Whether Companion can join
   a Realtime channel is unknown. A spike decides this, and a Companion-only relay is the fallback.
+  The slice 2 spike found that it can (ADR 0023, direct mode recommended for slice 9).
 - **Blobs:** audio moves to Supabase Storage. Consumers that need a real file path spool the
   audio to scratch first.
 - **Operations:**
@@ -106,7 +107,7 @@ Slice order:
    `make-guards.sh` to Node (the owner decided all stack tooling moves to Node). It also amends
    the "Static invariant check" tooling clause (currently docker, jq and a POSIX shell) and moves
    `test_check_envs.sh` into `node --test`.
-2. Companion Realtime spike (a finding, not code).
+2. Companion Realtime spike (a finding, not code). Done: ADR 0023.
 3. Async storage ports, still on SQLite.
 4. Catalog schema and the postgres.js adapter.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
