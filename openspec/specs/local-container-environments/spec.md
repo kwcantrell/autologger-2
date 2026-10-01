@@ -189,8 +189,10 @@ as literal values, never `${…}` references, in the app's `environment:`:
 - `DATA_DIR`
 - `PORT`
 
-`PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`, which is the only
-permitted variable in the pinned block.
+`PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`. Besides it, the only
+variables permitted in the app's `environment:` are the `AUTOLOGGER_STACK` sentinel and the
+catalog's `PGPASSWORD`, which SHALL be a `${APP_DB_PASSWORD:?…}` reference next to the literals
+`PGHOST=db` and `PGUSER=autologger_app`.
 
 A gate sidecar SHALL share the app's network namespace and be the only listener on the
 namespace's external interfaces. It SHALL forward to the app's loopback port. It SHALL
@@ -211,7 +213,10 @@ Published ports:
 
 Because the bind is loopback, both the open-network refusal and the AI v2 credentials rule
 pass. Only the host (through the published loopback port) and containers on the dev
-network (through the gate) can reach the app. The design SHALL record that this relies on
+network (through the gate) can reach the app. The app also joins the two-member `catalog`
+network, whose only other member is `db`; the gate SHALL refuse every connection whose source
+address is in the dev `catalog` subnet, and `make check` SHALL fail when the gate's refused
+subnet differs from the `catalog` network's. The design SHALL record that this relies on
 the gate for exactly the reach the loopback rule assumes.
 
 #### Scenario: Loopback posture
@@ -234,6 +239,11 @@ the gate for exactly the reach the loopback rule assumes.
 #### Scenario: Not reachable from the LAN
 - **WHEN** another machine connects to the host's LAN address on the dev port
 - **THEN** the connection is refused
+
+#### Scenario: Postgres cannot reach the dev app
+- **WHEN** a request to the gate's port comes from an address in the dev `catalog` subnet, with
+  `Host: app:8787`
+- **THEN** the gate refuses it, and the app never sees it
 
 ### Requirement: Dev isolates data and secrets, sharing only the operator's Claude login
 The dev environment SHALL set `DATA_DIR` to a path inside a named volume of the dev project.
@@ -262,7 +272,9 @@ The runtime user's home SHALL be a named volume of the dev project (`dev-home`).
 session store, its `~/.claude.json`, and its history live there, never on the host.
 
 The dev `app` container SHALL receive secrets only as the variables named in the shared
-allowlist file, each passed through from the Infisical `dev` environment. It SHALL have no `env_file`, and
+allowlist file, each passed through from the Infisical `dev` environment, plus the catalog
+connection literals `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`, whose password
+is `APP_DB_PASSWORD`. It SHALL have no `env_file`, and
 SHALL NOT receive the Infisical access token or machine-identity credentials. The
 documentation SHALL state the accepted residuals of the credentials mount:
 - the container can read the operator's Claude login;
@@ -290,7 +302,7 @@ documentation SHALL state the accepted residuals of the credentials mount:
 #### Scenario: Unnamed Infisical secrets stay out of the container
 - **WHEN** dev is up
 - **THEN** `env` inside the `app` container shows no variable outside the allowlist, the pins,
-  and the image's own environment
+  the five `PG*` catalog connection literals, and the image's own environment
 - **AND** it shows no `INFISICAL_*` variable and no `SSL_CERT_FILE`
 
 ### Requirement: Stage behaves as production, with local sign-in
@@ -492,16 +504,22 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
 15. The key names listed in the shared allowlist file differ from the null-passthrough names
     of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
 16. In any of the dev, stage, or prod projects:
-    - a service other than `db`, `migrate`, `auth`, `rest`, `realtime` and `storage` joins the `db` network, or
-      `db` or `migrate` joins any other network;
+    - a service other than `db`, `migrate`, `auth`, `rest`, `realtime` and `storage` joins the
+      `db` network; `migrate` joins any other network; or `db` joins any network other than
+      `db` and `catalog`;
+    - the `catalog` network's members are not exactly `db` and the app service (dev `app`;
+      stage and prod `api`), or the app service joins `db`. A service with
+      `network_mode: service:X` counts as a member of X's networks, and only `app-gate` may
+      share `app`'s namespace;
     - a service other than `supabase-gw`, `auth`, `rest`, `realtime` and `storage` joins the `supabase`
       network, or a service other than `supabase-gw` joins the `edge` network, or `supabase-gw`
       joins `db`;
     - a Supabase service other than `supabase-gw` publishes a port, or `supabase-gw` publishes
       anything other than one `127.0.0.1` port mapped to its listener;
-    - the `db` or `supabase` network is not internal, does not isolate the host from it (no host
-      address on the bridge), or is not on that environment's pinned subnet; or the `edge` network
-      is not on its pinned subnet;
+    - the `db`, `supabase` or `catalog` network is not internal, does not isolate the host from
+      it (no host address on the bridge), or is not on that environment's pinned subnet
+      (`catalog`: prod `172.28.15.0/24`, stage `172.28.25.0/24`, dev `172.28.34.0/24`); or the
+      `edge` network is not on its pinned subnet;
     - the image of `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` or `supabase-gw` is not
       pinned by `@sha256:` digest;
     - the placeholder value given for any Supabase secret appears anywhere (environment, command,
@@ -512,6 +530,7 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
       | --- | --- |
       | `POSTGRES_PASSWORD` | `db`, `migrate`, `realtime` |
       | `SUPABASE_ROLES_PASSWORD` | `db`, `auth`, `rest`, `storage` |
+      | `APP_DB_PASSWORD` | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
       | `JWT_SECRET` | `auth`, `rest`, `realtime`, `storage` |
       | `ANON_KEY` | `supabase-gw`, `realtime`, `storage` |
       | `SERVICE_ROLE_KEY` | `supabase-gw`, `storage` |
@@ -561,6 +580,19 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 - **WHEN** the `supabase` network's `internal: true` is removed
 - **THEN** `make check` exits non-zero and names invariant 16
 
+#### Scenario: The app password in another service is caught
+- **WHEN** `PGPASSWORD: ${APP_DB_PASSWORD}` is added to the `rest` service's environment
+- **THEN** `make check` exits non-zero and names invariant 16
+
+#### Scenario: The app on the shared db network is caught
+- **WHEN** the dev `app` is joined to the `db` network
+- **THEN** `make check` exits non-zero and names invariant 16
+
+#### Scenario: A third member of the catalog network is caught
+- **WHEN** `rest`, or the dev `companion`, is joined to the `catalog` network, or a new service
+  sets `network_mode: service:app`
+- **THEN** `make check` exits non-zero and names invariant 16
+
 #### Scenario: Clean tree passes
 - **WHEN** `make check` runs on the committed files
 - **THEN** it exits zero
@@ -597,7 +629,7 @@ ignored by git, and the tracked templates SHALL NOT be.
 
   | Key | Format |
   | --- | --- |
-  | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD` | at least 32 lowercase hexadecimal characters |
+  | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD` | at least 32 lowercase hexadecimal characters |
   | `JWT_SECRET` | at least 40 characters of `[A-Za-z0-9_-]` |
   | `SECRET_KEY_BASE` | at least 64 characters of `[A-Za-z0-9_-]` |
   | `REALTIME_DB_ENC_KEY` | exactly 16 characters of `[A-Za-z0-9_-]` |
@@ -609,7 +641,7 @@ ignored by git, and the tracked templates SHALL NOT be.
   the resolved configuration of a service outside that secret's allowed set.
 
 **Ordering with frozen checkouts.** A checkout whose allowed names lack `POSTGRES_PASSWORD`
-refuses an environment that holds it. The Supabase keys SHALL therefore be added to the Infisical
+(or `APP_DB_PASSWORD`) refuses an environment that holds it. The Supabase keys SHALL therefore be added to the Infisical
 `prod` environment only as part of the cutover, after `main` allows them. The documentation SHALL say so.
 
 **Documentation.** The documentation SHALL:
@@ -700,7 +732,15 @@ When it runs, it SHALL:
 - after each file, confirm that its version is recorded;
 - exit non-zero, naming the failing file, when a file fails or its record is missing. The failed
   file's changes and its record SHALL then both be absent, and later files SHALL NOT be applied;
+- after the migrations, in one transaction with statement logging and `pg_stat_statements`
+  utility tracking turned off, give the `autologger_app` role `LOGIN` and set its password to
+  `APP_DB_PASSWORD`, read from the environment and never from the command line. When no such
+  role exists, it SHALL say so and succeed;
+- report the number of files it applied;
 - print no secret value.
+
+Before connecting, the runner SHALL also refuse, printing no value, when `APP_DB_PASSWORD` is
+unset, or is not a single line of at least 32 lowercase hexadecimal characters.
 
 #### Scenario: A second run applies nothing
 - **WHEN** the migrations runner runs twice with no new migration file
@@ -726,11 +766,21 @@ When it runs, it SHALL:
 - **WHEN** a migration file contains a single quote, a `$$` block and a `:name` token
 - **THEN** its recorded `statements` equals the file's text
 
+#### Scenario: The app role gets its password without leaking it
+- **WHEN** the migrations runner runs with `APP_DB_PASSWORD` set
+- **THEN** `autologger_app` can log in with that password over TCP and a wrong password is
+  refused, and no row of `pg_stat_statements`, no line of the database log and no line of the
+  runner's output contains it
+
+#### Scenario: A missing app password is refused before connecting
+- **WHEN** the migrations runner runs with `APP_DB_PASSWORD` unset or set to `-e`
+- **THEN** it exits non-zero naming `APP_DB_PASSWORD`, prints no value, and applies nothing
+
 ### Requirement: Supabase secret generator
 `docker/scripts/supabase-keys.mjs ENV --writer FILE` SHALL create each missing Supabase secret
 for environment `ENV` in that environment's Infisical project: `POSTGRES_PASSWORD`,
-`SUPABASE_ROLES_PASSWORD`, `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE` and
-`REALTIME_DB_ENC_KEY`. `SUPABASE_PORT` is set by the operator. It SHALL:
+`SUPABASE_ROLES_PASSWORD`, `APP_DB_PASSWORD`, `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`,
+`SECRET_KEY_BASE` and `REALTIME_DB_ENC_KEY`. `SUPABASE_PORT` is set by the operator. It SHALL:
 - read the project id, Infisical URL and CA path from `.env.infisical.<ENV>`, with the same
   checks as the compose wrapper (the URL SHALL be `https://`);
 - read the client id and client secret from `FILE`. `FILE` SHALL pass the same ownership and
@@ -772,6 +822,11 @@ for environment `ENV` in that environment's Infisical project: `POSTGRES_PASSWOR
 - **WHEN** Infisical answers the create with an error, for example because a concurrent run
   created the key first
 - **THEN** the generator exits non-zero, prints no value, and sends no update request
+
+#### Scenario: The app password is created for an existing stack
+- **WHEN** the environment holds every other Supabase key but not `APP_DB_PASSWORD`, and the
+  generator runs
+- **THEN** it creates only `APP_DB_PASSWORD`, reports the others as kept, and prints no value
 
 ### Requirement: Supabase gateway routes and key checks
 Each project SHALL have a `supabase-gw` service, the only way to reach the Supabase services from
