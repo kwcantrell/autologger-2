@@ -462,8 +462,7 @@ deployment documentation SHALL say so.
 
 #### Scenario: Standalone output leaves single-process serving unchanged
 - **WHEN** `npm run build && npm run start` runs after standalone output is enabled
-- **THEN** the single-process server serves the shell, assets, and API exactly as before,
-  and the existing e2e suites pass
+- **THEN** the single-process server serves the shell, assets, and API exactly as before
 
 #### Scenario: Same shell from both topologies
 - **WHEN** `GET /sessions/abc` is requested from the single-process server and, for the

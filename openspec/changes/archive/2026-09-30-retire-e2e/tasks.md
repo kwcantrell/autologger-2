@@ -49,6 +49,7 @@ gates run with `GITHUB_BASE_REF=supabase-migration`.
   - Check: green, apart from `size` under the recorded exception.
 - [x] 4.2 Do the consistency read, appended to `panel.md`.
   Evidence: `git diff <approval> -- openspec/changes/retire-e2e/` -> tasks.md only (ticks and evidence); `panel.md` `## Consistency read 2026-09-30`, 3 minor items, all resolved (size 1,410 recorded in ADR 0021; table provenance; delta-to-check map).
-- [ ] 4.3 Archive with `/opsx:archive retire-e2e`, which syncs the specs and applies the two
+- [x] 4.3 Archive with `/opsx:archive retire-e2e`, which syncs the specs and applies the two
   Purpose edits from design D6.
+  Evidence: sync: container-deployment 1 MODIFIED (parity scenario) + 1 REMOVED ("Container e2e project") + 1 ADDED ("Router behaviour is checked without a browser"); local-container-environments 2 MODIFIED; web-frontend-platform 1 MODIFIED. Purpose edits exactly as design D6 (container-deployment: "non-browser router test"; api-contract-freeze: e2e suite dropped from the consumer list). `git diff --stat openspec/specs` -> 4 files, 27+/24-; `openspec validate --specs --strict` -> `Totals: 26 passed, 0 failed`; moved to `openspec/changes/archive/2026-09-30-retire-e2e/`.
   - Check: `openspec validate --all --strict`.
