@@ -104,7 +104,8 @@ shows names, statuses and counts only.
 
 ## 3. The migrations runner
 
-- [ ] 3.1 Write `docker/supabase/test_migrate.sh` first. It runs against a throwaway project
+- [x] 3.1 Write `docker/supabase/test_migrate.sh` first. It runs against a throwaway project
+  Evidence: `sh docker/supabase/test_migrate.sh` against the stub runner -> `test_migrate: 5 passed, 14 failed` (`migrate.sh: not implemented yet`; the 5 passes are the vacuous "nothing applied" checks).
   (`alg-migrate-test`, its own volume and network, removed on exit) with a fixture directory per
   case. The cases:
   1. an empty directory gives exit 0 and creates the table;
@@ -117,7 +118,8 @@ shows names, statuses and counts only.
   6. a file with `'`, `$$` and `:foo` is recorded byte-for-byte (A14).
 
   See it fail (no runner yet).
-- [ ] 3.2 Implement `docker/supabase/migrate.sh` and the `migrate` service (design D3).
+- [x] 3.2 Implement `docker/supabase/migrate.sh` and the `migrate` service (design D3).
+  Evidence: `sh docker/supabase/test_migrate.sh` -> 19 `ok` lines including `ok   a rerun applies nothing`, `ok   the failing file left no table and no record`, `ok   refused before connecting: commit`, `ok   refused before connecting: meta`, `ok   concurrent runs record the file once`, `ok   the record holds the file exactly` (A14: `'`, `$$`, `:foo` byte-for-byte), and `test_migrate: 19 passed, 0 failed`. The cases run as `--user postgres --read-only --cap-drop ALL` (A10).
   - Check: `sh docker/supabase/test_migrate.sh` passes all cases.
 - [ ] 3.3 Add `supabase/migrations/.gitkeep` and the Makefile changes (design D6): migrate-on-up,
   `dev-migrate`, `dev-psql`, and the reset help text. Checks:
@@ -128,7 +130,8 @@ shows names, statuses and counts only.
   - `make dev-reset CONFIRM=yes && make dev-up` recreates an empty `db`, and both
     `autologger-dev_supabase-db*` volumes are new;
   - `grep -nE 'prod.*(migrate|psql)' Makefile` is empty.
-- [ ] 3.4 Write `docs/supabase.md`, and update the README Makefile table and the ADR 0021 slice
+- [x] 3.4 Write `docs/supabase.md`, and update the README Makefile table and the ADR 0021 slice
+  Evidence: `docs/supabase.md` written; README rows for dev-up/stage-up/dev-migrate/dev-psql/resets updated; ADR 0021 slice list shows 1.2a/1.2b. Commands run on dev: `make dev-migrate` -> `0 applied`; `echo 'select current_user; …' | make dev-psql` -> roles with passwords `postgres`, `supabase_admin`; `printf '\\c postgres supabase_admin\nselect current_user;' | make dev-psql` -> `supabase_admin`. Rotation tested on dev with the non-interactive equivalent of `\password` (scratch `rotate-pg.mjs`: new value -> Infisical dev `PATCH 200`; `ALTER ROLE postgres/supabase_admin PASSWORD :'pw'` over the socket -> `rc 0 stderr-clean`), then `make dev-up` -> `db-1 Healthy`, migrate `0 applied` (authenticates with the new value), password count in db logs -> `0`. The interactive `\password` prompts themselves were not exercised.
   list (the 1.2a/1.2b split and the 1.2b decisions). `docs/supabase.md` covers:
   - the layout;
   - that the two volumes are a unit;

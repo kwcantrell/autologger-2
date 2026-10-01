@@ -81,7 +81,13 @@ Slice order:
    (owner, 2026-09-30) into:
    - 1.1 `infisical-secrets`: stack secrets from Infisical through a Node wrapper over its HTTP
      API;
-   - 1.2 `supabase-compose-stack`;
+   - 1.2 `supabase-compose-stack`, split (owner, 2026-09-30) into:
+     - 1.2a `supabase-db`: Postgres in every stack, the `supabase/migrations/` runner, and the
+       `POSTGRES_PASSWORD` generator;
+     - 1.2b `supabase-services`: auth, rest, realtime, storage, meta and Studio, plus Supabase's
+       init SQL. The gateway is Caddy with the legacy HS256 keys (`JWT_SECRET`, `ANON_KEY`,
+       `SERVICE_ROLE_KEY`). The gateway and Studio each get their own `127.0.0.1` port per
+       environment;
    - 1.3 `postgres-backups`;
    - 1.4 `retire-host-dev`.
 

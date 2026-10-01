@@ -1414,16 +1414,17 @@ existing configuration.
 | `make check` | Static invariant check of dev, stage and prod compose (reads no real env files) |
 | `make dev-check` | Dev invariants plus the credentials-inode drift warning |
 | `make dev-build` | Rebuild the dev image (needed after dependency, lockfile or config changes) |
-| `make dev-up` | Check, then build and start the whole dev project (app, gate, Companion) |
+| `make dev-up` | Check, then build and start the whole dev project (app, gate, Companion, Postgres), then apply migrations |
+| `make dev-migrate` / `make dev-psql` | Apply `supabase/migrations` to dev Postgres / psql in it ([docs/supabase.md](docs/supabase.md)) |
 | `make dev-down` | Stop and remove dev containers (volumes kept) |
 | `make dev-restart` | Restart dev: `app` then `app-gate`, `companion` then `companion-gate` |
 | `make dev-logs` / `make dev-shell` | Follow dev logs / shell in the dev app container |
-| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes |
+| `make dev-reset CONFIRM=yes` | **Destroy** the dev volumes, including Postgres |
 | `make stage-build` | Build the stage images (native arch) |
-| `make stage-up` | Check, then build and start the whole stage stack |
+| `make stage-up` | Check, then build and start the whole stage stack, then apply migrations |
 | `make stage-down` / `make stage-logs` | Stop and remove stage containers (volumes kept) / follow logs |
 | `make stage-claude-login` | Interactive Claude login inside the stage api container |
-| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes |
+| `make stage-reset CONFIRM=yes` | **Destroy** the stage volumes, including Postgres |
 | `make prod-build` | Native-arch build of both images, tagged `:local` only (no SHA tag, no push) |
 | `make prod-push` | Clean `main` only: multi-arch bake and push, tagged with the 12-char HEAD SHA |
 | `make prod-check` | Any branch: Infisical `prod` login, guards and compose config; starts nothing |
