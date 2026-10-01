@@ -39,3 +39,14 @@ Scope: the revision (no savepoints; joined `t.tx`; any error fails the transacti
 - [x] [minor] The deadline did not stop a timed-out body writing through the root, which autocommitted while its handle writes rolled back. Evidence: `node model.mjs` -> `U3 caller: timeout`, `rows [ 'zombie-root' ]`. Resolved: root calls from a transaction that ended failed or timed out reject, citing its error as `cause` (D4; test 1.2 "deadline" and "detached after failure").
 - [x] [minor] D3 didn't say the end protocol runs once. A second run (deadline, then the body settling) would see the next transaction's `inTransaction` and roll it back. Evidence: design D3. Resolved: the end protocol runs once, before the lock is released, and a late body is ignored (D3; test 1.2 "deadline" covers a late settle during the next transaction).
 - [x] [minor] The deadline timer was not cleared or `unref()`ed, which would delay process exit. Evidence: design D3. Resolved: D3 now specifies both.
+
+## Consistency read 2026-10-01
+Edits since approval: spec.md (scenario "A failed rollback stops the adapter" reworded), tasks.md (evidence lines; the 1.2 evidence moved above the "Cases:" list so the gate attaches it)
+Scope change: no
+- [x] [minor] The scenario said the failing call itself rejects with a broken-adapter error. That contradicts the same delta's "reject with the first error, which no later error, rollback error or misuse error replaces", and design D3. Resolved: reworded so the failing call keeps its own first error and only later or queued calls see `CatalogAdapterBrokenError`. This is what D3 specified and what the approved tests assert, so it is a wording fix, not a behaviour change.
+- [x] [minor] The counted size (359) is well above the D7 estimate (160-190), because the adapter file carries 294 lines including its comments. Resolved: still inside the 400 budget; recorded in task 3.2's evidence.
+- [x] [minor] The live check planned to pipe the API token, but dev sets no `API_TOKEN`, and the active show had no session. Resolved: the companion routes were called unauthenticated (dev's configured behaviour), with a scratch session created through the API. Recorded in task 3.3's evidence.
+- [x] [minor] Every requirement maps to a task and a test. Resolved:
+  - "The catalog transaction contract": each scenario is a named case in `asyncCatalogStore.test.ts` (rollback, caught error, join, root misuse, handle after end, un-awaited join, first error wins).
+  - "The SQLite catalog adapter serialises each connection": wait, call order, shared lock, deadline and broken cases, plus the KV-during-transaction case in `kvStore.test.ts`, with `config.ts` wiring checked live.
+  - Non-goals hold: no store, facade, transaction body, seed helper or migration change.

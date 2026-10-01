@@ -79,4 +79,4 @@ of joining it.
 
 #### Scenario: A failed rollback stops the adapter
 - **WHEN** a rollback fails and the connection is still inside the transaction
-- **THEN** that call and every later or queued call reject with a broken-adapter error, and none writes to the connection
+- **THEN** the failing call rejects with its own first error, every later or queued call rejects with a broken-adapter error, and none writes to the connection
