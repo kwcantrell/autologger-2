@@ -207,4 +207,9 @@ written to print names or exit codes only. The agent records that output and nev
 - **After this reaches `main` at cutover,** and only after a verified Infisical backup and a
   restore test: delete `.env.dev`, `.env.stage` and prod's `.env`, and remove the
   `docker/.env*.example` templates in a tier 0 commit.
-- Push the branch and open the PR into `supabase-migration` when asked.
+- Reduce or revoke the bootstrap identity's organization access (`~/.infisical-bootstrap`), then
+  delete the file.
+- Delete the old, unused `autologger` Infisical project. The bootstrap identity got 403 on it,
+  so this is done in the web UI.
+- Push the branch and open the PR into `supabase-migration` when asked, with the `size-override`
+  label and its reason in the body.

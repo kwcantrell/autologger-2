@@ -79,6 +79,20 @@ never into env files:
   scoped it to compose files: every other YAML keeps duplicate-key detection, and the lifecycle
   `yaml` gate (ADR 0017) still enforces its rule.
 - **One machine identity per environment.** A dev identity must not be able to read stage or prod.
+- **Free-plan limits (found during setup, owner 2026-09-30):**
+  - Infisical refuses custom project roles, so each environment is its own project
+    (`autologger-dev`, `autologger-stage`, `autologger-prod`) with one `viewer` identity.
+  - It also refuses Trusted IPs, so the network boundary is the Infisical proxy's LAN/Tailscale
+    allowlist plus the 15-minute token lifetime.
+  - The owner may revisit this, with Enterprise or a proxy IP rule.
+- **The agent ran the dev and stage setup** (owner request, 2026-09-30). It used the owner's
+  bootstrap identity (`~/.infisical-bootstrap`, organization access) to:
+  - create the three projects and identities;
+  - write the dev and stage client secrets straight into mode-600 `.env.infisical.<env>` files;
+  - copy the allowed values from `.env.dev` and `.env.stage` into Infisical.
+
+  No value, token or client secret was printed. No prod client secret was created on this host.
+  The owner reduces or revokes the bootstrap identity afterwards.
 - **Slice 1 is split four ways,** in the order 1.1 Infisical, 1.2 Supabase stack, 1.3 backups, 1.4
   retiring host dev. The order is the agent's recommendation.
 
@@ -107,7 +121,8 @@ None.
   it.
 - The Claude login mounts: the dev credentials bind, and the stage and prod `/home/node` volumes.
 - Running, upgrading, backing up or moving the Infisical instance itself (`~/infisical`).
-- Entering any secret value or configuring identities. The owner does this.
+- Entering prod secret values or creating the prod client secret. The owner does this on the
+  deploy host. (The dev and stage setup moved into scope by the owner decision above.)
 - Deleting the old env files and `docker/.env*.example` templates. That is owner-owed after
   cutover.
 - Porting `check-envs.sh`, `compose-env.sh`, and the secret-free `make-guards.sh` guards to Node.
