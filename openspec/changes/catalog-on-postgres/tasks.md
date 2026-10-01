@@ -100,11 +100,18 @@ Logs: keep the full output of every test and gate run under the session scratchp
 
 ## 4. NUL, integers and logs (design D5, D8, D9)
 
-- [ ] 4.1 Test first, in `postgresCatalogStore.test.ts` (stub client): a root `run` with a NUL
+- [x] 4.1 Test first, in `postgresCatalogStore.test.ts` (stub client): a root `run` with a NUL
   bind rejects with `CatalogInvalidTextError` and sends nothing. Also a `pg` case in
   `postgresCatalogStore.pg.test.ts`: a NUL bind inside a `tx`, after a write, rejects, and the
   write is rolled back. Red, then add the guard and the export. Green.
-- [ ] 4.2 Test first, in server integration tests:
+  Evidence: `4c-4.1-red.log`: `npx vitest run --project unit src/postgresCatalogStore.test.ts`
+  (packages/storage) -> `× a root statement with a NUL bind rejects…`, `AssertionError: promise
+  resolved "{ changes: 1 }" instead of rejecting`, `× inside a transaction…`. `4c-4.1-green.log`:
+  `npx vitest run` (unit + pg) -> `Test Files  7 passed (7)`, `Tests  97 passed (97)`.
+  `npx vitest run --project pg -t NUL` -> `Tests  1 passed`. The pg case was not run red on its
+  own; without the guard, Postgres's `22021` PostgresError is not a `CatalogInvalidTextError`
+  (A1), so it fails the `toBeInstanceOf` assertion.
+- [x] 4.2 Test first, in server integration tests:
   - `POST` show with a NUL `name` gives 400 `detail`, and no show exists;
   - `POST /api/teams` with a NUL `display_name` gives 400;
   - a team route with `%00` in the id gives 400;
@@ -121,13 +128,26 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - add the claim checks in `auth.ts`.
 
   Green.
-- [ ] 4.3 Test first, in a server integration test: creating a session with
+  Evidence: `4c-4.2-red.log`: `npx vitest run --project integration
+  src/routers/nulText.int.test.ts` -> `Tests  8 failed (8)`: `expected 500 to be 400` ×3,
+  `expected 500 to be 302` ×4, `expected 200 to be 400` (presence), `unhandled error
+  CatalogInvalidTextError` ×7. `4c-4.2-green.log` -> `Tests  8 passed (8)`.
+- [x] 4.3 Test first, in a server integration test: creating a session with
   `start_offset_frames: 1e20` gives 422, and none is created (red: 500 `22003`). Add `.max(MAX_SAFE_INTEGER)`
   on create and update. Green.
-- [ ] 4.4 Test first, in a unit test on the error handler: a thrown error shaped like
+  Evidence: `4c-4.3-red.log`: `-t MAX_SAFE` -> `unhandled error PostgresError: value
+  "100000000000000000000" is out of range for type bigint`, `expected 500 to be 422`.
+  `4c-4.3-green.log`: `src/routers/sessions.int.test.ts` -> `Tests  33 passed (33)` (update case
+  uses `2 ** 53`).
+- [x] 4.4 Test first, in a unit test on the error handler: a thrown error shaped like
   postgres.js's `{name, code: '23505', constraint_name, table_name, detail: 'Key (email)=(x@y)…'}`
   gives a 500, and the captured log has the code and constraint but not `x@y`. Red, then
   redact. Green.
+  Evidence: `4c-4.4-red.log`: `src/unhandledErrorLog.test.ts` (through the real `wireApp`) ->
+  `expected 'unhandled error {"name":"PostgresErro…' not to match /x@y\.example/`.
+  `4c-4.4-green.log` -> `Tests  2 passed (2)`. Whole server suite `4c-4-server-all.log`: `npx
+  vitest run` -> `Test Files  67 passed | 2 skipped (69)`, `Tests  879 passed | 3 skipped (882)`;
+  `npm run typecheck` -> exit 0.
 
 ## 5. Ops, docs and the retry note (design D3, D7)
 

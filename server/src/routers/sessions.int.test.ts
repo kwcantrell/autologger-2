@@ -41,6 +41,35 @@ describe('POST /api/sessions', () => {
     expect(((await res.json()) as { id: string }).id).toBeTruthy();
   });
 
+  it('422 for a start_offset_frames past MAX_SAFE_INTEGER, on create and update (api-contract-freeze "Catalog integer fields are bounded")', async () => {
+    const show = await seedShow({ studioId: await activeStudioId() });
+    const count = async () =>
+      (await env.ports.catalog.first<{ n: number }>('SELECT COUNT(*) AS n FROM sessions'))?.n;
+    const before = await count();
+    const create = await app.request(
+      '/api/sessions',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ show_id: show, episode: '008', start_offset_frames: 1e20 }),
+      },
+      { ...env },
+    );
+    expect(create.status).toBe(422);
+    expect(await count()).toBe(before);
+    const sid = await seedSession({ showId: show });
+    const update = await app.request(
+      `/api/sessions/${sid}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'T', start_offset_frames: 2 ** 53 }),
+      },
+      { ...env },
+    );
+    expect(update.status).toBe(422);
+  });
+
   it('422 on an invalid create body (missing show_id)', async () => {
     const res = await app.request(
       '/api/sessions',

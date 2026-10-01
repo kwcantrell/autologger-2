@@ -4,7 +4,7 @@
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CatalogAdapterBrokenError, CatalogTxTimeoutError } from './asyncCatalogStore';
-import { PostgresCatalogDb } from './postgresCatalogStore';
+import { CatalogInvalidTextError, PostgresCatalogDb } from './postgresCatalogStore';
 import { describeCatalogDbContract, gate, prompt } from './test/catalogDbContract';
 import { createTestDatabase, type TestDatabase } from './test/pgDb';
 
@@ -77,6 +77,20 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
   const INSERT = 'INSERT INTO t (k, v) VALUES (?, ?)';
   const raise = (code: string) =>
     `DO $$ BEGIN RAISE EXCEPTION 'forced %', '${code}' USING ERRCODE = '${code}'; END $$`;
+
+  it('a NUL bind inside a transaction is refused before sending, and the transaction writes nothing (catalog-on-postgres D5)', async () => {
+    const e = await make();
+    await expect(
+      e.db.tx(async (t) => {
+        await t.run(INSERT, 'ok', 1);
+        await t.run(INSERT, 'a\u0000b', 2);
+      }),
+    ).rejects.toBeInstanceOf(CatalogInvalidTextError);
+    expect(await count(e.admin, 't')).toBe(0);
+    // The adapter keeps working afterwards.
+    await e.db.run(INSERT, 'after', 3);
+    expect(await count(e.admin, 't')).toBe(1);
+  });
 
   it('int8 is a number, and a quoted ? is not a placeholder', async () => {
     const { db } = await make();

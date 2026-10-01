@@ -104,6 +104,11 @@ companionRouter.post('/api/companion/presence', async (c) => {
     await c.env.ports.presence.remove(cid);
     return c.json({ ok: true });
   }
+  // A stored NUL id would make every later Companion request's catalog lookup a 400
+  // (catalog-on-postgres D5), so it is refused here, before anything is stored.
+  if (body.session_id?.includes('\u0000')) {
+    throw new ApiError(400, 'Text must not contain NUL characters.');
+  }
   const meta = {
     session_id: (body.session_id ?? '').trim(),
     visible: body.visible,

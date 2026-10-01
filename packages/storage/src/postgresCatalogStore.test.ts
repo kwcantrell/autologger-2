@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CatalogTxMisuseError, CatalogTxTimeoutError } from './asyncCatalogStore';
 import {
   CatalogCommitUnknownError,
+  CatalogInvalidTextError,
   type PgClient,
   type PgClientOptions,
   PostgresCatalogDb,
@@ -95,6 +96,41 @@ function adapter(f: ReturnType<typeof fakes>, txTimeoutMs = 2000) {
 
 /** The slot's clients: the first client is the root pool. */
 const slotClients = (f: ReturnType<typeof fakes>) => f.clients.slice(1);
+
+describe('PostgresCatalogDb: NUL text (catalog-on-postgres D5)', () => {
+  it('a root statement with a NUL bind rejects with CatalogInvalidTextError and sends nothing', async () => {
+    const f = fakes(() => undefined);
+    const db = adapter(f);
+    for (const call of [
+      () => db.run('INSERT INTO t (k) VALUES (?)', 'a\u0000b'),
+      () => db.first('SELECT * FROM t WHERE k = ?', 'x', '\u0000'),
+      () => db.all('SELECT * FROM t WHERE k = ?', '\u0000'),
+    ]) {
+      await expect(call()).rejects.toBeInstanceOf(CatalogInvalidTextError);
+    }
+    expect(f.clients.flatMap((c) => c.sent)).toEqual([]);
+    // Text without NUL, and non-string binds, still go through.
+    await db.run('INSERT INTO t (k, v) VALUES (?, ?)', 'ab', 2);
+    expect(f.clients[0]?.sent).toHaveLength(1);
+    await db.close();
+  });
+
+  it('inside a transaction, a NUL bind fails the transaction without sending the statement', async () => {
+    const f = fakes(() => undefined);
+    const db = adapter(f);
+    await expect(
+      db.tx(async (t) => {
+        await t.run('INSERT INTO t (k) VALUES (?)', 'a');
+        await t.run('INSERT INTO t (k) VALUES (?)', 'a\u0000b');
+      }),
+    ).rejects.toBeInstanceOf(CatalogInvalidTextError);
+    const sent = slotClients(f).flatMap((c) => c.sent);
+    expect(sent).toContain('ROLLBACK');
+    expect(sent).not.toContain('COMMIT');
+    expect(sent.filter((x) => x.startsWith('INSERT'))).toHaveLength(1);
+    await db.close();
+  });
+});
 
 describe('PostgresCatalogDb: connection handling (fake clients)', () => {
   it('a failed ROLLBACK retires the client, and the next transaction runs on a new one', async () => {

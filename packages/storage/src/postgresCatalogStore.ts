@@ -22,6 +22,18 @@ export class CatalogCommitUnknownError extends Error {
   override name = 'CatalogCommitUnknownError';
 }
 
+/** A bind held a string with U+0000, which Postgres text can't store; refused before sending
+ * (catalog-on-postgres D5). The server maps it to 400. */
+export class CatalogInvalidTextError extends Error {
+  override name = 'CatalogInvalidTextError';
+}
+
+function checkText(binds: unknown[]): void {
+  if (binds.some((b) => typeof b === 'string' && b.includes('\u0000'))) {
+    throw new CatalogInvalidTextError('Text must not contain NUL characters.');
+  }
+}
+
 /** The slice of a postgres.js client the adapter uses; `connect` is the seam tests replace. */
 export interface PgResult extends Array<Record<string, unknown>> {
   count: number;
@@ -260,6 +272,7 @@ export class PostgresCatalogDb implements CatalogDb {
   private async rootQuery<T>(sql: string, binds: unknown[], map: (r: PgResult) => T): Promise<T> {
     this.guardRoot();
     if (this.closed) throw closedError();
+    checkText(binds);
     return map(await this.root.unsafe(toPg(sql), binds, { prepare: true }));
   }
 
@@ -506,6 +519,12 @@ class TxHandle implements CatalogDb {
     return handled(
       (async () => {
         checkUsable(a);
+        try {
+          checkText(binds);
+        } catch (error) {
+          fail(a, error);
+          throw error;
+        }
         const prev = a.chain;
         let done!: () => void;
         a.chain = new Promise<void>((r) => {
