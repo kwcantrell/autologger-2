@@ -69,6 +69,7 @@ adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
   requireAdminToken(c);
   try {
     await c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
+    await c.get('catalog').studios.refreshAfterWrite();
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;

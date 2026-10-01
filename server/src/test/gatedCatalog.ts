@@ -16,6 +16,7 @@ export interface Hold {
 
 interface Pending {
   pattern: RegExp;
+  after: boolean;
   armed: boolean;
   arrive: () => void;
   gate: Promise<void>;
@@ -24,7 +25,7 @@ interface Pending {
 class Gates {
   private holds: Pending[] = [];
 
-  hold(pattern: RegExp): Hold {
+  hold(pattern: RegExp, after = false): Hold {
     let arrive!: () => void;
     let open!: () => void;
     const reached = new Promise<void>((r) => {
@@ -33,13 +34,13 @@ class Gates {
     const gate = new Promise<void>((r) => {
       open = r;
     });
-    const p: Pending = { pattern, armed: true, arrive, gate };
+    const p: Pending = { pattern, after, armed: true, arrive, gate };
     this.holds.push(p);
     return { reached, release: open };
   }
 
-  async pass(sql: string): Promise<void> {
-    const p = this.holds.find((h) => h.armed && h.pattern.test(sql));
+  async pass(sql: string, after = false): Promise<void> {
+    const p = this.holds.find((h) => h.armed && h.after === after && h.pattern.test(sql));
     if (!p) return;
     p.armed = false;
     p.arrive();
@@ -55,17 +56,23 @@ class GatedHandle implements CatalogDb {
 
   async all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]> {
     await this.gates.pass(sql);
-    return this.inner.all<T>(sql, ...binds);
+    const r = await this.inner.all<T>(sql, ...binds);
+    await this.gates.pass(sql, true);
+    return r;
   }
 
   async first<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T | null> {
     await this.gates.pass(sql);
-    return this.inner.first<T>(sql, ...binds);
+    const r = await this.inner.first<T>(sql, ...binds);
+    await this.gates.pass(sql, true);
+    return r;
   }
 
   async run(sql: string, ...binds: unknown[]): Promise<{ changes: number }> {
     await this.gates.pass(sql);
-    return this.inner.run(sql, ...binds);
+    const r = await this.inner.run(sql, ...binds);
+    await this.gates.pass(sql, true);
+    return r;
   }
 
   tx<T>(fn: (t: CatalogDb) => Promise<T>): Promise<T> {
@@ -78,8 +85,14 @@ export class GatedCatalog extends GatedHandle {
     super(inner, new Gates());
   }
 
-  /** Hold the first statement whose SQL matches `pattern` until `release()`. */
+  /** Hold the first statement whose SQL matches `pattern`, before it is sent, until `release()`. */
   hold(pattern: RegExp): Hold {
     return this.gates.hold(pattern);
+  }
+
+  /** Hold the first statement whose SQL matches `pattern` after it has run, before its result
+   * returns to the caller, until `release()`. */
+  holdAfter(pattern: RegExp): Hold {
+    return this.gates.hold(pattern, true);
   }
 }

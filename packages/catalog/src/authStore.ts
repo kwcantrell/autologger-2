@@ -46,6 +46,7 @@ export interface AuthStoreFacade {
   authUpsertMembershipRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
   authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
   authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authGetMembershipRoleForShare: (userId: string, studioId: string) => Promise<TeamRole | null>;
   authCountEnabledAdmins: (studioId: string) => Promise<number>;
   authListTeamMembers: (studioId: string) => Promise<Array<{
     id: string;
@@ -310,6 +311,19 @@ export class AuthStore implements AuthStoreFacade {
   async authGetMembershipRole(userId: string, studioId: string): Promise<TeamRole | null> {
     const row = await this.db.first<Row>(
       'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+      userId,
+      studioId,
+    );
+    return row === null ? null : (String(row.role) as TeamRole);
+  }
+
+  /** Role of (user, team), or null, with the membership row locked for share until the
+   * transaction ends: a concurrent demotion or removal waits for it, and one that already
+   * committed fails it with a serialization error, so the re-run sees the new role
+   * (catalog-concurrency-hazards D2). Postgres only; call it inside a transaction. */
+  async authGetMembershipRoleForShare(userId: string, studioId: string): Promise<TeamRole | null> {
+    const row = await this.db.first<Row>(
+      'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ? FOR SHARE',
       userId,
       studioId,
     );

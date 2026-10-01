@@ -41,11 +41,19 @@ red before its fix (record the failure line) and green after.
 Tests in `server/src/routers/teams.race.int.test.ts`; each request is held before its
 in-transaction role read.
 
-- [ ] 2.1 Admin re-check (#8). Test first: a demoted admin's held delete and held rename each get
+- [x] 2.1 Admin re-check (#8). Test first: a demoted admin's held delete and held rename each get
   403 and change nothing. Red, then `requireTeamAdminIn` (FOR SHARE) plus the transaction-wrapped
   admin routes, with `guardedAgainstLastAdmin` taking `cat`. Green; `teams.int.test.ts` and
   `apiResponseFixtures.int.test.ts` stay green.
-- [ ] 2.2 Create (#9, #18). Test first:
+  Evidence: `4d-2.1-red.log`: `npx vitest run --project integration
+  src/routers/teams.race.int.test.ts` -> `× a demoted admin’s in-flight delete…`, `× …rename…`,
+  `AssertionError: expected 200 to be 403` ×2. The seam gained `holdAfter` (it holds after the
+  early root role read). Rename and delete no longer refresh the registry inside the
+  transaction (a full read of `studio_definitions` would make teams conflict); the routes call
+  `refreshAfterWrite()` after commit, and so does `admin.ts` delete. `4d-2.1-green.log`: race +
+  `teams.int` + `apiResponseFixtures.int` + `admin.int` -> `Test Files  4 passed (4)`, `Tests  85
+  passed (85)`. `npm run typecheck -w server` is clean.
+- [x] 2.2 Create (#9, #18). Test first:
   - concurrent creates at 19 give one 200 and one 400;
   - a held invite racing a team delete gets 404;
   - recreating the id gives only its creator, no invites and default settings;
@@ -55,6 +63,18 @@ in-transaction role read.
 
   Red, then the create transaction and purge in both planes, with the refresh after commit
   warning on failure. Green.
+  Evidence: `4d-2.2-red.log` (`-t creation`) -> `× concurrent creates… expected [ 200, 200 ] to
+  deeply equal [ 200, 400 ]`, `× a recreated id…` (stranger still a member), `× an id that still
+  has shows… expected 200 to be 400`, `× the admin plane…`; `Tests  4 failed | 2 passed`. The two
+  that passed:
+  - the invite-vs-delete race, already closed by 2.1's re-check (404);
+  - the built-in refusal, existing validation, which now runs before the transaction.
+
+  Validation went onto the registry facade (`validateNewStudio`), because
+  `packageBoundaries.repo.test.ts` forbids routers from importing `StudioRegistry`.
+  `4d-2.2-green.log`: race + teams + fixtures + admin + `catalog.int` -> `Tests  100 passed
+  (100)`; `packageBoundaries.repo.test.ts` -> `Tests  82 passed (82)`. `npm test -w
+  packages/catalog` -> `Tests  34 passed (34)`.
 - [ ] 2.3 Invite (#10). Test first: concurrent invites at 199 give one recorded and one 400. Red,
   then the invite transaction. Green.
 - [ ] 2.4 Role and removal (#11, #12). Test first: a held promotion racing a removal gets 404

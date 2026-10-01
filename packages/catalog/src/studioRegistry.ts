@@ -28,11 +28,14 @@ import type { CatalogDb } from '@autologger/ports';
  * checking under `strictFunctionTypes`). */
 export interface StudioRegistryFacade {
   adminCreateStudio: (studioId: string, displayName: string) => Promise<void>;
+  insertStudioDefinition: (sid: string, disp: string) => Promise<void>;
+  validateNewStudio: (studioId: string, displayName: string) => { sid: string; disp: string };
   adminDeleteStudio: (studioId: string) => Promise<void>;
   getSetting: (key: string, def?: string | null) => Promise<string | null>;
   isKnownStudio: (studioId: string) => boolean;
   listStudiosBrief: () => Array<{ id: string; name: string }>;
   renameStudio: (studioId: string, displayName: string) => Promise<void>;
+  refreshAfterWrite: () => Promise<void>;
   saveStudioSettingsBlob: (studioId: string, blob: Record<string, unknown>) => Promise<void>;
   setSetting: (key: string, value: string) => Promise<void>;
   studioNamesDict: () => Record<string, string>;
@@ -193,8 +196,13 @@ export class StudioRegistry implements StudioRegistryFacade {
 
   private static readonly STUDIO_ID_SLUG_RE = /^[a-z][a-z0-9-]{1,62}$/;
 
-  /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
-  async adminCreateStudio(studioId: string, displayName: string): Promise<void> {
+  /** Validation for a new team, shared by both planes; runs before any transaction, so the
+   * built-in reservation always precedes `insertStudioDefinition`'s purge. */
+  validateNewStudio(studioId: string, displayName: string): { sid: string; disp: string } {
+    return StudioRegistry.validateNewStudio(studioId, displayName);
+  }
+
+  static validateNewStudio(studioId: string, displayName: string): { sid: string; disp: string } {
     const sid = (studioId || '').trim();
     const disp = (displayName || '').trim();
     if (!sid || !disp) throw new ValidationError('Team id and display name are required.');
@@ -207,18 +215,33 @@ export class StudioRegistry implements StudioRegistryFacade {
     if (BUILTIN_STUDIO_ORDER.includes(sid)) {
       throw new ValidationError('That team id is reserved for a built-in team.');
     }
-    // Existence check and insert share one transaction (async-catalog-stores D2).
-    await this.db.tx(async (t) => {
-      const existing = await t.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
-      if (existing !== null) throw new ValidationError('A team with that id already exists.');
-      await t.run(
-        'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
-        sid,
-        disp,
-        nowIso(),
-      );
-    });
-    await this.refreshStudioRegistry();
+    return { sid, disp };
+  }
+
+  /** Insert a validated team's definition on this registry's handle (inside the caller's
+   * transaction). An id that still has shows is refused, and memberships, invites and settings
+   * left under the id are removed, so a reused id starts empty (catalog-concurrency-hazards D2). */
+  async insertStudioDefinition(sid: string, disp: string): Promise<void> {
+    const existing = await this.db.first<Row>('SELECT 1 FROM studio_definitions WHERE id = ?', sid);
+    if (existing !== null) throw new ValidationError('A team with that id already exists.');
+    const shows = await this.db.first<Row>('SELECT 1 FROM shows WHERE studio_id = ? LIMIT 1', sid);
+    if (shows !== null) throw new ValidationError('That team id is not available.');
+    await this.db.run(
+      'INSERT INTO studio_definitions (id, display_name, sort_order, created_at_utc) VALUES (?, ?, 1000, ?)',
+      sid,
+      disp,
+      nowIso(),
+    );
+    await this.db.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
+    await this.db.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
+    await this.db.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
+  }
+
+  /** admin_create_studio — insert a user-defined team (stable lowercase slug id). */
+  async adminCreateStudio(studioId: string, displayName: string): Promise<void> {
+    const { sid, disp } = StudioRegistry.validateNewStudio(studioId, displayName);
+    await this.db.tx(async (t) => this.withDb(t).insertStudioDefinition(sid, disp));
+    await this.refreshAfterWrite();
   }
 
   /** admin_delete_studio — remove a user-defined team (blocks if shows exist).
@@ -243,7 +266,6 @@ export class StudioRegistry implements StudioRegistryFacade {
       await t.run('DELETE FROM studio_definitions WHERE id = ?', sid);
       await t.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
     });
-    await this.refreshStudioRegistry();
   }
 
   /** teams-self-serve (design D4): display-name-only rename, sharing
@@ -258,6 +280,20 @@ export class StudioRegistry implements StudioRegistryFacade {
       throw new ValidationError('Cannot rename a built-in team.');
     }
     await this.db.run('UPDATE studio_definitions SET display_name = ? WHERE id = ?', disp, sid);
-    await this.refreshStudioRegistry();
+  }
+
+  /** Re-read the registry after a committed team write. Rename and delete don't refresh
+   * themselves: inside a transaction the refresh would read every team, so writes in different
+   * teams would conflict (catalog-concurrency-hazards D2). The snapshot only feeds display names
+   * and the early gates, so a failed refresh warns instead of failing the committed write. */
+  async refreshAfterWrite(): Promise<void> {
+    try {
+      await this.refreshStudioRegistry();
+    } catch (e) {
+      const code = (e as { code?: unknown })?.code;
+      console.warn(
+        `[catalog] studio registry refresh failed after a write (${typeof code === 'string' ? code : (e as Error)?.name})`,
+      );
+    }
   }
 }
