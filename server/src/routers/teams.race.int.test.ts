@@ -211,3 +211,56 @@ describe('team creation (#9, #18)', () => {
     expect(ghost.status).toBe(400);
   });
 });
+
+describe('invite cap (#10)', () => {
+  it('two invites for new emails at 199 pending: one recorded, one 400', async () => {
+    const { team, ids, cookies } = await teamWithAdmins(2);
+    for (let i = 0; i < 199; i++) {
+      await catalogFor().auth.authUpsertInvite(team, `p${i}@example.com`, ids[0] as string);
+    }
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/FROM team_invites WHERE studio_id = \?/);
+    const a = send('POST', `/api/teams/${team}/invites`, cookies[0] as string, { email: 'new-a@example.com' }, envWith({}, { catalog: gated }));
+    await h.reached;
+    const b = await send('POST', `/api/teams/${team}/invites`, cookies[1] as string, { email: 'new-b@example.com' });
+    h.release();
+    expect([b.status, (await a).status].sort()).toEqual([200, 400]);
+    expect(await invites(team)).toBe(200);
+  });
+});
+
+describe('role change and removal (#11, #12)', () => {
+  /** Holds the second matching role read: the target's, after the caller's own early check. */
+  function holdTargetRoleRead(gated: GatedCatalog) {
+    const own = gated.holdAfter(EARLY_ROLE_READ);
+    own.release();
+    return gated.holdAfter(EARLY_ROLE_READ);
+  }
+
+  it('a promotion racing the target’s removal gets 404 and doesn’t re-create the member', async () => {
+    const { team, cookies } = await teamWithAdmins(2);
+    const m = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = holdTargetRoleRead(gated);
+    const promote = send('POST', `/api/teams/${team}/members/${m}/role`, cookies[0] as string, { role: 'admin' }, envWith({}, { catalog: gated }));
+    await h.reached;
+    expect((await send('DELETE', `/api/teams/${team}/members/${m}`, cookies[1] as string)).status).toBe(200);
+    h.release();
+    expect((await promote).status).toBe(404);
+    expect(await role(m, team)).toBeNull();
+  });
+
+  it('a double removal: one 200, one 404', async () => {
+    const { team, cookies } = await teamWithAdmins(2);
+    const m = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = holdTargetRoleRead(gated);
+    const first = send('DELETE', `/api/teams/${team}/members/${m}`, cookies[0] as string, undefined, envWith({}, { catalog: gated }));
+    await h.reached;
+    const second = await send('DELETE', `/api/teams/${team}/members/${m}`, cookies[1] as string);
+    h.release();
+    expect([second.status, (await first).status].sort()).toEqual([200, 404]);
+  });
+});

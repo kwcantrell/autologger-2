@@ -31,8 +31,10 @@ requests end as if they had run one after the other.
   (a defined team or a built-in one) and that the caller may use it. A show SHALL NOT be created
   for a team deleted concurrently; that request gets `400 Unknown studio id.`.
 - **Admin plane.** The admin-plane membership add SHALL re-check the team inside its
-  transaction. The admin plane's membership removal and account disable SHALL run inside the
-  transaction that checks last-admin protection.
+  transaction. The admin plane's membership removal, account disable and membership upsert
+  SHALL NOT be subject to last-admin protection (api-contract-freeze, "Admin add-membership role
+  field"). A race between one of them and any team-plane demote, remove or leave SHALL end as
+  some serial order of the two requests.
 - **Cross-team independence.** Team-scoped reads and writes SHALL NOT make writes in another team
   fail. Concurrent writes in two different teams SHALL both succeed.
 

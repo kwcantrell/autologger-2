@@ -60,7 +60,6 @@ in-transaction role read.
   - an id with leftover shows gets 400;
   - `test-studios` gets 400 with its memberships unchanged;
   - the same on the admin plane.
-
   Red, then the create transaction and purge in both planes, with the refresh after commit
   warning on failure. Green.
   Evidence: `4d-2.2-red.log` (`-t creation`) -> `× concurrent creates… expected [ 200, 200 ] to
@@ -69,20 +68,30 @@ in-transaction role read.
   that passed:
   - the invite-vs-delete race, already closed by 2.1's re-check (404);
   - the built-in refusal, existing validation, which now runs before the transaction.
-
   Validation went onto the registry facade (`validateNewStudio`), because
   `packageBoundaries.repo.test.ts` forbids routers from importing `StudioRegistry`.
   `4d-2.2-green.log`: race + teams + fixtures + admin + `catalog.int` -> `Tests  100 passed
   (100)`; `packageBoundaries.repo.test.ts` -> `Tests  82 passed (82)`. `npm test -w
   packages/catalog` -> `Tests  34 passed (34)`.
-- [ ] 2.3 Invite (#10). Test first: concurrent invites at 199 give one recorded and one 400. Red,
+- [x] 2.3 Invite (#10). Test first: concurrent invites at 199 give one recorded and one 400. Red,
   then the invite transaction. Green.
-- [ ] 2.4 Role and removal (#11, #12). Test first: a held promotion racing a removal gets 404
+  Evidence: the invite transaction landed in 2.1, so red was shown by running the new test
+  against the pre-4d `teams.ts` (`git show supabase-migration:server/src/routers/teams.ts`,
+  restored afterwards). `4d-2.3-red.log` -> `AssertionError: expected [ 200, 200 ] to deeply equal
+  [ 200, 400 ]`. `4d-2.3-green.log` (current `teams.ts`) -> `Tests  1 passed`.
+- [x] 2.4 Role and removal (#11, #12). Test first: a held promotion racing a removal gets 404
   with no membership; a double removal gives 200 and 404. Red, then
   `authSetExistingMembershipRole` and the guard result. Green.
-- [ ] 2.5 Admin plane (A20). Test first: the admin-plane disable of one of two admins, racing a
-  demotion of the other, leaves one enabled admin (one request gets 409). Red, then the
-  transactions in `admin.ts`. Green.
+  Evidence: `4d-2.4-red.log` (pre-4d `teams.ts`, as in 2.3) -> `expected 200 to be 404`
+  (promotion re-created the member), `expected [ 200, 200 ] to deeply equal [ 200, 404 ]`. With
+  2.1's transactions both already passed (`4d-2.4-mid.log` -> `Tests  2 passed`), via a
+  SERIALIZABLE retry. `authSetExistingMembershipRole` (UPDATE only) and the guard's
+  `'missing'` result were added as designed. `4d-2.4-green.log`: race + teams + fixtures + admin
+  -> `Tests  94 passed (94)`.
+- [x] 2.5 Admin plane (A20): dropped by the re-panel (2026-10-01); see design D2.
+  Evidence: `server/src/routers/admin.ts:94-112` has no last-admin check (support plane, by
+  spec), so the raced outcome equals the serial order. Re-panel recorded in `panel.md` (owner
+  re-approved 2026-10-01).
 - [ ] 2.6 Show create (#13, #14). Test first: a held show create racing a team delete gets
   `400 Unknown studio id.`, and no show; an admin-plane membership add for a deleted team is
   refused. Red, then D3. Green.
@@ -98,7 +107,6 @@ in-transaction role read.
   - five concurrent `GET /api/profile` for a new team all give 200, with one settings row;
   - a deleted team's settings read writes no row;
   - a corrupt blob is repaired once.
-
   Red, then D4. Green.
 
 ## 4. Session mirror and Companion (design D6-D9)
@@ -109,7 +117,6 @@ in-transaction role read.
   - a root timeout waits for `settled` before the next link;
   - sessions are independent;
   - after `close()`, calls are no-ops and no hub is opened.
-
   Red, then `SessionMirror` and `ports.mirror`. Green.
 - [ ] 4.2 Test first, server integration with `projectSessionLive` failing
   (`vi.spyOn(SessionIndexStore.prototype, …)`):
@@ -118,7 +125,6 @@ in-transaction role read.
   - a local import updates `event_count`/`current_take`;
   - YouTube import gives 200 when the episode-date write fails (warning names the sid and date);
   - generate returns its outcome (update the `events.generate.int.test.ts:1033` pin).
-
   Red, then switch the A2 call sites and the import paths to `ports.mirror`. Green.
 - [ ] 4.3 Test first: a `kvStore` unit test for `replaceIf` (true, false on mismatch, false when
   expired). Server, with `ports.kv` on a gated catalog: ack(A) held after its read, command B
@@ -136,7 +142,6 @@ in-transaction role read.
     withdrawn, and `settled` is resolved;
   - a sent one rejects with no cancel, and `settled` resolves when it finishes;
   - no retry.
-
   Red, then the bound and `max_pipeline: 1`. Green, plus the storage pg project.
 - [ ] 5.2 Test first, `startupPurge.test.ts` (fake timers): the periodic purge runs every 10
   minutes, is unref'd, warns with its own text, and stops when cleared. Red, then wire it in
@@ -150,7 +155,6 @@ in-transaction role read.
   - the D11 revisit list as post-migration follow-ups;
   - the index migration;
   - the owner's one-PR `size-override`.
-
   Also the `docs/supabase.md` root deadline note. Verify with
   `grep -n "Revisit after the migration\|4d" docs/decisions/0021-*.md`.
 - [ ] 6.2 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green except

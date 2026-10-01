@@ -132,15 +132,16 @@ async function guardedAgainstLastAdmin(
   catalog: CatalogFacade,
   teamId: string,
   targetUserId: string,
-  mutate: (catalog: CatalogFacade) => Promise<void>,
+  mutate: (catalog: CatalogFacade) => Promise<boolean>,
 ): Promise<void> {
-  // Joins the caller's transaction when `catalog` is transaction-bound.
-  const blocked = await catalog.tx(async (cat) => {
-    if (await wouldStripLastEnabledAdmin(cat, teamId, targetUserId)) return true;
-    await mutate(cat);
-    return false;
+  // Joins the caller's transaction when `catalog` is transaction-bound. `mutate` reports whether
+  // the membership was there to change (catalog-concurrency-hazards D2).
+  const result = await catalog.tx(async (cat) => {
+    if (await wouldStripLastEnabledAdmin(cat, teamId, targetUserId)) return 'blocked';
+    return (await mutate(cat)) ? 'ok' : 'missing';
   });
-  if (blocked) throw new ApiError(409, LAST_ADMIN_MESSAGE);
+  if (result === 'blocked') throw new ApiError(409, LAST_ADMIN_MESSAGE);
+  if (result === 'missing') throw new ApiError(404, 'Member not found');
 }
 
 // -- POST /api/teams — self-serve creation (any user) -------------------------
@@ -308,11 +309,11 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
     if (currentRole === null) throw new ApiError(404, 'Member not found');
     if (currentRole === body.role) return; // idempotent
     if (body.role === 'member') {
-      await guardedAgainstLastAdmin(catalog, teamId, targetUserId, async (cat) => {
-        await cat.auth.authUpsertMembershipRole(targetUserId, teamId, 'member');
-      });
-    } else {
-      await catalog.auth.authUpsertMembershipRole(targetUserId, teamId, 'admin');
+      await guardedAgainstLastAdmin(catalog, teamId, targetUserId, (cat) =>
+        cat.auth.authSetExistingMembershipRole(targetUserId, teamId, 'member'),
+      );
+    } else if (!(await catalog.auth.authSetExistingMembershipRole(targetUserId, teamId, 'admin'))) {
+      throw new ApiError(404, 'Member not found');
     }
   });
   return c.json({ ok: true, role: body.role });
@@ -326,12 +327,9 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
   const targetUserId = c.req.param('userId').trim();
   await c.get('catalog').tx(async (catalog) => {
     await requireTeamAdminIn(catalog, admin.id, teamId);
-    if ((await catalog.auth.authGetMembershipRole(targetUserId, teamId)) === null) {
-      throw new ApiError(404, 'Member not found');
-    }
-    await guardedAgainstLastAdmin(catalog, teamId, targetUserId, async (cat) => {
-      await cat.auth.authRemoveMembership(targetUserId, teamId);
-    });
+    await guardedAgainstLastAdmin(catalog, teamId, targetUserId, (cat) =>
+      cat.auth.authRemoveMembership(targetUserId, teamId),
+    );
   });
   return c.json({ ok: true });
 });
@@ -341,8 +339,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
 teamsRouter.post('/api/teams/:id/leave', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user } = await requireTeamMember(c, teamId);
-  await guardedAgainstLastAdmin(c.get('catalog'), teamId, user.id, async (cat) => {
-    await cat.auth.authRemoveMembership(user.id, teamId);
-  });
+  await guardedAgainstLastAdmin(c.get('catalog'), teamId, user.id, (cat) =>
+    cat.auth.authRemoveMembership(user.id, teamId),
+  );
   return c.json({ ok: true });
 });

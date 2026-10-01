@@ -98,8 +98,12 @@ team-hazard test holds the in-flight request *before* its in-transaction role re
   for the admin-plane rescue.
 - **Removal (#12).** The guard returns `'missing' | 'blocked' | 'ok'`, after reading the target
   inside its transaction.
-- **Admin plane (A20).** Membership removal (`admin.ts:100`) and account disable (`:111`) move
-  into a transaction with the last-admin check, through the same guard.
+- **Admin plane (A20), corrected at implementation (re-panel 2026-10-01).** Membership removal
+  (`admin.ts:100`) and account disable (`:111`) stay as they are. The admin plane has no
+  last-admin check, by spec. A team-plane demotion that races an admin-plane disable can end
+  with no enabled admin, but that is the same result as the two requests run in order (demotion,
+  then disable), which the support plane may do. Adding the check would add `409`s to support
+  routes, which no delta authorizes.
 
 ### D3. Show create and the admin-plane membership add (#13, #14)
 
@@ -219,8 +223,9 @@ task 1.2).
 
 ## Risks / Trade-offs
 
-- **R1. Re-checks rely on every membership write being in a transaction.** → D2 moves the
-  admin-plane writes in. The D1 tests pin each route. Foreign keys are on the revisit list.
+- **R1. Re-checks rely on every team-plane membership write being in a transaction.** → The
+  D1 tests pin each route. The admin-plane writes stay root writes by design (D2, A20). Foreign
+  keys are on the revisit list.
 - **R2. More transactions mean more retries under contention.** → D12 removes cross-team
   conflicts. An invite still reads all of `users` and can conflict with a concurrent first
   sign-in; the retry absorbs it, and D11 lists an indexed lookup.

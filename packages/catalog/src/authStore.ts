@@ -47,6 +47,11 @@ export interface AuthStoreFacade {
   authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
   authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
   authGetMembershipRoleForShare: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authSetExistingMembershipRole: (
+    userId: string,
+    studioId: string,
+    role: TeamRole,
+  ) => Promise<boolean>;
   authCountEnabledAdmins: (studioId: string) => Promise<number>;
   authListTeamMembers: (studioId: string) => Promise<Array<{
     id: string;
@@ -290,6 +295,22 @@ export class AuthStore implements AuthStoreFacade {
       studioId,
       role,
     );
+  }
+
+  /** Change the role of an existing membership only; false when there is none, so a raced
+   * removal is never undone by a role change (catalog-concurrency-hazards D2). */
+  async authSetExistingMembershipRole(
+    userId: string,
+    studioId: string,
+    role: TeamRole,
+  ): Promise<boolean> {
+    const res = await this.db.run(
+      'UPDATE user_studio_memberships SET role = ? WHERE user_id = ? AND studio_id = ?',
+      role,
+      userId,
+      studioId,
+    );
+    return res.changes > 0;
   }
 
   /** Count of teams the user admins, excluding the given studio ids (the

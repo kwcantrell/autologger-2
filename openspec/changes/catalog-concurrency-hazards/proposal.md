@@ -3,7 +3,7 @@
 Tier: 2
 Tier reason: concurrency and transaction ordering across teams, auth and session routes; observable outcome changes on frozen routes; touches `server/src/routers/**` and the catalog port.
 
-Approved-by: Kalen 2026-10-01
+Approved-by: Kalen 2026-10-01 (re-approved after re-panel)
 
 ## Why
 
@@ -22,8 +22,8 @@ per-team indexes, so writes in different teams stop conflicting.
   - **Team creation** (cap check, studio, admin membership) is one transaction, on both the
     user and admin planes. It refuses an id that still has shows, and it removes leftover
     memberships, invites and settings for the id, so a reused team id starts empty.
-  - **Admin-plane membership removal and account disable** run inside the last-admin
-    transaction.
+  - **Admin-plane membership removal and account disable are unchanged.** The support plane
+    is not subject to last-admin protection (re-panel, 2026-10-01).
   - **Invites** (user lookup, cap check, grant or pending row) are one transaction.
   - **Role changes** update only an existing membership. A member removed concurrently gets
     `404`; the removed member is not re-created.

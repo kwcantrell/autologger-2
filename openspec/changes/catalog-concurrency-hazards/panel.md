@@ -12,7 +12,7 @@ Each reviewer ran as a separate subagent with fresh context. Their probes used t
 - [x] [major] The D1 seam can't reach KV or the mirror, which hold the process adapter. Resolved: tests also override `ports.kv` / `ports.mirror` with gated instances (A19, D1). Task 4.2 uses a `projectSessionLive` spy. The spec wording "a catalog it builds itself" became "SHALL NOT use the request's catalog".
 - [x] [minor] `guardedAgainstLastAdmin` calls the root facade, which the adapter refuses inside a transaction. Resolved: D2, it takes the bound `cat`.
 - [x] [minor] `admin.ts:82-92` has no transaction. Resolved: D3 adds one.
-- [x] [minor] Admin-plane membership removal and account disable are root writes that SSI can't see (`rootw.mjs` -> `enabled admins left=0`). Resolved: D2 moves them into the guard's transaction, and task 2.5 tests it.
+- [x] [minor] Admin-plane membership removal and account disable are root writes that SSI can't see (`rootw.mjs` -> `enabled admins left=0`). Resolved, then corrected by the re-panel below: the admin plane stays as it is, by spec.
 - [x] [minor] The anonymous active-show repair is still a blind overwrite. Resolved: D8 adds `setSettingIf`; task 4.4 covers anonymous mode.
 - [x] [minor] Implicit rules not stated (chain semantics, gates fired again on re-run, the D4 remap, the 30 s backstop). Resolved: D1 (one-shot gates that stay open), D4 (remap unchanged), D6 (a link starts after the call), D10 (the `statement_timeout` bound).
 
@@ -51,3 +51,20 @@ Each reviewer ran as a separate subagent with fresh context. Their probes used t
 - [x] [minor] #14 is only partly addressed. Resolved: 6.1 records it as partly done, and D11 lists display names.
 - [x] [minor] Task 2.1 bundled six hazards. Resolved: split into 2.1-2.7, each with its own red and green.
 - [x] [minor] Contract checks found no issue (the 404s and `{ok:false}` are already frozen defaults). Noted.
+
+## Re-panel 2026-10-01 (delta)
+Reviewer: one fresh-context subagent, covering all three lenses. Delta:
+- team-management "Admin plane" bullet: admin-plane removal, disable and upsert stay outside last-admin protection;
+- design D2 and R1, and task 2.5 dropped;
+- task 1.2's SQLite mirror migration `0006_team_indexes.sql` (design D12 updated).
+
+Checks with no issue:
+- The support plane is explicitly not subject to last-admin protection (`api-contract-freeze/spec.md:297-298`; team-management `spec.md:246-247` expects a team with no admins from support actions).
+- Every interleaving of an admin-plane root write with a team-plane SERIALIZABLE transaction ends as a serial order. Each admin write is one autocommit statement that reads only its target row.
+- No ADR 0021 hazard is reopened (A20 was a panel finding, not an ADR item).
+- The SQLite mirror's index names match, and the parity test compares them.
+
+- [x] [major] proposal.md still said admin-plane removal and disable run inside the last-admin transaction. Resolved: the proposal now says they are unchanged.
+- [x] [minor] panel.md marked the original A20 finding resolved by the dropped approach, and had no re-panel section. Resolved: the line is amended, and this section was added.
+- [x] [minor] The spec bullet named only demotion and wasn't a SHALL. Resolved: it now has a SHALL covering demote, remove and leave, and cites the freeze spec.
+- [x] [minor] README's migration listing stopped at 0005. Resolved: it now says 0006.
