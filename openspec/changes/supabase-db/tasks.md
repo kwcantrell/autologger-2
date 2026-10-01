@@ -121,7 +121,8 @@ shows names, statuses and counts only.
 - [x] 3.2 Implement `docker/supabase/migrate.sh` and the `migrate` service (design D3).
   Evidence: `sh docker/supabase/test_migrate.sh` -> 19 `ok` lines including `ok   a rerun applies nothing`, `ok   the failing file left no table and no record`, `ok   refused before connecting: commit`, `ok   refused before connecting: meta`, `ok   concurrent runs record the file once`, `ok   the record holds the file exactly` (A14: `'`, `$$`, `:foo` byte-for-byte), and `test_migrate: 19 passed, 0 failed`. The cases run as `--user postgres --read-only --cap-drop ALL` (A10).
   - Check: `sh docker/supabase/test_migrate.sh` passes all cases.
-- [ ] 3.3 Add `supabase/migrations/.gitkeep` and the Makefile changes (design D6): migrate-on-up,
+- [x] 3.3 Add `supabase/migrations/.gitkeep` and the Makefile changes (design D6): migrate-on-up,
+  Evidence: `make dev-down && make dev-migrate` -> `autologger-dev-db-1 Waiting` / `Healthy` (A9) / `0 applied`, rc=0; scratch `20260930000000_scratch_fail.sql` -> `ERROR:  division by zero` / `migrate: 20260930000000_scratch_fail.sql failed; nothing of it was applied`, make rc=2 (file removed); `make dev-reset` -> `compose-run: refusing: 'make dev-reset' deletes the autologger-dev volumes. Re-run with CONFIRM=yes.`; `make dev-reset CONFIRM=yes` (owner chose a real reset) -> `Volume autologger-dev_supabase-db Removed`, `…supabase-db-config Removed`; `make dev-up` -> `db-1 Healthy`, `0 applied`; volume CreatedAt `20:01:53` -> `20:08:17` (both), `init-scripts` lines 6 (fresh initdb), history table recreated (`t | 0`); `grep -nE 'prod.*(migrate|psql)' Makefile` -> empty.
   `dev-migrate`, `dev-psql`, and the reset help text. Checks:
   - `make dev-down && make dev-migrate` waits for `db` to be healthy and prints `0 applied`;
   - with a scratch failing file, `make dev-migrate` exits non-zero naming it. Remove the file
@@ -146,7 +147,8 @@ shows names, statuses and counts only.
 
 ## 4. Verify
 
-- [ ] 4.1 Run `scripts/check-change.sh --stage hook --base origin/supabase-migration`.
+- [x] 4.1 Run `scripts/check-change.sh --stage hook --base origin/supabase-migration`.
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS`, including `PASS  size             386/400 changed lines`, `PASS  evidence         every ticked task cites evidence`, `PASS  commands         ran ['typecheck', 'test']; not configured: ['lint']`.
   - Check: it is green, and size is 400 or under.
 - [ ] 4.2 Do the tier 2 consistency read, appended to `panel.md`.
 - [ ] 4.3 Archive with `/opsx:archive supabase-db`, which syncs the specs.
