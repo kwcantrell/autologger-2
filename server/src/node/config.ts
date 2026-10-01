@@ -8,6 +8,7 @@ import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
 import {
+  AsyncSqliteCatalogDb,
   acquireDataDirLock,
   applyMigrations,
   BlobStore,
@@ -41,7 +42,9 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
   applyMigrations(catalog, CATALOG_MIGRATIONS_DIR);
   const clock = systemClock;
-  const kv = new KvStore(catalog, clock);
+  // KV shares the catalog connection, so it goes through the async adapter's lock
+  // (async-catalog-adapter D5); the stores stay on the synchronous CatalogDb until 3d.
+  const kv = new KvStore(new AsyncSqliteCatalogDb(catalog), clock);
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request

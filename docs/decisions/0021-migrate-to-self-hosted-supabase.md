@@ -117,12 +117,26 @@ Slice order:
      catalog. Code that runs inside a catalog transaction (the Google sign-up body and the teams
      last-admin guard with its `mutate` callbacks) stays synchronous until 3d converts it, and
      the memory-only registry getters stay synchronous for good;
-   - 3c: the async catalog adapter (a FIFO lock and a scoped transaction handle), not wired in;
-   - 3d: the stores move to it, and the sync port is deleted.
+   - 3c `async-catalog-adapter`: the `AsyncCatalogDb` port and its SQLite adapter (one FIFO lock
+     per connection, a transaction-scoped handle, a nested `tx` joins the enclosing transaction,
+     any error fails the whole transaction, a 10-second deadline, misuse rejects). `KvStore`
+     moved onto it, so KV waits for an open transaction instead of joining it;
+   - 3d: the stores move to it, and the sync port is deleted. It inherits these from 3c
+     (async-catalog-adapter design D6):
+     - transaction bodies run on stores bound to the handle, through a facade `tx` that builds a
+       `Catalog` over it; it decides how that catalog's registry snapshot is initialised;
+     - the promise-hygiene test extends to `packages/catalog/src`;
+     - transaction bodies await only the handle;
+     - an adapter `close()` for shutdown, and `CatalogAdapterBrokenError` made fatal;
+     - a retype probe measures the size first, and the slice splits if it is over budget;
+     - **prerequisite:** the OAuth state take becomes atomic before or with 3d (the owner
+       decides how). Once a transaction holds the lock across awaits, two callbacks with one
+       state can both read it before either deletes it.
 
    **Slice 4 hazards** (async-session-callers design D6, async-catalog-callers design D6). These
    are harmless while storage is synchronous and real once it does I/O:
-   1. the OAuth state get-then-delete needs an atomic take (auth: the owner decides);
+   1. the OAuth state get-then-delete needs an atomic take (auth: the owner decides). Moved
+      earlier: it is now a 3d prerequisite (see 3d above);
    2. the Companion ack's read-modify-write needs one conditional update;
    3. projection mirror writes can land out of order (guard on `events_stream_revision`);
    4. re-audit the events generate `finally` (release, then mirror);

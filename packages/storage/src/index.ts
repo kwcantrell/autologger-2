@@ -7,6 +7,7 @@
 // applyMigrations — the catalog package owns the migrations *.sql files
 // themselves; see design D7, wired at phase 3).
 
+export * from './asyncCatalogStore';
 export * from './blobStore';
 export * from './catalogStore';
 export * from './dataDirLock';
