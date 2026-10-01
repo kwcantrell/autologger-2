@@ -95,3 +95,7 @@ Superseded mechanisms: the v1 and v2 resolutions above that cite `infisical run`
 - [ ] [minor] With `HOME` passed, docker resolves CLI plugins and `currentContext` from `~/.docker`, which could point at a remote daemon; this is the operator's own trust boundary. Recorded in the ASI03 exposure note (task 4.3).
 
 Re-approval: the owner re-approved v3 in chat on 2026-09-30, after the v3 re-panel (the `Approved-by:` date is unchanged, same day).
+
+## Owner decision 2026-09-30 (during setup)
+
+Infisical's free plan refused custom project roles (`POST /api/v1/projects/{id}/roles` -> 400 "Failed to create custom role due to plan RBAC restriction. Upgrade to Infisical Enterprise plan to create custom roles."). The owner chose one Infisical project per environment, each with one identity holding the built-in `viewer` role, over a single project with environment-wide `viewer` identities. The isolation goal of D6 and the spec are unchanged; how it is achieved changed. Recorded in design D6, task 1.2 and `docs/infisical-secrets.md`. The consistency read before archive covers it.

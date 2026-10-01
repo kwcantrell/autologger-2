@@ -302,8 +302,15 @@ same source, and invariants 6 and 7 already pin the posture literals.
 
 ### D6. Identity hardening (owner configuration, recorded here)
 
+Each environment is its own Infisical project (`autologger-dev`, `autologger-stage`,
+`autologger-prod`), holding only that environment (`dev`, `stage` or `prod`). Each project has one
+machine identity, created inside that project, with the built-in `viewer` role. (Owner,
+2026-09-30: the free plan refuses custom roles, "Upgrade to Infisical Enterprise plan to create
+custom roles". Per-environment projects give the same isolation. The wrapper is unchanged, because
+each `.env.infisical.<env>` already carries its own project ID.)
+
 Each machine identity:
-- has read-only access to its one environment;
+- has read-only access to its one environment, by being a viewer of only that project;
 - has an access-token TTL of 15 minutes and a maximum TTL of 1 hour;
 - has Trusted IPs on both the client secret and the access token, limited to the hosts that run
   that stack: this host for dev and stage, and the deploy host for prod;

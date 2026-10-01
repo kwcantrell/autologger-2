@@ -22,18 +22,20 @@ written to print names or exit codes only. The agent records that output and nev
   host. Put `~/infisical/infisical-root-ca.crt` (or a copy of it) where `INFISICAL_CA_FILE` will
   point. Check: `node --version` on each host.
   (The Infisical CLI installed earlier is no longer needed by this design.)
-- [ ] 1.2 **(owner)** Create the Infisical environments `dev`, `stage` and `prod`, and one
-  universal-auth machine identity per environment, set up as in design D6:
-  - read-only on its own environment;
+- [ ] 1.2 **(owner, run by the agent with the owner's bootstrap identity)** Create one Infisical
+  project per environment (`autologger-dev`, `autologger-stage`, `autologger-prod`), each holding
+  only its own environment, and one universal-auth machine identity per project, set up as in
+  design D6:
+  - the built-in `viewer` role on its own project only;
   - access-token TTL 15 minutes, maximum TTL 1 hour;
   - Trusted IPs on the client secret and on the token.
 
   Check that the dev identity can't read prod. Once task 3.2 exists:
   1. On this host, which holds no prod credentials, temporarily copy `.env.infisical.dev` to
-     `.env.infisical.prod` at the repo root (mode 600). The test hooks are not used, because H10
-     refuses them for prod.
+     `.env.infisical.prod` at the repo root (mode 600), with `INFISICAL_PROJECT_ID` changed to the
+     prod project's ID. The test hooks are not used, because H10 refuses them for prod.
   2. Run `make prod-check`.
-  3. It must fail at the fetch with a `403` status and message, and print no values. Paste only
+  3. It must fail at the fetch with a `403` or `404` status and message, and print no values. Paste only
      that line, then delete the copy.
 - [ ] 1.3 **(owner)** List today's key names without values:
   `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env.dev | sort`, then the same for `.env.stage`. Compare

@@ -91,18 +91,22 @@ To add a container key:
 
 ## Identity hardening
 
-Configure each machine identity (universal auth) in Infisical as follows.
+Each environment is its own Infisical project (`autologger-dev`, `autologger-stage`,
+`autologger-prod`) holding only that environment. Each project has one machine identity, created
+inside it, with the built-in `viewer` role. The free plan has no custom roles, so separate projects
+are what keep the dev identity away from prod. Configure each identity (universal auth) as follows.
 
 | Setting | Value |
 | --- | --- |
-| Access | Read-only on its **one** environment. The dev identity must not read `stage` or `prod`. |
+| Access | `viewer` on its **own** project only. The dev identity must not read `stage` or `prod`. |
 | Access-token TTL | 15 minutes, with a maximum TTL of 1 hour |
 | Trusted IPs | Set on both the client secret and the access token, limited to the hosts that run that stack |
 | Client secret | Rotate when a host is decommissioned, and at least yearly |
 
 To check that the dev identity can't read prod, on a host that holds no prod credentials:
-1. Copy `.env.infisical.dev` to `.env.infisical.prod`.
-2. Run `make prod-check`. It must fail with `HTTP 403`.
+1. Copy `.env.infisical.dev` to `.env.infisical.prod`, and set `INFISICAL_PROJECT_ID` in the copy
+   to the prod project's ID.
+2. Run `make prod-check`. It must fail with `HTTP 403` or `HTTP 404`.
 3. Delete the copy.
 
 ## Commands
