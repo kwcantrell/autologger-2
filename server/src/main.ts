@@ -24,16 +24,7 @@ if (refusal) {
 
 let created: ReturnType<typeof createBindings>;
 try {
-  created = createBindings(process.env, {
-    // async-catalog-stores D5: a failed ROLLBACK leaves the catalog connection inside a dead
-    // transaction. Stop through the graceful path with a non-zero exit so the supervisor
-    // (restart: unless-stopped) brings up a fresh process.
-    onBroken: () => {
-      console.error('[catalog] connection broken after a failed ROLLBACK; shutting down');
-      process.exitCode = 1;
-      process.kill(process.pid, 'SIGTERM');
-    },
-  });
+  created = createBindings(process.env);
 } catch (e) {
   // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
   if (e instanceof DataDirLockedError) {
@@ -140,10 +131,11 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
       console.error('frontend close() rejected during shutdown', err);
     });
     // Neither input rejects: serverClosed only resolves, frontendClosed catches.
-    void Promise.all([serverClosed, frontendClosed]).then(() => {
-      close();
-      // exitCode is 1 when shutdown was triggered by a broken catalog connection.
-      process.exit();
-    });
+    // close() ends the catalog connections (catalog-on-postgres D2); the failsafe above still
+    // bounds it, and a transaction it cuts short rolls back on the server.
+    void Promise.all([serverClosed, frontendClosed])
+      .then(() => close())
+      .catch((err) => console.error('catalog close() rejected during shutdown', err))
+      .finally(() => process.exit());
   });
 }

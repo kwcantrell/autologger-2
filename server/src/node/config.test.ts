@@ -4,10 +4,10 @@
 // bindings from a procEnv object, same shape test/harness.ts uses per test.
 
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
-import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loopbackHostname } from '../env';
 import { createBindings } from './config';
@@ -25,12 +25,19 @@ function freshProcEnv(overrides: Record<string, string | undefined> = {}) {
     GOOGLE_CLIENT_ID: '',
     GOOGLE_CLIENT_SECRET: '',
     REQUIRE_LOGIN: '0',
+    // Dummy catalog settings: the adapter connects lazily, so nothing here dials them
+    // (catalog-on-postgres A14). Port 1 is never listening.
+    PGHOST: '127.0.0.1',
+    PGPORT: '1',
+    PGUSER: 'autologger_app',
+    PGPASSWORD: 'unused',
+    PGDATABASE: 'postgres',
     ...overrides,
   };
 }
 
 describe('createBindings -- NEW_USER_ALL_TEAMS deprecation (design D5)', () => {
-  it('logs a one-time startup warning when NEW_USER_ALL_TEAMS is truthy', () => {
+  it('logs a one-time startup warning when NEW_USER_ALL_TEAMS is truthy', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const { close } = createBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '1' }));
@@ -38,21 +45,21 @@ describe('createBindings -- NEW_USER_ALL_TEAMS deprecation (design D5)', () => {
         expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy.mock.calls[0]?.join(' ')).toMatch(/NEW_USER_ALL_TEAMS.*deprecated/i);
       } finally {
-        close();
+        await close();
       }
     } finally {
       warnSpy.mockRestore();
     }
   });
 
-  it('does not warn when NEW_USER_ALL_TEAMS is unset/falsy', () => {
+  it('does not warn when NEW_USER_ALL_TEAMS is unset/falsy', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const { close } = createBindings(freshProcEnv({ NEW_USER_ALL_TEAMS: '0' }));
       try {
         expect(warnSpy).not.toHaveBeenCalled();
       } finally {
-        close();
+        await close();
       }
     } finally {
       warnSpy.mockRestore();
@@ -69,7 +76,7 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
       'arbitrary-file-read primitive. Pinning the exact expected value (not just a suffix) also ' +
       'catches a correct-suffixed-but-wrong-rooted resolution, which a suffix-only assertion ' +
       'cannot distinguish from the real thing (phase-2 fix2 re-review, finding A).',
-    () => {
+    async () => {
       const base = freshProcEnv({
         AI_V2_CREDENTIAL_SOURCE_PATH: '/etc/passwd',
         // A plausible differently-named override a buggy implementation
@@ -98,7 +105,7 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
         expect(bindings.config.AI_V2_CREDENTIAL_SOURCE_PATH).not.toBe('/etc/passwd');
         expect(bindings.config.AI_V2_CREDENTIAL_SOURCE_PATH).not.toBe('/etc/shadow');
       } finally {
-        close();
+        await close();
       }
     },
   );
@@ -115,7 +122,7 @@ describe('createBindings -- DATA_DIR is required and absolute (retire-host-dev D
 });
 
 describe('createBindings -- one server per DATA_DIR (retire-host-dev D2)', () => {
-  it('refuses a held DATA_DIR before migrating, creating or sweeping anything', () => {
+  it('refuses a held DATA_DIR before creating or sweeping anything', () => {
     const env = freshProcEnv();
     const scratch = join(dir, 'tmp', 'youtube-import-planted');
     mkdirSync(scratch, { recursive: true });
@@ -123,60 +130,81 @@ describe('createBindings -- one server per DATA_DIR (retire-host-dev D2)', () =>
     try {
       expect(() => createBindings(env)).toThrow(DataDirLockedError);
       expect(existsSync(scratch)).toBe(true); // the sweep never ran
-      expect(existsSync(join(dir, 'catalog.db'))).toBe(false); // no migration ran
+      expect(existsSync(join(dir, 'catalog.db'))).toBe(false);
       expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
     } finally {
       lock.release();
     }
   });
-  it('releases the lock on close, so the same DATA_DIR can boot again', () => {
+  it('releases the lock on close, so the same DATA_DIR can boot again', async () => {
     const env = freshProcEnv();
-    createBindings(env).close();
-    createBindings(env).close();
+    await createBindings(env).close();
+    await createBindings(env).close();
   });
 });
 
 describe('createBindings -- one effective host (retire-host-dev D3)', () => {
-  it('defaults HOST to loopback outside production, and the loopback checks agree', () => {
+  it('defaults HOST to loopback outside production, and the loopback checks agree', async () => {
     for (const NODE_ENV of [undefined, 'development']) {
       const b = createBindings({ ...freshProcEnv(), NODE_ENV });
       try {
         expect(b.bindings.config.HOST).toBe('127.0.0.1');
         expect(loopbackHostname(b.bindings.config)).toBe(true);
       } finally {
-        b.close();
+        await b.close();
       }
     }
   });
-  it('defaults HOST to every interface in production, and keeps an explicit HOST', () => {
+  it('defaults HOST to every interface in production, and keeps an explicit HOST', async () => {
     const p = createBindings({ ...freshProcEnv(), NODE_ENV: 'production' });
     try {
       expect(p.bindings.config.HOST).toBe('0.0.0.0');
     } finally {
-      p.close();
+      await p.close();
     }
     const e = createBindings({ ...freshProcEnv(), HOST: '10.1.2.3' });
     try {
       expect(e.bindings.config.HOST).toBe('10.1.2.3');
     } finally {
-      e.close();
+      await e.close();
     }
   });
 });
 
-describe('createBindings -- the KV purge is a boot step, not part of createBindings (async-session-callers D2)', () => {
-  it('leaves an expired KV row in place', () => {
+describe('createBindings -- the catalog is Postgres (catalog-on-postgres D1)', () => {
+  it('refuses each missing PG* setting by name, before taking the DATA_DIR lock', async () => {
     const env = freshProcEnv();
-    createBindings(env).close();
-    const db = new Database(join(dir, 'catalog.db'));
-    db.prepare('INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?)').run('dead', 'x', 1);
-    db.close();
-    const { close } = createBindings(env);
-    close();
-    const after = new Database(join(dir, 'catalog.db'));
-    expect(after.prepare('SELECT COUNT(*) AS n FROM kv WHERE key = ?').get('dead')).toEqual({
-      n: 1,
+    for (const k of ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) {
+      expect(() => createBindings({ ...env, [k]: undefined }), k).toThrow(new RegExp(k));
+      expect(() => createBindings({ ...env, [k]: '' }), k).toThrow(new RegExp(k));
+    }
+    expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
+    await createBindings(env).close(); // and the lock was never held
+  });
+
+  it('opens no catalog.db, and close() returns a promise', async () => {
+    const b = createBindings(freshProcEnv());
+    const closed = b.close();
+    expect(closed).toBeInstanceOf(Promise);
+    await closed;
+    expect(existsSync(join(dir, 'catalog.db'))).toBe(false);
+  });
+
+  it('opens no catalog connection: the KV purge and readiness wait are boot steps in main.ts', async () => {
+    let connections = 0;
+    const server = createServer((s) => {
+      connections++;
+      s.destroy();
     });
-    after.close();
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const port = (server.address() as { port: number }).port;
+      const b = createBindings(freshProcEnv({ PGPORT: String(port) }));
+      await new Promise((r) => setTimeout(r, 300));
+      await b.close();
+      expect(connections).toBe(0);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
   });
 });

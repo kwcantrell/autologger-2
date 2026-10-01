@@ -9,7 +9,7 @@ Logs: keep the full output of every test and gate run under the session scratchp
 
 ## 1. Wiring and the integration suite on Postgres (design D1, D6)
 
-- [ ] 1.1 Test first, in `server/src/node/config.test.ts`, with dummy `PG*` values (nothing
+- [x] 1.1 Test first, in `server/src/node/config.test.ts`, with dummy `PG*` values (nothing
   connects, A14):
   - a missing `PGPASSWORD` throws naming it, and the lock is not held afterwards (a second
     `createBindings` with full env succeeds);
@@ -18,7 +18,12 @@ Logs: keep the full output of every test and gate run under the session scratchp
   - the lock still refuses a second server.
 
   Red: today `PG*` is ignored and `catalog.db` is created.
-- [ ] 1.2 Implement it all in one step:
+  Evidence: `4c-1.1-red.log`: `npx vitest run --project unit src/node/config.test.ts` ->
+  `× refuses each missing PG* setting by name…`, `× opens no catalog.db, and close() returns a
+  promise`, `Tests  2 failed | 9 passed (11)`. `4c-1.1-green.log` -> `Tests  11 passed (11)`.
+  The old SQLite "KV purge is a boot step" case is replaced by "opens no catalog connection"
+  (TCP listener, 0 connections).
+- [x] 1.2 Implement it all in one step:
   - `createBindings`: `PG*` checked before the lock, one `PostgresCatalogDb`, no SQLite
     catalog or `onBroken`, async `close()`;
   - add `server/src/test/pgIntegrationSetup.ts` (shared setup, then the connection limit raised
@@ -33,6 +38,16 @@ Logs: keep the full output of every test and gate run under the session scratchp
     A8's 6.6 s);
   - `npx vitest run --project pg` still passes (`rolconnlimit: 20`);
   - `npm run typecheck` is clean.
+
+  Evidence: the first run, `npx vitest run --project integration` -> `Tests  125 failed | 471
+  passed (596)`. JSON reporter: 100 failures are `PostgresError: syntax error at or near "OR"`
+  (seeding memberships), and 25 are 500s logged as `42704 collation "nocase"`, i.e. task 3.1's
+  dialect sites, which were fixed next. After 3.1:
+  `4c-1.2-green.log` -> `Test Files  40 passed (40)`, `Tests  598 passed (598)`, `wall 31.72 s`
+  (baseline 6.61 s, A8). `4c-1.2-pg.log`: `npx vitest run --project pg` -> `Tests  16 passed
+  (16)` (`rolconnlimit: 20` intact). `docker ps -qf label=autologger-test-pg.pid | wc -l` after
+  the runs -> `0`. `4c-1.2-typecheck.log`: `npm run typecheck` -> exit 0. `main.ts` lost
+  `onBroken` and awaits `close()` here already, which typecheck needed (part of 2.3's code).
 
 ## 2. Boot (design D2)
 
@@ -57,13 +72,18 @@ Logs: keep the full output of every test and gate run under the session scratchp
 
 ## 3. Store dialect (design D4)
 
-- [ ] 3.1 Test first, in a server integration test:
+- [x] 3.1 Test first, in a server integration test:
   - shows `b`, `A`, `a` list as `A`, `a`, `b` (red: `42704 collation "nocase"`);
   - re-adding an existing membership through `authAddMemberships`, and through the invite
     path, succeeds with no duplicate (red: syntax error at `OR`).
 
   Then rewrite `showsStore.ts:178` and `authStore.ts:185,274`. Green on Postgres, and the
   `packages/catalog` tests stay green on SQLite.
+  Evidence: `4c-3.1-red.log`: `npx vitest run --project integration
+  src/test/catalogDialect.int.test.ts` -> `PostgresError: collation "nocase" for encoding "UTF8"
+  does not exist`, `PostgresError: syntax error at or near "OR"`, `Tests  2 failed (2)`.
+  `4c-3.1-green.log` -> `Tests  2 passed (2)`. `4c-3.1-catalog-sqlite.log`: `npm test -w
+  packages/catalog` -> `Tests  34 passed (34)`.
 
 ## 4. NUL, integers and logs (design D5, D8, D9)
 
