@@ -29,3 +29,19 @@ Probes are in the session scratchpad (`panel3d-assume/`, `panel3d-failure/`), ru
 - [x] [minor] Out of scope but worth recording: `/auth/google/start` writes one KV row per hit, purged only at boot; and hazard 15's "catch the conflict and retry" can't run inside a transaction under the any-error-fails rule. Evidence: `startupPurge.ts`; the 3c contract. Resolved: both are added to ADR 0021 (task 3.1).
 - [x] [minor] The old SQLite-adapter phrase "a key/value call never joins a catalog transaction" was dropped. Evidence: delta text. Resolved: restored in the MODIFIED requirement.
 - [x] [minor] Suggested a warning when a transaction holds the lock for more than about 100 ms. Evidence: the 3c deadline is 10 s. Resolved: not adopted. No body awaits non-catalog work (A3), and slice 4's pool changes the meaning; the deadline already bounds it.
+
+## Consistency read 2026-10-01
+Edits since approval: tasks.md (evidence lines only)
+Scope change: no
+- [x] [minor] Two store methods beyond the five planned now run in a transaction: `updateSessionIndex` (read, merge, write) and `authConsumeInvitesForEmail` (select, then delete). Resolved: the approved spec says "A store method … that reads and then writes … SHALL do so inside one `tx()`", so leaving them out would have contradicted it. Both use the approved `withDb` pattern, and their behaviour is unchanged (the second already ran only inside the sign-up transaction, which it now joins).
+- [x] [minor] The measured size is 904 counted lines, against a D8 estimate of 650-750. Resolved: the store facade types and multi-line signatures came out larger than estimated. It is within the owner's `size-override` decision, and recorded in task 3.2.
+- [x] [minor] `main.ts` now calls `process.exit()` instead of `process.exit(0)`, which design D5 didn't name. Resolved: necessary for D5's `exitCode = 1`, since an explicit `exit(0)` would override it. The behaviour is otherwise identical.
+- [x] [minor] One existing test (`authConsumeInvitesForEmail composes inside an outer catalog.tx()`) opened a transaction on the raw root and used root-bound stores inside it, which the 3c guard rejects. Resolved: it now uses `cat.tx(async (c) => …)`, the production shape. What it checks (consumption composes inside the outer transaction) is unchanged.
+- [x] [minor] `migrations.int.test.ts` turned `expect(() => p).not.toThrow()` into `await expect(p).resolves.not.toThrow()`. Resolved: the old form passes vacuously on a promise, which is exactly what the new D6 rule exists to prevent.
+- [x] [minor] Every requirement maps to a task and a test. Resolved:
+  - the async persistence requirement: the store conversion, plus composition, create-if-missing and last-admin tests;
+  - the facade `init`/`tx` requirement: `Catalog.tx` and `catalog.test.ts` unchanged;
+  - `KvStore.take`: tasks 1.2 and 1.3;
+  - hygiene over the catalog package and tests: task 1.1;
+  - the broken connection stops the server: task 1.5 and `main.ts` wiring (live restart not exercised, by design).
+  - Non-goals hold: no SQL or schema change, no hub change, no `close()`.
