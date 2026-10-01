@@ -16,40 +16,57 @@ describe('KvStore', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('round-trips a value without TTL', () => {
+  it('every operation returns a promise (async-session-callers D2)', async () => {
     const s = store();
-    s.put('a', 'hello');
-    expect(s.get('a')).toBe('hello');
-    s.delete('a');
-    expect(s.get('a')).toBeNull();
+    const ops = [s.put('a', 'b'), s.get('a'), s.delete('a'), s.purgeExpired()];
+    for (const op of ops) expect(op).toBeInstanceOf(Promise);
+    await Promise.all(ops);
   });
 
-  it('expires lazily on get after expirationTtl seconds', () => {
+  it('an expired get returns null and has removed the row once it resolves', async () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
+    const s = new KvStore(db, { now: () => Date.now() });
+    await s.put('k', 'v', { expirationTtl: 1 });
+    vi.advanceTimersByTime(2_000);
+    expect(await s.get('k')).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM kv').get()).toEqual({ n: 0 });
+  });
+
+  it('round-trips a value without TTL', async () => {
     const s = store();
-    s.put('sess', 'tok', { expirationTtl: 60 });
-    expect(s.get('sess')).toBe('tok');
+    await s.put('a', 'hello');
+    expect(await s.get('a')).toBe('hello');
+    await s.delete('a');
+    expect(await s.get('a')).toBeNull();
+  });
+
+  it('expires lazily on get after expirationTtl seconds', async () => {
+    const s = store();
+    await s.put('sess', 'tok', { expirationTtl: 60 });
+    expect(await s.get('sess')).toBe('tok');
     vi.advanceTimersByTime(61_000);
-    expect(s.get('sess')).toBeNull();
+    expect(await s.get('sess')).toBeNull();
   });
 
-  it('put overwrites value and TTL', () => {
+  it('put overwrites value and TTL', async () => {
     const s = store();
-    s.put('k', 'v1', { expirationTtl: 10 });
-    s.put('k', 'v2'); // no TTL now
+    await s.put('k', 'v1', { expirationTtl: 10 });
+    await s.put('k', 'v2'); // no TTL now
     vi.advanceTimersByTime(60_000);
-    expect(s.get('k')).toBe('v2');
+    expect(await s.get('k')).toBe('v2');
   });
 
-  it('purgeExpired deletes dead rows and keeps live ones', () => {
+  it('purgeExpired deletes dead rows and keeps live ones', async () => {
     const s = store();
-    s.put('dead', 'x', { expirationTtl: 1 });
-    s.put('live', 'y', { expirationTtl: 9999 });
-    s.put('forever', 'z');
+    await s.put('dead', 'x', { expirationTtl: 1 });
+    await s.put('live', 'y', { expirationTtl: 9999 });
+    await s.put('forever', 'z');
     vi.advanceTimersByTime(5_000);
-    s.purgeExpired();
-    expect(s.get('live')).toBe('y');
-    expect(s.get('forever')).toBe('z');
-    expect(s.get('dead')).toBeNull();
+    await s.purgeExpired();
+    expect(await s.get('live')).toBe('y');
+    expect(await s.get('forever')).toBe('z');
+    expect(await s.get('dead')).toBeNull();
   });
 });
 
@@ -68,25 +85,25 @@ describe('KV TTL with a fake clock (task 5.4)', () => {
     return { store: new KvStore(raw, clock), tick };
   }
 
-  it('an entry expires once the fake clock passes its TTL', () => {
+  it('an entry expires once the fake clock passes its TTL', async () => {
     const { store, tick } = kv();
-    store.put('csrf:x', '1', { expirationTtl: 600 }); // 10 minutes
-    expect(store.get('csrf:x')).toBe('1');
+    await store.put('csrf:x', '1', { expirationTtl: 600 }); // 10 minutes
+    expect(await store.get('csrf:x')).toBe('1');
     tick(599_000);
-    expect(store.get('csrf:x')).toBe('1');
+    expect(await store.get('csrf:x')).toBe('1');
     tick(2_000);
-    expect(store.get('csrf:x')).toBeNull();
+    expect(await store.get('csrf:x')).toBeNull();
   });
 
-  it('purgeExpired removes only entries past their TTL', () => {
+  it('purgeExpired removes only entries past their TTL', async () => {
     const { store, tick } = kv();
-    store.put('short', 'a', { expirationTtl: 10 });
-    store.put('long', 'b', { expirationTtl: 1000 });
-    store.put('forever', 'c');
+    await store.put('short', 'a', { expirationTtl: 10 });
+    await store.put('long', 'b', { expirationTtl: 1000 });
+    await store.put('forever', 'c');
     tick(11_000);
-    store.purgeExpired();
-    expect(store.get('short')).toBeNull();
-    expect(store.get('long')).toBe('b');
-    expect(store.get('forever')).toBe('c');
+    await store.purgeExpired();
+    expect(await store.get('short')).toBeNull();
+    expect(await store.get('long')).toBe('b');
+    expect(await store.get('forever')).toBe('c');
   });
 });

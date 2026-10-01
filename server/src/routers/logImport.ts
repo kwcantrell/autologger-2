@@ -116,7 +116,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
   const catalog = c.get('catalog');
   const user = c.get('user');
-  const show = catalog.shows.getShowRow(showId);
+  const show = await catalog.shows.getShowRow(showId);
   if (!show) throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
   // Studio-membership scope (the requireSession pattern in _helpers.ts): an
   // authenticated user who isn't a member of the show's studio gets the SAME
@@ -125,7 +125,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   // exactly as on every sibling route.
   if (user !== null) {
     const studioId = String(show.studio_id ?? '');
-    if (!studioId || !catalog.auth.authUserHasStudio(user.id, studioId)) {
+    if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
       throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
     }
   }
@@ -164,7 +164,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
       const sheets = await fetchPublicWorkbookSheets(spreadsheetUrl);
       appendLogImportLine(job.id, `Loaded ${sheets.length} sheet(s).`);
 
-      const sessions = catalog.sessions.listSessionsForShow(showId);
+      const sessions = await catalog.sessions.listSessionsForShow(showId);
       let sessionsOk = 0;
       let sessionsFailed = 0;
 
@@ -183,7 +183,9 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         appendLogImportLine(job.id, `Importing “${title}” → session ${sessionId.slice(0, 8)}…`);
         try {
           const getHub = () => env.ports.sessions.get(sessionId);
-          const row = catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: true });
+          const row = await catalog.sessions.getSessionJoinedRow(sessionId, {
+            includeHidden: true,
+          });
           if (!row) throw new Error('Session not found.');
           const ctx = timecodeCtx(row);
           const transcript = await ensureTimedTranscript({
@@ -194,15 +196,13 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             ctx,
             onProgress: (line) => appendLogImportLine(job.id, `  ${title}: ${line}`),
           });
-          const result = runSessionLogImport({
+          const result = await runSessionLogImport({
             hub: getHub(),
             rows: sheet.rows,
             categories,
             ctx,
             transcript,
-            projectLive: (projection) => {
-              catalog.sessions.projectSessionLive(sessionId, projection);
-            },
+            projectLive: (projection) => catalog.sessions.projectSessionLive(sessionId, projection),
           });
           for (const line of result.lines) {
             appendLogImportLine(job.id, `  ${title}: ${line}`);

@@ -10,7 +10,7 @@ export function mountSessionWs(app: Hono<AppEnv>, upgradeWebSocket: UpgradeWebSo
   app.get(
     '/api/sessions/:sessionId/ws',
     async (c, next) => {
-      requireSession(c, c.req.param('sessionId'), { includeHidden: true });
+      await requireSession(c, c.req.param('sessionId'), { includeHidden: true });
       await next();
     },
     upgradeWebSocket((c) => {

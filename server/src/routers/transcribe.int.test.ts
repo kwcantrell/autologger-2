@@ -954,6 +954,36 @@ describe('transcript generation', () => {
     expect(body.detail).not.toContain('Foreign Holder Title');
   });
 
+  it('409 concurrent: redaction checks the holder the detail names, even if the lock changes hands (async-session-callers D5)', async () => {
+    const holderStudio = seedStudio();
+    const holderShow = seedShow({ studioId: holderStudio });
+    const holderSession = seedSession({ showId: holderShow, title: 'Foreign Swapped Title' });
+    expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
+    const myStudio = seedStudio();
+    const mySession = seedSession({ showId: seedShow({ studioId: myStudio }) });
+    const cookie = await loginCookie(seedUser({ studios: [myStudio] }));
+    // The detail is built from the real (foreign) holder; any later lock read sees the
+    // requester's own session, as if the lock changed hands meanwhile.
+    const real = transcriptGenerationLock.getLock.bind(transcriptGenerationLock);
+    const spy = vi
+      .spyOn(transcriptGenerationLock, 'getLock')
+      .mockImplementationOnce(real)
+      .mockImplementation(() => ({ sessionId: mySession, startedAtMs: 1_700_000_000_000 }));
+    try {
+      const res = await generate(
+        mySession,
+        { headers: { Cookie: cookie } },
+        deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+      );
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { detail: string };
+      expect(body.detail).not.toContain('Foreign Swapped Title');
+      expect(body.detail).not.toContain(holderSession);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('409 concurrent: a logged-in member of the holding session’s studio keeps the enriched detail', async () => {
     const holderStudio = seedStudio();
     const holderShow = seedShow({ studioId: holderStudio });

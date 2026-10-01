@@ -41,6 +41,8 @@ export class TranscriptGenerateError extends Error {
       | 'upstream'
       | 'oversize',
     message: string,
+    /** in_flight only: the lock holder whose identifiers `message` names. */
+    readonly holderSessionId?: string,
   ) {
     super(message);
     this.name = 'TranscriptGenerateError';
@@ -69,7 +71,7 @@ export interface GenerateTranscriptDeps {
   /** Optional abort before the provider call starts. */
   signal?: AbortSignal | null;
   /** Optional catalog title lookup for enriched 409 detail (lock-status). */
-  resolveSessionTitle?: (sessionId: string) => string | null;
+  resolveSessionTitle?: (sessionId: string) => string | null | Promise<string | null>;
 }
 
 /** Run DeepGram transcription and atomically replace session words. */
@@ -86,10 +88,11 @@ export async function generateTranscriptWords(
         ? GENERATION_IN_FLIGHT_DETAIL
         : generationInFlightDetail(
             holder.sessionId,
-            deps.resolveSessionTitle?.(holder.sessionId) ?? null,
+            (await deps.resolveSessionTitle?.(holder.sessionId)) ?? null,
             holder.startedAtMs,
           );
-    throw new TranscriptGenerateError('in_flight', detail);
+    // The holder this detail names, so the route redacts by it (async-session-callers D5).
+    throw new TranscriptGenerateError('in_flight', detail, holder?.sessionId);
   }
 
   const blobStore = deps.audio;

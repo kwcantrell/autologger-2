@@ -38,8 +38,9 @@ function seamPartsForSession(hub: SessionHubFacade): { duration_s: number }[] {
   throw new Error('Session is missing stitch seam metadata; re-import audio with seam parts.');
 }
 
-/** Import parsed log rows into a session event feed (sync + create-at-frames). */
-export function runSessionLogImport(input: {
+/** Import parsed log rows into a session event feed (sync + create-at-frames). Async so the
+ * catalog mirror (`projectLive`) can be awaited (async-session-callers D5). */
+export async function runSessionLogImport(input: {
   hub: SessionHubFacade;
   rows: ParsedLogRow[];
   categories: CategoryRecord[];
@@ -53,8 +54,8 @@ export function runSessionLogImport(input: {
     current_take: number;
     transport_elapsed_frames: number;
     roll_started_at_utc: string | null;
-  }) => void;
-}): SessionLogImportResult {
+  }) => void | Promise<void>;
+}): Promise<SessionLogImportResult> {
   const lines: string[] = [];
   if (input.transcript.length === 0) {
     throw new Error('Transcript is missing or untimed after ensure step.');
@@ -104,7 +105,7 @@ export function runSessionLogImport(input: {
     lastProjection = projection;
   }
 
-  if (lastProjection) input.projectLive(lastProjection);
+  if (lastProjection) await input.projectLive(lastProjection);
   lines.push(`Created ${created}, skipped ${skipped} duplicate(s).`);
   return { created, skipped, lines };
 }

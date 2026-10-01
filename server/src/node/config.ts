@@ -42,7 +42,6 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   applyMigrations(catalog, CATALOG_MIGRATIONS_DIR);
   const clock = systemClock;
   const kv = new KvStore(catalog, clock);
-  kv.purgeExpired(); // startup hygiene — no sweep timer (spec)
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request

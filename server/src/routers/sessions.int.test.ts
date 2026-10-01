@@ -378,6 +378,18 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
 });
 
 describe('tenancy', () => {
+  it('the session WebSocket gate 404s a logged-in non-member before upgrading (async-session-callers 3.1)', async () => {
+    const studioA = seedStudio();
+    const session = seedSession({ showId: seedShow({ studioId: seedStudio() }) });
+    const outsider = await loginCookie(seedUser({ studios: [studioA] }));
+    const res = await app.request(
+      `/api/sessions/${session}/ws`,
+      { headers: { Cookie: outsider } },
+      envWith({ REQUIRE_LOGIN: '1' }),
+    );
+    expect(res.status).toBe(404);
+  });
+
   it('404 on PUT for a logged-in non-member', async () => {
     const studioA = seedStudio();
     const studioB = seedStudio();
