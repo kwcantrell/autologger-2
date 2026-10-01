@@ -129,7 +129,8 @@ counts only, never a value.
   - Check: green, apart from `size` under `size-override`.
 - [x] 5.2 Do the consistency read, appended to `panel.md`.
   Evidence: `git diff f226ca6 -- openspec/changes/supabase-services/` -> `tasks.md | 36 +++…` only (ticks and evidence), so no scope change; `panel.md` `## Consistency read 2026-09-30`, 5 minor items, all resolved.
-- [ ] 5.3 Archive with `/opsx:archive supabase-services`.
+- [x] 5.3 Archive with `/opsx:archive supabase-services`.
+  Evidence: sync: container-deployment 1 MODIFIED; local-container-environments 7 MODIFIED + 1 ADDED, each delta block present verbatim in `openspec/specs/` (asserted by the merge script); `openspec validate --specs --strict` -> `Totals: 26 passed, 0 failed`; moved to `openspec/changes/archive/2026-09-30-supabase-services/`.
   - Check: `openspec validate --all --strict`.
 
 ## Owner-owed (not tracked as tasks; at cutover)

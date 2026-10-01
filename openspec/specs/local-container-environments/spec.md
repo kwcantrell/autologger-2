@@ -57,7 +57,8 @@ The Makefile SHALL also provide:
 - `help`, as the default goal;
 - `check`, which runs the static invariant check;
 - `dev-up` and `stage-up`, which run their environment's check first and refuse to start if
-  it fails, and which run the migrations runner once `db` is healthy;
+  it fails, run the migrations runner once `db` is healthy, and print the app and Supabase
+  URLs;
 - `dev-migrate`, which runs only the migrations runner against dev;
 - `dev-psql`, which opens `psql` inside the dev `db` container without keeping a history file.
 
@@ -71,8 +72,11 @@ A target that removes volumes (`dev-reset`, `stage-reset`) SHALL:
    `autologger-stage` before running `down -v`.
 
 Because `down -v` removes every volume of the project, a reset SHALL also delete that
-environment's Postgres data and its Postgres configuration volume together. The help text and
-the documentation SHALL say so.
+environment's Postgres data, its Postgres configuration volume and its Supabase storage volume
+together. The help text and the documentation SHALL say so. Supabase's init SQL runs only on an
+empty Postgres data volume. When it changes, the documentation SHALL give the one-time step that
+removes only that environment's two Postgres volumes (never the app's data or home volumes)
+before the next `up`.
 
 No target SHALL remove a prod volume or run `docker volume prune` or
 `docker system prune`.
@@ -200,7 +204,9 @@ not one of those origins.
 
 Published ports:
 - Every port the dev project publishes SHALL be bound to the literal `127.0.0.1`.
-- Every port the dev project publishes SHALL be a gate port.
+- Every port the dev project publishes SHALL be a gate port: the app gate, the Companion gate,
+  or the Supabase gateway, which applies its own Host and Origin checks (see "Supabase gateway
+  routes and key checks").
 - No dev or stage published port SHALL be `8080`.
 
 Because the bind is loopback, both the open-network refusal and the AI v2 credentials rule
@@ -236,8 +242,11 @@ Bind mounts:
 - Source bind mounts SHALL be read-only.
 - Each source mount SHALL resolve under a repository source subtree. The exceptions are
   the gate configuration file `docker/dev-gate.Caddyfile`, the migrations runner script
-  `docker/supabase/migrate.sh`, and the migrations directory `supabase/migrations`. Each of
-  these SHALL also be read-only, and the last two SHALL be mounted only into `migrate`.
+  `docker/supabase/migrate.sh`, the migrations directory `supabase/migrations`, the Supabase
+  gateway configuration `docker/supabase-gw.Caddyfile`, and the Supabase init SQL files under
+  `docker/supabase/init/`. Each of these SHALL also be read-only. The runner script and the
+  migrations directory SHALL be mounted only into `migrate`, the gateway configuration only into
+  `supabase-gw`, and the init SQL only into `db`.
 - The mounted source subtrees SHALL include `packages/catalog/migrations`.
 - The only read-write bind mount SHALL be the host `~/.claude/.credentials.json` file,
   mounted at the runtime user's `~/.claude/.credentials.json`. This gives the dev CLI and
@@ -382,7 +391,11 @@ The stage project SHALL be startable while the prod project runs on the same hos
 subnets, `container_name`, volumes, and published ports SHALL differ from prod's. Dev uses
 a single app subnet, and ports distinct from both. Each project's `db` network SHALL have its own
 pinned subnet: `172.28.12.0/24` for prod, `172.28.22.0/24` for stage, and `172.28.31.0/24` for
-dev. Its Postgres volumes SHALL be scoped to that project.
+dev. Each project's `supabase` network (pinned `172.28.13.0/24` prod, `172.28.23.0/24` stage,
+`172.28.32.0/24` dev) and `edge` network (pinned `172.28.14.0/24` prod, `172.28.24.0/24` stage,
+`172.28.33.0/24` dev) SHALL be its own. Its Postgres and Supabase storage volumes SHALL be
+scoped to that project. Each environment's `SUPABASE_PORT` SHALL differ from every other
+published port of every environment on the host.
 
 The router's trusted-proxy gateways SHALL be read from `ROUTER_FRONT_GW` and
 `ROUTER_BACK_GW`. They default to `172.28.10.1` and `172.28.11.1`, so production's adapted
@@ -398,6 +411,8 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 - **WHEN** the dev and stage stacks are both up
 - **THEN** each has its own `db` container, data volume, and `db` network, and neither `db`
   can reach the other
+- **AND** each has its own Supabase gateway on its own `SUPABASE_PORT`, and a request to one
+  gateway never reaches the other environment's services
 
 #### Scenario: Production router defaults unchanged
 - **WHEN** the Caddyfile is adapted with neither gateway variable set
@@ -478,14 +493,30 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
 15. The key names listed in the shared allowlist file differ from the null-passthrough names
     of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
 16. In any of the dev, stage, or prod projects:
-    - `db` or `migrate` publishes a port, or joins a network other than `db`;
-    - a service other than `db` and `migrate` joins the `db` network;
-    - the `db` network is not internal, does not isolate the host from it (no host address on
-      the bridge), or is not on that environment's pinned subnet;
-    - the `db` or `migrate` image is not pinned by `@sha256:` digest;
-    - the placeholder value given for `POSTGRES_PASSWORD` appears anywhere in a service other
-      than `db` or `migrate` (environment, command, labels, healthcheck, build arguments, or any
-      other field).
+    - a service other than `db`, `migrate`, `auth`, `rest`, `realtime` and `storage` joins the `db` network, or
+      `db` or `migrate` joins any other network;
+    - a service other than `supabase-gw`, `auth`, `rest`, `realtime` and `storage` joins the `supabase`
+      network, or a service other than `supabase-gw` joins the `edge` network, or `supabase-gw`
+      joins `db`;
+    - a Supabase service other than `supabase-gw` publishes a port, or `supabase-gw` publishes
+      anything other than one `127.0.0.1` port mapped to its listener;
+    - the `db` or `supabase` network is not internal, does not isolate the host from it (no host
+      address on the bridge), or is not on that environment's pinned subnet; or the `edge` network
+      is not on its pinned subnet;
+    - the image of `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` or `supabase-gw` is not
+      pinned by `@sha256:` digest;
+    - the placeholder value given for any Supabase secret appears anywhere (environment, command,
+      labels, healthcheck, build arguments, or any other field) in a service outside that
+      secret's allowed set:
+
+      | Secret | Allowed services |
+      | --- | --- |
+      | `POSTGRES_PASSWORD` | `db`, `migrate`, `realtime` |
+      | `SUPABASE_ROLES_PASSWORD` | `db`, `auth`, `rest`, `storage` |
+      | `JWT_SECRET` | `auth`, `rest`, `realtime`, `storage` |
+      | `ANON_KEY` | `supabase-gw`, `realtime`, `storage` |
+      | `SERVICE_ROLE_KEY` | `supabase-gw`, `storage` |
+      | `SECRET_KEY_BASE`, `REALTIME_DB_ENC_KEY` | `realtime` |
 
 It SHALL need only `docker`, `jq`, and a POSIX shell.
 
@@ -519,6 +550,18 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 - **WHEN** the dev `companion` service is joined to the `db` network
 - **THEN** `make check` exits non-zero and names invariant 16
 
+#### Scenario: The superuser password in a service-role service is caught
+- **WHEN** `POSTGRES_PASSWORD` is referenced in the `rest` service's environment
+- **THEN** `make check` exits non-zero and names invariant 16
+
+#### Scenario: The gateway on the db network is caught
+- **WHEN** `supabase-gw` is joined to the `db` network
+- **THEN** `make check` exits non-zero and names invariant 16
+
+#### Scenario: A host-reachable supabase network is caught
+- **WHEN** the `supabase` network's `internal: true` is removed
+- **THEN** `make check` exits non-zero and names invariant 16
+
 #### Scenario: Clean tree passes
 - **WHEN** `make check` runs on the committed files
 - **THEN** it exits zero
@@ -548,16 +591,27 @@ ignored by git, and the tracked templates SHALL NOT be.
 - one of that environment's fixed compose-interpolation keys: `DEV_PORT` and
   `DEV_COMPANION_PORT` for dev, `STAGE_PORT` for stage, and `ROUTER_PORT`, `WEB_TAG`, `API_TAG`,
   and `PUBLIC_BASE_URL` for prod; or
-- `POSTGRES_PASSWORD`, in every environment. It is an interpolation key that only `db` and
-  `migrate` receive, and it SHALL NOT be listed in the shared allowlist file. Its value SHALL be
-  at least 32 lowercase hexadecimal characters. A compose target SHALL refuse the environment,
-  naming the key and printing no value, when it is not. At run time, the wrapper SHALL refuse to
-  start compose if the value appears anywhere in the resolved configuration of a service other
-  than `db` or `migrate`.
+- one of the Supabase keys, in every environment. These are interpolation keys that only the
+  services allowed for them in invariant 16 receive, and they SHALL NOT be listed in the shared
+  allowlist file. Each value SHALL match its format, and a compose target SHALL refuse the
+  environment, naming the key and printing no value, when one does not:
+
+  | Key | Format |
+  | --- | --- |
+  | `POSTGRES_PASSWORD`, `SUPABASE_ROLES_PASSWORD` | at least 32 lowercase hexadecimal characters |
+  | `JWT_SECRET` | at least 40 characters of `[A-Za-z0-9_-]` |
+  | `SECRET_KEY_BASE` | at least 64 characters of `[A-Za-z0-9_-]` |
+  | `REALTIME_DB_ENC_KEY` | exactly 16 characters of `[A-Za-z0-9_-]` |
+  | `ANON_KEY`, `SERVICE_ROLE_KEY` | HS256 JWTs that verify against `JWT_SECRET`, with `role` `anon` and `service_role` respectively, distinct, and not expired |
+  | `SUPABASE_PORT` | a port number 1024-65535 |
+
+  The wrapper SHALL warn, naming the key, when `ANON_KEY` or `SERVICE_ROLE_KEY` expires within
+  90 days. At run time, it SHALL refuse to start compose if any Supabase secret's value appears in
+  the resolved configuration of a service outside that secret's allowed set.
 
 **Ordering with frozen checkouts.** A checkout whose allowed names lack `POSTGRES_PASSWORD`
-refuses an environment that holds it. The key SHALL therefore be added to the Infisical `prod`
-environment only as part of the cutover, after `main` allows it. The documentation SHALL say so.
+refuses an environment that holds it. The Supabase keys SHALL therefore be added to the Infisical
+`prod` environment only as part of the cutover, after `main` allows them. The documentation SHALL say so.
 
 **Documentation.** The documentation SHALL:
 - list those keys;
@@ -587,6 +641,11 @@ and the fetch SHALL be refused as a whole if any secret fails validation.
   not at least 32 lowercase hexadecimal characters, and `make dev-up` runs
 - **THEN** it exits non-zero naming `POSTGRES_PASSWORD`, prints no value, and runs no docker
   command
+
+#### Scenario: Swapped Supabase API keys are refused
+- **WHEN** the Infisical `dev` environment's `ANON_KEY` and `SERVICE_ROLE_KEY` are swapped, or
+  either is signed with a different secret, and `make dev-up` runs
+- **THEN** it exits non-zero naming the key, prints no value, and runs no docker command
 
 #### Scenario: Credentials and old env files are ignored, templates are not
 - **WHEN** `git check-ignore .env .env.dev .env.stage .env.infisical.dev .env.infisical.prod` is run
@@ -670,16 +729,22 @@ When it runs, it SHALL:
 
 ### Requirement: Supabase secret generator
 `docker/scripts/supabase-keys.mjs ENV --writer FILE` SHALL create each missing Supabase secret
-for environment `ENV` in that environment's Infisical project. In this change the only secret is
-`POSTGRES_PASSWORD`. It SHALL:
+for environment `ENV` in that environment's Infisical project: `POSTGRES_PASSWORD`,
+`SUPABASE_ROLES_PASSWORD`, `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE` and
+`REALTIME_DB_ENC_KEY`. `SUPABASE_PORT` is set by the operator. It SHALL:
 - read the project id, Infisical URL and CA path from `.env.infisical.<ENV>`, with the same
   checks as the compose wrapper (the URL SHALL be `https://`);
 - read the client id and client secret from `FILE`. `FILE` SHALL pass the same ownership and
   permission checks as a credentials file;
 - list existing keys with the same path, recursion and import settings the compose wrapper
   fetches with, and without reading values;
-- generate each value from a cryptographically secure random source. For `POSTGRES_PASSWORD`
-  that is 32 lowercase hexadecimal characters;
+- generate each value from a cryptographically secure random source, in its format from
+  "Allowed names". `ANON_KEY` and `SERVICE_ROLE_KEY` SHALL be HS256 JWTs signed with the
+  `JWT_SECRET` created in the same run, with `role` `anon` and `service_role`, `iss`
+  `supabase`, and an expiry five years after issue;
+- create `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY` together. If some but not all of the
+  three exist, it SHALL refuse, naming them, without reading any value and without writing;
+- send every missing key in one create request, so a run creates all of them or none;
 - only ever create. It SHALL never update, overwrite or delete a key. A key that already exists
   SHALL be reported as kept. A create that Infisical rejects SHALL exit non-zero without retrying
   or updating;
@@ -695,7 +760,90 @@ for environment `ENV` in that environment's Infisical project. In this change th
 - **THEN** it creates the key with a newly generated value, and neither its output nor its
   error output contains that value
 
+#### Scenario: The anon and service-role keys verify against the JWT secret
+- **WHEN** the generator creates `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY`
+- **THEN** both keys verify as HS256 against that `JWT_SECRET`, with roles `anon` and
+  `service_role`
+
+#### Scenario: A partial JWT trio is refused
+- **WHEN** the environment holds `JWT_SECRET` but not `ANON_KEY`
+- **THEN** the generator exits non-zero naming the missing keys, and writes nothing
+
 #### Scenario: A rejected create is not retried as an update
 - **WHEN** Infisical answers the create with an error, for example because a concurrent run
   created the key first
 - **THEN** the generator exits non-zero, prints no value, and sends no update request
+
+### Requirement: Supabase gateway routes and key checks
+Each project SHALL have a `supabase-gw` service, the only way to reach the Supabase services from
+the host. It SHALL publish exactly one port, `127.0.0.1:${SUPABASE_PORT}`, through an `edge`
+network that only it joins, and reach `auth`, `rest`, `realtime` and `storage` over the internal `supabase`
+network. It SHALL, before any routing:
+- reject a request whose `Host` header is not `localhost:<SUPABASE_PORT>` or
+  `127.0.0.1:<SUPABASE_PORT>`, or that has no `Host`;
+- reject a request, including a WebSocket upgrade, whose `Origin` is present and is not
+  `http://localhost:<SUPABASE_PORT>` or `http://127.0.0.1:<SUPABASE_PORT>`.
+
+It SHALL route by path, with the prefix removed, and apply the `apikey` rule shown. Path
+matching SHALL be case-insensitive and SHALL normalise repeated slashes and percent-encoding, and
+the key rule SHALL apply to exactly the requests the route serves:
+
+| Path | Upstream | `apikey` |
+| --- | --- | --- |
+| `/auth/v1/verify`, `/auth/v1/callback`, `/auth/v1/authorize` | auth | not required |
+| other `/auth/v1/` paths | auth | anon or service-role |
+| `/rest/v1/` (exact) | rest `/` | service-role |
+| other `/rest/v1/` paths | rest | anon or service-role |
+| `/realtime/v1/api/tenants`, `/realtime/v1/api/openapi` | refused, `403` | |
+| `/realtime/v1/api/` | realtime `/api/` | anon or service-role |
+| other `/realtime/v1/` paths, including the websocket | realtime `/socket/` | anon or service-role, from the header or the `apikey` query parameter |
+| `/storage/v1/` | storage | not required (storage checks the token itself) |
+| anything else | refused, `404` | |
+
+It SHALL also:
+- answer `401` when a required `apikey` is missing, empty, or neither key, and `403` when a
+  service-role route gets the anon key;
+- when the client sent no `Authorization`, or an empty one, send `Authorization: Bearer <apikey>`
+  upstream, and never replace a non-empty `Authorization` the client sent;
+- reach realtime, for both the API and the websocket, with the `Host` realtime uses to find its
+  tenant;
+- drop any client `X-Forwarded-Path` toward storage;
+- never write either API key, or any other secret, to its logs.
+
+The four services SHALL start with GoTrue sign-up disabled and no sign-in provider enabled.
+
+#### Scenario: A request without a key is refused
+- **WHEN** `GET /rest/v1/` arrives with no `apikey`
+- **THEN** the gateway answers `401` and rest never sees the request
+
+#### Scenario: The anon key cannot reach the REST root by a path trick
+- **WHEN** the anon key is sent to `/rest/v1/`, `/REST/v1/`, `/rest/v1//` and `/rest/v1/%2F`
+- **THEN** each is answered `403` or `401`, and none reaches rest
+
+#### Scenario: A user token is not replaced
+- **WHEN** a request carries the anon key in `apikey` and a user JWT in `Authorization`
+- **THEN** the upstream service receives the user JWT
+
+#### Scenario: Realtime tenant APIs are blocked
+- **WHEN** `/realtime/v1/api/tenants` is requested with the service-role key, also as
+  `/realtime/v1/api//tenants` and `/realtime/v1/api/%2Ftenants`
+- **THEN** the gateway answers `403` or `401`, never forwarding it
+
+#### Scenario: A rebound Host or a foreign Origin is refused
+- **WHEN** a request reaches the Supabase port with `Host: evil.example:<SUPABASE_PORT>`, or with
+  a valid Host and `Origin: https://evil.example`
+- **THEN** the gateway refuses it
+
+#### Scenario: Realtime works through the gateway
+- **WHEN** a client opens `/realtime/v1/websocket?apikey=<anon key>&vsn=1.0.0` and joins a
+  channel, and sends a REST broadcast to `/realtime/v1/api/broadcast`
+- **THEN** the join succeeds and the broadcast is accepted
+
+#### Scenario: The host cannot bypass the gateway
+- **WHEN** the dev stack is up and a host process connects to the container address of
+  `auth`, `rest`, `realtime` or `storage`
+- **THEN** the connection fails
+
+#### Scenario: Keys stay out of the gateway log
+- **WHEN** an upstream is stopped and a request with the service-role key gets `502`
+- **THEN** the gateway's log contains neither API key
