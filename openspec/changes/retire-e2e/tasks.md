@@ -16,18 +16,21 @@ gates run with `GITHUB_BASE_REF=supabase-migration`.
 
 ## 2. Deletion and references
 
-- [ ] 2.1 Delete in the design D1 order, then make the D2 package changes
+- [x] 2.1 Delete in the design D1 order, then make the D2 package changes
   (`npm uninstall @playwright/test --package-lock-only`).
+  Evidence: `rm -rf e2e/.data e2e/.data-oauth test-results playwright-report` first, then `git rm -rq e2e playwright.config.ts scripts/teardown.mjs server/src/test/fixtures/ai-v2-fake-agent.mjs`; `.gitignore` e2e/Playwright lines removed (`.playwright-mcp/` kept); root scripts `teardown`/`e2e*` removed, `typecheck` drops `-p e2e`, lint globs drop `e2e playwright.config.ts`; `npm uninstall @playwright/test --package-lock-only` -> `package-lock.json | 59 ------` (2 remaining mentions are next's optional peer declaration). `git status --porcelain | grep -E 'e2e/|test-results|playwright-report' | grep -v '^D '` -> empty; `npm run typecheck` -> rc=0.
   - Check: `git status --porcelain | grep -E 'e2e/|test-results|playwright-report'` is empty;
     `npm run typecheck` passes; `git diff --stat package-lock.json` shows only removals.
-- [ ] 2.2 Remove the AI v2 seam (design D3) and fix the stale references (`fixturesDir.ts`,
+- [x] 2.2 Remove the AI v2 seam (design D3) and fix the stale references (`fixturesDir.ts`,
   `noAgentAuthoredMarkup.repo.test.ts`, `.pre-commit-config.yaml`).
+  Evidence: `aiV2.ts` seam removed (`pathToClaudeCodeExecutable` env read), fixture deleted; `fixturesDir.ts`, `noAgentAuthoredMarkup.repo.test.ts` (scan list and name), `.pre-commit-config.yaml` exclude, `biome.json` includes, `web/next.config.ts` and two test comments updated. `npm test` -> rc=0 (node 53/53; server 1384; web 794 passed / 3 skipped; every package suite passing); `npm run lint` -> `Found 2 warnings.`, both `compression.int.test.ts:58/62 noNonNullAssertion` (pre-existing, A7); `npm run typecheck` -> rc=0. `git grep -nE "playwright|AI_V2_SDK_EXECUTABLE_PATH|e2e/|ai-v2-fake-agent"` (outside docs/openspec/CHANGELOG) leaves: `.dockerignore` `**/playwright-report`, `.gitignore` `.playwright-mcp/`, `.gitleaksignore`, `test_router.sh` provenance comment, `noAgentAuthoredMarkup` excluded-dir names, and README lines (task 3.1) and `compose-env.sh` (task 2.3).
   - Check:
     - `npm test` passes;
     - `git grep -nE "playwright|AI_V2_SDK_EXECUTABLE_PATH|e2e/" -- ':!docs' ':!openspec' ':!CHANGELOG.md'`
       lists only the intended keeps (`.gitleaksignore`, `.dockerignore`, `.playwright-mcp`);
     - `npm run lint` shows only the two existing `compression.int.test.ts` warnings (A7).
-- [ ] 2.3 Static check (design D4).
+- [x] 2.3 Static check (design D4).
+  Evidence: red first: with `e2e/` deleted, `sh docker/scripts/check-envs.sh prod` -> `FAIL [invariant 0] could not resolve prod + e2e overlay … compose.e2e.yaml: no such file or directory`. After D4 (prod resolved once, invariant 14 without exemption, invariant 10 greps `compose.yaml` only, `E2E_*` unsets and `AL_E2E_OVERLAY` removed, case renamed `clean tree passes`): `check-envs: ok (all)`, `test_check_envs: 27 passed, 0 failed`; `grep -n 'E2E\|e2e'` over check-envs.sh, compose-env.sh and test_check_envs.sh -> no matches.
   - Check: `sh docker/scripts/test_check_envs.sh` passes; `make check` passes;
     `grep -c 'compose_prod_e2e\|AL_E2E_OVERLAY' docker/scripts/*.sh` gives 0.
 

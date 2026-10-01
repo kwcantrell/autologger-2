@@ -91,9 +91,9 @@ describe('ChunkRescueBanner', () => {
   // Visual-gate finding (chunked-live-recording U9): a HEALTHY chunk whose
   // first upload attempt is still in flight — never failed, no lastError —
   // must not render the failure banner. Regression coverage for the
-  // stalled-upload e2e:visual fixture (`stallAudioUploads` in
-  // e2e/visual.spec.ts holds the request open forever, so pump() never
-  // settles and the chunk stays 'queued' with lastError: null throughout).
+  // stalled-upload case the retired visual suite exercised (an upload held
+  // open forever, so pump() never settles and the chunk stays 'queued'
+  // with lastError: null throughout).
   it('renders nothing while a healthy chunk is mid first attempt (never failed)', async () => {
     const queue = seedQueue();
     // Never resolves/rejects — models the stalled-upload fixture

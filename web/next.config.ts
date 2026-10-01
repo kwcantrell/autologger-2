@@ -57,8 +57,8 @@ import type { NextConfig } from 'next';
 // - output: 'standalone' + outputFileTracingRoot (containerize-split-images D9, task 3.2):
 //   `next build` additionally emits `.next/standalone` — a self-contained server.js plus a
 //   traced, minimal node_modules — that the split `web` image runs. It only ADDS output:
-//   the single-process bridge still reads `.next` in place and serves identically (pinned by
-//   e2e/serving-contract.spec.ts). `outputFileTracingRoot` is the repo root because npm
+//   the single-process bridge still reads `.next` in place and serves identically (the browser
+//   suite that pinned this was retired in ADR 0021 slice 1.4a). `outputFileTracingRoot` is the repo root because npm
 //   workspaces hoist `node_modules` above `web/` (the `packages/*` sources are bundled by Next,
 //   not traced); without it
 //   the tracer stops at `web/` and the standalone tree misses hoisted dependencies. It also

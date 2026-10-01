@@ -26,7 +26,7 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
-  WEB_TAG API_TAG PUBLIC_BASE_URL E2E_ENV_FILE E2E_IP_ALLOWLIST HOST REQUIRE_LOGIN TRUST_PROXY \
+  WEB_TAG API_TAG PUBLIC_BASE_URL HOST REQUIRE_LOGIN TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
@@ -86,12 +86,6 @@ jq_ok() {
   return 0
 }
 
-# Prod with the test-only e2e overlay layered on (still project "autologger").
-compose_prod_e2e() {
-  _e=$1; shift
-  compose_prod "$_e" -f "$AL_E2E_OVERLAY" "$@"
-}
-
 # resolve OUT LABEL FN ENVFILE [config flags...]: resolve one project to JSON, no env resolution.
 resolve() {
   _out=$1; _label=$2; _fn=$3; _envf=$4
@@ -120,7 +114,6 @@ PORT=1
 EOF
 printf 'STAGE_PORT=18788\n' >"$TMP/stage-custom.env"
 printf 'WEB_TAG=abcdef123456\nAPI_TAG=abcdef123456\nPUBLIC_BASE_URL=https://example.invalid\n' >"$TMP/prod.env"
-E2E_ENV_FILE="$TMP/e2e-throwaway.env"; export E2E_ENV_FILE
 
 # ---------------------------------------------------------------- shared assertions -----------
 # Invariant 1 (any project): every published port is on the literal 127.0.0.1.
@@ -155,7 +148,7 @@ check_name() { # json label expected
   jq_ok 9 "$2: resolves without -p to a project name other than \"$3\"" "$1" '.name==$n' --arg n "$3"
 }
 
-# Invariant 14 (dev, stage, prod; the prod + e2e overlay is exempt): no service has an env_file.
+# Invariant 14 (dev, stage, prod): no service has an env_file.
 # Secrets reach compose from Infisical and containers through the shared allowlist.
 check_no_env_file() { # json label
   jq_ok 14 "$2: a service has an env_file (secrets come from Infisical through $ALLOWLIST)" "$1" \
@@ -426,23 +419,19 @@ check_stage() {
 check_prod() {
   echo "== prod (autologger)"
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
-  resolve "$TMP/prod-e2e.json" "prod + e2e overlay" compose_prod_e2e "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
   check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 # 16
-  for pair in "$TMP/prod.json:prod" "$TMP/prod-e2e.json:prod+e2e"; do
-    f=${pair%%:*}; l=${pair#*:}
-    check_name "$f" "$l" autologger                                    # 9
-    check_loopback_ports "$f" "$l"                                     # 1
-    check_posture_prodlike "$f" "$l"                                   # 7
-    check_gw_values "$f" "$l"                                          # 10
-    # The e2e overlay keeps a throwaway env_file (out of scope, ADR 0021), so only plain prod.
-    if [ "$l" = prod ]; then check_no_env_file "$f" "$l"; fi           # 14
-    jq_ok 10 "$l: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
-      '.services.router.environment==null'
-  done
-  if grep -Eq 'ROUTER_(FRONT|BACK)_GW' compose.yaml "$AL_E2E_OVERLAY"; then
-    fail 10 "prod: compose.yaml (or the e2e overlay) names ROUTER_FRONT_GW/ROUTER_BACK_GW"
+  f=$TMP/prod.json
+  check_name "$f" prod autologger                                      # 9
+  check_loopback_ports "$f" prod                                       # 1
+  check_posture_prodlike "$f" prod                                     # 7
+  check_gw_values "$f" prod                                            # 10
+  check_no_env_file "$f" prod                                          # 14
+  jq_ok 10 "prod: compose.yaml must never set ROUTER_FRONT_GW/ROUTER_BACK_GW: the resolved router environment is not empty" "$f" \
+    '.services.router.environment==null'
+  if grep -Eq 'ROUTER_(FRONT|BACK)_GW' compose.yaml; then
+    fail 10 "prod: compose.yaml names ROUTER_FRONT_GW/ROUTER_BACK_GW"
   fi
 
   # 13: the Caddyfile adapted with NO gateway variables equals the committed baseline. Exact

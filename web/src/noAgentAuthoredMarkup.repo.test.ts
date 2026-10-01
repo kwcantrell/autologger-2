@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // spec "No agent-authored markup is ever rendered") ---
 //
 // Standing regression guard, NO exceptions: no file under server/, web/,
-// companion/, or e2e/ (per this task's explicit scope) may contain an actual
+// or companion/ (per this task's explicit scope; e2e/ was retired) may contain an actual
 // `dangerouslySetInnerHTML` USAGE — a JSX attribute or object-literal key,
 // i.e. `dangerouslySetInnerHTML` followed by `=`/`:` and an opening `{`.
 //
@@ -40,7 +40,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 // non-exception the rest of the codebase already applies to comments
 // documenting the absence of real usage.
 
-const SCAN_DIR_NAMES = ['server', 'web', 'companion', 'e2e'];
+const SCAN_DIR_NAMES = ['server', 'web', 'companion'];
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const EXCLUDED_DIR_NAMES = new Set([
   'node_modules',
@@ -178,7 +178,7 @@ describe('scanForDangerousInnerHtmlUsage — end-to-end mutation check on a real
 });
 
 describe('repo-wide guard — no exceptions (spec: "No agent-authored markup is ever rendered")', () => {
-  it('server/ + web/ + companion/ + e2e/ contain ZERO dangerouslySetInnerHTML usages', () => {
+  it('server/ + web/ + companion/ contain ZERO dangerouslySetInnerHTML usages', () => {
     const hits = scanForDangerousInnerHtmlUsage(REPO_ROOT, SCAN_DIR_NAMES);
     expect(hits).toEqual([]);
   });

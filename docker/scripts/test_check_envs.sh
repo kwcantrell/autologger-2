@@ -30,7 +30,7 @@ expect() {
 
 BASE=$SCRATCH/base
 snapshot "$BASE"
-expect "clean tree passes (prod + e2e overlay env_file exempt)" "$BASE" ok
+expect "clean tree passes" "$BASE" ok
 
 d=$SCRATCH/envfile; snapshot "$d"
 # Re-add an env_file to prod api (invariant 14).

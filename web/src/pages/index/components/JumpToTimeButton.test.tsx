@@ -33,8 +33,8 @@ import { JUMP_COLUMN, JumpToTimeButton } from './JumpToTimeButton';
 //      that exercised them are replaced below by (a) an assertion that this
 //      renders a native `<button type="button">`, whose Enter/Space activation
 //      is then a UA guarantee rather than something to re-prove in jsdom, and
-//      (b) a real keyboard-activation check in `e2e/jump-column.spec.ts`,
-//      where an actual user agent exists to translate the keypress.
+//      (b) a real keyboard-activation check in a browser suite (the
+//      Playwright one was retired in ADR 0021 slice 1.4a; returns with e2e).
 
 describe('FeedTable + ColumnDef.ariaLabel (first consumer)', () => {
   it('renders JUMP_COLUMN header with no visible text but an accessible name', () => {
