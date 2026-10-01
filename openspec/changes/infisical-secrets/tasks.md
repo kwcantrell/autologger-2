@@ -29,7 +29,7 @@ written to print names or exit codes only. The agent records that output and nev
   design D6:
   - the built-in `viewer` role on its own project only;
   - access-token TTL 15 minutes, maximum TTL 1 hour;
-  - Trusted IPs on the client secret and on the token.
+  - (Trusted IPs: refused by the free plan; see D6.)
   Evidence: run by the agent with the owner's bootstrap identity (`setup-identities.mjs`, names/ids/statuses only): projects `autologger-dev` (1d1bd6e7), `autologger-stage` (f7add990), `autologger-prod` (90d01bab), each with one environment and one `viewer` identity, universal auth `accessTokenTTL 900` / `accessTokenMaxTTL 3600` -> all `POST 200`; Trusted IPs -> `400 ... plan restriction` (recorded in D6). Client secrets written straight to `.env.infisical.dev`/`.stage` (mode 600); none for prod. Isolation: dev credentials with the prod project ID, `make prod-check` -> `compose-run: Infisical answered HTTP 403: You are not a member of this project with ID 90d01bab-...` (copy deleted).
 
   Check that the dev identity can't read prod. Once task 3.2 exists:
@@ -45,6 +45,18 @@ written to print names or exit codes only. The agent records that output and nev
   for each name that isn't allowed: add it (a scope edit handled by the consistency read) or drop
   it. Check: the name lists and the decisions are pasted.
   Evidence: `copy-secrets.mjs` (names only) -> dev: copy `AI_V2_ENABLED DEEPGRAM_API_KEY`, empty skipped `AI_V2_API_KEY DEV_COMPANION_PORT DEV_PORT GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SHEETS_LOG_IMPORT_ENABLED`, NOT allowed `(0)`; stage: copy `ADMIN_TOKEN API_TOKEN DEEPGRAM_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET STAGE_PORT`, empty `AI_V2_API_KEY`, NOT allowed `(0)`. No allowlist decision needed. `--apply` -> dev `created 2: HTTP 200`, stage `created 6: HTTP 200`.
+- [ ] 1.4 **(owner, verified by the agent)** Remove the bootstrap identity from
+  `autologger-dev`, `autologger-stage` and `autologger-prod` (first add yourself as admin of each),
+  revoke it, then delete `~/.infisical-bootstrap`. The agent deletes its scratch setup scripts.
+  Check: a login with the old bootstrap credentials fails (401 or 403), and the agent's own
+  dev/stage wrapper runs still pass. Must be done before the prod project is filled and before
+  6.1.
+- [x] 1.5 Rotate the dev and stage client secrets to a 1-year TTL, cap the maximum token TTL at
+  900 s, and check isolation between all environment pairs (re-panel of the setup delta). Check:
+  the wrapper works with the new secrets, the old secrets are revoked, and cross-project fetches
+  get 403.
+  Evidence: `rotate.mjs` -> `universal auth TTL 900 / max 900 -> PATCH 200` (dev, stage, prod); dev `new client secret -> POST 200 ... ttl=31536000`, `wrapper with the new secret -> rc 0`, `revoke old 78e71135 -> POST 200`; stage likewise (`ttl=31536000`, rc 0, `revoke old 0400c462 -> POST 200`); files stay `-rw-------`. Isolation: dev creds -> stage project, dev -> prod, stage -> prod each `compose-run: Infisical answered HTTP 403: You are not a member of this project ...`; temporary copies deleted.
+
 ## 2. Static invariants first (`check-envs.sh`)
 
 - [x] 2.1 Invariant 14: no `env_file` in the dev, stage or prod projects; prod plus the e2e
@@ -162,10 +174,11 @@ written to print names or exit codes only. The agent records that output and nev
 
   Check: `grep -c '^## ' docs/infisical-secrets.md` shows every section.
 - [x] 4.3 Update `docs/security.md` ASI03 with:
-  - Infisical, one read-only identity per environment, short TTL and Trusted IPs;
+  - Infisical, one `viewer` identity per environment project, short token TTL, 1-year client
+    secrets, no Trusted IPs (LAN-wide reachability accepted);
   - the residuals: credentials readable with `Bash` `cat`, container env through `docker
     inspect`/`exec`, and `/proc/*/environ`. The Read deny rule is not the boundary.
-  Evidence: `grep -n -i infisical docs/security.md` -> line 12 (ASI03 row with the identities, TTL, Trusted IPs and the residuals: Bash `cat`, `docker inspect`/`exec`, `/proc/*/environ`, `~/.docker`); `grep -n '1\.1' docs/decisions/0021-*.md` -> line 82 (the 1.1-1.4 split and `node-stack-tooling`)
+  Evidence: `grep -n -i infisical docs/security.md` -> line 12 (ASI03 row with the identities and TTLs, and the residuals: Bash `cat`, `docker inspect`/`exec`, `/proc/*/environ`, `~/.docker`); `grep -n '1\.1' docs/decisions/0021-*.md` -> line 82 (the 1.1-1.4 split and `node-stack-tooling`)
 
   Also update ADR 0021's slice list to record the 1.1 to 1.4 split and the follow-up change
   `node-stack-tooling`, which ports `check-envs.sh`, `compose-env.sh` and `make-guards.sh`,
@@ -202,8 +215,8 @@ written to print names or exit codes only. The agent records that output and nev
 ## Owner-owed after merge (no checkbox)
 
 - **Before cutover:** fill the Infisical `prod` project, confirm Node ≥22.12 on the deploy host, create the prod identity's client secret there, and put
-  `.env.infisical.prod` on the deploy host, add the deploy host to the prod identity's Trusted
-  IPs, and run `make prod-check` there.
+  `.env.infisical.prod` on the deploy host, and run `make prod-check` there. Fill prod only after
+  task 1.4 (the bootstrap identity is revoked).
 - **After this reaches `main` at cutover,** and only after a verified Infisical backup and a
   restore test: delete `.env.dev`, `.env.stage` and prod's `.env`, and remove the
   `docker/.env*.example` templates in a tier 0 commit.

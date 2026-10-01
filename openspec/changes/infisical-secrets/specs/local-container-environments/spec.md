@@ -341,13 +341,14 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 
 ### Requirement: Secrets come from Infisical, one environment per stack
 Each stack SHALL read its secrets and its compose interpolation values from one Infisical
-environment of the owner's Infisical project: `dev`, `stage`, or `prod`. Each environment SHALL
-be read with its own machine identity.
+environment (`dev`, `stage`, or `prod`), held in its own Infisical project. Each environment SHALL
+be read with its own machine identity, which SHALL have no access to the other environments'
+projects.
 
 The per-host credentials for an environment SHALL live in an untracked file
 `.env.infisical.<env>` at the repository root. The file SHALL hold:
 - the machine identity's client id and client secret;
-- the project id;
+- the project id of that environment's project;
 - the Infisical URL, which SHALL use `https://`;
 - the path of the CA certificate that Infisical's TLS chains to.
 
@@ -409,6 +410,10 @@ and the fetch SHALL be refused as a whole if any secret fails validation.
 - **WHEN** Infisical returns a secret whose value is not a string, a duplicate key, or no
   secrets at all, and `make dev-up` runs
 - **THEN** it exits non-zero, prints no value, and runs no docker command
+
+#### Scenario: One environment's identity cannot read another's
+- **WHEN** the dev credentials are pointed at the stage or prod project
+- **THEN** the fetch is refused with an HTTP 403, and no value is printed
 
 #### Scenario: Secrets stay off the process list
 - **WHEN** `make dev-up` is running and `ps -eo args` is captured

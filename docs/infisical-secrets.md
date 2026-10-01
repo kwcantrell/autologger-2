@@ -17,8 +17,9 @@ Nothing is written to disk. No secret is put on a command line or read by a shel
 - **Node 22.12 or newer on `PATH`** when you run `make`. The Makefile resolves `node` from your
   `PATH`, then runs it under `env -i`. No `npm ci` is needed, because the wrapper uses only
   built-in modules.
-- **Network access to Infisical.** Today that is `https://192.168.0.100`, reachable on the LAN
-  and over Tailscale.
+- **Network access to Infisical.** Today that is `https://192.168.0.100`. It is reachable from
+  any LAN host and any container on this host, because the proxy has no IP rule (an accepted
+  risk).
 - **The CA certificate that Infisical's TLS chains to.** Today that is
   `~/infisical/infisical-root-ca.crt`. Node does not use the system trust store, so the path is
   required even if the CA is installed system-wide. The file must be a regular file, not a
@@ -100,7 +101,9 @@ are what keep the dev identity away from prod. Configure each identity (universa
 | --- | --- |
 | Access | `viewer` on its **own** project only. The dev identity must not read `stage` or `prod`. |
 | Access-token TTL | 15 minutes, with a maximum TTL of 1 hour |
-| Trusted IPs | Not available on the free plan (an Enterprise feature). The network boundary is the Infisical proxy's LAN/Tailscale allowlist. |
+| Client secret TTL | 1 year (`ttl=31536000`); rotate on host decommission and before expiry |
+| Trusted IPs | Not available on the free plan. Infisical is reachable LAN-wide; a client secret works from any LAN host until it expires or is revoked. |
+| Lockout | Default: 3 bad logins lock the identity for 300 s. Someone on the LAN can trigger this; wait, or clear it in the UI. |
 | Client secret | Rotate when a host is decommissioned, and at least yearly |
 
 To check that the dev identity can't read prod, on a host that holds no prod credentials:

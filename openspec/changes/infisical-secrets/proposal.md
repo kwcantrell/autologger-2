@@ -82,9 +82,9 @@ never into env files:
 - **Free-plan limits (found during setup, owner 2026-09-30):**
   - Infisical refuses custom project roles, so each environment is its own project
     (`autologger-dev`, `autologger-stage`, `autologger-prod`) with one `viewer` identity.
-  - It also refuses Trusted IPs, so the network boundary is the Infisical proxy's LAN/Tailscale
-    allowlist plus the 15-minute token lifetime.
-  - The owner may revisit this, with Enterprise or a proxy IP rule.
+  - It also refuses Trusted IPs. Infisical publishes only on `192.168.0.100:443` (`~/infisical/docker-compose.yml`). Its Caddy proxy has no IP rule, so any LAN host, and any container on this host, can reach the API. The owner accepted this LAN-wide reachability on 2026-09-30, instead of adding a Caddy `remote_ip` rule.
+  - Client secrets get a 1-year TTL, and tokens last 15 minutes.
+  - The owner may revisit this with a Caddy `remote_ip` rule or Enterprise.
 - **The agent ran the dev and stage setup** (owner request, 2026-09-30). It used the owner's
   bootstrap identity (`~/.infisical-bootstrap`, organization access) to:
   - create the three projects and identities;
@@ -148,7 +148,8 @@ None.
   delete, and README points to `docs/infisical-secrets.md`.
 - **Operators:**
   - have Node ≥22.12 on each host that runs `make`, including the deploy host;
-  - configure the identities (read-only, short TTL, Trusted IPs);
+  - for prod, create the client secret on the deploy host (dev and stage were set up by the
+    agent, see Decisions);
   - copy the env file values into Infisical;
   - put the credentials files in place;
   - until all of that is done, `make dev-*` and `make stage-*` fail with a message naming the

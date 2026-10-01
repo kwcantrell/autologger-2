@@ -314,14 +314,28 @@ custom roles". Per-environment projects give the same isolation. The wrapper is 
 each `.env.infisical.<env>` already carries its own project ID.)
 
 Each machine identity:
-- has read-only access to its one environment, by being a viewer of only that project;
-- has an access-token TTL of 15 minutes and a maximum TTL of 1 hour;
-- would have Trusted IPs on the client secret and the access token, but the free plan refuses them
-  ("Failed to add IP access range ... due to plan restriction"). The network boundary is instead
-  the Infisical proxy's LAN/Tailscale allowlist (`~/infisical`), plus the short token TTL;
-- has its client secret rotated when a host is decommissioned, and at least yearly.
+- is a `viewer` of only its own project, which is read-only. That covers the project's secrets
+  and its metadata (members, identities, roles, environments), but each project holds just one
+  environment;
+- has an access-token TTL of 15 minutes, and a maximum TTL of 15 minutes (the wrapper never
+  renews a token);
+- has a client secret with a **1-year TTL** (`ttl=31536000`). It is rotated when a host is
+  decommissioned, and at the latest when it expires. Universal-auth lockout stays at the defaults
+  (3 failures lock logins for 300 s);
+- has **no Trusted IPs**, because the free plan refuses them ("Failed to add IP access range ...
+  due to plan restriction"). Infisical publishes only on `192.168.0.100:443` (`~/infisical/docker-compose.yml`). Its Caddy proxy has no IP rule, so any LAN host, and any container on this host, can reach the API. The owner accepted this LAN-wide reachability on 2026-09-30, instead of adding a Caddy `remote_ip` rule. So whoever holds a client secret can use it from any
+  LAN host until it expires or is revoked.
+
+The owner's **bootstrap identity** (`~/.infisical-bootstrap`, organization access) created the
+projects, so it is a member of each. The owner removes it from all three projects and revokes it
+**before the prod project is filled and before archive** (task 1.4, checked by the agent: its login
+fails and it is in no `autologger-*` project).
 
 ### D7. Cutover, rollback and break-glass
+
+- **Lockout denial of service.** Anyone on the LAN who knows a client ID can send 3 bad logins and
+  lock that identity's logins for 300 s, repeatedly. During a deploy, wait it out, or clear it
+  from the Infisical UI (identity -> universal auth -> clear lockouts).
 
 - **Rollback** is reverting the change. No target deletes an env file.
 - **Old env files stay until main.** The owner deletes `.env.dev` and `.env.stage` only after this
@@ -452,7 +466,8 @@ and v2 designs. They are kept for the record: 11 is why `infisical run` was reje
   - `/proc/<pid>/environ` of a long-running `make dev-logs`.
 
   The Read deny rule only stops the Read tool. `docs/security.md` ASI03 states this. The short
-  token TTL (D6) limits what a stolen token is worth.
+  token TTL (D6) limits a stolen *access token*. A stolen *client secret* stays usable from any
+  LAN host until its 1-year TTL runs out or it is revoked.
 - **[Drift] An allowlist miss silently drops a key.** The owner's name check (task 1.3) compares
   today's env-file key names with the allowed set before cutover.
 - **[Behaviour change] Ambient overrides no longer work** (D3). This is documented.
