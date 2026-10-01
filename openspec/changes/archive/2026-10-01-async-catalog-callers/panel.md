@@ -17,3 +17,10 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [minor] The "unchanged" scenarios restate existing suites. Resolved: the delta keeps only the MODIFIED requirement's existing scenarios plus one new one. The per-file checks are task evidence (2.4).
 - [x] [minor] Size estimate high; the probe estimate is 140-170 lines. Resolved: D7 updated.
 - [x] [minor] The pre-existing OAuth get-then-delete. Resolved: already on the slice 4 list from 3a (D6.1 there).
+
+## Consistency read 2026-10-01
+Edits since approval: tasks.md (evidence lines only; 3.3 checks the anonymous `401` on `GET /api/teams/:id` because no `GET /api/teams` route exists)
+Scope change: no
+- [x] [minor] Task 3.3 named a `GET /api/teams` route that does not exist (it answers `404` before and after). Resolved: the anonymous `401` was checked on `GET /api/teams/:id`, recorded in the 3.3 evidence.
+- [x] [minor] Every clause of the MODIFIED requirement has a test: comparisons, whole-body, shorthand and spread response values, and async callbacks where no value is expected are fixtures in `promiseHygiene.repo.test.ts` (task 1.1); the unchanged scenarios are covered by the existing suites (task 2.4). Resolved: no gap.
+- [x] [minor] Non-goals hold: `git diff --stat` touches no `packages/catalog`, `packages/ports` or transaction body, and no OAuth state code. Resolved: no action needed.
