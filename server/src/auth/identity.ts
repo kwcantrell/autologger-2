@@ -40,6 +40,8 @@ export async function putOauthState(kv: KvStore, state: string, ttlSeconds = 180
 /** Delete and return true if the state existed (one-shot). One atomic take, so of two
  * concurrent callbacks carrying the same state exactly one succeeds (async-catalog-stores D4). */
 export async function takeOauthState(kv: KvStore, state: string): Promise<boolean> {
+  // No state is ever stored with NUL, and the catalog refuses it as text (catalog-on-postgres D5).
+  if (state.includes('\u0000')) return false;
   return (await kv.take(`${CSRF_PREFIX}${state}`)) !== null;
 }
 

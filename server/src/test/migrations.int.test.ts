@@ -1,9 +1,10 @@
 // persistence-package-extraction task 3.5: integration pins for the
-// "catalog package owns the catalog schema migrations" spec — fresh
-// DATA_DIR migrates the full ordered set via the package path (same
-// _migrations name set/order, same schema) and an already-migrated
-// DATA_DIR is untouched by a second boot — exercised through the REAL
-// composition root (`createBindings`), not a mock. Also recreates the
+// "catalog package owns the catalog schema migrations" spec — a fresh SQLite
+// catalog migrates the full ordered set via the package path (same
+// _migrations name set/order, same schema) and an already-migrated one is
+// untouched by a second run. The server no longer runs this migrator (its
+// catalog is Postgres, catalog-on-postgres); only tests do, until ADR 0021
+// slice 4e. Also recreates the
 // migration-CONTENT coverage the pre-move `server/src/node/migrate.test.ts`
 // carried for 0004/0005 (team-role admin backfill, show title_suffix
 // backfill), which task 2.3 explicitly deferred here rather than dropping
@@ -17,7 +18,6 @@ import { join } from 'node:path';
 import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { applyMigrations, openCatalogDb } from '@autologger/storage';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createBindings } from '../node/config';
 
 const REAL_MIGRATION_NAMES = [
   '0001_init.sql',
@@ -39,15 +39,13 @@ afterEach(() => {
   }
 });
 
-describe('catalog migrations via the real composition root (package-architecture spec)', () => {
-  it('fresh DATA_DIR migrates the full ordered set via the package path, recording the same name set/order and producing the same schema', async () => {
-    const dir = tempDir('autologger-catmig-');
-    const { bindings, close } = createBindings({ DATA_DIR: dir });
+describe('catalog migrations via the package path (package-architecture spec)', () => {
+  it('a new, empty catalog file migrates the full ordered set via the package path, recording the same name set/order and producing the same schema', () => {
+    const db = openCatalogDb(join(tempDir('autologger-catmig-'), 'catalog.db'));
     try {
+      applyMigrations(db, CATALOG_MIGRATIONS_DIR);
       const byName = (
-        await bindings.ports.catalog.all<{ name: string }>(
-          'SELECT name FROM _migrations ORDER BY name',
-        )
+        db.prepare('SELECT name FROM _migrations ORDER BY name').all() as { name: string }[]
       ).map((r) => r.name);
       expect(byName).toEqual([...REAL_MIGRATION_NAMES].sort());
 
@@ -55,57 +53,38 @@ describe('catalog migrations via the real composition root (package-architecture
       // other ordering key), proving the set applied in filename order, not
       // just that the same five names eventually landed.
       const byRowid = (
-        await bindings.ports.catalog.all<{ name: string }>(
-          'SELECT name FROM _migrations ORDER BY rowid',
-        )
+        db.prepare('SELECT name FROM _migrations ORDER BY rowid').all() as { name: string }[]
       ).map((r) => r.name);
       expect(byRowid).toEqual(REAL_MIGRATION_NAMES);
 
       // Resulting schema: one artifact from each migration is present.
-      await expect(
-        bindings.ports.catalog.all('SELECT * FROM users LIMIT 1'),
-      ).resolves.not.toThrow();
-      await expect(bindings.ports.catalog.all('SELECT * FROM kv LIMIT 1')).resolves.not.toThrow();
-      await expect(
-        bindings.ports.catalog.all('SELECT * FROM team_invites LIMIT 1'),
-      ).resolves.not.toThrow();
-      const membershipCols = (
-        await bindings.ports.catalog.all<{ name: string }>(
-          'PRAGMA table_info(user_studio_memberships)',
-        )
-      ).map((c) => c.name);
-      expect(membershipCols).toContain('role');
-      const showCols = (
-        await bindings.ports.catalog.all<{ name: string }>('PRAGMA table_info(shows)')
-      ).map((c) => c.name);
-      expect(showCols).toContain('title_suffix');
+      for (const t of ['users', 'kv', 'team_invites']) {
+        expect(() => db.prepare(`SELECT * FROM ${t} LIMIT 1`).all()).not.toThrow();
+      }
+      const cols = (t: string) =>
+        (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
+      expect(cols('user_studio_memberships')).toContain('role');
+      expect(cols('shows')).toContain('title_suffix');
     } finally {
-      close();
+      db.close();
     }
   });
 
-  it('already-migrated DATA_DIR is untouched by a second boot', async () => {
-    const dir = tempDir('autologger-catmig-');
-    const first = createBindings({ DATA_DIR: dir });
-    const firstRows = await first.bindings.ports.catalog.all<{
-      name: string;
-      applied_at_utc: string;
-    }>('SELECT name, applied_at_utc FROM _migrations ORDER BY name');
+  it('an already-migrated catalog file is untouched by a second run', () => {
+    const file = join(tempDir('autologger-catmig-'), 'catalog.db');
+    const rows = () => {
+      const db = openCatalogDb(file);
+      try {
+        applyMigrations(db, CATALOG_MIGRATIONS_DIR);
+        return db.prepare('SELECT name, applied_at_utc FROM _migrations ORDER BY name').all();
+      } finally {
+        db.close();
+      }
+    };
+    const firstRows = rows();
     expect(firstRows).toHaveLength(REAL_MIGRATION_NAMES.length);
-    first.close();
-
-    // Second boot against the SAME DATA_DIR: startup must proceed normally
-    // (no throw), and no migration re-applies — same rows, same timestamps.
-    const second = createBindings({ DATA_DIR: dir });
-    try {
-      const secondRows = await second.bindings.ports.catalog.all<{
-        name: string;
-        applied_at_utc: string;
-      }>('SELECT name, applied_at_utc FROM _migrations ORDER BY name');
-      expect(secondRows).toEqual(firstRows);
-    } finally {
-      second.close();
-    }
+    // Same rows, same timestamps: no migration re-applies.
+    expect(rows()).toEqual(firstRows);
   });
 });
 

@@ -57,8 +57,8 @@ The Makefile SHALL also provide:
 - `help`, as the default goal;
 - `check`, which runs the static invariant check;
 - `dev-up` and `stage-up`, which run their environment's check first and refuse to start if
-  it fails, run the migrations runner once `db` is healthy, and print the app and Supabase
-  URLs;
+  it fails, run the migrations runner once `db` is healthy and before starting the app, and
+  print the app and Supabase URLs;
 - `dev-migrate`, which runs only the migrations runner against dev;
 - `dev-psql`, which opens `psql` inside the dev `db` container without keeping a history file.
 

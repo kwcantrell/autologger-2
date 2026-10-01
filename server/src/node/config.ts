@@ -4,37 +4,33 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
 import {
-  AsyncSqliteCatalogDb,
   acquireDataDirLock,
-  applyMigrations,
   BlobStore,
   KvStore,
-  openCatalogDb,
+  PostgresCatalogDb,
 } from '@autologger/storage';
 import type { Bindings } from '../appEnv';
+import { CATALOG_PG_VARS } from '../bootGuard';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
 
-export function createBindings(
-  procEnv: Record<string, string | undefined>,
-  /** `onBroken`: called once if a failed ROLLBACK leaves the catalog connection unusable
-   * (async-catalog-stores D5). Only `main.ts` passes one; tests never do. */
-  opts: { onBroken?: () => void } = {},
-): {
+export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;
-  close(): void;
+  close(): Promise<void>;
 } {
   // retire-host-dev D1: no default data directory (never server/data by accident).
   const dataDir = procEnv.DATA_DIR ?? '';
   if (!dataDir || !isAbsolute(dataDir)) throw new Error('DATA_DIR must be set to an absolute path');
-  // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created, migrated or
-  // swept; a second server refuses here (DataDirLockedError). Released by close().
+  // Checked before the lock, so a refusal never holds it. Names only, never values.
+  const missing = CATALOG_PG_VARS.filter((k) => !procEnv[k]);
+  if (missing.length) throw new Error(`catalog connection settings missing: ${missing.join(', ')}`);
+  // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created or swept; a
+  // second server refuses here (DataDirLockedError). Released by close().
   const lock = acquireDataDirLock(dataDir);
   mkdirSync(join(dataDir, 'sessions'), { recursive: true });
   // r2_key values already start with "audio/", so the blob root is a sibling dir:
@@ -43,12 +39,16 @@ export function createBindings(
   mkdirSync(join(dataDir, 'blobs'), { recursive: true });
   mkdirSync(join(dataDir, 'tmp'), { recursive: true });
 
-  const catalog = openCatalogDb(join(dataDir, 'catalog.db'));
-  applyMigrations(catalog, CATALOG_MIGRATIONS_DIR);
   const clock = systemClock;
-  // One adapter for the catalog stores and KV, so every statement on the connection goes
-  // through its lock (async-catalog-stores D1).
-  const catalogDb = new AsyncSqliteCatalogDb(catalog, { onBroken: opts.onBroken });
+  // One adapter for the catalog stores and KV (catalog-on-postgres D1). It connects lazily, so
+  // nothing here touches the network; main.ts waits for the catalog before listening.
+  const catalogDb = new PostgresCatalogDb({
+    host: procEnv.PGHOST as string,
+    port: Number(procEnv.PGPORT),
+    user: procEnv.PGUSER as string,
+    password: procEnv.PGPASSWORD as string,
+    database: procEnv.PGDATABASE as string,
+  });
   const kv = new KvStore(catalogDb, clock);
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
@@ -140,10 +140,13 @@ export function createBindings(
 
   return {
     bindings,
-    close: () => {
+    close: async () => {
       registry.closeAll();
-      catalog.close();
-      lock.release();
+      try {
+        await catalogDb.close();
+      } finally {
+        lock.release();
+      }
     },
   };
 }

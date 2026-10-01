@@ -560,17 +560,20 @@ describe('sibling stubs stay frozen even with yt-dlp configured', () => {
 // ── Phase 5 review must-cover: crash-orphan scratch-dir sweep ───────────────
 
 describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wiring; Phase 5 review must-cover)', () => {
-  it('createBindings removes a stray youtube-import-* scratch dir and leaves a differently-prefixed dir alone', () => {
+  it('createBindings removes a stray youtube-import-* scratch dir and leaves a differently-prefixed dir alone', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'autologger-sweep-'));
+    // The catalog is never queried here (the adapter connects lazily); any reachable settings do.
+    const pg = { PGHOST: '127.0.0.1', PGPORT: '1', PGUSER: 'u', PGPASSWORD: 'p', PGDATABASE: 'd' };
     try {
       const boot = createBindings({
+        ...pg,
         DATA_DIR: dataDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
         REQUIRE_LOGIN: '0',
       });
       const scratchRoot = boot.bindings.ports.audio.scratchRoot();
-      boot.close();
+      await boot.close();
 
       const strayDir = join(scratchRoot, `${YOUTUBE_IMPORT_TMP_PREFIX}stray-session-orphan`);
       mkdirSync(strayDir, { recursive: true });
@@ -585,6 +588,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
 
       // Re-run the startup wiring — THIS is what sweeps stray import temp dirs.
       const reboot = createBindings({
+        ...pg,
         DATA_DIR: dataDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
@@ -595,7 +599,7 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
         expect(existsSync(survivorDir)).toBe(true); // untouched — different prefix
         expect(existsSync(join(survivorDir, 'keep.txt'))).toBe(true);
       } finally {
-        reboot.close();
+        await reboot.close();
       }
     } finally {
       rmSync(dataDir, { recursive: true, force: true });

@@ -129,12 +129,23 @@ migration. `postgres` is a member of `pg_read_all_data`, so anything holding `PO
 **The app's password.** After the migrations, `migrate.sh` gives `autologger_app` `LOGIN` and
 sets its password from `APP_DB_PASSWORD`, with statement logging and `pg_stat_statements` off for
 that transaction (both would otherwise record the plaintext). To rotate: change the key in
-Infisical, run `make dev-migrate` (or `make stage-up`), then recreate the app container. There is
-no window in which both passwords work.
+Infisical, then run `make dev-up` (or `make stage-up`). That applies `migrate` first, which sets the
+new password, and then recreates the app with the new value, because its env changed. There is no
+window in which both passwords work: between those two steps (a few seconds), any new or replaced
+catalog connection fails with `28P01` and its request gets a 500. Connections already open keep
+working until the app is recreated.
+
+**The server's catalog** (catalog-on-postgres) is this schema: the app connects as
+`autologger_app` with the `PG*` env the compose files pass, and refuses to boot without them. It
+never runs migrations. Before listening it waits up to 30 s for the catalog to answer (logging
+each failure code once), then exits 1 so the supervisor retries. `make dev-up` and
+`make stage-up` run `migrate` before starting the app.
 
 ## Tests against Postgres
 
-The server's `pg` vitest project (`*.pg.test.ts`) runs against the pinned image. Its global setup
+The server's `pg` vitest project (`*.pg.test.ts`) and its `integration` project (`*.int.test.ts`,
+one catalog clone per test; `server/src/test/pgIntegrationSetup.ts` raises the app role's
+connection limit to 200 in its own container only) run against the pinned image. Its global setup
 (`test/pg/globalSetup.ts`) starts a container published on `127.0.0.1` only, applies
 `supabase/migrations` with `migrate.sh` to `postgres` and to `autologger_template`, and each test
 clones the template (`test/pg/testDb.ts`). Passwords are random per run. `npm test` therefore

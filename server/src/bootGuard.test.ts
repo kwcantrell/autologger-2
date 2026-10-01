@@ -6,7 +6,15 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { checkBootEnv, STACKS } from './bootGuard';
 
-const ok = { AUTOLOGGER_STACK: 'dev', DATA_DIR: '/data' };
+const ok = {
+  AUTOLOGGER_STACK: 'dev',
+  DATA_DIR: '/data',
+  PGHOST: 'db',
+  PGPORT: '5432',
+  PGUSER: 'autologger_app',
+  PGPASSWORD: 'secret-value',
+  PGDATABASE: 'postgres',
+};
 
 describe('checkBootEnv', () => {
   it('accepts every stack with an absolute DATA_DIR', () => {
@@ -25,10 +33,19 @@ describe('checkBootEnv', () => {
       expect(checkBootEnv({ ...ok, DATA_DIR: v }), String(v)).toMatch(/DATA_DIR/);
     }
   });
+  it('refuses each missing or empty catalog connection setting, naming it (catalog-on-postgres D2)', () => {
+    for (const k of ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) {
+      for (const v of [undefined, '']) {
+        const msg = checkBootEnv({ ...ok, [k]: v });
+        expect(msg, `${k}=${String(v)}`).toMatch(new RegExp(k));
+        expect(msg).not.toContain('secret-value');
+      }
+    }
+  });
   it('never puts an environment value into the message', () => {
     const sentinel = 'sentinel-value-should-not-appear';
-    expect(checkBootEnv({ AUTOLOGGER_STACK: sentinel, DATA_DIR: '/data' })).not.toContain(sentinel);
-    expect(checkBootEnv({ AUTOLOGGER_STACK: 'dev', DATA_DIR: sentinel })).not.toContain(sentinel);
+    expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: sentinel })).not.toContain(sentinel);
+    expect(checkBootEnv({ ...ok, DATA_DIR: sentinel })).not.toContain(sentinel);
   });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');

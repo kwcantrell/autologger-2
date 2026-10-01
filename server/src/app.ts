@@ -3,7 +3,7 @@
 // upgradeWebSocket (from @hono/node-ws in main.ts; a 426 stub in HTTP tests).
 
 import { ValidationError } from '@autologger/domain';
-import { InvalidRangeError } from '@autologger/storage';
+import { CatalogInvalidTextError, InvalidRangeError } from '@autologger/storage';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import type { Hono, MiddlewareHandler } from 'hono';
 import { compress } from 'hono/compress';
@@ -130,6 +130,16 @@ const measureCompressibleBody: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.res = measured;
 };
 
+/** A Postgres error's message, `detail` and `where` can echo the values involved (an email, a
+ * Google subject id), so it is logged by code, constraint and table only (catalog-on-postgres D8).
+ * Anything else is logged whole, as before. */
+function redactDatabaseError(err: unknown): unknown[] {
+  const e = err as Record<string, unknown> | null;
+  if (!e || e.name !== 'PostgresError') return [err];
+  const { code, constraint_name, table_name } = e;
+  return [{ name: e.name, code, constraint_name, table_name }];
+}
+
 export function wireApp(
   app: Hono<AppEnv>,
   upgradeWebSocket: UpgradeWebSocket,
@@ -206,7 +216,9 @@ export function wireApp(
       return c.json({ detail: 'Requested range not satisfiable.' }, 416);
     }
     if (err instanceof SyntaxError) return c.json({ detail: 'Invalid JSON body.' }, 400);
-    console.error('unhandled error', err);
+    // api-contract-freeze "Text containing NUL is refused" (catalog-on-postgres D5).
+    if (err instanceof CatalogInvalidTextError) return c.json({ detail: err.message }, 400);
+    console.error('unhandled error', ...redactDatabaseError(err));
     return c.json({ detail: 'Internal Server Error' }, 500);
   });
 

@@ -160,9 +160,17 @@ authRouter.get('/auth/google/callback', async (c) => {
     return c.redirect('/?login_error=token_invalid', 302);
   }
   const email = String(claims.email ?? '').trim();
-  const gn = String(claims.given_name ?? '').trim();
-  const fn = String(claims.family_name ?? '').trim();
-  const pic = String(claims.picture ?? '').trim();
+  // catalog-on-postgres D5: the catalog can't store NUL. The subject and email are identity keys
+  // (a stripped email could match another address's invite), so NUL there refuses sign-in; the
+  // display claims are stripped.
+  if (googleSub.includes('\u0000') || email.includes('\u0000')) {
+    console.warn('OAuth callback: id_token subject or email claim contains NUL.');
+    return c.redirect('/?login_error=token_invalid', 302);
+  }
+  const noNul = (v: unknown) => String(v ?? '').replaceAll('\u0000', '').trim();
+  const gn = noNul(claims.given_name);
+  const fn = noNul(claims.family_name);
+  const pic = noNul(claims.picture);
   // JWTPayload carries an index signature, so unlisted claims (email_verified
   // is not one of jose's typed fields) flow through `claims` already -- no
   // change to verifyIdToken/oauth_google.ts is needed to surface it.

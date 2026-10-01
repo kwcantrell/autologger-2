@@ -40,7 +40,9 @@ export type ShowCreateBody = z.infer<typeof showCreateBodySchema>;
 export const newSessionBodySchema = z.object({
   title: z.string().max(200).nullish(),
   frame_rate: z.number().min(1.0).max(120.0).default(24.0),
-  start_offset_frames: z.number().int().min(0).default(0),
+  // Stored in a catalog bigint: bounded so a huge value is a 422, not a storage error
+  // (api-contract-freeze "Catalog integer fields are bounded").
+  start_offset_frames: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
   show_id: z.string().min(1).max(120),
   // session-title-suffix (design D6): blank/omitted episode is valid at the
   // schema level — whether it's REQUIRED depends on the linked show's
@@ -53,7 +55,9 @@ export type NewSessionBody = z.infer<typeof newSessionBodySchema>;
 
 export const sessionUpdateBodySchema = z.object({
   title: z.string().min(1).max(200),
-  start_offset_frames: z.number().int().min(0).default(0),
+  // Stored in a catalog bigint: bounded so a huge value is a 422, not a storage error
+  // (api-contract-freeze "Catalog integer fields are bounded").
+  start_offset_frames: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
 });
 export type SessionUpdateBody = z.infer<typeof sessionUpdateBodySchema>;
 

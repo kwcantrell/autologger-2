@@ -175,7 +175,9 @@ export class ShowsStore implements ShowsStoreFacade {
 
   async listShowsForStudio(studioId: string): Promise<Row[]> {
     return this.db.all<Row>(
-      'SELECT * FROM shows WHERE studio_id = ? ORDER BY name COLLATE NOCASE ASC',
+      // ASCII-case-insensitive, ties bytewise; lower() under COLLATE "C" folds ASCII only, as
+      // SQLite's NOCASE did (catalog-on-postgres D4).
+      'SELECT * FROM shows WHERE studio_id = ? ORDER BY lower(name), name',
       studioId,
     );
   }

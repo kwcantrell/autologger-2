@@ -6,7 +6,8 @@ required.
 Originally a faithful TypeScript port of the Python AutoLogger backend — this repo is now
 the canonical implementation. It authenticates
 via Google OAuth, persists the global catalog (users/studios/shows/prefs) plus login sessions
-and OAuth CSRF in a **SQLite catalog DB**, holds live per-session data (events, transport,
+and OAuth CSRF in a **Postgres catalog** (schema `catalog` in the stack's self-hosted Supabase
+Postgres; ADR 0021), holds live per-session data (events, transport,
 audio metadata, recording lease, transcript words, topics) in an **in-process SessionHub per
 session** (embedded SQLite), keeps audio bytes on the **filesystem**, and pushes live updates
 over a **WebSocket** — all with the **frozen JSON shapes** the React frontend and Companion
@@ -37,7 +38,7 @@ spawned or called *by the server*, never by a client.
    CLIENTS                          SINGLE NODE PROCESS                        LOCAL DISK
 ┌──────────────┐            ┌──────────────────────────────────┐        ┌───────────────────┐
 │ React web/   │  HTTP  ┌──▶│ Hono router + Zod + jose          │        │ DATA_DIR/         │
-│ (SPA)        │───────▶│   │  ├─ auth / profile / shows        │──SQL──▶│  catalog.db       │
+│ (SPA)        │───────▶│   │  ├─ auth / profile / shows        │──SQL──▶│  (catalog in PG)  │
 │              │◀── WS ─┤   │  ├─ sessions / events / audio     │        │  (global index,   │
 ├──────────────┤        │   │  ├─ transcribe / exports          │        │   kv, presence)   │
 │ Companion    │  HTTP  │   │  └─ companion / admin             │        ├───────────────────┤
@@ -76,7 +77,8 @@ spawned or called *by the server*, never by a client.
 A browser-only build would therefore be a different, single-user, no-hardware product — not a
 refactor of this one.
 
-- **Catalog DB = global, cross-session, relational, not hot** (`DATA_DIR/catalog.db`). Also
+- **Catalog DB = global, cross-session, relational, not hot** (Postgres schema `catalog`; the
+  stacks before ADR 0021 slice 4c used `DATA_DIR/catalog.db`). Also
   holds key/value rows (login sessions, OAuth CSRF, replacing KV) and a lightweight
   `sessions` index (metadata + a small live projection) so listing + status + cheap
   rolling-timecode never wake a session's hub.
@@ -472,8 +474,9 @@ above).
 
 ```
 DATA_DIR/
-  catalog.db           Catalog + kv (users/studios/shows/prefs, login sessions, OAuth CSRF,
-                        Companion presence, sessions index + live projection)
+  catalog.db           Legacy SQLite catalog: no longer opened (the catalog is Postgres schema
+                        `catalog`: users/studios/shows/prefs, kv, sessions index), kept for the
+                        slice 11 import
   sessions/<id>.db      One SQLite file per session — events, transport, audio metadata,
                         recording lease, transcript words, topics
   blobs/audio/…         Audio bytes (r2_key-shaped relative paths)
@@ -877,7 +880,7 @@ only: nothing reads `server/.env`. The stacks take values from Infisical
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for all state — `catalog.db`, per-session DBs, audio blobs, temp staging. |
+| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for per-session DBs, audio blobs and temp staging (the catalog is Postgres; a legacy `catalog.db` is left untouched). |
 | `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
 | `PUBLIC_BASE_URL` | *(empty; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |

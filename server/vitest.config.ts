@@ -3,7 +3,8 @@ import { defineConfig } from 'vitest/config';
 // Three test tiers as vitest projects (migrated from the removed vitest.workspace.ts
 // file — vitest 4 dropped workspace-file support in favor of `test.projects`):
 // - unit: `*.test.ts`, plain node, no bindings (plus the repo-level test/pg harness unit tests).
-// - integration: `*.int.test.ts`, real SQLite harness wired via setup.int.ts.
+// - integration: `*.int.test.ts`, the real bindings over a Postgres catalog clone per test, wired
+//   via setup.int.ts (catalog-on-postgres D6; needs a docker daemon).
 // - pg: `*.pg.test.ts`, against the pinned supabase/postgres image started by
 //   ../test/pg/globalSetup.ts (catalog-pg-schema design D6; needs a docker daemon).
 export default defineConfig({
@@ -23,6 +24,8 @@ export default defineConfig({
           include: ['src/**/*.int.test.ts'],
           environment: 'node',
           setupFiles: ['./src/test/setup.int.ts'],
+          globalSetup: ['./src/test/pgIntegrationSetup.ts'],
+          hookTimeout: 600_000,
         },
       },
       {

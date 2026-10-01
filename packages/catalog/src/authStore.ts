@@ -182,7 +182,7 @@ export class AuthStore implements AuthStoreFacade {
     await this.db.tx(async (t) => {
       for (const sid of ids) {
         await t.run(
-          'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?)',
+          'INSERT INTO user_studio_memberships (user_id, studio_id) VALUES (?, ?) ON CONFLICT DO NOTHING',
           userId,
           sid,
         );
@@ -271,7 +271,7 @@ export class AuthStore implements AuthStoreFacade {
    * invite grants (an existing member is left untouched, per D2). */
   async authAddMembershipWithRole(userId: string, studioId: string, role: TeamRole): Promise<void> {
     await this.db.run(
-      'INSERT OR IGNORE INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?)',
+      'INSERT INTO user_studio_memberships (user_id, studio_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
       userId,
       studioId,
       role,

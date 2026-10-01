@@ -518,7 +518,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       // a 500 response rather than a rejected promise (matching the
       // existing "post-verification write throws" coverage above) -- the
       // throw still propagates far enough to unwind CatalogDb.tx's
-      // better-sqlite3 transaction wrapper, which is what triggers the
+      // transaction (a Postgres ROLLBACK), which is what triggers the
       // rollback this test is really checking.
       const res = await runCallback({
         sub: 'sub-atomic-fail',

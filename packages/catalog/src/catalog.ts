@@ -63,7 +63,9 @@ export class Catalog implements CatalogFacade {
   }
 
   /** The body runs on stores bound to the transaction handle, with a copy of this catalog's
-   * registry snapshot (no query); a store transaction inside it joins it. */
+   * registry snapshot (no query); a store transaction inside it joins it. On Postgres the body may
+   * run more than once (a SERIALIZABLE retry), so it must touch only the catalog: no logging,
+   * broadcasts, timers, file I/O or outer-state writes (catalog-on-postgres D7). */
   tx<T>(fn: (cat: CatalogFacade) => Promise<T>): Promise<T> {
     return this.#db.tx(async (t) => fn(new Catalog(t, this.studios.withDb(t))));
   }

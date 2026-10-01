@@ -14,6 +14,7 @@ import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { purgeExpiredAtBoot } from './startupPurge';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
+import { waitForCatalog } from './waitForCatalog';
 
 // retire-host-dev D1: refuse before anything touches a data directory.
 const refusal = checkBootEnv(process.env);
@@ -24,16 +25,7 @@ if (refusal) {
 
 let created: ReturnType<typeof createBindings>;
 try {
-  created = createBindings(process.env, {
-    // async-catalog-stores D5: a failed ROLLBACK leaves the catalog connection inside a dead
-    // transaction. Stop through the graceful path with a non-zero exit so the supervisor
-    // (restart: unless-stopped) brings up a fresh process.
-    onBroken: () => {
-      console.error('[catalog] connection broken after a failed ROLLBACK; shutting down');
-      process.exitCode = 1;
-      process.kill(process.pid, 'SIGTERM');
-    },
-  });
+  created = createBindings(process.env);
 } catch (e) {
   // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
   if (e instanceof DataDirLockedError) {
@@ -43,6 +35,15 @@ try {
   throw e;
 }
 const { bindings, close } = created;
+// catalog-on-postgres D2: listen only once the catalog answers. Exit 1 otherwise, so the
+// supervisor retries (the stack's migrations service may still be creating the schema).
+try {
+  await waitForCatalog(bindings.ports.catalog);
+} catch (e) {
+  console.error(`autologger: ${(e as Error).message}`);
+  await close().catch(() => {});
+  process.exit(1);
+}
 // Startup KV hygiene, no sweep timer (async-session-callers D2): awaited before listening.
 await purgeExpiredAtBoot(bindings.ports.kv);
 const port = Number(process.env.PORT || '8787');
@@ -140,10 +141,11 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
       console.error('frontend close() rejected during shutdown', err);
     });
     // Neither input rejects: serverClosed only resolves, frontendClosed catches.
-    void Promise.all([serverClosed, frontendClosed]).then(() => {
-      close();
-      // exitCode is 1 when shutdown was triggered by a broken catalog connection.
-      process.exit();
-    });
+    // close() ends the catalog connections (catalog-on-postgres D2); the failsafe above still
+    // bounds it, and a transaction it cuts short rolls back on the server.
+    void Promise.all([serverClosed, frontendClosed])
+      .then(() => close())
+      .catch((err) => console.error('catalog close() rejected during shutdown', err))
+      .finally(() => process.exit());
   });
 }

@@ -1,4 +1,5 @@
-// Per-test Node bindings over a temp DATA_DIR — the isolatedStorage equivalent.
+// Per-test Node bindings over a temp DATA_DIR and a fresh Postgres catalog cloned from the
+// migrated template (catalog-on-postgres D6) — the isolatedStorage equivalent.
 // `env` is a Proxy so existing `{...env, ...overrides}` spreads keep working.
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -9,11 +10,13 @@ import type { UpgradeWebSocket } from 'hono/ws';
 import { wireApp } from '../app';
 import type { AppEnv, Bindings } from '../appEnv';
 import { createBindings } from '../node/config';
+import { createTestDatabase } from '../../../test/pg/testDb';
 
-let current: { bindings: Bindings; close(): void; dir: string } | null = null;
+let current: { bindings: Bindings; close(): Promise<void>; dir: string } | null = null;
 
-export function resetTestEnv(): void {
-  teardownTestEnv();
+export async function resetTestEnv(): Promise<void> {
+  await teardownTestEnv();
+  const db = (await createTestDatabase()).app;
   const dir = mkdtempSync(join(tmpdir(), 'autologger-int-'));
   // Hermetic stand-in for the operator's home directory (ai-runtime-package
   // task 2.5, closing the leak task 2.1 found): `createBindings` resolves
@@ -43,7 +46,7 @@ export function resetTestEnv(): void {
   const fakeHome = mkdtempSync(join(tmpdir(), 'autologger-int-home-'));
   const originalHome = process.env.HOME;
   process.env.HOME = fakeHome;
-  let made: { bindings: Bindings; close(): void };
+  let made: { bindings: Bindings; close(): Promise<void> };
   try {
     made = createBindings({
       DATA_DIR: dir,
@@ -62,6 +65,11 @@ export function resetTestEnv(): void {
       TRUST_PROXY: '',
       API_TOKEN: 'test-api-token',
       ADMIN_TOKEN: 'test-admin-token',
+      PGHOST: db.host,
+      PGPORT: String(db.port),
+      PGUSER: db.user,
+      PGPASSWORD: db.password,
+      PGDATABASE: db.database,
     });
   } finally {
     if (originalHome === undefined) delete process.env.HOME;
@@ -71,11 +79,12 @@ export function resetTestEnv(): void {
   current = { ...made, dir };
 }
 
-export function teardownTestEnv(): void {
+export async function teardownTestEnv(): Promise<void> {
   if (!current) return;
-  current.close();
-  rmSync(current.dir, { recursive: true, force: true });
+  const done = current;
   current = null;
+  await done.close();
+  rmSync(done.dir, { recursive: true, force: true });
 }
 
 function must(): Bindings {

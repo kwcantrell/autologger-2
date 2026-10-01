@@ -18,8 +18,8 @@ stack declares no byte-identical duplicate and no unreferenced face, and the two
 critical path are served from stable paths the shell can preload against; and the Companion
 presence heartbeat runs off an off-main-thread clock so a backgrounded tab is not throttled out
 of being a valid Companion target.
-## Requirements
 
+## Requirements
 
 ### Requirement: Next.js frontend served through the Hono bridge
 The web frontend SHALL be a Next.js (App Router) application compiled from `web/`. It SHALL
@@ -110,7 +110,6 @@ failing that decision SHALL be destroyed. The session WebSocket surface
   non-`/api` WebSocket upgrade against a dev server
 - **THEN** the socket is destroyed before reaching Next's upgrade handler
 
-
 ### Requirement: API-only fallback mode and boot ordering
 WHEN the production server boots and the Next build output (`web/.next`) is missing, the
 server SHALL warn loudly and run API-only: all `/api/*` and `/auth/*` surface behaves
@@ -128,7 +127,6 @@ SHALL fail the boot loudly — it SHALL NOT silently degrade to API-only mode.
 - **WHEN** the server starts in production with `web/.next` present but `prepare()`
   rejecting (corrupt or truncated build, config error)
 - **THEN** the boot fails with a loud error — the server does not come up API-only
-
 
 ### Requirement: Shell routing from the shared route definition
 Next SHALL serve the index shell for exactly the router-known paths — `/`,
@@ -171,7 +169,6 @@ at runtime).
   against a production server
 - **THEN** no new files appear under `web/.next`
 
-
 ### Requirement: Client-island rendering
 The index and admin application trees SHALL render as client-only islands (`ssr: false`
 dynamic imports from client wrapper components): no server-side rendering or hydration
@@ -186,7 +183,6 @@ across in-app navigations between router-known paths.
 - **WHEN** a user navigates in-app from `/` to `/sessions/<id>` and back
 - **THEN** the island component instance persists (departure-watcher and transport
   semantics fire exactly as before this change) and no full document load occurs
-
 
 ### Requirement: Server-rendered shell
 The documents served for the router-known paths **and for the admin route
@@ -226,7 +222,6 @@ Two properties of those preloads are load-bearing:
   crossorigin>` elements whose `href`s are the same stable `/static/fonts/` URLs the
   stylesheet's `@font-face` `src:` declarations request
 
-
 ### Requirement: Single-process development
 Development SHALL run only inside the dev compose stack (`make dev-up`). There, `npm run dev`
 SHALL start one process serving pages, assets, API, and WebSockets on one origin (`:8787`,
@@ -241,10 +236,13 @@ Supabase migration, until the stage stack is made reachable through the upstream
 The server SHALL refuse to boot, exiting non-zero with a message that names `make dev-up` and no
 environment values, unless `AUTOLOGGER_STACK` is one of `dev`, `stage` or `prod` (the compose
 stack sentinel). It SHALL refuse to boot when `DATA_DIR` is unset or not an absolute path, and
-SHALL NOT fall back to a default data directory. It SHALL refuse to boot when another server
-process already holds that `DATA_DIR`, before migrating, sweeping or creating anything in it.
-`npm run dev` SHALL apply the same checks before starting its file watcher, so a refused run exits
-instead of waiting for changes. No package script SHALL read a `server/.env` file.
+SHALL NOT fall back to a default data directory. It SHALL refuse to boot when any of `PGHOST`,
+`PGPORT`, `PGUSER`, `PGPASSWORD` or `PGDATABASE` is unset, naming the missing variables and no
+values, before taking the data-directory lock. It SHALL refuse to boot when another server
+process already holds that `DATA_DIR`, before connecting to the catalog, sweeping or creating
+anything in it. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
+refused run exits instead of waiting for changes. No package script SHALL read a `server/.env`
+file.
 
 #### Scenario: Host boot is refused
 - **WHEN** `npm run dev` is run on the host, outside any compose stack
@@ -255,11 +253,17 @@ instead of waiting for changes. No package script SHALL read a `server/.env` fil
 - **WHEN** the server boots with a valid `AUTOLOGGER_STACK` and `DATA_DIR` unset or relative
 - **THEN** it exits non-zero naming `DATA_DIR`, and opens no data directory
 
+#### Scenario: Missing catalog connection settings refuse boot
+- **WHEN** the server or `npm run dev` starts with a valid `AUTOLOGGER_STACK` and `DATA_DIR` and
+  `PGPASSWORD` unset
+- **THEN** it exits non-zero naming `PGPASSWORD`, prints no environment value, and creates
+  nothing in the data directory
+
 #### Scenario: A second server on the same data directory is refused
 - **WHEN** a server holds a `DATA_DIR` and a second server process starts against it, whether
   by `npm run dev` or directly
-- **THEN** the second process exits non-zero before applying migrations or removing any scratch
-  directory, and the running server is unaffected
+- **THEN** the second process exits non-zero before connecting to the catalog or removing any
+  scratch directory, and the running server is unaffected
 
 #### Scenario: No package script reads server/.env
 - **WHEN** every `package.json` script in the repository is inspected
@@ -274,7 +278,6 @@ instead of waiting for changes. No package script SHALL read a `server/.env` fil
 - **WHEN** the server starts outside production mode with no `HOST` set
 - **THEN** it listens on `127.0.0.1`, is not reachable from other hosts, and treats itself as
   loopback-bound for its open-network checks
-
 
 ### Requirement: The client island is route-split behind recoverable boundaries
 
@@ -366,7 +369,6 @@ navigated away; and the chunk-set measurement is **not scripted or regression-gu
 - **THEN** a dismissible failure card appears over the route, the route beneath remains rendered
   and interactive, and dismissing it closes the modal's open flag
 
-
 ### Requirement: Self-hosted font faces are deduplicated and scoped to what renders
 
 The self-hosted font stack SHALL declare no redundant and no unused faces.
@@ -411,7 +413,6 @@ Measured outcome: −94 KB of font transfer per session-page load.
 - **WHEN** the stylesheet's `@font-face` families are enumerated and compared against the
   families referenced by `web/src`
 - **THEN** every declared family is referenced by something that renders
-
 
 ### Requirement: The Companion presence heartbeat outlives tab backgrounding
 
