@@ -1,0 +1,131 @@
+# Tasks
+
+The first commit on `supabase-4c-catalog-on-postgres` is `openspec/changes/catalog-on-postgres/`
+only. The PR targets `supabase-migration`, and the gates run with
+`GITHUB_BASE_REF=supabase-migration`.
+
+Logs: keep the full output of every test and gate run under the session scratchpad as
+`4c-<task>-<red|green>.log`, and name the log in each `Evidence:` line.
+
+## 1. Wiring and the integration suite on Postgres (design D1, D6)
+
+- [ ] 1.1 Test first, in `server/src/node/config.test.ts`, with dummy `PG*` values (nothing
+  connects, A14):
+  - a missing `PGPASSWORD` throws naming it, and the lock is not held afterwards (a second
+    `createBindings` with full env succeeds);
+  - no `catalog.db` is created;
+  - `close()` returns a promise;
+  - the lock still refuses a second server.
+
+  Red: today `PG*` is ignored and `catalog.db` is created.
+- [ ] 1.2 Implement it all in one step:
+  - `createBindings`: `PG*` checked before the lock, one `PostgresCatalogDb`, no SQLite
+    catalog or `onBroken`, async `close()`;
+  - add `server/src/test/pgIntegrationSetup.ts` (shared setup, then the connection limit raised
+    to 200) and wire it into the `integration` project;
+  - make `resetTestEnv`/`teardownTestEnv` async with a clone per test;
+  - adapt `migrations.int.test.ts` (SQLite runner only) and the youtube-import reboot test
+    (async, awaits `close()`).
+
+  Green:
+  - 1.1 passes;
+  - `npx vitest run --project integration` passes every file (record the wall time against
+    A8's 6.6 s);
+  - `npx vitest run --project pg` still passes (`rolconnlimit: 20`);
+  - `npm run typecheck` is clean.
+
+## 2. Boot (design D2)
+
+- [ ] 2.1 Test first, in `bootGuard.test.ts` and `bootOrder.int.test.ts`: a valid stack and
+  `DATA_DIR` with `PGPASSWORD` unset exits 1, naming `PGPASSWORD`, printing no value, and
+  creating nothing. Red, then add the `PG*` check to `checkBootEnv`. Green.
+- [ ] 2.2 Test first, in `server/src/waitForCatalog.test.ts` (fake clock and fake db):
+  - `ECONNREFUSED`, `42P01`, then success resolves;
+  - a failure on every attempt rejects at the 30 s budget;
+  - an attempt that never settles is cut off at the remaining budget;
+  - each distinct code is logged once, with no message text.
+
+  Red, then implement. Green.
+- [ ] 2.3 `main.ts`:
+  - await `waitForCatalog` before `purgeExpiredAtBoot`, and exit 1 if it rejects;
+  - remove `onBroken`;
+  - shutdown awaits `close()`.
+
+  Test first, in `bootOrder.int.test.ts`: `PGHOST=127.0.0.1` with a closed port exits 1 without
+  ever listening (about 30 s, timeout 45 s). Red (today the server listens on SQLite), green
+  after.
+
+## 3. Store dialect (design D4)
+
+- [ ] 3.1 Test first, in a server integration test:
+  - shows `b`, `A`, `a` list as `A`, `a`, `b` (red: `42704 collation "nocase"`);
+  - re-adding an existing membership through `authAddMemberships`, and through the invite
+    path, succeeds with no duplicate (red: syntax error at `OR`).
+
+  Then rewrite `showsStore.ts:178` and `authStore.ts:185,274`. Green on Postgres, and the
+  `packages/catalog` tests stay green on SQLite.
+
+## 4. NUL, integers and logs (design D5, D8, D9)
+
+- [ ] 4.1 Test first, in `postgresCatalogStore.test.ts` (stub client): a root `run` with a NUL
+  bind rejects with `CatalogInvalidTextError` and sends nothing. Also a `pg` case in
+  `postgresCatalogStore.pg.test.ts`: a NUL bind inside a `tx`, after a write, rejects, and the
+  write is rolled back. Red, then add the guard and the export. Green.
+- [ ] 4.2 Test first, in server integration tests:
+  - `POST` show with a NUL `name` gives 400 `detail`, and no show exists;
+  - `POST /api/teams` with a NUL `display_name` gives 400;
+  - a team route with `%00` in the id gives 400;
+  - presence with a NUL `session_id` gives 400, and `GET /api/companion/state` shows no such
+    presence;
+  - an OAuth callback with `state=a%00b` gives `state_invalid`;
+  - first sign-in with a NUL `email` gives `token_invalid` and no user;
+  - with a NUL `given_name`, the user is created and the stored name is stripped.
+
+  Red, then:
+  - add the `app.onError` mapping;
+  - refuse NUL in the presence route;
+  - refuse NUL in `takeOauthState`;
+  - add the claim checks in `auth.ts`.
+
+  Green.
+- [ ] 4.3 Test first, in a server integration test: creating a session with
+  `start_offset_frames: 1e20` gives 422, and none is created (red: 500 `22003`). Add `.max(MAX_SAFE_INTEGER)`
+  on create and update. Green.
+- [ ] 4.4 Test first, in a unit test on the error handler: a thrown error shaped like
+  postgres.js's `{name, code: '23505', constraint_name, table_name, detail: 'Key (email)=(x@y)…'}`
+  gives a 500, and the captured log has the code and constraint but not `x@y`. Red, then
+  redact. Green.
+
+## 5. Ops, docs and the retry note (design D3, D7)
+
+- [ ] 5.1 Reorder `dev-up` and `stage-up` in the `Makefile`. Document the rotation (D3) in
+  `docs/supabase.md`. Verify with `make -n dev-up` and `make -n stage-up`: the migrate step
+  comes before `up`.
+- [ ] 5.2 Doc comments: `Catalog.tx` and the port's `tx` (the body may re-run and must stay
+  database-only), plus the `harness.ts`, `config.ts` and `auth.int.test.ts:521` comments.
+  Update the `catalog.db` lines in `README.md`. In ADR 0021, record:
+  - the 4c items closed;
+  - start empty;
+  - the hazards live on dev and stage;
+  - hazards 17-20 added to 4d.
+
+  Verify with `grep -n "catalog\.db" README.md` (only the slice 11 import and legacy
+  mentions remain) and
+  `grep -n "start empty\|live on dev and stage\|17\.\|20\." docs/decisions/0021-*.md`.
+
+## 6. Integration checks
+
+- [ ] 6.1 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green,
+  including size (the panel estimates 180-260 counted lines).
+- [ ] 6.2 Dev stack:
+  - Record `catalog.db`'s mtime and size first, then run `make dev-up` (migrate first, image
+    rebuilt).
+  - The app is healthy, and the app logs have no catalog errors.
+  - Create a session for the migration's seed show `show-autolog-test` with `POST
+    /api/sessions` (as the 3d live checks did; if dev's access rules refuse it, first create a
+    team and show through the admin API with dev's `ADMIN_TOKEN`), then `GET` it.
+  - `make dev-restart`, and the session is still listed.
+  - `catalog.db`'s mtime and size are unchanged.
+- [ ] 6.3 Stage: `make stage-up`, and the api env has `PG*`. Then
+  `docker/scripts/test_router.sh stage` passes all cases.
+- [ ] 6.4 Run `consistency-read` over the artifacts against the shipped code, then archive.
