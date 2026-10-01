@@ -181,11 +181,19 @@ Slice order:
        its own transactions;
    - 4b `postgres-catalog-adapter`: postgres.js behind `CatalogDb`. Every `tx` is `SERIALIZABLE`
      and retried on serialization failure or deadlock, at most 3 tries (owner). int8 is parsed
-     to a number;
-   - 4c `catalog-on-postgres`: the wiring. Its open items from 4a:
+     to a number. It also delivers an async `close()`. Transactions run on single-connection
+     clients the adapter manages, because postgres.js 3.4.9's `reserve()` and `begin()` crash the
+     process after a lost connection (4b design A5-A7). A `COMMIT` with no reply raises
+     `CatalogCommitUnknownError`;
+   - 4c `catalog-on-postgres`: the wiring. Its open items:
+     - first, audit the 16 `tx` bodies for effects outside the database, because a retry re-runs
+       them (4b);
      - text containing a NUL byte (Postgres refuses it): 400 or strip;
      - `ORDER BY … COLLATE NOCASE` has no Postgres equivalent;
-     - an async `close()`;
+     - `SUM`/`AVG` over `bigint` return `numeric`, which comes back as a string (4b);
+     - map `CatalogCommitUnknownError` to a response (4b);
+     - drop the `onBroken` wiring: the Postgres adapter retires a bad connection instead (4b);
+     - one adapter per process, shared by the catalog stores and `KvStore` (4b);
      - the boot order (migrate before the app) and password rotation (migrate, then recreate
        the app);
    - 4d `catalog-concurrency-hazards`: the hazards listed under slice 3. The owner may swap 4c

@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@autologger/ports": "*"
+    "@autologger/ports": "*",
+    "postgres": "^3.4.9"
   },
   "peerDependencies": {
     "better-sqlite3": "^12.11.1"

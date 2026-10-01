@@ -1505,7 +1505,13 @@ const NODE_BUILTIN_PREFIX = 'node:';
  * red on arrival without this entry already in place. The file now exists,
  * duplicate-per-package per the final policy (task 2.4/4.3). */
 const TEST_INFRASTRUCTURE_EXEMPTIONS: Record<string, readonly string[]> = {
-  '@autologger/storage': ['src/test/fakeClock.ts'],
+  // postgres-catalog-adapter (ADR 0021 slice 4b): the CatalogDb contract suite both adapters run,
+  // and the package's copy of the test/pg per-test database helper.
+  '@autologger/storage': [
+    'src/test/fakeClock.ts',
+    'src/test/catalogDbContract.ts',
+    'src/test/pgDb.ts',
+  ],
   '@autologger/session-core': ['src/test/fakeClock.ts', 'src/test/fakeCore.ts'],
   '@autologger/log-import': ['src/test/fakeClock.ts'],
 };
