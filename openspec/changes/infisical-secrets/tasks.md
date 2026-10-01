@@ -18,17 +18,19 @@ written to print names or exit codes only. The agent records that output and nev
 
 ## 1. Owner prerequisites
 
-- [ ] 1.1 **(owner)** Confirm Node ≥22.12 is on `PATH` for `make` on this host and on the deploy
+- [x] 1.1 **(owner)** Confirm Node ≥22.12 is on `PATH` for `make` on this host and on the deploy
   host. Put `~/infisical/infisical-root-ca.crt` (or a copy of it) where `INFISICAL_CA_FILE` will
   point. Check: `node --version` on each host.
   (The Infisical CLI installed earlier is no longer needed by this design.)
-- [ ] 1.2 **(owner, run by the agent with the owner's bootstrap identity)** Create one Infisical
+  Evidence: this host `node --version` -> `v24.21.0`; `~/infisical/infisical-root-ca.crt` is the `INFISICAL_CA_FILE` in `.env.infisical.dev`/`.stage`. The deploy host's Node check moves to "Owner-owed after merge" (before cutover).
+- [x] 1.2 **(owner, run by the agent with the owner's bootstrap identity)** Create one Infisical
   project per environment (`autologger-dev`, `autologger-stage`, `autologger-prod`), each holding
   only its own environment, and one universal-auth machine identity per project, set up as in
   design D6:
   - the built-in `viewer` role on its own project only;
   - access-token TTL 15 minutes, maximum TTL 1 hour;
   - Trusted IPs on the client secret and on the token.
+  Evidence: run by the agent with the owner's bootstrap identity (`setup-identities.mjs`, names/ids/statuses only): projects `autologger-dev` (1d1bd6e7), `autologger-stage` (f7add990), `autologger-prod` (90d01bab), each with one environment and one `viewer` identity, universal auth `accessTokenTTL 900` / `accessTokenMaxTTL 3600` -> all `POST 200`; Trusted IPs -> `400 ... plan restriction` (recorded in D6). Client secrets written straight to `.env.infisical.dev`/`.stage` (mode 600); none for prod. Isolation: dev credentials with the prod project ID, `make prod-check` -> `compose-run: Infisical answered HTTP 403: You are not a member of this project with ID 90d01bab-...` (copy deleted).
 
   Check that the dev identity can't read prod. Once task 3.2 exists:
   1. On this host, which holds no prod credentials, temporarily copy `.env.infisical.dev` to
@@ -37,12 +39,12 @@ written to print names or exit codes only. The agent records that output and nev
   2. Run `make prod-check`.
   3. It must fail at the fetch with a `403` or `404` status and message, and print no values. Paste only
      that line, then delete the copy.
-- [ ] 1.3 **(owner)** List today's key names without values:
+- [x] 1.3 **(owner)** List today's key names without values:
   `grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' .env.dev | sort`, then the same for `.env.stage`. Compare
   them with the allowed names in `docs/infisical-secrets.md` (written in 4.2). Record a decision
   for each name that isn't allowed: add it (a scope edit handled by the consistency read) or drop
   it. Check: the name lists and the decisions are pasted.
-
+  Evidence: `copy-secrets.mjs` (names only) -> dev: copy `AI_V2_ENABLED DEEPGRAM_API_KEY`, empty skipped `AI_V2_API_KEY DEV_COMPANION_PORT DEV_PORT GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SHEETS_LOG_IMPORT_ENABLED`, NOT allowed `(0)`; stage: copy `ADMIN_TOKEN API_TOKEN DEEPGRAM_API_KEY GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET STAGE_PORT`, empty `AI_V2_API_KEY`, NOT allowed `(0)`. No allowlist decision needed. `--apply` -> dev `created 2: HTTP 200`, stage `created 6: HTTP 200`.
 ## 2. Static invariants first (`check-envs.sh`)
 
 - [x] 2.1 Invariant 14: no `env_file` in the dev, stage or prod projects; prod plus the e2e
@@ -180,10 +182,12 @@ written to print names or exit codes only. The agent records that output and nev
   - the AI chat answers;
   - `docker exec autologger-dev-app env | cut -d= -f1 | sort` shows only the allowlist, the
     pins, `AUTOLOGGER_STACK` and the image's own variables.
+  Progress (agent, 2026-09-30): `make dev-up` -> built and started all four services, printed `dev app: http://127.0.0.1:8787`; `GET /` and `/api/profile` -> 200; `docker exec autologger-dev-app env | cut -d= -f1` -> `AI_V2_ENABLED AUTOLOGGER_STACK CLAUDE_CLI_PATH DATA_DIR DEEPGRAM_API_KEY ... YTDLP_PATH` (no `INFISICAL_*`). Owner still owes the browser checks: Companion URL, DeepGram transcript 200, AI chat.
 - [ ] 5.2 **(owner)** Fill the Infisical `stage` environment from `.env.stage`, then run
   `make stage-up`. Check:
   - Google sign-in round-trips on `http://localhost:8788`;
   - the scoped `API_TOKEN` gets 200 on `/api/companion/state` and 401 on `/api/sessions`.
+  Progress (agent, 2026-09-30): `make stage-up` -> all services healthy; in-container fetch: token `/api/companion/state` 200, token `/api/sessions` 401, anonymous `/api/sessions` 401; router `/` 200; env names only allowlist + pins. Owner still owes the Google sign-in round trip on `http://localhost:8788`.
 - [ ] 5.3 Run `scripts/check-change.sh --stage pr --base supabase-migration` and record the gate
   list. Every gate passes except `tasks` until this is ticked, and `size` is at most 400.
 
@@ -195,7 +199,7 @@ written to print names or exit codes only. The agent records that output and nev
 
 ## Owner-owed after merge (no checkbox)
 
-- **Before cutover:** fill the Infisical `prod` environment, confirm Node ≥22.12, and put
+- **Before cutover:** fill the Infisical `prod` project, confirm Node ≥22.12 on the deploy host, create the prod identity's client secret there, and put
   `.env.infisical.prod` on the deploy host, add the deploy host to the prod identity's Trusted
   IPs, and run `make prod-check` there.
 - **After this reaches `main` at cutover,** and only after a verified Infisical backup and a

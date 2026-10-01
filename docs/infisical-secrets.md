@@ -100,7 +100,7 @@ are what keep the dev identity away from prod. Configure each identity (universa
 | --- | --- |
 | Access | `viewer` on its **own** project only. The dev identity must not read `stage` or `prod`. |
 | Access-token TTL | 15 minutes, with a maximum TTL of 1 hour |
-| Trusted IPs | Set on both the client secret and the access token, limited to the hosts that run that stack |
+| Trusted IPs | Not available on the free plan (an Enterprise feature). The network boundary is the Infisical proxy's LAN/Tailscale allowlist. |
 | Client secret | Rotate when a host is decommissioned, and at least yearly |
 
 To check that the dev identity can't read prod, on a host that holds no prod credentials:

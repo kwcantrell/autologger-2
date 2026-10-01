@@ -312,8 +312,9 @@ each `.env.infisical.<env>` already carries its own project ID.)
 Each machine identity:
 - has read-only access to its one environment, by being a viewer of only that project;
 - has an access-token TTL of 15 minutes and a maximum TTL of 1 hour;
-- has Trusted IPs on both the client secret and the access token, limited to the hosts that run
-  that stack: this host for dev and stage, and the deploy host for prod;
+- would have Trusted IPs on the client secret and the access token, but the free plan refuses them
+  ("Failed to add IP access range ... due to plan restriction"). The network boundary is instead
+  the Infisical proxy's LAN/Tailscale allowlist (`~/infisical`), plus the short token TTL;
 - has its client secret rotated when a host is decommissioned, and at least yearly.
 
 ### D7. Cutover, rollback and break-glass
