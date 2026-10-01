@@ -93,7 +93,8 @@ counts only, never a value.
   - `auth.signUp` gives `signup_disabled`.
 
   Afterwards, every secret value's count in every container's logs is 0.
-- [ ] 3.5 Stage: the same one-time step for `autologger-stage`, then `make stage-up` and
+- [x] 3.5 Stage: the same one-time step for `autologger-stage`, then `make stage-up` and
+  Evidence: `make stage-down`; `docker volume rm autologger-stage_supabase-db autologger-stage_supabase-db-config`; `make stage-up` -> `0 applied`, `Supabase:       http://localhost:8791`, every stage container `(healthy)`; `autologger-stage_autologger-data`/`-home` CreatedAt `2026-09-30T17:19:56-07:00` before and after; `sh docker/supabase/test_gateway.sh stage` -> `test_gateway (stage): 45 passed, 0 failed` (incl. `other environment's Host refused`); subnets dev db .31/supabase .32/edge .33, stage .22/.23/.24, db and supabase `internal=true`; `sh docker/scripts/check-envs.sh prod` -> `check-envs: ok (prod)`.
   `test_gateway.sh stage`.
   - Check: stage is healthy beside dev; the six new subnets are distinct; dev's gateway never
     answers with stage's services; `sh docker/scripts/check-envs.sh prod` passes; stage's api
@@ -101,10 +102,12 @@ counts only, never a value.
 
 ## 4. Commands and docs
 
-- [ ] 4.1 Makefile help text (the reset and init note) and the README make-target table (not
+- [x] 4.1 Makefile help text (the reset and init note) and the README make-target table (not
+  Evidence: `make help` -> `dev-up … (app, gate, Companion, Supabase) and migrate`, `dev-reset  DESTROY dev volumes, incl. Postgres and Supabase storage (needs CONFIRM=yes)`, and the same for stage; README make-target rows 1417/1422/1424/1427 updated (the endpoint table is untouched); `make dev-up` tail -> `dev app:        http://127.0.0.1:8787` … `Supabase:       http://localhost:8790   (API gateway: /auth/v1, /rest/v1, /realtime/v1, /storage/v1)`.
   the frozen endpoint table); `urls` on `make dev-up`.
   - Check: `make help` and the `dev-up` tail.
-- [ ] 4.2 `docs/supabase.md` covers:
+- [x] 4.2 `docs/supabase.md` covers:
+  Evidence: docs/supabase.md rewritten (layout, network table, roles, gateway route table, commands, the Postgres-only re-init, migration rules, rotation and recovery, residual risks); ADR 0021 1.2b text updated. Commands run on dev: `echo 'select 1 as ok;' | make dev-psql` -> `1`; `make dev-migrate` -> `0 applied`; re-init exercised in 3.2/3.5; `test_gateway.sh dev` -> 45/45. Roles-password rotation per the doc (scratch `rotate-roles.mjs`: Infisical `PATCH 200`, `ALTER ROLE` x3 as `supabase_admin` -> `rc 0 stderr-clean`, then `make dev-up`) -> `test_gateway (dev): 45 passed, 0 failed`. JWT trio rotation per the doc (delete the three in Infisical -> `delete trio 200`; generator -> `created JWT_SECRET`, `created ANON_KEY`, `created SERVICE_ROLE_KEY`; `make dev-up`) -> gateway test 45/45 and smoke `rest: 404 PGRST205`, `storage: buckets=[]`, `signup: 422 signup_disabled`, `realtime: SUBSCRIBED send=ok`. (A first delete attempt returned 500 because the scratch helper sent no Content-Length; Infisical's log: `Body cannot be empty when content-type is set to 'application/json'`.)
   - the services;
   - the gateway route table;
   - the networks;
