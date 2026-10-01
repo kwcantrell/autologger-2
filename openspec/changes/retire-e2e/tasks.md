@@ -6,8 +6,9 @@ gates run with `GITHUB_BASE_REF=supabase-migration`.
 
 ## 1. Router test (before anything is deleted)
 
-- [ ] 1.1 Write `docker/scripts/test_router.sh` (design D5) and run it against stage while
+- [x] 1.1 Write `docker/scripts/test_router.sh` (design D5) and run it against stage while
   `e2e/container-routing.spec.ts` still exists, to cross-check every case.
+  Evidence: `sh docker/scripts/test_router.sh stage` -> `test_router: 67 passed, 0 failed` (shell 5, dispositions 24, static chunk, stray upgrades 5 + control, upgrade detection 11, traversal 11 + own-404 + POST + query, token scope 4, web->api `unreachable`, LAN `192.168.0.100` not reachable). The disposition table was recorded with `--record` from the stage router built from this commit. It was not re-compared against a live single-process reference (no host server is run); the e2e suite's earlier parity runs are the reference, as design D5 states. Regression: a scratch router (`rtrtest-broken`, stage networks, `127.0.0.1:18099`) with `@nonRead not method GET HEAD POST` -> `FAIL disposition POST /sessions/abc (got 200 | … text/html …)`, `test_router: 66 passed, 1 failed`; scratch container removed. Adds a `ROUTER_TEST_PORT` override for that.
   - Show it catches a regression: temporarily point the router's `POST /sessions/*` disposition
     at `web` in a scratch copy of the Caddyfile on a scratch router. Expect a FAIL naming that
     request.
