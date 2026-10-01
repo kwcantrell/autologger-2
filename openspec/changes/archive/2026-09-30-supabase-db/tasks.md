@@ -152,11 +152,12 @@ shows names, statuses and counts only.
   - Check: it is green, and size is 400 or under.
 - [x] 4.2 Do the tier 2 consistency read, appended to `panel.md`.
   Evidence: `git diff 4b83b5e -- openspec/changes/supabase-db/` -> `tasks.md | 36 +++…` only (ticks and evidence), so no scope change; `panel.md` `## Consistency read 2026-09-30` with 5 minor items, all resolved.
-- [ ] 4.3 Archive with `/opsx:archive supabase-db`, which syncs the specs.
+- [x] 4.3 Archive with `/opsx:archive supabase-db`, which syncs the specs.
+  Evidence: sync: container-deployment 1 MODIFIED, local-container-environments 5 MODIFIED + 2 ADDED, each delta block present verbatim in `openspec/specs/` (asserted by the merge script); `openspec validate --specs --strict` -> `Totals: 26 passed, 0 failed`; moved to `openspec/changes/archive/2026-09-30-supabase-db/`; `openspec validate --all --strict` -> `Totals: 26 passed, 0 failed (26 items)`.
   - Check: `openspec validate --all --strict` passes.
 
-## Owner-owed
+## Owner-owed (not tracked as tasks; done at cutover)
 
-- [ ] O.1 At cutover, after `main` contains this change, on the deploy host:
+- O.1 At cutover, after `main` contains this change, on the deploy host:
   `node docker/scripts/supabase-keys.mjs prod --writer <owner writer creds>`, then
   `make prod-check`. This is a step in the slice 11 cutover runbook, not before it.
