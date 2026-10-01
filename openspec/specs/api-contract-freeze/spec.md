@@ -9,8 +9,8 @@ and external API clients (bearer-token scripts, stale
 Companion installs) — but consumers are the *reason* for the freeze, not its measuring
 stick. The frozen surface is the full published surface (the README endpoint table is the
 normative route inventory), independent of what any consumer currently reads.
-## Requirements
 
+## Requirements
 
 ### Requirement: Frozen HTTP/WS contract
 The server SHALL preserve its entire published externally observable contract, including
@@ -50,7 +50,6 @@ Two explicit non-loopholes:
 - **WHEN** a change edits an observable server behavior and updates the in-repo consumers
   to match within the same change
 - **THEN** the server delta still requires an authorizing delta spec
-
 
 ### Requirement: OAuth callback failure redirect
 `GET /auth/google/callback` SHALL respond to each enumerated failure class with `302`
@@ -135,7 +134,6 @@ The success path SHALL remain byte-identical in behavior: set the session cookie
 - **THEN** the response is the app's ordinary `500` error — no `login_error` redirect,
   no cookie
 
-
 ### Requirement: Session deep-link HTML route
 `GET /sessions/:id`, where `:id` is a single non-empty path segment, SHALL respond
 `200` with the index shell HTML — the same page identity served at `/` (same route
@@ -190,7 +188,6 @@ assert `404` for the encoded form.)
   upgrade replay; this change authorizes the destroy disposition — the `/api` WS
   surface is unchanged)
 
-
 ### Requirement: Session detail endpoint
 `GET /api/sessions/:id` SHALL respond `200` with a JSON object carrying exactly the
 same field set and value semantics as one element of the `active`/`archived` arrays in
@@ -224,7 +221,6 @@ response (scope, shape, and semantics) is unchanged.
   member of
 - **THEN** every case responds with the same `404` (same shape), with no signal
   distinguishing them
-
 
 ### Requirement: Team management endpoint family
 The server SHALL expose the following authenticated team-management routes, which
@@ -268,7 +264,6 @@ values outside `admin`|`member` are schema-rejected `400`.
 - **THEN** the response is `403` (they may know the team exists; they may not manage
   it)
 
-
 ### Requirement: Teams page HTML route
 `GET /teams` SHALL respond `200` with the index shell HTML — the same page identity
 served at `/` and `/sessions/:id` — unconditionally on authentication (the login
@@ -278,7 +273,6 @@ remain outside the inventory and keep responding `404` when no static asset matc
 #### Scenario: Teams deep link serves the shell
 - **WHEN** `GET /teams` is requested by an anonymous client
 - **THEN** the server responds `200` with the index shell HTML and no `Set-Cookie`
-
 
 ### Requirement: Profile teams role field
 Each entry of the profile payload's `auth.user.teams[]` array SHALL gain a `role`
@@ -291,7 +285,6 @@ tolerate its presence.
   `GET /api/profile`
 - **THEN** `auth.user.teams` contains A with `role: "admin"` and B with
   `role: "member"`
-
 
 ### Requirement: Admin add-membership role field
 The support-plane `POST /api/admin/users/:userId/memberships` body SHALL accept an
@@ -315,7 +308,6 @@ exclusions. All other `/api/admin/*` surface is unchanged.
 - **THEN** the request succeeds exactly as before this change, creating a `member`
   membership
 
-
 ### Requirement: New-user membership grant behavior
 On first Google sign-in, a new user SHALL receive exactly the memberships
 materialized from pending invites matching their normalized email, and only when
@@ -331,7 +323,6 @@ failure `302 /?login_error=<code>`) is untouched.
 - **THEN** the created user has zero memberships (and the deprecated variable only
   produced a startup warning)
 
-
 ### Requirement: Disabled-account sign-in redirect
 When the OAuth callback completes token verification for a Google `sub` whose user
 row exists but is disabled, the server SHALL respond `302` with
@@ -346,7 +337,6 @@ otherwise untouched.
 - **WHEN** a user whose account is disabled completes the Google OAuth flow
 - **THEN** the callback responds `302` to `/?login_error=account_disabled` with no
   cookie, and no user row is created or modified
-
 
 ### Requirement: Transcript generation lock status endpoint
 `GET /api/transcript-generation/status` SHALL be frozen surface with:
@@ -374,7 +364,6 @@ transcript list routes.
 - **THEN** the response is `200` with `in_flight` true and the busy fields populated as
   specified — identifiers for permitted requesters, `session_id`/`session_title` nulled
   (same key set) for logged-in requesters without membership of the holding session
-
 
 ### Requirement: Transcript generation endpoint behavior
 `POST /api/sessions/:sessionId/transcript-words/generate` SHALL move from unconditional
@@ -444,7 +433,6 @@ an additional authorized surface (see above).
 #### Scenario: Sibling stubs stay frozen
 - **WHEN** a configured deployment receives `GET /api/sessions/:id/transcribe.csv`
 - **THEN** it still responds with the current `503 {detail}`
-
 
 ### Requirement: YouTube import endpoint behavior
 
@@ -521,7 +509,6 @@ their current frozen `503`.
 - **THEN** its JSON has the same fields as before, with `episode_date` now carrying the
   imported date rather than `null` — no field added, removed, or retyped
 
-
 ### Requirement: YouTube import success anchors a take; refuses while a recording is live
 
 `POST /api/sessions/:sessionId/youtube-import`, on a **successful** import, SHALL — in
@@ -559,7 +546,6 @@ messages.
 - **WHEN** an import fails after validation
 - **THEN** no `event.changed` or `transport.changed` is emitted on its behalf and no
   `Recording` events or transport advance persist
-
 
 ### Requirement: Topic generation endpoint behavior
 
@@ -603,7 +589,6 @@ its frozen `503`. The topics CRUD routes (`GET/POST/PATCH/DELETE …/topics`) ar
 - **WHEN** a configured deployment receives `GET /api/sessions/:id/transcribe.csv`
 - **THEN** it still responds with the current `503 {detail}`
 
-
 ### Requirement: Broadcast atomicity with the owning transaction
 
 WS `*.changed` broadcasts SHALL be emitted only for mutations whose owning transaction
@@ -640,7 +625,6 @@ behavior and SHALL NOT change.
   previously flag-suppressed intermediate broadcasts remain unobserved, matching the
   published pre-change success-path behavior
 
-
 ### Requirement: Suffix range against a zero-byte audio blob
 
 On the audio download endpoint (`GET /api/sessions/:sessionId/audio/segments/:segmentId`,
@@ -670,7 +654,6 @@ unchanged, except that the served `Content-Type` is the normalized value defined
   the `Content-Type` is the segment's stored type as normalized by the audio content-type
   clamp
 
-
 ### Requirement: Event update strips UI snapshots for profile-defined internal category
 
 `PUT /api/sessions/:sessionId/events/:eventId` SHALL reject (`400`) any category that
@@ -695,7 +678,6 @@ code.
 - **WHEN** a client PUTs an event update whose category is not defined in the studio
   profile (including `internal` when the profile does not define it)
 - **THEN** the response is the existing `400`, unchanged
-
 
 ### Requirement: Local audio import endpoint
 
@@ -765,7 +747,6 @@ the cap), or the post-read backstop.
   row or anchored take; the stored blob is deleted best-effort (rollback never
   masks the original failure, and never leaves a row pointing at a missing blob)
 
-
 ### Requirement: Show-scoped log-import job endpoints
 
 The published HTTP contract SHALL include:
@@ -816,7 +797,6 @@ create-at-arbitrary-timecode client endpoint in this change).
 - **WHEN** an authenticated user GETs a log-import job created by another user
 - **THEN** the response is `404 { detail: "Log import job not found." }`,
   byte-identical to the unknown-id response
-
 
 ### Requirement: events/generate optional body and deleted count
 
@@ -870,7 +850,6 @@ previously frozen unless superseded by the `auto-event-generation` delta.
   broadcasts were emitted beyond those of the run's own inserts, and a
   subsequent `GET …/events` still returns the prior auto rows
 
-
 ### Requirement: Events list has_auto_generated field
 
 `GET /api/sessions/:sessionId/events` SHALL include `has_auto_generated`
@@ -894,7 +873,6 @@ semantics changes.
 - **WHEN** a session has no event whose metadata carries
   `auto_generated === true`
 - **THEN** the events list response carries `has_auto_generated: false`
-
 
 ### Requirement: Show title_suffix on show wire; next_episode omitted
 
@@ -948,7 +926,6 @@ safety but SHALL NOT be bumped on session create and SHALL NOT appear on the sho
 - **THEN** the update succeeds without failing solely due to that key and no
   next-episode counter is written as a live product field
 
-
 ### Requirement: Wire deck_title equals stored session title
 
 Wherever the frozen HTTP surface emits `deck_title` for a session (including
@@ -969,7 +946,6 @@ only the value derivation is authorized to change from
 - **WHEN** a session list entry is serialized for a session titled `HD_260802`
   with a non-blank show code
 - **THEN** that entry's `deck_title` is `HD_260802`
-
 
 ### Requirement: Create-session optional episode under date suffix
 
@@ -993,7 +969,6 @@ create-path trim (leading/trailing whitespace removed).
 - **WHEN** a client creates a session for an episode-suffix show without a
   non-blank `episode` and without an explicit title that bypasses derivation
 - **THEN** the response is `400 { detail }`
-
 
 ### Requirement: Events POST strips reserved auto-generation metadata keys
 
@@ -1027,7 +1002,6 @@ the sheets importer's hub write) are NOT this route and SHALL be unaffected.
 
 - **WHEN** a client POSTs an event with metadata carrying no reserved keys
 - **THEN** the stored metadata is byte-equivalent to today's behavior
-
 
 ### Requirement: `/api/*` responses are content-encoding negotiated
 
@@ -1118,7 +1092,6 @@ by an enumerated exception list that a future route could fall out of:
   the freeze on non-JSON export bodies constrains the representation, and content-coding is
   transport applied above it, transparent to any conforming HTTP client
 
-
 ### Requirement: Show detail is addressable by id
 
 The server SHALL expose `GET /api/shows/:showId`, returning `200 { show }` where `show` is
@@ -1151,7 +1124,6 @@ posture the sibling routes already take for cross-tenant reads.
   `GET /api/shows/:showId` for a show that does exist
 - **THEN** the response is `404` with a body byte-identical to the unknown-id response, and
   nothing in the status or body distinguishes the two cases
-
 
 ### Requirement: Audio content types are clamped to non-compressible
 
@@ -1206,7 +1178,6 @@ therefore still clamped.
 - **WHEN** a segment is uploaded with `Content-Type: audio/webm;codecs=opus`
 - **THEN** the stored and served content type is exactly `audio/webm;codecs=opus`,
   parameters and case unchanged
-
 
 ### Requirement: sync-from-disk returns counts, not the segment list
 
@@ -1279,3 +1250,59 @@ names. Such targets are not in the endpoint inventory. This requirement authoriz
 - **WHEN** `GET /api/companion/%2e%2e/sessions` is sent with a valid session cookie at the
   public origin of the split topology
 - **THEN** the response is `404` and the sessions list handler does not run
+
+### Requirement: Text containing NUL is refused
+The catalog cannot store the character U+0000 (NUL). A request value containing NUL that would
+reach a catalog statement, whether from a path segment, a query value or a body field, SHALL be
+refused with status `400` and a JSON body `{"detail": "<message>"}`. The statement carrying it
+SHALL NOT be sent, and a catalog transaction it belongs to SHALL write nothing.
+
+These cases are handled explicitly:
+- `POST /api/companion/presence` with a `session_id` containing NUL SHALL be refused with `400`,
+  and SHALL store no presence.
+- An OAuth callback whose `state` contains NUL SHALL be treated as an invalid state, with the
+  existing `state_invalid` redirect.
+- A sign-in whose identity token has a subject or email claim containing NUL SHALL be refused
+  with the existing `token_invalid` redirect.
+- NUL SHALL be removed from the given-name, family-name and picture claims before they are
+  stored.
+
+Values without NUL SHALL behave as before.
+
+#### Scenario: NUL in a show name is a 400
+- **WHEN** a client creates a show whose `name` contains `\u0000`
+- **THEN** the response is `400` with a JSON `detail`, and no show is created
+
+#### Scenario: NUL in a team display name is a 400
+- **WHEN** a team admin creates a team whose `display_name` contains `\u0000`
+- **THEN** the response is `400` with a JSON `detail`, as for the family's other validation errors, and no team is created
+
+#### Scenario: NUL in a path segment is a 400
+- **WHEN** a client requests a team-scoped route whose team id path segment contains a percent-encoded NUL
+- **THEN** the response is `400` with a JSON `detail`, not `500`
+
+#### Scenario: NUL in a presence session id is refused
+- **WHEN** a Companion client posts presence with a `session_id` containing NUL
+- **THEN** the response is `400`, and a later `GET /api/companion/state` answers as if that presence had never been posted
+
+#### Scenario: NUL in the OAuth state is an invalid state
+- **WHEN** the OAuth callback receives a `state` containing a percent-encoded NUL
+- **THEN** it redirects with `login_error=state_invalid`
+
+#### Scenario: NUL in the email claim refuses sign-in
+- **WHEN** a first Google sign-in carries an `email` containing NUL
+- **THEN** it redirects with `login_error=token_invalid` and creates no user
+
+#### Scenario: NUL in a name claim is stripped
+- **WHEN** a first Google sign-in carries a `given_name` containing NUL and valid other claims
+- **THEN** the user is created, and the stored given name is the claim with NUL removed
+
+### Requirement: Catalog integer fields are bounded
+A request integer that the server stores in a 64-bit catalog column (session
+`start_offset_frames`, on create and on update) SHALL be at most `9007199254740991`
+(`Number.MAX_SAFE_INTEGER`). A larger value SHALL be refused with status `422` and the existing
+validation-error body, instead of failing on storage.
+
+#### Scenario: An oversized frame offset is a 422
+- **WHEN** a client creates a session with `start_offset_frames` of `1e20`
+- **THEN** the response is `422` with a validation-error body, and no session is created

@@ -199,4 +199,8 @@ Logs: keep the full output of every test and gate run under the session scratchp
   `PGUSER=autologger_app`, `PGDATABASE=postgres`, `PGPORT=5432`, `PGPASSWORD=<set>`. The api log
   has `AutoLogger (Node) listening on http://0.0.0.0:8787` with no catalog errors.
   `docker/scripts/test_router.sh stage` -> `test_router: 67 passed, 0 failed` (`4c-6.3-router.log`).
-- [ ] 6.4 Run `consistency-read` over the artifacts against the shipped code, then archive.
+- [x] 6.4 Run `consistency-read` over the artifacts against the shipped code, then archive.
+  Evidence: `panel.md` "Consistency read 2026-10-01": edits since `4a54603` are tasks.md only, no
+  scope change, every requirement maps to a test or check, 1 minor finding resolved.
+  `scripts/check-change.sh --only panel` -> `PASS  panel  42 finding(s), no open criticals`.
+  The archive follows in its own commit.

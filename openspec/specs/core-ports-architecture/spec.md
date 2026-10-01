@@ -667,7 +667,7 @@ leaking writes:
 
 ### Requirement: The SQLite catalog adapter serialises each connection
 
-Until the catalog moves to Postgres (ADR 0021 slice 4), the SQLite adapter SHALL run at most one
+Until it is removed (ADR 0021 slice 4e), the SQLite adapter SHALL run at most one
 transaction at a time on a connection. Every adapter instance on that connection SHALL share one
 lock. Root-handle statements and transactions SHALL wait until any open transaction ends, and
 SHALL be served in the order they were called.
@@ -678,12 +678,10 @@ The adapter SHALL also:
 - after a rollback fails, refuse every later call instead of serving a connection that is still
   inside a transaction.
 
-The catalog stores and `KvStore` SHALL share one instance of this adapter over the catalog
-connection, so no statement on that connection bypasses the lock and a key/value call never joins
-a catalog transaction.
-
-In a supervised deployment (production and stage), a failed rollback SHALL stop the server with a
-non-zero exit status, so its supervisor restarts it.
+The server SHALL NOT use this adapter; its catalog runs on the Postgres adapter (see
+catalog-database, "The server's catalog runs on Postgres"). Code that shares one SQLite connection
+between catalog stores and a key/value store SHALL share one instance of this adapter, so no
+statement on that connection bypasses the lock.
 
 #### Scenario: Outside statements wait for an open transaction
 - **WHEN** a root statement is issued while another transaction is awaiting
@@ -706,8 +704,8 @@ non-zero exit status, so its supervisor restarts it.
 - **THEN** the failing call rejects with its own first error, every later or queued call rejects with a broken-adapter error, and none writes to the connection
 
 #### Scenario: A broken connection stops a supervised server
-- **WHEN** a rollback fails and the adapter marks its connection broken in a supervised deployment
-- **THEN** the server logs the failure at error level and shuts down through its graceful path with a non-zero exit status
+- **WHEN** a server runs in a supervised deployment
+- **THEN** its catalog is served by the Postgres adapter, never by this one, so no failed SQLite catalog rollback can stop it; the Postgres adapter retires a bad connection instead
 
 ### Requirement: The Postgres catalog adapter
 
@@ -719,7 +717,9 @@ Statements:
 - it SHALL accept the `?` placeholders the catalog stores use, and leave quoted text and comments
   unchanged;
 - it SHALL return 64-bit integer values as numbers;
-- `run()` SHALL return the affected-row count.
+- `run()` SHALL return the affected-row count;
+- a statement with a text parameter containing U+0000 (NUL) SHALL be refused with a distinct
+  invalid-text error before it is sent; inside a transaction, that refusal fails the transaction.
 
 Transactions:
 - every transaction SHALL run at the `SERIALIZABLE` isolation level;
@@ -727,6 +727,8 @@ Transactions:
   body again, at most three runs in total. The caller SHALL then receive the last serialization
   error;
 - no other failure SHALL be retried;
+- because a body may run more than once, a transaction body SHALL have no effect outside the
+  catalog database;
 - a transaction SHALL resolve only when the server confirms its commit;
 - when a commit's reply never arrives, the caller SHALL receive a distinct "outcome unknown"
   error, and the adapter SHALL NOT retry or roll back after it.
@@ -744,6 +746,10 @@ Connections:
 - any other connection SHALL be closed and replaced;
 - after a transaction's connection is lost, no statement of that transaction SHALL be sent
   anywhere, and the process SHALL keep running.
+
+Sharing:
+- in the server, the catalog stores and the key/value store SHALL share one instance of this
+  adapter, and a key/value call SHALL never join a catalog transaction.
 
 Closing:
 - the adapter SHALL have an asynchronous `close()`;
@@ -793,3 +799,7 @@ Closing:
 #### Scenario: Placeholders and integers
 - **WHEN** a statement contains a `?` inside a quoted string and one outside it, and selects a row count
 - **THEN** only the outer `?` is bound, and the count is a number
+
+#### Scenario: NUL text is refused before it is sent
+- **WHEN** a statement binds a string containing NUL, at the root or inside a transaction
+- **THEN** the call rejects with the invalid-text error, no statement is sent for it, and a transaction it was part of writes nothing

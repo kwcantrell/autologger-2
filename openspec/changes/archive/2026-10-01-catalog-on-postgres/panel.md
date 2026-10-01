@@ -52,3 +52,25 @@ Reviewers ran as separate subagents with fresh context. Their probes used throwa
 - [x] [minor] A6 was verified on dev only, and the running stage api is stale (no `PG*`, not on `catalog`). Resolved: `stage-up` recreates it, and task 6.3 checks the api env.
 - [x] [minor] README still describes `DATA_DIR/catalog.db`. Resolved: task 5.2 updates README, which is listed in Impact.
 - [x] [minor] The rotation window. Resolved with the failure-and-abuse rotation finding.
+
+## Consistency read 2026-10-01
+Edits since approval (`4a54603`): tasks.md only. The changes are ticks, `Evidence:` lines, and blank lines removed inside items so the evidence gate reads each item whole. proposal, design and the spec deltas are unchanged.
+Scope change: no
+
+Each requirement was checked against the shipped code and its tests:
+- **catalog-database "The server's catalog runs on Postgres":**
+  - writes land and persist: the integration suite on Postgres clones (1.2), plus the dev live check with a restart (6.2);
+  - the wait for the migrated catalog: `waitForCatalog.test.ts` (`42P01` then success);
+  - an unreachable catalog stops boot: `bootOrder.int.test.ts`;
+  - the show order: `catalogDialect.int.test.ts`;
+  - the value-free log: `unhandledErrorLog.test.ts`;
+  - the rotation order: documented (5.1).
+- **core-ports-architecture:** the SQLite adapter's existing suite is unchanged. The Postgres NUL guard: 4.1, unit and pg.
+- **api-contract-freeze:** NUL, all six scenarios, in `nulText.int.test.ts` (plus a `sub` case). The integer bound: 4.3 (create and update).
+- **web-frontend-platform:** the `PG*` refusal: `bootGuard.test.ts` and `bootOrder.int.test.ts`. Lock-before-catalog: `config.test.ts`.
+- **local-container-environments:** `make -n dev-up` and `make -n stage-up` (5.1).
+- **package-architecture:** `migrations.int.test.ts` runs the SQLite migrator directly.
+- **Non-goals:** none crossed. There are no schema, role, network or secret changes. `packages/contract` changes only the `start_offset_frames` bound the spec authorizes. There is no import and no SQLite deletion.
+- **Design against specs:** no contradictions (D2 budget and logging, D5 single 400 rule, D8 log fields, D9 bound).
+
+- [x] [minor] "One adapter per process, shared by the stores and KV" (core-ports Sharing) has no dedicated test. Resolved: `createBindings` builds one `PostgresCatalogDb` and passes it to both `catalog` and `KvStore` (`server/src/node/config.ts`); `config.test.ts`'s no-connection case covers the construction. A test asserting object identity would only restate the wiring.
