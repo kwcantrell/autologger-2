@@ -35,7 +35,7 @@
 #   * All three also add -f docker/supabase-db.yaml (supabase-db D1: db and migrate) and
 #     -f docker/supabase-services.yaml (supabase-services D1: auth, rest, realtime, storage, gateway).
 #   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_DB_FILE, AL_STAGE_FILES,
-#     AL_PROD_FILE, AL_E2E_OVERLAY, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
+#     AL_PROD_FILE, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
 
 # shellcheck disable=SC2034  # the AL_* variables are consumed by the sourcing script
 AL_DEV_FILE=docker/compose.dev.yaml
@@ -44,7 +44,6 @@ AL_DB_FILE=docker/supabase-db.yaml
 AL_SB_FILE=docker/supabase-services.yaml
 AL_STAGE_OVERLAY=docker/compose.stage.yaml
 AL_STAGE_FILES="$AL_PROD_FILE $AL_STAGE_OVERLAY"
-AL_E2E_OVERLAY=e2e/container/compose.e2e.yaml
 AL_STAGE_WEB_TAG=stage
 AL_STAGE_API_TAG=stage
 AL_STAGE_PUBLIC_BASE_URL=http://localhost:8788

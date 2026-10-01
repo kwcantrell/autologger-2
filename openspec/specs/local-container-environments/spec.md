@@ -416,8 +416,8 @@ Wherever either is set, its value SHALL be a single dotted IPv4 address.
 
 #### Scenario: Production router defaults unchanged
 - **WHEN** the Caddyfile is adapted with neither gateway variable set
-- **THEN** the adapted JSON equals the pre-change adapted JSON, and `npm run e2e:container`
-  passes, including the forged `X-Forwarded-For` case
+- **THEN** the adapted JSON equals the committed baseline (`make check` invariant 13), and
+  `docker/scripts/test_router.sh stage` passes
 
 ### Requirement: Prod targets are explicit and bound to committed content
 `prod-push` and `prod-up` SHALL refuse to run unless both hold:
@@ -488,8 +488,7 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
 11. `docker/.env` exists.
 12. The companion ignore file does not begin with an exclude-all line.
 13. The Caddyfile adapted with no gateway variables differs from the committed baseline.
-14. Any service in the dev, stage, or prod project has an `env_file`. The prod project
-    combined with the `e2e:container` overlay is exempt.
+14. Any service in the dev, stage, or prod project has an `env_file`.
 15. The key names listed in the shared allowlist file differ from the null-passthrough names
     of the resolved prod `api` or dev `app`, excluding keys that service pins with a literal.
 16. In any of the dev, stage, or prod projects:

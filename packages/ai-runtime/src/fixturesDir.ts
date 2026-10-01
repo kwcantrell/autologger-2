@@ -11,8 +11,7 @@
 // index.ts would still set up a needless import cycle through the very
 // module it is testing. Re-exported from index.ts
 // unchanged, so every staying app-side reader (per design D2: four
-// integration-test files, one of them at two sites, plus
-// `playwright.config.ts`'s one fixture) and this package's own in-package
+// integration-test files, one of them at two sites) and this package's own in-package
 // tests all resolve through this ONE expression — never independently
 // written path computations for "the fixtures directory" that could
 // silently drift onto different on-disk copies.

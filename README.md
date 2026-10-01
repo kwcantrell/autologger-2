@@ -756,7 +756,7 @@ packages/                 Source-only npm workspace packages (no build step; ser
                                rather than merely conventional (a barrel re-export would open a
                                second route to the same module, undermining gate ruling E4)
   ai-runtime/fixtures/     fake-claude.mjs (shared: three in-package tests + four app-side
-                           integration suites, one at two sites, + playwright.config.ts),
+                           integration suites, one at two sites),
                            fake-claude-error.mjs,
                            fake-claude-exit-before-stdin.mjs, ai-v2-sdk-spawn-recorder.mjs —
                            moved from server/src/test/fixtures/ (ai-runtime-package task 3.3)
@@ -918,7 +918,7 @@ npm install
 cp server/.env.example server/.env # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
 # upgrading an existing checkout? your state moved: mv .env data server/
 
-npm run typecheck                  # server + web + e2e
+npm run typecheck                  # server + web + companion + packages
 npm run dev                        # single process (tsx watch), :8787 — Next-served frontend
 npm test                           # server vitest (unit + integration projects)
 ```
@@ -1027,8 +1027,8 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
   is emulated for the non-native architecture.
 - **Deploy host:** `docker login ghcr.io` with a PAT that has **`read:packages`** only. An
   anonymous pull of the private images must be refused.
-- `docker compose build` builds the images for the *native* architecture only (local runs,
-  `npm run e2e:container`); it does not push.
+- `docker compose build` builds the images for the *native* architecture only (local runs); it
+  does not push.
 - **Pin the tags** in the compose `.env` (`WEB_TAG=<sha>`, `API_TAG=<sha>`). The compose
   interpolation (`${WEB_TAG:?…}`) refuses an *unset* tag but does **not** reject the literal
   value `latest`; the operator must not use it.
@@ -1264,10 +1264,7 @@ sudo rsync -a --chown=1000:1000 ~/.claude ~/.claude.json "$HOMEVOL/"
 ```
 
 **2. Pre-flight on loopback.** `docker compose up -d`, then on `127.0.0.1:${ROUTER_PORT}` run
-your own probes. **Do not run `npm run e2e:container` now:** it uses the same compose file, so
-the fixed `autologger-api` container name and the pinned `172.28.10.0/24`/`172.28.11.0/24`
-subnets clash with the running production stack. Run it on another host, or before you bring
-production up (`docker compose down` first if it is up). **Do not attempt a
+your own probes. **Do not attempt a
 Google sign-in on loopback:** the OAuth callback always returns to `PUBLIC_BASE_URL`, so it can
 only complete through the public origin. The sign-in and `Secure` session-cookie check happens
 only in the outside verification after the Pangolin repoint. Rehearse the membership bootstrap
@@ -1380,21 +1377,18 @@ Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
   otherwise restore a backup taken before the upgrade. Repointing Pangolin at the *old host*
   drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
-- **One host, two stacks.** `api` has a fixed `container_name`, so `npm run e2e:container` (compose
-  project `alg-e2e`) and a production stack cannot coexist on the same Docker host; the e2e
-  script refuses to run if its project already has containers, and will fail on the name
-  clash while production is up. Run it elsewhere or stop production first.
 
 ### Verifying the container topology
 
-`npm run e2e:container` builds the web bundle and both images from the current tree, starts a
-single-process reference server and the compose stack (test-only `e2e/container/compose.e2e.yaml`,
-random throwaway secrets), runs the Playwright `container` project (a differential matrix
-between the router and the single-process server, raw-socket upgrade checks, traversal,
-encoding parity, session WebSocket, token scope, plus `serving-contract.spec.ts`), and tears
-everything down. It is excluded from the default `npm run e2e`. Not covered locally and owed at
-cutover: the forged-`X-Forwarded-For` check through your real Pangolin, and the amd64 image's
-behaviour under QEMU.
+`sh docker/scripts/test_router.sh stage` checks a running stack's router without a browser:
+shell routes, a recorded disposition table, stray-upgrade closure and upgrade detection,
+traversal with `API_TOKEN`, token scope including the WebSocket, `web` unable to reach `api`, and
+the port unreachable off loopback. It prints case names and statuses only. Browser e2e (the
+former Playwright suites, including the differential matrix against a single-process server)
+is retired during the Supabase migration (ADR 0021 slice 1.4a) and returns rebuilt against the
+Supabase stack. Not covered and owed at cutover: the forged-`X-Forwarded-For` check through
+your real Pangolin, session-WebSocket frames and encoding parity through the router, and the
+amd64 image's behaviour under QEMU.
 
 ## Local container environments
 
@@ -1611,8 +1605,6 @@ for AI chat.
   commands) and tags the **local** `main` HEAD, so push `main` first. `make prod-build` only
   tags `:local`, so it never overwrites a pulled release. `prod-up` also needs `WEB_TAG` and
   `API_TAG` pinned in Infisical `prod`.
-- `npm run e2e:container` still conflicts with a running prod stack (fixed `container_name`, prod
-  subnets); a follow-up.
 
 ## Frontend (web/ workspace)
 
@@ -1710,7 +1702,7 @@ Two conventions worth knowing before touching component styles:
 
 Stable ID/data-attribute hooks (`#v4-log-sheet`, `tr[data-event-id]`, `#v3-session-grid`,
 `#btn-ctl-*`, `[data-category-id]`, `body[data-v4-transport]`, …) are untouched by the
-migration — e2e and Companion selectors keep working. `body[data-v4-transport]` is set
+migration — Companion selectors (and any future browser e2e) keep working. `body[data-v4-transport]` is set
 dynamically at runtime (`SessionWorkspace.tsx`), so its `@layer components` block in
 `tailwind.css` is live styling, not dead code — the file carries a parity comment at that
 rule.
@@ -1775,35 +1767,13 @@ upgrade path outside Hono's middleware so a configured `IP_ALLOWLIST` alone woul
 Test LAN devices against the production serve path (`npm run build && npm run start`, which
 defaults `HOST=0.0.0.0`) instead.
 
-### e2e smoke
+### Browser e2e (retired)
 
-```bash
-npx playwright install chromium   # one-time
-npm run e2e                       # builds web/, boots a hermetic server on :8791
-```
-
-The Playwright `webServer` runs with `REQUIRE_LOGIN=0`, loopback bind, a wiped
-`e2e/.data/` DATA_DIR, and explicitly blanked OAuth/token env — your real `server/.env`
-never leaks into the suite. The wipe happens in the `webServer.command` itself, in the
-same shell invocation that starts the server, so it always runs before boot.
-
-### Visual regression harness
-
-```bash
-npm run e2e:visual          # 44 screenshots, two viewports (desktop 1280×720, mobile 390×844)
-npm run e2e:visual:update   # re-capture baselines after a reviewed, intentional UI change
-```
-
-`e2e/visual.spec.ts` is a separate Playwright **project**, excluded from default
-`npm run e2e` (gate decision E-1 from the Tailwind migration) — it's a standing opt-in
-safety net against pixel drift, not a per-PR gate. Baselines are committed PNGs, chromium
-only, masked for time-driven regions (playhead, rolling shimmer) and autoplaying video.
-**Re-baseline policy:** the "frozen for the whole campaign" rule was migration-specific
-and no longer applies — re-capture the affected shots freely for any legitimate UI
-change, with a human-reviewed before/after diff confirming only the intended change
-moved. A future Playwright/Chromium version bump will shift anti-aliasing across most
-shots and likely needs a full re-capture; that's expected and no longer gated behind an
-exact-pin policy (`@playwright/test` is back to a caret range).
+The Playwright suites (smoke, visual regression, login gate, Companion headless, container
+routing) were retired during the Supabase migration (ADR 0021 slice 1.4a); they remain in git
+history and return rebuilt against the Supabase stack. Until then, `npm test` (unit and
+integration), `docker/scripts/test_router.sh stage` and `docker/supabase/test_gateway.sh` are the
+regression checks.
 
 ## Companion module (`companion/`)
 
@@ -1907,7 +1877,5 @@ the proxy generally won't work: the module sends only `Authorization: Bearer <AP
 can't add a second custom header, so a proxy that also wants `Authorization` collides with
 AutoLogger's token.
 
-The headless-Companion Playwright project is binary-gated and excluded from the default
-`npm run e2e` run. To run it where a Companion install is present, use
-`npm run e2e -- --project=companion --workers=1` (it must not share workers with the
-`chromium` project — resource contention makes a shared multi-worker run flaky).
+The headless-Companion browser test was retired with the Playwright suites (ADR 0021 slice
+1.4a); test the module against the dev stack's Companion container instead.

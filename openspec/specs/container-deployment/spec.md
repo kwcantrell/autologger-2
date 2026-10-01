@@ -9,7 +9,7 @@ multi-arch build; the internal Caddy router that fronts both and preserves the
 single-process server's per-request disposition matrix at one public origin; the compose
 topology (loopback-published router, segmented networks, persistent state, single api
 replica); the explicit configuration required behind a TLS-terminating proxy; and the
-container e2e project that guards the routing.
+non-browser router test that guards the routing.
 
 ## Requirements
 
@@ -144,8 +144,9 @@ them.
   `Set-Cookie`
 
 #### Scenario: Differential parity with the single-process server
-- **WHEN** the same request list is sent to a single-process server and to the router, both
-  built from the same commit
+- **WHEN** the same request list is sent to the router, and compared with the dispositions the
+  single-process server gives for it (recorded in the router test's expectation table, last
+  verified against a single-process server built from the same commit)
 - **AND** the list covers: `GET` and `HEAD` of every shell route; an RSC flight request for
   `/teams`; a `/_next/static/*` asset; `/static/fonts/*`; `/_next/image?url=…`;
   `/sessions`; `/sessions/a/b`; `/sessions/a%2F`; `/teams/`; `HEAD /teams/`; `/nope`;
@@ -292,18 +293,22 @@ The documentation SHALL state:
 - **THEN** the session cookie is set with `Secure`, and the OAuth redirect URI is
   `${PUBLIC_BASE_URL}/auth/google/callback`
 
-### Requirement: Container e2e project
-The Playwright configuration SHALL provide a `container` project that does all of the
-following:
-- targets a running stack via a router base URL, with no `webServer`;
-- runs `e2e/serving-contract.spec.ts` against it;
-- runs a container-routing suite covering the router scenarios above: the differential,
-  stray-upgrade, session-WebSocket, traversal, and encoding-parity scenarios, plus the
-  Companion token scope.
+### Requirement: Router behaviour is checked without a browser
+A shell test, `docker/scripts/test_router.sh ENV`, SHALL exercise a running stack's router over
+plain HTTP and raw TCP, and SHALL print case names and statuses only. It SHALL cover:
+- the shell routes served by `web` with `200` and no `Set-Cookie`;
+- the request list of "Differential parity with the single-process server", compared with a
+  committed expectation table of status and header presence;
+- stray upgrades closed with no bytes written, and the session WebSocket path still proxied;
+- traversal to a non-Companion route with a valid `API_TOKEN`, including a non-GET and a query
+  string carrying a dot-segment;
+- `API_TOKEN` scope: Companion state is allowed; sessions, admin routes and the browser-role
+  WebSocket are handled as unauthenticated;
+- `web` unable to connect to `api`, and the router's port unreachable on a non-loopback host
+  address.
 
-The project SHALL NOT run as part of the default `npm run e2e`. A failing case SHALL name the
-request that diverged.
+It SHALL run against stage (`make stage-up`) by hand. CI has no docker.
 
-#### Scenario: Routing regression is caught
+#### Scenario: A router regression is caught
 - **WHEN** the router is misconfigured so that `POST /sessions/abc` reaches `web`
-- **THEN** the `container` project fails and names that request
+- **THEN** `test_router.sh stage` fails and names that request

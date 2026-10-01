@@ -5,7 +5,7 @@
 The server's externally observable HTTP/WS contract is frozen. This capability replaces
 the retired "Python parity" anchor. The freeze exists because real consumers depend on the
 surface — the in-repo `web/` frontend, the separately-deployed Bitfocus Companion module,
-the `e2e/` Playwright suite, and external API clients (bearer-token scripts, stale
+and external API clients (bearer-token scripts, stale
 Companion installs) — but consumers are the *reason* for the freeze, not its measuring
 stick. The frozen surface is the full published surface (the README endpoint table is the
 normative route inventory), independent of what any consumer currently reads.

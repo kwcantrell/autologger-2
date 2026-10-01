@@ -25,14 +25,6 @@ openspec/changes/**/.apply/
 # graphify knowledge-graph output (regenerable via /graphify)
 graphify-out/
 
-# e2e server state — wiped by playwright.config.ts's webServer.command each run
-e2e/.data/
-e2e/.data-oauth/
-
-# Playwright's default artifact/report output
-test-results/
-playwright-report/
-
 # Playwright MCP session captures (page snapshots dumped during interactive use)
 .playwright-mcp/
 
