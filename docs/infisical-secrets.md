@@ -63,9 +63,9 @@ An environment may hold only these keys:
 
   | Environment | Compose keys |
   | --- | --- |
-  | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT` |
-  | `stage` | `STAGE_PORT` |
-  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL` |
+  | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, `POSTGRES_PASSWORD` |
+  | `stage` | `STAGE_PORT`, `POSTGRES_PASSWORD` |
+  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, `POSTGRES_PASSWORD` |
 
 Any other name is refused before anything runs, and the error names the key without printing its
 value. That includes `LD_PRELOAD`, `DOCKER_HOST`, any `COMPOSE_*` name, and a key meant for
@@ -84,6 +84,27 @@ Other rules:
   `expandSecretReferences=false`, so store plain values.
 - **Every value must be readable by the identity.** A value the identity can list but not read
   arrives as `<hidden-by-infisical>`, and the wrapper refuses it.
+
+### `POSTGRES_PASSWORD` (Supabase Postgres)
+
+- **Where it goes.** Only the `db` and `migrate` services receive it (see `docs/supabase.md`).
+  Never add it to `docker/secrets-env.yaml`. The wrapper and `make check` (invariant 16) refuse a
+  config where the value appears in any other service.
+- **Format.** At least 32 lowercase hex characters. Any other value is refused.
+- **Create it with the generator,** never by hand. The generator only creates: it prints
+  `created` or `kept` and never shows the value.
+
+  ```sh
+  node docker/scripts/supabase-keys.mjs dev --writer ~/.infisical-bootstrap
+  ```
+
+  The writer file needs an identity that can write to the project. The environment's own `viewer`
+  identity gets `HTTP 403`.
+- **Prod gets it only at cutover.** A checkout without this key in its allowed names (including
+  `main` until cutover) refuses an environment that holds it. So add it to `autologger-prod` only
+  during the cutover, after `main` has the change: run the generator on the deploy host, then
+  `make prod-check`.
+- **Changing it after the database exists** needs `ALTER ROLE` too. See `docs/supabase.md`.
 
 To add a container key:
 1. Add a line `KEY:` to `docker/secrets-env.yaml`. `make check` invariant 15 keeps compose in
@@ -140,6 +161,9 @@ To check that the dev identity can't read prod, on a host that holds no prod cre
 - **Running containers are unaffected.** They keep the environment they started with.
 - **Stopping prod needs no secrets:**
   `docker stop autologger-router autologger-web autologger-api`.
+- **Every compose target needs `POSTGRES_PASSWORD`,** including `down` and `logs`. Its `${...:?}`
+  check fails before compose does anything. Stop a stack without it with `docker stop` on its
+  containers.
 - **Starting or restarting needs Infisical.** Otherwise the only way is to revert the
   `infisical-secrets` change on a checkout and use a temporary `.env` file.
 - **Don't delete the old env files too early.** Keep `.env.dev`, `.env.stage` and prod's `.env`

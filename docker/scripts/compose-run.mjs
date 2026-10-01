@@ -23,11 +23,16 @@ const ALLOWLIST = 'docker/secrets-env.yaml';
 const TEMPLATE = 'docker/infisical-credentials.example';
 const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
+// POSTGRES_PASSWORD reaches only the db and migrate services (supabase-db D4).
 const COMPOSE_KEYS = {
-  dev: ['DEV_PORT', 'DEV_COMPANION_PORT'],
-  stage: ['STAGE_PORT'],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL'],
+  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', 'POSTGRES_PASSWORD'],
+  stage: ['STAGE_PORT', 'POSTGRES_PASSWORD'],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', 'POSTGRES_PASSWORD'],
 };
+// Per-key value formats (supabase-db D4): strong, URL-safe, and safe for busybox echo.
+const KEY_FORMAT = { POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/ };
+// Services that may hold the Postgres password (supabase-db D4).
+const PG_SERVICES = new Set(['db', 'migrate']);
 const PROJECT = { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' };
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // no `m` flag: `$` is end of input only
 const WORD_RE = /^[A-Za-z0-9@%+=:,./_-]+$/;
@@ -117,6 +122,7 @@ export function validateSecrets(json, allowed) {
     else if (s.secretValueHidden !== false) bad(k, 'hidden-value');
     else if (s.secretValue.includes('\u0000')) bad(k, 'NUL');
     else if (out.has(k)) bad(k, 'duplicate');
+    else if (Object.hasOwn(KEY_FORMAT, k) && !KEY_FORMAT[k].test(s.secretValue)) bad(k, 'bad-format');
     else out.set(k, s.secretValue);
   }
   if (names.size || others) {
@@ -153,7 +159,8 @@ export function checkCaFile(f) {
   if (st.size > MAX_CA) refuse('INFISICAL_CA_FILE is larger than 64 KiB');
 }
 
-function readCreds(env, dir) {
+/** Read .env.infisical.<env>; with auth=false the client id and secret are not required. */
+export function readCreds(env, dir, { auth = true } = {}) {
   const f = join(dir, `.env.infisical.${env}`);
   try {
     lstatSync(f);
@@ -166,7 +173,7 @@ function readCreds(env, dir) {
     const m = /^([A-Z_]+)=(.*)$/.exec(line.trimEnd());
     if (m) kv.set(m[1], m[2]);
   }
-  const need = ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET', 'INFISICAL_PROJECT_ID', 'INFISICAL_DOMAIN', 'INFISICAL_CA_FILE'];
+  const need = [...(auth ? ['INFISICAL_UNIVERSAL_AUTH_CLIENT_ID', 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET'] : []), 'INFISICAL_PROJECT_ID', 'INFISICAL_DOMAIN', 'INFISICAL_CA_FILE'];
   for (const k of need) if (!kv.get(k)) refuse(`${k} is missing or empty in .env.infisical.${env} (see ${TEMPLATE})`);
   const url = parseDomain(kv.get('INFISICAL_DOMAIN'));
   const caPath = kv.get('INFISICAL_CA_FILE');
@@ -301,7 +308,7 @@ function runChild(argv, childEnv) {
 
 /** Resolve the compose config as JSON, in memory (it inlines passthrough values: never print). */
 function resolveConfig(env, childEnv) {
-  const r = spawnSync('sh', composeArgv(env, ['config', '--no-env-resolution', '--format', 'json']), {
+  const r = spawnSync('sh', composeArgv(env, ['--profile', '*', 'config', '--no-env-resolution', '--format', 'json']), {
     cwd: ROOT,
     env: childEnv,
     encoding: 'utf8',
@@ -316,9 +323,22 @@ function resolveConfig(env, childEnv) {
   }
 }
 
+/** Every string anywhere inside a value (keys and values of objects, array items). */
+function strings(v) {
+  if (typeof v === 'string') return [v];
+  if (Array.isArray(v)) return v.flatMap(strings);
+  if (v && typeof v === 'object') return Object.entries(v).flatMap(([k, x]) => [k, ...strings(x)]);
+  return [];
+}
+
 /** The checks make-guards.sh `envfile` did, on the resolved config (never printed). */
-export function checkResolved(env, cfg) {
+export function checkResolved(env, cfg, secrets = new Map()) {
   if (cfg?.name !== PROJECT[env]) refuse(`refusing: compose resolves the ${env} project to a name other than '${PROJECT[env]}'`);
+  const pw = secrets.get('POSTGRES_PASSWORD');
+  if (pw) {
+    const leaks = Object.entries(cfg.services ?? {}).filter(([n, s]) => !PG_SERVICES.has(n) && strings(s).some((x) => x.includes(pw)));
+    if (leaks.length) refuse(`refusing: the POSTGRES_PASSWORD value appears in ${leaks.map(([n]) => n).sort().join(', ')} (only db and migrate may hold it)`);
+  }
   const ports = Object.values(cfg.services ?? {}).flatMap((s) => s.ports ?? []);
   if (ports.some((p) => p.host_ip !== '127.0.0.1')) refuse(`refusing: a published ${env} port is not bound to 127.0.0.1`);
   const pub = ports.map((p) => String(p.published));
@@ -359,6 +379,10 @@ async function main(argv, ownEnv) {
     if (s.startsWith('compose ')) return { kind: 'compose', args: splitStep(s) };
     return refuse(`unknown step "${s.replace(/[^\x20-\x7e]/g, '?').slice(0, 80)}"`);
   });
+  // supabase-db D6: nothing may migrate prod or open a shell in it.
+  if (env === 'prod' && plan.some((p) => p.kind === 'compose' && p.args.some((w) => w === 'run' || w === 'exec'))) {
+    refuse('compose run and exec are refused for prod (no migration or shell against the prod database)');
+  }
   if (plan.some((p) => p.kind === 'reset')) {
     if (env === 'prod') refuse('reset is refused for prod (it would delete production volumes)');
     if (ownEnv.CONFIRM !== 'yes') refuse(`refusing: 'make ${env}-reset' deletes the ${PROJECT[env]} volumes. Re-run with CONFIRM=yes.`);
@@ -418,7 +442,7 @@ async function main(argv, ownEnv) {
     return cfg;
   };
   for (const step of plan) {
-    if (step.kind === 'resolved') checkResolved(env, config());
+    if (step.kind === 'resolved') checkResolved(env, config(), secrets);
     else if (step.kind === 'urls') urls(env, config());
     else if (step.kind === 'prod-tags') checkProdTags(secrets);
     else if (step.kind === 'reset') {

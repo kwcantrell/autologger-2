@@ -23,7 +23,8 @@ shows names, statuses and counts only.
 
 ## 1. Secret key, wrapper rules, generator
 
-- [ ] 1.1 Change `compose-run.mjs` (design D4, D6):
+- [x] 1.1 Change `compose-run.mjs` (design D4, D6):
+  Evidence: tests first: `node --test --test-timeout=30000 docker/scripts/compose-run.test.mjs` -> `✖ prod refuses compose run and exec…`, `✖ resolved refuses a config where the password value appears…` (`POSTGRES_PASSWORD [not-allowed]`); after the change -> `ℹ tests 40` / `ℹ pass 40` / `ℹ fail 0`.
   - `POSTGRES_PASSWORD` in `COMPOSE_KEYS` for dev, stage and prod;
   - the per-key format table;
   - the prod `run`/`exec` refusal;
@@ -38,7 +39,8 @@ shows names, statuses and counts only.
   4. a resolved config whose `app` label contains the value is refused.
 
   Check: `npm test` passes.
-- [ ] 1.2 Write `docker/scripts/supabase-keys.mjs ENV --writer FILE` (design D5). Tests first in
+- [x] 1.2 Write `docker/scripts/supabase-keys.mjs ENV --writer FILE` (design D5). Tests first in
+  Evidence: tests first: `node --test docker/scripts/supabase-keys.test.mjs` -> `ℹ pass 2` / `ℹ fail 6` (no generator); after -> `ℹ tests 8` / `ℹ pass 8`; both files together -> `ℹ tests 48` / `ℹ pass 48`. `package.json` `test` now runs both files.
   `supabase-keys.test.mjs`, against the HTTPS stand-in:
   1. an existing key gives `kept POSTGRES_PASSWORD` and no POST;
   2. a missing key gives one batch POST whose value is 32 lowercase hex characters, and no
@@ -51,14 +53,16 @@ shows names, statuses and counts only.
   7. Node 22.11 is refused.
 
   Add the test to the `package.json` `test` script. Check: `npm test` passes.
-- [ ] 1.3 Run the generator for dev and stage.
+- [x] 1.3 Run the generator for dev and stage.
+  Evidence: `node docker/scripts/supabase-keys.mjs dev --writer .env.infisical.dev` -> `creating POSTGRES_PASSWORD failed: Infisical answered HTTP 403: You are not allowed to create on secrets (not retried)`, rc=1; with `--writer ~/.infisical-bootstrap`: dev and stage -> `created POSTGRES_PASSWORD` rc=0; rerun -> `kept POSTGRES_PASSWORD` rc=0 (both); `compose-run.mjs {dev,stage} resolved` under `env -i` -> rc=0 (the key passes the format check).
   1. While dev still lacks the key, show that the `viewer` identity can't write: run
      `supabase-keys.mjs dev --writer .env.infisical.dev`. Expect the create to fail with HTTP
      403, exit non-zero, and leave no key.
   2. Run it for dev and stage with `--writer ~/.infisical-bootstrap`. Check: the output is
      `created POSTGRES_PASSWORD` per environment.
   3. Run it again. Check: it prints `kept POSTGRES_PASSWORD`.
-- [ ] 1.4 Update `docs/infisical-secrets.md`:
+- [x] 1.4 Update `docs/infisical-secrets.md`:
+  Evidence: `grep -n POSTGRES_PASSWORD docs/infisical-secrets.md` -> lines 66-68 (compose keys table), 88 (`### POSTGRES_PASSWORD (Supabase Postgres)`: placement, format, generator, cutover-only prod, rotation pointer), 164 (break-glass).
   - the key, which reaches `db`/`migrate` only, and its format;
   - the generator command;
   - the cutover-only prod ordering;
