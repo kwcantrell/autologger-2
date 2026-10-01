@@ -213,7 +213,9 @@ Recorded in ADR 0021's follow-ups:
 
 `team_invites` is already keyed by `studio_id` first (A21). With these, per-team reads lock
 only the rows they touch, and writes in different teams no longer conflict (A15). The index is
-additive and needs no SQLite mirror (4e removes SQLite).
+additive. A matching SQLite migration (`0006_team_indexes.sql`) keeps the catalog-database
+requirement that the Postgres schema's indexes match the SQLite catalog true until 4e (found in
+task 1.2).
 
 ## Risks / Trade-offs
 

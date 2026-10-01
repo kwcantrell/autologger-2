@@ -13,14 +13,28 @@ red before its fix (record the failure line) and green after.
 
 ## 1. Test seam and indexes (design D1, D12)
 
-- [ ] 1.1 Add `server/src/test/gatedCatalog.ts`: one-shot gates per pattern that stay open for
+- [x] 1.1 Add `server/src/test/gatedCatalog.ts`: one-shot gates per pattern that stay open for
   retries, `tx` handles wrapped, and `reached()`/`release()`. Self-test in
   `gatedCatalog.int.test.ts`: a held request finishes only after release, a second request
   commits meanwhile, and a body re-run passes an opened gate.
-- [ ] 1.2 Test first, `server/src/test/pg/teamIndexes.pg.test.ts`: `EXPLAIN` of a membership
+  Evidence: `4d-1.1-green.log`: `npx vitest run --project integration
+  src/test/gatedCatalog.int.test.ts` -> `Tests  2 passed (2)`.
+- [x] 1.2 Test first, `server/src/test/pg/teamIndexes.pg.test.ts`: `EXPLAIN` of a membership
   delete by `studio_id` uses an index. Red (`Seq Scan`), then add
   `supabase/migrations/<ts>_catalog_team_indexes.sql`. Green, and `docker/supabase/test_migrate.sh`
   passes.
+  Evidence: `EXPLAIN` can't tell a seek from a walk of the primary key, where `studio_id` is the
+  second column (it showed `Index Cond: studio_id` without an index). So the test checks
+  `pg_index` for an index whose first column is `studio_id`. `4d-1.2-red.log` -> `× catalog.user_studio_memberships …`,
+  `× catalog.shows …`, `Tests  2 failed | 1 passed (3)` (team_invites passes via its PK).
+  Added `supabase/migrations/20261002000000_catalog_team_indexes.sql`. The 4a parity test
+  (`catalogSchema.pg.test.ts`: "named indexes match" SQLite) then failed, so the same two indexes
+  went into `packages/catalog/migrations/0006_team_indexes.sql` (design D12 said no SQLite
+  mirror; this keeps the catalog-database parity requirement true until 4e).
+  `4d-1.2-green.log`: `npx vitest run --project pg` -> `Tests  19 passed (19)`.
+  `migrations.int.test.ts` -> `Tests  5 passed (5)` (name lists include 0006).
+  `npm test -w packages/catalog` -> `Tests  34 passed (34)`. `docker/supabase/test_migrate.sh`
+  -> `test_migrate: 35 passed, 0 failed`.
 
 ## 2. Team writes (design D2, D3; team-management "Concurrent team writes")
 
