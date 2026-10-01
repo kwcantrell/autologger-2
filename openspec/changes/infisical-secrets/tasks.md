@@ -221,7 +221,6 @@ written to print names or exit codes only. The agent records that output and nev
 - **At the end of the migration (ADR 0021 cutover):** remove the bootstrap identity from
   `autologger-dev`, `autologger-stage` and `autologger-prod`, revoke it, and delete
   `~/.infisical-bootstrap`. Then check that a login with it fails.
-- Delete the old, unused `autologger` Infisical project. The bootstrap identity got 403 on it,
-  so this is done in the web UI.
+- Delete the old, unused `autologger` Infisical project. Done by the owner in the web UI, 2026-09-30.
 - Push the branch and open the PR into `supabase-migration` when asked, with the `size-override`
   label and its reason in the body.

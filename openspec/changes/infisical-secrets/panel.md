@@ -129,3 +129,9 @@ Scope delta since 55b6728: per-environment Infisical projects (no custom roles o
 - [x] [minor] The setup scripts (`setup-identities.mjs`, `copy-secrets.mjs`, `rotate.mjs`, `boot.mjs`, `old-project.mjs`) exist only in the session scratchpad, so the evidence can't be audited later, and while the bootstrap file exists they work as admin tools. Evidence: `find / -name setup-identities.mjs` -> scratchpad only. Resolved: they are deleted with the bootstrap file at the end of the migration (owner-owed). Their outputs are quoted in the task evidence. A grep found no secrets in them, only IDs.
 - [ ] [minor] `accessTokenNumUsesLimit` is unset (unlimited uses within 15 minutes). Accepted: the 15-minute TTL bounds it, and a small limit risks breaking multi-step targets.
 - [ ] [minor] The proposal's size estimate (520 to 580) is below the actual 888, which is under the owner's size-override. The real number is in task 5.3; the owner sees both.
+
+Re-approval: the owner re-approved the setup delta in chat on 2026-09-30, after the setup-delta re-panel. It covers the spec amendment (one project per environment), the accepted risks (LAN-wide reachability, and the bootstrap identity kept until the migration ends) and the agent-run setup. The `Approved-by:` date is unchanged (same day).
+
+## Consistency read 2026-09-30 (final, before archive)
+Edits since the setup-delta re-approval: tasks.md (the owner-owed old-project line marked done), panel.md (this log). Scope change: no.
+- [x] [minor] Coverage re-checked after the spec amendment. The new scenario "One environment's identity cannot read another's" maps to task 1.5 (all three cross-project fetches give 403). Every other requirement keeps its task. The amended non-goal (prod values and prod client secret only) is respected: `.env.infisical.prod` does not exist on this host. Design D6 and the spec agree (per-project identities, no access to other projects).
