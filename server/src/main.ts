@@ -8,13 +8,21 @@ import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
 import { loopbackHostname, requireLoginEnabled } from './env';
+import { checkBootEnv } from './bootGuard';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 
+// retire-host-dev D1: refuse before anything touches a data directory.
+const refusal = checkBootEnv(process.env);
+if (refusal) {
+  console.error(`autologger: ${refusal}`);
+  process.exit(1);
+}
+
 const { bindings, close } = createBindings(process.env);
 const port = Number(process.env.PORT || '8787');
-const hostname = process.env.HOST || '0.0.0.0';
+const hostname = bindings.config.HOST;
 
 // Env-loading order is a deliberate invariant (nextjs-frontend-migration,
 // design D1 "Env-loading order"): createBindings() above already snapshotted
@@ -42,7 +50,7 @@ const webDir = join(dirname(fileURLToPath(import.meta.url)), '../../web');
 // degrade to API-only.
 const frontend = await createNextFrontend({ dev, dir: webDir });
 if (!dev && !frontend) {
-  console.warn('frontend not built — run `npm run build` (serving API only)');
+  console.warn('frontend not built (serving API only)');
 }
 
 // Gate decision E1: login defaults ON. If the operator explicitly opened the

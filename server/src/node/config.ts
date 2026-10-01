@@ -3,11 +3,18 @@
 
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
-import { applyMigrations, BlobStore, CatalogDb, KvStore, openCatalogDb } from '@autologger/storage';
+import {
+  acquireDataDirLock,
+  applyMigrations,
+  BlobStore,
+  CatalogDb,
+  KvStore,
+  openCatalogDb,
+} from '@autologger/storage';
 import type { Bindings } from '../appEnv';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
@@ -18,7 +25,12 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   bindings: Bindings;
   close(): void;
 } {
-  const dataDir = procEnv.DATA_DIR || './data';
+  // retire-host-dev D1: no default data directory (never server/data by accident).
+  const dataDir = procEnv.DATA_DIR ?? '';
+  if (!dataDir || !isAbsolute(dataDir)) throw new Error('DATA_DIR must be set to an absolute path');
+  // retire-host-dev D2: one server per DATA_DIR. Taken before anything is created, migrated or
+  // swept; a second server refuses here (DataDirLockedError). Released by close().
+  const lock = acquireDataDirLock(dataDir);
   mkdirSync(join(dataDir, 'sessions'), { recursive: true });
   // r2_key values already start with "audio/", so the blob root is a sibling dir:
   // bytes land at DATA_DIR/blobs/audio/<sid>/…  tmp stays OUTSIDE the root
@@ -51,7 +63,8 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     },
     config: {
       PUBLIC_BASE_URL: procEnv.PUBLIC_BASE_URL || '',
-      HOST: procEnv.HOST || '',
+      // retire-host-dev D3: one effective host, used for the bind (main.ts) and the loopback checks.
+      HOST: procEnv.HOST || (procEnv.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
       GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
       REQUIRE_LOGIN: procEnv.REQUIRE_LOGIN || '',
@@ -123,6 +136,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
     close: () => {
       registry.closeAll();
       catalog.close();
+      lock.release();
     },
   };
 }

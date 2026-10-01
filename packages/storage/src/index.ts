@@ -11,3 +11,4 @@ export * from './blobStore';
 export * from './catalogStore';
 export * from './kvStore';
 export * from './migrate';
+export * from './dataDirLock';

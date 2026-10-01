@@ -3,10 +3,12 @@
 // setup.int.ts harness needed): createBindings builds its own temp-dir
 // bindings from a procEnv object, same shape test/harness.ts uses per test.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { loopbackHostname } from '../env';
 import { createBindings } from './config';
 
 let dir: string;
@@ -99,4 +101,62 @@ describe('createBindings -- AI_V2_CREDENTIAL_SOURCE_PATH has NO environment over
       }
     },
   );
+});
+
+describe('createBindings -- DATA_DIR is required and absolute (retire-host-dev D1)', () => {
+  it('throws without DATA_DIR, with an empty one, or with a relative one', () => {
+    for (const v of [undefined, '', 'data', './data']) {
+      expect(() => createBindings({ ...freshProcEnv(), DATA_DIR: v }), String(v)).toThrow(/DATA_DIR/);
+    }
+  });
+});
+
+describe('createBindings -- one server per DATA_DIR (retire-host-dev D2)', () => {
+  it('refuses a held DATA_DIR before migrating, creating or sweeping anything', () => {
+    const env = freshProcEnv();
+    const scratch = join(dir, 'tmp', 'youtube-import-planted');
+    mkdirSync(scratch, { recursive: true });
+    const lock = acquireDataDirLock(dir);
+    try {
+      expect(() => createBindings(env)).toThrow(DataDirLockedError);
+      expect(existsSync(scratch)).toBe(true); // the sweep never ran
+      expect(existsSync(join(dir, 'catalog.db'))).toBe(false); // no migration ran
+      expect(existsSync(join(dir, 'sessions'))).toBe(false); // nothing was created
+    } finally {
+      lock.release();
+    }
+  });
+  it('releases the lock on close, so the same DATA_DIR can boot again', () => {
+    const env = freshProcEnv();
+    createBindings(env).close();
+    createBindings(env).close();
+  });
+});
+
+describe('createBindings -- one effective host (retire-host-dev D3)', () => {
+  it('defaults HOST to loopback outside production, and the loopback checks agree', () => {
+    for (const NODE_ENV of [undefined, 'development']) {
+      const b = createBindings({ ...freshProcEnv(), NODE_ENV });
+      try {
+        expect(b.bindings.config.HOST).toBe('127.0.0.1');
+        expect(loopbackHostname(b.bindings.config)).toBe(true);
+      } finally {
+        b.close();
+      }
+    }
+  });
+  it('defaults HOST to every interface in production, and keeps an explicit HOST', () => {
+    const p = createBindings({ ...freshProcEnv(), NODE_ENV: 'production' });
+    try {
+      expect(p.bindings.config.HOST).toBe('0.0.0.0');
+    } finally {
+      p.close();
+    }
+    const e = createBindings({ ...freshProcEnv(), HOST: '10.1.2.3' });
+    try {
+      expect(e.bindings.config.HOST).toBe('10.1.2.3');
+    } finally {
+      e.close();
+    }
+  });
 });
