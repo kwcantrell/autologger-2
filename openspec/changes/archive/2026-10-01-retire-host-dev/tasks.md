@@ -73,8 +73,9 @@ The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supabase-mi
   Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS`, including `PASS  size             304/400 changed lines`.
 - [x] 4.2 Do the consistency read, appended to `panel.md`.
   Evidence: `git diff <approval> -- openspec/changes/retire-host-dev/` -> tasks.md only (`12 insertions(+), 6 deletions(-)`), so no scope change; `panel.md` `## Consistency read 2026-10-01`, 3 minor items, all resolved.
-- [ ] 4.3 Archive with `/opsx:archive retire-host-dev`.
+- [x] 4.3 Archive with `/opsx:archive retire-host-dev`.
   - Check: `openspec validate --all --strict`.
+  Evidence: sync: web-frontend-platform 1 MODIFIED (Single-process development), package-architecture 1 MODIFIED, cursor-agent-adapters 1 MODIFIED; each delta block present verbatim in `openspec/specs/` (asserted by the merge script); `openspec validate --specs --strict` -> `Totals: 26 passed, 0 failed`; moved to `openspec/changes/archive/2026-10-01-retire-host-dev/`.
 
 ## Owner-owed (not tracked as tasks)
 

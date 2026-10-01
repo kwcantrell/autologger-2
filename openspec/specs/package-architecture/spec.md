@@ -121,7 +121,7 @@ every gate reports green.
 - **THEN** the integration setup file still executes for that tier, and the `--project` selection used by the fixture-capture script still works
 
 #### Scenario: Dev loop runs unchanged
-- **WHEN** `npm run dev` is run at the repo root
+- **WHEN** the dev stack runs `npm run dev` (its container command)
 - **THEN** the server boots resolving package source via tsx with no additional build or watch command
 
 ### Requirement: Runtime dependencies checked by nominal identity are never duplicated
@@ -550,4 +550,3 @@ to their former home, and SHALL NOT change any observable HTTP/WS behavior.
 
 - **WHEN** the repository is searched for declarations of the `TimecodeCtx` type
 - **THEN** exactly one exists, in `@autologger/session-core`; the server's `timecodeCtx(row)` derivation (which takes a catalog `Row` and therefore stays in the app) imports that type rather than redeclaring or re-exporting it
-
