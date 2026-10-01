@@ -1,15 +1,20 @@
 ---
-description: Restart the dev server yourself only when you started it or positively identified it — ask first otherwise.
+description: Restart the dev stack only through make dev-restart; ask first for anything else.
 alwaysApply: true
 ---
 
-After a server-code change, restart the dev process yourself — but ONLY when it is
-(a) a process you started in this session, or (b) a listener you positively identified
-as this repo's dev process by inspecting its command line.
+After a server-code change, `tsx watch` in the dev stack reloads on its own. When a restart is
+still needed, restart the dev stack yourself — but ONLY through `make dev-restart`, or a process
+you started yourself in this session.
 
-- Any other listener — an unidentified process on `:8787`, and ALWAYS the hermetic e2e
-  server on `:8791` — ask the user first; never restart or kill it yourself.
-- Dev runs as a single process on `:8787`; there is no separate `:5173` frontend dev
-  server to manage.
-- Reference the repo's dev script — see the `dev` scripts in `server/package.json` and
-  the root `package.json` — rather than reconstructing or duplicating a command line here.
+- `make dev-restart` fetches the dev stack's secrets from Infisical and restarts the app, the
+  Companion and both gates. If it fails, stop and ask the user; never `docker restart` or
+  `docker exec` into a container to restart or start a server.
+- Never start a second server by hand (in `make dev-shell` or anywhere): the server refuses a
+  data directory another server holds, and the host refuses to boot it at all.
+- Any other process or container — an unidentified listener on `:8787`, anything outside the
+  `autologger-dev` project — ask the user first; never restart or kill it yourself.
+- Dev runs as a single process on `:8787` inside the dev stack; there is no host dev process and
+  no separate `:5173` frontend dev server to manage.
+- Reference the Makefile targets (`make help`) rather than reconstructing or duplicating a
+  command line here.

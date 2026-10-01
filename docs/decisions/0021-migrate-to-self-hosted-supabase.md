@@ -97,7 +97,10 @@ Slice order:
        kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
        almost all deletions. The owner accepted this one exception to the under-400 rule;
      - 1.4b `retire-host-dev`: the server refuses to boot outside a compose stack, `DATA_DIR` is
-       required, `server/.env` is never loaded, and dev docs move to the stack.
+       required and locked (one server per data directory), `server/.env` is never loaded, and
+       dev docs move to the stack. LAN device testing is unavailable until a follow-up makes stage
+       reachable through the upstream proxy. The single-process production topology goes to the
+       follow-up `retire-single-process-prod`.
 
    A follow-up, `node-stack-tooling`, ports `check-envs.sh`, `compose-env.sh` and the rest of
    `make-guards.sh` to Node (the owner decided all stack tooling moves to Node). It also amends

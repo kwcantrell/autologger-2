@@ -56,7 +56,8 @@ Residuals the owner accepted:
 
 Follow-ups:
 - Retire the host workflow: `server/.env.example`, the README quick start, and the host path in
-  AGENTS.md's loopback rule.
+  AGENTS.md's loopback rule. Done in ADR 0021 slice 1.4b (`retire-host-dev`), except that the
+  owner kept `server/.env.example` as the variable reference (nothing reads `server/.env`).
 - Reword the "live" comments in `.dockerignore`, `docker/Dockerfile` and `docker/compose.dev.yaml`.
 - If `server/data` ever holds the only copy of anything again, restore a rule, as a settings deny
   rule rather than prose.

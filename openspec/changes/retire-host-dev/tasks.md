@@ -43,12 +43,14 @@ The PR targets `supabase-migration`. Gates run with `GITHUB_BASE_REF=supabase-mi
 
 ## 2. Docs
 
-- [ ] 2.1 README sections, `server/.env.example`, the `ai-runtime` comments, ADR 0021 and ADR
+- [x] 2.1 README sections, `server/.env.example`, the `ai-runtime` comments, ADR 0021 and ADR
   0022 (design D4). The README stays at or under about 120 changed lines.
   - Check: `grep -nE "npm run (start|build)( |$|\`)|server/\.env([^.a-z]|$)|<from \.env>|\./data" README.md`
     finds only intended lines (`npm run build -w companion` is excluded by pattern).
-- [ ] 2.2 AGENTS.md (the pointer line) and the Cursor rule (design D4).
+  Evidence: README: env table (reference only, `DATA_DIR` required and absolute, `HOST` default), quick start (`make dev-up`; `npm test`/typecheck on host; contract curls replaced by a pointer to `test_router.sh`), container deployment (3 sentences), the `DEV_PORT` collision line, the anonymous-use line, the frontend `next build` line, dev flow (`make dev-up`/`dev-restart`/`dev-logs`, anonymous by the stack's pins, loopback rationale, LAN unavailable), Companion `API_TOKEN` (Infisical), `ADMIN_TOKEN=<from Infisical prod>`. `git diff --numstat README.md` -> `33 57` (90 changed lines, under the ~120 cap). `server/.env.example` header plus `DATA_DIR=/data`/`HOST=127.0.0.1` with compose-pin comments; `ai-runtime` comments fixed; ADR 0021 (1.4b) and ADR 0022 (follow-up done, `.env.example` kept) updated. The task's grep -> only intended lines: 457 (AI v2 isolation), 873/925/1039 ("nothing reads server/.env"), 1578 (dev mount fences), 1761 (`npm run build -w companion`).
+- [x] 2.2 AGENTS.md (the pointer line) and the Cursor rule (design D4).
   - Check: `scripts/check-change.sh --only guide-size` passes, and both files are read back.
+  Evidence: AGENTS.md rule replaced by the pointer line (dev stack; host refuses; `npm test`/typecheck on host; LAN unavailable). The Cursor rule rewritten: restart only via `make dev-restart` (scope stated: Infisical fetch, app, Companion and both gates); on failure stop and ask, never `docker restart`/`docker exec`; never start a second server by hand; nothing outside `autologger-dev` without asking; no `:8791`. `scripts/check-change.sh --only guide-size` -> `PASS  guide-size       AGENTS.md 96/150 lines`; both files read back.
 
 ## 3. Live verification
 
