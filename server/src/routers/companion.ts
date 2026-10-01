@@ -19,7 +19,7 @@ import {
   mergeCategoryUiSnapshotsIntoMetadata,
   sessionDeckDisplayTitle,
 } from '@autologger/domain';
-import type { PresenceRegistry } from '@autologger/ports';
+import type { PresenceMeta } from '@autologger/ports';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
@@ -72,9 +72,10 @@ interface CompanionStatePayload {
 
 const LAST_COMMAND_KEY = 'companion:last_command';
 
-/** Freshest live presence with a session open, preferring visible tabs (hub.primary). */
-function primarySession(presence: PresenceRegistry): string | null {
-  const live = presence.list().filter((p) => p.session_id);
+/** Freshest live presence with a session open, preferring visible tabs (hub.primary). Takes
+ *  one presence snapshot so callers derive every value from the same list. */
+function primarySession(presences: PresenceMeta[]): string | null {
+  const live = presences.filter((p) => p.session_id);
   if (!live.length) return null;
   live.sort((a, b) => {
     const v = (b.visible ? 1 : 0) - (a.visible ? 1 : 0);
@@ -85,10 +86,10 @@ function primarySession(presence: PresenceRegistry): string | null {
 
 /** Resolve the primary session AND its catalog row — callers reuse the row
  *  instead of re-fetching (and non-null-casting) it per handler. */
-function requireActiveSession(c: Context<AppEnv>): { sid: string; row: Row } {
-  const sid = primarySession(c.env.ports.presence);
+async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
+  const sid = primarySession(await c.env.ports.presence.list());
   const row = sid
-    ? c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
+    ? await c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
   if (!sid || row === null) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
@@ -100,7 +101,7 @@ companionRouter.post('/api/companion/presence', async (c) => {
   const body = companionPresenceBodySchema.parse(await c.req.json());
   const cid = body.client_id.trim();
   if (body.closing) {
-    c.env.ports.presence.remove(cid);
+    await c.env.ports.presence.remove(cid);
     return c.json({ ok: true });
   }
   const meta = {
@@ -109,18 +110,18 @@ companionRouter.post('/api/companion/presence', async (c) => {
     is_playing: body.is_playing,
     updated: c.env.ports.clock.now(),
   };
-  c.env.ports.presence.upsert(cid, meta);
+  await c.env.ports.presence.upsert(cid, meta);
   return c.json({ ok: true });
 });
 
 companionRouter.get('/api/companion/state', async (c) => {
   const catalog = c.get('catalog');
-  const presences = c.env.ports.presence.list();
-  const activeSid = primarySession(c.env.ports.presence);
+  const presences = await c.env.ports.presence.list();
+  const activeSid = primarySession(presences);
   let sessionOut: CompanionSessionState | null = null;
   let resolvedSid: string | null = activeSid;
   if (activeSid) {
-    const row = catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
+    const row = await catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
     if (row === null) {
       resolvedSid = null;
     } else {
@@ -146,7 +147,7 @@ companionRouter.get('/api/companion/state', async (c) => {
       };
     }
   }
-  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
   const payload: CompanionStatePayload = {
     connected_clients: presences.length,
     active_session_id: resolvedSid,
@@ -158,9 +159,9 @@ companionRouter.get('/api/companion/state', async (c) => {
 
 companionRouter.post('/api/companion/log', async (c) => {
   const body = companionLogBodySchema.parse(await c.req.json());
-  const { sid, row } = requireActiveSession(c);
+  const { sid, row } = await requireActiveSession(c);
   const catalog = c.get('catalog');
-  const profile = catalog.sessions.studioProfileForSession(sid);
+  const profile = await catalog.sessions.studioProfileForSession(sid);
   let cat = null;
   if (body.category_id?.trim()) {
     cat = profile.categories.find((x) => x.id === body.category_id?.trim()) ?? null;
@@ -180,13 +181,13 @@ companionRouter.post('/api/companion/log', async (c) => {
     markedAtUtc: null,
     ctx: timecodeCtx(row),
   });
-  catalog.sessions.projectSessionLive(sid, projection);
+  await catalog.sessions.projectSessionLive(sid, projection);
   return c.json(enrichEventRpc(event, profile));
 });
 
 companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
-  const { sid, row } = requireActiveSession(c);
+  const { sid, row } = await requireActiveSession(c);
   const catalog = c.get('catalog');
   const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sid);
@@ -196,7 +197,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
     action = tr.is_rolling ? 'stop' : 'start';
   }
   const { state, projection } = action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
-  catalog.sessions.projectSessionLive(sid, projection);
+  await catalog.sessions.projectSessionLive(sid, projection);
   return c.json({
     ok: true,
     is_rolling: Boolean(state.is_rolling),
@@ -206,9 +207,8 @@ companionRouter.post('/api/companion/transport', async (c) => {
 
 companionRouter.post('/api/companion/command', async (c) => {
   const body = companionCommandBodySchema.parse(await c.req.json());
-  const { sid } = requireActiveSession(c);
+  const { sid } = await requireActiveSession(c);
   const commandId = crypto.randomUUID();
-  getSessionHub(c, sid).broadcastCommand(body.type);
   const last: CompanionLastCommand = {
     id: commandId,
     type: body.type,
@@ -218,14 +218,16 @@ companionRouter.post('/api/companion/command', async (c) => {
     ok: false,
     error: null,
   };
-  c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+  // Stored before the broadcast, so a fast ack always finds it (async-session-callers D5).
+  await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+  getSessionHub(c, sid).broadcastCommand(body.type);
   return c.json({ ok: true, command_id: commandId, active_session_id: sid });
 });
 
 companionRouter.get('/api/companion/categories', async (c) => {
-  const { sid, row } = requireActiveSession(c);
+  const { sid, row } = await requireActiveSession(c);
   const catalog = c.get('catalog');
-  const raw = catalog.sessions.getSessionShowCategories(sid);
+  const raw = await catalog.sessions.getSessionShowCategories(sid);
   if (raw === null) throw new ApiError(409, 'Active session has no show categories.');
   const showId = (row.show_id as string | null) ?? null;
   return c.json({
@@ -248,14 +250,14 @@ companionRouter.get('/api/companion/commands/wait', async (c) => {
 companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
   const commandId = c.req.param('commandId');
   const body = companionCommandAckBodySchema.parse(await c.req.json());
-  const lastRaw = c.env.ports.kv.get(LAST_COMMAND_KEY);
+  const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
   if (lastRaw) {
     const last = JSON.parse(lastRaw) as CompanionLastCommand;
     if (last.id === commandId) {
       last.ok = body.ok;
       last.error = body.error ?? null;
       last.delivered_to = body.client_id;
-      c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
+      await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
       return c.json({ ok: true });
     }
   }

@@ -1,6 +1,7 @@
 // Value-based KV over the catalog kv table (login sessions, OAuth CSRF,
 // companion last_command). Lazy expiry on get; purgeExpired() runs once at
-// startup — no background sweep (spec: scope #3).
+// startup — no background sweep (spec: scope #3). Async over synchronous
+// better-sqlite3 statements (async-session-callers D2).
 //
 // Moved from server/src/node/kvStore.ts (persistence-package-extraction task
 // 2.2): the former `= systemClock` default imported the composition root's
@@ -19,19 +20,19 @@ export class KvStore implements KvStorePort {
     private clock: Clock,
   ) {}
 
-  get(key: string): string | null {
+  async get(key: string): Promise<string | null> {
     const row = this.db.prepare('SELECT value, expires_at FROM kv WHERE key = ?').get(key) as
       | { value: string; expires_at: number | null }
       | undefined;
     if (!row) return null;
     if (row.expires_at !== null && row.expires_at <= this.clock.now()) {
-      this.delete(key);
+      await this.delete(key);
       return null;
     }
     return row.value;
   }
 
-  put(key: string, value: string, opts: { expirationTtl?: number } = {}): void {
+  async put(key: string, value: string, opts: { expirationTtl?: number } = {}): Promise<void> {
     const expiresAt = opts.expirationTtl ? this.clock.now() + opts.expirationTtl * 1000 : null;
     this.db
       .prepare(
@@ -41,11 +42,11 @@ export class KvStore implements KvStorePort {
       .run(key, value, expiresAt);
   }
 
-  delete(key: string): void {
+  async delete(key: string): Promise<void> {
     this.db.prepare('DELETE FROM kv WHERE key = ?').run(key);
   }
 
-  purgeExpired(): void {
+  async purgeExpired(): Promise<void> {
     this.db
       .prepare('DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?')
       .run(this.clock.now());

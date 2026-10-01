@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireDataDirLock, DataDirLockedError } from '@autologger/storage';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loopbackHostname } from '../env';
 import { createBindings } from './config';
@@ -160,5 +161,22 @@ describe('createBindings -- one effective host (retire-host-dev D3)', () => {
     } finally {
       e.close();
     }
+  });
+});
+
+describe('createBindings -- the KV purge is a boot step, not part of createBindings (async-session-callers D2)', () => {
+  it('leaves an expired KV row in place', () => {
+    const env = freshProcEnv();
+    createBindings(env).close();
+    const db = new Database(join(dir, 'catalog.db'));
+    db.prepare('INSERT INTO kv (key, value, expires_at) VALUES (?, ?, ?)').run('dead', 'x', 1);
+    db.close();
+    const { close } = createBindings(env);
+    close();
+    const after = new Database(join(dir, 'catalog.db'));
+    expect(after.prepare('SELECT COUNT(*) AS n FROM kv WHERE key = ?').get('dead')).toEqual({
+      n: 1,
+    });
+    after.close();
   });
 });

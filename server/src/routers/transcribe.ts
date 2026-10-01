@@ -95,11 +95,11 @@ function mapGenerateError(err: unknown): never {
   throw err;
 }
 
-function resolveCatalogSessionTitle(
+async function resolveCatalogSessionTitle(
   catalog: AppEnv['Variables']['catalog'],
   sessionId: string,
-): string | null {
-  const row = catalog.sessions.getSessionIndexRow(sessionId);
+): Promise<string | null> {
+  const row = await catalog.sessions.getSessionIndexRow(sessionId);
   if (row === null) return null;
   return String(row.title ?? '');
 }
@@ -110,12 +110,12 @@ function resolveCatalogSessionTitle(
  * route): a logged-in non-member gets the busy-ness fact but never the
  * holder's session id or title — the same existence/title oracle sibling
  * routes close by 404ing non-members. */
-function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): boolean {
+async function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
   const user = c.get('user');
   if (user === null) return true;
   const catalog = c.get('catalog');
-  const studioId = catalog.sessions.getSessionStudioId(sessionId);
-  return studioId !== null && catalog.auth.authUserHasStudio(user.id, studioId);
+  const studioId = await catalog.sessions.getSessionStudioId(sessionId);
+  return studioId !== null && (await catalog.auth.authUserHasStudio(user.id, studioId));
 }
 
 // ── Transcript generation lock status (transcript-gen-lock-status) ───────────
@@ -128,11 +128,13 @@ transcribeRouter.get('/api/transcript-generation/status', async (c) => {
   // Cross-tenant redaction: the lock is process-wide, so the holder may belong
   // to a studio the requester is not a member of. Busy-ness stays truthful;
   // the identifiers are nulled (same key set, null values, never absent keys).
-  const visible = requesterCanViewSession(c, holder.sessionId);
+  const visible = await requesterCanViewSession(c, holder.sessionId);
   return c.json({
     in_flight: true,
     session_id: visible ? holder.sessionId : null,
-    session_title: visible ? resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId) : null,
+    session_title: visible
+      ? await resolveCatalogSessionTitle(c.get('catalog'), holder.sessionId)
+      : null,
     started_at: new Date(holder.startedAtMs).toISOString(),
   });
 });
@@ -140,7 +142,7 @@ transcribeRouter.get('/api/transcript-generation/status', async (c) => {
 // ── Legacy CSV download (transcription unavailable) ─────────────────────────────
 
 transcribeRouter.get('/api/sessions/:sessionId/transcribe.csv', async (c) => {
-  requireSession(c, c.req.param('sessionId'));
+  await requireSession(c, c.req.param('sessionId'));
   throw new ApiError(503, UNAVAILABLE);
 });
 
@@ -148,14 +150,14 @@ transcribeRouter.get('/api/sessions/:sessionId/transcribe.csv', async (c) => {
 
 transcribeRouter.get('/api/sessions/:sessionId/transcript-words', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const words = getSessionHub(c, sessionId).listTranscriptWords();
   return c.json({ words: words.map(wordApiDict) });
 });
 
 transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
 
   if (!deepgramConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
@@ -176,12 +178,14 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     // Cross-tenant redaction on the enriched 409: the in-flight detail names
     // the HOLDER's session (title or id), which may belong to a studio the
     // requester is not a member of. Swap in the identifier-free generic
-    // detail for non-members (and for the rare race where the holder released
-    // between the failed acquire and this catch, leaving nothing to check
-    // membership against). Same 409 status either way.
+    // detail for non-members. Membership is checked against the holder the
+    // detail actually names (carried on the error), never a fresh lock read,
+    // which could see a different holder after an await (async-session-callers
+    // D5); no named holder means the detail is already the generic one.
+    // Same 409 status either way.
     if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
-      const holder = transcriptGenerationLock.getLock();
-      if (holder === null || !requesterCanViewSession(c, holder.sessionId)) {
+      const named = err.holderSessionId;
+      if (named === undefined || !(await requesterCanViewSession(c, named))) {
         throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
       }
     }
@@ -191,7 +195,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
 
 transcribeRouter.post('/api/sessions/:sessionId/transcript-words', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = transcriptWordCreateSchema.parse(await c.req.json());
   const word = getSessionHub(c, sessionId).insertTranscriptWord(body);
   return c.json(wordApiDict(word), 201);
@@ -199,7 +203,7 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words', async (c) => 
 
 transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = transcriptWordUpdateSchema.parse(await c.req.json());
   const patch: { session_time?: string; speaker?: string; word?: string } = {};
   if (body.session_time != null) patch.session_time = body.session_time;
@@ -212,7 +216,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/transcript-words/:wordId', asyn
 
 transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const ok = getSessionHub(c, sessionId).deleteTranscriptWord(c.req.param('wordId'));
   if (!ok) throw new ApiError(404, 'Transcript word not found.');
   return c.body(null, 204);
@@ -222,7 +226,7 @@ transcribeRouter.delete('/api/sessions/:sessionId/transcript-words/:wordId', asy
 
 transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   return c.json({ topics: getSessionHub(c, sessionId).listTopics() });
 });
 
@@ -253,7 +257,7 @@ const TOPIC_GENERATE_FAILURE_DETAIL = 'Topic generation failed.';
 
 transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
 
   // Configuration gate + open-network refusal — both 503, before any spawn,
   // byte-identical unconfigured detail to the pre-change stub (task 1.1).
@@ -355,7 +359,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
 
 transcribeRouter.post('/api/sessions/:sessionId/topics', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = topicCreateSchema.parse(await c.req.json());
   const topic = getSessionHub(c, sessionId).insertTopic(body);
   return c.json(topic, 201);
@@ -363,7 +367,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics', async (c) => {
 
 transcribeRouter.patch('/api/sessions/:sessionId/topics/:topicId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = topicUpdateSchema.parse(await c.req.json());
   const patch: {
     session_time?: string;
@@ -382,7 +386,7 @@ transcribeRouter.patch('/api/sessions/:sessionId/topics/:topicId', async (c) => 
 
 transcribeRouter.delete('/api/sessions/:sessionId/topics/:topicId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const ok = getSessionHub(c, sessionId).deleteTopic(c.req.param('topicId'));
   if (!ok) throw new ApiError(404, 'Topic not found.');
   return c.body(null, 204);

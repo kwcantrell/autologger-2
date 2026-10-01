@@ -13,23 +13,30 @@ describe('PresenceRegistry', () => {
     updated: Date.now(),
   });
 
-  it('lists fresh entries and drops stale ones after 15s', () => {
+  it('every operation returns a promise (async-session-callers D2)', async () => {
     const r = new PresenceRegistry();
-    r.upsert('c1', meta('s1'));
-    expect(r.list()).toHaveLength(1);
-    vi.advanceTimersByTime(16_000);
-    expect(r.list()).toHaveLength(0);
+    const ops = [r.upsert('c1', meta('s1')), r.list(), r.remove('c1')];
+    for (const op of ops) expect(op).toBeInstanceOf(Promise);
+    await Promise.all(ops);
   });
 
-  it('upsert refreshes an existing client; remove deletes it', () => {
+  it('lists fresh entries and drops stale ones after 15s', async () => {
     const r = new PresenceRegistry();
-    r.upsert('c1', meta('s1'));
+    await r.upsert('c1', meta('s1'));
+    expect(await r.list()).toHaveLength(1);
+    vi.advanceTimersByTime(16_000);
+    expect(await r.list()).toHaveLength(0);
+  });
+
+  it('upsert refreshes an existing client; remove deletes it', async () => {
+    const r = new PresenceRegistry();
+    await r.upsert('c1', meta('s1'));
     vi.advanceTimersByTime(10_000);
-    r.upsert('c1', meta('s2'));
+    await r.upsert('c1', meta('s2'));
     vi.advanceTimersByTime(10_000);
-    expect(r.list()).toEqual([expect.objectContaining({ session_id: 's2' })]);
-    r.remove('c1');
-    expect(r.list()).toHaveLength(0);
+    expect(await r.list()).toEqual([expect.objectContaining({ session_id: 's2' })]);
+    await r.remove('c1');
+    expect(await r.list()).toHaveLength(0);
   });
 });
 
@@ -41,19 +48,19 @@ describe('presence freshness with a fake clock (task 5.4)', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('an entry goes stale once the fake clock passes the freshness window', () => {
+  it('an entry goes stale once the fake clock passes the freshness window', async () => {
     const { clock, tick } = makeFakeClock();
     const reg = new PresenceRegistry(clock);
-    reg.upsert('tab-1', {
+    await reg.upsert('tab-1', {
       session_id: 's1',
       visible: true,
       is_playing: false,
       updated: clock.now(),
     });
-    expect(reg.list()).toHaveLength(1);
+    expect(await reg.list()).toHaveLength(1);
     tick(PRESENCE_FRESH_MS);
-    expect(reg.list()).toHaveLength(1); // exactly at the window edge is still fresh
+    expect(await reg.list()).toHaveLength(1); // exactly at the window edge is still fresh
     tick(1);
-    expect(reg.list()).toHaveLength(0); // pruned as stale
+    expect(await reg.list()).toHaveLength(0); // pruned as stale
   });
 });

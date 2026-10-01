@@ -135,8 +135,8 @@ export function setCompanionPresence(
   clientId: string,
   sessionId: string,
   opts: { visible?: boolean; is_playing?: boolean } = {},
-): void {
-  env.ports.presence.upsert(clientId, {
+): Promise<void> {
+  return env.ports.presence.upsert(clientId, {
     session_id: sessionId,
     visible: opts.visible ?? true,
     is_playing: opts.is_playing ?? false,

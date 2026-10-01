@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { app, env } from '../test/harness';
 import {
   seededSession,
@@ -220,5 +220,43 @@ describe('primarySession is global / unscoped (current behavior)', () => {
     await setCompanionPresence('cA', sA, { visible: false });
     await setCompanionPresence('cB', sB, { visible: true });
     expect((await state()).active_session_id).toBe(sB);
+  });
+});
+
+describe('ordering on async storage (async-session-callers D4/D5)', () => {
+  it('/command stores last_command before broadcasting it', async () => {
+    const s = seededSession().sessionId;
+    await setCompanionPresence('c1', s);
+    const hub = env.ports.sessions.get(s);
+    let storedAtBroadcast: Promise<string | null> | null = null;
+    const spy = vi.spyOn(hub, 'broadcastCommand').mockImplementation(() => {
+      storedAtBroadcast = env.ports.kv.get('companion:last_command');
+    });
+    try {
+      const res = await app.request(
+        '/api/companion/command',
+        { method: 'POST', headers: J, body: JSON.stringify({ type: 'record-start' }) },
+        { ...env },
+      );
+      expect(res.status).toBe(200);
+      const { command_id } = (await res.json()) as { command_id: string };
+      expect(spy).toHaveBeenCalledOnce();
+      const raw = await (storedAtBroadcast as Promise<string | null> | null);
+      expect(JSON.parse(raw ?? 'null')).toMatchObject({ id: command_id, type: 'record-start' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('/state takes one presence snapshot', async () => {
+    const s = seededSession().sessionId;
+    await setCompanionPresence('c1', s);
+    const spy = vi.spyOn(env.ports.presence, 'list');
+    try {
+      await state();
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

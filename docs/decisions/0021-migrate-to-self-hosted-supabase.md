@@ -108,7 +108,25 @@ Slice order:
    the "Static invariant check" tooling clause (currently docker, jq and a POSIX shell) and moves
    `test_check_envs.sh` into `node --test`.
 2. Companion Realtime spike (a finding, not code). Done: ADR 0023.
-3. Async storage ports, still on SQLite.
+3. Async storage ports, still on SQLite. Scope (owner, 2026-10-01): the catalog, key/value and
+   presence ports. The session hub goes async in slice 7, when sessions move to Postgres.
+   Converted top-down, because the catalog stores call each other synchronously:
+   - 3a `async-session-callers`: KV and presence ports async; the session-side routers await
+     the catalog; a type-checked test forbids dropped or misused promises in `server/src`;
+   - 3b: the teams, admin, profile, shows and auth callers;
+   - 3c: the async catalog adapter (a FIFO lock and a scoped transaction handle), not wired in;
+   - 3d: the stores move to it, and the sync port is deleted.
+
+   **Slice 4 hazards** (async-session-callers design D6). These are harmless while storage is
+   synchronous and real once it does I/O:
+   1. the OAuth state get-then-delete needs an atomic take (auth: the owner decides);
+   2. the Companion ack's read-modify-write needs one conditional update;
+   3. projection mirror writes can land out of order (guard on `events_stream_revision`);
+   4. re-audit the events generate `finally` (release, then mirror);
+   5. sessions' active-show read-then-write and show-check-then-create need transactions or
+      constraints;
+   6. the log-import job uses the request's catalog handle inside a detached job;
+   7. never hold a session hub across an await.
 4. Catalog schema and the postgres.js adapter.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
 6. RLS for the permission model above.

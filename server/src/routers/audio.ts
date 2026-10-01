@@ -175,7 +175,7 @@ export async function readLocalAudioImportBody(
 
 audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const segs = getSessionHub(c, sessionId).listAudioSegments();
   return c.json({
     segments: segs.map((s) => segmentApiDict(sessionId, s)),
@@ -185,7 +185,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments', async (c) => {
 
 audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const declared = c.req.header('content-length');
   enforceAudioByteLimit(declared !== undefined ? Number(declared) : null);
   const payload = await c.req.arrayBuffer();
@@ -216,7 +216,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments', async (c) => {
 
 audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const prefix = `audio/${sessionId}/`;
   const known: Array<{ r2_key: string; ordinal: number }> = [];
   let cursor: string | undefined;
@@ -242,7 +242,7 @@ audioRouter.post('/api/sessions/:sessionId/audio/segments/sync-from-disk', async
 audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const got = getSessionHub(c, sessionId).getAudioSegmentKey(segmentId);
   if (got === null) throw new ApiError(404, 'Audio segment not found.');
   // Defense in depth for the "audio responses are never compressible"
@@ -302,7 +302,7 @@ audioRouter.get('/api/sessions/:sessionId/audio/segments/:segmentId', async (c) 
 audioRouter.put('/api/sessions/:sessionId/audio/segments/:segmentId/waveform', async (c) => {
   const sessionId = c.req.param('sessionId');
   const segmentId = c.req.param('segmentId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = audioSegmentWaveformBodySchema.parse(await c.req.json());
   for (const x of body.peaks) {
     if (!Number.isFinite(x) || x < -0.02 || x > 1.02) {

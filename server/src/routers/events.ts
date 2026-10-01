@@ -77,8 +77,8 @@ function relinkMaps(profile: StudioProfile): {
 
 eventsRouter.get('/api/sessions/:sessionId/show-categories', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
-  const raw = c.get('catalog').sessions.getSessionShowCategories(sessionId);
+  await requireSession(c, sessionId);
+  const raw = await c.get('catalog').sessions.getSessionShowCategories(sessionId);
   if (raw === null) throw new ApiError(404, 'Session or show not found.');
   return c.json({
     categories: showCategoriesApiShape(raw.categories),
@@ -96,9 +96,9 @@ eventsRouter.get('/api/sessions/:sessionId/show-categories', async (c) => {
 
 eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const catalog = c.get('catalog');
-  const row = catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: false });
+  const row = await catalog.sessions.getSessionJoinedRow(sessionId, { includeHidden: false });
   if (row === null) throw new ApiError(404, 'Session not found.');
   const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sessionId);
@@ -140,7 +140,7 @@ eventsRouter.get('/api/sessions/:sessionId/status', async (c) => {
 
 eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
   const ok = getSessionHub(c, sessionId).claimLease(body.client_id.trim());
   if (!ok) {
@@ -154,7 +154,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease', async (c) =>
 
 eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/heartbeat', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
   const ok = getSessionHub(c, sessionId).heartbeatLease(body.client_id.trim());
   return c.json({ ok });
@@ -162,7 +162,7 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/heartbeat', as
 
 eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/release', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = audioRecordingLeaseBodySchema.parse(await c.req.json());
   getSessionHub(c, sessionId).releaseLease(body.client_id.trim());
   return c.json({ ok: true });
@@ -170,27 +170,27 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/release', asyn
 
 eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
   const { state, projection } = getSessionHub(c, sessionId).startTake(timecodeCtx(row));
-  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json(state);
 });
 
 eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
   const { state, projection } = getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
-  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json(state);
 });
 
 eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const catalog = c.get('catalog');
   const limit = clampInt(c.req.query('limit'), 200, 1, 2000);
   const offset = clampInt(c.req.query('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
-  const profile = catalog.sessions.studioProfileForSession(sessionId);
+  const profile = await catalog.sessions.studioProfileForSession(sessionId);
   const hub = getSessionHub(c, sessionId);
   if (offset === 0) {
     hub.maybeRelinkOrphans(relinkMaps(profile));
@@ -211,10 +211,10 @@ eventsRouter.get('/api/sessions/:sessionId/events', async (c) => {
 
 eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
   const body = logBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
-  const profile = catalog.sessions.studioProfileForSession(sessionId);
+  const profile = await catalog.sessions.studioProfileForSession(sessionId);
   const validIds = new Set(profile.categories.map((cat) => cat.id));
   if (!validIds.has(body.category) && body.category !== 'internal') {
     throw new ApiError(400, 'Unknown category for this studio profile.');
@@ -238,7 +238,7 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     markedAtUtc: marked,
     ctx: timecodeCtx(row),
   });
-  catalog.sessions.projectSessionLive(sessionId, projection);
+  await catalog.sessions.projectSessionLive(sessionId, projection);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -439,7 +439,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
   // 1. Session resolution — unknown/out-of-studio masks as 404 before any
   // configuration state below can leak (sibling-route pattern).
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
   const rawBody = await c.req.text();
   const parsedBody = eventGenerateBodySchema.safeParse(
     rawBody.trim() === '' ? {} : JSON.parse(rawBody),
@@ -459,6 +459,13 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     throw new ApiError(503, EVENT_GENERATE_OPEN_NETWORK_DETAIL);
   }
 
+  // The show's categories are read BEFORE the word snapshot below, so the
+  // snapshot-to-registration window holds no storage call or await
+  // (async-session-callers D4). Their checks still run in step 5's order.
+  const catalog = c.get('catalog');
+  const rawCategories =
+    (await catalog.sessions.getSessionShowCategories(sessionId))?.categories ?? [];
+
   // 4. Anchored-transcript precondition — a run without session-time anchors
   // could only invent timecodes. This read doubles as the run's WORD SNAPSHOT
   // (spec "snapshot at run start"; Phase-3 review carry): no `await` occurs
@@ -473,8 +480,6 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
 
   // 5. Instruction-bearing categories (the single imported definition, never
   // re-derived) — a show with none has nothing to detect.
-  const catalog = c.get('catalog');
-  const rawCategories = catalog.sessions.getSessionShowCategories(sessionId)?.categories ?? [];
   const bearing = rawCategories.filter(categoryIsInstructionBearing);
   if (bearing.length === 0) {
     throw new ApiError(400, EVENT_GENERATE_NO_INSTRUCTIONS_DETAIL);
@@ -619,26 +624,26 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // Slot release FIRST, unconditionally (Phase-4 review): a throw from the
     // hub re-acquire/ensure() or the catalog UPDATE below must never leak the
     // per-session slot — a leaked slot wedges every later AI turn for this
-    // session behind a 409 until restart. Releasing before the mirror is safe:
-    // both statements are synchronous (no await), so no other request can
-    // interleave between them.
+    // session behind a 409 until restart. Releasing before the mirror is safe
+    // while the catalog is synchronous: the mirror call runs before its await
+    // yields. Re-audit when the catalog does I/O (async-session-callers D6.4).
     slot.release();
     // Post-run catalog mirror on success AND failure paths (spec "the run
     // SHALL leave the catalog projection current by the time the route
     // responds") — the run's inserts persist either way. The hub is
     // RE-ACQUIRED after the potentially multi-minute turn (idle hubs close
     // their DB handles and reopen lazily).
-    catalog.sessions.projectSessionLive(sessionId, getSessionHub(c, sessionId).ensure());
+    await catalog.sessions.projectSessionLive(sessionId, getSessionHub(c, sessionId).ensure());
   }
 });
 
 eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
-  const row = requireSession(c, sessionId);
+  const row = await requireSession(c, sessionId);
   const body = eventUpdateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
-  const profile = catalog.sessions.studioProfileForSession(sessionId);
+  const profile = await catalog.sessions.studioProfileForSession(sessionId);
   const catDef = profile.categories.find((cat) => cat.id === body.category) ?? null;
   if (catDef === null) throw new ApiError(400, 'Unknown category for this studio profile.');
   const dt = parseOptionalMarkedAt(body.wall_time_utc);
@@ -684,17 +689,17 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     metadataJson: JSON.stringify(meta),
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
-  catalog.sessions.projectSessionLive(sessionId, result.projection);
+  await catalog.sessions.projectSessionLive(sessionId, result.projection);
   return c.json(enrichEventRpc(result.event, profile));
 });
 
 eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const { ok, projection } = getSessionHub(c, sessionId).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
-  c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
   return c.json({ ok: true });
 });
 

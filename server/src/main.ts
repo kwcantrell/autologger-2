@@ -12,6 +12,7 @@ import { checkBootEnv } from './bootGuard';
 import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
+import { purgeExpiredAtBoot } from './startupPurge';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 
 // retire-host-dev D1: refuse before anything touches a data directory.
@@ -33,6 +34,8 @@ try {
   throw e;
 }
 const { bindings, close } = created;
+// Startup KV hygiene, no sweep timer (async-session-callers D2): awaited before listening.
+await purgeExpiredAtBoot(bindings.ports.kv);
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 
@@ -127,7 +130,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     const frontendClosed = Promise.resolve(frontend?.close()).catch((err) => {
       console.error('frontend close() rejected during shutdown', err);
     });
-    Promise.all([serverClosed, frontendClosed]).then(() => {
+    // Neither input rejects: serverClosed only resolves, frontendClosed catches.
+    void Promise.all([serverClosed, frontendClosed]).then(() => {
       close();
       process.exit(0);
     });

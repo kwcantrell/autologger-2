@@ -18,16 +18,16 @@ export class PresenceRegistry implements PresenceRegistryPort {
 
   constructor(private clock: Clock = systemClock) {}
 
-  upsert(clientId: string, meta: PresenceMeta): void {
+  async upsert(clientId: string, meta: PresenceMeta): Promise<void> {
     this.map.set(clientId, meta);
   }
 
-  remove(clientId: string): void {
+  async remove(clientId: string): Promise<void> {
     this.map.delete(clientId);
   }
 
   /** Fresh entries only (≤15s old); stale ones are pruned as a side effect. */
-  list(): PresenceMeta[] {
+  async list(): Promise<PresenceMeta[]> {
     const now = this.clock.now();
     const out: PresenceMeta[] = [];
     for (const [cid, meta] of this.map) {

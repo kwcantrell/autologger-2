@@ -113,29 +113,32 @@ function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unkno
 sessionsRouter.get('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = c.get('user');
-  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env.config));
+  const active = await catalog.profile.getEffectiveStudioForUser(
+    user,
+    oauthConfigured(c.env.config),
+  );
   if (active === null) return c.json({ active: [], archived: [] });
 
-  const shows = catalog.shows.listShowsForStudio(active.id);
+  const shows = await catalog.shows.listShowsForStudio(active.id);
   const validShowIds = new Set(shows.map((r) => String(r.id)));
   let rawActiveShow = '';
   if (user === null) {
-    rawActiveShow = String(catalog.studios.getSetting(SETTING_ACTIVE_SHOW) ?? '').trim();
+    rawActiveShow = String((await catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) ?? '').trim();
   } else {
-    const prow = catalog.auth.authGetPrefs(user.id);
+    const prow = await catalog.auth.authGetPrefs(user.id);
     rawActiveShow = prow ? String(prow.active_show_id ?? '').trim() : '';
   }
   let activeShowId = validShowIds.has(rawActiveShow) ? rawActiveShow : '';
   if (!activeShowId && shows.length) {
     activeShowId = String(shows[0].id);
-    if (user === null) catalog.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
-    else catalog.auth.authSetPrefs(user.id, active.id, activeShowId);
+    if (user === null) await catalog.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
+    else await catalog.auth.authSetPrefs(user.id, active.id, activeShowId);
   }
   if (!activeShowId) return c.json({ active: [], archived: [] });
 
   const activeRows: Record<string, unknown>[] = [];
   const archivedRows: Record<string, unknown>[] = [];
-  for (const s of catalog.sessions.listSessionsForShow(activeShowId)) {
+  for (const s of await catalog.sessions.listSessionsForShow(activeShowId)) {
     const row = serializeSessionEntry(c, s);
     if (row.archived) archivedRows.push(row);
     else activeRows.push(row);
@@ -147,10 +150,13 @@ sessionsRouter.post('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = c.get('user');
   const body = newSessionBodySchema.parse(await c.req.json());
-  const active = catalog.profile.getEffectiveStudioForUser(user, oauthConfigured(c.env.config));
+  const active = await catalog.profile.getEffectiveStudioForUser(
+    user,
+    oauthConfigured(c.env.config),
+  );
   if (active === null) throw new ApiError(403, 'No team access.');
 
-  const showRow = catalog.shows.getShowRow(body.show_id.trim());
+  const showRow = await catalog.shows.getShowRow(body.show_id.trim());
   if (showRow === null) throw new ApiError(400, 'Unknown show_id.');
   if (String(showRow.studio_id) !== active.id) {
     throw new ApiError(400, 'Show does not belong to the active team.');
@@ -174,7 +180,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
 
   let created: { id: string; title: string; episode: string };
   try {
-    created = catalog.sessions.createSessionForShow({
+    created = await catalog.sessions.createSessionForShow({
       showId: body.show_id.trim(),
       showCode,
       titleSuffix,
@@ -211,20 +217,20 @@ sessionsRouter.post('/api/sessions', async (c) => {
 // requester's active-show/active-studio prefs or archived state.
 sessionsRouter.get('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
-  const row = c.get('catalog').sessions.getSessionJoinedRow(sessionId);
+  await requireSession(c, sessionId);
+  const row = await c.get('catalog').sessions.getSessionJoinedRow(sessionId);
   if (row === null) throw new ApiError(404, 'Session not found');
   return c.json(serializeSessionEntry(c, row));
 });
 
 sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
+  await requireSession(c, sessionId);
   const body = sessionUpdateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
   let row: Row | null;
   try {
-    row = catalog.sessions.updateSessionIndex(sessionId, {
+    row = await catalog.sessions.updateSessionIndex(sessionId, {
       title: body.title,
       startOffsetFrames: body.start_offset_frames,
     });
@@ -243,8 +249,8 @@ sessionsRouter.put('/api/sessions/:sessionId', async (c) => {
 
 sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
-  if (!c.get('catalog').sessions.setSessionArchived(sessionId, true)) {
+  await requireSession(c, sessionId);
+  if (!(await c.get('catalog').sessions.setSessionArchived(sessionId, true))) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, archived: true });
@@ -252,8 +258,8 @@ sessionsRouter.post('/api/sessions/:sessionId/archive', async (c) => {
 
 sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId);
-  if (!c.get('catalog').sessions.setSessionArchived(sessionId, false)) {
+  await requireSession(c, sessionId);
+  if (!(await c.get('catalog').sessions.setSessionArchived(sessionId, false))) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, archived: false });
@@ -261,8 +267,8 @@ sessionsRouter.post('/api/sessions/:sessionId/restore', async (c) => {
 
 sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
   const sessionId = c.req.param('sessionId');
-  requireSession(c, sessionId, { includeHidden: true });
-  if (!c.get('catalog').sessions.setSessionUiHidden(sessionId, true)) {
+  await requireSession(c, sessionId, { includeHidden: true });
+  if (!(await c.get('catalog').sessions.setSessionUiHidden(sessionId, true))) {
     throw new ApiError(404, 'Session not found');
   }
   return c.json({ ok: true, hidden: true });
@@ -436,7 +442,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
 
 sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   const sessionId = c.req.param('sessionId');
-  const sessionRow = requireSession(c, sessionId);
+  const sessionRow = await requireSession(c, sessionId);
   const ctx = timecodeCtx(sessionRow);
 
   // Configuration gate, THEN open-network refusal (matches the AI chat/AI v2
@@ -559,7 +565,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     if (parsedBody.data.use_publish_date) {
       const iso = normalizeUploadDate(fetched.uploadDate);
       if (iso) {
-        c.get('catalog').sessions.setSessionEpisodeDate(sessionId, iso);
+        await c.get('catalog').sessions.setSessionEpisodeDate(sessionId, iso);
       }
     }
 
