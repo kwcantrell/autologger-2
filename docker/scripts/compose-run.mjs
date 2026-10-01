@@ -25,7 +25,7 @@ const TEMPLATE = 'docker/infisical-credentials.example';
 const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
 // The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4).
-const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
+const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const COMPOSE_KEYS = {
   dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS],
   stage: ['STAGE_PORT', ...SUPABASE_KEYS],
@@ -36,6 +36,7 @@ const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const KEY_FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32,}$/,
+  APP_DB_PASSWORD: /^[0-9a-f]{32,}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
   SECRET_KEY_BASE: /^[A-Za-z0-9_-]{64,}$/,
   REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
@@ -43,9 +44,11 @@ const KEY_FORMAT = {
   SERVICE_ROLE_KEY: JWT_RE,
   SUPABASE_PORT: { test: (v) => /^[1-9][0-9]{3,4}$/.test(v) && Number(v) >= 1024 && Number(v) <= 65535 },
 };
-// The services each secret value may appear in (spec invariant 16).
+// The services each secret value may appear in (spec invariant 16); per stack where it differs.
 const SECRET_SCOPE = {
   POSTGRES_PASSWORD: ['db', 'migrate', 'realtime'],
+  // The catalog's app role (catalog-pg-schema D4): the stack's app service and the runner.
+  APP_DB_PASSWORD: { dev: ['app', 'migrate'], stage: ['api', 'migrate'], prod: ['api', 'migrate'] },
   SUPABASE_ROLES_PASSWORD: ['db', 'auth', 'rest', 'storage'],
   JWT_SECRET: ['auth', 'rest', 'realtime', 'storage'],
   ANON_KEY: ['supabase-gw', 'realtime', 'storage'],
@@ -312,7 +315,7 @@ export function httpsJson({ url, ca, method, path, headers = {}, body, connectMs
 
 // ------------------------------------------------------------------------ children --------
 
-function allowedNames(env) {
+export function allowedNames(env) {
   const keys = readFileSync(join(ROOT, ALLOWLIST), 'utf8')
     .split('\n')
     .map((l) => /^ {6}([A-Z][A-Z0-9_]*):\s*$/.exec(l)?.[1])
@@ -383,7 +386,8 @@ function strings(v) {
 /** The checks make-guards.sh `envfile` did, on the resolved config (never printed). */
 export function checkResolved(env, cfg, secrets = new Map()) {
   if (cfg?.name !== PROJECT[env]) refuse(`refusing: compose resolves the ${env} project to a name other than '${PROJECT[env]}'`);
-  for (const [k, scope] of Object.entries(SECRET_SCOPE)) {
+  for (const [k, scoped] of Object.entries(SECRET_SCOPE)) {
+    const scope = Array.isArray(scoped) ? scoped : scoped[env];
     const v = secrets.get(k);
     if (!v) continue;
     const leaks = Object.entries(cfg.services ?? {}).filter(([n, s]) => !scope.includes(n) && strings(s).some((x) => x.includes(v)));

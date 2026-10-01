@@ -9,6 +9,10 @@
 #                    is allowed
 #   UPSTREAM_PORT    the port the gated process binds on 127.0.0.1 (shared network namespace)
 #   GATE_EXTRA_HOST  OPTIONAL one extra allowed Host (e.g. `app:8787`, the name dev Companion uses)
+#   GATE_DENY_SUBNET OPTIONAL one CIDR whose peers are refused before anything else: the app gate
+#                    sets the dev `catalog` subnet, whose only other member is `db`
+#                    (catalog-pg-schema D5). Unset, it defaults to 192.0.2.0/32 (TEST-NET-1),
+#                    which no peer has.
 #
 # Rejections use `abort` (close the connection, write nothing), like the prod router's Rule 2.
 # A rejected request never reaches the upstream.
@@ -40,6 +44,11 @@
 	header {
 		-Server
 		-Via
+	}
+
+	@denied remote_ip {$GATE_DENY_SUBNET:192.0.2.0/32}
+	handle @denied {
+		abort
 	}
 
 	@badHost expression `!({http.request.hostport} in ["127.0.0.1:{$GATE_PORT}", "localhost:{$GATE_PORT}"] || ("{$GATE_EXTRA_HOST}" != "" && {http.request.hostport} == "{$GATE_EXTRA_HOST}"))`

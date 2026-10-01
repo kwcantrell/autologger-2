@@ -23,7 +23,8 @@
     "includes": [
       "companion/src/**/*.ts",
       "server/src/**/*.ts",
-      "packages/**/*.ts"
+      "packages/**/*.ts",
+      "test/**/*.ts"
     ]
   }
 }

@@ -192,11 +192,15 @@ These properties SHALL hold:
   `router` joined to both. `db` and `migrate` SHALL be only on a `db` network. That network SHALL be
   internal (no route off the host), SHALL give the host no address on it (so no host process can
   connect to `db`), and SHALL be on a pinned subnet that no other project uses. Besides `db` and
-  `migrate`, only `auth`, `rest`, `realtime` and `storage` SHALL join it. A `supabase` network, internal and
+  `migrate`, only `auth`, `rest`, `realtime` and `storage` SHALL join it. `db` SHALL also join a
+  `catalog` network, internal and host-isolated in the same way and on its own pinned subnet,
+  whose only other member SHALL be `api`: `api` reaches Postgres there as the catalog's client,
+  connecting as the `autologger_app` role with `APP_DB_PASSWORD`, never with the superuser
+  password, and reaches no Supabase service. A `supabase` network, internal and
   host-isolated in the same way and on its own pinned subnet, SHALL join `supabase-gw` to those
   four services and to nothing else. `supabase-gw` SHALL publish its port through an `edge`
-  network that no other service joins. None of these networks SHALL be joined by `router`, `web`
-  or `api`.
+  network that no other service joins. None of the `db`, `supabase` and `edge` networks SHALL be
+  joined by `router`, `web` or `api`, and `router` and `web` SHALL NOT join `catalog`.
 - **Single replica:** `api` SHALL have a fixed `container_name`, so it cannot be scaled past
   one replica.
 - **Volumes:** `api` SHALL mount persistent volumes for `DATA_DIR` and for the runtime
@@ -205,7 +209,8 @@ These properties SHALL hold:
   objects on a named volume.
 - **Secrets:** secrets SHALL come from the Infisical `prod` environment, injected into the
   compose process at start. No service SHALL use `env_file`. `api` SHALL receive only the
-  variables named in a shared allowlist file, as null passthroughs. Each Supabase
+  variables named in a shared allowlist file, as null passthroughs, plus the catalog connection
+  literals `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` (`APP_DB_PASSWORD`). Each Supabase
   secret's value SHALL appear only in the services that secret is allowed for. The superuser
   password SHALL appear in no public-facing service (`auth`, `rest`, `storage`, `supabase-gw`). No secret value SHALL appear in any tracked file.
 - **Posture:** `REQUIRE_LOGIN=1` SHALL be set as a literal in the compose `environment` block,
@@ -233,7 +238,9 @@ These properties SHALL hold:
 #### Scenario: Postgres is not reachable from the app or the host
 - **WHEN** the prod configuration is resolved
 - **THEN** `db` publishes no port, `db` is only on the internal `db` network, and no service
-  other than `db`, `migrate` and the four Supabase services is on that network
+  other than `db`, `migrate` and the four Supabase services is on that network; the app (`api`)
+  reaches `db` only over the two-member `catalog` network, as `autologger_app`, never with the
+  superuser password
 - **AND** when the stack is up, a TCP connection from the host to the `db` container's address
   on port 5432 fails
 
@@ -254,6 +261,11 @@ These properties SHALL hold:
 - **WHEN** the prod configuration is resolved with `POSTGRES_PASSWORD` set
 - **THEN** the value appears nowhere in `router`, `web`, `api`, `auth`, `rest`, `storage` or
   `supabase-gw`, and `db` receives it
+
+#### Scenario: The app's database password stays with the api
+- **WHEN** the prod configuration is resolved with `APP_DB_PASSWORD` set
+- **THEN** the value appears in `api` and `migrate` only, and `api`'s Postgres user is
+  `autologger_app`
 
 ### Requirement: Deployment behind a TLS-terminating proxy is configured explicitly
 The compose defaults and deployment documentation SHALL set:

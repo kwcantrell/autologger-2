@@ -166,7 +166,37 @@ Slice order:
        `INSERT … ON CONFLICT DO NOTHING`;
    16. `/auth/google/start` writes one KV row per hit, and expired rows are purged only at boot or
        on read, so a flood grows the `kv` table until restart (a periodic purge or a rate limit).
-4. Catalog schema and the postgres.js adapter.
+4. Catalog schema and the postgres.js adapter. Split (owner, 2026-10-01) into:
+   - 4a `catalog-pg-schema`:
+     - the catalog in Postgres schema `catalog` (not `public`, which the image grants to the API
+       roles), as a faithful port: text timestamps, 0/1 flags, JSON text, `bigint` integers,
+       `COLLATE "C"`;
+     - the least-privilege role `autologger_app` (DML only, 20 connections, timeouts), whose
+       password `APP_DB_PASSWORD` the migrations runner sets with logging and
+       `pg_stat_statements` off;
+     - the app's path: a two-member `catalog` network (`db` and the app). Owner, after the
+       panel: the shared `db` network would have let the Supabase services reach the app;
+     - tests against the pinned image, with a database cloned from a template per test. That
+       replaces "rollback per test" above (owner decision), because the code under test opens
+       its own transactions;
+   - 4b `postgres-catalog-adapter`: postgres.js behind `CatalogDb`. Every `tx` is `SERIALIZABLE`
+     and retried on serialization failure or deadlock, at most 3 tries (owner). int8 is parsed
+     to a number;
+   - 4c `catalog-on-postgres`: the wiring. Its open items from 4a:
+     - text containing a NUL byte (Postgres refuses it): 400 or strip;
+     - `ORDER BY … COLLATE NOCASE` has no Postgres equivalent;
+     - an async `close()`;
+     - the boot order (migrate before the app) and password rotation (migrate, then recreate
+       the app);
+   - 4d `catalog-concurrency-hazards`: the hazards listed under slice 3. The owner may swap 4c
+     and 4d;
+   - 4e `retire-sqlite-catalog`.
+
+   Follow-ups:
+   - after the migration, revisit a typed catalog schema (`timestamptz`, `jsonb`, `boolean`)
+     (owner, 2026-10-01);
+   - `docker/supabase/init/roles.sql` may leave `SUPABASE_ROLES_PASSWORD` in
+     `pg_stat_statements` and the DDL log at init.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
 6. RLS for the permission model above.
 7. Session tables, revision, version checks and the audited overwrite.

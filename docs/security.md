@@ -67,3 +67,12 @@ These live in the forge, not the repo, so the template can't apply them:
 - Deny rules match command prefixes. A determined agent can reach the network another way,
   which is why the sandbox, not the deny list, is the boundary
   ([Claude Code security](https://code.claude.com/docs/en/security)).
+- The app's catalog password (`PGPASSWORD`, from `APP_DB_PASSWORD`) sits in the app process's
+  environment. Its children (the Claude CLI, yt-dlp) get allowlisted environments, but a
+  same-uid child that runs code can still read `/proc/<pid>/environ`; a file would leak the same
+  way. The bounds are the database role (`autologger_app`: DML on `catalog` only, 20 connections,
+  statement timeouts, no memberships) and the two-member `catalog` network, which reaches only
+  `db` (catalog-pg-schema D3, D5).
+- PUBLIC keeps `CONNECT` on every database and `TEMP` on `postgres`, so `autologger_app` can
+  connect to databases where it has no grants and create session-local temp tables. Revoking
+  them from PUBLIC would change what the Supabase services get; slice 6 revisits it.

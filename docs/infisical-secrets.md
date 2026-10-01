@@ -95,6 +95,7 @@ where a value appears in any other service.
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate`, `realtime` |
 | `SUPABASE_ROLES_PASSWORD` (`authenticator`, `supabase_auth_admin`, `supabase_storage_admin`) | at least 32 lowercase hex characters | `db`, `auth`, `rest`, `storage` |
+| `APP_DB_PASSWORD` (`autologger_app`, the catalog's app role) | at least 32 lowercase hex characters | dev: `app`, `migrate`; stage and prod: `api`, `migrate` |
 | `JWT_SECRET` | at least 40 characters of `A-Za-z0-9_-` | `auth`, `rest`, `realtime`, `storage` |
 | `ANON_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `anon` | `supabase-gw`, `realtime`, `storage` |
 | `SERVICE_ROLE_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `service_role` | `supabase-gw`, `storage` |
