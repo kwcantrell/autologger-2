@@ -23,7 +23,7 @@ function ctx(config: Config): ProfileCtx {
 
 profileRouter.get('/api/studio', async (c) => {
   const catalog = c.get('catalog');
-  const prof = catalog.profile.getEffectiveStudioForUser(
+  const prof = await catalog.profile.getEffectiveStudioForUser(
     c.get('user'),
     oauthConfigured(c.env.config),
   );
@@ -33,7 +33,7 @@ profileRouter.get('/api/studio', async (c) => {
 
 profileRouter.get('/api/profile', async (c) => {
   const catalog = c.get('catalog');
-  return c.json(catalog.profile.profilePayload(c.get('user'), ctx(c.env.config)));
+  return c.json(await catalog.profile.profilePayload(c.get('user'), ctx(c.env.config)));
 });
 
 profileRouter.put('/api/profile', async (c) => {
@@ -46,32 +46,32 @@ profileRouter.put('/api/profile', async (c) => {
   const rawSid = (body.active_studio_id ?? '').trim();
 
   // Logged-in user with no team memberships: only name edits allowed.
-  if (user !== null && catalog.auth.authListStudioIdsForUser(user.id).length === 0) {
+  if (user !== null && (await catalog.auth.authListStudioIdsForUser(user.id)).length === 0) {
     if (rawSid || body.settings != null || body.show_updates?.length) {
       return c.json({ detail: 'No team access.' }, 403);
     }
     if (body.given_name != null || body.family_name != null) {
       const gn = (body.given_name ?? user.given_name).trim().slice(0, 200);
       const fn = (body.family_name ?? user.family_name).trim().slice(0, 200);
-      catalog.auth.authUpdateUserNames(user.id, gn, fn);
+      await catalog.auth.authUpdateUserNames(user.id, gn, fn);
     }
-    return c.json(catalog.profile.profilePayload(user, ctx(c.env.config)));
+    return c.json(await catalog.profile.profilePayload(user, ctx(c.env.config)));
   }
 
   if (!rawSid) return c.json({ detail: 'active_studio_id is required.' }, 400);
   if (!catalog.studios.isKnownStudio(rawSid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !catalog.auth.authUserHasStudio(user.id, rawSid)) {
+  if (user !== null && !(await catalog.auth.authUserHasStudio(user.id, rawSid))) {
     return c.json({ detail: 'No access to that team.' }, 403);
   }
 
   if (body.settings != null) {
-    catalog.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError
+    await catalog.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError
   }
 
   if (body.show_updates?.length) {
     for (const ent of body.show_updates) {
       const sid = ent.show_id.trim();
-      const row = catalog.shows.getShowRow(sid);
+      const row = await catalog.shows.getShowRow(sid);
       if (row === null || String(row.studio_id) !== rawSid) {
         return c.json({ detail: `Show '${ent.show_id}' is not part of the selected team.` }, 400);
       }
@@ -97,14 +97,14 @@ profileRouter.put('/api/profile', async (c) => {
         );
       }
       if (Object.keys(fields).length) {
-        catalog.shows.updateShowFields(sid, fields);
+        await catalog.shows.updateShowFields(sid, fields);
         // bump_events_stream_revision_for_show: the events stream lives in the
         // session hub, not the catalog — nothing to bump here.
       }
     }
   }
 
-  const showsNow = catalog.shows.listShowsForStudio(rawSid);
+  const showsNow = await catalog.shows.listShowsForStudio(rawSid);
   const validShowIds = new Set(showsNow.map((r) => String(r.id)));
   const rawActiveShow = (body.active_show_id ?? '').trim();
   let nextShow: string;
@@ -118,17 +118,17 @@ profileRouter.put('/api/profile', async (c) => {
   }
 
   if (user === null) {
-    catalog.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
-    catalog.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
+    await catalog.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
+    await catalog.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
   } else {
-    catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
+    await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
   }
 
   if (user !== null && (body.given_name != null || body.family_name != null)) {
     const gn = (body.given_name ?? user.given_name).trim().slice(0, 200);
     const fn = (body.family_name ?? user.family_name).trim().slice(0, 200);
-    catalog.auth.authUpdateUserNames(user.id, gn, fn);
+    await catalog.auth.authUpdateUserNames(user.id, gn, fn);
   }
 
-  return c.json(catalog.profile.profilePayload(user, ctx(c.env.config)));
+  return c.json(await catalog.profile.profilePayload(user, ctx(c.env.config)));
 });

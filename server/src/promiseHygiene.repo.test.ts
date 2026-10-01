@@ -1,9 +1,11 @@
-// Promise hygiene (async-session-callers D3; core-ports-architecture "Server code never drops or
-// misuses a promise"): server production code consumes every promise. A Promise-typed expression
-// statement must be awaited, voided, returned or given a rejection handler; a promise must never
-// be a condition, a `!` operand, a template value or a `c.json(...)` field. Biome's
-// noFloatingPromises misses calls through `@autologger/ports` interfaces and `!promise`, so this
-// uses the TypeScript type checker over the real program.
+// Promise hygiene (async-session-callers D3, async-catalog-callers D4; core-ports-architecture
+// "Server code never drops or misuses a promise"): server production code consumes every promise.
+// A Promise-typed expression statement must be awaited, voided, returned or given a rejection
+// handler; a promise must never be a condition, a `!` operand, a comparison operand, a template
+// value or a `c.json(...)` body or field; and an async function must never go where a callback
+// returning no value is expected. Biome's noFloatingPromises misses calls through
+// `@autologger/ports` interfaces and `!promise`, so this uses the TypeScript type checker over the
+// real program.
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -34,6 +36,13 @@ function handlesRejection(e: ts.Expression): boolean {
   );
 }
 
+const EQUALITY = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
 function findPromiseMisuse(program: ts.Program, files: readonly ts.SourceFile[]): string[] {
   const checker = program.getTypeChecker();
   const out = new Set<string>();
@@ -58,6 +67,36 @@ function findPromiseMisuse(program: ts.Program, files: readonly ts.SourceFile[])
         report(x, 'promise used as a condition');
       }
     };
+    const checkResponseValue = (e: ts.Expression): void => {
+      const x = strip(e);
+      if (!ts.isObjectLiteralExpression(x)) {
+        if (promiseAt(x)) report(x, 'promise serialised into a response');
+        return;
+      }
+      for (const p of x.properties) {
+        if (ts.isPropertyAssignment(p)) checkResponseValue(p.initializer);
+        else if (ts.isShorthandPropertyAssignment(p) && promiseAt(p.name))
+          report(p.name, 'promise serialised into a response');
+        else if (ts.isSpreadAssignment(p)) checkResponseValue(p.expression);
+      }
+    };
+    /** The argument's contextual type is a function whose every signature returns void/undefined. */
+    const expectsNoValue = (arg: ts.Expression): boolean => {
+      const ctx = checker.getContextualType(arg);
+      if (!ctx) return false;
+      const sigs = checker.getNonNullableType(ctx).getCallSignatures();
+      return (
+        sigs.length > 0 &&
+        sigs.every((sig) => {
+          const ret = checker.getReturnTypeOfSignature(sig);
+          return (ret.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0;
+        })
+      );
+    };
+    const returnsPromise = (type: ts.Type): boolean =>
+      type
+        .getCallSignatures()
+        .some((sig) => isPromiseLike(checker, checker.getReturnTypeOfSignature(sig)));
     const visit = (node: ts.Node): void => {
       if (ts.isExpressionStatement(node)) {
         const e = strip(node.expression);
@@ -85,12 +124,16 @@ function findPromiseMisuse(program: ts.Program, files: readonly ts.SourceFile[])
         ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === 'json'
       ) {
-        for (const arg of node.arguments) {
-          if (!ts.isObjectLiteralExpression(arg)) continue;
-          for (const p of arg.properties) {
-            if (ts.isPropertyAssignment(p) && promiseAt(p.initializer)) {
-              report(p.initializer, 'promise serialised into a response');
-            }
+        for (const arg of node.arguments) checkResponseValue(arg);
+      } else if (ts.isBinaryExpression(node) && EQUALITY.has(node.operatorToken.kind)) {
+        for (const side of [node.left, node.right]) {
+          if (promiseAt(strip(side))) report(side, 'promise used in a comparison');
+        }
+      }
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        for (const arg of node.arguments ?? []) {
+          if (returnsPromise(checker.getTypeAtLocation(arg)) && expectsNoValue(arg)) {
+            report(arg, 'async callback where no value is expected');
           }
         }
       }
@@ -123,7 +166,9 @@ const PRELUDE = `
 interface Kv { put(k: string, v: string): Promise<void>; get(k: string): Promise<string | null> }
 interface Presence { list(): Promise<string[]> }
 declare const kv: Kv;
-declare const c: { json(o: object): unknown; env: { ports: { kv: Kv } } };
+declare const c: { json(o: unknown): unknown; env: { ports: { kv: Kv } } };
+declare function each(f: (x: string) => void): void;
+declare function inTx(mutate: (k: Kv) => undefined): void;
 async function requireSession(id: string): Promise<{ id: string }> { return { id }; }
 async function canView(id: string): Promise<boolean> { return id !== ''; }
 `;
@@ -160,6 +205,41 @@ describe('promise hygiene', () => {
       'export function h() { return c.json({ t: kv.get("k") }); }',
       'response',
     ],
+    [
+      'a promise as the whole c.json body',
+      'export function h() { return c.json(kv.get("k")); }',
+      'response',
+    ],
+    [
+      'a promise as a shorthand c.json field',
+      'export function h() { const members = kv.get("k"); return c.json({ members }); }',
+      'response',
+    ],
+    [
+      'a promise spread into c.json',
+      'export function h() { const s = requireSession("s"); return c.json({ ...s }); }',
+      'response',
+    ],
+    [
+      'a promise compared with === null',
+      'export function h() { const r = kv.get("k") === null; return r; }',
+      'comparison',
+    ],
+    [
+      'a promise compared with !=',
+      'export function h() { const r = null != kv.get("k"); return r; }',
+      'comparison',
+    ],
+    [
+      'an async arrow where a void callback is expected',
+      'export function h() { each(async (x) => { await kv.put(x, x); }); }',
+      'async callback',
+    ],
+    [
+      'a named async function where a void callback is expected',
+      'async function m(x: string) { await kv.put(x, x); } export function h() { each(m); }',
+      'async callback',
+    ],
   ])('flags %s', (_name, body, what) => {
     const { program, file } = fixtureProgram(PRELUDE + body);
     const found = findPromiseMisuse(program, [file]);
@@ -176,6 +256,17 @@ export async function h() {
   kv.put('a', 'b').catch(() => {});
   const p = kv.get('k');
   if (await canView('x')) await p;
+  if ((await kv.get('k')) === null) return null;
+  each((x) => {
+    void kv.put(x, x);
+  });
+  inTx((k) => {
+    void k;
+    return undefined;
+  });
+  c.json(await kv.get('k'));
+  const members = await kv.get('k');
+  c.json({ members, ...(await requireSession('s')) });
   return kv.get('k');
 }`,
     );

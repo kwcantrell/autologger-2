@@ -545,13 +545,26 @@ treat expired entries as absent.
 ### Requirement: Server code never drops or misuses a promise
 
 Production code under `server/src` SHALL NOT leave a promise unconsumed. Every promise-returning
-call SHALL be awaited, returned, or explicitly discarded with `void`. No code SHALL use a
-promise as a condition, negate it, or serialise it into a response. A documented await-free
-window (a section of a request handler that relies on no other request interleaving) SHALL
-contain no storage call. Data the window needs from storage SHALL be read before it opens.
+call SHALL be awaited, returned, or explicitly discarded with `void`.
+
+No code SHALL:
+- use a promise as a condition, negate it, or compare it with `===`, `!==`, `==` or `!=`;
+- serialise it into a response, whether as the body itself or as a field, shorthand field
+  included;
+- pass a promise-returning function where the parameter expects a function that returns no
+  value. Such a callback's work would silently escape the caller's control, for example a write
+  running after the transaction it was meant to be inside.
+
+A documented await-free window (a section of a request handler that relies on no other request
+interleaving) SHALL contain no storage call. Data the window needs from storage SHALL be read
+before it opens.
 
 #### Scenario: A dropped or misused promise fails the build
-- **WHEN** server production code drops a promise-returning call, including one made through a port interface or a local alias, or uses a promise as a condition or a response value
+- **WHEN** server production code drops a promise-returning call, including one made through a port interface or a local alias, or uses a promise as a condition, a comparison operand or a response value
+- **THEN** a repository test fails and names the file and line
+
+#### Scenario: An async callback where no value is expected fails the build
+- **WHEN** server production code passes an async function to a parameter typed as a function returning no value, such as a mutation run inside a catalog transaction
 - **THEN** a repository test fails and names the file and line
 
 #### Scenario: Event-generation word snapshot stays await-free
