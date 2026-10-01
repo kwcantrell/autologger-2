@@ -177,6 +177,10 @@ Every Makefile target that touches a compose project calls this wrapper once, as
 - **H9. Signals.** While a child runs, the wrapper ignores SIGINT (the terminal delivers it to the
   whole process group, so compose gets it directly) and forwards SIGTERM and SIGHUP to the child.
   It exits with the child's status.
+  So that the child *is* docker, the wrapper sets an unexported `AL_EXEC=1` in its `sh -c`, and
+  `compose-env.sh`'s `al_compose` then `exec`s instead of forking. `check-envs.sh` and
+  `make-guards.sh` don't set it and keep forking. (This was found by the H9 test: without it,
+  SIGTERM reached `sh` and orphaned docker.)
 - **H10. Test hooks.** They are honored only with `AUTOLOGGER_TEST=1`.
   - `AUTOLOGGER_TEST_PATH` and `AUTOLOGGER_TEST_CRED_DIR` must be absolute.
   - Both are refused for `prod`.
