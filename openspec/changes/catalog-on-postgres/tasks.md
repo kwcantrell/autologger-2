@@ -175,7 +175,7 @@ Logs: keep the full output of every test and gate run under the session scratchp
   including size (the panel estimates 180-260 counted lines).
   Evidence: `4c-6.1-hook.log` -> exit 0; `PASS  risk-floor  8 high-risk path(s) touched`, `PASS
   evidence`, `PASS  size  248/400 changed lines`, `PASS  commands  ran ['typecheck', 'test']`.
-- [ ] 6.2 Dev stack:
+- [x] 6.2 Dev stack:
   - Record `catalog.db`'s mtime and size first, then run `make dev-up` (migrate first, image
     rebuilt).
   - The app is healthy, and the app logs have no catalog errors.
@@ -184,6 +184,19 @@ Logs: keep the full output of every test and gate run under the session scratchp
     team and show through the admin API with dev's `ADMIN_TOKEN`), then `GET` it.
   - `make dev-restart`, and the session is still listed.
   - `catalog.db`'s mtime and size are unchanged.
-- [ ] 6.3 Stage: `make stage-up`, and the api env has `PG*`. Then
+  Evidence: before `stat /data/catalog.db` -> `98304 1790887796`. `make dev-up` -> exit 0;
+  `4c-6.2-devup.log` shows the migrate run (`skipped 20261001000000`, `0 applied`) before the
+  containers start. The app is `healthy`, and its log has `AutoLogger (Node) listening` with no
+  catalog errors. `GET /api/studio` -> `test-studios`, and `GET /api/shows?studio_id=test-studios`
+  lists `show-autolog-test`. `POST /api/sessions` -> `{"id":"0475a376-…","title":"ATS_4c-live",…}`;
+  `GET /api/sessions/<id>` -> `200`. `make dev-restart` -> exit 0, `healthy`, and the session is
+  still listed. `psql … select id, title from catalog.sessions` -> `0475a376-…|ATS_4c-live`. After:
+  `stat` -> `98304 1790887796` (unchanged).
+- [x] 6.3 Stage: `make stage-up`, and the api env has `PG*`. Then
   `docker/scripts/test_router.sh stage` passes all cases.
+  Evidence: `make stage-up` -> exit 0 (`4c-6.3-stageup.log`), `Container autologger-stage-api
+  Healthy`. `docker exec autologger-stage-api env | grep ^PG` -> `PGHOST=db`,
+  `PGUSER=autologger_app`, `PGDATABASE=postgres`, `PGPORT=5432`, `PGPASSWORD=<set>`. The api log
+  has `AutoLogger (Node) listening on http://0.0.0.0:8787` with no catalog errors.
+  `docker/scripts/test_router.sh stage` -> `test_router: 67 passed, 0 failed` (`4c-6.3-router.log`).
 - [ ] 6.4 Run `consistency-read` over the artifacts against the shipped code, then archive.
