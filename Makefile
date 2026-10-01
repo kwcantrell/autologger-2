@@ -36,7 +36,7 @@ dev-check: ## Dev invariants + credentials-inode drift warning
 dev-build: ## Rebuild the dev image (needed after dependency/lockfile/config changes)
 	$(RUN) dev resolved 'compose build'
 
-dev-up: ## Check, then build and start the whole dev project (app, gate, Companion, Postgres) and migrate
+dev-up: ## Check, then build and start the whole dev project (app, gate, Companion, Supabase) and migrate
 	@$(G) creds-exists
 	@sh docker/scripts/check-envs.sh dev
 	@$(G) creds-inode
@@ -60,13 +60,13 @@ dev-migrate: ## Apply supabase/migrations to the dev Postgres (starts db if need
 dev-psql: ## psql in the dev Postgres (no history file)
 	$(RUN) dev 'compose exec -e PSQL_HISTORY=/dev/null db psql -U postgres'
 
-dev-reset: ## DESTROY dev volumes, incl. Postgres (needs CONFIRM=yes)
+dev-reset: ## DESTROY dev volumes, incl. Postgres and Supabase storage (needs CONFIRM=yes)
 	$(RUN_CONFIRM) dev reset 'compose down -v'
 
 stage-build: ## Build the stage images (native arch, docker compose build)
 	$(RUN) stage resolved 'compose build'
 
-stage-up: ## Check, then build and start the whole stage stack and migrate its Postgres
+stage-up: ## Check, then build and start the whole stage stack (incl. Supabase) and migrate its Postgres
 	@sh docker/scripts/check-envs.sh stage
 	$(RUN) stage resolved 'compose up -d --build' 'compose run --rm migrate' urls
 
@@ -79,7 +79,7 @@ stage-logs: ## Follow stage logs
 stage-claude-login: ## Interactive Claude login inside the stage api container (stage keeps its own login)
 	@docker exec -it autologger-stage-api claude auth login
 
-stage-reset: ## DESTROY stage volumes, incl. Postgres (needs CONFIRM=yes)
+stage-reset: ## DESTROY stage volumes, incl. Postgres and Supabase storage (needs CONFIRM=yes)
 	$(RUN_CONFIRM) stage reset 'compose down -v'
 
 prod-build: ## Native-arch build of both images, tagged :local only (no SHA tag, no push)

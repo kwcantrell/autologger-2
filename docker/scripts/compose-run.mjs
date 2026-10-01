@@ -12,6 +12,7 @@
 // allowlist keys). No secret is ever parsed by a shell, put on argv, written to disk, or printed.
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import https from 'node:https';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -23,16 +24,35 @@ const ALLOWLIST = 'docker/secrets-env.yaml';
 const TEMPLATE = 'docker/infisical-credentials.example';
 const ENVS = ['dev', 'stage', 'prod'];
 // Compose-interpolation keys an environment may hold besides the allowlist (design D3).
-// POSTGRES_PASSWORD reaches only the db and migrate services (supabase-db D4).
+// The Supabase keys reach only the services SECRET_SCOPE allows (supabase-db D4, supabase-services D4).
+const SUPABASE_KEYS = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'SUPABASE_PORT'];
 const COMPOSE_KEYS = {
-  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', 'POSTGRES_PASSWORD'],
-  stage: ['STAGE_PORT', 'POSTGRES_PASSWORD'],
-  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', 'POSTGRES_PASSWORD'],
+  dev: ['DEV_PORT', 'DEV_COMPANION_PORT', ...SUPABASE_KEYS],
+  stage: ['STAGE_PORT', ...SUPABASE_KEYS],
+  prod: ['ROUTER_PORT', 'WEB_TAG', 'API_TAG', 'PUBLIC_BASE_URL', ...SUPABASE_KEYS],
 };
-// Per-key value formats (supabase-db D4): strong, URL-safe, and safe for busybox echo.
-const KEY_FORMAT = { POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/ };
-// Services that may hold the Postgres password (supabase-db D4).
-const PG_SERVICES = new Set(['db', 'migrate']);
+// Per-key value formats: strong, URL-safe, and safe for busybox echo and psql backticks.
+const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const KEY_FORMAT = {
+  POSTGRES_PASSWORD: /^[0-9a-f]{32,}$/,
+  SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32,}$/,
+  JWT_SECRET: /^[A-Za-z0-9_-]{40,}$/,
+  SECRET_KEY_BASE: /^[A-Za-z0-9_-]{64,}$/,
+  REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
+  ANON_KEY: JWT_RE,
+  SERVICE_ROLE_KEY: JWT_RE,
+  SUPABASE_PORT: { test: (v) => /^[1-9][0-9]{3,4}$/.test(v) && Number(v) >= 1024 && Number(v) <= 65535 },
+};
+// The services each secret value may appear in (spec invariant 16).
+const SECRET_SCOPE = {
+  POSTGRES_PASSWORD: ['db', 'migrate', 'realtime'],
+  SUPABASE_ROLES_PASSWORD: ['db', 'auth', 'rest', 'storage'],
+  JWT_SECRET: ['auth', 'rest', 'realtime', 'storage'],
+  ANON_KEY: ['supabase-gw', 'realtime', 'storage'],
+  SERVICE_ROLE_KEY: ['supabase-gw', 'storage'],
+  SECRET_KEY_BASE: ['realtime'],
+  REALTIME_DB_ENC_KEY: ['realtime'],
+};
 const PROJECT = { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' };
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // no `m` flag: `$` is end of input only
 const WORD_RE = /^[A-Za-z0-9@%+=:,./_-]+$/;
@@ -133,6 +153,35 @@ export function validateSecrets(json, allowed) {
     );
   }
   return out;
+}
+
+/** supabase-services D4: the anon and service-role keys are unexpired HS256 JWTs signed with
+ * JWT_SECRET, with their own roles. Returns warnings (names only); refuses on any mismatch. */
+export function checkSupabaseKeys(secrets, nowSec = Math.floor(Date.now() / 1000)) {
+  const trio = ['JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY'];
+  const have = trio.filter((k) => secrets.get(k));
+  if (have.length === 0) return [];
+  if (have.length !== 3) refuse(`${trio.filter((k) => !secrets.get(k)).join(', ')} missing: JWT_SECRET, ANON_KEY and SERVICE_ROLE_KEY are set together (docker/scripts/supabase-keys.mjs)`);
+  if (secrets.get('ANON_KEY') === secrets.get('SERVICE_ROLE_KEY')) refuse('ANON_KEY and SERVICE_ROLE_KEY are the same value');
+  const warnings = [];
+  for (const [k, role] of [['ANON_KEY', 'anon'], ['SERVICE_ROLE_KEY', 'service_role']]) {
+    const [h, p, sig] = secrets.get(k).split('.');
+    const want = createHmac('sha256', secrets.get('JWT_SECRET')).update(`${h}.${p}`).digest();
+    const got = Buffer.from(sig, 'base64url');
+    let header;
+    let payload;
+    try {
+      header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));
+      payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+    } catch {
+      refuse(`${k} is not a readable JWT`);
+    }
+    if (header?.alg !== 'HS256' || got.length !== want.length || !timingSafeEqual(got, want)) refuse(`${k} is not an HS256 JWT signed with this environment's JWT_SECRET`);
+    if (payload?.role !== role) refuse(`${k} does not carry role ${role}`);
+    if (typeof payload.exp !== 'number' || payload.exp <= nowSec) refuse(`${k} has expired; create new keys (see docs/supabase.md)`);
+    if (payload.exp - nowSec < 90 * 86400) warnings.push(`${k} expires in under 90 days; rotate it (see docs/supabase.md)`);
+  }
+  return warnings;
 }
 
 export function checkProdTags(secrets) {
@@ -334,10 +383,11 @@ function strings(v) {
 /** The checks make-guards.sh `envfile` did, on the resolved config (never printed). */
 export function checkResolved(env, cfg, secrets = new Map()) {
   if (cfg?.name !== PROJECT[env]) refuse(`refusing: compose resolves the ${env} project to a name other than '${PROJECT[env]}'`);
-  const pw = secrets.get('POSTGRES_PASSWORD');
-  if (pw) {
-    const leaks = Object.entries(cfg.services ?? {}).filter(([n, s]) => !PG_SERVICES.has(n) && strings(s).some((x) => x.includes(pw)));
-    if (leaks.length) refuse(`refusing: the POSTGRES_PASSWORD value appears in ${leaks.map(([n]) => n).sort().join(', ')} (only db and migrate may hold it)`);
+  for (const [k, scope] of Object.entries(SECRET_SCOPE)) {
+    const v = secrets.get(k);
+    if (!v) continue;
+    const leaks = Object.entries(cfg.services ?? {}).filter(([n, s]) => !scope.includes(n) && strings(s).some((x) => x.includes(v)));
+    if (leaks.length) refuse(`refusing: the ${k} value appears in ${leaks.map(([n]) => n).sort().join(', ')} (only ${scope.join(', ')} may hold it)`);
   }
   const ports = Object.values(cfg.services ?? {}).flatMap((s) => s.ports ?? []);
   if (ports.some((p) => p.host_ip !== '127.0.0.1')) refuse(`refusing: a published ${env} port is not bound to 127.0.0.1`);
@@ -347,13 +397,15 @@ export function checkResolved(env, cfg, secrets = new Map()) {
   if (env === 'dev' && pub.some((p) => p === '80' || p === '443')) {
     refuse('refusing: a published dev port is 80 or 443; browsers omit the default port from Host/Origin so the dev gate would reject every request');
   }
-  const want = env === 'dev' ? 2 : 1;
-  if (ports.length !== want || (env === 'dev' && pub[0] === pub[1])) {
-    refuse(`refusing: the resolved ${env} ports are not the expected set (dev: app and Companion on distinct ports; stage/prod: the router only)`);
+  const want = env === 'dev' ? ['app', 'companion', 'supabase-gw'] : ['router', 'supabase-gw'];
+  const owners = Object.entries(cfg.services ?? {}).filter(([, s]) => (s.ports ?? []).length).map(([n]) => n).sort();
+  if (ports.length !== want.length || owners.join() !== want.join() || new Set(pub).size !== pub.length) {
+    refuse(`refusing: the resolved ${env} ports are not the expected set (${want.join(', ')}, one each, on distinct ports)`);
   }
 }
 
 function urls(env, cfg) {
+  const sb = cfg.services['supabase-gw']?.ports?.[0]?.published;
   if (env === 'dev') {
     process.stdout.write(`dev app:        http://127.0.0.1:${cfg.services.app.ports[0].published}\n`);
     process.stdout.write(`dev Companion:  http://127.0.0.1:${cfg.services.companion.ports[0].published}\n`);
@@ -363,6 +415,7 @@ function urls(env, cfg) {
   } else {
     process.stdout.write(`prod router:    http://127.0.0.1:${cfg.services.router.ports[0].published}\n`);
   }
+  if (sb) process.stdout.write(`Supabase:       http://localhost:${sb}   (API gateway: /auth/v1, /rest/v1, /realtime/v1, /storage/v1)\n`);
 }
 
 // ------------------------------------------------------------------------ main ------------
@@ -427,6 +480,7 @@ async function main(argv, ownEnv) {
     headers: { authorization: `Bearer ${login.accessToken}` },
   });
   const secrets = validateSecrets(fetched, allowedNames(env));
+  for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
 
   // H6, H12: the child environment, built from nothing.
   const childEnv = Object.create(null);

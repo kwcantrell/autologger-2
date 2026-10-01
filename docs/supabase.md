@@ -1,89 +1,171 @@
-# Supabase Postgres in the compose stacks
+# Supabase in the compose stacks
 
-ADR 0021 slice 1.2a (OpenSpec change `supabase-db`). Each stack (dev, stage, prod) has its own
-Supabase Postgres. The other Supabase services (auth, rest, realtime, storage, Studio and a
-gateway) come in slice 1.2b. Nothing in the app uses Postgres yet; the catalog moves there in
-slice 4.
+ADR 0021 slices 1.2a (`supabase-db`) and 1.2b (`supabase-services`). Each stack (dev, stage,
+prod) has its own self-hosted Supabase:
+- Postgres;
+- the API services auth (GoTrue), rest (PostgREST), realtime and storage;
+- a gateway, `supabase-gw`.
+
+Studio and postgres-meta are deferred to a later slice. Use `make dev-psql` for admin work.
+Nothing in the app uses Supabase yet: the catalog moves in slice 4 and sign-in in slice 5. Prod
+gets the definitions only. Its keys and first start wait for the cutover.
 
 ## Layout
 
-- **`docker/supabase-db.yaml`** defines two services. `docker/scripts/compose-env.sh` adds the
-  file to every stack.
-  - `db` runs `supabase/postgres`, pinned by digest. It is healthy when `pg_isready` passes.
-  - `migrate` is a one-shot runner. `compose up` never starts it.
-- **The `db` network.** Each base compose file declares it: internal, with no host address
-  (`gateway_mode_ipv4/ipv6: isolated`), on a pinned subnet.
+- **Compose files.** `docker/supabase-db.yaml` (`db`, `migrate`) and
+  `docker/supabase-services.yaml` (`auth`, `rest`, `realtime`, `storage`, `supabase-gw`). Both
+  are added to every stack by `docker/scripts/compose-env.sh`.
+- **The gateway** is the only way in. It's published on `127.0.0.1:${SUPABASE_PORT}` (dev 8790,
+  stage 8791), and `make dev-up` prints the URL. It's configured in
+  `docker/supabase-gw.Caddyfile`.
+- **Networks.** Each base compose file declares them on pinned subnets, and `make check`
+  invariant 16 enforces membership:
 
-  | Stack | Subnet |
-  | --- | --- |
-  | dev | `172.28.31.0/24` |
-  | stage | `172.28.22.0/24` |
-  | prod | `172.28.12.0/24` |
+  | Network | Internal, host-isolated | Members | prod | stage | dev |
+  | --- | --- | --- | --- | --- | --- |
+  | `db` | yes | `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` | 172.28.12.0/24 | .22 | .31 |
+  | `supabase` | yes | `supabase-gw`, `auth`, `rest`, `realtime`, `storage` | 172.28.13.0/24 | .23 | .32 |
+  | `edge` | no (it publishes the port) | `supabase-gw` only | 172.28.14.0/24 | .24 | .33 |
 
-  Only `db` and `migrate` join it. Nothing on the host can connect to Postgres, and no port is
-  published. `make check` invariant 16 enforces all of this.
-- **Volumes.** `<project>_supabase-db` holds the data and `<project>_supabase-db-config` holds
-  the pgsodium root key. **They are one unit.** Back them up, restore them and delete them
-  together. A data volume without its config volume silently gets a new root key, and anything
-  encrypted with the old one can't be read.
-- **The password.** `POSTGRES_PASSWORD` comes from Infisical (see
-  [infisical-secrets.md](infisical-secrets.md)). Only `db` and `migrate` receive it. It is the
-  password of the `postgres` and `supabase_admin` roles.
+  Nothing on the host can connect to Postgres or to a service directly. `docker/supabase/test_gateway.sh` checks this.
+- **Volumes.**
+  - `<project>_supabase-db` (data) and `<project>_supabase-db-config` (the pgsodium root key)
+    are **one unit**. Back them up, restore them and delete them together. A data volume without
+    its config volume silently gets a new root key.
+  - `<project>_supabase-storage` holds storage objects. Each file is capped at 50 MB, but the
+    volume has no quota: watch `docker system df`.
+- **Database roles.**
+
+  | Role | Used by | Password |
+  | --- | --- | --- |
+  | `supabase_admin` (superuser), `postgres` | `db`, `migrate`, realtime | `POSTGRES_PASSWORD` |
+  | `authenticator` (rest), `supabase_auth_admin` (auth), `supabase_storage_admin` (storage) | those services | `SUPABASE_ROLES_PASSWORD` |
+
+  The public-facing API services never hold the superuser password. Realtime does, because
+  upstream requires it. The keys and their allowed services are listed in
+  [infisical-secrets.md](infisical-secrets.md).
+
+## The gateway
+
+The gateway reproduces upstream's legacy-key gateway. Supabase clients use
+`http://localhost:<SUPABASE_PORT>` with the anon key (`ANON_KEY`) or the service-role key
+(`SERVICE_ROLE_KEY`).
+
+| Path | Goes to | `apikey` |
+| --- | --- | --- |
+| `/auth/v1/verify`, `/callback`, `/authorize` | auth | not required |
+| other `/auth/v1/` | auth | anon or service-role |
+| `/rest/v1/` (the root) | rest | service-role |
+| other `/rest/v1/` | rest | anon or service-role |
+| `/realtime/v1/api/tenants`, `/realtime/v1/api/openapi` | refused, 403 | |
+| `/realtime/v1/api/` | realtime `/api/` | anon or service-role |
+| other `/realtime/v1/` (websocket) | realtime `/socket/` | anon or service-role (header or `?apikey=`) |
+| `/storage/v1/` | storage | not required; storage checks the token |
+| anything else | 404 | |
+
+Before routing, the gateway refuses (403):
+- a `Host` other than `localhost:<port>` or `127.0.0.1:<port>`;
+- an `Origin` other than those two.
+
+A missing or wrong key gets 401, and the anon key on the REST root gets 403. With no
+`Authorization` header (or an empty one), the gateway sends `Bearer <apikey>`. A client token is
+never replaced. Realtime gets the `Host` it uses to find its tenant (`realtime-dev`). The
+gateway's upstream-error log is turned off, because it would print the `apikey` header. Debug
+with each service's own logs.
+
+GoTrue runs with sign-up disabled and no sign-in provider. Google arrives in slice 5, together
+with CORS and auth's internet access.
+
+To check a running stack: `sh docker/supabase/test_gateway.sh dev` (or `stage`). It prints
+statuses only.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `make dev-up`, `make stage-up` | Start the stack, then apply migrations |
+| `make dev-up`, `make stage-up` | Start the stack (Supabase included), apply migrations, print the URLs |
 | `make dev-migrate` | Apply migrations to dev. It starts `db` and waits for it to be healthy. |
 | `make dev-psql` | psql in the dev `db` as `postgres`, with no history file |
-| `make dev-reset CONFIRM=yes`, `make stage-reset CONFIRM=yes` | **Delete** every volume of that stack, Postgres included |
+| `make dev-reset CONFIRM=yes`, `make stage-reset CONFIRM=yes` | **Delete** every volume of that stack, Postgres and Supabase storage included |
 
 Nothing migrates prod or opens a shell in it. The compose wrapper refuses `compose run` and
-`compose exec` for prod. Prod is migrated by the cutover runbook (ADR 0021, slice 11).
+`compose exec` for prod.
+
+## Re-initialising Postgres (when the init SQL changes)
+
+`docker/supabase/init/` holds three files:
+- `roles.sql`, which sets the service-role passwords;
+- `jwt.sql`;
+- `realtime.sql`.
+
+They run only when the Postgres data volume is empty. To apply changed init SQL to dev or stage
+without touching app data, logins or Companion config:
+
+```sh
+make dev-down
+docker volume rm autologger-dev_supabase-db autologger-dev_supabase-db-config
+make dev-up
+```
+
+For stage, use `make stage-down`, the `autologger-stage_…` volumes, and `make stage-up`. This
+deletes that environment's Postgres data. Run `docker/supabase/test_gateway.sh` afterwards.
 
 ## Writing a migration
 
-- **Name:** `supabase/migrations/<14-digit UTC timestamp>_<name>.sql`, where `<name>` uses
-  `a-z`, `0-9` and `_`, for example `20261001120000_catalog_tables.sql`. Each version must be
-  unique. The runner refuses the whole directory if any name is wrong, a version repeats, or an
-  entry isn't a plain file.
+- **Naming.** `supabase/migrations/<14-digit UTC timestamp>_<name>.sql`, where `<name>` uses
+  `a-z`, `0-9` and `_`, for example `20261001120000_catalog_tables.sql`.
+  - Each version must be unique.
+  - The runner refuses the whole directory if a name is wrong, a version repeats, or an entry
+    isn't a plain file.
 - **One transaction per file.** The runner wraps each file, together with its record in
-  `supabase_migrations.schema_migrations`, in one transaction under an advisory lock. Either
-  both land or neither does. So a file must not:
+  `supabase_migrations.schema_migrations`, in one transaction under an advisory lock. So a file
+  must not:
   - start a line with a psql meta-command (`\`);
   - start a line with `BEGIN`, `COMMIT`, `ROLLBACK`, `END`, `ABORT`, `SAVEPOINT`, `RELEASE` or
-    `START TRANSACTION`. Indent the `BEGIN … END` of a function body;
-  - use statements that can't run in a transaction: `CREATE INDEX CONCURRENTLY`, `VACUUM`,
-    `ALTER SYSTEM` or `CREATE DATABASE`.
-- **Timeouts.** A file waits at most 10 s for a lock and runs for at most 15 minutes.
-- **Ordering.** Every unrecorded version runs, in version order, even one older than the newest
-  applied version (for example, a branch merged late).
-- **Applied files are final.** Editing a file that has already been applied has no effect.
-  Write a new migration instead.
-- **History table.** It has the Supabase CLI's shape (`version`, `statements`, `name`), so the
-  CLI can take over later.
+    `START TRANSACTION`. Indent a function body's `BEGIN … END`;
+  - use statements that can't run in a transaction, such as `CREATE INDEX CONCURRENTLY`,
+    `VACUUM`, `ALTER SYSTEM` or `CREATE DATABASE`.
+- **Limits.** Each file waits at most 10 s for a lock and runs for at most 15 minutes.
+- **Order.** Every unrecorded version runs, in version order, even one older than the newest
+  applied version.
+- **Applied files are final.** Editing a file that has already run has no effect. Write a new
+  migration instead.
+- **CLI compatibility.** The history table has the Supabase CLI's shape (`version`,
+  `statements`, `name`).
 
-## Rotating `POSTGRES_PASSWORD`
+## Rotation and recovery
 
-The database keeps the old password until you change it inside Postgres, so do both steps.
-This procedure was tested on dev, 2026-09-30.
+Infisical holds the values, but the database keeps the passwords it was given. Changing a value
+in Infisical alone breaks the services that use it.
 
-1. **Set the new value** in that environment's Infisical project: `openssl rand -hex 16`, pasted
-   into the UI. Don't print it anywhere else.
-2. **Change it in the running database**, which still has the old environment. Using `\password`
-   means the value never appears in a statement or a log.
-   - Dev: `make dev-psql`, then `\c postgres supabase_admin`, `\password postgres` and
-     `\password supabase_admin`, entering the new value each time.
-   - Stage: `docker exec -it autologger-stage-db-1 psql -U supabase_admin`, then the same two
-     `\password` commands.
-   - Prod: the owner runs `docker exec -it autologger-db-1 psql -U supabase_admin` on the deploy
-     host, since the wrapper refuses exec for prod.
-3. **Restart and check.** Run `make dev-up` (or `make stage-up`). It recreates `db` with the
-   new value, and its migrate step fails if the passwords don't match.
+- **`POSTGRES_PASSWORD`** (tested on dev, 2026-09-30):
+  1. Set the new value (`openssl rand -hex 16`) in Infisical.
+  2. In the running database, run `make dev-psql`, then `\c postgres supabase_admin`, then
+     `\password postgres` and `\password supabase_admin`, entering the new value. Stage uses
+     `docker exec -it autologger-stage-db-1 psql -U supabase_admin`. Prod, at the owner's hand,
+     uses `docker exec -it autologger-db-1 …`.
+  3. `make dev-up` (or `make stage-up`) recreates the services with the new value.
+- **`SUPABASE_ROLES_PASSWORD`:** the same steps, with `\password authenticator`,
+  `\password supabase_auth_admin` and `\password supabase_storage_admin` as `supabase_admin`.
+- **`JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`** change together. Delete all three in
+  Infisical, run `node docker/scripts/supabase-keys.mjs <env> --writer <file>` (it creates the
+  three), then `make <env>-up`. Old user sessions become invalid. The wrapper warns 90 days
+  before the API keys' 5-year expiry.
+- **`SECRET_KEY_BASE`:** change it in Infisical, then `make <env>-up`.
+- **`REALTIME_DB_ENC_KEY`** encrypts realtime's stored tenant settings. After changing it,
+  re-initialise Postgres (above) on dev or stage.
+- **A failed generator run** creates nothing, because each run is one all-or-nothing request.
+  If the JWT trio is incomplete for some other reason, the generator refuses. Delete whichever
+  of the three exist in Infisical and run it again.
+- **If you lose a password:** inside the `db` container, `supabase_admin` can still log in over
+  the local socket without one, so `\password` still works. Infisical's version history also
+  keeps old values.
 
-**If the old value is lost and the new one doesn't match:**
-- Inside the container, `supabase_admin` can still log in over the local socket without a
-  password, so step 2 works anyway.
-- Infisical's version history also keeps earlier values.
-- On dev and stage, a reset is the last resort.
+## Residual risks
+
+- **Realtime holds the superuser password,** as upstream requires. It is reachable only through
+  the gateway's key check, on internal networks.
+- **The four services can reach each other's ports** on the shared `db` and `supabase`
+  networks. Revisit before cutover.
+- **Container logs carry text from outside the stack,** such as request paths and failed-login
+  names. Treat them as untrusted data (see [security.md](security.md)).

@@ -101,5 +101,47 @@ d=$SCRATCH/migbind; snapshot "$d"
 sed -i 's#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./supabase/migrations:/m:ro#' "$d/docker/compose.dev.yaml"
 expect "the migrations directory mounted outside migrate is caught" "$d" fail "invariant 4] dev"
 
+# ---- supabase-services (invariant 16 rewritten, invariants 3 and 4)
+SBF=docker/supabase-services.yaml
+d=$SCRATCH/pwrest; snapshot "$d"
+sed -i 's#^      PGRST_DB_SCHEMAS: public$#&\n      X_PW: ${POSTGRES_PASSWORD}#' "$d/$SBF"
+expect "the superuser password in rest is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/gwdb; snapshot "$d"
+sed -i 's/^    networks: \[supabase, edge\]$/    networks: [supabase, edge, db]/' "$d/$SBF"
+expect "the gateway on the db network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/restedge; snapshot "$d"
+sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, edge]/' "$d/$SBF"
+expect "rest on the edge network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/sbinternal; snapshot "$d"
+sed -i '193{/^    internal: true$/d}' "$d/docker/compose.dev.yaml"
+expect "a non-internal supabase network is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/authimg; snapshot "$d"
+sed -i 's#^    image: supabase/gotrue@sha256:[0-9a-f]* \# v2.196.0$#    image: supabase/gotrue:v2.196.0#' "$d/$SBF"
+expect "an unpinned auth image is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/storageport; snapshot "$d"
+sed -i 's/^      S3_PROTOCOL_ENABLED: "false"$/&\n    ports: ["127.0.0.1:5000:5000"]/' "$d/$SBF"
+expect "storage publishing a port is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/edgesubnet; snapshot "$d"
+sed -i 's/172\.28\.24\.0/172.28.25.0/' "$d/docker/compose.stage.yaml"
+expect "an edge network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
+
+d=$SCRATCH/anonapi; snapshot "$d"
+sed -i 's/^    container_name: autologger-api$/    container_name: autologger-api\n    labels: { k: "${ANON_KEY}" }/' "$d/compose.yaml"
+expect "the anon key in prod api is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/gwbind; snapshot "$d"
+sed -i '122s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase-gw.Caddyfile:/x:ro#' "$d/docker/compose.dev.yaml"
+expect "the gateway Caddyfile mounted outside the gateway is caught" "$d" fail "invariant 4] dev"
+
+d=$SCRATCH/initbind; snapshot "$d"
+sed -i '122s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase/init/roles.sql:/x.sql:ro#' "$d/docker/compose.dev.yaml"
+expect "init SQL mounted outside db is caught" "$d" fail "invariant 4] dev"
+
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

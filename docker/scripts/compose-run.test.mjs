@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -21,6 +22,7 @@ import {
   checkCredFile,
   checkNodeVersion,
   checkResolved,
+  checkSupabaseKeys,
   httpsJson,
   parseDomain,
   sanitizeMessage,
@@ -34,6 +36,16 @@ const REAL_DOCKER = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'ut
 const SECRET = 'csec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
 const PGPW = '0123456789abcdef0123456789abcdef'; // a valid POSTGRES_PASSWORD (supabase-db D4)
+// supabase-services: the compose files interpolate every Supabase key, so resolve needs them all.
+const SB_JS = 'j'.repeat(43);
+const sbJwt = (role) => {
+  const p = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role, iss: 'supabase', exp: Math.floor(Date.now() / 1000) + 365 * 86400 })}`;
+  return `${hp}.${createHmac('sha256', SB_JS).update(hp).digest('base64url')}`;
+};
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('JWT_SECRET', SB_JS),
+  secret('ANON_KEY', sbJwt('anon')), secret('SERVICE_ROLE_KEY', sbJwt('service_role')), secret('SECRET_KEY_BASE', 's'.repeat(64)),
+  secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
 
 let T; // temp dir
 let server;
@@ -175,7 +187,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -411,7 +423,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, fetches with the right query, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787'), secret('POSTGRES_PASSWORD', PGPW)]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('DEV_PORT', '18787'), ...sbSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.equal(seen.length, 2);
@@ -436,7 +448,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'TERM']);
+    assert.deepEqual(names, ['ANON_KEY', 'AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a multi-step call logs in once and runs the steps in order', async () => {
@@ -472,11 +484,12 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
     const r = await run(['dev', 'resolved', 'urls']);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /127\.0\.0\.1:18787/);
+    assert.match(r.out, /Supabase: +http:\/\/localhost:18790/);
   });
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('DEV_PORT', p), secret('POSTGRES_PASSWORD', PGPW)]);
+      handler = standIn([secret('DEV_PORT', p), ...sbSecrets()]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -503,7 +516,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('DEV_PORT', '8080'), secret('POSTGRES_PASSWORD', PGPW)]);
+    handler = standIn([secret('DEV_PORT', '8080'), ...sbSecrets()]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
@@ -541,7 +554,7 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
     assert.equal(r.code, 0, r.out);
   });
   it('resolved refuses a config where the password value appears outside db and migrate', () => {
-    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
+    const ok = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, db: { environment: { POSTGRES_PASSWORD: PGPW } }, migrate: { environment: { PGPASSWORD: PGPW } } } };
     const secrets = new Map([['POSTGRES_PASSWORD', PGPW]]);
     assert.doesNotThrow(() => checkResolved('prod', ok, secrets));
     for (const leak of [{ labels: { x: `pw=${PGPW}` } }, { environment: { DATABASE_URL: `postgres://u:${PGPW}@db/x` } }, { build: { args: { P: PGPW } } }]) {
@@ -552,5 +565,85 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
       assert.match(msg, /POSTGRES_PASSWORD.*api|api.*POSTGRES_PASSWORD/, JSON.stringify(leak));
       assert.ok(!msg.includes(PGPW));
     }
+  });
+});
+
+// supabase-services D4: formats, JWT consistency, per-secret confinement.
+const b64u = (x) => Buffer.from(typeof x === 'string' ? x : JSON.stringify(x)).toString('base64url');
+function jwt(secret, payload, header = { alg: 'HS256', typ: 'JWT' }) {
+  const hp = `${b64u(header)}.${b64u(payload)}`;
+  return `${hp}.${createHmac('sha256', secret).update(hp).digest('base64url')}`;
+}
+const JS = 'j'.repeat(43);
+const now = Math.floor(Date.now() / 1000);
+const ANON = jwt(JS, { role: 'anon', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
+const SVC = jwt(JS, { role: 'service_role', iss: 'supabase', iat: now, exp: now + 5 * 365 * 86400 });
+
+describe('Supabase keys (supabase-services D4)', () => {
+  const keys = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT'];
+  const allowed = new Set(keys);
+  it('each format refuses a bad value without printing it', () => {
+    const bad = {
+      SUPABASE_ROLES_PASSWORD: 'A'.repeat(32), // uppercase is refused
+      JWT_SECRET: 'short-secret-value',
+      SECRET_KEY_BASE: 'k'.repeat(63),
+      REALTIME_DB_ENC_KEY: 'k'.repeat(15),
+      ANON_KEY: 'not-a-jwt-value',
+      SERVICE_ROLE_KEY: 'a.b.c.d',
+      SUPABASE_PORT: '80',
+    };
+    for (const [k, v] of Object.entries(bad)) {
+      let msg = '';
+      try { validateSecrets({ secrets: [secret(k, v)] }, allowed); } catch (e) { msg = e.message; }
+      assert.match(msg, new RegExp(`${k}.*bad-format`), k);
+      assert.ok(!msg.includes(v), k);
+    }
+    for (const v of ['99999', '1023', '8790x']) assert.throws(() => validateSecrets({ secrets: [secret('SUPABASE_PORT', v)] }, allowed), /bad-format/, v);
+    const ok = validateSecrets({ secrets: [secret('SUPABASE_ROLES_PASSWORD', PGPW), secret('JWT_SECRET', JS), secret('SECRET_KEY_BASE', 'k'.repeat(64)), secret('REALTIME_DB_ENC_KEY', 'k'.repeat(16)), secret('ANON_KEY', ANON), secret('SERVICE_ROLE_KEY', SVC), secret('SUPABASE_PORT', '8790')] }, allowed);
+    assert.equal(ok.size, 7);
+  });
+  it('the anon and service-role keys must verify against JWT_SECRET with the right roles', () => {
+    const m = (o) => new Map(Object.entries({ JWT_SECRET: JS, ANON_KEY: ANON, SERVICE_ROLE_KEY: SVC, ...o }));
+    assert.deepEqual(checkSupabaseKeys(m({})), []);
+    const refused = (o, re) => {
+      let msg = '';
+      try { checkSupabaseKeys(m(o)); } catch (e) { msg = e.message; }
+      assert.match(msg, re, JSON.stringify(Object.keys(o)));
+      for (const v of Object.values(o)) if (v && v.length > 8) assert.ok(!msg.includes(v));
+    };
+    refused({ ANON_KEY: SVC, SERVICE_ROLE_KEY: ANON }, /ANON_KEY/);
+    refused({ ANON_KEY: jwt('x'.repeat(43), { role: 'anon', exp: now + 999999 }) }, /ANON_KEY/);
+    refused({ SERVICE_ROLE_KEY: jwt(JS, { role: 'service_role', exp: now - 10 }) }, /SERVICE_ROLE_KEY/);
+    refused({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 999999 }, { alg: 'none' }) }, /ANON_KEY/);
+    refused({ SERVICE_ROLE_KEY: ANON }, /SERVICE_ROLE_KEY/);
+    refused({ ANON_KEY: undefined }, /ANON_KEY/);
+    const warn = checkSupabaseKeys(m({ ANON_KEY: jwt(JS, { role: 'anon', exp: now + 30 * 86400 }) }));
+    assert.equal(warn.length, 1);
+    assert.match(warn[0], /ANON_KEY.*expires/);
+    assert.deepEqual(checkSupabaseKeys(new Map([['POSTGRES_PASSWORD', PGPW]])), []);
+  });
+  it('resolved refuses a secret value outside its allowed services', () => {
+    const base = { name: 'autologger', services: { router: { ports: [{ host_ip: '127.0.0.1', published: '8080' }] }, realtime: { environment: { ANON: ANON, DB: PGPW } }, storage: { environment: { A: ANON, S: SVC } }, 'supabase-gw': { environment: { A: ANON, S: SVC }, ports: [{ host_ip: '127.0.0.1', published: '8790' }] } } };
+    const secrets = new Map([['POSTGRES_PASSWORD', PGPW], ['ANON_KEY', ANON], ['SERVICE_ROLE_KEY', SVC]]);
+    assert.doesNotThrow(() => checkResolved('prod', base, secrets));
+    for (const [svc, k, v] of [['api', 'ANON_KEY', ANON], ['rest', 'POSTGRES_PASSWORD', PGPW], ['realtime', 'SERVICE_ROLE_KEY', SVC]]) {
+      const cfg = structuredClone(base);
+      cfg.services[svc] = { ...(cfg.services[svc] ?? {}), labels: { x: v } };
+      let msg = '';
+      try { checkResolved('prod', cfg, secrets); } catch (e) { msg = e.message; }
+      assert.match(msg, new RegExp(`${k}.*${svc}`), `${k} in ${svc}`);
+      assert.ok(!msg.includes(v));
+    }
+  });
+});
+
+describe('published ports with the Supabase gateway (supabase-services D4)', () => {
+  const port = (n) => ({ ports: [{ host_ip: '127.0.0.1', published: String(n) }] });
+  it('dev needs app, Companion and the gateway on distinct ports; stage and prod the router and the gateway', () => {
+    assert.doesNotThrow(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8790) } }));
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000) } }), /expected set/);
+    assert.throws(() => checkResolved('dev', { name: 'autologger-dev', services: { app: port(8787), companion: port(8000), 'supabase-gw': port(8787) } }), /expected set/);
+    assert.doesNotThrow(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788), 'supabase-gw': port(8791) } }));
+    assert.throws(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788) } }), /expected set/);
   });
 });

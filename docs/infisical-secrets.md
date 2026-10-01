@@ -63,9 +63,9 @@ An environment may hold only these keys:
 
   | Environment | Compose keys |
   | --- | --- |
-  | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, `POSTGRES_PASSWORD` |
-  | `stage` | `STAGE_PORT`, `POSTGRES_PASSWORD` |
-  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, `POSTGRES_PASSWORD` |
+  | `dev` | `DEV_PORT`, `DEV_COMPANION_PORT`, plus the Supabase keys |
+  | `stage` | `STAGE_PORT`, plus the Supabase keys |
+  | `prod` | `ROUTER_PORT`, `WEB_TAG`, `API_TAG`, `PUBLIC_BASE_URL`, plus the Supabase keys |
 
 Any other name is refused before anything runs, and the error names the key without printing its
 value. That includes `LD_PRELOAD`, `DOCKER_HOST`, any `COMPOSE_*` name, and a key meant for
@@ -85,14 +85,31 @@ Other rules:
 - **Every value must be readable by the identity.** A value the identity can list but not read
   arrives as `<hidden-by-infisical>`, and the wrapper refuses it.
 
-### `POSTGRES_PASSWORD` (Supabase Postgres)
+### Supabase keys
 
-- **Where it goes.** Only the `db` and `migrate` services receive it (see `docs/supabase.md`).
-  Never add it to `docker/secrets-env.yaml`. The wrapper and `make check` (invariant 16) refuse a
-  config where the value appears in any other service.
-- **Format.** At least 32 lowercase hex characters. Any other value is refused.
-- **Create it with the generator,** never by hand. The generator only creates: it prints
-  `created` or `kept` and never shows the value.
+Each Supabase key reaches only the services listed below (see [supabase.md](supabase.md)). Never
+add one to `docker/secrets-env.yaml`. The wrapper and `make check` (invariant 16) refuse a config
+where a value appears in any other service.
+
+| Key | Format | Services |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` (superuser) | at least 32 lowercase hex characters | `db`, `migrate`, `realtime` |
+| `SUPABASE_ROLES_PASSWORD` (`authenticator`, `supabase_auth_admin`, `supabase_storage_admin`) | at least 32 lowercase hex characters | `db`, `auth`, `rest`, `storage` |
+| `JWT_SECRET` | at least 40 characters of `A-Za-z0-9_-` | `auth`, `rest`, `realtime`, `storage` |
+| `ANON_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `anon` | `supabase-gw`, `realtime`, `storage` |
+| `SERVICE_ROLE_KEY` | HS256 JWT signed with `JWT_SECRET`, `role` `service_role` | `supabase-gw`, `storage` |
+| `SECRET_KEY_BASE` | at least 64 characters of `A-Za-z0-9_-` | `realtime` |
+| `REALTIME_DB_ENC_KEY` | exactly 16 characters of `A-Za-z0-9_-` | `realtime` |
+| `SUPABASE_PORT` | port 1024-65535, distinct from every other published port (dev 8790, stage 8791) | compose (the gateway's published port) |
+
+Any value outside its format is refused, and so is a pair of API keys that isn't consistent:
+swapped, signed with another secret, the same value twice, or expired. The wrapper warns when an
+API key expires within 90 days.
+
+- **Create the keys with the generator,** never by hand. It creates every missing key except
+  `SUPABASE_PORT` in one request (all or nothing), prints `created` or `kept` for each, and never
+  shows a value. `JWT_SECRET`, `ANON_KEY` and `SERVICE_ROLE_KEY` are created together. If only
+  some of the three exist, it refuses.
 
   ```sh
   node docker/scripts/supabase-keys.mjs dev --writer ~/.infisical-bootstrap
@@ -100,11 +117,13 @@ Other rules:
 
   The writer file needs an identity that can write to the project. The environment's own `viewer`
   identity gets `HTTP 403`.
-- **Prod gets it only at cutover.** A checkout without this key in its allowed names (including
-  `main` until cutover) refuses an environment that holds it. So add it to `autologger-prod` only
-  during the cutover, after `main` has the change: run the generator on the deploy host, then
-  `make prod-check`.
-- **Changing it after the database exists** needs `ALTER ROLE` too. See `docs/supabase.md`.
+- **Set `SUPABASE_PORT` yourself** in the Infisical UI.
+- **Prod gets the keys only at cutover.** A checkout without these keys in its allowed names
+  (including `main` until cutover) refuses an environment that holds them. Add them to
+  `autologger-prod` only during cutover, after `main` has the change: run the generator on the
+  deploy host, set `SUPABASE_PORT`, then `make prod-check`.
+- **Changing a password or `JWT_SECRET` after the database exists** needs more than Infisical.
+  See "Rotation" in [supabase.md](supabase.md).
 
 To add a container key:
 1. Add a line `KEY:` to `docker/secrets-env.yaml`. `make check` invariant 15 keeps compose in
@@ -161,7 +180,7 @@ To check that the dev identity can't read prod, on a host that holds no prod cre
 - **Running containers are unaffected.** They keep the environment they started with.
 - **Stopping prod needs no secrets:**
   `docker stop autologger-router autologger-web autologger-api`.
-- **Every compose target needs `POSTGRES_PASSWORD`,** including `down` and `logs`. Its `${...:?}`
+- **Every compose target needs the Supabase keys,** including `down` and `logs`. Its `${...:?}`
   check fails before compose does anything. Stop a stack without it with `docker stop` on its
   containers.
 - **Starting or restarting needs Infisical.** Otherwise the only way is to revert the

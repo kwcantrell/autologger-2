@@ -33,9 +33,15 @@ services:
       JWT_EXP: "3600"
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
       PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      # Used only by init SQL (roles.sql) on an empty volume (supabase-services D6).
+      SUPABASE_ROLES_PASSWORD: ${SUPABASE_ROLES_PASSWORD:?add the Supabase keys with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     volumes:
       - supabase-db:/var/lib/postgresql/data
       - supabase-db-config:/etc/postgresql-custom
+      # Supabase init SQL: runs only on an empty data volume (see docs/supabase.md).
+      - ./docker/supabase/init/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+      - ./docker/supabase/init/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./docker/supabase/init/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
     networks: [db]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]

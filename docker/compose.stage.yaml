@@ -53,3 +53,11 @@ networks:
     ipam: !override
       config:
         - subnet: 172.28.22.0/24
+  supabase:
+    ipam: !override
+      config:
+        - subnet: 172.28.23.0/24
+  edge:
+    ipam: !override
+      config:
+        - subnet: 172.28.24.0/24

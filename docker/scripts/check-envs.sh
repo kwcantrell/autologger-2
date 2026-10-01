@@ -28,8 +28,12 @@ cd "$ROOT"
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
   WEB_TAG API_TAG PUBLIC_BASE_URL E2E_ENV_FILE E2E_IP_ALLOWLIST HOST REQUIRE_LOGIN TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
-# supabase-db D4: a sentinel for the Postgres password, so invariant 16 can find its value anywhere.
-PGPW_SENTINEL=pgpwsentinel7f3c0d1e2a; POSTGRES_PASSWORD=$PGPW_SENTINEL; export POSTGRES_PASSWORD
+# supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
+# each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
+SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY"
+for k in $SB_SECRETS; do eval "$k=sbsentinel_${k}_z; export $k"; done
+SUPABASE_PORT=18790; export SUPABASE_PORT
+SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate","realtime"],"SUPABASE_ROLES_PASSWORD":["db","auth","rest","storage"],"JWT_SECRET":["auth","rest","realtime","storage"],"ANON_KEY":["supabase-gw","realtime","storage"],"SERVICE_ROLE_KEY":["supabase-gw","storage"],"SECRET_KEY_BASE":["realtime"],"REALTIME_DB_ENC_KEY":["realtime"]}'
 
 # The shared allowlist (infisical-secrets D2): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
@@ -187,24 +191,39 @@ check_gw_values() { # json label
     "[.services[]|(.environment//{})|to_entries[]|select(.key|test(\"^ROUTER_(FRONT|BACK)_GW\$\"))|.value]|all(type==\"string\" and test(\"$IPV4\") and .!=\"0.0.0.0\")"
 }
 
-# Invariant 16 (dev, stage, prod; supabase-db D1-D4): Postgres is isolated and its password stays in
-# db/migrate. The value check covers every string in a service (env, command, labels, build args).
-check_db() { # json label subnet
+# Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4): Postgres and the
+# Supabase services are reachable only through the gateway, and each secret stays in its services.
+# The value check covers every string in a service (env, command, labels, healthcheck, build args).
+check_supabase() { # json label db-subnet supabase-subnet edge-subnet
   jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins a network other than db" "$1" \
     '(.services.db and .services.migrate)
      and ([.services.db,.services.migrate]|all(((.ports//[])|length==0) and ((.networks//{})|keys==["db"])))'
-  jq_ok 16 "$2: a service other than db and migrate joins the db network" "$1" \
-    '[.services|to_entries[]|select(.key!="db" and .key!="migrate")|select((.value.networks//{})|has("db"))]|length==0'
-  jq_ok 16 "$2: the db network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $3" "$1" \
-    '.networks.db|.internal==true
-     and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
-     and .driver_opts["com.docker.network.bridge.gateway_mode_ipv6"]=="isolated"
-     and .ipam.config==[{"subnet":$sn}]' --arg sn "$3"
-  jq_ok 16 "$2: the db or migrate image is not pinned by @sha256: digest" "$1" \
-    '[.services.db.image,.services.migrate.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
-  jq_ok 16 "$2: the POSTGRES_PASSWORD value appears in a service other than db and migrate" "$1" \
-    '[.services|to_entries[]|select(.key!="db" and .key!="migrate")|select([.value|..|strings|contains($pw)]|any)]|length==0' \
-    --arg pw "$PGPW_SENTINEL"
+  jq_ok 16 "$2: auth, rest, realtime or storage is missing, publishes a port, or joins networks other than db and supabase" "$1" \
+    '[.services.auth,.services.rest,.services.realtime,.services.storage]
+     |all(. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["db","supabase"]))'
+  jq_ok 16 "$2: supabase-gw does not publish exactly one 127.0.0.1 port to 8000, or joins networks other than edge and supabase" "$1" \
+    '.services["supabase-gw"]|((.networks//{})|keys==["edge","supabase"])
+     and ((.ports//[])|length==1 and .[0].host_ip=="127.0.0.1" and .[0].target==8000)'
+  jq_ok 16 "$2: a service outside db, migrate, auth, rest, realtime and storage joins the db network; or outside supabase-gw and those four joins supabase; or one other than supabase-gw joins edge" "$1" \
+    '([.services|to_entries[]|select((.value.networks//{})|has("db"))|.key] - ["db","migrate","auth","rest","realtime","storage"] == [])
+     and ([.services|to_entries[]|select((.value.networks//{})|has("supabase"))|.key] - ["supabase-gw","auth","rest","realtime","storage"] == [])
+     and ([.services|to_entries[]|select((.value.networks//{})|has("edge"))|.key] == ["supabase-gw"])'
+  for n in db supabase; do
+    [ "$n" = db ] && sn=$3 || sn=$4
+    jq_ok 16 "$2: the $n network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $sn" "$1" \
+      '.networks[$n]|.internal==true
+       and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
+       and .driver_opts["com.docker.network.bridge.gateway_mode_ipv6"]=="isolated"
+       and .ipam.config==[{"subnet":$sn}]' --arg n "$n" --arg sn "$sn"
+  done
+  jq_ok 16 "$2: the edge network is not on $5" "$1" '.networks.edge.ipam.config==[{"subnet":$sn}]' --arg sn "$5"
+  jq_ok 16 "$2: a Supabase image (db, migrate, auth, rest, realtime, storage, supabase-gw) is not pinned by @sha256: digest" "$1" \
+    '[.services|(.db,.migrate,.auth,.rest,.realtime,.storage,.["supabase-gw"])|.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
+  for k in $SB_SECRETS; do
+    jq_ok 16 "$2: the $k value appears in a service outside its allowed set" "$1" \
+      '($scope[$k]) as $ok | [.services|to_entries[]|select(.key as $n|$ok|index($n)|not)|select([.value|..|strings|contains($v)]|any)]|length==0' \
+      --arg k "$k" --arg v "sbsentinel_${k}_z" --argjson scope "$SB_SCOPE"
+  done
 }
 
 # ---------------------------------------------------------------- DEV ------------------------
@@ -225,20 +244,21 @@ check_dev() {
   # 3: ports appear only on app/companion, one each, targeting the gate ports 8787/8001 (never
   # the app's 8786 or Companion's ungated 8000); the raw mapping pins the env var AND default.
   for f in "$D" "$C"; do
-    jq_ok 3 "dev: published ports are not exactly app->8787 and companion->8001 (a published port is not a gate port)" "$f" \
-      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["app","companion"]
+    jq_ok 3 "dev: published ports are not exactly app->8787, companion->8001 and supabase-gw->8000 (a published port is not a gate port)" "$f" \
+      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["app","companion","supabase-gw"]
        and (.services.app.ports|length==1 and .[0].target==8787)
        and (.services.companion.ports|length==1 and .[0].target==8001)'
   done
   jq_ok 3 "dev: raw published-port mappings are not exactly 127.0.0.1:\${DEV_PORT:-8787}:8787 / 127.0.0.1:\${DEV_COMPANION_PORT:-8000}:8001" "$R" \
     '(.services.app.ports==["127.0.0.1:${DEV_PORT:-8787}:8787"])
-     and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])'
+     and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])
+     and (.services["supabase-gw"].ports==["127.0.0.1:${SUPABASE_PORT}:8000"])'
   jq_ok 3 "dev: the gates do not share their gated service's network namespace, or a gate/app joins a network other than dev" "$D" \
     '.services["app-gate"].network_mode=="service:app" and .services["companion-gate"].network_mode=="service:companion"
      and ((.services.app.networks//{})|keys)==["dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
   # Port variables: numeric 1-65535 when they resolve, distinct, defaults distinct.
   jq_ok 2 "dev: DEV_PORT / DEV_COMPANION_PORT do not resolve to numbers 1-65535, or are equal (custom or default)" "$C" \
-    '[.services.app.ports[0].published,.services.companion.ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and .[0]!=.[1]'
+    '[.services.app.ports[0].published,.services.companion.ports[0].published,.services["supabase-gw"].ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and (unique|length==3)'
   jq_ok 2 "dev: default DEV_PORT equals default DEV_COMPANION_PORT" "$D" \
     '.services.app.ports[0].published!=.services.companion.ports[0].published'
   # Gate coupling (seam S1): GATE_PORT is the browser-facing published port; LISTEN_PORT the
@@ -258,9 +278,9 @@ check_dev() {
   jq_ok 6 "dev: companion command is not exactly [\"--admin-address\",\"127.0.0.1\"]" "$D" \
     '.services.companion.command==["--admin-address","127.0.0.1"]'
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
-  jq_ok 6 "dev: the service set is not exactly app, app-gate, companion, companion-gate, db, migrate" "$D" \
-    '(.services|keys|sort)==["app","app-gate","companion","companion-gate","db","migrate"]'
-  check_db "$D" dev 172.28.31.0/24                                     # 16
+  jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, migrate, realtime, rest, storage, supabase-gw" "$D" \
+    '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","migrate","realtime","rest","storage","supabase-gw"]'
+  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24      # 16
   check_no_host_priv "$D" dev
   check_no_env_file "$D" dev                                           # 14
   check_allowlist "$R" dev app                                         # 15
@@ -295,13 +315,15 @@ check_dev() {
   BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
-  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations)(/.*)?$'
-  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, packages/catalog/migrations, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh or supabase/migrations (or names repo root, a data segment, .. or a .env file)" "$D" \
+  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations|docker/supabase-gw\\.Caddyfile|docker/supabase/init/[a-z]+\\.sql)(/.*)?$'
+  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, packages/catalog/migrations, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh, supabase/migrations, docker/supabase-gw.Caddyfile or docker/supabase/init/*.sql (or names repo root, a data segment, .. or a .env file)" "$D" \
     "$BINDS | map(select(.ro)) | all(.src | startswith(\$root+\"/\") and (ltrimstr(\$root+\"/\") | test(\"$ALLOW\") and (test(\"(^|/)(data|\\\\.\\\\.|\\\\.)(/|\$)\")|not) and (test(\"(^|/)\\\\.env[^/]*\$\")|not)))"
   jq_ok 4 "dev: the gate Caddyfile bind is not read-only" "$D" \
     "$BINDS | map(select(.src|endswith(\"/docker/dev-gate.Caddyfile\"))) | length==2 and all(.ro)"
   jq_ok 4 "dev: docker/supabase/migrate.sh or supabase/migrations is mounted into a service other than migrate" "$D" \
     "$BINDS | map(select(.src==(\$root+\"/docker/supabase/migrate.sh\") or (.src|startswith(\$root+\"/supabase/migrations\")))) | all(.s==\"migrate\")"
+  jq_ok 4 "dev: docker/supabase-gw.Caddyfile is mounted into a service other than supabase-gw, or docker/supabase/init into one other than db" "$D" \
+    "($BINDS | map(select(.src==(\$root+\"/docker/supabase-gw.Caddyfile\"))) | all(.s==\"supabase-gw\")) and ($BINDS | map(select(.src|startswith(\$root+\"/docker/supabase/init/\"))) | all(.s==\"db\"))"
   jq -r --arg root "$ROOT" --arg home "$HOME" "$JQ_NORM $BINDS | map(select(.ro)) | .[].src" "$D" >"$TMP/ro-sources.txt"
   while IFS= read -r p; do
     [ -e "$p" ] || fail 4 "dev: read-only source mount names a path that does not exist: ${p#"$ROOT"/}"
@@ -356,14 +378,14 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
-  check_db "$S" stage 172.28.22.0/24                                   # 16
+  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24    # 16
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
     check_posture_prodlike "$f" stage                                  # 7
     check_gw_values "$f" stage                                         # 10
-    jq_ok 3 "stage: published ports are not exactly the router's (web/api must publish none)" "$f" \
-      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key])==["router"] and (.services.router.ports|length==1 and .[0].target==8080)'
+    jq_ok 3 "stage: published ports are not exactly the router's and supabase-gw's (web/api must publish none)" "$f" \
+      '([.services|to_entries[]|select((.value.ports//[])|length>0)|.key]|sort)==["router","supabase-gw"] and (.services.router.ports|length==1 and .[0].target==8080)'
   done
   jq_ok 2 "stage: raw router mapping is not exactly 127.0.0.1:\${STAGE_PORT:-8788}:8080" "$SR" \
     '.services.router.ports==["127.0.0.1:${STAGE_PORT:-8788}:8080"]'
@@ -407,7 +429,7 @@ check_prod() {
   resolve "$TMP/prod-e2e.json" "prod + e2e overlay" compose_prod_e2e "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
-  check_db "$TMP/prod.json" prod 172.28.12.0/24                        # 16
+  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 # 16
   for pair in "$TMP/prod.json:prod" "$TMP/prod-e2e.json:prod+e2e"; do
     f=${pair%%:*}; l=${pair#*:}
     check_name "$f" "$l" autologger                                    # 9
