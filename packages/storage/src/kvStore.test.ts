@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AsyncSqliteCatalogDb } from './asyncCatalogStore';
 import { KvStore } from './kvStore';
 import { makeFakeClock } from './test/fakeClock';
 
@@ -9,7 +10,7 @@ function store(): KvStore {
   // clock is required (task 2.4); vi.useFakeTimers() (beforeEach below) fakes
   // global Date, so a plain Date.now()-reading clock still advances with
   // vi.advanceTimersByTime — identical behavior to the old DEFAULT_CLOCK.
-  return new KvStore(db, { now: () => Date.now() });
+  return new KvStore(new AsyncSqliteCatalogDb(db), { now: () => Date.now() });
 }
 
 describe('KvStore', () => {
@@ -26,7 +27,7 @@ describe('KvStore', () => {
   it('an expired get returns null and has removed the row once it resolves', async () => {
     const db = new Database(':memory:');
     db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
-    const s = new KvStore(db, { now: () => Date.now() });
+    const s = new KvStore(new AsyncSqliteCatalogDb(db), { now: () => Date.now() });
     await s.put('k', 'v', { expirationTtl: 1 });
     vi.advanceTimersByTime(2_000);
     expect(await s.get('k')).toBeNull();
@@ -68,6 +69,47 @@ describe('KvStore', () => {
     expect(await s.get('forever')).toBe('z');
     expect(await s.get('dead')).toBeNull();
   });
+
+  it("an expired key re-put between get's read and its expiry delete survives", async () => {
+    const s = store();
+    await s.put('k', 'old', { expirationTtl: 1 });
+    vi.advanceTimersByTime(2_000);
+    // get's SELECT, this put, then get's DELETE are separate lock acquisitions, in call order.
+    const [got] = await Promise.all([s.get('k'), s.put('k', 'fresh')]);
+    expect(got).toBeNull();
+    expect(await s.get('k')).toBe('fresh');
+  });
+});
+
+// async-catalog-adapter D5: KV shares the catalog connection, so it waits for an open adapter
+// transaction instead of joining it.
+describe('KvStore on the async catalog adapter', () => {
+  it('a write issued during an open transaction lands after it and survives its rollback', async () => {
+    const db = new Database(':memory:');
+    db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
+    const catalog = new AsyncSqliteCatalogDb(db);
+    const s = new KvStore(catalog, { now: () => Date.now() });
+    let open!: () => void;
+    const held = new Promise<void>((r) => {
+      open = r;
+    });
+    const txp = catalog.tx(async (t) => {
+      await t.run("INSERT INTO kv (key, value, expires_at) VALUES ('in-tx', 'x', NULL)");
+      await held;
+      throw new Error('roll back');
+    });
+    let written = false;
+    const put = s.put('k', 'v').then(() => {
+      written = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(written).toBe(false);
+    open();
+    await expect(txp).rejects.toThrow('roll back');
+    await put;
+    expect(await s.get('k')).toBe('v');
+    expect(await s.get('in-tx')).toBeNull();
+  });
 });
 
 // Relocated from session/fakeClock.test.ts (code-health-tail task 5.2) — this
@@ -82,7 +124,7 @@ describe('KV TTL with a fake clock (task 5.4)', () => {
     const { clock, tick } = makeFakeClock();
     const raw = new Database(':memory:');
     raw.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER)');
-    return { store: new KvStore(raw, clock), tick };
+    return { store: new KvStore(new AsyncSqliteCatalogDb(raw), clock), tick };
   }
 
   it('an entry expires once the fake clock passes its TTL', async () => {
