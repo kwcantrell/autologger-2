@@ -1,29 +1,4 @@
-# local-container-environments Specification
-
-## Purpose
-
-How AutoLogger runs as containers for day-to-day work, alongside the production deployment
-owned by `container-deployment`. The capability defines three environments, each driven by
-a root `Makefile`.
-
-- **dev** runs a hot-reload `npm run dev`:
-  - the app binds loopback behind a Host/Origin gate sidecar;
-  - source is mounted read-only, data is kept isolated, and only the operator's Claude
-    credentials file is shared;
-  - a Bitfocus Companion container runs this repo's module.
-- **stage** is the production stack built locally, with Google sign-in on localhost. It
-  behaves as prod, and it can run beside prod on the same host.
-- **prod** wraps the documented deployment procedure, with guards that bind it to
-  committed content on `main`.
-
-The capability also owns:
-- env-file hygiene: untracked env files, and tracked templates for them;
-- the static invariant check (`make check`), which guards the silent-failure safety
-  properties of all three projects.
-
-It changes no HTTP/WS behaviour of the server.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Makefile entry points per environment
 The repository root SHALL have a `Makefile` with one target family per environment:
@@ -155,60 +130,6 @@ Sign-in is optional:
   `http://localhost:<DEV_PORT>/`
 - **THEN** the callback completes on that origin, and `/api/profile` reports the user
 
-### Requirement: Dev app binds loopback behind a Host/Origin gate
-The dev app SHALL bind `127.0.0.1` inside its container. The compose file SHALL pin these
-as literal values, never `${…}` references, in the app's `environment:`:
-- `HOST=127.0.0.1`
-- `REQUIRE_LOGIN=0`
-- `TRUST_PROXY=0`
-- `IP_ALLOWLIST=` (empty)
-- `DATA_DIR`
-- `PORT`
-
-`PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`, which is the only
-permitted variable in the pinned block.
-
-A gate sidecar SHALL share the app's network namespace and be the only listener on the
-namespace's external interfaces. It SHALL forward to the app's loopback port. It SHALL
-reject any request whose `Host` is not one of:
-- `127.0.0.1:<DEV_PORT>`
-- `localhost:<DEV_PORT>`
-- the in-network name the dev Companion uses
-
-It SHALL also reject a non-GET/HEAD request or WebSocket upgrade whose `Origin` is present and
-not one of those origins.
-
-Published ports:
-- Every port the dev project publishes SHALL be bound to the literal `127.0.0.1`.
-- Every port the dev project publishes SHALL be a gate port.
-- No dev or stage published port SHALL be `8080`.
-
-Because the bind is loopback, both the open-network refusal and the AI v2 credentials rule
-pass. Only the host (through the published loopback port) and containers on the dev
-network (through the gate) can reach the app. The design SHALL record that this relies on
-the gate for exactly the reach the loopback rule assumes.
-
-#### Scenario: Loopback posture
-- **WHEN** the dev app starts with the pinned environment
-- **THEN** the server reports a loopback bind, prints no open-network warning, and neither
-  the open-network refusal nor the AI v2 credentials refusal is in effect
-
-#### Scenario: DNS-rebound request is rejected
-- **WHEN** a request reaches the dev port with `Host: evil.example:8787`
-- **THEN** the gate rejects it, and the app never sees it
-
-#### Scenario: Cross-origin write is rejected
-- **WHEN** a `POST` arrives with `Host: 127.0.0.1:8787` and `Origin: https://evil.example`
-- **THEN** the gate rejects it
-
-#### Scenario: HMR and the session WebSocket work through the gate
-- **WHEN** a dev page is open at `http://127.0.0.1:8787/`
-- **THEN** the Next HMR upgrade and the session WebSocket upgrade both succeed
-
-#### Scenario: Not reachable from the LAN
-- **WHEN** another machine connects to the host's LAN address on the dev port
-- **THEN** the connection is refused
-
 ### Requirement: Dev isolates data and secrets, sharing only the operator's Claude login
 The dev environment SHALL set `DATA_DIR` to a path inside a named volume of the dev project.
 
@@ -320,60 +241,6 @@ The documentation SHALL state:
 - **WHEN** stage runs with `AI_V2_ENABLED=1` and no `AI_V2_API_KEY`
 - **THEN** AI v2 design turns are refused by the credentials rule
 
-### Requirement: Dev Companion container runs this repo's module
-The dev environment SHALL include a `companion` service. The service SHALL:
-- run `ghcr.io/bitfocus/companion/companion` pinned by digest to `v4.3.4`, the version the
-  module's base-API check targets;
-- load this repository's `companion/` module, compiled (`npm run build -w companion`) and
-  packaged (`companion-module-build`) in `docker/companion.Dockerfile`, through Companion's
-  local-dev module directory;
-- keep its configuration in a named volume of the dev project;
-- expose its admin UI only through its own Host/Origin gate sidecar, published on
-  `127.0.0.1`.
-
-The connection's base URL SHALL be entered once in the Companion UI, and the documentation
-SHALL give its value. Companion reaches the dev app through the app's gate on the dev
-network, anonymously.
-
-The build's per-Dockerfile ignore file SHALL be in allowlist form. It begins by excluding
-everything, then re-admits only the root manifest, the lockfile, and the `companion/`
-sources.
-
-#### Scenario: Module is available
-- **WHEN** the Companion admin UI is opened
-- **THEN** the AutoLogger connection type is offered as a dev module
-- **AND** the packaged manifest in the image carries `runtime.apiVersion` `1.14.x`
-
-#### Scenario: Dev Companion drives the app
-- **WHEN** a dev Companion connection is configured with the documented base URL
-- **THEN**:
-  - it reaches status OK;
-  - a Companion "log event" action creates an event visible in the dev app.
-
-#### Scenario: Companion admin UI is rebinding-safe
-- **WHEN** a request reaches the Companion port with `Host: evil.example:8000`
-- **THEN** the Companion gate rejects it
-
-### Requirement: Stage coexists with prod; dev is disjoint by construction
-The stage project SHALL be startable while the prod project runs on the same host. Stage's
-subnets, `container_name`, volumes, and published ports SHALL differ from prod's. Dev uses
-a single subnet, and ports distinct from both.
-
-The router's trusted-proxy gateways SHALL be read from `ROUTER_FRONT_GW` and
-`ROUTER_BACK_GW`. They default to `172.28.10.1` and `172.28.11.1`, so production's adapted
-router configuration is byte-identical. `compose.yaml` SHALL NOT set either variable.
-Wherever either is set, its value SHALL be a single dotted IPv4 address.
-
-#### Scenario: Stage beside prod
-- **WHEN** the prod stack is up and `make stage-up` runs
-- **THEN** stage starts without a network-pool overlap or container-name conflict, and
-  prod's containers are not recreated
-
-#### Scenario: Production router defaults unchanged
-- **WHEN** the Caddyfile is adapted with neither gateway variable set
-- **THEN** the adapted JSON equals the pre-change adapted JSON, and `npm run e2e:container`
-  passes, including the forged `X-Forwarded-For` case
-
 ### Requirement: Prod targets are explicit and bound to committed content
 `prod-push` and `prod-up` SHALL refuse to run unless both hold:
 - `git status --porcelain` is empty (this covers untracked, non-ignored files);
@@ -470,6 +337,8 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 - **WHEN** `make check` runs on the committed files
 - **THEN** it exits zero
 
+## ADDED Requirements
+
 ### Requirement: Secrets come from Infisical, one environment per stack
 Each stack SHALL read its secrets and its compose interpolation values from one Infisical
 environment (`dev`, `stage`, or `prod`), held in its own Infisical project. Each environment SHALL
@@ -549,3 +418,17 @@ and the fetch SHALL be refused as a whole if any secret fails validation.
 #### Scenario: Secrets stay off the process list
 - **WHEN** `make dev-up` is running and `ps -eo args` is captured
 - **THEN** no captured argument contains the client secret or the access token
+
+## REMOVED Requirements
+
+### Requirement: Env files are untracked and templated
+**Reason**: Infisical replaces the per-stack env files `.env`, `.env.dev`, and `.env.stage` as
+the source of secrets. The ignore rules and the template warnings move to "Secrets come from
+Infisical, one environment per stack".
+**Migration**: The owner does the following, in order:
+1. Copy each env file's values into the matching Infisical environment, after comparing its key
+   names with the allowed names.
+2. Put the per-host credentials files in place from `docker/infisical-credentials.example`.
+3. Verify the stacks.
+4. After this reaches `main` at cutover, and after a verified Infisical backup and restore
+   test, delete the old env files and the `docker/.env*.example` templates.

@@ -77,7 +77,18 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
     the prod container volume.
 
 Slice order:
-1. Compose stack, migrations scaffold, backup, Infisical, dev only through compose.
+1. Compose stack, migrations scaffold, backup, Infisical, dev only through compose. Split
+   (owner, 2026-09-30) into:
+   - 1.1 `infisical-secrets`: stack secrets from Infisical through a Node wrapper over its HTTP
+     API;
+   - 1.2 `supabase-compose-stack`;
+   - 1.3 `postgres-backups`;
+   - 1.4 `retire-host-dev`.
+
+   A follow-up, `node-stack-tooling`, ports `check-envs.sh`, `compose-env.sh` and the rest of
+   `make-guards.sh` to Node (the owner decided all stack tooling moves to Node). It also amends
+   the "Static invariant check" tooling clause (currently docker, jq and a POSIX shell) and moves
+   `test_check_envs.sh` into `node --test`.
 2. Companion Realtime spike (a finding, not code).
 3. Async storage ports, still on SQLite.
 4. Catalog schema and the postgres.js adapter.

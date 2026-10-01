@@ -1,6 +1,12 @@
 #!/bin/sh
 # docker/scripts/make-guards.sh -- guard logic for the root Makefile (containerized-dev-env, task 7.2).
 #
+# SUPERSEDED (infisical-secrets, 2026-09-30): envfile, urls, reset and prod-tags now live in
+# docker/scripts/compose-run.mjs, which checks the config it resolves with the stack's Infisical
+# secrets. The Makefile no longer calls them; they stay until the node-stack-tooling change
+# deletes them. The Makefile still uses creds-exists, creds-inode, prod-git, prod-builder and
+# native-platform (none of which touch secrets).
+#
 #   make-guards.sh envfile dev|stage      env file present (names the template) + resolved config safe
 #   make-guards.sh urls dev|stage         print the URLs to use after `up`
 #   make-guards.sh creds-exists           host ~/.claude/.credentials.json must exist (dev bind)

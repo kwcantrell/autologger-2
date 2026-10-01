@@ -27,9 +27,11 @@
 #     No `-p` is ever passed: the project name must come from each file's own top-level `name:`.
 #   * Ambient COMPOSE_PROJECT_NAME / COMPOSE_FILE / COMPOSE_PATH_SEPARATOR / COMPOSE_PROFILES /
 #     COMPOSE_ENV_FILES / COMPOSE_DISABLE_ENV_FILE are stripped for the call (they would
-#     silently override `name:`, the file list or the env file). Other variables pass through,
-#     so `DEV_PORT=9000 make dev-up` still works for real use; check-envs.sh strips those
-#     itself so its result is independent of the caller's shell.
+#     silently override `name:`, the file list or the env file). The Makefile only reaches these
+#     functions through docker/scripts/compose-run.mjs (infisical-secrets), which passes
+#     /dev/null as the env file and an environment built from the stack's Infisical secrets, so
+#     ambient overrides such as `DEV_PORT=9000 make dev-up` no longer apply: set the value in
+#     Infisical. check-envs.sh strips the caller's variables itself.
 #   * Variables (for callers that need the raw pieces): AL_DEV_FILE, AL_STAGE_FILES,
 #     AL_PROD_FILE, AL_E2E_OVERLAY, AL_STAGE_WEB_TAG, AL_STAGE_API_TAG, AL_STAGE_PUBLIC_BASE_URL.
 
@@ -50,7 +52,13 @@ al_compose_guard() {
   fi
 }
 
+# AL_EXEC=1 (set by docker/scripts/compose-run.mjs only) execs instead of forking, so the
+# wrapper's child IS docker and a forwarded SIGTERM/SIGHUP reaches it (infisical-secrets H9).
 al_compose() {
+  if [ "${AL_EXEC:-}" = 1 ]; then
+    exec env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR -u COMPOSE_PROFILES \
+      -u COMPOSE_ENV_FILES -u COMPOSE_DISABLE_ENV_FILE "$@"
+  fi
   env -u COMPOSE_PROJECT_NAME -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR -u COMPOSE_PROFILES \
     -u COMPOSE_ENV_FILES -u COMPOSE_DISABLE_ENV_FILE "$@"
 }

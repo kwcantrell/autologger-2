@@ -6,9 +6,9 @@
 - Run the adversarial panel's reviewers as separate subagents with fresh context. The author
   never reviews its own work.
 - Implementation subagents work on the current branch. Don't create worktrees for them.
-- The Stop hook (`.claude/hooks/stop-check.sh`) runs `scripts/check-change.sh --stage hook`
-  when you have uncommitted changes. If it blocks you, fix the failure. If you can't, say so
-  plainly to the human. Never work around the hook.
+- No Stop hook is wired up. Before you finish with uncommitted changes, run
+  `scripts/check-change.sh --stage hook` yourself. If it fails, fix the failure. If you can't,
+  say so plainly to the human.
 - The PreToolUse hook blocks writing `Approved-by:`. Ask the human to approve instead.
-- The sandbox and deny rules in `.claude/settings.json` are intentional. If a command is
-  blocked, tell the human what you needed and why. Don't look for another route to it.
+- `.claude/settings.json` has no sandbox and no permission rules; reading `.env` files and
+  secrets is allowed. Don't push unless the human asks.

@@ -1,8 +1,10 @@
 # AutoLogger split deployment (containerize-split-images, design D7 / D11).
 #   Pangolin -> Newt (host) -> 127.0.0.1:${ROUTER_PORT} -> router -> web | api
 #
-#   cp docker/.env.example .env      # then fill in secrets; .env is gitignored
-#   docker compose up -d
+#   make prod-up     # runs docker/scripts/compose-run.mjs: secrets come from Infisical `prod`
+#
+# A hand-typed `docker compose up` fails on purpose (docker/secrets-env.yaml's AUTOLOGGER_STACK
+# guard). See docs/infisical-secrets.md.
 #
 # Only `router` publishes a port, and only on host loopback. `web` (front) and `api` (back)
 # are on separate networks; only the router joins both, so web cannot reach api.
@@ -51,7 +53,7 @@ services:
     logging: *logging
 
   web:
-    image: ghcr.io/kwcantrell/autologger-web:${WEB_TAG:?set WEB_TAG in .env (a git-SHA tag, never latest)}
+    image: ghcr.io/kwcantrell/autologger-web:${WEB_TAG:?set WEB_TAG in Infisical prod (a git-SHA tag, never latest)}
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -70,7 +72,7 @@ services:
     logging: *logging
 
   api:
-    image: ghcr.io/kwcantrell/autologger-api:${API_TAG:?set API_TAG in .env (a git-SHA tag, never latest)}
+    image: ghcr.io/kwcantrell/autologger-api:${API_TAG:?set API_TAG in Infisical prod (a git-SHA tag, never latest)}
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -82,11 +84,10 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     networks: [back]
-    # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...). Values in
-    # `environment` below take precedence over this file, so it cannot flip the posture or
-    # relocate the paths the image is built around (a copied server/.env.example line such as
-    # `DATA_DIR=./data` or an empty `YTDLP_PATH=` is overridden here).
-    env_file: .env
+    # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...) come from the
+    # shared allowlist, passed through from Infisical `prod`. The literals in `environment` below
+    # win over it, so no Infisical value can flip the posture or relocate the image's paths.
+    extends: { file: docker/secrets-env.yaml, service: secrets }
     environment:
       NODE_ENV: production
       DATA_DIR: /data
@@ -97,7 +98,7 @@ services:
       REQUIRE_LOGIN: "1"
       TRUST_PROXY: "1"
       COOKIE_SECURE: "1"
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL to the public https origin}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in Infisical prod to the public https origin}
     volumes:
       - autologger-data:/data
       - autologger-home:/home/node

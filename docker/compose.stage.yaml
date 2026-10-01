@@ -2,12 +2,12 @@
 # An overlay on the production compose.yaml: same images' build, same routing, same posture
 # (REQUIRE_LOGIN=1, TRUST_PROXY=1), served on plain http://localhost:${STAGE_PORT:-8788}.
 #
-# Always invoked from the repo root as (the Makefile does this):
+# Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
-#   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file .env.stage ...
+#   docker compose -f compose.yaml -f docker/compose.stage.yaml --env-file /dev/null ...
 # The three exported placeholders only satisfy compose.yaml's `${...:?}` guards, which compose
 # interpolates before merging; the overlay's own image, PUBLIC_BASE_URL etc. are what take effect.
-# `.env.stage` is copied from docker/.env.stage.example and is gitignored.
+# Secrets come from Infisical `stage` through prod's allowlist (docker/secrets-env.yaml).
 #
 # Invariants a future reader must not "helpfully" undo:
 #   * Do NOT set REQUIRE_LOGIN or TRUST_PROXY here: stage inherits prod's posture unchanged.
@@ -33,9 +33,6 @@ services:
   api:
     image: autologger-stage-api:local
     container_name: autologger-stage-api
-    env_file: !override
-      - path: .env.stage
-        required: true
     environment:
       PUBLIC_BASE_URL: http://localhost:${STAGE_PORT:-8788}
       COOKIE_SECURE: "0"
