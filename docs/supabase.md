@@ -7,7 +7,9 @@ prod) has its own self-hosted Supabase:
 - a gateway, `supabase-gw`.
 
 Studio and postgres-meta are deferred to a later slice. Use `make dev-psql` for admin work.
-Nothing in the app uses Supabase yet: the catalog moves in slice 4 and sign-in in slice 5. Prod
+Nothing in the app uses Supabase yet: the catalog moves in slice 4 and sign-in in slice 5. Slice 4a
+created the catalog's schema and the app's database role and network path; the app still runs on
+SQLite until 4c. Prod
 gets the definitions only. Its keys and first start wait for the cutover.
 
 ## Layout
@@ -24,10 +26,14 @@ gets the definitions only. Its keys and first start wait for the cutover.
   | Network | Internal, host-isolated | Members | prod | stage | dev |
   | --- | --- | --- | --- | --- | --- |
   | `db` | yes | `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` | 172.28.12.0/24 | .22 | .31 |
+  | `catalog` | yes | `db` and the app only (dev `app`, stage/prod `api`) | 172.28.15.0/24 | .25 | .34 |
   | `supabase` | yes | `supabase-gw`, `auth`, `rest`, `realtime`, `storage` | 172.28.13.0/24 | .23 | .32 |
   | `edge` | no (it publishes the port) | `supabase-gw` only | 172.28.14.0/24 | .24 | .33 |
 
   Nothing on the host can connect to Postgres or to a service directly. `docker/supabase/test_gateway.sh` checks this.
+  The app reaches Postgres only over `catalog`, so it can't reach the Supabase services, and they
+  can't reach it. In dev, `app-gate` also refuses any connection from the `catalog` subnet
+  (`GATE_DENY_SUBNET`).
 - **Volumes.**
   - `<project>_supabase-db` (data) and `<project>_supabase-db-config` (the pgsodium root key)
     are **one unit**. Back them up, restore them and delete them together. A data volume without
@@ -40,6 +46,7 @@ gets the definitions only. Its keys and first start wait for the cutover.
   | --- | --- | --- |
   | `supabase_admin` (superuser), `postgres` | `db`, `migrate`, realtime | `POSTGRES_PASSWORD` |
   | `authenticator` (rest), `supabase_auth_admin` (auth), `supabase_storage_admin` (storage) | those services | `SUPABASE_ROLES_PASSWORD` |
+  | `autologger_app`: DML on schema `catalog` only, at most 20 connections, 30 s statement and 15 s idle-in-transaction timeouts, `search_path` `catalog` | the app (`PGUSER`) | `APP_DB_PASSWORD`, set by the migrations runner |
 
   The public-facing API services never hold the superuser password. Realtime does, because
   upstream requires it. The keys and their allowed services are listed in
@@ -109,6 +116,34 @@ make dev-up
 
 For stage, use `make stage-down`, the `autologger-stage_…` volumes, and `make stage-up`. This
 deletes that environment's Postgres data. Run `docker/supabase/test_gateway.sh` afterwards.
+
+## The catalog schema
+
+The catalog lives in schema `catalog` (`supabase/migrations/20261001000000_catalog_schema.sql`),
+not `public`, because the image grants every new `public` table to `anon`, `authenticated` and
+`service_role`, and PostgREST serves `public`. It is a faithful port of the SQLite catalog (text
+timestamps, 0/1 flags, JSON text, `bigint` integers, `COLLATE "C"`); a typed schema follows the
+migration. `postgres` is a member of `pg_read_all_data`, so anything holding `POSTGRES_PASSWORD`
+(`db`, `migrate`, `realtime`) can read it; slice 6 revisits that.
+
+**The app's password.** After the migrations, `migrate.sh` gives `autologger_app` `LOGIN` and
+sets its password from `APP_DB_PASSWORD`, with statement logging and `pg_stat_statements` off for
+that transaction (both would otherwise record the plaintext). To rotate: change the key in
+Infisical, run `make dev-migrate` (or `make stage-up`), then recreate the app container. There is
+no window in which both passwords work.
+
+## Tests against Postgres
+
+The server's `pg` vitest project (`*.pg.test.ts`) runs against the pinned image. Its global setup
+(`test/pg/globalSetup.ts`) starts a container published on `127.0.0.1` only, applies
+`supabase/migrations` with `migrate.sh` to `postgres` and to `autologger_template`, and each test
+clones the template (`test/pg/testDb.ts`). Passwords are random per run. `npm test` therefore
+needs a running docker daemon. A crashed run can leave its container behind; a later run removes
+it once the owning process is gone, or by hand:
+
+```sh
+docker rm -f $(docker ps -qf label=autologger-test-pg.pid)
+```
 
 ## Writing a migration
 

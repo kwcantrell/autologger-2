@@ -32,10 +32,11 @@ The catalog SHALL NOT be created in schema `public`.
 - **THEN** all three read back with the same numeric values
 
 ### Requirement: The app connects as a least-privilege role
-The migration SHALL create the role `autologger_app` and SHALL always set it to no superuser,
-`CREATEDB`, `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, a connection limit of 20, a
-`statement_timeout` of 30 seconds and an `idle_in_transaction_session_timeout` of 15 seconds.
-The migration SHALL fail if the role is a member of any role. Its only privileges SHALL be `USAGE` on schema
+The migration SHALL create the role `autologger_app` and SHALL always reset it to no `CREATEDB`,
+`CREATEROLE` or `BYPASSRLS`, a connection limit of 20, a `statement_timeout` of 30 seconds and an
+`idle_in_transaction_session_timeout` of 15 seconds. The migration SHALL fail if the role is a
+superuser, a replication role, or a member of any role (the migrations user, not a superuser,
+cannot reset those two attributes). Its only privileges SHALL be `USAGE` on schema
 `catalog` and `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the catalog's tables, including tables
 later migrations create there. Its `search_path` SHALL be `catalog`. The migration SHALL hold no
 password. Creating the role SHALL be safe when the role already exists in the cluster.

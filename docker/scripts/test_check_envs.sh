@@ -62,7 +62,7 @@ sed -i '0,/^    networks: \[db\]$/s//    networks: [db, default]/' "$d/$DBF"
 expect "db on a second network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/compdb; snapshot "$d"
-sed -i '147s/networks: \[dev\]/networks: [dev, db]/' "$d/docker/compose.dev.yaml"
+sed -i '/^  companion:$/,/networks:/s/networks: \[dev\]/networks: [dev, db]/' "$d/docker/compose.dev.yaml"
 expect "companion joined to the db network is caught" "$d" fail "invariant 16] dev"
 
 d=$SCRATCH/dbinternal; snapshot "$d"
@@ -86,7 +86,7 @@ sed -i '/^  migrate:$/,/image:/s/^    image: \*image$/    image: supabase\/postg
 expect "an unpinned migrate image is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/dburl; snapshot "$d"
-sed -i '50s/^      PORT: "8786"$/      PORT: "8786"\n      DATABASE_URL: postgres:\/\/postgres:${POSTGRES_PASSWORD}@db\/postgres/' "$d/docker/compose.dev.yaml"
+sed -i '0,/^      PORT: "8786"$/s/^      PORT: "8786"$/      PORT: "8786"\n      DATABASE_URL: postgres:\/\/postgres:${POSTGRES_PASSWORD}@db\/postgres/' "$d/docker/compose.dev.yaml"
 expect "the password embedded in a dev app DATABASE_URL is caught" "$d" fail "invariant 16] dev"
 
 d=$SCRATCH/pwlabel; snapshot "$d"
@@ -116,7 +116,7 @@ sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, edge]/'
 expect "rest on the edge network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/sbinternal; snapshot "$d"
-sed -i '193{/^    internal: true$/d}' "$d/docker/compose.dev.yaml"
+sed -i '/^  supabase:$/,/internal: true/{/^    internal: true$/d}' "$d/docker/compose.dev.yaml"
 expect "a non-internal supabase network is caught" "$d" fail "invariant 16] dev"
 
 d=$SCRATCH/authimg; snapshot "$d"
@@ -136,12 +136,53 @@ sed -i 's/^    container_name: autologger-api$/    container_name: autologger-ap
 expect "the anon key in prod api is caught" "$d" fail "invariant 16] prod"
 
 d=$SCRATCH/gwbind; snapshot "$d"
-sed -i '122s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase-gw.Caddyfile:/x:ro#' "$d/docker/compose.dev.yaml"
+sed -i '0,/dev-gate.Caddyfile:\/etc\/caddy\/Caddyfile:ro$/s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase-gw.Caddyfile:/x:ro#' "$d/docker/compose.dev.yaml"
 expect "the gateway Caddyfile mounted outside the gateway is caught" "$d" fail "invariant 4] dev"
 
 d=$SCRATCH/initbind; snapshot "$d"
-sed -i '122s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase/init/roles.sql:/x.sql:ro#' "$d/docker/compose.dev.yaml"
+sed -i '0,/dev-gate.Caddyfile:\/etc\/caddy\/Caddyfile:ro$/s#^      - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro$#&\n      - ./docker/supabase/init/roles.sql:/x.sql:ro#' "$d/docker/compose.dev.yaml"
 expect "init SQL mounted outside db is caught" "$d" fail "invariant 4] dev"
+
+# ---- catalog-pg-schema (invariants 3 and 16: the two-member catalog network, APP_DB_PASSWORD)
+d=$SCRATCH/apprest; snapshot "$d"
+sed -i 's#^      PGRST_DB_SCHEMAS: public$#&\n      X_PW: ${APP_DB_PASSWORD}#' "$d/$SBF"
+expect "the app password in rest is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/appweb; snapshot "$d"
+sed -i '0,/^    networks: \[front\]$/s//    networks: [front]\n    labels: { pw: "${APP_DB_PASSWORD}" }/' "$d/compose.yaml"
+expect "the app password in prod web is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/compcat; snapshot "$d"
+sed -i '/^  companion:$/,/networks:/s/networks: \[dev\]/networks: [dev, catalog]/' "$d/docker/compose.dev.yaml"
+expect "companion joined to the catalog network is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/restcat; snapshot "$d"
+sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, catalog]/' "$d/$SBF"
+expect "rest on the catalog network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/appdb; snapshot "$d"
+sed -i 's/^    networks: \[dev, catalog\]$/    networks: [dev, catalog, db]/' "$d/docker/compose.dev.yaml"
+expect "the dev app on the shared db network is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/apidb; snapshot "$d"
+sed -i 's/^    networks: \[back, catalog\]$/    networks: [back, catalog, db]/' "$d/compose.yaml"
+expect "the prod api on the shared db network is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/nsshare; snapshot "$d"
+sed -i 's/^networks:$/  sidecar:\n    image: caddy:2\n    network_mode: service:app\n\nnetworks:/' "$d/docker/compose.dev.yaml"
+expect "a second service in the app's namespace is caught" "$d" fail "invariant 16] dev"
+
+d=$SCRATCH/catsubnet; snapshot "$d"
+sed -i 's/172\.28\.25\.0/172.28.26.0/' "$d/docker/compose.stage.yaml"
+expect "a catalog network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
+
+d=$SCRATCH/catinternal; snapshot "$d"
+sed -i '/^  catalog:$/,/internal: true/{/^    internal: true$/d}' "$d/compose.yaml"
+expect "a non-internal catalog network is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/gatedeny; snapshot "$d"
+sed -i '/^      GATE_DENY_SUBNET: /d' "$d/docker/compose.dev.yaml"
+expect "an app gate that admits the catalog subnet is caught" "$d" fail "invariant 16] dev"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

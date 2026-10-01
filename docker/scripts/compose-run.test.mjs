@@ -18,6 +18,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  allowedNames,
   checkCaFile,
   checkCredFile,
   checkNodeVersion,
@@ -43,7 +44,7 @@ const sbJwt = (role) => {
   const hp = `${p({ alg: 'HS256', typ: 'JWT' })}.${p({ role, iss: 'supabase', exp: Math.floor(Date.now() / 1000) + 365 * 86400 })}`;
   return `${hp}.${createHmac('sha256', SB_JS).update(hp).digest('base64url')}`;
 };
-const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('JWT_SECRET', SB_JS),
+const sbSecrets = () => [secret('POSTGRES_PASSWORD', PGPW), secret('SUPABASE_ROLES_PASSWORD', 'f'.repeat(32)), secret('APP_DB_PASSWORD', 'e'.repeat(32)), secret('JWT_SECRET', SB_JS),
   secret('ANON_KEY', sbJwt('anon')), secret('SERVICE_ROLE_KEY', sbJwt('service_role')), secret('SECRET_KEY_BASE', 's'.repeat(64)),
   secret('REALTIME_DB_ENC_KEY', 'r'.repeat(16)), secret('SUPABASE_PORT', '18790')];
 
@@ -448,7 +449,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['ANON_KEY', 'AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['ANON_KEY', 'APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a multi-step call logs in once and runs the steps in order', async () => {
@@ -564,6 +565,48 @@ describe('Postgres password and prod run/exec (supabase-db D4, D6)', () => {
       try { checkResolved('prod', cfg, secrets); } catch (e) { msg = e.message; }
       assert.match(msg, /POSTGRES_PASSWORD.*api|api.*POSTGRES_PASSWORD/, JSON.stringify(leak));
       assert.ok(!msg.includes(PGPW));
+    }
+  });
+});
+
+// catalog-pg-schema D4-D5: the app's database password, its format and its per-stack services.
+describe('APP_DB_PASSWORD (catalog-pg-schema D4, D5)', () => {
+  const APW = 'abcdef0123456789abcdef0123456789';
+  it('must be at least 32 lowercase hex characters; the value is never printed', () => {
+    for (const v of ['-e', 'A'.repeat(32), 'a'.repeat(31), `${APW}\n${APW}`]) {
+      let msg = '';
+      try { validateSecrets({ secrets: [secret('APP_DB_PASSWORD', v)] }, new Set(['APP_DB_PASSWORD'])); } catch (e) { msg = e.message; }
+      assert.match(msg, /APP_DB_PASSWORD.*bad-format/, JSON.stringify(v));
+      if (v.length > 2) assert.ok(!msg.includes(v));
+    }
+  });
+  it('is an allowed name in every environment', () => {
+    for (const env of ['dev', 'stage', 'prod']) {
+      assert.equal(validateSecrets({ secrets: [secret('APP_DB_PASSWORD', APW)] }, allowedNames(env)).get('APP_DB_PASSWORD'), APW, env);
+    }
+  });
+  const base = (env) => {
+    const ports = env === 'dev'
+      ? { app: { ports: [{ host_ip: '127.0.0.1', published: '8787' }] }, companion: { ports: [{ host_ip: '127.0.0.1', published: '8000' }] } }
+      : { router: { ports: [{ host_ip: '127.0.0.1', published: env === 'prod' ? '8080' : '8788' }] } };
+    return { name: { dev: 'autologger-dev', stage: 'autologger-stage', prod: 'autologger' }[env], services: { ...ports, 'supabase-gw': { ports: [{ host_ip: '127.0.0.1', published: '8790' }] }, migrate: { environment: { APP_DB_PASSWORD: APW } } } };
+  };
+  const secrets = new Map([['APP_DB_PASSWORD', APW]]);
+  const refusal = (env, svc) => {
+    const cfg = base(env);
+    cfg.services[svc] = { ...(cfg.services[svc] ?? {}), environment: { PGPASSWORD: APW } };
+    try { checkResolved(env, cfg, secrets); return ''; } catch (e) { return e.message; }
+  };
+  it('is allowed in the stack app service and migrate only', () => {
+    assert.equal(refusal('dev', 'app'), '');
+    assert.equal(refusal('stage', 'api'), '');
+    assert.equal(refusal('prod', 'api'), '');
+  });
+  it('is refused in rest, in a dev api or a prod app, without printing it', () => {
+    for (const [env, svc] of [['dev', 'rest'], ['prod', 'rest'], ['dev', 'api'], ['prod', 'app'], ['dev', 'companion']]) {
+      const msg = refusal(env, svc);
+      assert.match(msg, new RegExp(`APP_DB_PASSWORD value appears in ${svc}`), `${env} ${svc}`);
+      assert.ok(!msg.includes(APW));
     }
   });
 });

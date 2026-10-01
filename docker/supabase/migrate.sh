@@ -22,6 +22,13 @@ for f in *; do
   seen="$seen $v"; files="$files $f"
 done
 
+# The app role's password (catalog-pg-schema D4): one line of at least 32 lowercase hex characters,
+# checked before connecting. `case` matches the whole value, so a newline is refused too.
+case ${APP_DB_PASSWORD-} in
+  '' | *[!0-9a-f]*) refuse "APP_DB_PASSWORD is unset or not lowercase hexadecimal (create it with docker/scripts/supabase-keys.mjs)" ;;
+esac
+[ "${#APP_DB_PASSWORD}" -ge 32 ] || refuse "APP_DB_PASSWORD is shorter than 32 characters"
+
 # Phase 2: the history table (Supabase CLI shape), then one transaction per unrecorded file.
 psql -X -q -v ON_ERROR_STOP=1 -c 'create schema if not exists supabase_migrations' \
   -c 'create table if not exists supabase_migrations.schema_migrations (version text primary key, statements text[], name text)'
@@ -49,6 +56,24 @@ for f in $files; do
   [ "$(psql -X -At -c "select count(*) from supabase_migrations.schema_migrations where version = '$v'")" = 1 ] ||
     { echo "migrate: $f ran but is not recorded" >&2; exit 1; }
   echo "$out"
-  case $out in applied*) n=$((n + 1)) ;; esac
+  case $out in *"applied $v"*) n=$((n + 1)) ;; esac
 done
 echo "$n applied"
+
+# Phase 3: the app role's LOGIN and password, from the environment (never argv). Statement logging
+# (log_statement is `ddl` for postgres on this image) and pg_stat_statements utility tracking are
+# off for this transaction, so the plaintext reaches neither the log nor the stats view.
+cat >/tmp/approle.sql <<'SQL'
+\set apppw `printf %s "$APP_DB_PASSWORD"`
+set local log_statement = 'none';
+set local pg_stat_statements.track_utility = off;
+select exists (select from pg_roles where rolname = 'autologger_app') as has_role \gset
+\if :has_role
+alter role autologger_app with login password :'apppw';
+\echo app role password set
+\else
+\echo app role absent; password not set
+\endif
+SQL
+psql -X -q -v ON_ERROR_STOP=1 --single-transaction -f /tmp/approle.sql ||
+  { echo "migrate: setting the app role's password failed" >&2; exit 1; }

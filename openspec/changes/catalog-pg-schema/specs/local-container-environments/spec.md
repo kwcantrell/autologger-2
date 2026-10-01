@@ -10,8 +10,10 @@ as literal values, never `${…}` references, in the app's `environment:`:
 - `DATA_DIR`
 - `PORT`
 
-`PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`, which is the only
-permitted variable in the pinned block.
+`PUBLIC_BASE_URL` SHALL be pinned to `http://localhost:${DEV_PORT:-8787}`. Besides it, the only
+variables permitted in the app's `environment:` are the `AUTOLOGGER_STACK` sentinel and the
+catalog's `PGPASSWORD`, which SHALL be a `${APP_DB_PASSWORD:?…}` reference next to the literals
+`PGHOST=db` and `PGUSER=autologger_app`.
 
 A gate sidecar SHALL share the app's network namespace and be the only listener on the
 namespace's external interfaces. It SHALL forward to the app's loopback port. It SHALL
@@ -34,7 +36,8 @@ Because the bind is loopback, both the open-network refusal and the AI v2 creden
 pass. Only the host (through the published loopback port) and containers on the dev
 network (through the gate) can reach the app. The app also joins the two-member `catalog`
 network, whose only other member is `db`; the gate SHALL refuse every connection whose source
-address is in the dev `catalog` subnet. The design SHALL record that this relies on
+address is in the dev `catalog` subnet, and `make check` SHALL fail when the gate's refused
+subnet differs from the `catalog` network's. The design SHALL record that this relies on
 the gate for exactly the reach the loopback rule assumes.
 
 #### Scenario: Loopback posture

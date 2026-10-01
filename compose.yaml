@@ -83,7 +83,7 @@ services:
     init: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [back]
+    networks: [back, catalog]
     # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...) come from the
     # shared allowlist, passed through from Infisical `prod`. The literals in `environment` below
     # win over it, so no Infisical value can flip the posture or relocate the image's paths.
@@ -99,6 +99,13 @@ services:
       TRUST_PROXY: "1"
       COOKIE_SECURE: "1"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in Infisical prod to the public https origin}
+      # The catalog's Postgres client (catalog-pg-schema D5): reached over the two-member `catalog`
+      # network as the least-privilege autologger_app role. Not in the shared allowlist.
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: autologger_app
+      PGPASSWORD: ${APP_DB_PASSWORD:?add APP_DB_PASSWORD with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     volumes:
       - autologger-data:/data
       - autologger-home:/home/node
@@ -132,6 +139,16 @@ networks:
     ipam:
       config:
         - subnet: 172.28.12.0/24
+  # The catalog network (catalog-pg-schema D5): internal and host-isolated, with exactly two
+  # members, `db` and the app, so the app reaches Postgres and nothing else on `db`.
+  catalog:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.15.0/24
   # Supabase services (docker/supabase-services.yaml): internal and host-isolated; only the gateway
   # also joins `edge`, which exists to publish its port.
   supabase:

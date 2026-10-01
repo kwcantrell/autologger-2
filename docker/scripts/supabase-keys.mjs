@@ -23,6 +23,7 @@ const b64u = (n) => () => randomBytes(n).toString('base64url');
 const KEYS = {
   POSTGRES_PASSWORD: hex(16),
   SUPABASE_ROLES_PASSWORD: hex(16),
+  APP_DB_PASSWORD: hex(16),
   JWT_SECRET: b64u(32),
   SECRET_KEY_BASE: b64u(64),
   REALTIME_DB_ENC_KEY: b64u(12),

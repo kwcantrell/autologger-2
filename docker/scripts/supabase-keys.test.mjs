@@ -19,10 +19,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const GEN = join(ROOT, 'docker/scripts/supabase-keys.mjs');
 const SECRET = 'wsec-SHOULD-NOT-LEAK';
 const TOKEN = 'tok-SHOULD-NOT-LEAK';
-const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY'];
+const ALL = ['POSTGRES_PASSWORD', 'SUPABASE_ROLES_PASSWORD', 'APP_DB_PASSWORD', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'SECRET_KEY_BASE', 'REALTIME_DB_ENC_KEY'];
 const FORMAT = {
   POSTGRES_PASSWORD: /^[0-9a-f]{32}$/,
   SUPABASE_ROLES_PASSWORD: /^[0-9a-f]{32}$/,
+  APP_DB_PASSWORD: /^[0-9a-f]{32}$/,
   JWT_SECRET: /^[A-Za-z0-9_-]{43}$/,
   SECRET_KEY_BASE: /^[A-Za-z0-9_-]{86}$/,
   REALTIME_DB_ENC_KEY: /^[A-Za-z0-9_-]{16}$/,
@@ -164,6 +165,21 @@ describe('supabase-keys.mjs (supabase-db D5)', () => {
       assert.ok(Math.abs(pl.iat - now) < 60);
       assert.equal(pl.exp - pl.iat, 5 * 365 * 86400);
     }
+  });
+
+  it('an existing stack gets only the app password created (catalog-pg-schema D4)', async () => {
+    const w = writeFiles();
+    handler = standIn({ keys: ALL.filter((k) => k !== 'APP_DB_PASSWORD') });
+    const r = await run(['dev', '--writer', w]);
+    assert.equal(r.code, 0, r.out);
+    const posts = seen.filter((s) => s.url === '/api/v4/secrets/batch');
+    assert.equal(posts.length, 1);
+    const b = JSON.parse(posts[0].body);
+    assert.deepEqual(b.secrets.map((x) => x.secretKey), ['APP_DB_PASSWORD']);
+    assert.match(b.secrets[0].secretValue, FORMAT.APP_DB_PASSWORD);
+    assert.ok(!r.out.includes(b.secrets[0].secretValue));
+    assert.match(r.out, /^created APP_DB_PASSWORD$/m);
+    for (const k of ALL.filter((x) => x !== 'APP_DB_PASSWORD')) assert.match(r.out, new RegExp(`^kept ${k}$`, 'm'));
   });
 
   it('a partial JWT trio is refused before any write, naming the missing keys', async () => {

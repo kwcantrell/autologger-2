@@ -2,9 +2,10 @@
 # docker/scripts/compose-env.sh to dev, stage and prod; each base file declares the `db` network
 # (internal, host-isolated, pinned subnet). Paths are repo-root-relative.
 #
-# Invariant 16 (make check): db/migrate publish no port and join only `db`; no other service
-# joins `db`; both images are digest-pinned; the POSTGRES_PASSWORD value appears in no other
-# service. The two volumes are one unit: back up, restore and delete them together.
+# Invariant 16 (make check): db/migrate publish no port; migrate joins only `db`, and db joins `db`
+# and `catalog`, the two-member network it shares only with the app (catalog-pg-schema D5); no
+# other service joins `db`; both images are digest-pinned; the POSTGRES_PASSWORD value appears in
+# no other service, and APP_DB_PASSWORD only in the app and migrate. The two volumes are one unit: back up, restore and delete them together.
 
 x-logging: &logging
   driver: json-file
@@ -42,7 +43,8 @@ services:
       - ./docker/supabase/init/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
       - ./docker/supabase/init/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
       - ./docker/supabase/init/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:ro
-    networks: [db]
+    # `catalog` is the app's only path to Postgres (catalog-pg-schema D5).
+    networks: [db, catalog]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
       interval: 5s
@@ -67,6 +69,8 @@ services:
       PGUSER: postgres
       PGDATABASE: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:?add POSTGRES_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
+      # The catalog app role's password, set by migrate.sh after the migrations (catalog-pg-schema D4).
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?add APP_DB_PASSWORD to this environment in Infisical with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     volumes:
       - ./supabase/migrations:/migrations:ro
       - ./docker/supabase/migrate.sh:/migrate.sh:ro

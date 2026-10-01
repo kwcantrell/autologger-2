@@ -105,16 +105,19 @@ read the catalog whatever the grants say. That is documented and left to slice 6
 The migration (with `begin`/`end` indented inside `DO` blocks, A19):
 1. Creates `autologger_app` if it is missing. Roles are cluster-wide, and the test setup migrates
    two databases in one cluster.
-2. Always runs `ALTER ROLE autologger_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-   NOBYPASSRLS NOLOGIN CONNECTION LIMIT 20`. The role sets these for itself:
+2. Always runs `ALTER ROLE autologger_app NOCREATEDB NOCREATEROLE NOBYPASSRLS CONNECTION LIMIT
+   20`. `postgres` is neither a superuser nor a replication role, so PG 17 refuses to let it
+   alter `SUPERUSER` or `REPLICATION` (implementation: `permission denied to alter role`).
+   Step 3 refuses a role that holds either. `LOGIN` is left as the runner set it. The role sets
+   these for itself:
    - `statement_timeout = '30s'`;
    - `idle_in_transaction_session_timeout = '15s'` (4b's adapter deadline is 10 s);
    - `search_path = catalog`.
 
    A pre-existing role can't keep stronger attributes. The 20-connection cap leaves the cluster's
    other ~77 slots to the Supabase services and `migrate`.
-3. Raises an exception if the role is a member of any role. Memberships come only in slice 6, as
-   a deliberate grant.
+3. Raises an exception if the role is a member of any role, a superuser or a replication role.
+   Memberships come only in slice 6, as a deliberate grant.
 4. Grants `USAGE` on schema `catalog` and `SELECT, INSERT, UPDATE, DELETE` on all its tables.
 5. Runs `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA catalog GRANT SELECT, INSERT,
    UPDATE, DELETE ON TABLES TO autologger_app` (A20).
@@ -189,7 +192,10 @@ The only new peer of the app is Postgres, which already holds every catalog row.
 route between networks through a container, so the app still can't reach the services on `db`.
 
 **Defence in depth.** In dev, `app-gate` refuses any request whose remote IP is in the dev
-`catalog` subnet, with a Caddy `remote_ip` matcher that aborts the connection. That protects
+`catalog` subnet, with a Caddy `remote_ip` matcher that aborts the connection. The subnet is set
+as `GATE_DENY_SUBNET`, which defaults to `192.0.2.0/32` for the Companion gate. `make check`
+asserts it equals the `catalog` network's subnet. Invariant 6 admits `PGPASSWORD` as the
+`${APP_DB_PASSWORD:?…}` reference. That protects
 against a future pg_net SSRF from `db`. pg_net is not created today, and if it ever is, the
 image's own migration grants it to PUBLIC (panel).
 

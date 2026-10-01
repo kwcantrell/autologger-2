@@ -30,10 +30,10 @@ unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
-SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY"
+SB_SECRETS="POSTGRES_PASSWORD SUPABASE_ROLES_PASSWORD APP_DB_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY SECRET_KEY_BASE REALTIME_DB_ENC_KEY"
 for k in $SB_SECRETS; do eval "$k=sbsentinel_${k}_z; export $k"; done
 SUPABASE_PORT=18790; export SUPABASE_PORT
-SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate","realtime"],"SUPABASE_ROLES_PASSWORD":["db","auth","rest","storage"],"JWT_SECRET":["auth","rest","realtime","storage"],"ANON_KEY":["supabase-gw","realtime","storage"],"SERVICE_ROLE_KEY":["supabase-gw","storage"],"SECRET_KEY_BASE":["realtime"],"REALTIME_DB_ENC_KEY":["realtime"]}'
+SB_SCOPE='{"POSTGRES_PASSWORD":["db","migrate","realtime"],"APP_DB_PASSWORD":{"dev":["app","migrate"],"stage":["api","migrate"],"prod":["api","migrate"]},"SUPABASE_ROLES_PASSWORD":["db","auth","rest","storage"],"JWT_SECRET":["auth","rest","realtime","storage"],"ANON_KEY":["supabase-gw","realtime","storage"],"SERVICE_ROLE_KEY":["supabase-gw","storage"],"SECRET_KEY_BASE":["realtime"],"REALTIME_DB_ENC_KEY":["realtime"]}'
 
 # The shared allowlist (infisical-secrets D2): every key a container may receive, one null
 # passthrough per line. Those keys must not leak the caller's values into the resolved JSON, and
@@ -184,13 +184,22 @@ check_gw_values() { # json label
     "[.services[]|(.environment//{})|to_entries[]|select(.key|test(\"^ROUTER_(FRONT|BACK)_GW\$\"))|.value]|all(type==\"string\" and test(\"$IPV4\") and .!=\"0.0.0.0\")"
 }
 
-# Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4): Postgres and the
-# Supabase services are reachable only through the gateway, and each secret stays in its services.
-# The value check covers every string in a service (env, command, labels, healthcheck, build args).
-check_supabase() { # json label db-subnet supabase-subnet edge-subnet
-  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins a network other than db" "$1" \
+# Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4, catalog-pg-schema D5):
+# Postgres and the Supabase services are reachable only through the gateway, the app reaches only
+# Postgres over the two-member catalog network, and each secret stays in its services. The value
+# check covers every string in a service (env, command, labels, healthcheck, build args).
+check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-subnet
+  [ "$2" = dev ] && app=app || app=api
+  jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db and catalog (db)" "$1" \
     '(.services.db and .services.migrate)
-     and ([.services.db,.services.migrate]|all(((.ports//[])|length==0) and ((.networks//{})|keys==["db"])))'
+     and ([.services.db,.services.migrate]|all((.ports//[])|length==0))
+     and ((.services.migrate.networks//{})|keys==["db"]) and ((.services.db.networks//{})|keys==["catalog","db"])'
+  jq_ok 16 "$2: the catalog network's members are not exactly db and $app" "$1" \
+    '[.services|to_entries[]|select((.value.networks//{})|has("catalog"))|.key]|sort==(["db",$app]|sort)' --arg app "$app"
+  jq_ok 16 "$2: a service shares the network namespace of $app or of a Supabase service (only app-gate may share app's, in dev)" "$1" \
+    '[.services|to_entries[]|select((.value.network_mode//"")|startswith("service:"))
+      |select(.value.network_mode|ltrimstr("service:") as $t|["db","migrate","auth","rest","realtime","storage","supabase-gw",$app]|index($t))|.key]
+     ==(if $app=="app" then ["app-gate"] else [] end)' --arg app "$app"
   jq_ok 16 "$2: auth, rest, realtime or storage is missing, publishes a port, or joins networks other than db and supabase" "$1" \
     '[.services.auth,.services.rest,.services.realtime,.services.storage]
      |all(. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["db","supabase"]))'
@@ -201,8 +210,8 @@ check_supabase() { # json label db-subnet supabase-subnet edge-subnet
     '([.services|to_entries[]|select((.value.networks//{})|has("db"))|.key] - ["db","migrate","auth","rest","realtime","storage"] == [])
      and ([.services|to_entries[]|select((.value.networks//{})|has("supabase"))|.key] - ["supabase-gw","auth","rest","realtime","storage"] == [])
      and ([.services|to_entries[]|select((.value.networks//{})|has("edge"))|.key] == ["supabase-gw"])'
-  for n in db supabase; do
-    [ "$n" = db ] && sn=$3 || sn=$4
+  for n in db supabase catalog; do
+    case $n in db) sn=$3 ;; supabase) sn=$4 ;; *) sn=$6 ;; esac
     jq_ok 16 "$2: the $n network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $sn" "$1" \
       '.networks[$n]|.internal==true
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
@@ -214,8 +223,8 @@ check_supabase() { # json label db-subnet supabase-subnet edge-subnet
     '[.services|(.db,.migrate,.auth,.rest,.realtime,.storage,.["supabase-gw"])|.image]|all(type=="string" and test("@sha256:[0-9a-f]{64}$"))'
   for k in $SB_SECRETS; do
     jq_ok 16 "$2: the $k value appears in a service outside its allowed set" "$1" \
-      '($scope[$k]) as $ok | [.services|to_entries[]|select(.key as $n|$ok|index($n)|not)|select([.value|..|strings|contains($v)]|any)]|length==0' \
-      --arg k "$k" --arg v "sbsentinel_${k}_z" --argjson scope "$SB_SCOPE"
+      '($scope[$k]|if type=="object" then .[$env] else . end) as $ok | [.services|to_entries[]|select(.key as $n|$ok|index($n)|not)|select([.value|..|strings|contains($v)]|any)]|length==0' \
+      --arg k "$k" --arg v "sbsentinel_${k}_z" --argjson scope "$SB_SCOPE" --arg env "$2"
   done
 }
 
@@ -246,9 +255,9 @@ check_dev() {
     '(.services.app.ports==["127.0.0.1:${DEV_PORT:-8787}:8787"])
      and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])
      and (.services["supabase-gw"].ports==["127.0.0.1:${SUPABASE_PORT}:8000"])'
-  jq_ok 3 "dev: the gates do not share their gated service's network namespace, or a gate/app joins a network other than dev" "$D" \
+  jq_ok 3 "dev: the gates do not share their gated service's network namespace, or app joins networks other than dev and catalog, or companion one other than dev" "$D" \
     '.services["app-gate"].network_mode=="service:app" and .services["companion-gate"].network_mode=="service:companion"
-     and ((.services.app.networks//{})|keys)==["dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
+     and ((.services.app.networks//{})|keys)==["catalog","dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
   # Port variables: numeric 1-65535 when they resolve, distinct, defaults distinct.
   jq_ok 2 "dev: DEV_PORT / DEV_COMPANION_PORT do not resolve to numbers 1-65535, or are equal (custom or default)" "$C" \
     '[.services.app.ports[0].published,.services.companion.ports[0].published,.services["supabase-gw"].ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and (unique|length==3)'
@@ -273,7 +282,9 @@ check_dev() {
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
   jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, migrate, realtime, rest, storage, supabase-gw" "$D" \
     '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","migrate","realtime","rest","storage","supabase-gw"]'
-  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24      # 16
+  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24 172.28.34.0/24 # 16
+  jq_ok 16 "dev: app-gate does not refuse the catalog subnet (GATE_DENY_SUBNET), so db could reach the app" "$D" \
+    '.services["app-gate"].environment.GATE_DENY_SUBNET==(.networks.catalog.ipam.config[0].subnet)'
   check_no_host_priv "$D" dev
   check_no_env_file "$D" dev                                           # 14
   check_allowlist "$R" dev app                                         # 15
@@ -286,14 +297,15 @@ check_dev() {
   done
 
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL and the D4
-  # AUTOLOGGER_STACK sentinel may hold a variable),
+  # AUTOLOGGER_STACK sentinel and the catalog's PGPASSWORD, catalog-pg-schema D5, may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
   jq_ok 6 "dev: a posture pin (HOST/REQUIRE_LOGIN/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
     '.services.app.environment|envmap
      | .HOST=="127.0.0.1" and .REQUIRE_LOGIN=="0" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
        and .PUBLIC_BASE_URL=="http://localhost:${DEV_PORT:-8787}"
        and (.AUTOLOGGER_STACK//""|startswith("${AUTOLOGGER_STACK:?"))
-       and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK")|.value|tostring|contains("$")]|any|not)'
+       and (.PGPASSWORD|startswith("${APP_DB_PASSWORD:?")) and .PGUSER=="autologger_app" and .PGHOST=="db"
+       and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK" and .key!="PGPASSWORD")|.value|tostring|contains("$")]|any|not)'
   for f in "$D" "$C"; do
     jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 REQUIRE_LOGIN=0 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
       '.services.app.environment
@@ -371,7 +383,7 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
-  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24    # 16
+  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24 172.28.25.0/24 # 16
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -421,7 +433,7 @@ check_prod() {
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
-  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 # 16
+  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 172.28.15.0/24 # 16
   f=$TMP/prod.json
   check_name "$f" prod autologger                                      # 9
   check_loopback_ports "$f" prod                                       # 1

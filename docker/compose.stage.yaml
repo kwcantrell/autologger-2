@@ -61,3 +61,7 @@ networks:
     ipam: !override
       config:
         - subnet: 172.28.24.0/24
+  catalog:
+    ipam: !override
+      config:
+        - subnet: 172.28.25.0/24

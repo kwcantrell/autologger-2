@@ -4,7 +4,8 @@
 # Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   docker compose --project-directory . --env-file /dev/null -f docker/compose.dev.yaml ...
 # with the Infisical `dev` environment injected, so every relative path below is
-# repo-root-relative. Secrets reach `app` only through docker/secrets-env.yaml.
+# repo-root-relative. Secrets reach `app` only through docker/secrets-env.yaml, except the catalog's
+# PGPASSWORD (APP_DB_PASSWORD), a literal reference in `app`'s own environment (catalog-pg-schema D5).
 #
 # Invariants a future reader must not "helpfully" undo:
 #   * The posture keys under `environment:` are LITERALS. They win over the allowlist, so no
@@ -16,7 +17,8 @@
 #   * `app` owns the network namespace and is the only service declaring `ports:`, on the literal
 #     127.0.0.1. `app-gate` joins that namespace and is the only listener on its external
 #     interfaces; the app binds 127.0.0.1:8786 inside it. Do NOT publish on a non-loopback
-#     address or join other networks to `app` (design D3 "honest note").
+#     address or join other networks to `app` (design D3 "honest note"). The one exception is
+#     `catalog`, shared only with `db`; the gate refuses that subnet (catalog-pg-schema D5).
 #   * The Claude credentials file is the ONLY host path mounted read-write and the only host
 #     file dev touches. A missing host file must FAIL (create_host_path: false), not become a
 #     directory.
@@ -54,11 +56,18 @@ services:
       YTDLP_PATH: /opt/ytdlp/yt-dlp
       CLAUDE_CLI_PATH: /usr/local/bin/claude
       PUBLIC_BASE_URL: http://localhost:${DEV_PORT:-8787}
+      # The catalog's Postgres client (catalog-pg-schema D5): reached over the two-member `catalog`
+      # network as the least-privilege autologger_app role. Not in the shared allowlist.
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: autologger_app
+      PGPASSWORD: ${APP_DB_PASSWORD:?add APP_DB_PASSWORD with docker/scripts/supabase-keys.mjs (see docs/supabase.md)}
     # The gate (app-gate) listens on the container-side 8787; compose attaches ports to the
     # namespace owner, which is this service.
     ports:
       - "127.0.0.1:${DEV_PORT:-8787}:8787"
-    networks: [dev]
+    networks: [dev, catalog]
     volumes:
       - dev-data:/data
       - dev-next:/app/web/.next
@@ -118,6 +127,8 @@ services:
       GATE_PORT: ${DEV_PORT:-8787}
       UPSTREAM_PORT: "8786"
       GATE_EXTRA_HOST: app:8787
+      # The dev catalog subnet: its only other member is db, which the gate refuses outright.
+      GATE_DENY_SUBNET: 172.28.34.0/24
     volumes:
       - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
     logging: *logging
@@ -187,6 +198,16 @@ networks:
     ipam:
       config:
         - subnet: 172.28.31.0/24
+  # The catalog network (catalog-pg-schema D5): internal and host-isolated, with exactly two
+  # members, `db` and the app, so the app reaches Postgres and nothing else on `db`.
+  catalog:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.34.0/24
   # Supabase services (docker/supabase-services.yaml): internal and host-isolated; only the gateway
   # also joins `edge`, which exists to publish its port.
   supabase:
