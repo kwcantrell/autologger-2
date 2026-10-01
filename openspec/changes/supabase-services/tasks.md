@@ -124,9 +124,11 @@ counts only, never a value.
 
 ## 5. Verify
 
-- [ ] 5.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
+- [x] 5.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS` (incl. `PASS  evidence         every ticked task cites evidence`, `PASS  commands         ran ['typecheck', 'test']`) except `WARN  size             561 changed lines > budget 400`, which the owner pre-approved as `size-override` (proposal Decisions).
   - Check: green, apart from `size` under `size-override`.
-- [ ] 5.2 Do the consistency read, appended to `panel.md`.
+- [x] 5.2 Do the consistency read, appended to `panel.md`.
+  Evidence: `git diff f226ca6 -- openspec/changes/supabase-services/` -> `tasks.md | 36 +++…` only (ticks and evidence), so no scope change; `panel.md` `## Consistency read 2026-09-30`, 5 minor items, all resolved.
 - [ ] 5.3 Archive with `/opsx:archive supabase-services`.
   - Check: `openspec validate --all --strict`.
 

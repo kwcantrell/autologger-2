@@ -68,3 +68,12 @@ merged.
 
 ## Approval 2026-09-30
 The owner approved v2 (four services, Studio/meta deferred, isolated `supabase` + `edge` networks, Postgres-volume-only re-init). Storage stays in scope.
+
+## Consistency read 2026-09-30
+Edits since approval: tasks.md (ticks and evidence only).
+Scope change: no
+- [x] [minor] Every spec requirement and scenario is covered: the gateway table, path tricks, Host/Origin, token passthrough, empty Authorization, realtime API and websocket, storage, host bypass and the 502 log case by `test_gateway.sh` (45 cases, dev and stage); confinement, membership, isolation, subnets and pins by `test_check_envs.sh` (27 cases); formats, JWT consistency, scope and port counts by `compose-run.test.mjs`; generator rules by `supabase-keys.test.mjs`; role-password split, re-init and rotation by live runs (3.2, 3.5, 4.2). Resolved: no gap found.
+- [x] [minor] Implementation is slightly stricter than the design in three places: `/rest/v1` without the slash is treated as the REST root (service-role); the gateway log also excludes `http.handlers.reverse_proxy`; storage's healthcheck uses `127.0.0.1` because storage listens on IPv4 only. Resolved: recorded here; none widens scope.
+- [x] [minor] "Each environment's SUPABASE_PORT SHALL differ from every other published port of every environment" can only be checked within one environment statically (the values live in Infisical). Resolved: the wrapper and invariant 2 enforce distinctness within an environment; cross-environment distinctness was verified live (dev 8790 and stage 8791 both up, 3.5).
+- [x] [minor] Counted size is 561 lines, above the ~420-450 estimate (the services file and the Caddyfile came out longer). Resolved: within the owner's pre-approved `size-override`; the PR carries the label.
+- [x] [minor] Non-goals hold: no Studio/meta, no CORS, no GraphQL, no provider, no prod keys, no app connection.
