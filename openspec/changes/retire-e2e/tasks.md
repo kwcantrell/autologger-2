@@ -44,9 +44,11 @@ gates run with `GITHUB_BASE_REF=supabase-migration`.
 
 ## 4. Verify
 
-- [ ] 4.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
+- [x] 4.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`.
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> every gate `PASS` except `WARN  size             1410 changed lines > budget 400`. That is above the proposal's "about 1,250" estimate (the README edits); ADR 0021 now records 1,410, and the difference is noted in the consistency read.
   - Check: green, apart from `size` under the recorded exception.
-- [ ] 4.2 Do the consistency read, appended to `panel.md`.
+- [x] 4.2 Do the consistency read, appended to `panel.md`.
+  Evidence: `git diff <approval> -- openspec/changes/retire-e2e/` -> tasks.md only (ticks and evidence); `panel.md` `## Consistency read 2026-09-30`, 3 minor items, all resolved (size 1,410 recorded in ADR 0021; table provenance; delta-to-check map).
 - [ ] 4.3 Archive with `/opsx:archive retire-e2e`, which syncs the specs and applies the two
   Purpose edits from design D6.
   - Check: `openspec validate --all --strict`.

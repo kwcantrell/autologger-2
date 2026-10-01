@@ -58,3 +58,10 @@ proposal and re-panel.
 
 ## Approval 2026-09-30
 The owner approved v2 (split 1.4a, size exception, test_router.sh, Purpose edits in D6).
+
+## Consistency read 2026-09-30
+Edits since approval: tasks.md (ticks and evidence only).
+Scope change: no
+- [x] [minor] The counted size is 1,410 lines, against the proposal's "about 1,250". The difference is the README rewrite. Resolved: ADR 0021 records the actual 1,410 as the owner's 1.4a exception, and the PR body states it. The approved proposal is not edited.
+- [x] [minor] The disposition table was recorded from the stage router, not re-compared against a live single-process server, because none runs any more. Resolved: stated in design D5, task 1.1 evidence and README. The table catches regressions (shown with a broken scratch router).
+- [x] [minor] Every spec delta has a check: the parity scenario and the router requirement via `test_router.sh` (67 cases); invariant 14 and the router-defaults scenario via `make check` and `test_check_envs.sh`; the REMOVED requirement by deletion. Non-goals hold: no host-serving or boot-guard change (1.4b), and no browser e2e rebuilt.

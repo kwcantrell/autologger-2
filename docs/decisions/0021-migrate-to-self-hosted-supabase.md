@@ -94,7 +94,7 @@ Slice order:
    - 1.3 `postgres-backups`;
    - 1.4, run before 1.3 (owner, 2026-09-30), split into:
      - 1.4a `retire-e2e`: retire the Playwright e2e harness; the router's security cases are
-       kept as `docker/scripts/test_router.sh`. **Size exception:** about 1,250 counted lines,
+       kept as `docker/scripts/test_router.sh`. **Size exception:** 1,410 counted lines,
        almost all deletions. The owner accepted this one exception to the under-400 rule;
      - 1.4b `retire-host-dev`: the server refuses to boot outside a compose stack, `DATA_DIR` is
        required, `server/.env` is never loaded, and dev docs move to the stack.
