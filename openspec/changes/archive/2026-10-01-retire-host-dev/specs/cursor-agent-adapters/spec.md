@@ -1,28 +1,4 @@
-# cursor-agent-adapters
-
-## Purpose
-
-Governs the two remaining Cursor-side files: the untracked `.cursor/mcp.json` with its
-tracked portable example, and the `restart-server-yourself` rule. Cursor and Codex agents read the
-lifecycle from `AGENTS.md`; the former pointer adapters and their drift guard were retired by
-`adopt-agent-lifecycle`.
-
-## Requirements
-
-### Requirement: Cursor MCP config is untracked with a tracked portable example
-`.cursor/mcp.json` SHALL be untracked (gitignored). A tracked `.cursor/mcp.json.example`
-SHALL document local setup, SHALL contain no machine-specific absolute paths, and SHALL pin
-the MCP server package to an exact version (no floating install). No automated guard enforces
-this; review of `.cursor/` changes does.
-
-#### Scenario: Local config never enters the tree
-- **WHEN** a contributor localizes `mcp.json` from the example
-- **THEN** the gitignore entry keeps the localized file untracked
-
-#### Scenario: Package spec changes are conspicuous
-- **WHEN** a change edits the example's MCP server package name or version
-- **THEN** the edit appears as a change to the tracked `.cursor/mcp.json.example` in the
-  reviewed diff, and the pinned version stays exact
+## MODIFIED Requirements
 
 ### Requirement: The restart rule is scoped to identified dev processes
 The `restart-server-yourself` rule (gate ruling E1, 2026-08-06: kept with the ownership fix)

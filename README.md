@@ -869,13 +869,14 @@ tight loop.
 ### Environment variable reference
 
 The deployment / auth / network knobs, consolidated. `server/.env.example` is the
-authoritative, fully-commented list (including the config-gate keys below); copy it to
-`server/.env` (gitignored) and fill in what you need.
+authoritative, fully-commented list (including the config-gate keys below). It is a reference
+only: nothing reads `server/.env`. The stacks take values from Infisical
+([docs/infisical-secrets.md](docs/infisical-secrets.md)).
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `DATA_DIR` | `./data` | Root for all state — `catalog.db`, per-session DBs, audio blobs, temp staging. |
-| `HOST` | `0.0.0.0` | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
+| `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for all state — `catalog.db`, per-session DBs, audio blobs, temp staging. |
+| `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
 | `PUBLIC_BASE_URL` | *(empty; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
 | `REQUIRE_LOGIN` | `1` | When on, every `/api` route needs a session **or** a bearer token. Set `0` only for an open, trusted LAN box (triggers the open-bind startup warning). |
@@ -915,36 +916,19 @@ These are accepted operational tradeoffs, not bugs to "fix" with a cross-DB tran
 
 ```bash
 npm install
-cp server/.env.example server/.env # fill GOOGLE_CLIENT_ID/SECRET for real OAuth
-# upgrading an existing checkout? your state moved: mv .env data server/
-
-npm run typecheck                  # server + web + companion + packages
-npm run dev                        # single process (tsx watch), :8787 — Next-served frontend
-npm test                           # server vitest (unit + integration projects)
+npm run typecheck                  # server + web + companion + packages (runs on the host)
+npm test                           # unit + integration tests (runs on the host)
+make dev-up                        # the app runs only in the dev stack (docs/infisical-secrets.md first)
 ```
 
-### Verify the contract
-
-```bash
-B=http://127.0.0.1:8787
-
-# Login gate (REQUIRE_LOGIN defaults to 1 — see server/.env.example):
-curl -o /dev/null -w '%{http_code}\n' $B/api/sessions                    # 401
-curl -o /dev/null -w '%{http_code}\n' $B/api/profile                     # 200 (always anonymous-safe)
-curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/sessions   # 401 (API_TOKEN is honoured only under /api/companion/)
-curl -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer <API_TOKEN>' $B/api/companion/state   # 200
-
-# Anonymous parity (set REQUIRE_LOGIN=0 in server/.env): profile + shows both answer.
-curl $B/api/profile
-curl $B/api/shows
-
-# OAuth round-trip needs real Google creds (GOOGLE_CLIENT_ID/SECRET in server/.env) and
-# PUBLIC_BASE_URL registered as an authorized callback URI.
-```
+The server refuses to boot outside a compose stack (`AUTOLOGGER_STACK`), needs an absolute
+`DATA_DIR`, and never reads `server/.env`. To check the login gate and token scope against a
+running stack, use `docker/scripts/test_router.sh stage` (see "Verifying the container
+topology").
 
 ## Container deployment
 
-The single-process path above (`npm run build && npm run start`) is unchanged. In addition the
+The dev stack runs the single process (`npm run dev` inside its container). In addition the
 repo builds **two independent images from one multistage `docker/Dockerfile`** and runs them
 behind a small internal router (OpenSpec change `containerize-split-images`; specs
 `container-deployment` and `api-contract-freeze`). Everything is driven from the repo root by
@@ -976,7 +960,7 @@ behind a small internal router (OpenSpec change `containerize-split-images`; spe
 
 - **`web`** runs Next's standalone server (`output: 'standalone'`); **`api`** is the unchanged
   server booted in its API-only mode (no `web/.next`, so the bridge answers `404` for
-  non-API paths). `npm run dev` / `npm run start` keep the in-process bridge.
+  non-API paths). The dev stack keeps the in-process bridge.
 - **`web` and `api` sit on separate networks** and only `router` joins both, so `web` cannot
   reach `api`. `api` has a fixed `container_name: autologger-api`, so
   `docker compose up --scale api=2` is refused (the SessionHub is single-process).
@@ -1052,8 +1036,7 @@ GIT_SHA=$(git rev-parse --short=12 HEAD) docker buildx bake -f docker-bake.hcl -
 Secrets and settings live in the Infisical `prod` environment; `make prod-up` fetches them
 (`docker/scripts/compose-run.mjs`) and passes `api` only the keys listed in
 `docker/secrets-env.yaml`. Setup: [docs/infisical-secrets.md](docs/infisical-secrets.md). A
-hand-typed `docker compose up` fails on purpose. This is separate from `server/.env`
-(single-process runs).
+hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 
 | Infisical `prod` key | Required | Why |
 |-----|----------|-----|
@@ -1358,7 +1341,7 @@ no-op, a given `role` is re-applied (re-POSTed, so it **overrides a role changed
 since the last run; omit `role` for members whose role should be left alone).
 
 ```bash
-ADMIN_TOKEN=<from .env> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
+ADMIN_TOKEN=<from Infisical prod> npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
     [--base-url http://127.0.0.1:8080] [--dry-run]
 ```
 
@@ -1443,8 +1426,7 @@ existing configuration.
 | Cookies | n/a | `COOKIE_SECURE=0`, `SESSION_COOKIE=autologger_stage_sid` | secure |
 
 Docker's default address pools include `172.28.0.0/16`; the subnets above are pinned, so
-another compose project that lands in that range will clash. Dev's 8787 collides with a host
-`npm run dev`: run one or the other, or set `DEV_PORT`.
+another compose project that lands in that range will clash.
 
 ### Setup
 
@@ -1487,7 +1469,7 @@ loopback-only login rule both pass with no server change.
   turn it into exactly the multi-user exposure the AI v2 rule forbids. `make check` enforces
   loopback-only publishing and the literal pins.
 - Any local process or user on the host can use the dev app anonymously with your Claude
-  login, as with a loopback `npm run dev`.
+  login.
 - Source subtrees (`server/src`, `web/src`, each `packages/*/src`, ...) are mounted
   **read-only**, so hot reload works from host edits (Linux file watching only; Docker Desktop is
   not supported). A dependency-manifest, lockfile or config change needs `make dev-build`.
@@ -1609,7 +1591,7 @@ for AI chat.
 ## Frontend (web/ workspace)
 
 The React frontend lives in `web/` (Next.js 15 App Router + React 19, Tailwind v4) and is
-canonical for this app. `npm run build` runs `next build`, emitting `web/.next/`; the server
+canonical for this app. `next build` (in the image builds) emits `web/.next/`; the server
 bridges unmatched GET requests to Next (`server/src/node/nextFrontend.ts`, mounted from a Hono
 catch-all — `frontend.handle(...)`) rather than serving prebuilt static files. `GET /`,
 `GET /sessions/:id`, `GET /teams`, and `GET /admin/users` all render through the shell (the API
@@ -1726,7 +1708,9 @@ and vietnamese subsets — stays a bundler-emitted asset import under `web/src/a
 ### Dev flow
 
 ```bash
-npm run dev        # single process (tsx watch), :8787 — Next dev-serves the frontend
+make dev-up        # dev stack: single process (tsx watch) behind the gate, :8787
+make dev-restart   # restart app, Companion and both gates (fetches the stack's secrets)
+make dev-logs
 ```
 
 Browse `http://127.0.0.1:8787/`. Deep links (`/sessions/<id>`, `/teams`, `/admin/users`) work
@@ -1743,29 +1727,21 @@ restarts). The session WebSocket (`/api/sessions/:id/ws`) and Next's dev HMR soc
 
 **`web/next.config.ts` edits need a manual restart** — Next reads its config only at
 `prepare()`, and (per the exclusion above) a config-only edit under `web/**` doesn't trigger
-one; `Ctrl-C` and re-run `npm run dev`. Every other `web/src/**` edit gets normal HMR.
+one; run `make dev-restart`. Every other `web/src/**` edit gets normal HMR.
 
-**Dev auth is anonymous by design**: set `REQUIRE_LOGIN=0` in `server/.env`. Dev OAuth now
-round-trips same-origin at `:8787` for the first time (the retired Vite proxy could never carry
-the Google callback) — set real `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and a `:8787`
-`PUBLIC_BASE_URL` to verify it directly against `npm run dev`. The production serve path still
-works too, and remains the only way to test from a LAN device (see below):
-
-```bash
-npm run build && npm run start   # everything on :8787
-```
+**Dev auth is anonymous by design**: the dev stack pins `REQUIRE_LOGIN=0`. Google sign-in in
+dev needs real `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` in Infisical `dev`.
 
 If dev auth is misconfigured (login required but no session), the first symptom is an
 opaque WebSocket drop — the 401 fires before the upgrade, so the browser sees a bare
 close with no status.
 
-**Keep dev loopback-bound.** The `dev` script defaults `HOST=127.0.0.1` (overridable) — the
-successor to the retired Vite `server.host` pin, same rationale: exposing the dev frontend
-(source modules, the HMR socket, Next's `/__nextjs_*` dev endpoints) to the LAN would let peers
-reach the API *as* 127.0.0.1, bypassing `IP_ALLOWLIST`, and the HMR socket sits on the raw
-upgrade path outside Hono's middleware so a configured `IP_ALLOWLIST` alone wouldn't cover it.
-Test LAN devices against the production serve path (`npm run build && npm run start`, which
-defaults `HOST=0.0.0.0`) instead.
+**Dev stays loopback-bound.** The dev stack pins `HOST=127.0.0.1`, and outside production the
+server defaults to it — the successor to the retired Vite `server.host` pin, same rationale:
+exposing the dev frontend (source modules, the HMR socket, Next's `/__nextjs_*` dev endpoints)
+to the LAN would let peers reach the API *as* 127.0.0.1, bypassing `IP_ALLOWLIST`. **LAN device
+testing is unavailable during the Supabase migration**, until stage is made reachable through
+the upstream proxy (a follow-up).
 
 ### Browser e2e (retired)
 
@@ -1820,8 +1796,8 @@ WebSocket, so HTTPS works with no extra setup).
    - **Poll interval (ms)** — default `1000` (clamped to 250–10000).
 3. **Authenticate (public / `REQUIRE_LOGIN=1` servers)** — the module authenticates by
    sending `Authorization: Bearer <token>`, which the server accepts only when it equals its
-   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the server's
-   `server/.env`, restart, and paste the **same** secret into the connection's **API token**
+   **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the stack's Infisical
+   environment, run `make <env>-up`, and paste the **same** secret into the connection's **API token**
    field. Leave it blank only on an open LAN box running `REQUIRE_LOGIN=0` (never a
    public one). If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
    so the client IP is read from the forwarded header.

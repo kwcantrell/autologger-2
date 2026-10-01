@@ -7,14 +7,13 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "sh -c 'HOST=${HOST:-127.0.0.1} NEXT_TELEMETRY_DISABLED=1 tsx watch --exclude \"../web/**\" --exclude \"../web/.next/**\" --env-file-if-exists=.env src/main.ts'",
-    "start": "NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 tsx --env-file-if-exists=.env src/main.ts",
+    "dev": "tsx src/bootGuardCli.ts && NEXT_TELEMETRY_DISABLED=1 tsx watch --exclude \"../web/**\" --exclude \"../web/.next/**\" src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:real": "RUN_REAL_AI_TESTS=1 vitest run real.test",
     "fixtures:capture": "UPDATE_API_FIXTURES=1 vitest run --project integration src/routers/apiResponseFixtures.int.test.ts",
-    "merge-audio": "tsx --env-file-if-exists=.env scripts/merge-session-audio.ts",
-    "capture:deepgram-fixture": "node --env-file-if-exists=.env scripts/capture-deepgram-fixture.mjs"
+    "merge-audio": "tsx scripts/merge-session-audio.ts",
+    "capture:deepgram-fixture": "node scripts/capture-deepgram-fixture.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.216",

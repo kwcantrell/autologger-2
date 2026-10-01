@@ -5,9 +5,10 @@
 //
 //   npm run capture:deepgram-fixture -w server
 //
-// Reads DEEPGRAM_API_KEY / DEEPGRAM_MODEL from gitignored server/.env via
-// Node's --env-file-if-exists (same mechanism server/package.json's dev/start
-// scripts use) — the key is never hardcoded or passed on the command line.
+// Run on the host (its fixtures are not in the dev image). Reads DEEPGRAM_API_KEY / DEEPGRAM_MODEL
+// from the environment; enter the key without echo or shell history (value from Infisical):
+//   read -rs DEEPGRAM_API_KEY && export DEEPGRAM_API_KEY && npm run capture:deepgram-fixture -w server
+// Nothing reads server/.env (retire-host-dev D3); the key is never hardcoded or on a command line.
 // This script is deliberately NOT wired into `npm test` and lives under
 // scripts/, outside src/**, so vitest's `src/**/*.test.ts` /
 // `src/**/*.int.test.ts` include globs never pick it up: running it costs a
@@ -68,8 +69,8 @@ function fail(msg) {
 const apiKey = (process.env.DEEPGRAM_API_KEY || '').trim();
 if (!apiKey) {
   fail(
-    'DEEPGRAM_API_KEY is not set. Put it in gitignored server/.env and run via ' +
-      '`npm run capture:deepgram-fixture -w server` (loads server/.env with --env-file-if-exists).',
+    'DEEPGRAM_API_KEY is not set. Enter it without echo (value from Infisical): ' +
+      '`read -rs DEEPGRAM_API_KEY && export DEEPGRAM_API_KEY`, then `npm run capture:deepgram-fixture -w server`.',
   );
 }
 const model = (process.env.DEEPGRAM_MODEL || '').trim() || 'nova-3';

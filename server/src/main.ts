@@ -2,19 +2,39 @@
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DataDirLockedError } from '@autologger/storage';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
+import { checkBootEnv } from './bootGuard';
 import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 
-const { bindings, close } = createBindings(process.env);
+// retire-host-dev D1: refuse before anything touches a data directory.
+const refusal = checkBootEnv(process.env);
+if (refusal) {
+  console.error(`autologger: ${refusal}`);
+  process.exit(1);
+}
+
+let created: ReturnType<typeof createBindings>;
+try {
+  created = createBindings(process.env);
+} catch (e) {
+  // retire-host-dev D2: another server holds DATA_DIR — refuse cleanly (nothing was touched).
+  if (e instanceof DataDirLockedError) {
+    console.error(`autologger: ${e.message}`);
+    process.exit(1);
+  }
+  throw e;
+}
+const { bindings, close } = created;
 const port = Number(process.env.PORT || '8787');
-const hostname = process.env.HOST || '0.0.0.0';
+const hostname = bindings.config.HOST;
 
 // Env-loading order is a deliberate invariant (nextjs-frontend-migration,
 // design D1 "Env-loading order"): createBindings() above already snapshotted
@@ -42,7 +62,7 @@ const webDir = join(dirname(fileURLToPath(import.meta.url)), '../../web');
 // degrade to API-only.
 const frontend = await createNextFrontend({ dev, dir: webDir });
 if (!dev && !frontend) {
-  console.warn('frontend not built — run `npm run build` (serving API only)');
+  console.warn('frontend not built (serving API only)');
 }
 
 // Gate decision E1: login defaults ON. If the operator explicitly opened the

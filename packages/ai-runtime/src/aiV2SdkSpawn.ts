@@ -576,8 +576,8 @@ export interface DesignTurnWorkspace {
 
 /**
  * Create a fresh, per-turn cwd and isolated config dir under the OS tmp dir —
- * neither inside the repo checkout nor DATA_DIR (whose default `./data`
- * resolves under the repo). Fresh per turn: a design turn never resumes an SDK
+ * neither inside the repo checkout nor DATA_DIR (an absolute path the stacks
+ * pin, `/data`). Fresh per turn: a design turn never resumes an SDK
  * session store, so there is nothing to preserve across turns and full
  * isolation is the safest choice.
  */

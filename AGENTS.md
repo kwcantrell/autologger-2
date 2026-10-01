@@ -91,5 +91,6 @@ Stack commands (test, lint, typecheck, audit) live under `lifecycle.commands` in
 
   An observable change needs an OpenSpec change whose delta amends `api-contract-freeze`, and
   `packages/contract/**` and `server/src/routers/**` force tier 2.
-- **Keep dev on loopback.** `npm run dev` binds `127.0.0.1`. Test LAN devices against
-  `npm run build && npm run start` instead.
+- **Dev runs in the dev stack** (`make dev-up`); the server refuses to boot on the host.
+  `npm test` and `npm run typecheck` still run on the host. LAN device testing is unavailable
+  during the Supabase migration.

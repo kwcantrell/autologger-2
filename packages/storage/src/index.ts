@@ -9,5 +9,6 @@
 
 export * from './blobStore';
 export * from './catalogStore';
+export * from './dataDirLock';
 export * from './kvStore';
 export * from './migrate';

@@ -185,7 +185,7 @@ const CWD_ROOT = join(tmpdir(), 'autologger-ai-chat-cwd');
  * fresh per turn — the CLI keys its own session store by cwd, so a fresh cwd
  * per turn would break `--resume` on the second turn (spike (d)). Rooted
  * under the OS tmp dir, which is neither inside this repo checkout nor
- * inside `DATA_DIR` (whose default, `./data`, resolves under the repo) — a
+ * inside `DATA_DIR` (an absolute path the stacks pin, `/data`) — a
  * sibling location the CLI's own bookkeeping can use freely without ever
  * touching autologger-managed storage.
  */

@@ -3,6 +3,10 @@
 //
 //   npm run merge-audio -w server -- <sessionId> [--data-dir <dir>] [--out <dir>]
 //
+// Run it in the dev stack (`make dev-shell`, then `cd server`), with `--out /tmp/<name>` so the
+// output stays off the data volume; copy it out with `docker cp`. DATA_DIR (or --data-dir) is
+// required: there is no default data directory (retire-host-dev D3).
+//
 // Reads segment order from the session DB (DATA_DIR/sessions/<id>.db), maps
 // each row's r2_key to its blob under DATA_DIR/blobs/, and packet-copies each
 // codec-family run into its own container (Opus->WebM, AAC->MP4, PCM->WAVE)
@@ -37,10 +41,9 @@ if (!sessionId || positional.length > 1) {
   process.exit(2);
 }
 
-// Same default the server uses (./data relative to the server package).
-const dataDir = resolve(
-  dataDirArg ?? process.env.DATA_DIR ?? join(import.meta.dirname, '..', 'data'),
-);
+const dataDirIn = dataDirArg ?? process.env.DATA_DIR;
+if (!dataDirIn) fail('set DATA_DIR or pass --data-dir (there is no default data directory)');
+const dataDir = resolve(dataDirIn);
 const dbPath = join(dataDir, 'sessions', `${sessionId}.db`);
 if (!existsSync(dbPath)) fail(`no session DB at ${dbPath}`);
 
