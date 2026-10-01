@@ -382,10 +382,13 @@ describe('start-up checks (H1, H10, H11)', () => {
     assert.deepEqual(splitStep('compose logs -f --tail=200'), ['logs', '-f', '--tail=200']);
   });
   it('test hooks without AUTOLOGGER_TEST=1 are ignored', async () => {
-    writeCreds('dev');
-    const r = await run(['dev', 'compose version'], { env: { AUTOLOGGER_TEST: '' } });
+    // prod: honored hooks would be refused for prod; ignored hooks fall through to the repo-root
+    // credentials file, which never exists for prod on a dev host or in CI. (dev/stage would use
+    // a real .env.infisical.<env> once the owner has one, and reach the real Infisical.)
+    const r = await run(['prod', 'compose version'], { env: { AUTOLOGGER_TEST: '' } });
     assert.notEqual(r.code, 0);
-    assert.match(r.out, /\.env\.infisical\.dev is missing/);
+    assert.match(r.out, /\.env\.infisical\.prod is missing/);
+    assert.doesNotMatch(r.out, /TEST HOOKS ACTIVE|test hooks/);
     assert.equal(seen.length, 0);
   });
   it('relative hook paths and hooks with prod are refused; a banner shows when active', async () => {

@@ -174,7 +174,7 @@ written to print names or exit codes only. The agent records that output and nev
   docs/security.md` shows the row, and `grep -n '1\.1' docs/decisions/0021-*.md` shows the split.
 ## 5. Verify
 
-- [ ] 5.1 **(owner)** Fill the Infisical `dev` environment from `.env.dev` (plus `DEV_PORT` and
+- [x] 5.1 **(owner)** Fill the Infisical `dev` environment from `.env.dev` (plus `DEV_PORT` and
   `DEV_COMPANION_PORT`), put `.env.infisical.dev` in place (mode 600), then run `make dev-up`.
   Check, repeating the verification from the containerized-dev-env archive:
   - the app and Companion URLs load;
@@ -183,14 +183,16 @@ written to print names or exit codes only. The agent records that output and nev
   - `docker exec autologger-dev-app env | cut -d= -f1 | sort` shows only the allowlist, the
     pins, `AUTOLOGGER_STACK` and the image's own variables.
   Progress (agent, 2026-09-30): `make dev-up` -> built and started all four services, printed `dev app: http://127.0.0.1:8787`; `GET /` and `/api/profile` -> 200; `docker exec autologger-dev-app env | cut -d= -f1` -> `AI_V2_ENABLED AUTOLOGGER_STACK CLAUDE_CLI_PATH DATA_DIR DEEPGRAM_API_KEY ... YTDLP_PATH` (no `INFISICAL_*`). Owner still owes the browser checks: Companion URL, DeepGram transcript 200, AI chat.
-- [ ] 5.2 **(owner)** Fill the Infisical `stage` environment from `.env.stage`, then run
+  Evidence: agent run (see Progress) plus the owner's browser checks, 2026-09-30: "all browser checks pass" (Companion URL, DeepGram transcript, AI chat).
+- [x] 5.2 **(owner)** Fill the Infisical `stage` environment from `.env.stage`, then run
   `make stage-up`. Check:
   - Google sign-in round-trips on `http://localhost:8788`;
   - the scoped `API_TOKEN` gets 200 on `/api/companion/state` and 401 on `/api/sessions`.
   Progress (agent, 2026-09-30): `make stage-up` -> all services healthy; in-container fetch: token `/api/companion/state` 200, token `/api/sessions` 401, anonymous `/api/sessions` 401; router `/` 200; env names only allowlist + pins. Owner still owes the Google sign-in round trip on `http://localhost:8788`.
-- [ ] 5.3 Run `scripts/check-change.sh --stage pr --base supabase-migration` and record the gate
+  Evidence: agent run (see Progress) plus the owner's browser check, 2026-09-30: "all browser checks pass" (Google sign-in round trip on `http://localhost:8788`).
+- [x] 5.3 Run `scripts/check-change.sh --stage pr --base supabase-migration` and record the gate
   list. Every gate passes except `tasks` until this is ticked, and `size` is at most 400.
-
+  Evidence: owner chose `size-override` (2026-09-30); locally `LIFECYCLE_OVERRIDE="size_budget: owner size-override ..." scripts/check-change.sh --stage pr --base supabase-migration` -> PASS openspec, yaml (61), workflows, skills-sync, guide-size (97/150), change (tier 2), risk-floor (3 high-risk paths: the owner's guardrail commit 29aed0e), approval, panel (80, no open criticals), evidence, artifacts-first, tests-with-code, commands (typecheck, test incl. `compose-run.test.mjs` 36/36), audit; WARN size `888 changed lines > 400 (overridden)`; FAIL only `tasks` (5.3, 6.1 unticked). On GitHub the PR needs the existing `size-override` label and its reason in the body. The hook test `test hooks without AUTOLOGGER_TEST=1 are ignored` was switched to `prod` so a real `.env.infisical.dev` on the host can't change its outcome.
 ## 6. Archive
 
 - [ ] 6.1 Run the consistency read (tier 2) if any artifact changed after approval, then
