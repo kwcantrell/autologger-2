@@ -113,12 +113,15 @@ Slice order:
    Converted top-down, because the catalog stores call each other synchronously:
    - 3a `async-session-callers`: KV and presence ports async; the session-side routers await
      the catalog; a type-checked test forbids dropped or misused promises in `server/src`;
-   - 3b: the teams, admin, profile, shows and auth callers;
+   - 3b `async-catalog-callers`: the teams, admin, profile, shows and auth callers await the
+     catalog. Code that runs inside a catalog transaction (the Google sign-up body and the teams
+     last-admin guard with its `mutate` callbacks) stays synchronous until 3d converts it, and
+     the memory-only registry getters stay synchronous for good;
    - 3c: the async catalog adapter (a FIFO lock and a scoped transaction handle), not wired in;
    - 3d: the stores move to it, and the sync port is deleted.
 
-   **Slice 4 hazards** (async-session-callers design D6). These are harmless while storage is
-   synchronous and real once it does I/O:
+   **Slice 4 hazards** (async-session-callers design D6, async-catalog-callers design D6). These
+   are harmless while storage is synchronous and real once it does I/O:
    1. the OAuth state get-then-delete needs an atomic take (auth: the owner decides);
    2. the Companion ack's read-modify-write needs one conditional update;
    3. projection mirror writes can land out of order (guard on `events_stream_revision`);
@@ -126,7 +129,21 @@ Slice order:
    5. sessions' active-show read-then-write and show-check-then-create need transactions or
       constraints;
    6. the log-import job uses the request's catalog handle inside a detached job;
-   7. never hold a session hub across an await.
+   7. never hold a session hub across an await;
+   8. every `requireTeamAdmin` gate reads the role outside the transaction that then writes, so a
+      demoted admin's in-flight request still completes (re-check inside the transaction, or
+      RLS in slice 6);
+   9. team creation counts the cap, then creates the studio, then adds the admin membership, with
+      no transaction (one transaction, cap re-checked inside);
+   10. the pending-invite cap is count-then-upsert (a transaction or a constraint);
+   11. a role promotion reads the current role, then writes (a conditional update);
+   12. member removal checks existence outside the guarded transaction (move it inside);
+   13. team delete counts shows outside its transaction while show create checks the studio, then
+       creates (count inside the delete transaction, or a foreign key);
+   14. the registry getters need `init()` first, and the snapshot goes stale across awaits within
+       one request (refresh after writes, or read names in the response query);
+   15. concurrent first Google sign-ins with one `sub` hit the unique constraint as a 500 (catch
+       the conflict and retry the lookup).
 4. Catalog schema and the postgres.js adapter.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
 6. RLS for the permission model above.

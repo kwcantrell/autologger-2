@@ -14,7 +14,7 @@ import { requireLoginEnabled, sessionCookieName } from '../env';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   const catalog = createCatalog(c.env.ports.catalog);
-  catalog.init();
+  await catalog.init();
   c.set('catalog', catalog);
 
   const cookie = getCookie(c, sessionCookieName(c.env.config));

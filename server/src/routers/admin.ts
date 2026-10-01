@@ -32,9 +32,9 @@ adminRouter.get('/api/admin/users', async (c) => {
     builtin: builtin.has(sid),
   }));
   const usersOut: Record<string, unknown>[] = [];
-  for (const r of catalog.auth.authListUsersAdmin()) {
+  for (const r of await catalog.auth.authListUsersAdmin()) {
     const uid = String(r.id);
-    const mids = catalog.auth.authListStudioIdsForUser(uid);
+    const mids = await catalog.auth.authListStudioIdsForUser(uid);
     usersOut.push({
       id: uid,
       email: String(r.email),
@@ -54,7 +54,7 @@ adminRouter.post('/api/admin/studios', async (c) => {
   const body = adminStudioCreateBodySchema.parse(await c.req.json());
   const catalog = c.get('catalog');
   try {
-    catalog.studios.adminCreateStudio(body.id.trim(), body.display_name.trim());
+    await catalog.studios.adminCreateStudio(body.id.trim(), body.display_name.trim());
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
@@ -68,7 +68,7 @@ adminRouter.post('/api/admin/studios', async (c) => {
 adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
   requireAdminToken(c);
   try {
-    c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
+    await c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
@@ -82,41 +82,41 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   const catalog = c.get('catalog');
   const sid = body.studio_id.trim();
   if (!catalog.studios.isKnownStudio(sid)) throw new ApiError(400, 'Unknown team id.');
-  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
+  const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   // Upsert (not the INSERT OR IGNORE of authAddMemberships): with the role
   // column present, a re-POST on an existing membership must update its role
   // (defaulting to 'member' when absent) — the orphaned-team rescue path
   // (teams-self-serve) needs promotion to actually take effect, not no-op.
-  catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
+  await catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
   return c.json({ ok: true });
 });
 
 adminRouter.delete('/api/admin/users/:userId/memberships/:studioId', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
+  const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  catalog.auth.authRemoveMembership(String(row.id), c.req.param('studioId').trim());
+  await catalog.auth.authRemoveMembership(String(row.id), c.req.param('studioId').trim());
   return c.json({ ok: true });
 });
 
 adminRouter.post('/api/admin/users/:userId/disable', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
+  const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
   // Disabling flips disabled_at_utc; resolveSessionUser already filters disabled
   // users, so existing KV sessions stop resolving without an explicit sweep.
-  catalog.auth.authSetUserDisabled(String(row.id), true);
+  await catalog.auth.authSetUserDisabled(String(row.id), true);
   return c.json({ ok: true });
 });
 
 adminRouter.post('/api/admin/users/:userId/enable', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const row = catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
+  const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
   if (row === null) throw new ApiError(404, 'User not found.');
-  catalog.auth.authSetUserDisabled(String(row.id), false);
+  await catalog.auth.authSetUserDisabled(String(row.id), false);
   return c.json({ ok: true });
 });

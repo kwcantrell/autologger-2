@@ -174,7 +174,7 @@ authRouter.get('/auth/google/callback', async (c) => {
   // before the existing/new split. A disabled match must redirect here --
   // falling through to the new-user branch would trip the unique google_sub
   // constraint (the former latent 500).
-  const anyExisting = catalog.auth.authGetUserByGoogleSubAny(googleSub);
+  const anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
   if (anyExisting?.disabled_at_utc) {
     console.warn('OAuth callback: disabled account attempted sign-in', sanitizeForLog(googleSub));
     return c.redirect('/?login_error=account_disabled', 302);
@@ -183,7 +183,7 @@ authRouter.get('/auth/google/callback', async (c) => {
   let uid: string;
   if (anyExisting) {
     uid = String(anyExisting.id);
-    catalog.auth.authUpdateUserProfile(uid, {
+    await catalog.auth.authUpdateUserProfile(uid, {
       email,
       givenName: gn,
       familyName: fn,
