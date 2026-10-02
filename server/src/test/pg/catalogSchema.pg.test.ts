@@ -23,6 +23,7 @@ const TABLES = [
   'sessions',
   'kv',
   'team_invites',
+  'show_grants',
 ];
 const KEY_COLUMN: Record<string, string> = {
   users: 'id',
@@ -34,6 +35,7 @@ const KEY_COLUMN: Record<string, string> = {
   sessions: 'id',
   kv: 'key',
   team_invites: 'studio_id',
+  show_grants: 'user_id',
 };
 const MIGRATION = resolve(
   import.meta.dirname,
@@ -205,6 +207,21 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     primaryKey: ['studio_id', 'email_norm'],
     foreignKeys: [],
   },
+  // show-grants D1.
+  show_grants: {
+    columns: [
+      'user_id text collate C not null',
+      'show_id text collate C not null',
+      'can_write bigint not null default 1',
+      'granted_by_user_id text collate C',
+      'granted_at_utc text collate C not null',
+    ],
+    primaryKey: ['user_id', 'show_id'],
+    foreignKeys: [
+      'FOREIGN KEY (show_id) REFERENCES catalog.shows(id) ON DELETE CASCADE',
+      'FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE',
+    ],
+  },
   $unique: ['catalog.users UNIQUE (google_sub)'],
   // owner-bootstrap D1: the role check and at most one owner per team.
   $checks: [
@@ -212,6 +229,7 @@ const EXPECTED_SCHEMA: SchemaRecord = {
   ],
   $indexes: [
     'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
+    'CREATE INDEX idx_show_grants_show ON catalog.show_grants USING btree (show_id)',
     'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
     "CREATE UNIQUE INDEX idx_user_studio_memberships_one_owner ON catalog.user_studio_memberships USING btree (studio_id) WHERE (role = 'owner'::text)",
     'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
@@ -327,6 +345,7 @@ describe('the app role (design D3)', () => {
     await sql`insert into kv (key, value) values ('k', 'v')`;
     await sql`insert into team_invites (studio_id, email_norm, invited_by_user_id, invited_at_utc)
               values ('st', 'e', 'u', ${t})`;
+    await sql`insert into show_grants (user_id, show_id, granted_at_utc) values ('u', 'sh', ${t})`;
     for (const table of TABLES) {
       const n = await sql.unsafe(`select count(*)::int as n from ${table}`);
       expect(n[0]?.n, table).toBeGreaterThan(0);

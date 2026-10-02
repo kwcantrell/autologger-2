@@ -36,9 +36,16 @@ export function normalizeUploadDate(raw: string | null | undefined): string | nu
  * `strictFunctionTypes`). */
 export interface SessionIndexStoreFacade {
   getSessionStudioId: (sessionId: string) => Promise<string | null>;
-  getSessionIndexRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Promise<Row | null>;
-  getSessionJoinedRow: (sessionId: string, opts?: { includeHidden?: boolean }) => Promise<Row | null>;
+  getSessionIndexRow: (
+    sessionId: string,
+    opts?: { includeHidden?: boolean },
+  ) => Promise<Row | null>;
+  getSessionJoinedRow: (
+    sessionId: string,
+    opts?: { includeHidden?: boolean },
+  ) => Promise<Row | null>;
   listSessionsForShow: (showId: string) => Promise<Row[]>;
+  listSessionIdsForShows: (showIds: readonly string[]) => Promise<string[]>;
   createSessionIndex: (opts: {
     showId: string;
     title: string;
@@ -110,14 +117,20 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     return sid || null;
   }
 
-  async getSessionIndexRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Promise<Row | null> {
+  async getSessionIndexRow(
+    sessionId: string,
+    opts: { includeHidden?: boolean } = {},
+  ): Promise<Row | null> {
     let q = 'SELECT * FROM sessions WHERE id = ?';
     if (!opts.includeHidden) q += ' AND COALESCE(ui_hidden, 0) = 0';
     return this.db.first<Row>(q, sessionId);
   }
 
   /** Joined index row carrying show_code / show_name for deck titles. */
-  async getSessionJoinedRow(sessionId: string, opts: { includeHidden?: boolean } = {}): Promise<Row | null> {
+  async getSessionJoinedRow(
+    sessionId: string,
+    opts: { includeHidden?: boolean } = {},
+  ): Promise<Row | null> {
     let q = `SELECT s.*, sh.show_code AS show_code, sh.name AS show_name
              FROM sessions s LEFT JOIN shows sh ON sh.id = s.show_id WHERE s.id = ?`;
     if (!opts.includeHidden) q += ' AND COALESCE(s.ui_hidden, 0) = 0';
@@ -132,6 +145,17 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
        ORDER BY s.created_at_utc DESC`,
       showId,
     );
+  }
+
+  /** Every session id of the given shows, hidden sessions included (show-grants D20: the
+   * sessions whose sockets close when a user loses access to those shows). */
+  async listSessionIdsForShows(showIds: readonly string[]): Promise<string[]> {
+    if (showIds.length === 0) return [];
+    const rows = await this.db.all<Row>(
+      `SELECT id FROM sessions WHERE show_id IN (${showIds.map(() => '?').join(', ')})`,
+      ...showIds,
+    );
+    return rows.map((r) => String(r.id));
   }
 
   async createSessionIndex(opts: {
@@ -302,7 +326,11 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
   async setSessionEpisodeDate(sessionId: string, iso: string | null | undefined): Promise<boolean> {
     const value = (iso ?? '').trim();
     if (!value) return false;
-    const res = await this.db.run('UPDATE sessions SET episode_date = ? WHERE id = ?', value, sessionId);
+    const res = await this.db.run(
+      'UPDATE sessions SET episode_date = ? WHERE id = ?',
+      value,
+      sessionId,
+    );
     return res.changes > 0;
   }
 

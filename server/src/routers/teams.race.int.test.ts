@@ -443,9 +443,9 @@ describe('show create and admin membership add vs team delete (#13, #14)', () =>
   it('a show create racing the team delete gets 400 Unknown studio id. and no show exists', async () => {
     const { team, cookies } = await teamWithAdmins(2);
     const gated = new GatedCatalog(env.ports.catalog);
-    const h = gated.holdAfter(
-      /^SELECT 1 FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/,
-    );
+    // Held after the team-exists read: the role read that follows is FOR SHARE (show-grants D9),
+    // so holding after it would block the delete on the membership row lock.
+    const h = gated.holdAfter(/^SELECT 1 FROM studio_definitions WHERE id = \?$/);
     const create = send(
       'POST',
       '/api/shows',
@@ -530,5 +530,190 @@ describe('cross-team independence (D12)', () => {
     h.release();
     expect([b.status, (await a).status]).toEqual([200, 200]);
     expect(gated.count(UPSERT_INVITE)).toBeLessThanOrEqual(2);
+  });
+});
+
+// show-grants D5: a grant re-reads the target's membership FOR SHARE inside its transaction, and a
+// leave or removal deletes the member's grants in the team in the same transaction as the
+// membership (D2), so no grant outlives its membership whichever commits first.
+describe('show grants racing membership changes (show-grants D5)', () => {
+  /** The FOR SHARE role read every grant write makes: first the caller's, then the target's. */
+  const FOR_SHARE_ROLE =
+    /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \? FOR SHARE$/;
+
+  async function grantTeam() {
+    const { team, ids, cookies } = await teamWithAdmins(3); // owner, admin A, admin B
+    const show = (
+      await env.ports.catalog.first<{ id: string }>(
+        'SELECT id FROM shows WHERE studio_id = ? LIMIT 1',
+        team,
+      )
+    )?.id;
+    const showId =
+      show ??
+      (await catalogFor().shows.createShow({
+        studioId: team,
+        name: 'Race Show',
+        showCode: 'RS',
+        categoriesJson: '[]',
+        paletteJson: '[]',
+        paletteCustomJson: '[]',
+      }));
+    const m = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
+    return {
+      team,
+      showId,
+      owner: { id: ids[0] as string, cookie: cookies[0] as string },
+      adminA: { id: ids[1] as string, cookie: cookies[1] as string },
+      adminB: { id: ids[2] as string, cookie: cookies[2] as string },
+      m: { id: m, cookie: await loginCookie(m) },
+    };
+  }
+
+  const grantPath = (t: { team: string; showId: string }, userId: string) =>
+    `/api/teams/${t.team}/shows/${t.showId}/grants/${userId}`;
+
+  async function grantRow(userId: string, showId: string): Promise<boolean> {
+    return (
+      (await env.ports.catalog.first(
+        'SELECT 1 FROM show_grants WHERE user_id = ? AND show_id = ?',
+        userId,
+        showId,
+      )) !== null
+    );
+  }
+
+  /** Grants on the team's shows whose holder is no longer a member: must always be none. */
+  async function orphanGrants(team: string): Promise<number> {
+    const r = await env.ports.catalog.first<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM show_grants g JOIN shows s ON s.id = g.show_id
+       WHERE s.studio_id = ? AND NOT EXISTS (
+         SELECT 1 FROM user_studio_memberships m WHERE m.user_id = g.user_id AND m.studio_id = ?)`,
+      team,
+      team,
+    );
+    return Number(r?.n ?? 0);
+  }
+
+  /** Holds the grant's second FOR SHARE role read (the target's), before it is sent (`before`) or
+   * after it ran with the target's row locked for share (`after`). */
+  function holdTargetForShare(gated: GatedCatalog, when: 'before' | 'after') {
+    const own = gated.holdAfter(FOR_SHARE_ROLE);
+    own.release();
+    if (when === 'after') return gated.holdAfter(FOR_SHARE_ROLE);
+    // `hold` (before) and `holdAfter` gates are separate: pass the caller's read before it too.
+    const ownBefore = gated.hold(FOR_SHARE_ROLE);
+    ownBefore.release();
+    return gated.hold(FOR_SHARE_ROLE);
+  }
+
+  type Loss = 'leave' | 'removal';
+  const loss = (t: Awaited<ReturnType<typeof grantTeam>>, kind: Loss) =>
+    kind === 'leave'
+      ? send('POST', `/api/teams/${t.team}/leave`, t.m.cookie)
+      : send('DELETE', `/api/teams/${t.team}/members/${t.m.id}`, t.adminB.cookie);
+
+  for (const kind of ['leave', 'removal'] as const) {
+    it(`a grant racing the target’s ${kind}, ${kind} first: the grant gets 404 and stores nothing`, async () => {
+      const t = await grantTeam();
+      const gated = new GatedCatalog(env.ports.catalog);
+      const h = holdTargetForShare(gated, 'before');
+      const grant = send(
+        'PUT',
+        grantPath(t, t.m.id),
+        t.adminA.cookie,
+        undefined,
+        envWith({}, { catalog: gated }),
+      );
+      await h.reached; // inside the grant's transaction, before the target's read
+      expect((await loss(t, kind)).status).toBe(200);
+      h.release();
+      const res = await grant;
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Member not found' });
+      expect(await grantRow(t.m.id, t.showId)).toBe(false);
+      expect(await role(t.m.id, t.team)).toBeNull();
+      expect(await orphanGrants(t.team)).toBe(0);
+    });
+
+    it(`a grant racing the target’s ${kind}, grant first: the ${kind} deletes the grant`, async () => {
+      const t = await grantTeam();
+      const gated = new GatedCatalog(env.ports.catalog);
+      const h = holdTargetForShare(gated, 'after');
+      const grant = send(
+        'PUT',
+        grantPath(t, t.m.id),
+        t.adminA.cookie,
+        undefined,
+        envWith({}, { catalog: gated }),
+      );
+      await h.reached; // the grant holds the target's membership row FOR SHARE
+      const lost = loss(t, kind); // waits on the row lock (or fails and retries)
+      await new Promise((r) => setTimeout(r, 100));
+      h.release();
+      expect((await grant).status).toBe(200);
+      expect((await lost).status).toBe(200);
+      expect(await grantRow(t.m.id, t.showId)).toBe(false);
+      expect(await role(t.m.id, t.team)).toBeNull();
+      expect(await orphanGrants(t.team)).toBe(0);
+    });
+  }
+
+  it('a demotion racing a grant on the target, demotion first: the grant is stored for the member', async () => {
+    const t = await grantTeam();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = holdTargetForShare(gated, 'before');
+    // The target is admin B; the owner demotes B to member while admin A's grant is in flight.
+    const grant = send(
+      'PUT',
+      grantPath(t, t.adminB.id),
+      t.adminA.cookie,
+      undefined,
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    expect(
+      (
+        await send('POST', `/api/teams/${t.team}/members/${t.adminB.id}/role`, t.owner.cookie, {
+          role: 'member',
+        })
+      ).status,
+    ).toBe(200);
+    h.release();
+    expect((await grant).status).toBe(200);
+    expect(await role(t.adminB.id, t.team)).toBe('member');
+    expect(await grantRow(t.adminB.id, t.showId)).toBe(true);
+    expect(await orphanGrants(t.team)).toBe(0);
+  });
+
+  it('a demotion racing a grant on the target, grant first: the grant is a no-op for the admin, then the demotion lands', async () => {
+    const t = await grantTeam();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = holdTargetForShare(gated, 'after');
+    const grant = send(
+      'PUT',
+      grantPath(t, t.adminB.id),
+      t.adminA.cookie,
+      undefined,
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached; // the grant read B as admin, row locked FOR SHARE
+    const demote = send(
+      'POST',
+      `/api/teams/${t.team}/members/${t.adminB.id}/role`,
+      t.owner.cookie,
+      {
+        role: 'member',
+      },
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    h.release();
+    expect((await grant).status).toBe(200);
+    expect((await demote).status).toBe(200);
+    expect(await role(t.adminB.id, t.team)).toBe('member');
+    // Serial order grant-then-demote: the grant on an admin stores nothing (D5).
+    expect(await grantRow(t.adminB.id, t.showId)).toBe(false);
+    expect(await orphanGrants(t.team)).toBe(0);
   });
 });

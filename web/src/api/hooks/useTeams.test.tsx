@@ -13,6 +13,7 @@ import {
   useRemoveMember,
   useRenameTeam,
   useRevokeInvite,
+  useSetShowGrant,
   useTeam,
   useTransferOwnership,
 } from './useTeams';
@@ -228,4 +229,30 @@ describe('mutation invalidation wiring', () => {
     expect(client.getQueryState(teamKeys.detail('my-crew'))?.isInvalidated).toBe(true);
     expect(client.getQueryState(['profile'])?.isInvalidated).toBe(true);
   });
+});
+
+describe('useSetShowGrant (show-grants D13)', () => {
+  for (const [granted, method] of [
+    [true, 'PUT'],
+    [false, 'DELETE'],
+  ] as const) {
+    it(`granted: ${granted} sends ${method} to …/shows/:showId/grants/:userId and invalidates the team detail`, async () => {
+      mockedApiFetch.mockResolvedValue({ ok: true });
+      const client = makeClient();
+      seedFresh(client, teamKeys.detail('my-crew'), { id: 'my-crew' });
+      seedFresh(client, ['profile'], {});
+
+      const { result } = renderHook(() => useSetShowGrant('my-crew'), {
+        wrapper: wrapperFor(client),
+      });
+      result.current.mutate({ showId: 'show/1', userId: 'user 2', granted });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockedApiFetch).toHaveBeenCalledWith('teams/my-crew/shows/show%2F1/grants/user%202', {
+        method,
+      });
+      expect(client.getQueryState(teamKeys.detail('my-crew'))?.isInvalidated).toBe(true);
+      expect(client.getQueryState(['profile'])?.isInvalidated).toBe(true);
+    });
+  }
 });

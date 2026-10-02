@@ -15,6 +15,8 @@ export type Row = Record<string, SqlValue>;
 export interface AttachedSocket {
   send(data: string): void;
   role: 'browser' | 'companion';
+  /** The signed-in user the socket was attached for (show-grants D20); absent for test sockets. */
+  userId?: string;
 }
 
 /** The SQL seam the session domain programs against: reads return rows,

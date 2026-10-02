@@ -23,7 +23,7 @@ import type { PresenceMeta } from '@autologger/ports';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { getSessionHub, timecodeCtx } from './_helpers';
+import { canAccessSession, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 
@@ -84,14 +84,24 @@ function primarySession(presences: PresenceMeta[]): string | null {
   return live[0].session_id;
 }
 
+/** Whether the caller may see `sessionId` through the Companion routes (show-grants D10): a
+ * token-only caller (no user; the Companion's device credential until slice 9) is the system
+ * caller and may; a signed-in caller needs access to the session's show. */
+async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
+  if (c.get('user') === null) return true;
+  return canAccessSession(c, sessionId);
+}
+
 /** Resolve the primary session AND its catalog row — callers reuse the row
- *  instead of re-fetching (and non-null-casting) it per handler. */
+ *  instead of re-fetching (and non-null-casting) it per handler. A signed-in caller who can't
+ *  access the active session gets exactly the no-active-session answer (show-grants D10), so its
+ *  existence doesn't leak. */
 async function requireActiveSession(c: Context<AppEnv>): Promise<{ sid: string; row: Row }> {
   const sid = primarySession(await c.env.ports.presence.list());
   const row = sid
     ? await c.get('catalog').sessions.getSessionIndexRow(sid, { includeHidden: true })
     : null;
-  if (!sid || row === null) {
+  if (!sid || row === null || !(await callerMaySee(c, sid))) {
     throw new ApiError(409, 'No active session — open AutoLogger in a browser and open a session.');
   }
   return { sid, row };
@@ -109,8 +119,15 @@ companionRouter.post('/api/companion/presence', async (c) => {
   if (body.session_id?.includes('\u0000')) {
     throw new ApiError(400, 'Text must not contain NUL characters.');
   }
+  const sessionId = (body.session_id ?? '').trim();
+  // A signed-in caller may only point presence at a session they can access (show-grants D10);
+  // a session they can't access and one that doesn't exist get the same masked 404, and nothing
+  // is stored. Token-only calls are unchanged.
+  if (c.get('user') !== null && sessionId) {
+    await requireSession(c, sessionId, { includeHidden: true });
+  }
   const meta = {
-    session_id: (body.session_id ?? '').trim(),
+    session_id: sessionId,
     visible: body.visible,
     is_playing: body.is_playing,
     updated: c.env.ports.clock.now(),
@@ -125,7 +142,9 @@ companionRouter.get('/api/companion/state', async (c) => {
   const activeSid = primarySession(presences);
   let sessionOut: CompanionSessionState | null = null;
   let resolvedSid: string | null = activeSid;
-  if (activeSid) {
+  // A signed-in caller without access to the active session sees none (show-grants D10).
+  if (activeSid && !(await callerMaySee(c, activeSid))) resolvedSid = null;
+  if (resolvedSid !== null && activeSid) {
     const row = await catalog.sessions.getSessionJoinedRow(activeSid, { includeHidden: true });
     if (row === null) {
       resolvedSid = null;
@@ -153,11 +172,14 @@ companionRouter.get('/api/companion/state', async (c) => {
     }
   }
   const lastRaw = await c.env.ports.kv.get(LAST_COMMAND_KEY);
+  let lastCommand = lastRaw ? (JSON.parse(lastRaw) as CompanionLastCommand) : null;
+  // The last command names its session: hidden from a signed-in caller who can't access it.
+  if (lastCommand !== null && !(await callerMaySee(c, lastCommand.session_id))) lastCommand = null;
   const payload: CompanionStatePayload = {
     connected_clients: presences.length,
     active_session_id: resolvedSid,
     session: sessionOut,
-    last_command: lastRaw ? (JSON.parse(lastRaw) as CompanionLastCommand) : null,
+    last_command: lastCommand,
   };
   return c.json(payload);
 });
@@ -263,7 +285,11 @@ companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
       last.delivered_to = body.client_id;
       // Only while A is still the latest command: a newer one stored meanwhile wins, and this ack
       // gets the superseded-command answer (catalog-concurrency-hazards D7).
-      const marked = await c.env.ports.kv.replaceIf(LAST_COMMAND_KEY, lastRaw, JSON.stringify(last));
+      const marked = await c.env.ports.kv.replaceIf(
+        LAST_COMMAND_KEY,
+        lastRaw,
+        JSON.stringify(last),
+      );
       return c.json({ ok: marked });
     }
   }

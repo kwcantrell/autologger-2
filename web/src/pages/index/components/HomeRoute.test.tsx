@@ -1,7 +1,8 @@
 import { fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useProfile } from '../../../api/hooks/useProfile';
 import { useSessions } from '../../../api/hooks/useSessions';
-import type { Session, SessionsResponse } from '../../../api/types';
+import type { ProfilePayload, Session, SessionsResponse } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { setNavigationImplForTesting } from '../navigation';
 import { HomeRoute } from './HomeRoute';
@@ -19,7 +20,35 @@ vi.mock('../../../api/hooks/useSessions', () => ({
   useSessions: vi.fn(),
 }));
 
+vi.mock('../../../api/hooks/useProfile', () => ({ useProfile: vi.fn() }));
+
 const mockedUseSessions = vi.mocked(useSessions);
+
+// show-grants D13: the components read show access from the profile through `useShowAccess`;
+// `useProfile` is mocked at the module boundary. The default profile can access `show-1` (the
+// session fixtures' show) in the active team `studio-1`.
+function accessProfile(
+  shows: Array<{ id: string; studio_id?: string; can_access: boolean }> = [
+    { id: 'show-1', can_access: true },
+  ],
+): ProfilePayload {
+  return {
+    active_studio_id: 'studio-1',
+    active_show_id: shows[0]?.id ?? '',
+    shows: shows.map((s) => ({
+      studio_id: 'studio-1',
+      name: s.id,
+      show_code: s.id.toUpperCase(),
+      title_suffix: 'date',
+      ...s,
+    })),
+    auth: { logged_in: true, oauth_configured: true, user: null },
+  } as unknown as ProfilePayload;
+}
+
+function mockProfile(p: ProfilePayload) {
+  vi.mocked(useProfile).mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
+}
 
 function sessionFixture(overrides: Partial<Session> = {}): Session {
   return {
@@ -55,6 +84,7 @@ let navRecord: string[] = [];
 beforeEach(() => {
   navRecord = [];
   setNavigationImplForTesting((path) => navRecord.push(path));
+  mockProfile(accessProfile());
 });
 
 afterEach(() => {
@@ -123,5 +153,33 @@ describe('HomeRoute', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^new session$/i }));
     expect(onNewSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('HomeRoute follows show access (show-grants D13)', () => {
+  it('a member with no accessible show in the active team: no resume card and no New Session — scenario "Home for a member without access"', () => {
+    mockProfile(accessProfile([{ id: 'show-1', can_access: false }]));
+    mockSessions({ active: [sessionFixture({ id: 'sess-1', show_id: 'show-1' })], archived: [] });
+
+    renderStrict(<HomeRoute onNewSession={() => {}} />);
+
+    expect(screen.getByRole('heading', { name: 'AutoLogger' })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /jump back in/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /new session|start a session/i })).toBeNull();
+  });
+
+  it('skips the resume card when the first active session is not openable, but keeps New Session', () => {
+    mockProfile(
+      accessProfile([
+        { id: 'show-1', can_access: false },
+        { id: 'show-2', can_access: true },
+      ]),
+    );
+    mockSessions({ active: [sessionFixture({ id: 'sess-1', show_id: 'show-1' })], archived: [] });
+
+    renderStrict(<HomeRoute onNewSession={() => {}} />);
+
+    expect(screen.queryByRole('button', { name: /jump back in/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /start a session/i })).not.toBeNull();
   });
 });

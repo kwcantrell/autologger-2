@@ -71,13 +71,14 @@ showsRouter.post('/api/shows', async (c) => {
   norm = freshCategoryIds(norm);
 
   const palJson = JSON.stringify(normalizeEventPaletteNine(null));
-  // The team and the caller's membership are checked inside the insert's transaction, so a team
-  // deleted meanwhile never gets a show (catalog-concurrency-hazards D3).
+  // The team, the caller's membership and role are checked inside the insert's transaction, so a
+  // team deleted or a caller demoted meanwhile never gets a show (catalog-concurrency-hazards D3;
+  // show-grants D9: only owners and admins create shows).
   const created = await catalog.tx(async (cat) => {
     if (!(await cat.studios.studioExists(body.studio_id))) return 400 as const;
-    if (!(await cat.auth.authUserHasStudio(user.id, body.studio_id))) {
-      return 404 as const;
-    }
+    const role = await cat.auth.authGetMembershipRoleForShare(user.id, body.studio_id);
+    if (role === null) return 404 as const;
+    if (role !== 'owner' && role !== 'admin') return 403 as const;
     return cat.shows.createShow({
       studioId: body.studio_id,
       name: body.name.trim(),
@@ -87,6 +88,7 @@ showsRouter.post('/api/shows', async (c) => {
       paletteCustomJson: palJson,
     });
   });
+  if (created === 403) return c.json({ detail: 'Admin role required.' }, 403);
   if (typeof created === 'number') return c.json({ detail: 'Unknown studio id.' }, created);
   const row = await catalog.shows.getShowRow(created);
   if (row === null) return c.json({ detail: 'Show was not created.' }, 500);

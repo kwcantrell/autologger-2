@@ -18,6 +18,7 @@ import { app, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  seedAccessMatrix,
   seededSession,
   seedSession,
   seedShow,
@@ -738,6 +739,16 @@ function generate(
   );
 }
 
+/** A signed-in user who is an `admin` of each team, so they reach every show there (show-grants
+ * D14): the requesters below need access to their own session to reach the lock check. */
+async function seedAdminOf(studios: string[]): Promise<string> {
+  const id = await seedUser();
+  for (const studio of studios) {
+    await catalogFor().auth.authAddMembershipWithRole(id, studio, 'admin');
+  }
+  return id;
+}
+
 describe('transcript generation', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -913,11 +924,11 @@ describe('transcript generation', () => {
     const holderSession = await seedSession({ showId: holderShow, title: 'Foreign Holder Title' });
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
 
-    // Requester: member of their own session's studio only.
+    // Requester: admin of their own session's studio only.
     const myStudio = await seedStudio();
     const myShow = await seedShow({ studioId: myStudio });
     const mySession = await seedSession({ showId: myShow });
-    const cookie = await loginCookie(await seedUser({ studios: [myStudio] }));
+    const cookie = await loginCookie(await seedAdminOf([myStudio]));
 
     const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
     expect(res.status).toBe(409);
@@ -937,7 +948,7 @@ describe('transcript generation', () => {
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
     const myStudio = await seedStudio();
     const mySession = await seedSession({ showId: await seedShow({ studioId: myStudio }) });
-    const cookie = await loginCookie(await seedUser({ studios: [myStudio] }));
+    const cookie = await loginCookie(await seedAdminOf([myStudio]));
     // The detail is built from the real (foreign) holder; any later lock read sees the
     // requester's own session, as if the lock changed hands meanwhile.
     const real = transcriptGenerationLock.getLock.bind(transcriptGenerationLock);
@@ -960,23 +971,52 @@ describe('transcript generation', () => {
     }
   });
 
-  it('409 concurrent: a logged-in member of the holding session’s studio keeps the enriched detail', async () => {
+  it('409 concurrent: a logged-in caller with access to the holding session keeps the enriched detail', async () => {
     const holderStudio = await seedStudio();
     const holderShow = await seedShow({ studioId: holderStudio });
     const holderSession = await seedSession({ showId: holderShow, title: 'Visible Holder Title' });
     expect(transcriptGenerationLock.tryAcquire(holderSession, 1_700_000_000_000)).toBe(true);
 
-    // Requester: member of BOTH studios — their own (to pass requireSession)
-    // and the holder's (to see its identifiers).
+    // Requester: admin of BOTH studios — their own (to pass requireSession)
+    // and the holder's (to see its identifiers; show-grants D12).
     const myStudio = await seedStudio();
     const myShow = await seedShow({ studioId: myStudio });
     const mySession = await seedSession({ showId: myShow });
-    const cookie = await loginCookie(await seedUser({ studios: [myStudio, holderStudio] }));
+    const cookie = await loginCookie(await seedAdminOf([myStudio, holderStudio]));
 
     const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
     expect(res.status).toBe(409);
     const body = (await res.json()) as { detail: string };
     expect(body.detail).toContain('Visible Holder Title');
+  });
+
+  it('409 concurrent: the enriched detail is redacted for an ungranted member of the holder’s team (show-grants D12)', async () => {
+    // Holder: the matrix session, whose show the ungranted member has no grant for.
+    const m = await seedAccessMatrix();
+    expect(transcriptGenerationLock.tryAcquire(m.sessionId, 1_700_000_000_000)).toBe(true);
+    // Requester: the same member, generating on a session of another show of the team that they
+    // were granted (their own session would be the masked 404).
+    const myShow = await seedShow({ studioId: m.studioId, name: 'Mine', code: 'MN' });
+    await catalogFor().auth.authGrantShow(
+      m.ungranted.id,
+      myShow,
+      m.owner.id,
+      new Date().toISOString(),
+    );
+    const mySession = await seedSession({ showId: myShow, title: 'My Session' });
+
+    const res = await generate(
+      mySession,
+      { headers: { Cookie: m.ungranted.cookie } },
+      deepgramConfiguredEnv(),
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { detail: string };
+    expect(body.detail).toBe(
+      'A transcript generation run is already in progress on this deployment; try again once it completes.',
+    );
+    expect(body.detail).not.toContain(m.sessionId);
+    expect(body.detail).not.toContain('Test Session');
   });
 
   it('502 upstream failure preserves existing words', async () => {
@@ -1048,7 +1088,7 @@ describe('transcript generation', () => {
       const myStudio = await seedStudio();
       const myShow = await seedShow({ studioId: myStudio });
       const mySession = await seedSession({ showId: myShow });
-      const cookie = await loginCookie(await seedUser({ studios: [myStudio, holderStudio] }));
+      const cookie = await loginCookie(await seedAdminOf([myStudio, holderStudio]));
 
       const res = await generate(
         mySession,
@@ -1288,14 +1328,17 @@ describe('transcript generation lock status', () => {
     });
   });
 
-  it('busy for a logged-in MEMBER of the holder’s studio: full identifiers', async () => {
+  it('busy for a logged-in member granted the holder’s show: full identifiers', async () => {
     const holderStudio = await seedStudio();
     const holderShow = await seedShow({ studioId: holderStudio });
     const holderSession = await seedSession({ showId: holderShow, title: 'Member-Visible Title' });
     const startedAtMs = 1_700_000_000_000;
     expect(transcriptGenerationLock.tryAcquire(holderSession, startedAtMs)).toBe(true);
 
-    const cookie = await loginCookie(await seedUser({ studios: [holderStudio] }));
+    // A member sees the holder only with a grant for its show (show-grants D12).
+    const member = await seedUser({ studios: [holderStudio] });
+    await catalogFor().auth.authGrantShow(member, holderShow, member, new Date().toISOString());
+    const cookie = await loginCookie(member);
 
     const res = await app.request(
       '/api/transcript-generation/status',

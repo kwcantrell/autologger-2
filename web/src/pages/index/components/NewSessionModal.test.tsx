@@ -58,12 +58,21 @@ vi.mock('./Select', () => ({
 
 const mockedUseCreateSession = vi.mocked(useCreateSession);
 
-const dateShow = { id: 'show-date', name: 'Date Show', show_code: 'DS', title_suffix: 'date' };
+const dateShow = {
+  id: 'show-date',
+  studio_id: 'studio-1',
+  name: 'Date Show',
+  show_code: 'DS',
+  title_suffix: 'date',
+  can_access: true,
+};
 const episodeShow = {
   id: 'show-ep',
+  studio_id: 'studio-1',
   name: 'Episode Show',
   show_code: 'ES',
   title_suffix: 'episode',
+  can_access: true,
 };
 
 const profile = {
@@ -160,5 +169,24 @@ describe('NewSessionModal — conditional episode field', () => {
     const body = mutate.mock.calls[0][0] as { episode?: string; title?: string };
     expect(body.episode).toBeUndefined();
     expect(body.title).toBeUndefined();
+  });
+});
+
+describe('NewSessionModal — the picker lists accessible shows of the active team (show-grants D13)', () => {
+  it('lists A and not B (no grant) or C (another team); the default skips an inaccessible active show', () => {
+    const p = {
+      ...profile,
+      active_show_id: 'show-b',
+      shows: [
+        { ...dateShow, id: 'show-a', name: 'Show A', show_code: 'SA' },
+        { ...dateShow, id: 'show-b', name: 'Show B', show_code: 'SB', can_access: false },
+        { ...dateShow, id: 'show-c', name: 'Show C', show_code: 'SC', studio_id: 'studio-2' },
+      ],
+    } as unknown as ProfilePayload;
+    renderStrict(<NewSessionModal profile={p} onClose={vi.fn()} onCreated={vi.fn()} />);
+
+    const select = screen.getByLabelText('Show') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Show A (SA)']);
+    expect(select.value).toBe('show-a');
   });
 });

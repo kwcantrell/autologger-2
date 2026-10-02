@@ -64,10 +64,12 @@ import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
 import { sessionDetail } from '../../../fixtures/api-responses/sessionDetail';
 import sessionStatus from '../../../fixtures/api-responses/sessionStatus.json';
 import { sessionsList } from '../../../fixtures/api-responses/sessionsList';
+import { sessionsListNoAccess } from '../../../fixtures/api-responses/sessionsListNoAccess';
 import sessionUpdate from '../../../fixtures/api-responses/sessionUpdate.json';
 import { showCategories } from '../../../fixtures/api-responses/showCategories';
 import { showCreate } from '../../../fixtures/api-responses/showCreate';
 import { showDetail } from '../../../fixtures/api-responses/showDetail';
+import { showGrantPut } from '../../../fixtures/api-responses/showGrantPut';
 import { showsList } from '../../../fixtures/api-responses/showsList';
 import { teamCreate } from '../../../fixtures/api-responses/teamCreate';
 import { teamDetailAdmin } from '../../../fixtures/api-responses/teamDetailAdmin';
@@ -102,6 +104,7 @@ import type {
   EventsResponse,
   LogEvent,
   ProfilePayload,
+  ProfileShow,
   Session,
   SessionCreateResponse,
   SessionStatus,
@@ -111,6 +114,7 @@ import type {
   Show,
   ShowBrief,
   ShowCategoriesResponse,
+  ShowGrantResponse,
   TeamCreateResponse,
   TeamDetail,
   TeamMember,
@@ -341,6 +345,21 @@ describe('CW-7/CW-8 — session create and update are not `Session`', () => {
   });
 });
 
+describe('GET /api/sessions for a caller without access to the active show (show-grants D21)', () => {
+  it('the blanked list is assignable to SessionsResponse with content and live state blanked', () => {
+    const list: SessionsResponse = sessionsListNoAccess;
+    const [entry] = list.active;
+    expect(entry.title).toBe('ATS - 2');
+    expect(entry.notes).toBe('');
+    expect(entry.event_count).toBe(0);
+    expect(entry.is_rolling).toBe(false);
+    expect(entry.current_take).toBe(0);
+    expect(entry.rolling_timecode).toBeNull();
+    // Same key set as an unblanked entry.
+    expect(Object.keys(entry).sort()).toEqual(Object.keys(sessionsList.active[0]).sort());
+  });
+});
+
 describe('CW-9 — four Session fields are nullable on the wire', () => {
   it('the captured list and detail bodies are assignable to their types', () => {
     const list: SessionsResponse = sessionsList;
@@ -457,7 +476,9 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
     expect(['date', 'episode']).toContain(brief.title_suffix);
 
     const show = profileAuthenticated.shows[0];
+    // show-grants D7: `can_access` is the one key beyond the brief identity/selection keys.
     expect(Object.keys(show).sort()).toEqual([
+      'can_access',
       'id',
       'name',
       'show_code',
@@ -475,6 +496,17 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
     expect(show.categories).toBeUndefined();
     // @ts-expect-error `event_palette` is not on the captured brief entry
     expect(show.event_palette).toBeUndefined();
+  });
+
+  it('`profile.shows[]` entries are ProfileShow, with `can_access` true and false (show-grants D7)', () => {
+    const entries: ProfileShow[] = profileAuthenticated.shows;
+    // Ann owns my-crew (ATS) and is a plain member of ymhs with no grant (YMHS Weekly).
+    expect(entries.map((s) => [s.studio_id, s.can_access])).toEqual([
+      ['my-crew', true],
+      ['ymhs', false],
+    ]);
+    const profile: ProfilePayload['shows'] = profileAuthenticated.shows;
+    expect(profile).toHaveLength(2);
   });
 
   it('a full `Show` is NOT assignable from a brief profile entry', () => {
@@ -612,6 +644,21 @@ describe('Teams — the responses `useTeams.ts` types', () => {
   it('a member row is assignable to TeamMember and carries all three roles, owner first', () => {
     const members: TeamMember[] = teamDetailAdmin.members;
     expect(members.map((m) => m.role)).toEqual(['owner', 'admin', 'member']);
+  });
+
+  it('`members[].show_ids` is on the owner and admin views only, `[]` for managers (show-grants D6)', () => {
+    const asAdmin: TeamMember[] = teamDetailAdmin.members;
+    const asOwner: TeamMember[] = teamDetailOwner.members;
+    for (const members of [asAdmin, asOwner]) {
+      expect(members.map((m) => m.show_ids?.length)).toEqual([0, 0, 1]);
+    }
+    const asMember: TeamMember[] = teamDetailMember.members;
+    expect(asMember.every((m) => !('show_ids' in m))).toBe(true);
+  });
+
+  it('PUT …/shows/:showId/grants/:userId is assignable to ShowGrantResponse (show-grants D5)', () => {
+    const check: ShowGrantResponse = showGrantPut;
+    expect(check).toEqual({ ok: true });
   });
 });
 

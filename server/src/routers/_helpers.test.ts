@@ -5,7 +5,13 @@ import type { Context } from 'hono';
 import { describe, expect, it } from 'vitest';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { MissingPrincipalError, requireSession, requireUser } from './_helpers';
+import {
+  ACCESS_LOST_CLOSE_CODE,
+  closeSocketsAfterAccessLoss,
+  MissingPrincipalError,
+  requireSession,
+  requireUser,
+} from './_helpers';
 
 /** A context with no user whose catalog would serve any session as a visible member's. */
 function anonymousContext(): Context<AppEnv> {
@@ -47,5 +53,45 @@ describe('route helpers assert a principal (require-login D3)', () => {
     const user = { id: 'u1', email: 'a@example.com' };
     const c = { get: (k: string) => (k === 'user' ? user : null) } as unknown as Context<AppEnv>;
     expect(requireUser(c)).toBe(user);
+  });
+});
+
+// show-grants D20: the close runs after a committed write, so it never fails that write, and a
+// failure anywhere in it closes every socket of the user (fail closed; one with access reconnects).
+describe('closeSocketsAfterAccessLoss fails closed (show-grants D20)', () => {
+  function closeContext(catalog: unknown) {
+    const calls: unknown[][] = [];
+    const vars: Record<string, unknown> = { catalog };
+    const c = {
+      get: (k: string) => vars[k],
+      env: { ports: { sessions: { closeUserSockets: (...a: unknown[]) => (calls.push(a), 0) } } },
+    } as unknown as Context<AppEnv>;
+    return { c, calls };
+  }
+  const boom = () => {
+    throw Object.assign(new Error('db down'), { code: '57P01' });
+  };
+
+  it('a failing show-id read closes all of the user’s sockets and does not throw', async () => {
+    const { c, calls } = closeContext({});
+    await closeSocketsAfterAccessLoss(c, 'user-m', async () => boom());
+    expect(calls).toEqual([['user-m', 'all', ACCESS_LOST_CLOSE_CODE]]);
+  });
+
+  it('a failing access check closes all of the user’s sockets and does not throw', async () => {
+    const { c, calls } = closeContext({ auth: { authCanAccessShow: async () => boom() } });
+    await closeSocketsAfterAccessLoss(c, 'user-m', ['show-1']);
+    expect(calls).toEqual([['user-m', 'all', ACCESS_LOST_CLOSE_CODE]]);
+  });
+
+  it('a show still accessible closes nothing', async () => {
+    const { c, calls } = closeContext({
+      auth: { authCanAccessShow: async () => true },
+      sessions: {
+        listSessionIdsForShows: async (shows: string[]) => (shows.length ? ['s-1'] : []),
+      },
+    });
+    await closeSocketsAfterAccessLoss(c, 'user-m', async () => ['show-1']);
+    expect(calls).toEqual([]);
   });
 });

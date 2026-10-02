@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
 import { useCreateShow, useProfile, useProfileMutation } from '../../../api/hooks/useProfile';
 import { sessionStatusKeys } from '../../../api/hooks/useSessionStatus';
+import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import { showKeys, useStudioShows } from '../../../api/hooks/useShows';
 import type { ProfilePayload, Show } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
@@ -457,6 +458,11 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
   if (!isOpen) return null;
 
   const showsForStudio = studioShows.filter((s) => s.studio_id === targetStudioId);
+  // show-grants D13 (owner-confirmed member Settings view): when the selected team's role is
+  // `member`, the team defaults (frame rate), show editing and "Add show" are not rendered, and
+  // the save omits `settings` and `show_updates` (both owner/admin only on the server). The team
+  // switch and the name fields stay.
+  const isMemberView = showAccessFrom(profile).teamRole(activeStudioId) === 'member';
   const currentDraft = activeShowId ? showDrafts[activeShowId] : undefined;
   const otherShows = showsForStudio.filter((s) => s.id !== activeShowId);
 
@@ -569,8 +575,9 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
     const body: Parameters<typeof mutation.mutateAsync>[0] = {
       active_studio_id: activeStudioId,
       active_show_id: activeShowIdForSave,
-      settings,
-      show_updates: show_updates.length ? show_updates : undefined,
+      ...(isMemberView
+        ? {}
+        : { settings, show_updates: show_updates.length ? show_updates : undefined }),
     };
 
     if (profile.auth.logged_in) {
@@ -838,7 +845,15 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
           {visitedTabs.has('general') && (
             <>
               {/* Show details. .profileShowFields sets border-b-0 (over admin-settings-block's border). */}
-              {currentDraft ? (
+              {isMemberView ? (
+                <p
+                  className="modal-hint muted"
+                  id="profile-show-fields-member"
+                  style={{ marginBottom: '0.75rem' }}
+                >
+                  Only the team’s owner and admins can edit shows and team defaults.
+                </p>
+              ) : currentDraft ? (
                 <div id="profile-show-fields" className="admin-settings-block border-b-0">
                   <div className={FIELDS_HEAD}>
                     {/* .profileShowFieldsHead :global(.settings-subheading) forced margin:0. */}
@@ -1036,27 +1051,30 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
                 </div>
               )}
 
-              {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color. */}
-              <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
-                <button
-                  type="button"
-                  className="btn"
-                  id="profile-show-add"
-                  // `!showsReady` here as well as on `disabled`: the account init now
-                  // commits the studio selection immediately (review finding 2), so
-                  // `activeStudioId` alone no longer implies the shows section is usable —
-                  // and offering Add-New-Show over a section that is still loading, or that
-                  // failed to load, would advertise an action that cannot work.
-                  hidden={!showsReady || !activeStudioId || (profile?.studios ?? []).length === 0}
-                  // Creating a show while the studio's shows are still in
-                  // flight would land the new draft in a map the rebuild
-                  // effect is about to replace.
-                  disabled={createShow.isPending || !showsReady}
-                  onClick={handleAddShow}
-                >
-                  {`Add New Show to ${(profile?.studios ?? []).find((s) => s.id === activeStudioId)?.name ?? 'this team'}`}
-                </button>
-              </div>
+              {/* Add new show. .addShowActions overrides .settings-actions justify/mt/pt/border-color.
+                  Not rendered in the member view (show-grants D13). */}
+              {!isMemberView && (
+                <div className="settings-actions justify-center mt-5 pt-4 border-t border-v5-border">
+                  <button
+                    type="button"
+                    className="btn"
+                    id="profile-show-add"
+                    // `!showsReady` here as well as on `disabled`: the account init now
+                    // commits the studio selection immediately (review finding 2), so
+                    // `activeStudioId` alone no longer implies the shows section is usable —
+                    // and offering Add-New-Show over a section that is still loading, or that
+                    // failed to load, would advertise an action that cannot work.
+                    hidden={!showsReady || !activeStudioId || (profile?.studios ?? []).length === 0}
+                    // Creating a show while the studio's shows are still in
+                    // flight would land the new draft in a map the rebuild
+                    // effect is about to replace.
+                    disabled={createShow.isPending || !showsReady}
+                    onClick={handleAddShow}
+                  >
+                    {`Add New Show to ${(profile?.studios ?? []).find((s) => s.id === activeStudioId)?.name ?? 'this team'}`}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1073,7 +1091,11 @@ export function HomeSettingsModal({ isOpen, onClose, onCloseSession }: Props) {
               exists for — EventButtonsTable's per-row Radix Selects dominate the modal's
               mount cost, so this content only mounts once the tab has been activated. */}
           {visitedTabs.has('event-buttons') &&
-            (currentDraft ? (
+            (isMemberView ? (
+              <p className="modal-hint muted" id="event-buttons-member">
+                Only the team’s owner and admins can edit event buttons.
+              </p>
+            ) : currentDraft ? (
               <>
                 {/* .eventsIntro: margin-top 0 over the .modal-hint base.
                     ui-refresh: the old copy claimed slot colors and drag order "save

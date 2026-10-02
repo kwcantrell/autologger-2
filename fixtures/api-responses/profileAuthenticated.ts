@@ -161,7 +161,16 @@ const captured = {
       "studio_id": "my-crew",
       "name": "All The Smoke",
       "show_code": "ATS",
-      "title_suffix": "date"
+      "title_suffix": "date",
+      "can_access": true
+    },
+    {
+      "id": "########-####-####-####-############",
+      "studio_id": "ymhs",
+      "name": "YMHS Weekly",
+      "show_code": "YW",
+      "title_suffix": "date",
+      "can_access": false
     }
   ],
   "new_session_defaults": {

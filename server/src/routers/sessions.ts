@@ -43,7 +43,13 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
+import {
+  canAccessSession,
+  getSessionHub,
+  requireSession,
+  requireUser,
+  timecodeCtx,
+} from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();
@@ -109,6 +115,21 @@ function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unkno
   };
 }
 
+/** The list entry for a caller without access to its show (show-grants D21): identity, titles
+ * and dates are kept, and every field carrying content or live state is blanked to its
+ * nothing-logged value. Same keys, same order. */
+function redactSessionEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...entry,
+    notes: '',
+    event_count: 0,
+    is_rolling: false,
+    current_take: 0,
+    rolling_timecode: null,
+    total_runtime_hms: '00:00:00',
+  };
+}
+
 sessionsRouter.get('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = requireUser(c);
@@ -129,10 +150,13 @@ sessionsRouter.get('/api/sessions', async (c) => {
   }
   if (!activeShowId) return c.json({ active: [], archived: [] });
 
+  // A member without a grant for the show sees titles and dates only (show-grants D21).
+  const canAccess = await catalog.auth.authCanAccessShow(user.id, activeShowId);
   const activeRows: Record<string, unknown>[] = [];
   const archivedRows: Record<string, unknown>[] = [];
   for (const s of await catalog.sessions.listSessionsForShow(activeShowId)) {
-    const row = serializeSessionEntry(c, s);
+    const entry = serializeSessionEntry(c, s);
+    const row = canAccess ? entry : redactSessionEntry(entry);
     if (row.archived) archivedRows.push(row);
     else activeRows.push(row);
   }
@@ -168,25 +192,32 @@ sessionsRouter.post('/api/sessions', async (c) => {
   const nowMs = c.env.ports.clock.now();
   const now = isoZ(new Date(nowMs));
 
-  let created: { id: string; title: string; episode: string };
+  let created: { id: string; title: string; episode: string } | null;
   try {
-    created = await catalog.sessions.createSessionForShow({
-      showId: body.show_id.trim(),
-      showCode,
-      titleSuffix,
-      explicitTitle,
-      rawEpisode,
-      frameRate: body.frame_rate,
-      startOffsetFrames: body.start_offset_frames,
-      notes,
-      startedAtUtc: now,
-      createdAtUtc: now,
-      nowMs,
+    // Show access is decided inside the create's transaction (show-grants D8): the grant and the
+    // membership are read FOR SHARE, so a revoke committing first refuses the create on re-run,
+    // and no session row exists. createSessionForShow's own transaction joins this one.
+    created = await catalog.tx(async (cat) => {
+      if (!(await cat.auth.authCanAccessShowForShare(user.id, body.show_id.trim()))) return null;
+      return cat.sessions.createSessionForShow({
+        showId: body.show_id.trim(),
+        showCode,
+        titleSuffix,
+        explicitTitle,
+        rawEpisode,
+        frameRate: body.frame_rate,
+        startOffsetFrames: body.start_offset_frames,
+        notes,
+        startedAtUtc: now,
+        createdAtUtc: now,
+        nowMs,
+      });
     });
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
+  if (created === null) throw new ApiError(403, 'No access to this show.');
   // Instantiate the hub so its transport row exists.
   getSessionHub(c, created.id).ensure();
   return c.json({
@@ -488,6 +519,11 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // this resolves, below.
     const fetched = await fetchYoutubeAudio({ url: urlCheck.href, tempDir, binaryPath });
     const bytes = await readFile(fetched.audioPath);
+
+    // Access re-check (show-grants D19, owner decision F): the download can take minutes, so a
+    // caller who lost access to the session meanwhile gets the gate's masked 404 and nothing is
+    // written; the finally below removes the temp dir.
+    if (!(await canAccessSession(c, sessionId))) throw new ApiError(404, 'Session not found');
 
     // Re-acquire the hub post-download (D1). N is computed before the
     // segment is attached (design D12 — collision-proof, not

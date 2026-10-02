@@ -789,7 +789,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | Route | Origin (historical) |
 |-------|---------------------|
 | `GET /auth/google/start` · `/callback` · `GET\|POST /auth/logout` | `routers/auth.py` |
-| `GET /api/studio` · `GET\|PUT /api/profile` (profile `shows[]` is the **brief** shape `{id, studio_id, name, show_code, title_suffix}` — no `categories`, no palette fields) · `GET\|POST /api/shows` · `GET /api/shows/{showId}` → **200** `{show}` in the full show shape (the brief five plus `categories`, `event_palette`, `event_palette_preset`, `event_palette_custom`); an unknown id and a non-member of the show's studio both get an identical **404** `{detail}`, so the route is no existence oracle | `routers/profile.py`, `shows.py` |
+| `GET /api/studio` · `GET\|PUT /api/profile` (profile `shows[]` is the **brief** shape `{id, studio_id, name, show_code, title_suffix}` plus `can_access` (whether the caller can open the show's sessions) — no `categories`, no palette fields; `POST /api/shows` and a profile `PUT` with `settings` or `show_updates` are **403** `Admin role required.` for a member) · `GET\|POST /api/shows` · `GET /api/shows/{showId}` → **200** `{show}` in the full show shape (the brief five plus `categories`, `event_palette`, `event_palette_preset`, `event_palette_custom`); an unknown id and a non-member of the show's studio both get an identical **404** `{detail}`, so the route is no existence oracle | `routers/profile.py`, `shows.py` |
 | `GET\|POST /api/sessions` · `GET\|PUT\|DELETE /api/sessions/{id}` · `…/archive\|restore` | `routers/sessions.py` |
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
@@ -802,7 +802,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `POST …/topics/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
-| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
+| `POST /api/shows/:showId/log-import` → **404** show/no show access · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
 | `POST …/youtube-import` → **503** unconfigured · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
 | `POST …/ai/chat` → **503** unconfigured · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
@@ -813,8 +813,23 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
 | `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
+| `PUT\|DELETE /api/teams/{id}/shows/{showId}/grants/{userId}` (show grants, owner or admin; no body) → **401** signed out · **404** `Team not found` non-member · **403** `Admin role required.` member · **404** `Show not found.` unknown or other team's show · PUT: **404** `Member not found` non-member target, **200** `{ok: true}` (idempotent; an owner or admin target stores nothing) · DELETE: **200** `{ok: true}` always (idempotent). The team detail carries `members[].show_ids` for owner and admin callers | `routers/teams.ts` (new, show-grants) |
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
+
+**Show access (show-grants).** Owners and admins of a team reach every show in it; a member
+reaches a show only with a grant (the routes above). Without access:
+- every `/api/sessions/{id}…` route, `GET /api/sessions/{id}`, the `…/ws` upgrade and
+  `POST /api/shows/{showId}/log-import` answer the same masked **404** as a nonexistent id;
+- `GET /api/sessions` still lists the active show's sessions, but each entry keeps only identity,
+  titles and dates: `notes` `""`, `event_count` 0, `is_rolling` false, `current_take` 0,
+  `rolling_timecode` null, `total_runtime_hms` `"00:00:00"`;
+- `POST /api/sessions` is **403** `No access to this show.`;
+- on `/api/companion/*` with a session cookie, presence for a session the caller can't access is
+  **404** `Session not found`, and `state`, `categories`, `log`, `transport` and `command` answer as
+  if there were no active session (token-only calls are unchanged);
+- a revoke, a removal, a leave or a demotion to member closes the user's open session sockets on
+  sessions they no longer reach with close code **4403**; the reconnect gets the masked 404.
 
 **Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
 

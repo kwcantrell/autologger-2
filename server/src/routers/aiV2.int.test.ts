@@ -270,7 +270,7 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
       s,
       { message: 'hi' },
       envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' }),
-      { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) },
+      { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId], role: 'admin' })) },
     );
     expect(res.status).toBe(503);
     const detail = ((await res.json()) as { detail: string }).detail;
@@ -288,7 +288,7 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
         HOST: '0.0.0.0',
         AI_V2_API_KEY: 'workspace-key',
       }),
-      { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) },
+      { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId], role: 'admin' })) },
     );
     // Every 503 gate lifted; falls through to the real streaming turn (200
     // SSE, mocked hermetically) — never a credentials 503. The turn is
@@ -554,7 +554,7 @@ describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, des
 
   it('a valid in-studio real user still passes (not refused by the new guard)', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const user = await seedUser({ studios: [studioId] });
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
     const res = await post(s, { message: 'hi' }, loopbackEnv(), {
       ...J,
       Cookie: await loginCookie(user),
@@ -858,7 +858,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
 
   it('404 when no question is pending for the given ids, past every earlier guard', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const user = await seedUser({ studios: [studioId] });
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
     const res = await postAnswer(
       s,
       {
@@ -909,7 +909,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const initiator = await seedUser({ studios: [studioId] });
+    const initiator = await seedUser({ studios: [studioId], role: 'admin' });
     aiV2PendingQuestions.register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
@@ -933,8 +933,8 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
   it("(a) a DIFFERENT authenticated user with studio access to the SAME session cannot answer another user's pending question", async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const initiator = await seedUser({ studios: [studioId] });
-    const coMember = await seedUser({ studios: [studioId] });
+    const initiator = await seedUser({ studios: [studioId], role: 'admin' });
+    const coMember = await seedUser({ studios: [studioId], role: 'admin' });
     aiV2PendingQuestions.register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
@@ -958,7 +958,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
   it('the initiating principal CAN answer their own pending question — 200, and the pending entry is resolved and removed', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const initiator = await seedUser({ studios: [studioId] });
+    const initiator = await seedUser({ studios: [studioId], role: 'admin' });
     const promise = aiV2PendingQuestions.register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
@@ -985,7 +985,7 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
 
   it('(d) a late answer (turn already ended / abandoned) has no effect — 404, even from the correct principal', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const initiator = await seedUser({ studios: [studioId] });
+    const initiator = await seedUser({ studios: [studioId], role: 'admin' });
     aiV2PendingQuestions.register(
       { sessionId: s, turnId: 'turn-1', requestId: 'req-1' },
       initiator,
@@ -1012,7 +1012,7 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
       'stream, and the matching POST …/answer un-blocks it — no live SDK turn, no Anthropic spend',
     async () => {
       const { sessionId: s, studioId } = await seededSession();
-      const user = await seedUser({ studios: [studioId] });
+      const user = await seedUser({ studios: [studioId], role: 'admin' });
 
       // Exercises the REAL canUseTool/onQuestion/registry/SSE-emission wiring
       // the route builds — no live Agent SDK turn is involved: the fake
@@ -1281,7 +1281,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
 
   it('a valid config round-trips through PUT then GET, recording created_by from the authenticated principal', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const user = await seedUser({ studios: [studioId] });
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
     const headers = { ...J, Cookie: await loginCookie(user) };
     const putRes = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), headers);
     expect(putRes.status).toBe(200);
@@ -1418,7 +1418,10 @@ describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameteri
 
   it('under a credentials-refused env with an explicit member cookie, /design still 503s while dashboard GET serves', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const headers = { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) };
+    const headers = {
+      ...J,
+      Cookie: await loginCookie(await seedUser({ studios: [studioId], role: 'admin' })),
+    };
     const credsEnv = () => envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' });
 
     const designRes = await post(s, { message: 'hi' }, credsEnv(), headers);
@@ -1466,7 +1469,7 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
 
   it('a valid proposal streams a `dashboard` event carrying the exact validated config, on this stream only', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const user = await seedUser({ studios: [studioId] });
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
     const proposedConfig = {
       widgets: [{ id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 }],
       interactions: [],
@@ -1519,7 +1522,7 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
       '(fix wave: closes the D5b "originating turn" gap for the proposal-persist flow)',
     async () => {
       const { sessionId: s, studioId } = await seededSession();
-      const user = await seedUser({ studios: [studioId] });
+      const user = await seedUser({ studios: [studioId], role: 'admin' });
       const proposedConfig = {
         widgets: [
           { id: 'w1', type: 'session_duration', title: 'Duration', x: 0, y: 0, w: 4, h: 2 },
@@ -1564,7 +1567,7 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
 
   it('an invalid (markup-bearing) proposal is rejected at the tool boundary — no `dashboard` event, nothing persisted', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    const user = await seedUser({ studios: [studioId] });
+    const user = await seedUser({ studios: [studioId], role: 'admin' });
 
     spawnSpy.mockImplementationOnce((_prompt, options) => {
       async function* gatedQuery(): AsyncGenerator<SDKMessage> {

@@ -44,12 +44,13 @@ routes (same middleware / login gate as `GET …/transcript-words`). The respons
 | No run in flight | `{ "in_flight": false }` |
 | Run in flight | `{ "in_flight": true, "session_id": <string\|null>, "session_title": <string\|null>, "started_at": "<ISO-8601 UTC>" }` |
 
-The lock is process-wide, so the holder may belong to a studio the requester is
-not a member of. For a requester who lacks studio membership of the holding
-session, `session_id` and `session_title` SHALL both be `null` while `in_flight`
-stays `true` — the same key set with null values, never absent keys. A member of
-the holding session's studio sees the full identifiers, matching the membership
-scope every sibling route applies (sibling-route parity). For a permitted requester, `session_id` SHALL be the
+The lock is process-wide, so the holder may belong to a session the requester
+cannot access. For a requester without access to the holding session's show (not a
+member of its studio, or a member without a grant for the show; team-management "Member
+content access"), `session_id` and `session_title` SHALL both be `null` while `in_flight`
+stays `true` — the same key set with null values, never absent keys. A requester with
+access to the holding session's show sees the full identifiers, matching the access
+rule every sibling route applies (sibling-route parity). For a permitted requester, `session_id` SHALL be the
 holder's session id and `session_title` SHALL be the catalog session title at
 the time of the status read, or `null` if no session row exists for
 `session_id`. `started_at` SHALL be the UTC instant the lock was acquired for
@@ -63,13 +64,13 @@ generation.
 
 #### Scenario: Busy status names the holder for a permitted requester
 - **WHEN** a generation run for session S is in flight, the catalog row for S has title T,
-  and the requester is a member of S's studio
+  and the requester can access S's show
 - **THEN** `GET /api/transcript-generation/status` responds `200` with `in_flight: true`,
   `session_id` equal to S, `session_title` equal to T, and a parseable UTC `started_at`
 
 #### Scenario: Non-member sees redacted busy status
-- **WHEN** a generation run for session S is in flight and the requester is not a member
-  of S's studio
+- **WHEN** a generation run for session S is in flight and the requester cannot access S's
+  show (not a member of S's studio, or a member without a grant for S's show)
 - **THEN** the response is `200` with `in_flight: true`, `session_id: null`,
   `session_title: null`, and the real `started_at` — busy-ness stays truthful, the
   holder's identifiers do not leak across tenants
@@ -86,9 +87,9 @@ session: a generate request arriving while another run is in flight (same or dif
 session) SHALL respond `409` with an actionable detail and MUST NOT issue a provider
 request. The `409` detail SHALL name the session that holds the lock (catalog title when
 available, otherwise the session id) when the requester is permitted to view that session
-(a member of the holder's studio); for a non-member —
+(can access the holder's show); for a requester without that access —
 and for the race where the holder released the lock between the failed acquire and error
-mapping, leaving nothing to check membership against — the detail SHALL fall back to the
+mapping, leaving nothing to check access against — the detail SHALL fall back to the
 identifier-free generic in-flight detail (`GENERATION_IN_FLIGHT_DETAIL`). Status stays
 `409` either way. Before issuing the provider request, the pipeline
 SHALL check whether the originating HTTP request has been aborted and, if so, abandon the
@@ -106,13 +107,13 @@ Generation lock status is observable).
 
 #### Scenario: Concurrent 409 detail names the busy session
 - **WHEN** a generate request arrives while a run for session S titled T is in flight and
-  the requester is a member of S's studio
+  the requester can access S's show
 - **THEN** the `409` `{detail}` string includes T (or S if no title) so an operator can
   identify the holder without calling status
 
 #### Scenario: Concurrent 409 for a non-member is identifier-free
-- **WHEN** a generate request from a non-member of S's studio arrives while a
-  run for S is in flight (or the holder released in the race before error mapping)
+- **WHEN** a generate request from a requester without access to S's show (a non-member of
+  S's studio, or a member without a grant for S's show) arrives while a run for S is in flight (or the holder released in the race before error mapping)
 - **THEN** the response is `409` with the generic in-flight `{detail}` that names no
   session id or title
 

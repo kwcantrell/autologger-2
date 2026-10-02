@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
 import { sheetsLogImportConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { requireUser, timecodeCtx } from './_helpers';
+import { requireShowAccess, requireUser, timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
 
@@ -116,7 +116,9 @@ export async function ensureTimedTranscript(input: {
 function jobFailureDetail(err: unknown): string | null {
   const e = err as { code?: unknown; name?: unknown; message?: unknown } | null;
   if (typeof e?.code === 'string' || String(e?.name ?? '').startsWith('Catalog')) {
-    console.warn(`[log-import] catalog failure during a job (${typeof e?.code === 'string' ? e.code : String(e?.name)})`);
+    console.warn(
+      `[log-import] catalog failure during a job (${typeof e?.code === 'string' ? e.code : String(e?.name)})`,
+    );
     return null;
   }
   return err instanceof Error ? err.message : String(err);
@@ -124,17 +126,10 @@ function jobFailureDetail(err: unknown): string | null {
 
 logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
-  const catalog = c.get('catalog');
   const user = requireUser(c);
-  const show = await catalog.shows.getShowRow(showId);
-  if (!show) throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-  // Studio-membership scope (the requireSession pattern in _helpers.ts): a
-  // user who isn't a member of the show's studio gets the SAME 404 as a
-  // nonexistent show — no existence oracle (always checked, require-login D3).
-  const studioId = String(show.studio_id ?? '');
-  if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
-    throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-  }
+  // Show access (show-grants D3): a user who can't access the show (a non-member, or a member
+  // without a grant) gets the SAME 404 as a nonexistent show — no existence oracle.
+  const show = await requireShowAccess(c, showId, SHOW_NOT_FOUND_DETAIL);
 
   // Configuration gate AFTER the 404 scope check (the youtube-import ordering
   // in sessions.ts): the outbound docs.google.com fetch is operator opt-in —
@@ -173,6 +168,13 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
       let sessionsFailed = 0;
 
       for (const sheet of sheets) {
+        // Access re-check before each sheet (show-grants D19, owner decision F): a creator who
+        // lost access to the show stops the job; sheets already imported keep their events.
+        if (!(await catalog.auth.authCanAccessShow(job.createdByUserId, showId))) {
+          appendLogImportLine(job.id, 'Access revoked; stopping.');
+          setLogImportStatus(env.ports.clock, job.id, 'failed', 'Access revoked.');
+          return;
+        }
         const title = sheet.name.trim();
         const session = sessions.find((s) => String(s.title ?? '').trim() === title);
         if (!session) {
@@ -215,7 +217,10 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         } catch (err) {
           sessionsFailed += 1;
           const detail = jobFailureDetail(err);
-          appendLogImportLine(job.id, detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`);
+          appendLogImportLine(
+            job.id,
+            detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`,
+          );
           appendLogImportLine(job.id, `Continuing with remaining sheets…`);
           // Per-session failure must not abort the rest of the workbook.
         }

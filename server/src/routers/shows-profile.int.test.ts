@@ -95,7 +95,7 @@ describe('GET /api/studio + /api/profile', () => {
   // The four heavy per-show config fields moved to the two full-show read
   // routes below; only these five keys stay on a payload that fans out over
   // every show in every reachable studio.
-  it('shows[] entries are brief: exactly the five identity/selection keys', async () => {
+  it('shows[] entries are brief: the five identity/selection keys plus can_access (show-grants D7)', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Brief Show', code: 'BS' });
 
@@ -105,6 +105,7 @@ describe('GET /api/studio + /api/profile', () => {
     const show = body.shows.find((s) => s.id === showId);
     expect(show).toBeTruthy();
     expect(Object.keys(show ?? {}).sort()).toEqual([
+      'can_access',
       'id',
       'name',
       'show_code',
@@ -128,6 +129,7 @@ describe('GET /api/studio + /api/profile', () => {
     const show = body.shows.find((s) => s.id === showId);
     expect(show).toBeTruthy();
     expect(Object.keys(show ?? {}).sort()).toEqual([
+      'can_access',
       'id',
       'name',
       'show_code',
@@ -405,5 +407,246 @@ describe('session-title-suffix — show wire', () => {
       showId,
     );
     expect(after?.next_episode).toBe(before?.next_episode);
+  });
+});
+
+// show-grants D9: only owners and admins create shows and save team or show settings.
+describe('member writes need owner or admin (show-grants D9)', () => {
+  const J = { 'content-type': 'application/json' };
+
+  async function team(): Promise<{
+    studio: string;
+    show: string;
+    member: { id: string; cookie: string };
+    admin: { id: string; cookie: string };
+    outsider: { id: string; cookie: string };
+  }> {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio, name: 'Original', code: 'OR' });
+    const mk = async (role: 'admin' | 'member' | null) => {
+      const id = role === null ? await seedUser() : await seedUser({ studios: [studio], role });
+      return { id, cookie: await loginCookie(id) };
+    };
+    return {
+      studio,
+      show,
+      member: await mk('member'),
+      admin: await mk('admin'),
+      outsider: await mk(null),
+    };
+  }
+
+  async function postShow(studio: string, cookie: string, name: string) {
+    return anonApp.request(
+      '/api/shows',
+      {
+        method: 'POST',
+        headers: { ...J, cookie },
+        body: JSON.stringify({ studio_id: studio, name }),
+      },
+      { ...env },
+    );
+  }
+
+  async function showNames(studio: string): Promise<string[]> {
+    return (await catalogFor().shows.listShowsForStudio(studio)).map((r) => String(r.name)).sort();
+  }
+
+  it('a member gets 403 Admin role required. and no show is created; an admin gets 200; a non-member keeps the 404', async () => {
+    const t = await team();
+    const byMember = await postShow(t.studio, t.member.cookie, 'Member Show');
+    expect(byMember.status).toBe(403);
+    expect(await byMember.json()).toEqual({ detail: 'Admin role required.' });
+    expect(await showNames(t.studio)).toEqual(['Original']);
+
+    const byAdmin = await postShow(t.studio, t.admin.cookie, 'Admin Show');
+    expect(byAdmin.status).toBe(200);
+    expect(await showNames(t.studio)).toEqual(['Admin Show', 'Original']);
+
+    const byOutsider = await postShow(t.studio, t.outsider.cookie, 'Outsider Show');
+    expect(byOutsider.status).toBe(404);
+    expect(await showNames(t.studio)).toEqual(['Admin Show', 'Original']);
+  });
+
+  async function snapshot(t: Awaited<ReturnType<typeof team>>) {
+    const cat = catalogFor();
+    return {
+      settings: await cat.studios.getStudioSettingsBlob(t.studio),
+      show: await cat.shows.getShowRow(t.show),
+      prefs: await cat.auth.authGetPrefs(t.member.id),
+      user: await cat.auth.authGetUserById(t.member.id),
+    };
+  }
+
+  it('a member PUT /api/profile with settings, or with show_updates, gets 403 and changes nothing', async () => {
+    const t = await team();
+    const other = await seedShow({ studioId: t.studio, name: 'Other', code: 'OT' });
+    const before = await snapshot(t);
+    const settings = { ...before.settings, default_frame_rate: 30 };
+    for (const extra of [{ settings }, { show_updates: [{ show_id: t.show, name: 'Renamed' }] }]) {
+      const res = await anonApp.request(
+        '/api/profile',
+        {
+          method: 'PUT',
+          headers: { ...J, cookie: t.member.cookie },
+          body: JSON.stringify({
+            active_studio_id: t.studio,
+            active_show_id: other,
+            given_name: 'Changed',
+            family_name: 'Name',
+            ...extra,
+          }),
+        },
+        { ...env },
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ detail: 'Admin role required.' });
+      expect(await snapshot(t)).toEqual(before);
+    }
+  });
+
+  it('a member PUT /api/profile with only the active team and show and names is 200', async () => {
+    const t = await team();
+    const other = await seedShow({ studioId: t.studio, name: 'Other', code: 'OT' });
+    const res = await anonApp.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { ...J, cookie: t.member.cookie },
+        body: JSON.stringify({
+          active_studio_id: t.studio,
+          active_show_id: other,
+          given_name: 'New',
+          family_name: 'Name',
+        }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    const prefs = await catalogFor().auth.authGetPrefs(t.member.id);
+    expect(prefs).toMatchObject({ active_studio_id: t.studio, active_show_id: other });
+    expect(await catalogFor().auth.authGetUserById(t.member.id)).toMatchObject({
+      given_name: 'New',
+      family_name: 'Name',
+    });
+  });
+
+  it('an admin PUT /api/profile with settings and show_updates is 200', async () => {
+    const t = await team();
+    const settings = {
+      ...(await catalogFor().studios.getStudioSettingsBlob(t.studio)),
+      default_frame_rate: 30,
+    };
+    const res = await anonApp.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { ...J, cookie: t.admin.cookie },
+        body: JSON.stringify({
+          active_studio_id: t.studio,
+          settings,
+          show_updates: [{ show_id: t.show, name: 'Renamed' }],
+        }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    expect((await catalogFor().shows.getShowRow(t.show))?.name).toBe('Renamed');
+    expect((await catalogFor().studios.getStudioSettingsBlob(t.studio)).default_frame_rate).toBe(
+      30,
+    );
+  });
+});
+
+describe('profile shows[].can_access (show-grants D7)', () => {
+  async function profileShows(cookie: string): Promise<Array<Record<string, unknown>>> {
+    const res = await anonApp.request(
+      '/api/profile',
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { shows: Array<Record<string, unknown>> }).shows;
+  }
+
+  async function grantedTeam() {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const showA = await seedShow({ studioId: studio, name: 'Show A', code: 'SA' });
+    const showB = await seedShow({ studioId: studio, name: 'Show B', code: 'SB' });
+    const member = await seedUser({ studios: [studio], role: 'member' });
+    const admin = await seedUser({ studios: [studio], role: 'admin' });
+    await cat.auth.authGrantShow(member, showA, admin, new Date().toISOString());
+    return { studio, showA, showB, member, admin };
+  }
+
+  it('a member granted A but not B sees can_access true for A and false for B', async () => {
+    const { showA, showB, member } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(member));
+    expect(shows.find((s) => s.id === showA)?.can_access).toBe(true);
+    expect(shows.find((s) => s.id === showB)?.can_access).toBe(false);
+  });
+
+  it('an admin sees can_access true for every show of the team', async () => {
+    const { showA, showB, admin } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(admin));
+    expect(shows.find((s) => s.id === showA)?.can_access).toBe(true);
+    expect(shows.find((s) => s.id === showB)?.can_access).toBe(true);
+  });
+
+  it('profile shows[] keys are exactly the brief keys plus can_access', async () => {
+    const { member } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(member));
+    expect(shows.length).toBeGreaterThan(0);
+    for (const s of shows) {
+      expect(Object.keys(s).sort()).toEqual([
+        'can_access',
+        'id',
+        'name',
+        'show_code',
+        'studio_id',
+        'title_suffix',
+      ]);
+    }
+  });
+
+  it('GET /api/shows, GET /api/shows/:showId and POST /api/shows carry no can_access', async () => {
+    const { studio, showA, admin } = await grantedTeam();
+    const cookie = await loginCookie(admin);
+    const list = await anonApp.request(
+      `/api/shows?studio_id=${encodeURIComponent(studio)}`,
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { shows: Array<Record<string, unknown>> };
+    expect(listBody.shows.length).toBeGreaterThan(0);
+    for (const s of listBody.shows) expect(s).not.toHaveProperty('can_access');
+
+    const detail = await anonApp.request(
+      `/api/shows/${showA}`,
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(detail.status).toBe(200);
+    expect(JSON.stringify(await detail.json())).not.toContain('can_access');
+
+    const created = await anonApp.request(
+      '/api/shows',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ studio_id: studio, name: 'Fresh' }),
+      },
+      { ...env },
+    );
+    expect(created.status).toBe(200);
+    expect(JSON.stringify(await created.json())).not.toContain('can_access');
+  });
+
+  it('the signed-out profile has shows: []', async () => {
+    const res = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { shows: unknown[] }).shows).toEqual([]);
   });
 });

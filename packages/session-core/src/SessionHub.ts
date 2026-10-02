@@ -82,7 +82,7 @@ export type { TranscriptWord } from './transcriptStore';
  */
 export interface SessionHubFacade {
   // -- WebSocket fan-out ---------------------------------------------------
-  attachSocket: (ws: { send(data: string): void }, role: 'browser' | 'companion') => void;
+  attachSocket: (ws: HubSocketLike, role: 'browser' | 'companion', userId?: string) => void;
   detachSocket: (ws: { send(data: string): void }) => void;
   handleSocketMessage: (raw: string) => void;
   broadcastCommand: (command: string) => void;
@@ -261,12 +261,24 @@ export interface SessionHubFacade {
  */
 export interface SessionHubRegistryFacade {
   get: (sessionId: string) => SessionHubFacade;
+  closeUserSockets: (
+    userId: string,
+    sessionIds: ReadonlySet<string> | 'all',
+    code: number,
+  ) => number;
   evictIdle: (idleMs?: number) => void;
   startSweeper: () => void;
 }
 
+/** A socket as the hub receives it: it sends, and (a real WebSocket) can be closed with a code
+ * (show-grants D20). */
+export interface HubSocketLike {
+  send(data: string): void;
+  close?(code?: number, reason?: string): void;
+}
+
 interface HubSocket extends AttachedSocket {
-  raw: { send(data: string): void };
+  raw: HubSocketLike;
 }
 
 // Constructor default only — the composition root (node/config.ts) always
@@ -382,8 +394,28 @@ export class SessionHub implements SessionHubFacade {
 
   // -- WebSocket fan-out ---------------------------------------------------
 
-  attachSocket(ws: { send(data: string): void }, role: 'browser' | 'companion'): void {
-    this.socketSet.add({ raw: ws, send: (d) => ws.send(d), role });
+  /** `userId` is the signed-in user the upgrade admitted (show-grants D20), so
+   * `closeUserSockets` can find that user's sockets when they lose access. */
+  attachSocket(ws: HubSocketLike, role: 'browser' | 'companion', userId?: string): void {
+    this.socketSet.add({ raw: ws, send: (d) => ws.send(d), role, userId });
+  }
+
+  /** Close (with `code`) and detach every socket attached for `userId`; returns how many
+   * (show-grants D20). Detaching here as well as from the socket's onClose stops broadcasts to
+   * it at once; a second detach is a no-op. */
+  closeUserSockets(userId: string, code: number): number {
+    let closed = 0;
+    for (const s of this.socketSet) {
+      if (s.userId !== userId) continue;
+      this.socketSet.delete(s);
+      closed += 1;
+      try {
+        s.raw.close?.(code);
+      } catch {
+        // already closed
+      }
+    }
+    return closed;
   }
 
   detachSocket(ws: { send(data: string): void }): void {
@@ -757,6 +789,19 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
     }
     hub.lastTouchedMs = this.clock.now();
     return hub;
+  }
+
+  /** Close `userId`'s sockets on the named sessions with `code` (show-grants D20: `4403` when the
+   * user lost access to them). Walks only the hubs already live in this process and never
+   * instantiates one: a session with no live hub has no socket to close. `'all'` closes the
+   * user's sockets on every live hub (the fail-closed path). Returns how many. */
+  closeUserSockets(userId: string, sessionIds: ReadonlySet<string> | 'all', code: number): number {
+    let closed = 0;
+    for (const id of sessionIds === 'all' ? [...this.hubs.keys()] : sessionIds) {
+      const hub = this.hubs.get(id);
+      if (hub) closed += hub.closeUserSockets(userId, code);
+    }
+    return closed;
   }
 
   /** Close hubs holding nothing live — fd hygiene, everything is on disk. */

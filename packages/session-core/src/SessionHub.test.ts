@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_DASHBOARDS_PER_SESSION } from '@autologger/contract';
@@ -747,5 +747,79 @@ describe('SessionHubRegistry', () => {
     expect(reg.get('sess-c')).toBe(armed);
     reg.closeAll();
     vi.useRealTimers();
+  });
+});
+
+describe('SessionHubRegistry.closeUserSockets (show-grants D20)', () => {
+  it("'all' closes that user's sockets on every live hub (the fail-closed path)", () => {
+    const reg = new SessionHubRegistry(dir);
+    const m1 = fakeWs();
+    const m3 = fakeWs();
+    const other1 = fakeWs();
+    reg.get('sess-1').attachSocket(m1, 'browser', 'user-m');
+    reg.get('sess-3').attachSocket(m3, 'browser', 'user-m');
+    reg.get('sess-1').attachSocket(other1, 'browser', 'user-o');
+
+    expect(reg.closeUserSockets('user-m', 'all', 4403)).toBe(2);
+    expect(m1.closed).toEqual([4403]);
+    expect(m3.closed).toEqual([4403]);
+    expect(other1.closed).toEqual([]);
+  });
+
+  type FakeWs = {
+    send(d: string): void;
+    close(code?: number): void;
+    got: string[];
+    closed: number[];
+  };
+  const fakeWs = (): FakeWs => {
+    const ws: FakeWs = {
+      got: [],
+      closed: [],
+      send: (d: string) => void ws.got.push(d),
+      close: (code?: number) => void ws.closed.push(code ?? 1000),
+    };
+    return ws;
+  };
+
+  it('attachSocket records the user id; only that user’s sockets on the named live sessions close', () => {
+    const reg = new SessionHubRegistry(dir);
+    const s1 = reg.get('sess-1');
+    const s3 = reg.get('sess-3');
+    const m1 = fakeWs(); // M on sess-1: closes
+    const m3 = fakeWs(); // M on sess-3 (not named): stays
+    const other1 = fakeWs(); // another user on sess-1: stays
+    const anon1 = fakeWs(); // attached with no user id: stays
+    s1.attachSocket(m1, 'browser', 'user-m');
+    s3.attachSocket(m3, 'browser', 'user-m');
+    s1.attachSocket(other1, 'browser', 'user-o');
+    s1.attachSocket(anon1, 'companion');
+
+    const closed = reg.closeUserSockets('user-m', new Set(['sess-1', 'sess-never']), 4403);
+
+    expect(closed).toBe(1);
+    expect(m1.closed).toEqual([4403]);
+    expect(m3.closed).toEqual([]);
+    expect(other1.closed).toEqual([]);
+    expect(anon1.closed).toEqual([]);
+    // The closed socket gets no further broadcasts; the others still do.
+    s1.broadcastCommand('record-start');
+    expect(m1.got).toEqual([]);
+    expect(other1.got).toHaveLength(1);
+    expect(anon1.got).toHaveLength(1);
+    expect(s1.presence()).toEqual({ browsers: 1, companions: 1 });
+    // A session with no live hub is never instantiated (no database file is created).
+    expect(existsSync(join(dir, 'sess-never.db'))).toBe(false);
+    reg.closeAll();
+  });
+
+  it('closes nothing for a user with no sockets, and an empty session set closes nothing', () => {
+    const reg = new SessionHubRegistry(dir);
+    const ws = fakeWs();
+    reg.get('sess-1').attachSocket(ws, 'browser', 'user-m');
+    expect(reg.closeUserSockets('user-x', new Set(['sess-1']), 4403)).toBe(0);
+    expect(reg.closeUserSockets('user-m', new Set(), 4403)).toBe(0);
+    expect(ws.closed).toEqual([]);
+    reg.closeAll();
   });
 });

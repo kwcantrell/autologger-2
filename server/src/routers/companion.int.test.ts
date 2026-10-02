@@ -1,9 +1,11 @@
 import { KvStore } from '@autologger/storage';
 import { describe, expect, it, vi } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   COMPANION_BEARER,
+  SEED_CATEGORY_ID,
+  seedAccessMatrix,
   seededSession,
   seedSession,
   seedShow,
@@ -303,4 +305,149 @@ describe('ack racing a newer command', () => {
     expect(await (await ack).json()).toEqual({ ok: false });
     expect(((await state()).last_command as { id: string }).id).toBe(b.command_id);
   });
+});
+
+// show-grants D10: a signed-in caller's Companion requests are checked against their session
+// access; token-only calls are the Companion's device credential and are unchanged.
+describe('Companion routes check a signed-in caller’s session access (show-grants D10)', () => {
+  const JSON_H = { 'content-type': 'application/json' };
+  const NO_ACTIVE = {
+    detail: 'No active session — open AutoLogger in a browser and open a session.',
+  };
+
+  function asCookie(cookie: string, path: string, init: { method?: string; body?: unknown } = {}) {
+    return anonApp.request(
+      path,
+      {
+        method: init.method ?? 'GET',
+        headers: { ...JSON_H, cookie },
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      },
+      { ...env },
+    );
+  }
+  function asToken(path: string, init: { method?: string; body?: unknown } = {}) {
+    return anonApp.request(
+      path,
+      {
+        method: init.method ?? 'GET',
+        headers: { ...JSON_H, ...COMPANION_BEARER },
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      },
+      { ...env },
+    );
+  }
+  const counts = async (sessionId: string) => {
+    const hub = env.ports.sessions.get(sessionId).ensure();
+    return {
+      events: hub.event_count,
+      take: hub.current_take,
+      cmd: await env.ports.kv.get('companion:last_command'),
+    };
+  };
+
+  it('presence: an ungranted member and a nonexistent id get 404 Session not found and store nothing', async () => {
+    const m = await seedAccessMatrix();
+    const idle = await (await asToken('/api/companion/state')).json();
+    for (const sid of [m.sessionId, 'no-such-session']) {
+      const res = await asCookie(m.ungranted.cookie, '/api/companion/presence', {
+        method: 'POST',
+        body: { client_id: 'tab-u', session_id: sid },
+      });
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ detail: 'Session not found' });
+    }
+    expect(await (await asToken('/api/companion/state')).json()).toEqual(idle);
+  });
+
+  it('presence: a granted member is 200 and the state reports the session', async () => {
+    const m = await seedAccessMatrix();
+    const res = await asCookie(m.granted.cookie, '/api/companion/presence', {
+      method: 'POST',
+      body: { client_id: 'tab-g', session_id: m.sessionId },
+    });
+    expect(res.status).toBe(200);
+    const st = (await (await asToken('/api/companion/state')).json()) as Record<string, unknown>;
+    expect(st.active_session_id).toBe(m.sessionId);
+  });
+
+  it('presence: closing, an empty session_id and a token-only post behave as before; NUL is still 400 first', async () => {
+    const m = await seedAccessMatrix();
+    const closing = await asCookie(m.ungranted.cookie, '/api/companion/presence', {
+      method: 'POST',
+      body: { client_id: 'tab-u', session_id: m.sessionId, closing: true },
+    });
+    expect(closing.status).toBe(200);
+    const empty = await asCookie(m.ungranted.cookie, '/api/companion/presence', {
+      method: 'POST',
+      body: { client_id: 'tab-u', session_id: '' },
+    });
+    expect(empty.status).toBe(200);
+    const nul = await asCookie(m.ungranted.cookie, '/api/companion/presence', {
+      method: 'POST',
+      body: { client_id: 'tab-u', session_id: `a\u0000b` },
+    });
+    expect(nul.status).toBe(400);
+    const token = await asToken('/api/companion/presence', {
+      method: 'POST',
+      body: { client_id: 'device', session_id: m.sessionId },
+    });
+    expect(token.status).toBe(200);
+    const st = (await (await asToken('/api/companion/state')).json()) as Record<string, unknown>;
+    expect(st.active_session_id).toBe(m.sessionId);
+  });
+
+  for (const scenario of ['a granted teammate', 'another team'] as const) {
+    it(`with ${scenario}'s presence active, the ungranted member's cookie sees no active session`, async () => {
+      const m = await seedAccessMatrix();
+      const idle = await (await asCookie(m.ungranted.cookie, '/api/companion/state')).json();
+      let held = m.sessionId;
+      if (scenario === 'another team') held = (await seededSession()).sessionId;
+      await setCompanionPresence('tab-holder', held, { visible: true });
+      const cmd = await asToken('/api/companion/command', {
+        method: 'POST',
+        body: { type: 'record-start' },
+      });
+      expect(cmd.status).toBe(200);
+      const before = await counts(held);
+
+      const st = (await (
+        await asCookie(m.ungranted.cookie, '/api/companion/state')
+      ).json()) as Record<string, unknown>;
+      expect({ ...st, connected_clients: 0 }).toEqual({
+        ...(idle as object),
+        connected_clients: 0,
+      });
+      expect(st).toMatchObject({ active_session_id: null, session: null, last_command: null });
+
+      for (const [path, body] of [
+        ['/api/companion/categories', undefined],
+        ['/api/companion/log', { category_id: SEED_CATEGORY_ID, message: 'x' }],
+        ['/api/companion/transport', { action: 'start' }],
+        ['/api/companion/command', { type: 'play-toggle' }],
+      ] as const) {
+        const res = await asCookie(m.ungranted.cookie, path, {
+          method: body === undefined ? 'GET' : 'POST',
+          body,
+        });
+        expect(`${path} ${res.status}`).toBe(`${path} 409`);
+        expect(await res.json()).toEqual(NO_ACTIVE);
+      }
+      expect(await counts(held)).toEqual(before);
+
+      // The token and (for the teammate's session) the granted member still get the session.
+      const tok = (await (await asToken('/api/companion/state')).json()) as Record<string, unknown>;
+      expect(tok.active_session_id).toBe(held);
+      expect(tok.last_command).not.toBeNull();
+      if (scenario === 'a granted teammate') {
+        const g = (await (
+          await asCookie(m.granted.cookie, '/api/companion/state')
+        ).json()) as Record<string, unknown>;
+        expect(g.active_session_id).toBe(held);
+        expect(g.last_command).not.toBeNull();
+        const cats = await asCookie(m.granted.cookie, '/api/companion/categories');
+        expect(cats.status).toBe(200);
+      }
+    });
+  }
 });

@@ -803,3 +803,224 @@ describe('owner lifecycle walk-through', () => {
     expect(await roles()).toEqual([[ownerId, 'owner']]);
   });
 });
+
+// show-grants D5, D6, D11: the grant routes, the team detail's show_ids, revocation with the
+// membership, and grants surviving role changes.
+describe('show grants (show-grants D5, D6, D11)', () => {
+  const grantPath = (team: string, show: string, user: string) =>
+    `/api/teams/${team}/shows/${show}/grants/${user}`;
+  const grantsOf = async (show: string) =>
+    (await catalogFor().auth.authListShowGrants(show)).map((r) => String(r.user_id));
+  const canAccess = (user: string, show: string) => catalogFor().auth.authCanAccessShow(user, show);
+
+  async function setup() {
+    const { team, ownerId, cookie: ownerCookie } = await seedTeamWithOwner();
+    const admin = await addToTeam(team, 'admin');
+    const member = await addToTeam(team, 'member');
+    const showA = await seedShow({ studioId: team, name: 'A', code: 'A' });
+    const showB = await seedShow({ studioId: team, name: 'B', code: 'B' });
+    return { team, ownerId, ownerCookie, admin, member, showA, showB };
+  }
+
+  it('PUT grants a member and is idempotent: 200 {ok: true}', async () => {
+    const t = await setup();
+    for (let i = 0; i < 2; i++) {
+      const res = await req('PUT', grantPath(t.team, t.showA, t.member.userId), {
+        cookie: t.admin.cookie,
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    }
+    expect(await grantsOf(t.showA)).toEqual([t.member.userId]);
+    expect(await canAccess(t.member.userId, t.showA)).toBe(true);
+    expect(await canAccess(t.member.userId, t.showB)).toBe(false);
+  });
+
+  it('PUT to a non-member is 404 Member not found; to the owner or an admin is 200 and stores nothing', async () => {
+    const t = await setup();
+    const outsider = await seedUser();
+    const res = await req('PUT', grantPath(t.team, t.showA, outsider), { cookie: t.admin.cookie });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Member not found' });
+    for (const target of [t.ownerId, t.admin.userId]) {
+      const r = await req('PUT', grantPath(t.team, t.showA, target), { cookie: t.admin.cookie });
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({ ok: true });
+    }
+    expect(await grantsOf(t.showA)).toEqual([]);
+  });
+
+  it('a disabled member is grantable', async () => {
+    const t = await setup();
+    await catalogFor().auth.authSetUserDisabled(t.member.userId, true);
+    const res = await req('PUT', grantPath(t.team, t.showA, t.member.userId), {
+      cookie: t.ownerCookie,
+    });
+    expect(res.status).toBe(200);
+    expect(await grantsOf(t.showA)).toEqual([t.member.userId]);
+  });
+
+  it('DELETE revokes and is 200 twice, and 200 for a non-member', async () => {
+    const t = await setup();
+    await req('PUT', grantPath(t.team, t.showA, t.member.userId), { cookie: t.admin.cookie });
+    for (let i = 0; i < 2; i++) {
+      const res = await req('DELETE', grantPath(t.team, t.showA, t.member.userId), {
+        cookie: t.admin.cookie,
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    }
+    expect(await grantsOf(t.showA)).toEqual([]);
+    const nonMember = await req('DELETE', grantPath(t.team, t.showA, await seedUser()), {
+      cookie: t.admin.cookie,
+    });
+    expect(nonMember.status).toBe(200);
+  });
+
+  it('a show of another team or an unknown show is 404 Show not found. for PUT and DELETE', async () => {
+    const t = await setup();
+    const foreignShow = await seedShow({ studioId: await seedStudio() });
+    for (const show of [foreignShow, 'no-such-show']) {
+      for (const method of ['PUT', 'DELETE']) {
+        const res = await req(method, grantPath(t.team, show, t.member.userId), {
+          cookie: t.admin.cookie,
+        });
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ detail: 'Show not found.' });
+      }
+    }
+    expect(await grantsOf(foreignShow)).toEqual([]);
+  });
+
+  it('a member caller gets 403, a non-member the masked 404, anonymous 401; nothing changes', async () => {
+    const t = await setup();
+    const other = await addToTeam(t.team, 'member');
+    const outsider = await loginCookie(await seedUser());
+    await catalogFor().auth.authGrantShow(
+      other.userId,
+      t.showB,
+      t.ownerId,
+      new Date().toISOString(),
+    );
+    for (const method of ['PUT', 'DELETE']) {
+      const show = method === 'PUT' ? t.showA : t.showB;
+      const byMember = await req(method, grantPath(t.team, show, other.userId), {
+        cookie: t.member.cookie,
+      });
+      expect(byMember.status).toBe(403);
+      expect(await byMember.json()).toEqual({ detail: 'Admin role required.' });
+      const byOutsider = await req(method, grantPath(t.team, show, other.userId), {
+        cookie: outsider,
+      });
+      expect(byOutsider.status).toBe(404);
+      expect(await byOutsider.json()).toEqual({ detail: 'Team not found' });
+      const anon = await req(method, grantPath(t.team, show, other.userId));
+      expect(anon.status).toBe(401);
+    }
+    expect(await grantsOf(t.showA)).toEqual([]);
+    expect(await grantsOf(t.showB)).toEqual([other.userId]);
+  });
+
+  it('status order: 401, team 404, role 403, show 404, target 404', async () => {
+    const t = await setup();
+    const outsider = await loginCookie(await seedUser());
+    const nobody = await seedUser();
+    // Anonymous on an unknown team with an unknown show and target: 401.
+    expect((await req('PUT', grantPath('no-team', 'no-show', nobody))).status).toBe(401);
+    // A non-member on a real team, unknown show and target: the masked team 404.
+    const r1 = await req('PUT', grantPath(t.team, 'no-show', nobody), { cookie: outsider });
+    expect([r1.status, await r1.json()]).toEqual([404, { detail: 'Team not found' }]);
+    // A member, unknown show and target: 403.
+    const r2 = await req('PUT', grantPath(t.team, 'no-show', nobody), { cookie: t.member.cookie });
+    expect(r2.status).toBe(403);
+    // An admin, unknown show and non-member target: show 404 first.
+    const r3 = await req('PUT', grantPath(t.team, 'no-show', nobody), { cookie: t.admin.cookie });
+    expect([r3.status, await r3.json()]).toEqual([404, { detail: 'Show not found.' }]);
+    // An admin, a real show and a non-member target: target 404.
+    const r4 = await req('PUT', grantPath(t.team, t.showA, nobody), { cookie: t.admin.cookie });
+    expect([r4.status, await r4.json()]).toEqual([404, { detail: 'Member not found' }]);
+  });
+
+  it('GET …/grants is not a route', async () => {
+    const t = await setup();
+    const res = await req('GET', `/api/teams/${t.team}/shows/${t.showA}/grants`, {
+      cookie: t.admin.cookie,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('the team detail carries members[].show_ids for owner and admin callers only', async () => {
+    const t = await setup();
+    await req('PUT', grantPath(t.team, t.showB, t.member.userId), { cookie: t.admin.cookie });
+    await req('PUT', grantPath(t.team, t.showA, t.member.userId), { cookie: t.admin.cookie });
+    // A stored grant held by an admin is inert and not reported.
+    await catalogFor().auth.authGrantShow(
+      t.admin.userId,
+      t.showA,
+      t.ownerId,
+      new Date().toISOString(),
+    );
+    for (const cookie of [t.ownerCookie, t.admin.cookie]) {
+      const res = await req('GET', `/api/teams/${t.team}`, { cookie });
+      const body = (await res.json()) as { members: Array<{ id: string; show_ids?: string[] }> };
+      const byId = Object.fromEntries(body.members.map((m) => [m.id, m.show_ids]));
+      expect(byId).toEqual({
+        [t.ownerId]: [],
+        [t.admin.userId]: [],
+        [t.member.userId]: [t.showA, t.showB].sort(),
+      });
+    }
+    const asMember = await req('GET', `/api/teams/${t.team}`, { cookie: t.member.cookie });
+    const body = (await asMember.json()) as { members: Array<Record<string, unknown>> };
+    for (const m of body.members) expect(m).not.toHaveProperty('show_ids');
+  });
+
+  it('leave and remove delete the grants in that team, keep them elsewhere, and re-inviting restores no access', async () => {
+    for (const how of ['leave', 'remove'] as const) {
+      const t = await setup();
+      const other = await seedStudio();
+      const otherShow = await seedShow({ studioId: other });
+      await catalogFor().auth.authAddMembershipWithRole(t.member.userId, other, 'member');
+      const now = new Date().toISOString();
+      await catalogFor().auth.authGrantShow(t.member.userId, t.showA, t.ownerId, now);
+      await catalogFor().auth.authGrantShow(t.member.userId, t.showB, t.ownerId, now);
+      await catalogFor().auth.authGrantShow(t.member.userId, otherShow, t.ownerId, now);
+      const res =
+        how === 'leave'
+          ? await req('POST', `/api/teams/${t.team}/leave`, { cookie: t.member.cookie })
+          : await req('DELETE', `/api/teams/${t.team}/members/${t.member.userId}`, {
+              cookie: t.admin.cookie,
+            });
+      expect(res.status).toBe(200);
+      expect(await grantsOf(t.showA)).toEqual([]);
+      expect(await grantsOf(t.showB)).toEqual([]);
+      expect(await grantsOf(otherShow)).toEqual([t.member.userId]);
+
+      const user = await catalogFor().auth.authGetUserById(t.member.userId);
+      const invite = await req('POST', `/api/teams/${t.team}/invites`, {
+        cookie: t.admin.cookie,
+        body: { email: String(user?.email) },
+      });
+      expect(invite.status).toBe(200);
+      expect(await catalogFor().auth.authGetMembershipRole(t.member.userId, t.team)).toBe('member');
+      expect(await canAccess(t.member.userId, t.showA)).toBe(false);
+      expect(await canAccess(t.member.userId, t.showB)).toBe(false);
+    }
+  });
+
+  it('a promoted then demoted member keeps their grant', async () => {
+    const t = await setup();
+    await req('PUT', grantPath(t.team, t.showA, t.member.userId), { cookie: t.admin.cookie });
+    const role = (r: 'admin' | 'member') =>
+      req('POST', `/api/teams/${t.team}/members/${t.member.userId}/role`, {
+        cookie: t.ownerCookie,
+        body: { role: r },
+      });
+    expect((await role('admin')).status).toBe(200);
+    expect(await canAccess(t.member.userId, t.showB)).toBe(true);
+    expect((await role('member')).status).toBe(200);
+    expect(await grantsOf(t.showA)).toEqual([t.member.userId]);
+    expect(await canAccess(t.member.userId, t.showA)).toBe(true);
+    expect(await canAccess(t.member.userId, t.showB)).toBe(false);
+  });
+});

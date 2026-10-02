@@ -1,7 +1,7 @@
 // teams-self-serve (design D1/D2): role-aware membership ops + invite storage.
 import { describe, expect, it } from 'vitest';
 import { env } from './harness';
-import { catalogFor, seedStudio, seedUser } from './helpers';
+import { catalogFor, seedShow, seedStudio, seedUser } from './helpers';
 
 describe('AuthStore: role-aware memberships (design D1)', () => {
   it('authAddMembershipWithRole creates with the given role', async () => {
@@ -416,5 +416,180 @@ describe('AuthStore: team ownership (owner-bootstrap D3, D6, D7)', () => {
       [owned.member]: 'member',
     });
     expect(await cat.auth.authClaimOwnerlessStudios(claimant)).toEqual([]);
+  });
+});
+
+describe('AuthStore: show access and grants (show-grants D2)', () => {
+  const T = '2026-10-05T00:00:00.000Z';
+  async function matrix(): Promise<{
+    studio: string;
+    showA: string;
+    showB: string;
+    owner: string;
+    admin: string;
+    granted: string;
+    ungranted: string;
+    outsider: string;
+  }> {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const showA = await seedShow({ studioId: studio, name: 'A', code: 'A' });
+    const showB = await seedShow({ studioId: studio, name: 'B', code: 'B' });
+    const [owner, admin, granted, ungranted, outsider] = await Promise.all([
+      seedUser(),
+      seedUser(),
+      seedUser(),
+      seedUser(),
+      seedUser(),
+    ]);
+    await cat.auth.authAddMembershipWithRole(owner, studio, 'owner');
+    await cat.auth.authAddMembershipWithRole(admin, studio, 'admin');
+    await cat.auth.authAddMembershipWithRole(granted, studio, 'member');
+    await cat.auth.authAddMembershipWithRole(ungranted, studio, 'member');
+    await cat.auth.authGrantShow(granted, showA, owner, T);
+    return { studio, showA, showB, owner, admin, granted, ungranted, outsider };
+  }
+
+  it('authCanAccessShow: owner and admin without a grant, member only with one', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    expect(await cat.auth.authCanAccessShow(m.owner, m.showA)).toBe(true);
+    expect(await cat.auth.authCanAccessShow(m.admin, m.showB)).toBe(true);
+    expect(await cat.auth.authCanAccessShow(m.granted, m.showA)).toBe(true);
+    expect(await cat.auth.authCanAccessShow(m.granted, m.showB)).toBe(false);
+    expect(await cat.auth.authCanAccessShow(m.ungranted, m.showA)).toBe(false);
+    expect(await cat.auth.authCanAccessShow(m.owner, 'no-such-show')).toBe(false);
+  });
+
+  it('authCanAccessShow is false for a non-member holding a stale grant row', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    await env.ports.catalog.run(
+      'INSERT INTO show_grants (user_id, show_id, granted_at_utc) VALUES (?, ?, ?)',
+      m.outsider,
+      m.showA,
+      T,
+    );
+    expect(await cat.auth.authCanAccessShow(m.outsider, m.showA)).toBe(false);
+  });
+
+  it('authCanAccessShowForShare gives the same answers inside catalog.tx', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    await env.ports.catalog.run(
+      'INSERT INTO show_grants (user_id, show_id, granted_at_utc) VALUES (?, ?, ?)',
+      m.outsider,
+      m.showA,
+      T,
+    );
+    const answers = await cat.tx(async (c) => [
+      await c.auth.authCanAccessShowForShare(m.owner, m.showA),
+      await c.auth.authCanAccessShowForShare(m.admin, m.showB),
+      await c.auth.authCanAccessShowForShare(m.granted, m.showA),
+      await c.auth.authCanAccessShowForShare(m.granted, m.showB),
+      await c.auth.authCanAccessShowForShare(m.ungranted, m.showA),
+      await c.auth.authCanAccessShowForShare(m.outsider, m.showA),
+      await c.auth.authCanAccessShowForShare(m.owner, 'no-such-show'),
+    ]);
+    expect(answers).toEqual([true, true, true, false, false, false, false]);
+  });
+
+  it('authListAccessibleShowIds: every show of owner/admin teams plus granted shows of member teams', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    const other = await seedStudio();
+    const otherShow = await seedShow({ studioId: other, name: 'O', code: 'O' });
+    const otherShow2 = await seedShow({ studioId: other, name: 'P', code: 'P' });
+    await cat.auth.authAddMembershipWithRole(m.granted, other, 'admin');
+    await cat.auth.authAddMembershipWithRole(m.admin, other, 'member');
+    await cat.auth.authGrantShow(m.admin, otherShow2, m.granted, T);
+    expect([...(await cat.auth.authListAccessibleShowIds(m.granted))].sort()).toEqual(
+      [m.showA, otherShow, otherShow2].sort(),
+    );
+    expect([...(await cat.auth.authListAccessibleShowIds(m.admin))].sort()).toEqual(
+      [m.showA, m.showB, otherShow2].sort(),
+    );
+    expect([...(await cat.auth.authListAccessibleShowIds(m.ungranted))]).toEqual([]);
+    expect([...(await cat.auth.authListAccessibleShowIds(m.outsider))]).toEqual([]);
+  });
+
+  it('authGrantShow is idempotent and records granted_by_user_id and granted_at_utc', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    await cat.auth.authGrantShow(m.ungranted, m.showB, m.admin, T);
+    await cat.auth.authGrantShow(m.ungranted, m.showB, m.owner, '2026-10-06T00:00:00.000Z');
+    const rows = await cat.auth.authListShowGrants(m.showB);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      user_id: m.ungranted,
+      show_id: m.showB,
+      granted_by_user_id: m.admin,
+      granted_at_utc: T,
+    });
+    expect(Number(rows[0]?.can_write)).toBe(1);
+  });
+
+  it('authRevokeShow is idempotent', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    await cat.auth.authRevokeShow(m.granted, m.showA);
+    await cat.auth.authRevokeShow(m.granted, m.showA);
+    expect(await cat.auth.authListShowGrants(m.showA)).toEqual([]);
+    expect(await cat.auth.authCanAccessShow(m.granted, m.showA)).toBe(false);
+  });
+
+  it('authListShowGrants orders by user_id', async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    await cat.auth.authGrantShow(m.ungranted, m.showA, m.owner, T);
+    const ids = (await cat.auth.authListShowGrants(m.showA)).map((r) => String(r.user_id));
+    expect(ids).toEqual([m.granted, m.ungranted].sort());
+  });
+
+  it("authListShowGrantsInStudio returns only that team's pairs", async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    const other = await seedStudio();
+    const otherShow = await seedShow({ studioId: other, name: 'O', code: 'O' });
+    await cat.auth.authAddMembershipWithRole(m.granted, other, 'member');
+    await cat.auth.authGrantShow(m.granted, otherShow, m.owner, T);
+    await cat.auth.authGrantShow(m.ungranted, m.showB, m.owner, T);
+    const pairs = await cat.auth.authListShowGrantsInStudio(m.studio);
+    expect(pairs.map((p) => `${p.user_id}:${p.show_id}`).sort()).toEqual(
+      [`${m.granted}:${m.showA}`, `${m.ungranted}:${m.showB}`].sort(),
+    );
+  });
+
+  it("authRevokeGrantsInStudio deletes the user's grants in that team only", async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    const other = await seedStudio();
+    const otherShow = await seedShow({ studioId: other, name: 'O', code: 'O' });
+    await cat.auth.authAddMembershipWithRole(m.granted, other, 'member');
+    await cat.auth.authGrantShow(m.granted, otherShow, m.owner, T);
+    await cat.auth.authGrantShow(m.granted, m.showB, m.owner, T);
+    await cat.auth.authGrantShow(m.ungranted, m.showB, m.owner, T);
+    await cat.auth.authRevokeGrantsInStudio(m.granted, m.studio);
+    expect((await cat.auth.authListShowGrantsInStudio(m.studio)).map((p) => p.user_id)).toEqual([
+      m.ungranted,
+    ]);
+    expect(await cat.auth.authCanAccessShow(m.granted, otherShow)).toBe(true);
+  });
+
+  it("authRemoveMembership also deletes the member's grants in that team and keeps them elsewhere", async () => {
+    const cat = catalogFor();
+    const m = await matrix();
+    const other = await seedStudio();
+    const otherShow = await seedShow({ studioId: other, name: 'O', code: 'O' });
+    await cat.auth.authAddMembershipWithRole(m.granted, other, 'member');
+    await cat.auth.authGrantShow(m.granted, otherShow, m.owner, T);
+    expect(await cat.auth.authRemoveMembership(m.granted, m.studio)).toBe(true);
+    expect(await cat.auth.authListShowGrants(m.showA)).toEqual([]);
+    // Re-joining restores no access.
+    await cat.auth.authAddMembershipWithRole(m.granted, m.studio, 'member');
+    expect(await cat.auth.authCanAccessShow(m.granted, m.showA)).toBe(false);
+    expect((await cat.auth.authListShowGrants(otherShow)).map((r) => r.user_id)).toEqual([
+      m.granted,
+    ]);
   });
 });

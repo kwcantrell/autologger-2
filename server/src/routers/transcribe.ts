@@ -27,7 +27,6 @@ import {
   TranscriptGenerateError,
   transcriptGenerationLock,
 } from '@autologger/transcription';
-import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import {
@@ -37,7 +36,7 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
+import { canAccessSession, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
@@ -103,18 +102,6 @@ async function resolveCatalogSessionTitle(
   return String(row.title ?? '');
 }
 
-/** Whether the requester may see the lock holder's session identifiers.
- * Mirrors `requireSession`'s studio-membership scope exactly (always checked,
- * require-login D3): a non-member gets the busy-ness fact but never the
- * holder's session id or title — the same existence/title oracle sibling
- * routes close by 404ing non-members. */
-async function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
-  const user = requireUser(c);
-  const catalog = c.get('catalog');
-  const studioId = await catalog.sessions.getSessionStudioId(sessionId);
-  return studioId !== null && (await catalog.auth.authUserHasStudio(user.id, studioId));
-}
-
 // ── Transcript generation lock status (transcript-gen-lock-status) ───────────
 
 transcribeRouter.get('/api/transcript-generation/status', async (c) => {
@@ -122,10 +109,11 @@ transcribeRouter.get('/api/transcript-generation/status', async (c) => {
   if (holder === null) {
     return c.json({ in_flight: false });
   }
-  // Cross-tenant redaction: the lock is process-wide, so the holder may belong
-  // to a studio the requester is not a member of. Busy-ness stays truthful;
-  // the identifiers are nulled (same key set, null values, never absent keys).
-  const visible = await requesterCanViewSession(c, holder.sessionId);
+  // Cross-tenant redaction: the lock is process-wide, so the holder may be a
+  // session the requester can't access (another team's, or a show they hold no
+  // grant for; show-grants D12). Busy-ness stays truthful; the identifiers are
+  // nulled (same key set, null values, never absent keys).
+  const visible = await canAccessSession(c, holder.sessionId);
   return c.json({
     in_flight: true,
     session_id: visible ? holder.sessionId : null,
@@ -173,16 +161,16 @@ transcribeRouter.post('/api/sessions/:sessionId/transcript-words/generate', asyn
     return c.json({ words: words.map(wordApiDict) });
   } catch (err) {
     // Cross-tenant redaction on the enriched 409: the in-flight detail names
-    // the HOLDER's session (title or id), which may belong to a studio the
-    // requester is not a member of. Swap in the identifier-free generic
-    // detail for non-members. Membership is checked against the holder the
+    // the HOLDER's session (title or id), which the requester may not be able
+    // to access (show-grants D12). Swap in the identifier-free generic detail
+    // for them. Access is checked against the holder the
     // detail actually names (carried on the error), never a fresh lock read,
     // which could see a different holder after an await (async-session-callers
     // D5); no named holder means the detail is already the generic one.
     // Same 409 status either way.
     if (err instanceof TranscriptGenerateError && err.code === 'in_flight') {
       const named = err.holderSessionId;
-      if (named === undefined || !(await requesterCanViewSession(c, named))) {
+      if (named === undefined || !(await canAccessSession(c, named))) {
         throw new ApiError(409, GENERATION_IN_FLIGHT_DETAIL);
       }
     }

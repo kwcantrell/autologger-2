@@ -9,7 +9,7 @@ import type { CatalogDb } from '@autologger/ports';
 export type TeamRole = 'owner' | 'admin' | 'member';
 
 /** Consumption-based facade surface (persistence-package-extraction design D3):
- * the 29 members reached externally via `catalog.auth.x()` in `server/src`
+ * the members reached externally via `catalog.auth.x()` in `server/src`
  * (routers + `test/helpers.ts`) — every public `AuthStore` method except
  * `authListMembershipsForUser`, which is consumed only internally (by
  * `profileAssembler.ts`, same package, against the concrete class) and so is
@@ -76,7 +76,30 @@ export interface AuthStoreFacade {
   authCountPendingInvites: (studioId: string) => Promise<number>;
   authConsumeInvitesForEmail: (emailNorm: string) => Promise<Row[]>;
   authListUsersByEmailNorm: (emailNorm: string) => Promise<Row[]>;
+  // show-grants D2: the access rule and the grant store.
+  authCanAccessShow: (userId: string, showId: string) => Promise<boolean>;
+  authCanAccessShowForShare: (userId: string, showId: string) => Promise<boolean>;
+  authListAccessibleShowIds: (userId: string) => Promise<Set<string>>;
+  authListShowGrants: (showId: string) => Promise<Row[]>;
+  authListShowGrantsInStudio: (
+    studioId: string,
+  ) => Promise<Array<{ user_id: string; show_id: string }>>;
+  authGrantShow: (
+    userId: string,
+    showId: string,
+    grantedByUserId: string,
+    grantedAtUtc: string,
+  ) => Promise<void>;
+  authRevokeShow: (userId: string, showId: string) => Promise<number>;
+  authRevokeGrantsInStudio: (userId: string, studioId: string) => Promise<number>;
 }
+
+/** The show access rule (show-grants D2), as one SQL predicate over a show `s` joined to the
+ * caller's membership `m` in the show's team: an owner or admin reaches every show of the team, a
+ * member only a show they hold a grant for. A non-member has no `m` row, so no access, whatever
+ * grant rows exist. Slice 6b copies this predicate into a policy (design D17). */
+const SHOW_ACCESS_PREDICATE = `(m.role IN ('owner', 'admin')
+       OR EXISTS (SELECT 1 FROM show_grants g WHERE g.user_id = m.user_id AND g.show_id = s.id))`;
 
 export class AuthStore implements AuthStoreFacade {
   constructor(private db: CatalogDb) {}
@@ -286,13 +309,19 @@ export class AuthStore implements AuthStoreFacade {
     }
   }
 
+  /** Delete a membership and, in the same transaction (which joins a caller's), the member's show
+   * grants in that team, so no grant outlives its membership (show-grants D2). Every membership
+   * delete goes through here: team remove, team leave and the support plane. */
   async authRemoveMembership(userId: string, studioId: string): Promise<boolean> {
-    const res = await this.db.run(
-      'DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
-      userId,
-      studioId,
-    );
-    return res.changes > 0;
+    return this.db.tx(async (t) => {
+      await this.withDb(t).authRevokeGrantsInStudio(userId, studioId);
+      const res = await t.run(
+        'DELETE FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+        userId,
+        studioId,
+      );
+      return res.changes > 0;
+    });
   }
 
   // -- teams-self-serve: role-aware memberships (design D1) --------------------
@@ -532,5 +561,110 @@ export class AuthStore implements AuthStoreFacade {
   async authListUsersByEmailNorm(emailNorm: string): Promise<Row[]> {
     const users = await this.db.all<Row>('SELECT * FROM users');
     return users.filter((u) => normalizeEmail(String(u.email)) === emailNorm);
+  }
+
+  // -- show-grants: the access rule and the grant store (design D2) ------------
+
+  /** Whether the user can access the show: owner or admin of its team, or a member with a grant
+   * for it. An unknown show, a non-member and an ungranted member all get false. */
+  async authCanAccessShow(userId: string, showId: string): Promise<boolean> {
+    const row = await this.db.first<Row>(
+      `SELECT 1 FROM shows s
+       JOIN user_studio_memberships m ON m.studio_id = s.studio_id AND m.user_id = ?
+       WHERE s.id = ? AND ${SHOW_ACCESS_PREDICATE}`,
+      userId,
+      showId,
+    );
+    return row !== null;
+  }
+
+  /** `authCanAccessShow` for use inside a write's transaction: the membership row and, for a
+   * member, the grant row are locked for share until the transaction ends, so a revoke, removal or
+   * demotion that commits meanwhile waits for, or fails, this reader and the re-run sees it.
+   * Postgres only; call it inside a transaction. */
+  async authCanAccessShowForShare(userId: string, showId: string): Promise<boolean> {
+    const show = await this.db.first<Row>('SELECT studio_id FROM shows WHERE id = ?', showId);
+    if (show === null) return false;
+    const role = await this.authGetMembershipRoleForShare(userId, String(show.studio_id));
+    if (role === null) return false;
+    if (role === 'owner' || role === 'admin') return true;
+    const grant = await this.db.first<Row>(
+      'SELECT 1 FROM show_grants WHERE user_id = ? AND show_id = ? FOR SHARE',
+      userId,
+      showId,
+    );
+    return grant !== null;
+  }
+
+  /** Every show id the user can access, over all their teams, in one statement. */
+  async authListAccessibleShowIds(userId: string): Promise<Set<string>> {
+    const rows = await this.db.all<Row>(
+      `SELECT s.id AS id FROM shows s
+       JOIN user_studio_memberships m ON m.studio_id = s.studio_id AND m.user_id = ?
+       WHERE ${SHOW_ACCESS_PREDICATE}`,
+      userId,
+    );
+    return new Set(rows.map((r) => String(r.id)));
+  }
+
+  /** The grant rows of one show, ordered by user id. */
+  async authListShowGrants(showId: string): Promise<Row[]> {
+    return this.db.all<Row>(
+      `SELECT user_id, show_id, can_write, granted_by_user_id, granted_at_utc
+       FROM show_grants WHERE show_id = ? ORDER BY user_id`,
+      showId,
+    );
+  }
+
+  /** The (user_id, show_id) grant pairs of every show of a team, for the team detail. */
+  async authListShowGrantsInStudio(
+    studioId: string,
+  ): Promise<Array<{ user_id: string; show_id: string }>> {
+    const rows = await this.db.all<Row>(
+      `SELECT g.user_id AS user_id, g.show_id AS show_id
+       FROM show_grants g JOIN shows s ON s.id = g.show_id
+       WHERE s.studio_id = ? ORDER BY g.user_id, g.show_id`,
+      studioId,
+    );
+    return rows.map((r) => ({ user_id: String(r.user_id), show_id: String(r.show_id) }));
+  }
+
+  /** Grant a show (idempotent: an existing grant keeps its recorded granter and time). */
+  async authGrantShow(
+    userId: string,
+    showId: string,
+    grantedByUserId: string,
+    grantedAtUtc: string,
+  ): Promise<void> {
+    await this.db.run(
+      `INSERT INTO show_grants (user_id, show_id, can_write, granted_by_user_id, granted_at_utc)
+       VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT (user_id, show_id) DO NOTHING`,
+      userId,
+      showId,
+      grantedByUserId,
+      grantedAtUtc,
+    );
+  }
+
+  /** Revoke one grant (idempotent); returns the number of rows deleted. */
+  async authRevokeShow(userId: string, showId: string): Promise<number> {
+    const res = await this.db.run(
+      'DELETE FROM show_grants WHERE user_id = ? AND show_id = ?',
+      userId,
+      showId,
+    );
+    return res.changes;
+  }
+
+  /** Revoke every grant the user holds on the shows of one team; returns the number deleted. */
+  async authRevokeGrantsInStudio(userId: string, studioId: string): Promise<number> {
+    const res = await this.db.run(
+      `DELETE FROM show_grants g USING shows s
+       WHERE g.show_id = s.id AND s.studio_id = ? AND g.user_id = ?`,
+      studioId,
+      userId,
+    );
+    return res.changes;
   }
 }

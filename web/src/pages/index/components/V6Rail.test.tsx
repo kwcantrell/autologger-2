@@ -3,8 +3,9 @@ import { fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Router } from 'wouter';
 import { memoryLocation } from 'wouter/memory-location';
+import { useProfile } from '../../../api/hooks/useProfile';
 import { useSessions } from '../../../api/hooks/useSessions';
-import type { Session, SessionsResponse } from '../../../api/types';
+import type { ProfilePayload, Session, SessionsResponse } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { setNavigationImplForTesting } from '../navigation';
 import { V6Rail } from './V6Rail';
@@ -32,6 +33,8 @@ vi.mock('../../../api/hooks/useSessions', async (importOriginal) => {
   return { ...actual, useSessions: vi.fn() };
 });
 
+vi.mock('../../../api/hooks/useProfile', () => ({ useProfile: vi.fn() }));
+
 vi.mock('overlayscrollbars-react', () => ({
   OverlayScrollbarsComponent: ({
     children,
@@ -49,6 +52,32 @@ vi.mock('overlayscrollbars-react', () => ({
 }));
 
 const mockedUseSessions = vi.mocked(useSessions);
+
+// show-grants D13: the components read show access from the profile through `useShowAccess`;
+// `useProfile` is mocked at the module boundary. The default profile can access `show-1` (the
+// session fixtures' show) in the active team `studio-1`.
+function accessProfile(
+  shows: Array<{ id: string; studio_id?: string; can_access: boolean }> = [
+    { id: 'show-1', can_access: true },
+  ],
+): ProfilePayload {
+  return {
+    active_studio_id: 'studio-1',
+    active_show_id: shows[0]?.id ?? '',
+    shows: shows.map((s) => ({
+      studio_id: 'studio-1',
+      name: s.id,
+      show_code: s.id.toUpperCase(),
+      title_suffix: 'date',
+      ...s,
+    })),
+    auth: { logged_in: true, oauth_configured: true, user: null },
+  } as unknown as ProfilePayload;
+}
+
+function mockProfile(p: ProfilePayload) {
+  vi.mocked(useProfile).mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
+}
 
 function sessionFixture(overrides: Partial<Session> = {}): Session {
   return {
@@ -105,6 +134,7 @@ function renderRail(initialPath = '/') {
 beforeEach(() => {
   document.body.classList.remove('v6-app--rail-collapsed');
   mockSessions({ active: [], archived: [] });
+  mockProfile(accessProfile());
 });
 
 afterEach(() => {
@@ -265,5 +295,38 @@ describe('V6Rail session search (spec: "Real rail session search")', () => {
     expect(document.body.classList.contains('v6-app--rail-collapsed')).toBe(false);
     const input = screen.getByRole('searchbox', { name: 'Search sessions' });
     expect(document.activeElement).toBe(input);
+  });
+});
+
+describe('V6Rail New Session and Batch Import follow show access (show-grants D13)', () => {
+  it('are hidden when the active team has no show the user can access', () => {
+    mockProfile(accessProfile([{ id: 'show-1', can_access: false }]));
+    renderRail();
+    expect(screen.queryByRole('button', { name: 'New Session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Batch Import' })).toBeNull();
+  });
+
+  it('are hidden when the only accessible show belongs to another team', () => {
+    mockProfile(
+      accessProfile([
+        { id: 'show-1', can_access: false },
+        { id: 'show-9', studio_id: 'studio-2', can_access: true },
+      ]),
+    );
+    renderRail();
+    expect(screen.queryByRole('button', { name: 'New Session' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Batch Import' })).toBeNull();
+  });
+
+  it('are shown with one accessible show in the active team', () => {
+    mockProfile(
+      accessProfile([
+        { id: 'show-1', can_access: false },
+        { id: 'show-2', can_access: true },
+      ]),
+    );
+    renderRail();
+    expect(screen.getByRole('button', { name: 'New Session' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Batch Import' })).not.toBeNull();
   });
 });

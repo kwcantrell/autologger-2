@@ -1649,3 +1649,72 @@ describe('HomeSettingsModal preserves the active show on an account-only save', 
     studioTwoDown = false;
   });
 });
+
+// --- Member view (show-grants D13; owner-confirmed "member Settings view") ---
+//
+// For a team where the caller's role is `member`, Settings keeps the team switch and the name
+// fields, hides the team defaults (frame rate), show editing and "Add show", and its save body
+// carries neither `settings` nor `show_updates` (both are owner/admin only on the server). An
+// admin's view is unchanged.
+describe('HomeSettingsModal member view (show-grants D13)', () => {
+  function withRole(role: 'member' | 'admin'): ProfilePayload {
+    return {
+      ...profileFull,
+      auth: {
+        ...profileFull.auth,
+        user: {
+          ...(profileFull.auth.user as NonNullable<ProfilePayload['auth']['user']>),
+          teams: [
+            { id: 'studio-1', name: 'Studio One', role },
+            { id: 'studio-2', name: 'Studio Two', role: 'admin' },
+          ],
+        },
+      },
+    } as ProfilePayload;
+  }
+
+  it('a member sees no show details, no frame rate, no event-button editor and no Add show; the save omits settings and show_updates', async () => {
+    useProfileWith(withRole('member'), [showWithCategories, secondShow]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields')).toBeNull();
+    expect(document.getElementById('profile-default-fps')).toBeNull();
+    expect(screen.queryByLabelText('Name:')).toBeNull();
+    expect(document.getElementById('profile-show-add')).toBeNull();
+    // Names and the team switch stay.
+    expect(document.getElementById('profile-account-given')).not.toBeNull();
+    expect(screen.getByLabelText('Team')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    expect(screen.queryByTestId('event-buttons-mock')).toBeNull();
+
+    fireEvent.change(document.getElementById('profile-account-given') as HTMLInputElement, {
+      target: { value: 'Grace' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('settings');
+    expect(body).not.toHaveProperty('show_updates');
+    expect(body.given_name).toBe('Grace');
+    expect(body.active_studio_id).toBe('studio-1');
+  });
+
+  it('an admin’s view is unchanged: show details, the editor and Add show; the save carries settings', async () => {
+    useProfileWith(withRole('admin'), [showWithCategories, secondShow]);
+    renderStrict(<HomeSettingsModal isOpen onClose={vi.fn()} onCloseSession={vi.fn()} />);
+
+    expect(document.getElementById('profile-show-fields')).not.toBeNull();
+    expect(document.getElementById('profile-show-add')).not.toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Event Buttons' }));
+    expect(screen.getByTestId('event-buttons-mock')).not.toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'General' }));
+
+    fireEvent.change(screen.getByLabelText('Name:'), { target: { value: 'Renamed Show' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const body = mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+    expect(body).toHaveProperty('settings');
+    expect(body).toHaveProperty('show_updates');
+  });
+});

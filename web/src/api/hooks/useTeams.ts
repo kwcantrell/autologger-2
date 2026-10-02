@@ -2,6 +2,7 @@ import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tansta
 import { apiFetch } from '../client';
 import type {
   OkResponse,
+  ShowGrantResponse,
   TeamCreateBody,
   TeamCreateResponse,
   TeamDetail,
@@ -152,6 +153,30 @@ export function useTransferOwnership(teamId: string) {
         method: 'POST',
         body: JSON.stringify({ user_id: userId } satisfies TeamOwnerTransferBody),
       }),
+    onSuccess: () => invalidateTeam(qc, teamId),
+  });
+}
+
+/** `PUT` (grant) or `DELETE` (revoke) `/api/teams/:id/shows/:showId/grants/:userId`
+ * (show-grants D5, D13). Both keys go stale: the detail's `members[].show_ids` changed, and a
+ * caller granting themselves nothing still refetches a cheap profile; the grantee's own profile
+ * picks the change up on its next refetch. */
+export function useSetShowGrant(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      showId,
+      userId,
+      granted,
+    }: {
+      showId: string;
+      userId: string;
+      granted: boolean;
+    }) =>
+      apiFetch<ShowGrantResponse>(
+        teamPath(teamId, 'shows', encodeURIComponent(showId), 'grants', encodeURIComponent(userId)),
+        { method: granted ? 'PUT' : 'DELETE' },
+      ),
     onSuccess: () => invalidateTeam(qc, teamId),
   });
 }

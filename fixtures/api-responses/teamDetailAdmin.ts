@@ -31,21 +31,26 @@ const captured = {
       "email": "olu@example.com",
       "given_name": "Test",
       "family_name": "User",
-      "role": "owner"
+      "role": "owner",
+      "show_ids": []
     },
     {
       "id": "########-####-####-####-############",
       "email": "ann@example.com",
       "given_name": "Test",
       "family_name": "User",
-      "role": "admin"
+      "role": "admin",
+      "show_ids": []
     },
     {
       "id": "########-####-####-####-############",
       "email": "bo@example.com",
       "given_name": "Test",
       "family_name": "User",
-      "role": "member"
+      "role": "member",
+      "show_ids": [
+        "########-####-####-####-############"
+      ]
     }
   ],
   "invites": [

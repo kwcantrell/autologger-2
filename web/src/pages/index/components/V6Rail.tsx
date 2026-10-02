@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useSessions } from '../../../api/hooks/useSessions';
+import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import { APP_VERSION } from '../../../shared/appVersion';
 import { navigate } from '../navigation';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -144,6 +145,8 @@ export function V6Rail({
   onMobileClose,
 }: Props) {
   const { data: sessions, isLoading } = useSessions();
+  const access = useShowAccess();
+  const canCreate = access.accessibleShows(access.activeStudioId).length > 0;
   // Same-route guard (design D2 gate decision 1, mirroring AppShell's own
   // `onTeamsRoute` read): skip navigate when already on /teams, so repeated
   // clicks don't stack duplicate history entries and deaden browser Back.
@@ -204,37 +207,48 @@ export function V6Rail({
         </svg>
       </button>
 
-      <button type="button" className={RAIL_PRIMARY} id="v6-btn-new-session" onClick={onNewSession}>
-        <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-        </span>
-        <span className={RAIL_PRIMARY_LABEL}>New Session</span>
-      </button>
+      {/* show-grants D13: New Session and Batch Import only when the active team has a show the
+          user can access (web-home-launch "Session actions follow show access"). */}
+      {canCreate && (
+        <>
+          <button
+            type="button"
+            className={RAIL_PRIMARY}
+            id="v6-btn-new-session"
+            onClick={onNewSession}
+          >
+            <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span className={RAIL_PRIMARY_LABEL}>New Session</span>
+          </button>
 
-      <button
-        type="button"
-        className={RAIL_PRIMARY}
-        id="v6-btn-batch-import"
-        onClick={onBatchImport}
-      >
-        <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            <path
-              d="M7 8L12 3L17 8"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-        </span>
-        <span className={RAIL_PRIMARY_LABEL}>Batch Import</span>
-      </button>
+          <button
+            type="button"
+            className={RAIL_PRIMARY}
+            id="v6-btn-batch-import"
+            onClick={onBatchImport}
+          >
+            <span className={RAIL_PRIMARY_ICON} aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path
+                  d="M7 8L12 3L17 8"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span className={RAIL_PRIMARY_LABEL}>Batch Import</span>
+          </button>
+        </>
+      )}
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus convenience around the real <input>/<button>; keyboard users reach the button below directly */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the wrapped <button>/<input> are the keyboard surfaces; the div click only forwards focus */}
