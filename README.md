@@ -812,7 +812,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
-| `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` | `routers/teams.ts` (new, teams-self-serve) |
+| `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 

@@ -1,6 +1,6 @@
 // GENERATED — DO NOT EDIT BY HAND.
 //
-// Captured from a real `GET /api/teams/:id (caller is a plain member)` response by
+// Captured from a real `GET /api/teams/:id (caller is the team owner)` response by
 // `server/src/routers/apiResponseFixtures.int.test.ts` and re-asserted
 // against the live handler on every server test run
 // (web-api-shape-conformance, design D2/D3).
@@ -23,7 +23,7 @@ import type { Mutable } from './_mutable';
 const captured = {
   "id": "my-crew",
   "name": "My Crew",
-  "role": "member",
+  "role": "owner",
   "enabled_admin_count": 1,
   "members": [
     {
@@ -47,7 +47,13 @@ const captured = {
       "family_name": "User",
       "role": "member"
     }
+  ],
+  "invites": [
+    {
+      "email": "pending@example.com",
+      "invited_at_utc": "####-##-##T##:##:##.###Z"
+    }
   ]
 } as const;
 
-export const teamDetailMember = captured as Mutable<typeof captured>;
+export const teamDetailOwner = captured as Mutable<typeof captured>;

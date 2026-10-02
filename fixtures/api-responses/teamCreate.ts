@@ -23,7 +23,7 @@ import type { Mutable } from './_mutable';
 const captured = {
   "id": "my-crew",
   "name": "My Crew",
-  "role": "admin"
+  "role": "owner"
 } as const;
 
 export const teamCreate = captured as Mutable<typeof captured>;

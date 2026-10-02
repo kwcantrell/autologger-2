@@ -28,6 +28,13 @@ const captured = {
   "members": [
     {
       "id": "########-####-####-####-############",
+      "email": "olu@example.com",
+      "given_name": "Test",
+      "family_name": "User",
+      "role": "owner"
+    },
+    {
+      "id": "########-####-####-####-############",
       "email": "ann@example.com",
       "given_name": "Test",
       "family_name": "User",

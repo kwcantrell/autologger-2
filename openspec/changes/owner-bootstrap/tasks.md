@@ -227,13 +227,28 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   integration src/routers/teams.race.int.test.ts`, 5 runs (`5c-5.3-race-{1..5}.log`) -> each
   `Tests  18 passed (18)`, including `concurrent creates by a user owning 19 teams: one 200, one
   400` (red after 4.2, green now).
-- [ ] 5.4 Recapture the fixtures in `server/src/routers/apiResponseFixtures.int.test.ts`:
+- [x] 5.4 Recapture the fixtures in `server/src/routers/apiResponseFixtures.int.test.ts`:
   `teamCreate`, `teamDetailAdmin`, `teamDetailMember`, `teamRoleChange`, `profileAuthenticated`,
   and new `teamOwnerTransfer` and `teamDetailOwner` captures (seed the caller as owner, not
   through `seedTeam()`, which adds an admin); check them in `web/src/api/types.conformance.test.ts` and
   `web/src/apiResponseShapes.repo.test.ts`. Update the README endpoint table (`README.md:814-815`)
   with `POST …/owner`. Verify: the capture test and both web tests green; `git diff --stat
   fixtures/` names only those captures.
+  Evidence: `seedTeam()` now seeds an owner (Olu) and the admin caller (Ann); `teamRoleChange` and
+  the two new captures run as the owner; the profile capture's first team is owned. Red: `cd
+  server && npx vitest run --project integration src/routers/apiResponseFixtures.int.test.ts`
+  (`5c-5.4-red.log`) -> `Tests  7 failed | 25 passed (32)` (`teamCreate`, `profileAuthenticated`,
+  `teamDetailAdmin`, `teamDetailMember`, the two missing new fixtures, and `adminUsers`, which
+  6.1 owns). `npm run fixtures:capture -w server` (`5c-5.4-capture.log`) -> `Tests  32 passed`,
+  then `adminUsers.json` restored for 6.1; re-run (`5c-5.4-green.log`) -> `Tests  1 failed | 31
+  passed (32)`, the one failure `GET /api/admin/users` (6.1). `teamRoleChange` bytes are
+  unchanged (`{ok: true, role: "admin"}`). `git diff --stat fixtures/` -> `profileAuthenticated.ts`,
+  `teamCreate.ts`, `teamDetailAdmin.ts`, `teamDetailMember.ts`, plus new `teamDetailOwner.ts`,
+  `teamOwnerTransfer.json`. The conformance assignments need the owner role on the client, so
+  `web/src/api/types.ts` gains `TeamRole` `owner` and the transfer body and response types here
+  (8.2's types item). `cd web && npx vitest run src/api/types.conformance.test.ts
+  src/apiResponseShapes.repo.test.ts` (`5c-5.4-web.log`) -> `Test Files  2 passed (2)`, `Tests
+  95 passed (95)`; `npm run typecheck -w web` -> exit 0 (`5c-5.4-web-typecheck.log`).
 
 ## 6. Support plane: owner upsert (design D6)
 

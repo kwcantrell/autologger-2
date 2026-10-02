@@ -136,7 +136,7 @@ export interface StudioBrief {
 // Teams (teams-self-serve)
 // ---------------------------------------------------------------------------
 
-export type TeamRole = 'admin' | 'member';
+export type TeamRole = 'owner' | 'admin' | 'member';
 
 /** `auth.user.teams[]` entries (profile assembler, teams-self-serve task 4.1):
  * a StudioBrief plus the caller's role in that team. */
@@ -158,7 +158,7 @@ export interface TeamInvite {
 }
 
 /** `GET /api/teams/:id` response. `invites` is present only when `role` is
- * `admin` (server omits the field for members — design D4). */
+ * `owner` or `admin` (server omits the field for members — design D4). */
 export interface TeamDetail {
   id: string;
   name: string;
@@ -192,13 +192,24 @@ export interface TeamInviteBody {
   email: string;
 }
 
+/** Ownership moves only by transfer, so a role change names `admin` or `member`. */
 export interface TeamRoleChangeBody {
-  role: TeamRole;
+  role: 'admin' | 'member';
 }
 
 export interface TeamRoleChangeResponse {
   ok: boolean;
   role: TeamRole;
+}
+
+/** `POST /api/teams/:id/owner` body (owner-bootstrap D3). */
+export interface TeamOwnerTransferBody {
+  user_id: string;
+}
+
+/** `POST /api/teams/:id/owner` response. */
+export interface TeamOwnerTransferResponse {
+  ok: boolean;
 }
 
 export interface OkResponse {

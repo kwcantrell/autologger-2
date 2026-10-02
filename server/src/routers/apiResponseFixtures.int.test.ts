@@ -176,7 +176,7 @@ describe('GET /api/profile', () => {
       categoriesJson: CATEGORIES_JSON,
     });
     const userId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
-    await catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'owner');
     await catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
     await catalogFor().auth.authSetPrefs(userId, teamA, showId);
 
@@ -708,11 +708,27 @@ describe('topics', () => {
 // Teams — `GET /api/teams/:id` is caller-dependent (audit row 26)
 // ---------------------------------------------------------------------------
 
-async function seedTeam(): Promise<{ team: string; adminId: string; adminCookie: string }> {
+/** A team with an owner (Olu) and an admin (Ann), the caller of most captures (owner-bootstrap
+ * D13: owner-only routes are captured as the owner). */
+async function seedTeam(): Promise<{
+  team: string;
+  adminId: string;
+  adminCookie: string;
+  ownerId: string;
+  ownerCookie: string;
+}> {
   const team = await seedStudio({ id: 'my-crew', name: 'My Crew' });
+  const ownerId = await seedUser({ email: 'olu@example.com', sub: 'sub-olu' });
+  await catalogFor().auth.authAddMembershipWithRole(ownerId, team, 'owner');
   const adminId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
   await catalogFor().auth.authAddMembershipWithRole(adminId, team, 'admin');
-  return { team, adminId, adminCookie: await loginCookie(adminId) };
+  return {
+    team,
+    adminId,
+    adminCookie: await loginCookie(adminId),
+    ownerId,
+    ownerCookie: await loginCookie(ownerId),
+  };
 }
 
 describe('teams', () => {
@@ -814,15 +830,65 @@ describe('teams', () => {
     );
   });
 
+  it('GET /api/teams/:id as the owner matches the captured fixture (carries `invites`)', async () => {
+    const { team, ownerCookie } = await seedTeam();
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    await app.request(
+      `/api/teams/${team}/invites`,
+      {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Cookie: ownerCookie },
+        body: JSON.stringify({ email: 'pending@example.com' }),
+      },
+      { ...env },
+    );
+
+    const res = await app.request(
+      `/api/teams/${team}`,
+      { method: 'GET', headers: { Cookie: ownerCookie } },
+      { ...env },
+    );
+    const body = await expectCapturedResponse(
+      {
+        name: 'teamDetailOwner',
+        endpoint: 'GET /api/teams/:id (caller is the team owner)',
+        format: 'ts',
+        exportName: 'teamDetailOwner',
+      },
+      res,
+    );
+    expect(body).toHaveProperty('invites');
+  });
+
+  it('POST /api/teams/:id/owner matches the captured fixture', async () => {
+    const { team, ownerCookie } = await seedTeam();
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    const res = await app.request(
+      `/api/teams/${team}/owner`,
+      {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Cookie: ownerCookie },
+        body: JSON.stringify({ user_id: memberId }),
+      },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      { name: 'teamOwnerTransfer', endpoint: 'POST /api/teams/:id/owner', format: 'json' },
+      res,
+    );
+  });
+
   it('POST …/members/:uid/role matches the captured fixture', async () => {
-    const { team, adminCookie } = await seedTeam();
+    const { team, ownerCookie } = await seedTeam();
     const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
     await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
     const res = await app.request(
       `/api/teams/${team}/members/${memberId}/role`,
       {
         method: 'POST',
-        headers: { ...JSON_HEADERS, Cookie: adminCookie },
+        headers: { ...JSON_HEADERS, Cookie: ownerCookie },
         body: JSON.stringify({ role: 'admin' }),
       },
       { ...env },
