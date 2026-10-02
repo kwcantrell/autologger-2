@@ -118,7 +118,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
     expect(runs).toBe(3);
   });
 
-  it('retries a deadlock, gives up on serialization failure after 3 runs, never retries others', async () => {
+  it('retries a deadlock, gives up on serialization failure after 5 runs, never retries others', async () => {
     const { db } = await make();
     let runs = 0;
     await db.tx(async (t) => {
@@ -135,7 +135,7 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
         await t.run(raise('40001'));
       }),
     ).rejects.toMatchObject({ code: '40001' });
-    expect(runs).toBe(3);
+    expect(runs).toBe(5);
 
     runs = 0;
     await expect(
@@ -145,6 +145,26 @@ describe('PostgresCatalogDb: Postgres-only cases', () => {
       }),
     ).rejects.toMatchObject({ code: '23505' });
     expect(runs).toBe(1);
+  });
+
+  // catalog-retry-backoff: contending writers back off instead of re-running in lockstep.
+  it('8 contending read-modify-write transactions all commit', async () => {
+    const e = await make();
+    await e.db.run(INSERT, 'w', 0);
+    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+      const row = await t.first<{ v: number }>('SELECT v FROM t WHERE k = ?', 'w');
+      await t.first('SELECT count(*) FROM t');
+      await t.first('SELECT count(*) FROM t');
+      await t.run('UPDATE t SET v = ? WHERE k = ?', (row?.v ?? 0) + 1, 'w');
+    };
+    const failures: string[] = [];
+    for (let rep = 0; rep < 5; rep++) {
+      const results = await Promise.allSettled(Array.from({ length: 8 }, () => e.db.tx(body)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      if (failed) failures.push(`repetition ${rep}: ${failed}/8 exhausted`);
+    }
+    expect(failures).toEqual([]);
+    expect(await e.db.first('SELECT v FROM t WHERE k = ?', 'w')).toEqual({ v: 40 });
   });
 
   it('a statement running at the deadline is cancelled, its session ends, and the next tx commits', async () => {

@@ -4,8 +4,8 @@
 // of single-connection clients. postgres.js's own `reserve()` and `begin()` crash the process when a
 // statement reaches a connection whose socket has closed (design A5-A7), so the adapter tracks each
 // transaction's connection itself and never sends a statement after it was lost. Every transaction
-// is SERIALIZABLE and re-runs its body on a serialization failure or deadlock, at most `maxTries`
-// runs; one deadline bounds the whole call.
+// is SERIALIZABLE and re-runs its body on a serialization failure or deadlock, after a jittered
+// backoff (catalog-retry-backoff), at most `maxTries` runs; one deadline bounds the whole call.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CatalogDb } from '@autologger/ports';
@@ -89,7 +89,16 @@ export interface PostgresCatalogDbOptions {
   rootTimeoutMs?: number;
   maxTries?: number;
   connect?: (opts: PgClientOptions) => PgClient;
+  /** Backoff randomness and wait, for tests (catalog-retry-backoff D3). */
+  random?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** An unref'd timer: a backoff wait never keeps the process alive. */
+const unrefSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
+
+/** Full-jitter backoff before re-running after run `n`: below 20 x 2^(n-1) ms. */
+const BACKOFF_BASE_MS = 20;
 
 function connectPostgres(opts: PgClientOptions): PgClient {
   return postgres({
@@ -221,6 +230,8 @@ export class PostgresCatalogDb implements CatalogDb {
   private readonly txTimeoutMs: number;
   private readonly rootTimeoutMs: number;
   private readonly maxTries: number;
+  private readonly random: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private closed = false;
 
   constructor(opts: PostgresCatalogDbOptions) {
@@ -229,10 +240,14 @@ export class PostgresCatalogDb implements CatalogDb {
       txSlots = 5,
       txTimeoutMs = 10_000,
       rootTimeoutMs = 5_000,
-      maxTries = 3,
+      maxTries = 5,
       connect,
+      random = Math.random,
+      sleep = unrefSleep,
       ...conn
     } = opts;
+    this.random = random;
+    this.sleep = sleep;
     this.rootTimeoutMs = rootTimeoutMs;
     this.connect = connect ?? connectPostgres;
     this.conn = conn;
@@ -272,6 +287,17 @@ export class PostgresCatalogDb implements CatalogDb {
         } catch (error) {
           const code = (error as { code?: unknown } | null)?.code;
           if (n >= this.maxTries || this.closed || !RETRYABLE.has(code as string)) throw error;
+          // catalog-retry-backoff D1/D2: contenders back off instead of re-running in lockstep.
+          // attempt() has already released its slot, so the wait holds no connection.
+          const left = deadlineAt - Date.now();
+          if (left > 0) {
+            await this.sleep(Math.min(this.random() * BACKOFF_BASE_MS * 2 ** (n - 1), left));
+          }
+          if (this.closed) throw error;
+          // A re-run past the deadline would still take a slot and send BEGIN; refuse it here.
+          if (Date.now() >= deadlineAt) {
+            throw new CatalogTxTimeoutError(`catalog transaction exceeded ${this.txTimeoutMs} ms`);
+          }
         }
       }
     })();
