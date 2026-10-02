@@ -119,7 +119,7 @@ the failure line) and green after.
 
 ## 5. Drop pre-GoTrue users (design D8)
 
-- [ ] 5.1 Test first: a `server/src/test/pg/` test seeds a clone with a user, a membership, prefs, an
+- [x] 5.1 Test first: a `server/src/test/pg/` test seeds a clone with a user, a membership, prefs, an
   invite, a `session:` KV row, a `csrf:` KV row, a studio and a show, then applies the new
   migration's SQL:
   - the first five are gone;
@@ -127,6 +127,12 @@ the failure line) and green after.
   - a second application deletes nothing more.
   Then add `supabase/migrations/<ts>_drop_pre_gotrue_users.sql` (no BEGIN/COMMIT) and run
   `docker/supabase/test_migrate.sh`.
+  Evidence: `5a-5.1-red.log`: `npx vitest run --project pg
+  src/test/pg/dropPreGotrueUsers.pg.test.ts` -> `Error: ENOENT ... 20261003000000_drop_pre_gotrue_users.sql`.
+  `5a-5.1-green.log`: that test plus `catalogSchema.pg.test.ts` (the template now applies the new
+  migration too) -> `Tests  14 passed (14)`; both runs leave `{users:0, memberships:0, prefs:0,
+  invites:0, sessions:0, csrf:1, studios:1, shows:1}`. `5a-5.1-test_migrate.log`:
+  `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed`.
 
 ## 6. Docs, live checks, gates
 
