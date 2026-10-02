@@ -6,14 +6,14 @@
 
 import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { app, env } from '../test/harness';
+import { anonApp, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 /** catalogFor() constructs a fresh Catalog whose in-memory studio registry
  * starts empty until `.init()` runs (normally done per-request by
  * authContext) — call this instead when a test needs registry reads
  * (studioNamesDict/isKnownStudio) after a mutation made through a *different*
- * Catalog instance (e.g. the one the app.request() call used). */
+ * Catalog instance (e.g. the one the anonApp.request() call used). */
 async function initedCatalog() {
   const cat = catalogFor();
   await cat.init();
@@ -50,7 +50,7 @@ async function req(
   path: string,
   opts: { cookie?: string; body?: unknown } = {},
 ): Promise<Response> {
-  return app.request(
+  return anonApp.request(
     path,
     {
       method,

@@ -28,11 +28,12 @@ import { clearLogImportJobs } from '@autologger/log-import';
 import { transcriptGenerationLock } from '@autologger/transcription';
 import { describe, expect, it, vi } from 'vitest';
 import { expectCapturedResponse } from '../test/apiFixtures';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   adminHeader,
   catalogFor,
   loginCookie,
+  seedMemberStudio,
   seedSession,
   seedShow,
   seedStudio,
@@ -90,16 +91,16 @@ async function initedCatalog() {
   return cat;
 }
 
-async function anonymousStudioId(): Promise<string> {
+async function activeStudioId(): Promise<string> {
   const res = await app.request('/api/studio', { method: 'GET' }, { ...env });
   return ((await res.json()) as { id: string }).id;
 }
 
-/** The anonymous effective studio, given a show (which becomes the active
+/** The default member's effective studio, given a show (which becomes the active
  * show, since it is the only one) and a session under it — the state
  * `GET /api/sessions` and every per-session route need. */
 async function seedActiveChain(): Promise<{ studioId: string; showId: string; sessionId: string }> {
-  const studioId = await anonymousStudioId();
+  const studioId = await activeStudioId();
   const showId = await seedShow({
     studioId,
     name: 'All The Smoke',
@@ -160,7 +161,7 @@ describe('GET /api/admin/users', () => {
 
 describe('GET /api/profile', () => {
   it('anonymous (oauth unconfigured) matches the captured fixture', async () => {
-    const studioId = await anonymousStudioId();
+    const studioId = await activeStudioId();
     await (await initedCatalog()).studios.saveStudioSettingsBlob(studioId, {
       categories: CATEGORIES,
       show_title_format: 'ATS',
@@ -173,7 +174,7 @@ describe('GET /api/profile', () => {
       categoriesJson: CATEGORIES_JSON,
     });
 
-    const res = await app.request('/api/profile', { method: 'GET' }, { ...env });
+    const res = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
     await expectCapturedResponse(
       {
         name: 'profileAnonymous',
@@ -223,7 +224,7 @@ describe('GET /api/profile', () => {
   it('logged-out with oauth configured matches the captured fixture', async () => {
     // The third branch the audit records for `profilePayload` (row 1, branch
     // i): same key set, but an empty active studio and empty studios/shows.
-    const res = await app.request(
+    const res = await anonApp.request(
       '/api/profile',
       { method: 'GET' },
       envWith({ GOOGLE_CLIENT_ID: 'fixture-client-id' }),
@@ -253,7 +254,7 @@ describe('GET /api/profile', () => {
 // `type: 'BUTTON' | 'DROPDOWN' | 'ON_OFF'` (design D4's wrinkle).
 describe('GET /api/shows?studio_id=…', () => {
   it('matches the captured fixture', async () => {
-    const studioId = await anonymousStudioId();
+    const studioId = await activeStudioId();
     await seedShow({
       studioId,
       name: 'All The Smoke',
@@ -279,7 +280,7 @@ describe('GET /api/shows?studio_id=…', () => {
 
 describe('GET /api/shows/:showId', () => {
   it('matches the captured fixture', async () => {
-    const studioId = await anonymousStudioId();
+    const studioId = await activeStudioId();
     const showId = await seedShow({
       studioId,
       name: 'All The Smoke',
@@ -301,7 +302,7 @@ describe('GET /api/shows/:showId', () => {
 
 describe('POST /api/shows', () => {
   it('matches the captured fixture', async () => {
-    const studioId = await anonymousStudioId();
+    const studioId = await activeStudioId();
     const res = await app.request(
       '/api/shows',
       {
@@ -381,7 +382,7 @@ describe('sessions', () => {
   });
 
   it('POST /api/sessions matches the captured fixture', async () => {
-    const studioId = await anonymousStudioId();
+    const studioId = await activeStudioId();
     const showId = await seedShow({
       studioId,
       name: 'All The Smoke',
@@ -888,13 +889,13 @@ describe('GET /api/transcript-generation/status', () => {
     );
   });
 
-  it('busy matches the captured fixture (dev-anonymous requester sees the holder)', async () => {
-    // The MEMBER/dev-anonymous view: full identifiers. The cross-tenant
+  it('busy matches the captured fixture (a member sees the holder)', async () => {
+    // The MEMBER view: full identifiers. The cross-tenant
     // REDACTED view differs only by `session_id`/`session_title` going null
     // (same key set — see transcribe.int.test.ts), so the web tier covers it
     // type-level off this same fixture with a nulled spread rather than a
     // second capture.
-    const studioId = await seedStudio();
+    const studioId = await seedMemberStudio();
     const showId = await seedShow({ studioId });
     const sessionId = await seedSession({ showId, episode: '002', title: 'ATS - 2' });
     // Fixed acquisition instant — redacted to `#`s anyway, but deterministic.
@@ -931,7 +932,7 @@ describe('GET /api/transcript-generation/status', () => {
 
 describe('log-import', () => {
   it('POST /api/shows/:showId/log-import and GET /api/log-import/:jobId (terminal) match the captured fixtures', async () => {
-    const studioId = await seedStudio();
+    const studioId = await seedMemberStudio();
     const showId = await seedShow({ studioId });
     vi.stubGlobal(
       'fetch',

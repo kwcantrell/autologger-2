@@ -39,7 +39,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   or an anonymous caller. Harness choice: the default user is created on first use (wrapped
   `app` or `seededSession()`), so the admin users capture keeps no extra user (D7's stated
   invariant).
-- [ ] 1.2 Convert the suites D7 and D12 name:
+- [x] 1.2 Convert the suites D7 and D12 name:
   - auth, role and anonymous suites go to `anonApp` or explicit cookies (`gate`, `authz`,
     `apiToken`, `teams`, `admin`, `shows-profile` signed-out, `activeShow.race`);
   - Companion suites use the bearer;
@@ -47,6 +47,24 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - the real-server suites (`upgradeDispatch`, `companion-ws`) send a cookie or the bearer.
 
   Verify: the server suite is green.
+  Evidence: `cd server && npx vitest run` -> `5b-1.2-green.log`: `Test Files  76 passed | 2
+  skipped (78)`, `Tests  936 passed | 3 skipped (939)`. `anonApp`: `gate` (auth and
+  encoded-path cases), `apiToken` (whole file; "token-only is inert under open login" deleted),
+  `teams`, `admin`, `authz`, `auth` (OAuth suites), the `shows-profile` signed-out 404, the
+  `ai`/`aiV2` "no credentials 401" cases and the signed-out profile captures. `activeShow.race`
+  anonymous case deleted; `shows-profile` "(anonymous)" cases now run signed in;
+  `events.generate` sets the default user's prefs. Companion suites (`companion`, `nulText`'s
+  presence/state) send `COMPANION_BEARER`; `upgradeDispatch` and `companion-ws` open the session
+  WS with the default cookie and post `/api/companion/command` with the bearer. Follow-ons on
+  suites that seeded studios only anonymous could see: `seedMemberStudio()` (helpers) in
+  `logImport`, the `apiResponseFixtures` busy ("a member sees the holder") and log-import cases;
+  `sessions.localAudioImport` and `gate` caps use the shared `seededSession()`; `logImport`'s
+  "anonymous GET still works in dev mode" and `aiV2`'s "anonymous write records created_by:
+  null" deleted (anonymous-only); `transcribe` "missing catalog row" now uses a member's hidden
+  session (a row-less holder has no studio, so only anonymous could view it).
+  Note: `sessions.int` "concurrent same-clock creates" hit a `40001` 500 once under full-suite
+  load in `5b-1.1-red.log` (signed-in path, after the adapter's 3 tries); it passed 3/3 alone and
+  in this run.
 
 ## 2. Login is always required (design D1, D2, D3, D13)
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
@@ -75,7 +75,7 @@ describe('GET /api/studio + /api/profile', () => {
     });
   });
 
-  it('anonymous: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
+  it('default member: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
 
@@ -138,7 +138,7 @@ describe('GET /api/studio + /api/profile', () => {
 });
 
 describe('PUT /api/profile', () => {
-  it('sets the active studio (anonymous)', async () => {
+  it('sets the active studio (signed in)', async () => {
     const sid = await activeStudioId();
     const res = await app.request(
       '/api/profile',
@@ -152,7 +152,7 @@ describe('PUT /api/profile', () => {
     expect(res.status).toBe(200);
   });
 
-  it('400 when active_studio_id is missing (anonymous)', async () => {
+  it('400 when active_studio_id is missing (signed in)', async () => {
     const res = await app.request(
       '/api/profile',
       { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' },
@@ -254,7 +254,7 @@ describe('shows', () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
 
-    const res = await app.request(
+    const res = await anonApp.request(
       `/api/shows/${showId}`,
       { method: 'GET' },
       envWith({ GOOGLE_CLIENT_ID: 'test-client-id' }),

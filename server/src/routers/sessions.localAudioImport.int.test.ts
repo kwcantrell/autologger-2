@@ -6,7 +6,7 @@ import type { Clock } from '@autologger/ports';
 import { describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, env, envWith } from '../test/harness';
-import { seedSession, seedShow, seedStudio } from '../test/helpers';
+import { seededSession as seedSessionChain } from '../test/helpers';
 import { __setLocalAudioImportByteCapForTests, MAX_LOCAL_AUDIO_IMPORT_BYTES } from './audio';
 
 // Detail strings copied verbatim from `server/src/routers/sessions.ts`'s own
@@ -25,9 +25,7 @@ const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const FAKE_AUDIO = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00]); // minimal RIFF-ish bytes
 
 async function seededSession(): Promise<string> {
-  const studio = await seedStudio();
-  const show = await seedShow({ studioId: studio });
-  return seedSession({ showId: show });
+  return (await seedSessionChain()).sessionId;
 }
 
 async function postLocalImport(

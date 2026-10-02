@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { app, envWith } from '../test/harness';
+import { anonApp, envWith } from '../test/harness';
 import { adminHeader, catalogFor, seedUser } from '../test/helpers';
 
 const TOKEN = 'sweep-admin-token';
@@ -8,7 +8,7 @@ const H = { ...adminHeader(TOKEN), 'content-type': 'application/json' };
 
 describe('admin auth', () => {
   it('401 with a wrong token', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/api/admin/users',
       { method: 'GET', headers: adminHeader('nope') },
       ADMIN_ENV,
@@ -17,7 +17,7 @@ describe('admin auth', () => {
   });
 
   it('GET /api/admin/users returns studios_catalog + users', async () => {
-    const res = await app.request('/api/admin/users', { method: 'GET', headers: H }, ADMIN_ENV);
+    const res = await anonApp.request('/api/admin/users', { method: 'GET', headers: H }, ADMIN_ENV);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { studios_catalog: unknown[]; users: unknown[] };
     expect(Array.isArray(body.studios_catalog)).toBe(true);
@@ -27,7 +27,7 @@ describe('admin auth', () => {
 
 describe('admin studios', () => {
   it('creates then deletes a studio', async () => {
-    const create = await app.request(
+    const create = await anonApp.request(
       '/api/admin/studios',
       {
         method: 'POST',
@@ -40,7 +40,7 @@ describe('admin studios', () => {
     expect((await create.json()) as { studio: { id: string } }).toMatchObject({
       studio: { id: 'sweep-team' },
     });
-    const del = await app.request(
+    const del = await anonApp.request(
       '/api/admin/studios/sweep-team',
       { method: 'DELETE', headers: H },
       ADMIN_ENV,
@@ -50,7 +50,7 @@ describe('admin studios', () => {
   });
 
   it('422 on an invalid studio id (too short)', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/api/admin/studios',
       { method: 'POST', headers: H, body: JSON.stringify({ id: 'a', display_name: 'X' }) },
       ADMIN_ENV,
@@ -59,7 +59,7 @@ describe('admin studios', () => {
   });
 
   it('DELETE cascades pending team_invites (shared delete method, teams-self-serve)', async () => {
-    const create = await app.request(
+    const create = await anonApp.request(
       '/api/admin/studios',
       {
         method: 'POST',
@@ -73,7 +73,7 @@ describe('admin studios', () => {
     await catalogFor().auth.authUpsertInvite('sweep-team-invites', 'pending@example.com', inviter);
     expect(await catalogFor().auth.authCountPendingInvites('sweep-team-invites')).toBe(1);
 
-    const del = await app.request(
+    const del = await anonApp.request(
       '/api/admin/studios/sweep-team-invites',
       { method: 'DELETE', headers: H },
       ADMIN_ENV,
@@ -86,13 +86,13 @@ describe('admin studios', () => {
 describe('admin user memberships + disable/enable', () => {
   it('adds and removes a membership for a known builtin studio', async () => {
     const user = await seedUser({});
-    const add = await app.request(
+    const add = await anonApp.request(
       `/api/admin/users/${user}/memberships`,
       { method: 'POST', headers: H, body: JSON.stringify({ studio_id: 'test-studios' }) },
       ADMIN_ENV,
     );
     expect(add.status).toBe(200);
-    const del = await app.request(
+    const del = await anonApp.request(
       `/api/admin/users/${user}/memberships/test-studios`,
       { method: 'DELETE', headers: H },
       ADMIN_ENV,
@@ -102,13 +102,13 @@ describe('admin user memberships + disable/enable', () => {
 
   it('disable then enable a user', async () => {
     const user = await seedUser({});
-    const d = await app.request(
+    const d = await anonApp.request(
       `/api/admin/users/${user}/disable`,
       { method: 'POST', headers: H },
       ADMIN_ENV,
     );
     expect(d.status).toBe(200);
-    const e = await app.request(
+    const e = await anonApp.request(
       `/api/admin/users/${user}/enable`,
       { method: 'POST', headers: H },
       ADMIN_ENV,
@@ -117,7 +117,7 @@ describe('admin user memberships + disable/enable', () => {
   });
 
   it('404 disabling an unknown user', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/api/admin/users/no-such-user/disable',
       { method: 'POST', headers: H },
       ADMIN_ENV,
@@ -129,7 +129,7 @@ describe('admin user memberships + disable/enable', () => {
 describe('admin add-membership role field (teams-self-serve, task 4.1)', () => {
   it('legacy body (no role) creates a member membership, as before', async () => {
     const user = await seedUser({});
-    const add = await app.request(
+    const add = await anonApp.request(
       `/api/admin/users/${user}/memberships`,
       { method: 'POST', headers: H, body: JSON.stringify({ studio_id: 'test-studios' }) },
       ADMIN_ENV,
@@ -140,7 +140,7 @@ describe('admin add-membership role field (teams-self-serve, task 4.1)', () => {
 
   it('rescues an orphaned team by promoting an existing member to admin (upsert)', async () => {
     const orphanTeam = 'orphan-team-rescue';
-    await app.request(
+    await anonApp.request(
       '/api/admin/studios',
       {
         method: 'POST',
@@ -154,7 +154,7 @@ describe('admin add-membership role field (teams-self-serve, task 4.1)', () => {
     await catalogFor().auth.authAddMembershipWithRole(user, orphanTeam, 'member');
     expect(await catalogFor().auth.authGetMembershipRole(user, orphanTeam)).toBe('member');
 
-    const promote = await app.request(
+    const promote = await anonApp.request(
       `/api/admin/users/${user}/memberships`,
       {
         method: 'POST',
@@ -177,7 +177,7 @@ describe('admin add-membership role field (teams-self-serve, task 4.1)', () => {
     await catalogFor().auth.authAddMembershipWithRole(user, 'test-studios', 'admin');
     expect(await catalogFor().auth.authGetMembershipRole(user, 'test-studios')).toBe('admin');
 
-    const res = await app.request(
+    const res = await anonApp.request(
       `/api/admin/users/${user}/memberships`,
       { method: 'POST', headers: H, body: JSON.stringify({ studio_id: 'test-studios' }) },
       ADMIN_ENV,

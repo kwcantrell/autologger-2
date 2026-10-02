@@ -1268,15 +1268,19 @@ describe('transcript generation lock status', () => {
   });
 
   it('busy with missing catalog row: session_title is null', async () => {
-    const ghostId = 'ghost-session-no-row';
+    // A member may view the holder, but the catalog lookup finds no (visible) session row: the
+    // session is hidden. (A holder with no row at all has no studio, so no signed-in caller can
+    // view it; only the removed anonymous mode could — require-login.)
+    const { sessionId } = await seededSession();
+    await env.ports.catalog.run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', sessionId);
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(ghostId, startedAtMs)).toBe(true);
+    expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
 
     const res = await status();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       in_flight: true,
-      session_id: ghostId,
+      session_id: sessionId,
       session_title: null,
       started_at: new Date(startedAtMs).toISOString(),
     });
@@ -1286,8 +1290,7 @@ describe('transcript generation lock status', () => {
   // holder can belong to a studio the requester is not a member of. Sibling
   // routes close the existence/title oracle by 404ing non-members; here
   // busy-ness stays truthful but the identifiers are nulled (same key set,
-  // null values). The anonymous `busy:` test above pins the dev-mode
-  // (REQUIRE_LOGIN=0, user === null) full-detail behavior.
+  // null values). The `busy:` test above pins the member's full-detail view.
 
   it('busy for a logged-in NON-member of the holder’s studio: identifiers are null, busy-ness truthful', async () => {
     const holderStudio = await seedStudio();

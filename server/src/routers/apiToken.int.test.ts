@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
-import { app, envWith } from '../test/harness';
+import { anonApp, envWith } from '../test/harness';
 import { seededSession } from '../test/helpers';
 
 const TOKEN = 'test-api-token';
@@ -22,7 +22,7 @@ const openLogin = envWith({ REQUIRE_LOGIN: '0' });
 
 describe('token-only requests, REQUIRE_LOGIN=1', () => {
   it('GET /api/companion/state is 200 with the frozen state shape', async () => {
-    const res = await app.request('/api/companion/state', { headers: bearer }, withLogin);
+    const res = await anonApp.request('/api/companion/state', { headers: bearer }, withLogin);
     expect(res.status).toBe(200);
     expect(Object.keys((await res.json()) as object).sort()).toEqual([
       'active_session_id',
@@ -33,13 +33,13 @@ describe('token-only requests, REQUIRE_LOGIN=1', () => {
   });
 
   it('GET /api/sessions is 401 "Login required." (token no longer opens other API routes)', async () => {
-    const res = await app.request('/api/sessions', { headers: bearer }, withLogin);
+    const res = await anonApp.request('/api/sessions', { headers: bearer }, withLogin);
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('anonymous GET /api/sessions is 401 "Login required." (baseline)', async () => {
-    const res = await app.request('/api/sessions', {}, withLogin);
+    const res = await anonApp.request('/api/sessions', {}, withLogin);
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
@@ -48,8 +48,8 @@ describe('token-only requests, REQUIRE_LOGIN=1', () => {
 describe('/auth/* and /api/admin/* with an API_TOKEN bearer', () => {
   it('POST /auth/logout is handled identically with and without the token', async () => {
     for (const e of [withLogin, openLogin]) {
-      const anon = await app.request('/auth/logout', { method: 'POST' }, e);
-      const tok = await app.request('/auth/logout', { method: 'POST', headers: bearer }, e);
+      const anon = await anonApp.request('/auth/logout', { method: 'POST' }, e);
+      const tok = await anonApp.request('/auth/logout', { method: 'POST', headers: bearer }, e);
       expect(tok.status).toBe(anon.status);
       expect(await tok.text()).toBe(await anon.text());
     }
@@ -57,9 +57,9 @@ describe('/auth/* and /api/admin/* with an API_TOKEN bearer', () => {
 
   it('/api/admin/users: API_TOKEN is not the admin token (401); ADMIN_TOKEN still works', async () => {
     const e = envWith({ REQUIRE_LOGIN: '1', ADMIN_TOKEN: 'right' });
-    const asApi = await app.request('/api/admin/users', { headers: bearer }, e);
+    const asApi = await anonApp.request('/api/admin/users', { headers: bearer }, e);
     expect(asApi.status).toBe(401);
-    const asAdmin = await app.request(
+    const asAdmin = await anonApp.request(
       '/api/admin/users',
       { headers: { Authorization: 'Bearer right' } },
       e,
@@ -73,25 +73,16 @@ describe('AI v2 dashboard with an API_TOKEN bearer', () => {
   const aiEnv = (login: '0' | '1') =>
     envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: login });
 
-  it('REQUIRE_LOGIN=0: token-only is inert — identical to the same request with no Authorization', async () => {
-    const s = (await seededSession()).sessionId;
-    const tok = await app.request(dash(s), { headers: bearer }, aiEnv('0'));
-    const anon = await app.request(dash(s), {}, aiEnv('0'));
-    expect(anon.status).toBe(200);
-    expect(tok.status).toBe(anon.status);
-    expect(await tok.text()).toBe(await anon.text());
-  });
-
   it('REQUIRE_LOGIN=1: token-only is 401 "Login required." like anonymous', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await app.request(dash(s), { headers: bearer }, aiEnv('1'));
+    const res = await anonApp.request(dash(s), { headers: bearer }, aiEnv('1'));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('REQUIRE_LOGIN=1: anonymous is 401', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await app.request(dash(s), {}, aiEnv('1'));
+    const res = await anonApp.request(dash(s), {}, aiEnv('1'));
     expect(res.status).toBe(401);
   });
 });

@@ -50,7 +50,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -180,7 +180,11 @@ function postAnswer(
 describe('ai/v2/design — auth gate (first)', () => {
   it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await post(s, { message: 'hi' }, loopbackEnv({ REQUIRE_LOGIN: '1' }));
+    const res = await anonApp.request(
+      `/api/sessions/${s}/ai/v2/design`,
+      { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+      loopbackEnv({ REQUIRE_LOGIN: '1' }),
+    );
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
   });
@@ -859,9 +863,17 @@ describe("ai/v2/design — the route hands the AI runtime the REQUEST's own inje
 describe('ai/v2/answer — guard chain mirrors the design route through body validation (task 3.2)', () => {
   it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await postAnswer(
-      s,
-      { turnId: 't', requestId: 'r', answers: [{ kind: 'text', text: 'x' }] },
+    const res = await anonApp.request(
+      `/api/sessions/${s}/ai/v2/answer`,
+      {
+        method: 'POST',
+        headers: J,
+        body: JSON.stringify({
+          turnId: 't',
+          requestId: 'r',
+          answers: [{ kind: 'text', text: 'x' }],
+        }),
+      },
       loopbackEnv({ REQUIRE_LOGIN: '1' }),
     );
     expect(res.status).toBe(401);
@@ -1401,14 +1413,6 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     // the port's shape) — check it the way the hub itself would.
     const stored = env.ports.sessions.get(s).getDashboard('primary');
     expect(stored?.createdBy).toBe(user);
-  });
-
-  it('an anonymous (no-credentials, REQUIRE_LOGIN=0) write records created_by: null — a safe degraded state, not a security bypass', async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv());
-    expect(res.status).toBe(200);
-    const stored = env.ports.sessions.get(s).getDashboard('primary');
-    expect(stored?.createdBy).toBeNull();
   });
 
   it('an optional ?turnId= query param is recorded as the originating turn', async () => {

@@ -21,6 +21,14 @@ export async function seedStudio(opts: { id?: string; name?: string } = {}): Pro
   return id;
 }
 
+/** `seedStudio` plus a `member` membership for the default signed-in user (harness `app`), for
+ * suites whose default caller works in a studio they seed themselves (require-login D7). */
+export async function seedMemberStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
+  const id = await seedStudio(opts);
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, id, 'member');
+  return id;
+}
+
 export async function seedUser(
   opts: { id?: string; email?: string; sub?: string; studios?: string[] } = {},
 ): Promise<string> {
@@ -139,6 +147,10 @@ export async function loginCookie(userId: string): Promise<string> {
 export function adminHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
+
+/** The harness `API_TOKEN` as a bearer: what the Companion sends on `/api/companion/*`. The
+ * wrapped harness `app` never signs those paths in (require-login D7). */
+export const COMPANION_BEARER: Record<string, string> = { Authorization: 'Bearer test-api-token' };
 
 /** Register companion presence so primarySession() resolves to sessionId. */
 export function setCompanionPresence(

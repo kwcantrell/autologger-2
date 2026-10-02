@@ -67,7 +67,7 @@ import type { Clock, Config } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { aiChatOpenNetworkRefused } from '../env';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -211,7 +211,11 @@ describe('ai/chat — auth gate (first)', () => {
     // fixtureEnv (not loopbackEnv's bogus CLI): a real, resolvable CLI, so
     // `neverSpawned` genuinely proves the auth guard — not a misconfigured
     // path — is what stopped the subprocess (see SPAWN OBSERVATION note).
-    const res = await post(s, { message: 'hi' }, fixtureEnv({ REQUIRE_LOGIN: '1' }));
+    const res = await anonApp.request(
+      `/api/sessions/${s}/ai/chat`,
+      { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+      fixtureEnv({ REQUIRE_LOGIN: '1' }),
+    );
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);

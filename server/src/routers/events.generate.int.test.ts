@@ -34,11 +34,10 @@ import {
   INSTRUCTION_OPEN,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
 import { SessionIndexStore } from '@autologger/catalog';
-import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { app, env, envWith } from '../test/harness';
+import { app, defaultUser, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
@@ -798,8 +797,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       // catalog projection was mirrored by the ROUTE — no manual write — so
       // GET /api/sessions serves the updated event_count.
       const cat = catalogFor();
-      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, studioId);
-      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, showId);
+      await cat.auth.authSetPrefs((await defaultUser()).id, studioId, showId);
       const listRes = await app.request('/api/sessions', { method: 'GET' }, { ...env });
       expect(listRes.status).toBe(200);
       const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };
