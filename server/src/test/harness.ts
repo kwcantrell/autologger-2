@@ -87,10 +87,12 @@ export async function resetTestEnv(): Promise<void> {
   current = { ...made, dir, defaultUser: null };
 }
 
-/** The default signed-in caller (require-login D7): a plain `member` of the two seed teams
- * (`test-studios`, `test-studio-2`; owner-bootstrap D13) only.
- * `seededSession()` adds the same membership for its fresh studio; `seedStudio` adds none, so team
- * and admin suites see no extra member. Created on first use (the wrapped `app` adding its cookie,
+/** The default signed-in caller (require-login D7): an `admin` of the two seed teams
+ * (`test-studios`, `test-studio-2`; owner-bootstrap D13) only, so it reaches every show there
+ * without a grant (show-grants D14; an admin, not the owner, so the bootstrap claim still finds
+ * the seed teams ownerless). `seededSession()` and `seedMemberStudio()` add the same `admin`
+ * membership for their fresh studio; `seedStudio` adds none, so team and admin suites see no extra
+ * member. The member path is covered by `seedAccessMatrix()`. Created on first use (the wrapped `app` adding its cookie,
  * or `seededSession()`), so a suite that never signs in as it — the admin users capture — sees no
  * extra user either. */
 export function defaultUser(): Promise<{ id: string; cookie: string }> {
@@ -108,7 +110,7 @@ export function defaultUser(): Promise<{ id: string; cookie: string }> {
       pictureUrl: '',
     });
     for (const sid of ['test-studios', 'test-studio-2']) {
-      await catalog.auth.authAddMembershipWithRole(id, sid, 'member');
+      await catalog.auth.authAddMembershipWithRole(id, sid, 'admin');
     }
     const raw = await createLoginSession(cur.bindings.ports.kv, id, 14);
     return { id, cookie: `${sessionCookieName(cur.bindings.config)}=${raw}` };
@@ -234,7 +236,7 @@ const wrappedRequest: AppRequest = (input, requestInit, envArg, executionCtx) =>
   return wrappedFetch(req, envArg, executionCtx);
 };
 
-/** The app most suites use: it signs in the default member unless the request brings its own
+/** The app most suites use: it signs in the default user unless the request brings its own
  * credentials (see `withDefaultCookie`). Everything other than `fetch`/`request` is the raw app. */
 export const app: typeof anonApp = new Proxy(anonApp, {
   get(target, p, receiver) {

@@ -21,11 +21,12 @@ export async function seedStudio(opts: { id?: string; name?: string } = {}): Pro
   return id;
 }
 
-/** `seedStudio` plus a `member` membership for the default signed-in user (harness `app`), for
- * suites whose default caller works in a studio they seed themselves (require-login D7). */
+/** `seedStudio` plus an `admin` membership for the default signed-in user (harness `app`), for
+ * suites whose default caller works in a studio they seed themselves (require-login D7). An admin
+ * reaches every show of the studio without a grant (show-grants D14). */
 export async function seedMemberStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
   const id = await seedStudio(opts);
-  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, id, 'member');
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, id, 'admin');
   return id;
 }
 
@@ -98,7 +99,7 @@ export async function seedSession(opts: {
 }
 
 /** Seed the standard studio → show → session chain in one call; the default signed-in user
- * (harness `app`) is made a `member` of the new studio (code-health-tail
+ * (harness `app`) is made an `admin` of the new studio (show-grants D14; code-health-tail
  * task 5.1, finding 5.10) — the fixture nearly every router int test needs.
  * Returns all three ids so callers can grab whichever layer they assert on
  * (most want `.sessionId`; cross-studio tests also read `.studioId`).
@@ -111,11 +112,49 @@ export async function seededSession(opts: { categoriesJson?: string } = {}): Pro
   sessionId: string;
 }> {
   const studioId = await seedStudio();
-  // The default signed-in caller is a member of every seededSession studio (require-login D7).
-  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, studioId, 'member');
+  // The default signed-in caller is an admin of every seededSession studio (require-login D7,
+  // show-grants D14), so it reaches the show without a grant.
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, studioId, 'admin');
   const showId = await seedShow({ studioId, categoriesJson: opts.categoriesJson });
   const sessionId = await seedSession({ showId });
   return { studioId, showId, sessionId };
+}
+
+/** A signed-in test caller: its user id and a session cookie header value. */
+export interface TestCaller {
+  id: string;
+  cookie: string;
+}
+
+/** The show-access matrix (show-grants D14): a fresh team with one show and one session, and a
+ * caller per access case: the team's `owner`, an `admin`, a `member` granted the show, a `member`
+ * with no grant, and a signed-in user outside the team. The default user is not added. */
+export async function seedAccessMatrix(opts: { categoriesJson?: string } = {}): Promise<{
+  studioId: string;
+  showId: string;
+  sessionId: string;
+  owner: TestCaller;
+  admin: TestCaller;
+  granted: TestCaller;
+  ungranted: TestCaller;
+  nonMember: TestCaller;
+}> {
+  const cat = catalogFor();
+  const studioId = await seedStudio();
+  const showId = await seedShow({ studioId, categoriesJson: opts.categoriesJson });
+  const sessionId = await seedSession({ showId });
+  const caller = async (role: 'owner' | 'admin' | 'member' | null): Promise<TestCaller> => {
+    const id = await seedUser();
+    if (role !== null) await cat.auth.authAddMembershipWithRole(id, studioId, role);
+    return { id, cookie: await loginCookie(id) };
+  };
+  const owner = await caller('owner');
+  const admin = await caller('admin');
+  const granted = await caller('member');
+  const ungranted = await caller('member');
+  const nonMember = await caller(null);
+  await cat.auth.authGrantShow(granted.id, showId, owner.id, new Date().toISOString());
+  return { studioId, showId, sessionId, owner, admin, granted, ungranted, nonMember };
 }
 
 /** Parse Hono's `streamSSE` wire format (`event: <t>\ndata: <json>\n\n`, no
