@@ -186,9 +186,10 @@ check_gw_values() { # json label
 
 # Invariant 16 (dev, stage, prod; supabase-db D1-D4, supabase-services D1-D4, catalog-pg-schema D5):
 # Postgres and the Supabase services are reachable only through the gateway, the app reaches only
-# Postgres over the two-member catalog network, and each secret stays in its services. The value
+# Postgres over the two-member catalog network and GoTrue over the two-member auth-app network
+# (gotrue-sign-in D6), only GoTrue has egress (auth-egress), and each secret stays in its services. The value
 # check covers every string in a service (env, command, labels, healthcheck, build args).
-check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-subnet
+check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-subnet auth-egress-subnet auth-app-subnet
   [ "$2" = dev ] && app=app || app=api
   jq_ok 16 "$2: db or migrate is missing, publishes a port, or joins other networks than db (migrate) or db and catalog (db)" "$1" \
     '(.services.db and .services.migrate)
@@ -200,9 +201,10 @@ check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-su
     '[.services|to_entries[]|select((.value.network_mode//"")|startswith("service:"))
       |select(.value.network_mode|ltrimstr("service:") as $t|["db","migrate","auth","rest","realtime","storage","supabase-gw",$app]|index($t))|.key]
      ==(if $app=="app" then ["app-gate"] else [] end)' --arg app "$app"
-  jq_ok 16 "$2: auth, rest, realtime or storage is missing, publishes a port, or joins networks other than db and supabase" "$1" \
-    '[.services.auth,.services.rest,.services.realtime,.services.storage]
-     |all(. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["db","supabase"]))'
+  jq_ok 16 "$2: auth, rest, realtime or storage is missing, publishes a port, or joins networks other than db and supabase (auth: also auth-app and auth-egress)" "$1" \
+    '([.services.rest,.services.realtime,.services.storage]
+      |all(. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["db","supabase"])))
+     and (.services.auth|. != null and ((.ports//[])|length==0) and ((.networks//{})|keys==["auth-app","auth-egress","db","supabase"]))'
   jq_ok 16 "$2: supabase-gw does not publish exactly one 127.0.0.1 port to 8000, or joins networks other than edge and supabase" "$1" \
     '.services["supabase-gw"]|((.networks//{})|keys==["edge","supabase"])
      and ((.ports//[])|length==1 and .[0].host_ip=="127.0.0.1" and .[0].target==8000)'
@@ -210,8 +212,17 @@ check_supabase() { # json label db-subnet supabase-subnet edge-subnet catalog-su
     '([.services|to_entries[]|select((.value.networks//{})|has("db"))|.key] - ["db","migrate","auth","rest","realtime","storage"] == [])
      and ([.services|to_entries[]|select((.value.networks//{})|has("supabase"))|.key] - ["supabase-gw","auth","rest","realtime","storage"] == [])
      and ([.services|to_entries[]|select((.value.networks//{})|has("edge"))|.key] == ["supabase-gw"])'
-  for n in db supabase catalog; do
-    case $n in db) sn=$3 ;; supabase) sn=$4 ;; *) sn=$6 ;; esac
+  # gotrue-sign-in D6: auth-egress is GoTrue's alone; auth-app joins exactly auth and the app.
+  jq_ok 16 "$2: a service other than auth joins auth-egress, or auth-app's members are not exactly auth and $app" "$1" \
+    '([.services|to_entries[]|select((.value.networks//{})|has("auth-egress"))|.key] == ["auth"])
+     and ([.services|to_entries[]|select((.value.networks//{})|has("auth-app"))|.key]|sort == (["auth",$app]|sort))' --arg app "$app"
+  if [ "$app" = api ]; then
+    jq_ok 16 "$2: api joins networks other than back, catalog and auth-app" "$1" \
+      '(.services.api.networks//{})|keys==["auth-app","back","catalog"]'
+  fi
+  jq_ok 16 "$2: the auth-egress network is not on $7" "$1" '.networks["auth-egress"].ipam.config==[{"subnet":$sn}]' --arg sn "$7"
+  for n in db supabase catalog auth-app; do
+    case $n in db) sn=$3 ;; supabase) sn=$4 ;; catalog) sn=$6 ;; *) sn=$8 ;; esac
     jq_ok 16 "$2: the $n network is not internal, not host-isolated (gateway_mode_ipv4/ipv6 isolated), or not on $sn" "$1" \
       '.networks[$n]|.internal==true
        and .driver_opts["com.docker.network.bridge.gateway_mode_ipv4"]=="isolated"
@@ -255,9 +266,9 @@ check_dev() {
     '(.services.app.ports==["127.0.0.1:${DEV_PORT:-8787}:8787"])
      and (.services.companion.ports==["127.0.0.1:${DEV_COMPANION_PORT:-8000}:8001"])
      and (.services["supabase-gw"].ports==["127.0.0.1:${SUPABASE_PORT}:8000"])'
-  jq_ok 3 "dev: the gates do not share their gated service's network namespace, or app joins networks other than dev and catalog, or companion one other than dev" "$D" \
+  jq_ok 3 "dev: the gates do not share their gated service's network namespace, or app joins networks other than dev, catalog and auth-app, or companion one other than dev" "$D" \
     '.services["app-gate"].network_mode=="service:app" and .services["companion-gate"].network_mode=="service:companion"
-     and ((.services.app.networks//{})|keys)==["catalog","dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
+     and ((.services.app.networks//{})|keys)==["auth-app","catalog","dev"] and ((.services.companion.networks//{})|keys)==["dev"]'
   # Port variables: numeric 1-65535 when they resolve, distinct, defaults distinct.
   jq_ok 2 "dev: DEV_PORT / DEV_COMPANION_PORT do not resolve to numbers 1-65535, or are equal (custom or default)" "$C" \
     '[.services.app.ports[0].published,.services.companion.ports[0].published,.services["supabase-gw"].ports[0].published]|all(test("^[1-9][0-9]{0,4}$") and (tonumber<=65535)) and (unique|length==3)'
@@ -282,9 +293,9 @@ check_dev() {
   # 6: the dev service set is exactly the four expected services (no extra/privileged sidecar).
   jq_ok 6 "dev: the service set is not exactly app, app-gate, auth, companion, companion-gate, db, migrate, realtime, rest, storage, supabase-gw" "$D" \
     '(.services|keys|sort)==["app","app-gate","auth","companion","companion-gate","db","migrate","realtime","rest","storage","supabase-gw"]'
-  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24 172.28.34.0/24 # 16
-  jq_ok 16 "dev: app-gate does not refuse the catalog subnet (GATE_DENY_SUBNET), so db could reach the app" "$D" \
-    '.services["app-gate"].environment.GATE_DENY_SUBNET==(.networks.catalog.ipam.config[0].subnet)'
+  check_supabase "$D" dev 172.28.31.0/24 172.28.32.0/24 172.28.33.0/24 172.28.34.0/24 172.28.35.0/24 172.28.36.0/24 # 16
+  jq_ok 16 "dev: app-gate does not refuse exactly the catalog and auth-app subnets (GATE_DENY_SUBNET), so db or auth could reach the app" "$D" \
+    '.services["app-gate"].environment.GATE_DENY_SUBNET==(.networks.catalog.ipam.config[0].subnet+" "+.networks["auth-app"].ipam.config[0].subnet)'
   check_no_host_priv "$D" dev
   check_no_env_file "$D" dev                                           # 14
   check_allowlist "$R" dev app                                         # 15
@@ -381,7 +392,7 @@ check_stage() {
   check_no_host_priv "$S" stage                                        # 6
   check_no_env_file "$S" stage                                         # 14
   check_container_name "$S" stage api autologger-stage-api            # 6 (container name pinned)
-  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24 172.28.25.0/24 # 16
+  check_supabase "$S" stage 172.28.22.0/24 172.28.23.0/24 172.28.24.0/24 172.28.25.0/24 172.28.27.0/24 172.28.28.0/24 # 16
   for f in "$S" "$SC"; do
     check_loopback_ports "$f" stage                                    # 1
     check_no_8080_numeric "$f" stage                                   # 2
@@ -431,7 +442,7 @@ check_prod() {
   resolve "$TMP/prod.json" "prod" compose_prod "$TMP/prod.env" || return 0
   resolve "$TMP/prod-raw.json" "prod (raw, --no-interpolate)" compose_prod "$TMP/prod.env" --no-interpolate || return 0
   check_allowlist "$TMP/prod-raw.json" prod api                        # 15
-  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 172.28.15.0/24 # 16
+  check_supabase "$TMP/prod.json" prod 172.28.12.0/24 172.28.13.0/24 172.28.14.0/24 172.28.15.0/24 172.28.16.0/24 172.28.17.0/24 # 16
   f=$TMP/prod.json
   check_name "$f" prod autologger                                      # 9
   check_loopback_ports "$f" prod                                       # 1

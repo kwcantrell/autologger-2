@@ -31,7 +31,7 @@ the failure line) and green after.
 
 ## 2. Networks and static checks (design D6, D7)
 
-- [ ] 2.1 Test first: add `test_check_envs.sh` guard cases, each red before the rule exists:
+- [x] 2.1 Test first: add `test_check_envs.sh` guard cases, each red before the rule exists:
   - `rest` joins `auth-egress`;
   - the app joins `auth-egress`;
   - `rest` joins `auth-app`;
@@ -48,6 +48,13 @@ the failure line) and green after.
   - in `check-envs.sh`, update invariant 3 (the dev app network set) and add the invariant 16
     rules (auth, `auth-egress`, `auth-app`, the `api` network set, subnets, the gate list).
   Green: `check-envs.sh all` passes, and `test_check_envs.sh` passes every case.
+  Evidence: `5a-2.1-red.log` (compose edits and the updated equality checks in, new rules not yet):
+  `FAIL a non-internal auth-app network is caught`, `FAIL an auth egress network off its pinned
+  subnet is caught`, `FAIL the prod api on a network outside back, catalog and auth-app is caught`,
+  plus two older cases whose `sed` patterns named the old network lists (updated to the new lines).
+  The other six new cases were already caught by the updated invariant 3/16 equality checks.
+  `5a-2.1-green.log`: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 47 passed, 0
+  failed`; `5a-2.1-checkenvs.log`: `sh docker/scripts/check-envs.sh all` -> exit 0.
 
 ## 3. GoTrue configuration (design D3)
 

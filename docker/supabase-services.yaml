@@ -1,9 +1,11 @@
 # Supabase API services and gateway for every stack (supabase-services, design D1-D3). Added by
 # docker/scripts/compose-env.sh after docker/supabase-db.yaml; each base file declares the
-# `supabase` (internal, host-isolated) and `edge` networks on pinned subnets.
+# `supabase` (internal, host-isolated), `edge`, `auth-egress` and `auth-app` networks on pinned
+# subnets.
 #
-# Invariant 16 (make check): only supabase-gw publishes a port and joins `edge`; auth, rest,
-# realtime and storage join only `db` and `supabase`; every image is digest-pinned; each secret
+# Invariant 16 (make check): only supabase-gw publishes a port and joins `edge`; rest, realtime and
+# storage join only `db` and `supabase`; auth also joins `auth-egress` (alone) and `auth-app` (with
+# the app only); every image is digest-pinned; each secret
 # value appears only in its allowed services (the table in docker/scripts/compose-run.mjs).
 
 x-logging: &logging
@@ -23,6 +25,8 @@ x-svc: &svc
 services:
   auth:
     <<: *svc
+    # GoTrue reaches Google over auth-egress and is reached by the app over auth-app (gotrue-sign-in D6).
+    networks: [db, supabase, auth-egress, auth-app]
     image: supabase/gotrue@sha256:c0c25187a6b835e65a6f6e6c6b39d090e832d40e6de5186f2c038e0411944232 # v2.196.0
     environment:
       GOTRUE_API_HOST: 0.0.0.0
@@ -32,7 +36,12 @@ services:
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${SUPABASE_ROLES_PASSWORD:?run compose through make}@db:5432/postgres
       GOTRUE_SITE_URL: http://localhost:${SUPABASE_PORT}
       GOTRUE_URI_ALLOW_LIST: ""
-      GOTRUE_DISABLE_SIGNUP: "true"
+      # Google is the only provider and the only way to create a user (gotrue-sign-in D3): the app
+      # exchanges a verified Google ID token for the user. Auto-confirm stays off, so GoTrue links
+      # identities by email only for verified addresses. Dev has no client id: every token is refused.
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: "true"
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOTRUE_JWT_ADMIN_ROLES: service_role
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
