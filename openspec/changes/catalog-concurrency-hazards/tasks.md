@@ -5,7 +5,8 @@ The first commit on `supabase-4d-catalog-concurrency-hazards` is
 gates run with `GITHUB_BASE_REF=supabase-migration`.
 
 The PR needs the owner's `size-override` label. The ceiling was about 650 counted lines; at 576
-after 4.2, the owner raised it to about 700 rather than split (2026-10-01).
+after 4.2, the owner raised it to about 700 rather than split, and at 688 after 4.5 the owner
+dropped the ceiling: every task ships in this PR (2026-10-01).
 
 Logs: keep the full output of every test and gate run under the session scratchpad as
 `4d-<task>-<red|green>.log`, and name the log in each `Evidence:` line. Each "test first" item is
@@ -189,15 +190,25 @@ in-transaction role read.
 
 ## 5. Adapter and ops (design D10)
 
-- [ ] 5.1 Test first, `postgresCatalogStore.test.ts` (fake client):
+- [x] 5.1 Test first, `postgresCatalogStore.test.ts` (fake client):
   - an unsent root statement past `rootTimeoutMs` rejects with `CatalogRootTimeoutError`, is
     withdrawn, and `settled` is resolved;
   - a sent one rejects with no cancel, and `settled` resolves when it finishes;
   - no retry.
   Red, then the bound and `max_pipeline: 1`. Green, plus the storage pg project.
-- [ ] 5.2 Test first, `startupPurge.test.ts` (fake timers): the periodic purge runs every 10
+  Evidence: `4d-5.1-red.log` -> both cases `Error: Test timed out in 5000ms` (no root bound).
+  Added `rootTimeoutMs` (5 000), `CatalogRootTimeoutError` with `settled`, root
+  `max_pipeline: 1`, a dequeue `cancel()` only when `state` is unset, and no retry.
+  `4d-5.1-green.log`: storage `npx vitest run` (unit + pg) -> `Test Files  7 passed (7)`, `Tests
+  101 passed (101)`.
+- [x] 5.2 Test first, `startupPurge.test.ts` (fake timers): the periodic purge runs every 10
   minutes, is unref'd, warns with its own text, and stops when cleared. Red, then wire it in
   `main.ts`. Green.
+  Evidence: `4d-5.2-red.log` -> `TypeError: startPeriodicPurge is not a function`. Added
+  `startPeriodicPurge` (unref'd `setInterval`, own warning text), started in `main.ts` after the
+  boot purge and cleared on SIGINT/SIGTERM. `4d-5.2-green.log`: `startupPurge` +
+  `promiseHygiene` -> `Tests  21 passed (21)`. Whole server `4d-5-server-all.log` -> `Tests  916
+  passed | 3 skipped (919)`; `npm run typecheck` -> exit 0.
 
 ## 6. Docs and integration checks
 

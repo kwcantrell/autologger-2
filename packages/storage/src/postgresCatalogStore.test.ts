@@ -6,7 +6,9 @@ import { CatalogTxMisuseError, CatalogTxTimeoutError } from './asyncCatalogStore
 import {
   CatalogCommitUnknownError,
   CatalogInvalidTextError,
+  CatalogRootTimeoutError,
   type PgClient,
+  type PgResult,
   type PgClientOptions,
   PostgresCatalogDb,
   toPg,
@@ -96,6 +98,65 @@ function adapter(f: ReturnType<typeof fakes>, txTimeoutMs = 2000) {
 
 /** The slot's clients: the first client is the root pool. */
 const slotClients = (f: ReturnType<typeof fakes>) => f.clients.slice(1);
+
+describe('PostgresCatalogDb: root deadline (catalog-concurrency-hazards D10)', () => {
+  /** A root client whose statements never answer until `finish()`; `sent` marks them as sent. */
+  function hangingRoot(sent: boolean) {
+    const calls: Array<{ text: string; cancelled: boolean; finish: () => void }> = [];
+    let rootOpts: PgClientOptions | undefined;
+    const connect = (opts: PgClientOptions): PgClient => {
+      rootOpts ??= opts;
+      return {
+        unsafe(text) {
+          let finish!: () => void;
+          const p = new Promise<PgResult>((r) => {
+            finish = () => r(Object.assign([], { count: 0, command: 'SELECT' }));
+          });
+          const call = { text, cancelled: false, finish };
+          calls.push(call);
+          return Object.assign(p, {
+            state: sent ? { pid: 1 } : null,
+            cancel: () => {
+              call.cancelled = true;
+              return null;
+            },
+          });
+        },
+        async end() {},
+      };
+    };
+    const db = new PostgresCatalogDb({
+      host: 'h', port: 1, user: 'u', password: 'p', database: 'd',
+      rootMax: 1, txSlots: 1, rootTimeoutMs: 50, connect,
+    });
+    return { db, calls, opts: () => rootOpts };
+  }
+
+  it('an unsent statement past the deadline is withdrawn, rejects, and is already settled', async () => {
+    const r = hangingRoot(false);
+    const err = await r.db.first('SELECT 1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CatalogRootTimeoutError);
+    expect(r.calls).toHaveLength(1); // not retried
+    expect(r.calls[0]?.cancelled).toBe(true);
+    await expect((err as CatalogRootTimeoutError).settled).resolves.toBeUndefined();
+    expect(r.opts()?.max_pipeline).toBe(1);
+  });
+
+  it('a sent statement past the deadline rejects without a cancel and settles when it finishes', async () => {
+    const r = hangingRoot(true);
+    const err = (await r.db.run('UPDATE t SET v = 1').catch((e: unknown) => e)) as CatalogRootTimeoutError;
+    expect(err).toBeInstanceOf(CatalogRootTimeoutError);
+    expect(r.calls[0]?.cancelled).toBe(false);
+    let settled = false;
+    void err.settled.then(() => {
+      settled = true;
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(settled).toBe(false);
+    r.calls[0]?.finish();
+    await err.settled;
+  });
+});
 
 describe('PostgresCatalogDb: NUL text (catalog-on-postgres D5)', () => {
   it('a root statement with a NUL bind rejects with CatalogInvalidTextError and sends nothing', async () => {

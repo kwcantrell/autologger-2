@@ -22,6 +22,19 @@ export class CatalogCommitUnknownError extends Error {
   override name = 'CatalogCommitUnknownError';
 }
 
+/** A root (non-transaction) statement missed the adapter's root deadline (catalog-concurrency-hazards
+ * D10). If it was never sent it was withdrawn; if it was sent it may still apply, so the outcome
+ * is unknown and it is never retried. `settled` resolves once it can no longer apply. */
+export class CatalogRootTimeoutError extends Error {
+  override name = 'CatalogRootTimeoutError';
+  constructor(
+    message: string,
+    readonly settled: Promise<void>,
+  ) {
+    super(message);
+  }
+}
+
 /** A bind held a string with U+0000, which Postgres text can't store; refused before sending
  * (catalog-on-postgres D5). The server maps it to 400. */
 export class CatalogInvalidTextError extends Error {
@@ -40,6 +53,8 @@ export interface PgResult extends Array<Record<string, unknown>> {
   command: string;
 }
 export interface PgQuery extends Promise<PgResult> {
+  /** Set by postgres.js once the query is handed to a connection (sent); null while queued. */
+  state?: unknown;
   /** Sends a cancel request; postgres.js returns null, so nothing can be awaited (design A4). */
   cancel(): unknown;
 }
@@ -54,6 +69,8 @@ export interface PgClientOptions {
   password: string;
   database: string;
   max: number;
+  /** Queries a connection may have in flight at once; the root pool uses 1 (design D10). */
+  max_pipeline?: number;
   onclose?: (connId: number) => void;
 }
 
@@ -68,6 +85,8 @@ export interface PostgresCatalogDbOptions {
   /** Concurrent transactions; with `rootMax`, 8 of the app role's 20 connections. */
   txSlots?: number;
   txTimeoutMs?: number;
+  /** Client-side bound on a root statement, queueing included (default 5 000). */
+  rootTimeoutMs?: number;
   maxTries?: number;
   connect?: (opts: PgClientOptions) => PgClient;
 }
@@ -87,6 +106,7 @@ function connectPostgres(opts: PgClientOptions): PgClient {
 }
 
 const GRACE_MS = 1000;
+const ROOT_EXPIRED = Symbol('root-expired');
 const RETRYABLE = new Set(['40001', '40P01']);
 
 const pgText = new Map<string, string>();
@@ -199,16 +219,28 @@ export class PostgresCatalogDb implements CatalogDb {
   private readonly connect: (opts: PgClientOptions) => PgClient;
   private readonly conn: Omit<PgClientOptions, 'max' | 'onclose'>;
   private readonly txTimeoutMs: number;
+  private readonly rootTimeoutMs: number;
   private readonly maxTries: number;
   private closed = false;
 
   constructor(opts: PostgresCatalogDbOptions) {
-    const { rootMax = 3, txSlots = 5, txTimeoutMs = 10_000, maxTries = 3, connect, ...conn } = opts;
+    const {
+      rootMax = 3,
+      txSlots = 5,
+      txTimeoutMs = 10_000,
+      rootTimeoutMs = 5_000,
+      maxTries = 3,
+      connect,
+      ...conn
+    } = opts;
+    this.rootTimeoutMs = rootTimeoutMs;
     this.connect = connect ?? connectPostgres;
     this.conn = conn;
     this.txTimeoutMs = txTimeoutMs;
     this.maxTries = maxTries;
-    this.root = this.connect({ ...conn, max: rootMax });
+    // One statement per root connection, so a query still queued can be withdrawn at its deadline
+    // instead of riding behind a stalled statement (design D10).
+    this.root = this.connect({ ...conn, max: rootMax, max_pipeline: 1 });
     for (let i = 0; i < txSlots; i++) {
       const slot: Slot = { client: this.root, holder: null };
       slot.client = this.slotClient(slot);
@@ -273,7 +305,34 @@ export class PostgresCatalogDb implements CatalogDb {
     this.guardRoot();
     if (this.closed) throw closedError();
     checkText(binds);
-    return map(await this.root.unsafe(toPg(sql), binds, { prepare: true }));
+    const q = this.root.unsafe(toPg(sql), binds, { prepare: true });
+    let timer: NodeJS.Timeout | undefined;
+    const expired = new Promise<typeof ROOT_EXPIRED>((r) => {
+      timer = setTimeout(() => r(ROOT_EXPIRED), this.rootTimeoutMs);
+    });
+    let res: PgResult | typeof ROOT_EXPIRED;
+    try {
+      res = await Promise.race([q, expired]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res !== ROOT_EXPIRED) return map(res);
+    // Not sent yet: withdraw it (postgres.js only dequeues; nothing reaches the server). Sent: never
+    // cancel, since a late cancel could hit the next statement on the pooled connection (A4).
+    if (q.state === null || q.state === undefined) {
+      try {
+        q.cancel();
+      } catch {}
+      q.catch(() => {});
+      throw new CatalogRootTimeoutError('catalog statement timed out before it was sent', Promise.resolve());
+    }
+    throw new CatalogRootTimeoutError(
+      'catalog statement timed out; it may still apply',
+      q.then(
+        () => {},
+        () => {},
+      ),
+    );
   }
 
   /** As in SQLite: the root handle inside an open transaction would escape it, and work left over

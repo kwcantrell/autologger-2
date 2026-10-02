@@ -12,7 +12,7 @@ import { checkBootEnv } from './bootGuard';
 import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
-import { purgeExpiredAtBoot } from './startupPurge';
+import { purgeExpiredAtBoot, startPeriodicPurge } from './startupPurge';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 import { waitForCatalog } from './waitForCatalog';
 
@@ -46,6 +46,7 @@ try {
 }
 // Startup KV hygiene, no sweep timer (async-session-callers D2): awaited before listening.
 await purgeExpiredAtBoot(bindings.ports.kv);
+const purgeTimer = startPeriodicPurge(bindings.ports.kv);
 const port = Number(process.env.PORT || '8787');
 const hostname = bindings.config.HOST;
 
@@ -126,6 +127,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // server.close() alone never completes while a WebSocket is open (upgraded
     // sockets aren't idle keep-alives) — the normal state of this app. Destroy
     // them too, and guarantee exit even if something else holds the loop.
+    clearInterval(purgeTimer);
     const failsafe = setTimeout(() => process.exit(1), 5000);
     failsafe.unref();
     const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
