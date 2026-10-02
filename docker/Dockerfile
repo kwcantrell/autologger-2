@@ -90,7 +90,6 @@ COPY server/tsconfig.json server/tsconfig.json
 COPY server/src server/src
 COPY packages/ai-runtime/src packages/ai-runtime/src
 COPY packages/catalog/src packages/catalog/src
-COPY packages/catalog/migrations packages/catalog/migrations
 COPY packages/contract/src packages/contract/src
 COPY packages/domain/src packages/domain/src
 COPY packages/log-import/src packages/log-import/src
@@ -208,7 +207,7 @@ COPY --chown=node:node packages/transcription/tsconfig.json packages/transcripti
 # server/.env are never reachable). /home/node/.claude exists and is node-owned; the operator's
 # credentials file is bind-mounted inside it. settings.json carries DISABLE_AUTOUPDATER as in `api`.
 RUN mkdir -p server/src server/scripts web/src web/public web/.next \
-      packages/ai-runtime/src packages/catalog/src packages/catalog/migrations \
+      packages/ai-runtime/src packages/catalog/src \
       packages/contract/src packages/domain/src packages/log-import/src \
       packages/media-import/src packages/ports/src packages/session-core/src \
       packages/storage/src packages/transcription/src \

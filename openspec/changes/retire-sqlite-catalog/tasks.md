@@ -129,7 +129,7 @@ Logs:
 
 ## 4. Dev image and compose (design D5)
 
-- [ ] 4.1 Test first: add a guard case to `docker/scripts/test_check_envs.sh`. A dev config with a
+- [x] 4.1 Test first: add a guard case to `docker/scripts/test_check_envs.sh`. A dev config with a
   read-only bind of the existing non-`src` path `packages/catalog/package.json` is expected to
   fail `invariant 4] dev` on the ALLOW rule. The path exists, so the existence loop can't be what
   refuses it.
@@ -142,10 +142,18 @@ Logs:
   - narrow check 4's allow pattern to `packages/*/src` and update its message;
   - remove the Dockerfile `api-src` `COPY` and the dev `mkdir` entry.
   Green: `check-envs.sh` exits 0, and `test_check_envs.sh` passes, including the new case.
+  Evidence: `4e-4.1-baseline.log` (before the docker edits, after group 3 deleted the dir) ->
+  `FAIL clean tree passes ... read-only source mount names a path that does not exist:
+  packages/catalog/migrations`. After: `4e-4.1-checkenvs.log`: `sh docker/scripts/check-envs.sh
+  all` -> `check-envs: ok (all)`; `4e-4.1-green.log`: `sh docker/scripts/test_check_envs.sh` ->
+  `ok   a package bind outside src is caught`, `test_check_envs: 38 passed, 0 failed`. Red check
+  (ALLOW widened to `packages/[a-z0-9-]+/.*`, restored after): `4e-4.1-red.log` -> `FAIL a package
+  bind outside src is caught (wanted fail ..., got ok)`, `37 passed, 1 failed`.
 - [ ] 4.2 Images:
   - `docker build -f docker/Dockerfile --target api .` builds. That target uses `api-src`, which
-    `make dev-up` never builds. Run it once with dev's env, and `/api/health` is 200;
-  - `make dev-up`: the dev image builds, the app boots on Postgres, `GET /api/health` is 200, and
+    `make dev-up` never builds. Boot it (`make stage-up`; the owner runs or allows it), and its
+    healthcheck route `/api/profile` answers 200;
+  - `make dev-up`: the dev image builds, the app boots on Postgres, `GET /api/profile` (the healthcheck route) is 200, and
     `POST /api/sessions` creates a session.
 
 ## 5. Docs and specs
