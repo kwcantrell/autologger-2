@@ -25,6 +25,7 @@ const REAL_MIGRATION_NAMES = [
   '0003_kv.sql',
   '0004_team_roles_and_invites.sql',
   '0005_show_title_suffix.sql',
+  '0006_team_indexes.sql',
 ];
 
 const scratchDirs: string[] = [];
@@ -137,7 +138,11 @@ describe('catalog migration content: 0004 team-role backfill + invites (recreate
     ); // non-built-in
 
     const applied = applyMigrations(db, CATALOG_MIGRATIONS_DIR);
-    expect(applied).toEqual(['0004_team_roles_and_invites.sql', '0005_show_title_suffix.sql']);
+    expect(applied).toEqual([
+      '0004_team_roles_and_invites.sql',
+      '0005_show_title_suffix.sql',
+      '0006_team_indexes.sql',
+    ]);
 
     const rows = db
       .prepare('SELECT studio_id, role FROM user_studio_memberships ORDER BY studio_id')
@@ -187,7 +192,7 @@ describe('catalog migration content: 0005 show title_suffix backfill (recreated 
     ).run('show-pre', 'studio-1', 'Pre-existing Show', 'PRE', 1, now);
 
     const applied = applyMigrations(db, CATALOG_MIGRATIONS_DIR);
-    expect(applied).toEqual(['0005_show_title_suffix.sql']);
+    expect(applied).toEqual(['0005_show_title_suffix.sql', '0006_team_indexes.sql']);
 
     const preRow = db.prepare('SELECT title_suffix FROM shows WHERE id = ?').get('show-pre') as {
       title_suffix: string;

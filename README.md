@@ -634,8 +634,9 @@ packages/                 Source-only npm workspace packages (no build step; ser
                              together, design D7); the directory-generic migrator that applies
                              them stays in @autologger/storage
   catalog/migrations/       Catalog DDL, filename-ordered (0001_init.sql through
-                           0005_show_title_suffix.sql: init + seeded built-in shows, sessions
-                           index + live projection, kv table, team roles/invites, title suffix)
+                           0006_team_indexes.sql: init + seeded built-in shows, sessions
+                           index + live projection, kv table, team roles/invites, title suffix,
+                           per-team indexes)
   storage/src/             @autologger/storage — the SQLite/filesystem persistence adapters
                            (L1; deps: ports only; better-sqlite3 peerDependency) moved from
                            server/src/node/ (persistence-package-extraction task 2.2)

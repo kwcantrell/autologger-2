@@ -68,12 +68,6 @@ showsRouter.post('/api/shows', async (c) => {
   if (user === null && oauthConfigured(c.env.config))
     return c.json({ detail: 'Login required.' }, 401);
 
-  if (!catalog.studios.isKnownStudio(body.studio_id))
-    return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(await catalog.auth.authUserHasStudio(user.id, body.studio_id))) {
-    return c.json({ detail: 'Unknown studio id.' }, 404);
-  }
-
   const code = (body.show_code ?? '').trim().toUpperCase() || suggestedShowCode(body.name);
   if (!code) return c.json({ detail: 'Show code is required.' }, 400);
 
@@ -86,15 +80,24 @@ showsRouter.post('/api/shows', async (c) => {
   norm = freshCategoryIds(norm);
 
   const palJson = JSON.stringify(normalizeEventPaletteNine(null));
-  const newId = await catalog.shows.createShow({
-    studioId: body.studio_id,
-    name: body.name.trim(),
-    showCode: code,
-    categoriesJson: JSON.stringify(norm),
-    paletteJson: palJson,
-    paletteCustomJson: palJson,
+  // The team and the caller's membership are checked inside the insert's transaction, so a team
+  // deleted meanwhile never gets a show (catalog-concurrency-hazards D3).
+  const created = await catalog.tx(async (cat) => {
+    if (!(await cat.studios.studioExists(body.studio_id))) return 400 as const;
+    if (user !== null && !(await cat.auth.authUserHasStudio(user.id, body.studio_id))) {
+      return 404 as const;
+    }
+    return cat.shows.createShow({
+      studioId: body.studio_id,
+      name: body.name.trim(),
+      showCode: code,
+      categoriesJson: JSON.stringify(norm),
+      paletteJson: palJson,
+      paletteCustomJson: palJson,
+    });
   });
-  const row = await catalog.shows.getShowRow(newId);
+  if (typeof created === 'number') return c.json({ detail: 'Unknown studio id.' }, created);
+  const row = await catalog.shows.getShowRow(created);
   if (row === null) return c.json({ detail: 'Show was not created.' }, 500);
   return c.json({ show: showApiDict(row) });
 });

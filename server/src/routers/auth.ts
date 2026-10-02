@@ -179,30 +179,15 @@ authRouter.get('/auth/google/callback', async (c) => {
   const catalog = c.get('catalog');
 
   // Design D11: resolve the sub against ALL rows (not just enabled ones)
-  // before the existing/new split. A disabled match must redirect here --
-  // falling through to the new-user branch would trip the unique google_sub
-  // constraint (the former latent 500).
-  const anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
-  if (anyExisting?.disabled_at_utc) {
-    console.warn('OAuth callback: disabled account attempted sign-in', sanitizeForLog(googleSub));
-    return c.redirect('/?login_error=account_disabled', 302);
-  }
-
-  let uid: string;
-  if (anyExisting) {
-    uid = String(anyExisting.id);
-    await catalog.auth.authUpdateUserProfile(uid, {
-      email,
-      givenName: gn,
-      familyName: fn,
-      pictureUrl: pic,
-    });
-  } else {
+  // before the existing/new split. A disabled match must redirect here.
+  let anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
+  let uid = '';
+  if (!anyExisting) {
     // Design D2: the whole new-user branch -- creation, pref seeding, and
     // invite materialization + consumption -- runs inside one catalog
     // transaction, on stores bound to it (store transactions join it;
     // async-catalog-stores D3). The KV login-session write below stays outside.
-    uid = await catalog.tx(async (cat) => {
+    const created = await catalog.tx(async (cat) => {
       const newUid = await cat.auth.authCreateUserGoogle({
         googleSub,
         email: email || `${googleSub}@users.noreply.invalid`,
@@ -210,6 +195,8 @@ authRouter.get('/auth/google/callback', async (c) => {
         familyName: fn,
         pictureUrl: pic,
       });
+      // A concurrent first sign-in for this sub won (catalog-concurrency-hazards D5).
+      if (newUid === null) return null;
       await cat.auth.authSeedPrefsFromGlobals(
         newUid,
         (await cat.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
@@ -229,6 +216,21 @@ authRouter.get('/auth/google/callback', async (c) => {
         }
       }
       return newUid;
+    });
+    if (created === null) anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
+    else uid = created;
+  }
+  if (anyExisting) {
+    if (anyExisting.disabled_at_utc) {
+      console.warn('OAuth callback: disabled account attempted sign-in', sanitizeForLog(googleSub));
+      return c.redirect('/?login_error=account_disabled', 302);
+    }
+    uid = String(anyExisting.id);
+    await catalog.auth.authUpdateUserProfile(uid, {
+      email,
+      givenName: gn,
+      familyName: fn,
+      pictureUrl: pic,
     });
   }
 

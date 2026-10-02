@@ -16,3 +16,23 @@ export async function purgeExpiredAtBoot(
     );
   }
 }
+
+/** Purge expired KV entries every 10 minutes while running, so rows such as sign-in states don't
+ * pile up until a restart (catalog-concurrency-hazards D10). Unref'd, warn-only; main.ts clears it
+ * on shutdown. */
+export function startPeriodicPurge(
+  kv: KvStore,
+  warn: (msg: string) => void = console.warn,
+  intervalMs = 10 * 60_000,
+): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    kv.purgeExpired().catch((e: unknown) => {
+      const code = (e as { code?: unknown })?.code;
+      warn(
+        `autologger: periodic KV purge failed (${typeof code === 'string' ? code : e instanceof Error ? e.name : 'error'})`,
+      );
+    });
+  }, intervalMs);
+  timer.unref();
+  return timer;
+}

@@ -69,6 +69,7 @@ adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
   requireAdminToken(c);
   try {
     await c.get('catalog').studios.adminDeleteStudio(c.req.param('studioId').trim());
+    await c.get('catalog').studios.refreshAfterWrite();
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
@@ -79,16 +80,19 @@ adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
 adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   requireAdminToken(c);
   const body = adminMembershipBodySchema.parse(await c.req.json());
-  const catalog = c.get('catalog');
   const sid = body.studio_id.trim();
-  if (!catalog.studios.isKnownStudio(sid)) throw new ApiError(400, 'Unknown team id.');
-  const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
-  if (row === null) throw new ApiError(404, 'User not found.');
-  // Upsert (not the INSERT OR IGNORE of authAddMemberships): with the role
-  // column present, a re-POST on an existing membership must update its role
-  // (defaulting to 'member' when absent) — the orphaned-team rescue path
-  // (teams-self-serve) needs promotion to actually take effect, not no-op.
-  await catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
+  // The team is checked inside the upsert's transaction, not against the request's snapshot, so a
+  // team deleted meanwhile gets no membership (catalog-concurrency-hazards D3).
+  await c.get('catalog').tx(async (catalog) => {
+    if (!(await catalog.studios.studioExists(sid))) throw new ApiError(400, 'Unknown team id.');
+    const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
+    if (row === null) throw new ApiError(404, 'User not found.');
+    // Upsert (not the ON CONFLICT DO NOTHING of authAddMemberships): with the role
+    // column present, a re-POST on an existing membership must update its role
+    // (defaulting to 'member' when absent) — the orphaned-team rescue path
+    // (teams-self-serve) needs promotion to actually take effect, not no-op.
+    await catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
+  });
   return c.json({ ok: true });
 });
 

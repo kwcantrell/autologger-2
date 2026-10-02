@@ -1041,15 +1041,17 @@ describe('events/generate — configured behavior (real create_event MCP round t
         .mockImplementationOnce(() => {
           throw new Error('boom — simulated projection failure');
         });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const res = await generateReq(sessionId, configuredEnv(EVENTS_SUCCESS_FIXTURE));
-        // The projection throw surfaces as the app's generic 500 (app.ts
-        // onError) — the load-bearing assertion is the slot state below, not
-        // this status.
-        expect(res.status).toBe(500);
+        // A failed mirror write only warns: the run's own outcome is returned
+        // (catalog-concurrency-hazards D6; was the generic 500). The slot is free either way.
+        expect(res.status).toBe(200);
+        expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/live projection not written/);
         expect(aiChatTurns.isSessionInFlight(sessionId)).toBe(false);
       } finally {
         spy.mockRestore();
+        warn.mockRestore();
       }
     },
   );

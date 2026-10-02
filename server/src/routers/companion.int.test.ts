@@ -1,5 +1,7 @@
+import { KvStore } from '@autologger/storage';
 import { describe, expect, it, vi } from 'vitest';
-import { app, env } from '../test/harness';
+import { GatedCatalog } from '../test/gatedCatalog';
+import { app, env, envWith } from '../test/harness';
 import {
   seededSession,
   seedSession,
@@ -258,5 +260,34 @@ describe('ordering on async storage (async-session-callers D4/D5)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// catalog-concurrency-hazards D7: an ack marks its command only while it is still the latest.
+describe('ack racing a newer command', () => {
+  it('a late ack for command A after command B lands gives {ok:false}, and last_command stays B', async () => {
+    const s = (await seededSession()).sessionId;
+    await setCompanionPresence('c1', s, { visible: true });
+    const command = async () =>
+      (await (
+        await app.request(
+          '/api/companion/command',
+          { method: 'POST', headers: J, body: JSON.stringify({ type: 'record-toggle' }) },
+          { ...env },
+        )
+      ).json()) as { command_id: string };
+    const a = await command();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/^SELECT value, expires_at FROM kv WHERE key = \?$/);
+    const ack = app.request(
+      `/api/companion/commands/${a.command_id}/ack`,
+      { method: 'POST', headers: J, body: JSON.stringify({ client_id: 'c1', ok: true }) },
+      envWith({}, { kv: new KvStore(gated, env.ports.clock) }),
+    );
+    await h.reached;
+    const b = await command();
+    h.release();
+    expect(await (await ack).json()).toEqual({ ok: false });
+    expect(((await state()).last_command as { id: string }).id).toBe(b.command_id);
   });
 });

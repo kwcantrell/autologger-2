@@ -18,6 +18,7 @@ import type { Ports as BasePorts, Config } from '@autologger/ports';
 import type { SessionHubRegistryFacade } from '@autologger/session-core';
 
 export type { Config };
+import type { SessionMirror } from './sessionMirror';
 
 /** Constructed services, role-named. Extends the package's base Ports shape
  * with the one handle type it deliberately does not carry as a base-Ports
@@ -25,6 +26,9 @@ export type { Config };
  * concrete `SessionHubRegistry` class. */
 export interface Ports extends BasePorts {
   sessions: SessionHubRegistryFacade;
+  /** Ordered, failure-tolerant catalog mirror of each session's live projection
+   * (catalog-concurrency-hazards D6). */
+  mirror: Pick<SessionMirror, 'mirror'>;
 }
 
 /** The per-request env object. Callers MUST pass a fresh env per request and

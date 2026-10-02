@@ -84,6 +84,16 @@ async function requireTeamAdmin(c: Context<AppEnv>, teamId: string): Promise<Aut
   return user;
 }
 
+/** The admin check again, inside the write's transaction, with the caller's membership row
+ * locked for share (catalog-concurrency-hazards D2): a demotion or removal that commits while
+ * the request is in flight either waits for the write or fails it, and the re-run answers as a
+ * serial order would. Same statuses as `requireTeamAdmin`. */
+async function requireTeamAdminIn(cat: CatalogFacade, userId: string, teamId: string): Promise<void> {
+  const role = await cat.auth.authGetMembershipRoleForShare(userId, teamId);
+  if (role === null) throw new ApiError(404, 'Team not found');
+  if (role !== 'admin') throw new ApiError(403, 'Admin role required.');
+}
+
 /** Count of non-built-in teams the user currently admins — self-serve
  * creation cap (design D10). Single indexed query (phase-2 review: replaced
  * an N+1 over every membership the user holds, which didn't scale with a
@@ -119,17 +129,19 @@ const LAST_ADMIN_MESSAGE = 'This would leave the team with no enabled admin.';
  * transaction-bound catalog, and `mutate` is awaited inside the transaction
  * (async-catalog-stores D3). */
 async function guardedAgainstLastAdmin(
-  c: Context<AppEnv>,
+  catalog: CatalogFacade,
   teamId: string,
   targetUserId: string,
-  mutate: (catalog: CatalogFacade) => Promise<void>,
+  mutate: (catalog: CatalogFacade) => Promise<boolean>,
 ): Promise<void> {
-  const blocked = await c.get('catalog').tx(async (cat) => {
-    if (await wouldStripLastEnabledAdmin(cat, teamId, targetUserId)) return true;
-    await mutate(cat);
-    return false;
+  // Joins the caller's transaction when `catalog` is transaction-bound. `mutate` reports whether
+  // the membership was there to change (catalog-concurrency-hazards D2).
+  const result = await catalog.tx(async (cat) => {
+    if (await wouldStripLastEnabledAdmin(cat, teamId, targetUserId)) return 'blocked';
+    return (await mutate(cat)) ? 'ok' : 'missing';
   });
-  if (blocked) throw new ApiError(409, LAST_ADMIN_MESSAGE);
+  if (result === 'blocked') throw new ApiError(409, LAST_ADMIN_MESSAGE);
+  if (result === 'missing') throw new ApiError(404, 'Member not found');
 }
 
 // -- POST /api/teams — self-serve creation (any user) -------------------------
@@ -141,19 +153,25 @@ teamsRouter.post('/api/teams', async (c) => {
   const teamId = body.id.trim();
   const displayName = body.display_name.trim();
 
-  if ((await countOwnedNonBuiltinTeams(catalog, user.id)) >= MAX_OWNED_TEAMS) {
-    throw new ApiError(
-      400,
-      `You already admin ${MAX_OWNED_TEAMS} teams; the limit has been reached.`,
-    );
-  }
   try {
-    await catalog.studios.adminCreateStudio(teamId, displayName);
+    const { sid, disp } = catalog.studios.validateNewStudio(teamId, displayName);
+    // Cap, definition and admin membership in one transaction (catalog-concurrency-hazards D2):
+    // two creates can't both pass the cap, and the team never exists without its admin.
+    await catalog.tx(async (cat) => {
+      if ((await countOwnedNonBuiltinTeams(cat, user.id)) >= MAX_OWNED_TEAMS) {
+        throw new ApiError(
+          400,
+          `You already admin ${MAX_OWNED_TEAMS} teams; the limit has been reached.`,
+        );
+      }
+      await cat.studios.insertStudioDefinition(sid, disp);
+      await cat.auth.authAddMembershipWithRole(user.id, sid, 'admin');
+    });
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
-  await catalog.auth.authAddMembershipWithRole(user.id, teamId, 'admin');
+  await catalog.studios.refreshAfterWrite();
   return c.json({ id: teamId, name: displayName, role: 'admin' as TeamRole });
 });
 
@@ -186,16 +204,20 @@ teamsRouter.get('/api/teams/:id', async (c) => {
 
 teamsRouter.patch('/api/teams/:id', async (c) => {
   const teamId = c.req.param('id').trim();
-  await requireTeamAdmin(c, teamId);
+  const admin = await requireTeamAdmin(c, teamId);
   const body = parseTeamBody(teamRenameBodySchema, await c.req.json());
   const catalog = c.get('catalog');
   const displayName = body.display_name.trim();
   try {
-    await catalog.studios.renameStudio(teamId, displayName);
+    await catalog.tx(async (cat) => {
+      await requireTeamAdminIn(cat, admin.id, teamId);
+      await cat.studios.renameStudio(teamId, displayName);
+    });
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
+  await catalog.studios.refreshAfterWrite();
   return c.json({ id: teamId, name: displayName });
 });
 
@@ -203,16 +225,20 @@ teamsRouter.patch('/api/teams/:id', async (c) => {
 
 teamsRouter.delete('/api/teams/:id', async (c) => {
   const teamId = c.req.param('id').trim();
-  await requireTeamAdmin(c, teamId);
+  const admin = await requireTeamAdmin(c, teamId);
   const catalog = c.get('catalog');
   try {
     // Shared with the admin plane (studioRegistry.adminDeleteStudio) so both
-    // planes cascade identically, incl. team_invites — design D4.
-    await catalog.studios.adminDeleteStudio(teamId);
+    // planes cascade identically, incl. team_invites — design D4. Its transaction joins this one.
+    await catalog.tx(async (cat) => {
+      await requireTeamAdminIn(cat, admin.id, teamId);
+      await cat.studios.adminDeleteStudio(teamId);
+    });
   } catch (e) {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
+  await catalog.studios.refreshAfterWrite();
   return c.json({ ok: true });
 });
 
@@ -225,26 +251,31 @@ teamsRouter.post('/api/teams/:id/invites', async (c) => {
   const emailNorm = normalizeEmail(body.email);
   if (!isPlausibleEmail(emailNorm)) throw new ApiError(400, 'Invalid email address.');
 
-  const catalog = c.get('catalog');
-  const matches = await catalog.auth.authListUsersByEmailNorm(emailNorm);
-  if (matches.length > 0) {
-    // Immediate membership for every matching user row (incl. disabled —
-    // design D2); a match that's already a member is a strict no-op (role
-    // preserved by authAddMembershipWithRole's INSERT OR IGNORE).
-    for (const m of matches) {
-      await catalog.auth.authAddMembershipWithRole(String(m.id), teamId, 'member');
+  // One transaction for the lookup, the cap and the write (catalog-concurrency-hazards D2): two
+  // invites can't pass the cap together, and an invite can't miss a user whose first sign-in
+  // commits meanwhile.
+  await c.get('catalog').tx(async (catalog) => {
+    await requireTeamAdminIn(catalog, admin.id, teamId);
+    const matches = await catalog.auth.authListUsersByEmailNorm(emailNorm);
+    if (matches.length > 0) {
+      // Immediate membership for every matching user row (incl. disabled —
+      // design D2); a match that's already a member is a strict no-op (role
+      // preserved by authAddMembershipWithRole's ON CONFLICT DO NOTHING).
+      for (const m of matches) {
+        await catalog.auth.authAddMembershipWithRole(String(m.id), teamId, 'member');
+      }
+    } else {
+      const pending = await catalog.auth.authListInvitesForTeam(teamId);
+      const alreadyPending = pending.some((r) => String(r.email_norm) === emailNorm);
+      if (!alreadyPending && pending.length >= MAX_PENDING_INVITES) {
+        throw new ApiError(
+          400,
+          `This team already has ${MAX_PENDING_INVITES} pending invites; revoke one before inviting more.`,
+        );
+      }
+      await catalog.auth.authUpsertInvite(teamId, emailNorm, admin.id);
     }
-  } else {
-    const pending = await catalog.auth.authListInvitesForTeam(teamId);
-    const alreadyPending = pending.some((r) => String(r.email_norm) === emailNorm);
-    if (!alreadyPending && pending.length >= MAX_PENDING_INVITES) {
-      throw new ApiError(
-        400,
-        `This team already has ${MAX_PENDING_INVITES} pending invites; revoke one before inviting more.`,
-      );
-    }
-    await catalog.auth.authUpsertInvite(teamId, emailNorm, admin.id);
-  }
+  });
   // Uniform 200 either way (design D2: shape minimalism, not enumeration
   // hygiene — the admin reads the outcome from the next GET team detail).
   return c.json({ ok: true });
@@ -254,10 +285,13 @@ teamsRouter.post('/api/teams/:id/invites', async (c) => {
 
 teamsRouter.delete('/api/teams/:id/invites/:email', async (c) => {
   const teamId = c.req.param('id').trim();
-  await requireTeamAdmin(c, teamId);
+  const admin = await requireTeamAdmin(c, teamId);
   // Hono decodes path params already; normalize identically to invite-time.
   const emailNorm = normalizeEmail(c.req.param('email'));
-  await c.get('catalog').auth.authDeleteInvite(teamId, emailNorm);
+  await c.get('catalog').tx(async (cat) => {
+    await requireTeamAdminIn(cat, admin.id, teamId);
+    await cat.auth.authDeleteInvite(teamId, emailNorm);
+  });
   return c.json({ ok: true });
 });
 
@@ -265,22 +299,23 @@ teamsRouter.delete('/api/teams/:id/invites/:email', async (c) => {
 
 teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   const teamId = c.req.param('id').trim();
-  await requireTeamAdmin(c, teamId);
+  const admin = await requireTeamAdmin(c, teamId);
   const targetUserId = c.req.param('userId').trim();
   const body = parseTeamBody(teamRoleChangeBodySchema, await c.req.json());
-  const catalog = c.get('catalog');
 
-  const currentRole = await catalog.auth.authGetMembershipRole(targetUserId, teamId);
-  if (currentRole === null) throw new ApiError(404, 'Member not found');
-  if (currentRole === body.role) return c.json({ ok: true, role: body.role }); // idempotent
-
-  if (body.role === 'member') {
-    await guardedAgainstLastAdmin(c, teamId, targetUserId, async (cat) => {
-      await cat.auth.authUpsertMembershipRole(targetUserId, teamId, 'member');
-    });
-  } else {
-    await catalog.auth.authUpsertMembershipRole(targetUserId, teamId, 'admin');
-  }
+  await c.get('catalog').tx(async (catalog) => {
+    await requireTeamAdminIn(catalog, admin.id, teamId);
+    const currentRole = await catalog.auth.authGetMembershipRole(targetUserId, teamId);
+    if (currentRole === null) throw new ApiError(404, 'Member not found');
+    if (currentRole === body.role) return; // idempotent
+    if (body.role === 'member') {
+      await guardedAgainstLastAdmin(catalog, teamId, targetUserId, (cat) =>
+        cat.auth.authSetExistingMembershipRole(targetUserId, teamId, 'member'),
+      );
+    } else if (!(await catalog.auth.authSetExistingMembershipRole(targetUserId, teamId, 'admin'))) {
+      throw new ApiError(404, 'Member not found');
+    }
+  });
   return c.json({ ok: true, role: body.role });
 });
 
@@ -288,14 +323,13 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
 
 teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
   const teamId = c.req.param('id').trim();
-  await requireTeamAdmin(c, teamId);
+  const admin = await requireTeamAdmin(c, teamId);
   const targetUserId = c.req.param('userId').trim();
-  const catalog = c.get('catalog');
-  if ((await catalog.auth.authGetMembershipRole(targetUserId, teamId)) === null) {
-    throw new ApiError(404, 'Member not found');
-  }
-  await guardedAgainstLastAdmin(c, teamId, targetUserId, async (cat) => {
-    await cat.auth.authRemoveMembership(targetUserId, teamId);
+  await c.get('catalog').tx(async (catalog) => {
+    await requireTeamAdminIn(catalog, admin.id, teamId);
+    await guardedAgainstLastAdmin(catalog, teamId, targetUserId, (cat) =>
+      cat.auth.authRemoveMembership(targetUserId, teamId),
+    );
   });
   return c.json({ ok: true });
 });
@@ -305,8 +339,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
 teamsRouter.post('/api/teams/:id/leave', async (c) => {
   const teamId = c.req.param('id').trim();
   const { user } = await requireTeamMember(c, teamId);
-  await guardedAgainstLastAdmin(c, teamId, user.id, async (cat) => {
-    await cat.auth.authRemoveMembership(user.id, teamId);
-  });
+  await guardedAgainstLastAdmin(c.get('catalog'), teamId, user.id, (cat) =>
+    cat.auth.authRemoveMembership(user.id, teamId),
+  );
   return c.json({ ok: true });
 });

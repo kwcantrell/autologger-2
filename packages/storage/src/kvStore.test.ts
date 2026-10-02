@@ -109,6 +109,30 @@ describe('KvStore.take', () => {
   });
 });
 
+describe('KvStore.replaceIf (catalog-concurrency-hazards D7)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('replaces only when the stored value is the expected one, keeping the expiry', async () => {
+    const s = store();
+    await s.put('k', 'a', { expirationTtl: 60 });
+    expect(await s.replaceIf('k', 'stale', 'x')).toBe(false);
+    expect(await s.get('k')).toBe('a');
+    expect(await s.replaceIf('k', 'a', 'b')).toBe(true);
+    expect(await s.get('k')).toBe('b');
+    vi.advanceTimersByTime(61_000);
+    expect(await s.get('k')).toBeNull(); // the expiry was kept
+  });
+
+  it('refuses a missing or expired key', async () => {
+    const s = store();
+    expect(await s.replaceIf('nope', 'a', 'b')).toBe(false);
+    await s.put('k', 'a', { expirationTtl: 1 });
+    vi.advanceTimersByTime(2_000);
+    expect(await s.replaceIf('k', 'a', 'b')).toBe(false);
+  });
+});
+
 describe('KvStore.take under contention', () => {
   it('two takes queued behind a held transaction: exactly one gets the value', async () => {
     const db = new Database(':memory:');

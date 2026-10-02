@@ -121,18 +121,21 @@ sessionsRouter.get('/api/sessions', async (c) => {
 
   const shows = await catalog.shows.listShowsForStudio(active.id);
   const validShowIds = new Set(shows.map((r) => String(r.id)));
-  let rawActiveShow = '';
+  // `stored` is the raw value read, so the repair below applies only if it is still there.
+  let stored: string | null;
   if (user === null) {
-    rawActiveShow = String((await catalog.studios.getSetting(SETTING_ACTIVE_SHOW)) ?? '').trim();
+    stored = await catalog.studios.getSetting(SETTING_ACTIVE_SHOW);
   } else {
     const prow = await catalog.auth.authGetPrefs(user.id);
-    rawActiveShow = prow ? String(prow.active_show_id ?? '').trim() : '';
+    stored = prow ? ((prow.active_show_id as string | null) ?? null) : null;
   }
+  const rawActiveShow = String(stored ?? '').trim();
   let activeShowId = validShowIds.has(rawActiveShow) ? rawActiveShow : '';
   if (!activeShowId && shows.length) {
     activeShowId = String(shows[0].id);
-    if (user === null) await catalog.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
-    else await catalog.auth.authSetPrefs(user.id, active.id, activeShowId);
+    // Conditional, so a profile update committed meanwhile wins (catalog-concurrency-hazards D8).
+    if (user === null) await catalog.studios.setSettingIf(SETTING_ACTIVE_SHOW, stored, activeShowId);
+    else await catalog.auth.authReplaceActiveShowIf(user.id, active.id, stored, activeShowId);
   }
   if (!activeShowId) return c.json({ active: [], archived: [] });
 
@@ -436,6 +439,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
     await rollbackLocalAudioImportSegment(c, sessionId, seg);
     throw err;
   }
+  await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
 
   return c.json({ ok: true });
 });
@@ -559,13 +563,23 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       throw err;
     }
 
+    await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
+
     // Publish-date opt-in (D4) — catalog write, not a hub RPC; a missing/
-    // unusable date is a no-op, never a failure. The catalog handle is
-    // process-lifetime, so no re-acquire concern here (unlike the hub).
+    // unusable date is a no-op, never a failure. The audio is attached by now, so a failed write
+    // only warns with what to repair (youtube-audio-import, catalog-concurrency-hazards D6).
     if (parsedBody.data.use_publish_date) {
       const iso = normalizeUploadDate(fetched.uploadDate);
       if (iso) {
-        await c.get('catalog').sessions.setSessionEpisodeDate(sessionId, iso);
+        await c
+          .get('catalog')
+          .sessions.setSessionEpisodeDate(sessionId, iso)
+          .catch((e: unknown) => {
+            const code = (e as { code?: unknown })?.code;
+            console.warn(
+              `[youtube-import] session ${sessionId} episode_date ${iso} not written (${typeof code === 'string' ? code : (e as Error)?.name}); set it by hand`,
+            );
+          });
       }
     }
 

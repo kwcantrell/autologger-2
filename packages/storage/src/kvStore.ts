@@ -63,6 +63,17 @@ export class KvStore implements KvStorePort {
     return row.value;
   }
 
+  async replaceIf(key: string, expected: string, next: string): Promise<boolean> {
+    const res = await this.db.run(
+      'UPDATE kv SET value = ? WHERE key = ? AND value = ? AND (expires_at IS NULL OR expires_at > ?)',
+      next,
+      key,
+      expected,
+      this.clock.now(),
+    );
+    return res.changes > 0;
+  }
+
   async purgeExpired(): Promise<void> {
     await this.db.run(
       'DELETE FROM kv WHERE expires_at IS NOT NULL AND expires_at <= ?',

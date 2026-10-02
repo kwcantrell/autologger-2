@@ -25,7 +25,7 @@ export interface AuthStoreFacade {
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }) => Promise<string>;
+  }) => Promise<string | null>;
   authUpdateUserProfile: (
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
@@ -46,6 +46,18 @@ export interface AuthStoreFacade {
   authUpsertMembershipRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
   authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
   authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authGetMembershipRoleForShare: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authReplaceActiveShowIf: (
+    userId: string,
+    studioId: string,
+    expected: string | null,
+    next: string,
+  ) => Promise<void>;
+  authSetExistingMembershipRole: (
+    userId: string,
+    studioId: string,
+    role: TeamRole,
+  ) => Promise<boolean>;
   authCountEnabledAdmins: (studioId: string) => Promise<number>;
   authListTeamMembers: (studioId: string) => Promise<Array<{
     id: string;
@@ -100,12 +112,15 @@ export class AuthStore implements AuthStoreFacade {
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }): Promise<string> {
-    const uid = crypto.randomUUID();
-    await this.db.run(
+  }): Promise<string | null> {
+    // null when a user with this Google subject already exists: a concurrent first sign-in won
+    // (catalog-concurrency-hazards D5); the caller then takes the existing-user path.
+    const row = await this.db.first<Row>(
       `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      uid,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (google_sub) DO NOTHING
+       RETURNING id`,
+      crypto.randomUUID(),
       opts.googleSub,
       opts.email,
       opts.givenName,
@@ -113,7 +128,7 @@ export class AuthStore implements AuthStoreFacade {
       opts.pictureUrl,
       nowIso(),
     );
-    return uid;
+    return row === null ? null : String(row.id);
   }
 
   async authUpdateUserProfile(
@@ -221,6 +236,26 @@ export class AuthStore implements AuthStoreFacade {
     );
   }
 
+  /** Repair the active show only if it is still `expected` (the value the caller read), creating
+   * the row with `studioId` if it is missing; the studio column is never touched, so a concurrent
+   * profile update wins (catalog-concurrency-hazards D8). Postgres only. */
+  async authReplaceActiveShowIf(
+    userId: string,
+    studioId: string,
+    expected: string | null,
+    next: string,
+  ): Promise<void> {
+    await this.db.run(
+      `INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET active_show_id = excluded.active_show_id
+       WHERE user_prefs.active_show_id IS NOT DISTINCT FROM ?`,
+      userId,
+      studioId,
+      next,
+      expected,
+    );
+  }
+
   async authSeedPrefsFromGlobals(userId: string, activeStudioId: string, activeShowId: string): Promise<void> {
     // Read, then write, in one transaction (async-catalog-stores D2).
     await this.db.tx(async (t) => {
@@ -291,6 +326,22 @@ export class AuthStore implements AuthStoreFacade {
     );
   }
 
+  /** Change the role of an existing membership only; false when there is none, so a raced
+   * removal is never undone by a role change (catalog-concurrency-hazards D2). */
+  async authSetExistingMembershipRole(
+    userId: string,
+    studioId: string,
+    role: TeamRole,
+  ): Promise<boolean> {
+    const res = await this.db.run(
+      'UPDATE user_studio_memberships SET role = ? WHERE user_id = ? AND studio_id = ?',
+      role,
+      userId,
+      studioId,
+    );
+    return res.changes > 0;
+  }
+
   /** Count of teams the user admins, excluding the given studio ids (the
    * built-ins) — a single indexed query for the self-serve creation cap
    * (phase-2 review: avoids an N+1 over every membership the user holds). */
@@ -310,6 +361,19 @@ export class AuthStore implements AuthStoreFacade {
   async authGetMembershipRole(userId: string, studioId: string): Promise<TeamRole | null> {
     const row = await this.db.first<Row>(
       'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ?',
+      userId,
+      studioId,
+    );
+    return row === null ? null : (String(row.role) as TeamRole);
+  }
+
+  /** Role of (user, team), or null, with the membership row locked for share until the
+   * transaction ends: a concurrent demotion or removal waits for it, and one that already
+   * committed fails it with a serialization error, so the re-run sees the new role
+   * (catalog-concurrency-hazards D2). Postgres only; call it inside a transaction. */
+  async authGetMembershipRoleForShare(userId: string, studioId: string): Promise<TeamRole | null> {
+    const row = await this.db.first<Row>(
+      'SELECT role FROM user_studio_memberships WHERE user_id = ? AND studio_id = ? FOR SHARE',
       userId,
       studioId,
     );

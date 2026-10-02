@@ -215,13 +215,52 @@ Slice order:
      - start empty (owner, 2026-10-01): dev and stage begin with only the migration's seed shows;
        the old `catalog.db` and `sessions/*.db` stay untouched for the slice 11 import;
      - the server integration suite runs on a Postgres clone per test;
-   - 4d `catalog-concurrency-hazards`: the hazards listed under slice 3. The owner may swap 4c
-     and 4d;
+   - 4d `catalog-concurrency-hazards`: the hazards listed under slice 3. Done (2026-10-01), as one
+     PR over the size budget (owner: `size-override`, every task in this PR):
+     - #2: the Companion ack marks its command with one compare-and-set (`KvStore.replaceIf`);
+     - #3, #4, #17: one ordered mirror writer per session (`ports.mirror`), which re-reads the hub
+       when it writes and only warns on failure (owner: log and succeed). Local and YouTube imports
+       now mirror, and the YouTube episode date is best-effort;
+     - #5: the active-show repair is conditional; the anonymous profile writes in one transaction;
+     - #6: the log-import job builds its own catalog, and its lines hide catalog and driver error
+       text only;
+     - #7: verified, no route holds a hub across an await; no change;
+     - #8-#12, #18: each team admin write re-checks the caller's role with `FOR SHARE` inside its
+       transaction. Create is one transaction that refuses an id with shows and purges leftover
+       memberships, invites and settings (both planes). Role changes update existing rows only,
+       and a raced removal gives 404. The admin plane stays outside last-admin protection, by
+       spec (re-panel);
+     - #13, and the gate half of #14: show create and the admin membership add check the team
+       inside their transaction. Registry display names can still go stale across awaits
+       (accepted, revisit below);
+     - #15: concurrent first sign-ins for one sub both succeed (`ON CONFLICT DO NOTHING`, then the
+       existing-user path);
+     - #16: expired KV rows are purged every 10 minutes as well as at boot;
+     - #19: root statements have a 5 s client deadline. One statement per root connection; an
+       unsent one is withdrawn, a sent one is never cancelled and may still apply;
+     - #20: settings defaults are written without a transaction (`ON CONFLICT DO NOTHING`, a
+       compare-and-set repair), never for a team that no longer exists;
+     - per-team indexes on `user_studio_memberships (studio_id)` and `shows (studio_id)` (owner,
+       after the panel), mirrored in SQLite `0006` to keep schema parity until 4e. On small
+       tables SERIALIZABLE still tracks reads by page, so writes in different teams can retry
+       once.
    - 4e `retire-sqlite-catalog`.
 
    Follow-ups:
    - after the migration, revisit a typed catalog schema (`timestamptz`, `jsonb`, `boolean`)
      (owner, 2026-10-01);
+   - **Revisit after the migration** (4d alternatives not taken, owner 2026-10-01):
+     - `503` + `Retry-After` for timeouts and exhausted retries, instead of the generic `500`;
+     - foreign keys from memberships, invites and shows to `studio_definitions` (built-ins seeded
+       as rows, `23503` mapped), instead of in-transaction re-checks and the create purge;
+     - a `live_revision` column with a hub counter, instead of the in-process mirror chain
+       (needed once slice 8 runs several processes);
+     - reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror failures;
+     - a rate limit on `/auth/google/start` and on team writes, instead of the periodic purge
+       alone (a sustained flood can still exhaust SERIALIZABLE retries);
+     - the 5 s root deadline's value, and a distinct timeout for root writes;
+     - registry display names that go stale across awaits (#14);
+     - an email-indexed user lookup, so an invite doesn't read all of `users`;
    - `docker/supabase/init/roles.sql` may leave `SUPABASE_ROLES_PASSWORD` in
      `pg_stat_statements` and the DDL log at init.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.
