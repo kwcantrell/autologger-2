@@ -49,9 +49,9 @@ scratchpad as `hf-<task>-<red|green>.log`.
   - `/api/sessions` gives 401;
   - `/api/profile` and `/%61pi/profile` give 200;
   - `/api/companion/state` with the stage token gives 200.
-- [ ] 3.3 Owner: merge, then rebuild and redeploy prod `api`, then confirm
-  `curl https://<prod>/%61pi/sessions` gives 401. Then run the incident review on prod data
-  (proposal Impact: Exposure, Forensics).
+- [ ] 3.3 Owner: merge. Prod is not deployed (owner, 2026-10-02), so there is no redeploy or
+  incident review. Prod's first deploy is built from a commit that contains this fix; verify
+  then with `curl https://<prod>/%61pi/sessions` -> 401.
 - [ ] 3.4 Merge `main` into `supabase-migration` before 5b's first commit. Add a line to ADR 0021
   on that branch recording this freeze exception. Verify: `git merge-base --is-ancestor`
   shows the fix commit in `supabase-migration`, and the server suite there is green.

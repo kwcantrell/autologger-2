@@ -19,8 +19,9 @@ local stage stack (no cookie, no token):
 - `GET /%61pi/sessions` gives 200;
 - `GET /%61pi/companion/state` gives 200.
 
-Prod runs the same code from `main`. The owner chose a hotfix to `main` now, ahead of the
-migration.
+Prod is not deployed (owner, 2026-10-02), and stage is reachable only on loopback, so no
+exposed deployment runs this code. The owner chose to fix it on `main` now, as an exception to
+the migration freeze, so that prod's first deploy and the integration branch both have the fix.
 
 ## What Changes
 
@@ -74,20 +75,12 @@ None.
 
 - **Code:** `server/src/middleware/auth.ts` (a few lines), plus tests in
   `server/src/routers/gate.int.test.ts` and `authz.int.test.ts`.
-- **Deploy:** the owner rebuilds and redeploys prod `api` after merge. Prod stays exploitable
-  until then. If the redeploy may lag, the owner can add a stopgap Caddyfile rule that rejects
-  raw targets whose `/api` prefix contains a `%` escape. That rule isn't part of this change.
-- **Exposure, for the owner's incident review.** Through an encoded prefix, an anonymous caller
-  could reach every `/api/*` route except admin. That includes reads and writes on sessions,
-  events, transcripts, exports, audio upload and import, archive and delete, team and profile
-  routes, and the AI routes, which spend provider credit. `requireSession` skips the
-  studio-membership check when there is no user, so this access crossed studios. The exposure
-  window runs from whenever prod's router started forwarding encoded `/api` prefixes, or the
-  Hono server started taking traffic, until the fixed `api` is deployed.
-- **Forensics.** The server logs no requests, and `docker/Caddyfile` has no `log` directive, so
-  the app's own logs can't show this traffic. The review has to inspect the data: unexpected
-  session edits, deletions or archives, events and audio, Companion presence and `last_command`,
-  and AI provider usage. Logs from the front proxy (Pangolin/Newt), if kept, are the only place
-  a `%61pi` request line would appear.
+- **Deploy:** prod is not deployed, so there is nothing to redeploy. Prod's first deploy must be
+  built from a commit that contains this fix.
+- **Exposure:** none on an exposed deployment, because prod is not deployed and stage is
+  loopback-only. On any deployment running the old code, an anonymous caller could reach every
+  `/api/*` route except admin, across studios, because `requireSession` skips the membership
+  check when there is no user. The server and `docker/Caddyfile` log no requests, so such access
+  could only be found by inspecting the data. This is why the fix must precede the first deploy.
 - **Slice 5b:** the same fix is carried on `supabase-migration` (merge `main` into it, or
   cherry-pick).

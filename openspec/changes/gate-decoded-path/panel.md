@@ -15,8 +15,22 @@ The reviewers found no remaining bypass once the fix is in. They probed the inst
 - [x] [minor] The non-goal overstated the upgrade dispatcher ("destroys everything else"); in dev a non-literal upgrade goes to Next. Evidence: `sed -n 79,88p server/src/upgradeDispatch.ts`. Resolved: the proposal wording is corrected.
 - [ ] [minor] `HEAD /api/profile` gets 401 under strict login while GET is exempt. This is pre-existing and out of scope. Evidence: harness -> `HEAD /api/profile 401`. Recorded for 5b (its panel already has it).
 - [ ] [minor] Drift: a future middleware deciding on the raw `.pathname` would reintroduce the bug. A CI grep ban would enforce it (AGENTS.md rule 8). Evidence: design A4 grep. Recorded in design Risks as a 5b follow-up.
-- [ ] [minor] Rollout gap: prod stays exploitable until the redeploy. A Caddyfile stopgap is possible but is a non-goal. Evidence: `docker/Caddyfile` `@apiPrefix` forwards `^/(a|%61)(p|%70)(i|%69)`. Recorded in the proposal Deploy section as the owner's option.
+- [x] [minor] Rollout gap: prod stays exploitable until the redeploy. A Caddyfile stopgap is possible but is a non-goal. Evidence: `docker/Caddyfile` `@apiPrefix` forwards `^/(a|%61)(p|%70)(i|%69)`. Resolved: moot. Prod is not deployed (owner, 2026-10-02); its first deploy is built from a commit with the fix (see consistency read).
 - [x] [minor] The freeze exception was recorded only in this proposal; ADR 0021 lives on `supabase-migration`. Evidence: `ls docs/decisions | grep 0021` -> none on `main`. Resolved: task 3.4 adds the ADR line when `main` is merged in.
 - [ ] [minor] Merging into `supabase-migration` may conflict in `gate.int.test.ts`/`authz.int.test.ts` (the async rewrite there), and new cases may need `await`. Evidence: `git diff main origin/supabase-migration --stat -- server/src/routers/gate.int.test.ts` -> `22 +-`. Covered by task 3.4.
 
 Not verified by the reviewers: A1 (the live stage curl) was denied to them. The author ran it during the 5b panel: `/api/sessions -> 401`, `/%61pi/sessions -> 200`, `/%61pi/companion/state -> 200`.
+
+## Consistency read 2026-10-02
+Edits since approval (8e74b53):
+- proposal.md: Why and Impact now say prod is not deployed (owner, 2026-10-02) and stage is loopback-only; Deploy, Exposure and Forensics are folded into one Exposure note with no incident review;
+- tasks.md: 1.1, 2.1 and 3.1 ticked with evidence; 3.3 is now merge, with the 401 check done at prod's first deploy and no redeploy or incident review.
+
+Scope change: no. The code, spec deltas, tests and contract impact are unchanged. The edits correct deployment facts only, which lowers urgency and removes the incident-review step.
+- Every spec-delta requirement has a task and a test:
+  - core-ports-architecture "Percent-encoded API prefix is gated like the literal one" -> `gate.int.test.ts` encoded no-credential cases (task 1.1);
+  - api-contract-freeze "Encoded spellings get the literal path's answer" -> `gate.int.test.ts` `/%61pi/companion/state` and `/api/%63ompanion/state` cases (task 1.1);
+  - the unchanged scenarios are covered by the existing `gate`/`authz` tests, which are green in 2.1.
+- No task does something a non-goal excludes: there is no Caddyfile edit and no upgrade dispatcher change.
+- No contradiction between design and specs: D1 (`c.req.path`) matches both deltas.
+- [x] [minor] Panel majors 1 and 2 cite "task 3.3 adds the incident review" and "Forensics", which the edit removed. Resolved: these are historical panel records. The current proposal records that there is no deployed exposure, and that without request logs only a data inspection could reveal access on old code.
