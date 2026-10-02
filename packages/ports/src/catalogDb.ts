@@ -10,7 +10,7 @@
 // transaction ended, reject.
 //
 // On Postgres a `tx` body may run more than once: a serialization failure or deadlock re-runs it
-// (at most three runs). A body must therefore have only database effects.
+// (at most five runs). A body must therefore have only database effects.
 
 export interface CatalogDb {
   all<T = Record<string, unknown>>(sql: string, ...binds: unknown[]): Promise<T[]>;

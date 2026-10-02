@@ -179,7 +179,8 @@ Slice order:
    19. root (non-transaction) statements have no client-side deadline, so a paused db stalls
        every request up to the role's 30 s `statement_timeout` (4c panel);
    20. `getStudioSettingsBlob` writes a default while reading, inside SERIALIZABLE; concurrent
-       first loads on an empty catalog conflict and can exhaust the retries (4c panel).
+       first loads on an empty catalog conflict and can exhaust the retries (4c panel). Jittered
+       backoff (`catalog-retry-backoff`) makes that rarer.
 
    Since 4c these hazards are live on dev and stage (real I/O); prod is on hold until cutover.
 4. Catalog schema and the postgres.js adapter. Split (owner, 2026-10-01) into:
@@ -196,7 +197,8 @@ Slice order:
        replaces "rollback per test" above (owner decision), because the code under test opens
        its own transactions;
    - 4b `postgres-catalog-adapter`: postgres.js behind `CatalogDb`. Every `tx` is `SERIALIZABLE`
-     and retried on serialization failure or deadlock, at most 3 tries (owner). int8 is parsed
+     and retried on serialization failure or deadlock, at most 5 runs with a full-jitter backoff
+     below 20 × 2^(n−1) ms (owner, 2026-10-02, `catalog-retry-backoff`; first 3 tries, no wait). int8 is parsed
      to a number. It also delivers an async `close()`. Transactions run on single-connection
      clients the adapter manages, because postgres.js 3.4.9's `reserve()` and `begin()` crash the
      process after a lost connection (4b design A5-A7). A `COMMIT` with no reply raises
@@ -277,15 +279,16 @@ Slice order:
        (needed once slice 8 runs several processes);
      - reconcile-on-read, or a retried dirty set, instead of log-and-succeed for mirror failures;
      - a rate limit on `/auth/google/start` and on team writes, instead of the periodic purge
-       alone (a sustained flood can still exhaust SERIALIZABLE retries);
+       alone (a sustained flood can still exhaust SERIALIZABLE retries, and with 5 runs a
+       contended request can do up to 5/3 the database work);
      - the 5 s root deadline's value, and a distinct timeout for root writes;
      - registry display names that go stale across awaits (#14);
      - an email-indexed user lookup, so an invite doesn't read all of `users`;
      - stale SQLite wording in the frozen `api-contract-freeze` spec: `SQLITE_FULL` as the example
        commit failure, and "the SQLite column `shows.next_episode`" (4e panel);
-     - two concurrent session creates for one show can exhaust the 3 SERIALIZABLE runs under
-       load (seen once in a full `npm test` during 4e, as a 500 from `40001`; it passed 8/8
-       alone); one more instance of the retry-exhaustion item above;
+     - ~~two concurrent session creates for one show exhaust the SERIALIZABLE retries under
+       load~~ resolved by `catalog-retry-backoff` (2026-10-02): lockstep re-runs exhausted 60/150
+       transactions at 5 writers; jitter with 5 runs measured 0/240 at 8 writers;
      - (5a) a foreign key from `catalog.users` to `auth.users`;
      - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
        host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;

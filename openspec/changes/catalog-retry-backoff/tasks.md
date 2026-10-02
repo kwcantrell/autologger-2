@@ -18,13 +18,11 @@ with `GITHUB_BASE_REF=supabase-migration`. Logs go to the session scratchpad as
   - a wait is capped by the remaining deadline (fake `Date`, the `sleep` advances it);
   - a wait that reaches the deadline gives `CatalogTxTimeoutError` with no further statement sent
     and no new connection opened.
-
   In `postgresCatalogStore.pg.test.ts`:
   - "gives up on serialization failure after 3 runs" becomes 5;
   - a new case: 8 concurrent read-modify-write transactions on one row, each body making 4
     statements, all commit with the row incremented 8 times, repeated 5 times; on failure it
     reports the run counts.
-
   Verify: these are red before 2.1. Record the failures.
   Evidence: `cd packages/storage && npx vitest run src/postgresCatalogStore.test.ts
   src/postgresCatalogStore.pg.test.ts` (`rb-1.1-red.log`) -> `Tests  5 failed | 40 passed (45)`:
@@ -45,7 +43,7 @@ with `GITHUB_BASE_REF=supabase-migration`. Logs go to the session scratchpad as
 
 ## 3. Docs and verification
 
-- [ ] 3.1 Docs:
+- [x] 3.1 Docs:
   - ADR 0021:
     - the 4b entry (line 199): "at most 3 tries" becomes "at most 5 runs, with full-jitter
       backoff (owner, 2026-10-02, `catalog-retry-backoff`)";
@@ -56,9 +54,16 @@ with `GITHUB_BASE_REF=supabase-migration`. Logs go to the session scratchpad as
   - `docs/supabase.md:149`: "retried up to 3 runs" becomes "up to 5 runs with a jittered
     backoff";
   - `packages/ports/src/catalogDb.ts:13`: "(at most three runs)" becomes "(at most five runs)".
-
   Verify: `grep -rniE "three runs|3 runs|3 tries|3 SERIALIZABLE" --exclude-dir=node_modules
   --exclude-dir=archive --exclude-dir=changes .` gives no hits outside history and specs text
   this change replaces.
-- [ ] 3.2 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`; it is
+  Evidence: the grep -> remaining hits are unrelated (`audioMerge.ts` "MP3 runs", ADR 0018 "3
+  tries", ADR 0023 "three runs"), the ADR 0021 history phrase "first 3 tries, no wait", and
+  `openspec/specs/core-ports-architecture/spec.md:691`, which archive replaces;
+  `sed -n 12,13p packages/ports/src/catalogDb.ts` -> `(at most five runs)`.
+- [x] 3.2 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`; it is
   green. Run the full server suite 3 times; it is green each time.
+  Evidence: `rb-3.2-hook.log` -> every gate PASS (`size  34/400 changed lines`, `commands  ran
+  ['typecheck', 'test']`) once the evidence lines sat inside each task's first block;
+  `cd server && npx vitest run` x3 (`rb-3.2-server-{1,2,3}.log`) -> `Tests  940 passed | 3 skipped
+  (943)` each run.
