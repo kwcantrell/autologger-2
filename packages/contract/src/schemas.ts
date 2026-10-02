@@ -267,6 +267,12 @@ export const teamRoleChangeBodySchema = z.object({
 });
 export type TeamRoleChangeBody = z.infer<typeof teamRoleChangeBodySchema>;
 
+/** owner-bootstrap D3: `POST /api/teams/:id/owner` hands ownership to an existing member. */
+export const teamOwnerTransferBodySchema = z.object({
+  user_id: z.string().trim().min(1),
+});
+export type TeamOwnerTransferBody = z.infer<typeof teamOwnerTransferBodySchema>;
+
 // -- youtube-audio-import: request body + exact-hostname allowlist (D6) ------
 // `url`/`use_publish_date` are the verbatim snake_case keys the client sends
 // (web/src/api/hooks/useSessions.ts useYoutubeImport). The allowlist validator

@@ -178,7 +178,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 5. Team routes: owner rules and transfer (design D2, D3, D4, D5, D13)
 
-- [ ] 5.1 Test first, in `server/src/routers/teams.int.test.ts`:
+- [x] 5.1 Test first, in `server/src/routers/teams.int.test.ts`:
   - create returns `role: "owner"` and the profile shows `owner`;
   - an admin gets `403` on a role change, on delete, on transfer, and on removing another admin;
     an admin removes a `member` (`200`);
@@ -197,12 +197,22 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     `authClaimOwnerlessStudios`), the owner renames it (`200`), and a non-member gets the masked
     `404` on every `/api/teams/test-studios/*` operation.
   Delete the last-admin `409` cases they replace. Verify: red before 5.2.
-- [ ] 5.2 Implement: `packages/contract/src/schemas.ts` `teamOwnerTransferBodySchema` (role-change
+  Evidence: red before 5.2: `cd server && npx vitest run --project integration
+  src/routers/teams.int.test.ts` (`5c-5.1-red.log`) -> `Tests  30 failed | 24 passed (54)` (e.g.
+  `an admin gets 403 on a role change, delete and transfer`, `creates the team and the creator
+  becomes its owner`, `409s the owner leaving`, `400s a bad body` for transfer, `creation cap:
+  owning 20 teams refuses the 21st`); the three last-admin `409` cases and the concurrent
+  last-admin test are deleted. Green after 5.2 (see 5.2).
+- [x] 5.2 Implement: `packages/contract/src/schemas.ts` `teamOwnerTransferBodySchema` (role-change
   schema unchanged); in `teams.ts`, `requireTeamRole` / `requireTeamRoleIn`, the D2 target rules,
   creation as `owner`, the transfer route, the `invites` gate in `GET /api/teams/:id`
   (`teams.ts:190`) widened to admin or owner, and the deletion of `wouldStripLastEnabledAdmin`,
   `guardedAgainstLastAdmin` and `LAST_ADMIN_MESSAGE`; update the file header comment. Verify: 5.1
   green, `teams.int` and `authz.int` green, typecheck exit 0.
+  Evidence: `cd server && npx vitest run --project integration src/routers/teams.int.test.ts
+  src/routers/authz.int.test.ts` (`5c-5.2-green.log`) -> `Test Files  2 passed (2)`, `Tests  62
+  passed (62)`; `npm run typecheck` -> exit 0 (`5c-5.2-typecheck.log`). The cap message follows
+  design D5: `You already own 20 teams; the limit has been reached.`
 - [ ] 5.3 Test first, in `server/src/routers/teams.race.int.test.ts` (replacing the last-admin
   races): two concurrent transfers to different members; a transfer racing the target's leave;
   the owner's demotion of admin B racing B's rename; each run asserts exactly one owner at the
