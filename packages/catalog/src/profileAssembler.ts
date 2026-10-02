@@ -154,9 +154,14 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
     } else {
       // profileStudioForUser already fetched the active studio's shows (5.7).
       const showsRaw = activeShows;
+      // show-grants D7: `can_access` from one access-set query per profile, spread over the
+      // brief entry (which stays a pure function of the row, like the /api/shows serializers).
+      const accessible = await this.auth.authListAccessibleShowIds(user.id);
       for (const s of studiosForList) {
         const rows = s.id === active.id ? showsRaw : await this.shows.listShowsForStudio(s.id);
-        for (const r of rows) showsOut.push(showBriefApiDict(r));
+        for (const r of rows) {
+          showsOut.push({ ...showBriefApiDict(r), can_access: accessible.has(String(r.id)) });
+        }
       }
       activeShowId = computedShowId;
       const validIds = new Set(showsRaw.map((r) => String(r.id)));

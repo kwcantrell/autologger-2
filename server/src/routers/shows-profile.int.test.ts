@@ -95,7 +95,7 @@ describe('GET /api/studio + /api/profile', () => {
   // The four heavy per-show config fields moved to the two full-show read
   // routes below; only these five keys stay on a payload that fans out over
   // every show in every reachable studio.
-  it('shows[] entries are brief: exactly the five identity/selection keys', async () => {
+  it('shows[] entries are brief: the five identity/selection keys plus can_access (show-grants D7)', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Brief Show', code: 'BS' });
 
@@ -105,6 +105,7 @@ describe('GET /api/studio + /api/profile', () => {
     const show = body.shows.find((s) => s.id === showId);
     expect(show).toBeTruthy();
     expect(Object.keys(show ?? {}).sort()).toEqual([
+      'can_access',
       'id',
       'name',
       'show_code',
@@ -128,6 +129,7 @@ describe('GET /api/studio + /api/profile', () => {
     const show = body.shows.find((s) => s.id === showId);
     expect(show).toBeTruthy();
     expect(Object.keys(show ?? {}).sort()).toEqual([
+      'can_access',
       'id',
       'name',
       'show_code',
@@ -553,5 +555,94 @@ describe('member writes need owner or admin (show-grants D9)', () => {
     expect((await catalogFor().studios.getStudioSettingsBlob(t.studio)).default_frame_rate).toBe(
       30,
     );
+  });
+});
+
+describe('profile shows[].can_access (show-grants D7)', () => {
+  async function profileShows(cookie: string): Promise<Array<Record<string, unknown>>> {
+    const res = await anonApp.request('/api/profile', { method: 'GET', headers: { cookie } }, { ...env });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { shows: Array<Record<string, unknown>> }).shows;
+  }
+
+  async function grantedTeam() {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const showA = await seedShow({ studioId: studio, name: 'Show A', code: 'SA' });
+    const showB = await seedShow({ studioId: studio, name: 'Show B', code: 'SB' });
+    const member = await seedUser({ studios: [studio], role: 'member' });
+    const admin = await seedUser({ studios: [studio], role: 'admin' });
+    await cat.auth.authGrantShow(member, showA, admin, new Date().toISOString());
+    return { studio, showA, showB, member, admin };
+  }
+
+  it('a member granted A but not B sees can_access true for A and false for B', async () => {
+    const { showA, showB, member } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(member));
+    expect(shows.find((s) => s.id === showA)?.can_access).toBe(true);
+    expect(shows.find((s) => s.id === showB)?.can_access).toBe(false);
+  });
+
+  it('an admin sees can_access true for every show of the team', async () => {
+    const { showA, showB, admin } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(admin));
+    expect(shows.find((s) => s.id === showA)?.can_access).toBe(true);
+    expect(shows.find((s) => s.id === showB)?.can_access).toBe(true);
+  });
+
+  it('profile shows[] keys are exactly the brief keys plus can_access', async () => {
+    const { member } = await grantedTeam();
+    const shows = await profileShows(await loginCookie(member));
+    expect(shows.length).toBeGreaterThan(0);
+    for (const s of shows) {
+      expect(Object.keys(s).sort()).toEqual([
+        'can_access',
+        'id',
+        'name',
+        'show_code',
+        'studio_id',
+        'title_suffix',
+      ]);
+    }
+  });
+
+  it('GET /api/shows, GET /api/shows/:showId and POST /api/shows carry no can_access', async () => {
+    const { studio, showA, admin } = await grantedTeam();
+    const cookie = await loginCookie(admin);
+    const list = await anonApp.request(
+      `/api/shows?studio_id=${encodeURIComponent(studio)}`,
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(list.status).toBe(200);
+    const listBody = (await list.json()) as { shows: Array<Record<string, unknown>> };
+    expect(listBody.shows.length).toBeGreaterThan(0);
+    for (const s of listBody.shows) expect(s).not.toHaveProperty('can_access');
+
+    const detail = await anonApp.request(
+      `/api/shows/${showA}`,
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(detail.status).toBe(200);
+    expect(JSON.stringify(await detail.json())).not.toContain('can_access');
+
+    const created = await anonApp.request(
+      '/api/shows',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ studio_id: studio, name: 'Fresh' }),
+      },
+      { ...env },
+    );
+    expect(created.status).toBe(200);
+    expect(JSON.stringify(await created.json())).not.toContain('can_access');
+  });
+
+  it('the signed-out profile has shows: []', async () => {
+    const res = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { shows: unknown[] }).shows).toEqual([]);
   });
 });

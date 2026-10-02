@@ -45,3 +45,74 @@ describe('profilePayload(null, ctx) is the signed-out shape (require-login D5)',
     });
   }
 });
+
+describe('profilePayload(user) sets shows[].can_access from the accessible set (show-grants D7)', () => {
+  it('one authListAccessibleShowIds call decides each entry', async () => {
+    const show = (id: string, studio: string) => ({
+      id,
+      studio_id: studio,
+      name: `Show ${id}`,
+      show_code: id.toUpperCase(),
+      title_suffix: 'date',
+    });
+    const showsByStudio: Record<string, ReturnType<typeof show>[]> = {
+      t1: [show('a', 't1'), show('b', 't1')],
+      t2: [show('c', 't2')],
+    };
+    const studios = {
+      allStudioSettingsForAllowedStudios: async () => ({}),
+      listStudiosBriefAllowed: () => [
+        { id: 't1', name: 'T1' },
+        { id: 't2', name: 'T2' },
+      ],
+      studioOrderTuple: () => ['t1', 't2'],
+      studioNamesDict: () => ({ t1: 'T1', t2: 'T2' }),
+      loadStudioProfile: async (id: string) => ({
+        id,
+        name: id,
+        categories: [],
+        show_title_format: 'Episode {n}',
+        default_frame_rate: 24,
+      }),
+    } as unknown as StudioRegistry;
+    let accessCalls = 0;
+    const auth = {
+      authListStudioIdsForUser: async () => ['t1', 't2'],
+      authEnsurePrefsRow: async () => {},
+      authGetPrefs: async () => ({ active_studio_id: 't1', active_show_id: 'a' }),
+      authSetPrefs: async () => {},
+      authListMembershipsForUser: async () => [
+        { studioId: 't1', role: 'member' },
+        { studioId: 't2', role: 'admin' },
+      ],
+      authListAccessibleShowIds: async (userId: string) => {
+        accessCalls += 1;
+        expect(userId).toBe('u1');
+        return new Set(['a', 'c']);
+      },
+    } as unknown as AuthStore;
+    const shows = {
+      listShowsForStudio: async (sid: string) => showsByStudio[sid] ?? [],
+    } as unknown as ShowsStore;
+    const payload = await new ProfileAssembler(studios, auth, shows).profilePayload(
+      {
+        id: 'u1',
+        email: 'u1@example.com',
+        given_name: '',
+        family_name: '',
+        picture_url: '',
+      } as never,
+      { oauthConfigured: true, adminMeta: {} },
+    );
+    const out = (payload.shows as Array<{ id: string; can_access: boolean }>).map((s) => [
+      s.id,
+      s.can_access,
+    ]);
+    expect(out).toEqual([
+      ['a', true],
+      ['b', false],
+      ['c', true],
+    ]);
+    expect(accessCalls).toBe(1);
+  });
+});
