@@ -36,12 +36,7 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import {
-  canAccessSession,
-  getSessionHub,
-  requireSession,
-  timecodeCtx,
-} from './_helpers';
+import { canAccessSession, getSessionHub, requireSession, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 

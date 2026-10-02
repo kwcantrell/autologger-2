@@ -6,12 +6,12 @@
 import { rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { type ServerType, serve } from '@hono/node-server';
-import { createNodeWebSocket } from '@hono/node-ws';
 import { AI_RUNTIME_FIXTURES_DIR } from '@autologger/ai-runtime';
 import { aiChatTurns } from '@autologger/ai-runtime/aiChatRegistry';
 import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { transcriptGenerationLock } from '@autologger/transcription';
+import { type ServerType, serve } from '@hono/node-server';
+import { createNodeWebSocket } from '@hono/node-ws';
 import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { wireApp } from '../app';
