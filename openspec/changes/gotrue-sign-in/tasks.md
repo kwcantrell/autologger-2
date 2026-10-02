@@ -74,7 +74,7 @@ the failure line) and green after.
 
 ## 4. Server bridge (design D1-D4, D9)
 
-- [ ] 4.1 Test first: `server/src/auth/gotrue.test.ts` against an injected fake `fetch`. Each case
+- [x] 4.1 Test first: `server/src/auth/gotrue.test.ts` against an injected fake `fetch`. Each case
   is red, then implement `server/src/auth/gotrue.ts`:
   - a 200 with one matching Google identity returns `{id}`;
   - zero, two, or a non-matching Google identity → `identity mismatch`;
@@ -82,7 +82,10 @@ the failure line) and green after.
   - a timeout → `timeout`;
   - a network error → `network`;
   - a missing, empty or NUL `user.id` → `malformed`.
-- [ ] 4.2 Test first, in `routers/auth.int.test.ts`. First fix `server/src/test/oauth.ts` so its
+  Evidence: `5a-4.1-red.log`: `npx vitest run --project unit src/auth/gotrue.test.ts` -> `Error:
+  Cannot find module './gotrue'`. `5a-4.1-green.log`: the same -> `Tests  7 passed (7)`;
+  `npx tsc --noEmit -p server` -> no output; `npx biome check` clean.
+- [x] 4.2 Test first, in `routers/auth.int.test.ts`. First fix `server/src/test/oauth.ts` so its
   fetch stub keys on origin and path, and add `mockGoTrue`. Then:
   - a new user's catalog id is the GoTrue id;
   - `email_verified` false or absent → `email_unverified`, GoTrue is never called, and no user is
@@ -94,6 +97,15 @@ the failure line) and green after.
   - every existing callback and NUL case stays green, with GoTrue mocked.
   Then change the callback and `authCreateUserGoogle({id, …})` with a target-less
   `ON CONFLICT DO NOTHING`. Test helpers (`seedUser`) pass an id.
+  Evidence: `5a-4.2-red.log`: `npx vitest run --project integration src/routers/auth.int.test.ts
+  src/routers/nulText.int.test.ts` -> `Tests  9 failed | 32 passed (41)` (`× email_verified: false --
+  refused with email_unverified`, `× a new user's account id is the Supabase Auth user id`,
+  `× Supabase Auth unreachable gives identity_unavailable`, `× a Supabase Auth id owned by another
+  Google account is refused`, …). First green run caught the reverse-id check refusing the
+  concurrent twin (same subject); fixed to refuse only another subject. `5a-4.2-green.log`: ->
+  `Tests  41 passed (41)`. `5a-4.2-server.log`: `npx vitest run` (server) -> `Test Files  74
+  passed | 2 skipped`, `Tests  924 passed | 3 skipped`; `5a-4.2-tsc.log`: `npm run typecheck` ->
+  exit 0. The fetch stub now matches origin+path (`mockGoTrue`, `pendingMocks` added).
 - [ ] 4.3 Test first: a `server/src/test/pg/` race test. Two `authCreateUserGoogle` calls with the
   same id and subject run in overlapping transactions, held by a barrier. One returns the id, the
   other returns `null`, and there is no 23505. It is red against the targeted

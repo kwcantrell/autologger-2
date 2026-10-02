@@ -11,6 +11,7 @@ import {
   mintIdToken,
   mockGoogleJwks,
   mockGoogleToken,
+  mockGoTrue,
   resetMockAgent,
 } from '../test/oauth';
 
@@ -106,10 +107,11 @@ describe('NUL in the OAuth callback', () => {
       privateKey: KP.privateKey,
       kid: KP.kid,
       audience: CLIENT,
-      claims: { given_name: 'A', family_name: 'B', ...claims },
+      claims: { given_name: 'A', family_name: 'B', email_verified: true, ...claims },
     });
     mockGoogleToken({ id_token: idToken });
     mockGoogleJwks(KP.publicJwk);
+    mockGoTrue({ id: `gt-${String(claims.sub)}`, sub: String(claims.sub) });
     await putOauthState(env.ports.kv, 'state-nul');
     return app.request(
       '/auth/google/callback?code=abc&state=state-nul',

@@ -20,6 +20,7 @@ export interface AuthStoreFacade {
   authGetUserByGoogleSubAny: (googleSub: string) => Promise<Row | null>;
   authGetUserById: (userId: string) => Promise<Row | null>;
   authCreateUserGoogle: (opts: {
+    id: string;
     googleSub: string;
     email: string;
     givenName: string;
@@ -107,20 +108,23 @@ export class AuthStore implements AuthStoreFacade {
   }
 
   async authCreateUserGoogle(opts: {
+    id: string;
     googleSub: string;
     email: string;
     givenName: string;
     familyName: string;
     pictureUrl: string;
   }): Promise<string | null> {
-    // null when a user with this Google subject already exists: a concurrent first sign-in won
-    // (catalog-concurrency-hazards D5); the caller then takes the existing-user path.
+    // null when a user with this id or Google subject already exists: a concurrent first sign-in
+    // won (catalog-concurrency-hazards D5), or the id belongs to another account; the caller
+    // re-reads by subject. No conflict target, so a clash on either key is never a 23505
+    // (gotrue-sign-in D4: the id is the Supabase Auth user id, shared by racing sign-ins).
     const row = await this.db.first<Row>(
       `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
        VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (google_sub) DO NOTHING
+       ON CONFLICT DO NOTHING
        RETURNING id`,
-      crypto.randomUUID(),
+      opts.id,
       opts.googleSub,
       opts.email,
       opts.givenName,

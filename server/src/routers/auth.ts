@@ -9,6 +9,7 @@ import {
 import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
+import { exchangeGoogleIdToken, IdentityUnavailableError } from '../auth/gotrue';
 import {
   createLoginSession,
   newOauthState,
@@ -175,6 +176,27 @@ authRouter.get('/auth/google/callback', async (c) => {
   // is not one of jose's typed fields) flow through `claims` already -- no
   // change to verifyIdToken/oauth_google.ts is needed to surface it.
   const emailVerified = claims.email_verified === true;
+  // gotrue-sign-in D3: only verified Google emails sign in, so Supabase Auth's email-based
+  // account linking only ever sees verified addresses.
+  if (!emailVerified || !email) {
+    console.warn('OAuth callback: the Google account has no verified email.');
+    return c.redirect('/?login_error=email_unverified', 302);
+  }
+
+  // gotrue-sign-in D1, D2: Supabase Auth verifies the same token again; its user id is the
+  // account id. It runs before any catalog read, so a failure touches nothing.
+  let authId: string;
+  try {
+    authId = (await exchangeGoogleIdToken(String(idTok), googleSub)).id;
+  } catch (e) {
+    if (!(e instanceof IdentityUnavailableError)) throw e;
+    console.warn('OAuth callback: Supabase Auth exchange failed', e.reason);
+    return c.redirect('/?login_error=identity_unavailable', 302);
+  }
+  const mismatch = (detail: string) => {
+    console.warn(`OAuth callback: ${detail}; refusing sign-in (gotrue-sign-in D4)`);
+    return c.redirect('/?login_error=identity_unavailable', 302);
+  };
 
   const catalog = c.get('catalog');
 
@@ -183,12 +205,22 @@ authRouter.get('/auth/google/callback', async (c) => {
   let anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
   let uid = '';
   if (!anyExisting) {
+    // The id may already hold this subject's account (a concurrent first sign-in just made it),
+    // or another subject's: that is GoTrue linking two Google accounts, refused.
+    const owner = await catalog.auth.authGetUserRowAny(authId);
+    if (owner && String(owner.google_sub) !== googleSub) {
+      return mismatch(`Supabase Auth id ${authId} already belongs to another Google account`);
+    }
+    anyExisting = owner;
+  }
+  if (!anyExisting) {
     // Design D2: the whole new-user branch -- creation, pref seeding, and
     // invite materialization + consumption -- runs inside one catalog
     // transaction, on stores bound to it (store transactions join it;
     // async-catalog-stores D3). The KV login-session write below stays outside.
     const created = await catalog.tx(async (cat) => {
       const newUid = await cat.auth.authCreateUserGoogle({
+        id: authId,
         googleSub,
         email: email || `${googleSub}@users.noreply.invalid`,
         givenName: gn,
@@ -217,8 +249,13 @@ authRouter.get('/auth/google/callback', async (c) => {
       }
       return newUid;
     });
-    if (created === null) anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
-    else uid = created;
+    if (created === null) {
+      anyExisting = await catalog.auth.authGetUserByGoogleSubAny(googleSub);
+      if (!anyExisting) return mismatch(`Supabase Auth id ${authId} was taken by another account`);
+    } else uid = created;
+  }
+  if (anyExisting && String(anyExisting.id) !== authId) {
+    return mismatch(`account ${String(anyExisting.id)} has Supabase Auth id ${authId}`);
   }
   if (anyExisting) {
     if (anyExisting.disabled_at_utc) {

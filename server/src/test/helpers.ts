@@ -22,10 +22,11 @@ export async function seedStudio(opts: { id?: string; name?: string } = {}): Pro
 }
 
 export async function seedUser(
-  opts: { email?: string; sub?: string; studios?: string[] } = {},
+  opts: { id?: string; email?: string; sub?: string; studios?: string[] } = {},
 ): Promise<string> {
   const cat = catalogFor();
   const created = await cat.auth.authCreateUserGoogle({
+    id: opts.id ?? crypto.randomUUID(),
     email: opts.email ?? `${uid('user')}@example.com`,
     googleSub: opts.sub ?? uid('sub'),
     givenName: 'Test',

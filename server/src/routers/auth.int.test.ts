@@ -10,6 +10,8 @@ import {
   mintIdToken,
   mockGoogleJwks,
   mockGoogleToken,
+  mockGoTrue,
+  pendingMocks,
   resetMockAgent,
 } from '../test/oauth';
 
@@ -42,7 +44,10 @@ async function runCallback(
     email?: string;
     state?: string;
     code?: string;
-    emailVerified?: boolean;
+    /** Defaults to true; pass null to omit the claim (gotrue-sign-in D3). */
+    emailVerified?: boolean | null;
+    /** GoTrue's answer (gotrue-sign-in D2); defaults to a user `gt-<sub>`; null queues none. */
+    gotrue?: Parameters<typeof mockGoTrue>[0] | null;
   },
   envOverride: Bindings = OAUTH_ENV,
 ): Promise<Response> {
@@ -55,14 +60,14 @@ async function runCallback(
       email: opts.email ?? 'a@b.com',
       given_name: 'A',
       family_name: 'B',
-      // Only set the claim when the test cares -- omitting it entirely
-      // exercises the "absent" branch distinctly from an explicit `false`
-      // (task 3.1: both must fail to materialize invites).
-      ...(opts.emailVerified !== undefined ? { email_verified: opts.emailVerified } : {}),
+      // null omits the claim, exercising "absent" distinctly from an explicit `false`.
+      ...(opts.emailVerified === null ? {} : { email_verified: opts.emailVerified ?? true }),
     },
   });
   mockGoogleToken({ id_token: idToken });
   mockGoogleJwks(KP.publicJwk);
+  if (opts.gotrue !== null)
+    mockGoTrue(opts.gotrue ?? { id: `gt-${opts.sub}`, sub: String(opts.sub) });
   const state = opts.state ?? 'state-spike';
   await putOauthState(env.ports.kv, state);
   return app.request(
@@ -91,11 +96,18 @@ describe('callback -- concurrent replay of one state', () => {
       privateKey: KP.privateKey,
       kid: KP.kid,
       audience: CLIENT,
-      claims: { sub: 'sub-replay', email: 'replay@b.com', given_name: 'A', family_name: 'B' },
+      claims: {
+        sub: 'sub-replay',
+        email: 'replay@b.com',
+        email_verified: true,
+        given_name: 'A',
+        family_name: 'B',
+      },
     });
     mockGoogleToken({ id_token: idToken });
     mockGoogleToken({ id_token: idToken });
     mockGoogleJwks(KP.publicJwk);
+    mockGoTrue({ id: 'gt-sub-replay', sub: 'sub-replay' });
     await putOauthState(env.ports.kv, 'state-replay');
     const callback = () =>
       app.request(
@@ -135,7 +147,7 @@ describe('callback -- existing user', () => {
   it('updates (does not duplicate) a user with a known google sub', async () => {
     const sub = 'sub-existing';
     const seededId = await seedUser({ sub });
-    const res = await runCallback({ sub });
+    const res = await runCallback({ sub, gotrue: { id: seededId, sub } });
     expect(res.status).toBe(302);
     const user = await catalogFor().auth.authGetUserByGoogleSub(sub);
     expect(user).not.toBeNull();
@@ -262,10 +274,17 @@ describe('callback -- error branches', () => {
       privateKey: KP.privateKey,
       kid: KP.kid,
       audience: CLIENT,
-      claims: { sub: 'sub-writefail', email: 'a@b.com', given_name: 'A', family_name: 'B' },
+      claims: {
+        sub: 'sub-writefail',
+        email: 'a@b.com',
+        email_verified: true,
+        given_name: 'A',
+        family_name: 'B',
+      },
     });
     mockGoogleToken({ id_token: idToken });
     mockGoogleJwks(KP.publicJwk);
+    mockGoTrue({ id: 'gt-sub-writefail', sub: 'sub-writefail' });
     const state = 'state-writefail';
     await putOauthState(env.ports.kv, state);
     // The only kv.put call left on this request path (after state consumption
@@ -381,7 +400,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(0);
   });
 
-  it('email_verified: false -- user is created, invite remains, no membership', async () => {
+  it('email_verified: false -- refused with email_unverified before GoTrue; no user, invite remains', async () => {
     const teamId = await seedStudio();
     await catalogFor().auth.authUpsertInvite(
       teamId,
@@ -397,14 +416,15 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     });
 
     expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?login_error=email_unverified');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(pendingMocks()).toEqual(['POST http://auth:9999/token']); // GoTrue never called
     const cat = catalogFor();
-    const user = await cat.auth.authGetUserByGoogleSub('sub-unverified-false');
-    expect(user).not.toBeNull();
-    expect(await cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(await cat.auth.authGetUserByGoogleSub('sub-unverified-false')).toBeNull();
     expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
   });
 
-  it('email_verified absent -- user is created, invite remains, no membership', async () => {
+  it('email_verified absent -- refused with email_unverified; no user, invite remains', async () => {
     const teamId = await seedStudio();
     await catalogFor().auth.authUpsertInvite(
       teamId,
@@ -415,15 +435,14 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     const res = await runCallback({
       sub: 'sub-unverified-absent',
       email: 'unverified-absent@example.com',
-      // emailVerified intentionally omitted -- claim absent, not false
+      emailVerified: null, // claim absent, not false
       state: 'state-invite-unverified-absent',
     });
 
     expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?login_error=email_unverified');
     const cat = catalogFor();
-    const user = await cat.auth.authGetUserByGoogleSub('sub-unverified-absent');
-    expect(user).not.toBeNull();
-    expect(await cat.auth.authGetMembershipRole(String(user?.id), teamId)).toBeNull();
+    expect(await cat.auth.authGetUserByGoogleSub('sub-unverified-absent')).toBeNull();
     expect(await cat.auth.authListInvitesForTeam(teamId)).toHaveLength(1);
   });
 
@@ -456,6 +475,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       email: 'existing@example.com',
       emailVerified: true,
       state: 'state-existing-rescan',
+      gotrue: { id: existingId, sub },
     });
 
     expect(res.status).toBe(302);
@@ -497,6 +517,7 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
       sub,
       email: 'disabled@example.com',
       state: 'state-disabled-signin',
+      gotrue: { id: userId, sub },
     });
 
     expect(res.status).toBe(302);
@@ -544,6 +565,74 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
   });
 });
 
+// gotrue-sign-in D1-D4 (api-contract-freeze "OAuth callback failure redirect"): the verified
+// Google ID token is exchanged with Supabase Auth, whose user id becomes the account id.
+describe('callback -- Supabase Auth exchange', () => {
+  async function userCount(sub: string): Promise<number> {
+    const n = await env.ports.catalog.first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM users WHERE google_sub = ?',
+      sub,
+    );
+    return Number(n?.n);
+  }
+
+  it("a new user's account id is the Supabase Auth user id", async () => {
+    const res = await runCallback({
+      sub: 'sub-gt-new',
+      state: 'state-gt-new',
+      gotrue: { id: '0b8e4f3a-1111-4c22-9d33-5e6f7a8b9c0d', sub: 'sub-gt-new' },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    const user = await catalogFor().auth.authGetUserByGoogleSub('sub-gt-new');
+    expect(String(user?.id)).toBe('0b8e4f3a-1111-4c22-9d33-5e6f7a8b9c0d');
+  });
+
+  for (const [label, gotrue] of [
+    ['unreachable', 'down'],
+    ['refusing (400)', { status: 400 }],
+    ['failing (500)', { status: 500 }],
+    ['returning another Google identity', { id: 'gt-x', sub: 'some-other-sub' }],
+  ] as const) {
+    it(`Supabase Auth ${label} gives identity_unavailable, no cookie and no user`, async () => {
+      const sub = `sub-gt-${label.replace(/\W+/g, '-')}`;
+      const res = await runCallback({ sub, state: `state-${sub}`, gotrue });
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/?login_error=identity_unavailable');
+      expect(res.headers.get('set-cookie')).toBeNull();
+      expect(await userCount(sub)).toBe(0);
+    });
+  }
+
+  it('an account whose id differs from the Supabase Auth id is refused and left unchanged', async () => {
+    const sub = 'sub-gt-mismatch';
+    const userId = await seedUser({ sub, email: 'mm@example.com' });
+    const before = await catalogFor().auth.authGetUserRowAny(userId);
+    const res = await runCallback({
+      sub,
+      email: 'changed@example.com',
+      state: 'state-gt-mismatch',
+      gotrue: { id: 'gt-someone-else', sub },
+    });
+    expect(res.headers.get('location')).toBe('/?login_error=identity_unavailable');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await catalogFor().auth.authGetUserRowAny(userId)).toEqual(before);
+  });
+
+  it('a Supabase Auth id owned by another Google account is refused', async () => {
+    const ownerId = await seedUser({ sub: 'sub-gt-owner', email: 'owner@example.com' });
+    const res = await runCallback({
+      sub: 'sub-gt-intruder',
+      email: 'owner@example.com',
+      state: 'state-gt-intruder',
+      gotrue: { id: ownerId, sub: 'sub-gt-intruder' },
+    });
+    expect(res.headers.get('location')).toBe('/?login_error=identity_unavailable');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await userCount('sub-gt-intruder')).toBe(0);
+  });
+});
+
 describe('logout', () => {
   it('GET clears the session cookie and redirects', async () => {
     const cookie = await loginCookie(await seedUser({}));
@@ -572,12 +661,20 @@ describe('callback -- concurrent first sign-in for one sub', () => {
     const held = runCallback(
       { sub: 'sub-twin', email: 'twin@example.com', state: 'state-twin-a' },
       envWith(
-        { GOOGLE_CLIENT_ID: CLIENT, GOOGLE_CLIENT_SECRET: 'secret', PUBLIC_BASE_URL: 'http://127.0.0.1:8787' },
+        {
+          GOOGLE_CLIENT_ID: CLIENT,
+          GOOGLE_CLIENT_SECRET: 'secret',
+          PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+        },
         { catalog: gated },
       ),
     );
     await h.reached;
-    const other = await runCallback({ sub: 'sub-twin', email: 'twin@example.com', state: 'state-twin-b' });
+    const other = await runCallback({
+      sub: 'sub-twin',
+      email: 'twin@example.com',
+      state: 'state-twin-b',
+    });
     h.release();
     for (const res of [other, await held]) {
       expect(res.status).toBe(302);

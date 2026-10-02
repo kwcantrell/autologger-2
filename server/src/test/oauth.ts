@@ -45,7 +45,10 @@ export async function mintIdToken(opts: {
 // instead, keyed on (method, origin+path), matching in registration order.
 interface QueuedMock {
   method: string;
+  origin: string;
   path: string;
+  /** Reject the fetch like a refused connection instead of answering. */
+  networkError?: boolean;
   status: number;
   body: string;
   headers: Record<string, string>;
@@ -64,11 +67,14 @@ function ensureStub(): void {
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET') ?? 'GET')
         .toString()
         .toUpperCase();
-      const idx = queue.findIndex((m) => m.method === method && m.path === url.pathname);
+      const idx = queue.findIndex(
+        (m) => m.method === method && m.origin === url.origin && m.path === url.pathname,
+      );
       if (idx === -1) {
-        throw new Error(`No mock registered for ${method} ${url.pathname}`);
+        throw new Error(`No mock registered for ${method} ${url.origin}${url.pathname}`);
       }
       const [match] = queue.splice(idx, 1);
+      if (match.networkError) throw new TypeError('fetch failed');
       return new Response(match.body, { status: match.status, headers: match.headers });
     },
   );
@@ -81,10 +87,16 @@ export function resetMockAgent(): void {
   queue = [];
 }
 
+/** Test-only: the mocks queued but not yet consumed, as `METHOD origin/path`. */
+export function pendingMocks(): string[] {
+  return queue.map((m) => `${m.method} ${m.origin}${m.path}`);
+}
+
 export function mockGoogleToken(body: unknown, status = 200): void {
   ensureStub();
   queue.push({
     method: 'POST',
+    origin: 'https://oauth2.googleapis.com',
     path: '/token',
     status,
     body: JSON.stringify(body),
@@ -96,9 +108,43 @@ export function mockGoogleJwks(publicJwk: JsonWebKey): void {
   ensureStub();
   queue.push({
     method: 'GET',
+    origin: 'https://www.googleapis.com',
     path: '/oauth2/v3/certs',
     status: 200,
     body: JSON.stringify({ keys: [publicJwk] }),
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** Queue GoTrue's answer to the id_token grant (gotrue-sign-in D2): a user with one Google
+ * identity for `sub` (or the identities given), an error status, or a refused connection. */
+export function mockGoTrue(
+  answer: { id: string; sub: string; identities?: unknown[] } | { status: number } | 'down',
+): void {
+  ensureStub();
+  const base = { method: 'POST', origin: 'http://auth:9999', path: '/token' };
+  if (answer === 'down') {
+    queue.push({ ...base, status: 0, body: '', headers: {}, networkError: true });
+    return;
+  }
+  if ('status' in answer) {
+    queue.push({
+      ...base,
+      status: answer.status,
+      body: '{"error":"x"}',
+      headers: { 'content-type': 'application/json' },
+    });
+    return;
+  }
+  const identities = answer.identities ?? [{ provider: 'google', provider_id: answer.sub }];
+  queue.push({
+    ...base,
+    status: 200,
+    body: JSON.stringify({
+      access_token: 'a',
+      refresh_token: 'r',
+      user: { id: answer.id, identities },
+    }),
     headers: { 'content-type': 'application/json' },
   });
 }
