@@ -149,12 +149,20 @@ Logs:
   `ok   a package bind outside src is caught`, `test_check_envs: 38 passed, 0 failed`. Red check
   (ALLOW widened to `packages/[a-z0-9-]+/.*`, restored after): `4e-4.1-red.log` -> `FAIL a package
   bind outside src is caught (wanted fail ..., got ok)`, `37 passed, 1 failed`.
-- [ ] 4.2 Images:
+- [x] 4.2 Images:
   - `docker build -f docker/Dockerfile --target api .` builds. That target uses `api-src`, which
     `make dev-up` never builds. Boot it (`make stage-up`; the owner runs or allows it), and its
     healthcheck route `/api/profile` answers 200;
   - `make dev-up`: the dev image builds, the app boots on Postgres, `GET /api/profile` (the healthcheck route) is 200, and
     `POST /api/sessions` creates a session.
+  Evidence: `4e-4.2-api-build.log`: `docker build -f docker/Dockerfile --target api .` -> exit 0;
+  in that image `/app/packages/catalog` holds `package.json`, `src`. `4e-4.2-stage-up.log`: `make
+  stage-up` (run with the owner's permission) -> exit 0, `Container autologger-stage-api Healthy`;
+  `4e-4.2-stage-live.log`: stage api `/app/packages/catalog` -> `package.json src`, in-container
+  `/api/profile` -> 200, via the router `http://localhost:8788/api/profile` -> 200.
+  `4e-4.2-dev-up.log`: `make dev-up` -> exit 0; `4e-4.2-dev-live.log`: app `healthy`,
+  `/api/profile` -> 200, `POST /api/sessions {"show_id":"show-autolog-test","episode":"4e"}` ->
+  200 `"title":"ATS_4e"`.
 
 ## 5. Docs and specs
 
