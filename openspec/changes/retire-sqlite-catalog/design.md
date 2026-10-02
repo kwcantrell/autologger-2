@@ -129,8 +129,7 @@ That adapter also backs `KvStore`. What remains of the SQLite catalog:
 - The Dockerfile's `api-src` `COPY` and the dev stage's `mkdir` of the mount point go too.
   `api-src` feeds the prod/stage `api` target (`Dockerfile:144-145`), and `make dev-up` never
   builds it. So verification builds `--target api` and boots it to its healthcheck route
-  (`/api/profile`), as well as
-  running `make dev-up`.
+  (`/api/profile`), as well as running `make dev-up`.
 - `docker/scripts/test_check_envs.sh` gains a regression case: a dev config with a read-only
   bind of an existing non-`src` package path (`packages/catalog/package.json`) is refused by
   check 4's ALLOW rule. A re-added `packages/catalog/migrations` mount wouldn't do: after the

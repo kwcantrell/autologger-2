@@ -189,8 +189,13 @@ Logs:
   slice 11 refusal + explicit columns; recorded schema; KvStore on Postgres; dev mount and `api`
   copy gone), 0006 wording "both retired in 4e", and two revisit items (the `api-contract-freeze`
   SQLite wording; the observed session-create retry exhaustion).
-- [ ] 5.3 Gates and review:
+- [x] 5.3 Gates and review:
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green, apart from
     size (overridden by the label);
   - `openspec validate retire-sqlite-catalog --strict`;
   - the consistency read appended to `panel.md`.
+  Evidence: `4e-5.3-hook.log`: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage
+  hook` -> exit 0; `PASS  openspec`, `PASS  evidence`, `PASS  commands ran ['typecheck', 'test']`,
+  `WARN  size  689 changed lines > budget 400` (owner's `size-override`). `openspec validate
+  retire-sqlite-catalog --strict` -> `Change 'retire-sqlite-catalog' is valid`. Consistency read
+  appended to `panel.md` (scope change: no); `--only panel` -> `29 finding(s), no open criticals`.

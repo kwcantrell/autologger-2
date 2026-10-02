@@ -37,3 +37,11 @@ changes scope.
 - [x] [minor] Stale comments the plan missed (`storage/kvStore.ts:3-5,31-32`, `session-core/src/fakeClock.test.ts:6`), and a grep that can't catch "async catalog adapter" wording. Resolved: added to D6 and 3.3, and the grep is widened.
 - [x] [minor] `api-contract-freeze` `:596` (`SQLITE_FULL`) and `:895` (the SQLite `shows.next_episode` column) are stale, but that spec is frozen. Resolved: task 5.2 adds them to ADR 0021's revisit list.
 - [x] [minor] The delta's "A migration" became "Migrations" without the proposal saying so. Resolved: listed in the proposal's catalog-database entry.
+
+## Consistency read 2026-10-01
+Edits since approval (`fa260e0`): tasks.md and design.md change the health route from `/api/health` to `/api/profile` (the compose healthcheck route; `/api/health` is 404). Task 4.2 boots the `api` image with `make stage-up`, which the owner runs or allows (the agent's run was refused as a deploy). Ticks and evidence were added, and blank lines inside items removed for the evidence gate.
+Scope change: no
+- [x] [minor] Each spec delta requirement has a task and a test: core-ports MODIFIED (contract suite on Postgres, `postgresCatalogStore.pg.test.ts`), REMOVED SQLite adapter (3.1), catalog-database MODIFIED (1.1 recorded schema, ordering and round-trip tests kept), package-architecture REMOVED and MODIFIED (3.2, 5.1), local-container-environments MODIFIED (4.1, guard case in `test_check_envs.sh`). Resolved: no gaps.
+- [x] [minor] Task 3.3 also rewrote `sessionIndexStore.ts:180` ("holds the connection's lock" became SERIALIZABLE with retry), a stale comment its grep found but D6 didn't list. Resolved: within D6's rule (comments that describe the deleted adapter); recorded in 3.3's evidence.
+- [x] [minor] The README edits touch the rollback note only, not the slice 11 runbook, as the non-goal's stated exception allows; `docs/supabase.md:10` ("Nothing in the app uses Supabase yet") was stale since 4c and was reworded. Resolved: docs only, no non-goal crossed.
+- [x] [minor] Size is 689 counted lines, not the estimated ~600: README additions count. Resolved: within the owner's `size-override` decision (one PR, no ceiling given).
