@@ -218,8 +218,9 @@ These properties SHALL hold:
   literals `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` (`APP_DB_PASSWORD`). Each Supabase
   secret's value SHALL appear only in the services that secret is allowed for. The superuser
   password SHALL appear in no public-facing service (`auth`, `rest`, `storage`, `supabase-gw`). No secret value SHALL appear in any tracked file.
-- **Posture:** `REQUIRE_LOGIN=1` SHALL be set as a literal in the compose `environment` block,
-  so no Infisical value can turn it off.
+- **Posture:** login is always required. No service's compose `environment` block SHALL set
+  `REQUIRE_LOGIN`, and the shared allowlist file SHALL NOT list it. The server refuses to boot
+  when it is set (see `web-frontend-platform` "Single-process development").
 - **Operability:** every long-running service SHALL have
   - a restart policy;
   - a healthcheck that needs no tools beyond the image's runtime (for `api`,
@@ -260,7 +261,8 @@ These properties SHALL hold:
 
 #### Scenario: Posture cannot be flipped from Infisical
 - **WHEN** the Infisical `prod` environment sets `REQUIRE_LOGIN=0`
-- **THEN** the running `api` still has `REQUIRE_LOGIN=1`
+- **THEN** the compose target refuses the environment, naming `REQUIRE_LOGIN` as outside its
+  allowed names, and starts nothing
 
 #### Scenario: The Postgres password does not reach the app
 - **WHEN** the prod configuration is resolved with `POSTGRES_PASSWORD` set
@@ -279,7 +281,6 @@ These properties SHALL hold:
 
 ### Requirement: Deployment behind a TLS-terminating proxy is configured explicitly
 The compose defaults and deployment documentation SHALL set:
-- `REQUIRE_LOGIN=1`;
 - `PUBLIC_BASE_URL` to the public HTTPS origin;
 - `COOKIE_SECURE=1`, set explicitly;
 - `TRUST_PROXY=1`, with the router trusting forwarded headers only from a pinned compose

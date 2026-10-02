@@ -261,10 +261,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   1022 changed lines > budget 400` (owner: one PR, `size-override`). Server suite after rebasing
   onto `catalog-retry-backoff`: 5 runs in a row, `Tests  935 passed | 3 skipped (938)` each
   (`5b-flake-{1..5}.log`).
-- [ ] 6.2 Owner step: create the dev Google OAuth client (redirect
+- [x] 6.2 Owner step: create the dev Google OAuth client (redirect
   `http://localhost:8787/auth/google/callback`), put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   and `API_TOKEN` in Infisical `autologger-dev`, and set the token in the dev Companion module.
-- [ ] 6.3 Dev live check (`make dev-up`):
+  Evidence: owner reported the client created and the values set (2026-10-02). `make dev-up`
+  (`5b-6.3-devup.log`) -> exit 0, which `compose-run` refuses without both Google values;
+  `docker exec autologger-dev-app printenv API_TOKEN` -> set; `GET /auth/google/start` -> `302
+  https://accounts.google.com/...redirect_uri=http%3A%2F%2Flocalhost%3A8787%2Fauth%2Fgoogle%2Fcallback...`.
+- [x] 6.3 Dev live check (`make dev-up`):
   - anonymous `GET /api/sessions` and `/%61pi/sessions` give 401;
   - `GET /api/profile` gives `logged_in:false, oauth_configured:true`;
   - the owner signs in with Google on `http://localhost:8787`;
@@ -272,13 +276,32 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
     Companion gets 401 (expected).
   Negative check: a compose-run with `GOOGLE_CLIENT_SECRET` withheld (scratch override) refuses.
   Running `bootGuardCli` in the app container with `REQUIRE_LOGIN=0` added prints the refusal.
-- [ ] 6.4 Stage live check, with owner permission for `make stage-up`: the same probes, plus
+  Evidence: `5b-6.3-probes.log` -> `GET /api/sessions -> 401`, `GET /%61pi/sessions -> 401`, `/api/studio`
+  and `/api/shows` -> 401; `/api/profile` -> `{"logged_in":false,"user":null,"oauth_configured":true}`;
+  `HEAD /api/profile -> 200`; `/api/companion/state` with the bearer -> 200, without it -> 401;
+  `REQUIRE_LOGIN absent from app env`. The owner signed in with Google on `http://localhost:8787`
+  (2026-10-02, "signed in fine"). `5b-6.3-negative.log` -> `bootGuardCli REQUIRE_LOGIN=0 exit 1`
+  ("REQUIRE_LOGIN was removed"), blank `GOOGLE_CLIENT_SECRET` -> exit 1 ("sign-in settings missing
+  or blank: GOOGLE_CLIENT_SECRET"), and `compose-run` `checkSignInClient('dev')` without the secret
+  -> refused.
+- [x] 6.4 Stage live check, with owner permission for `make stage-up`: the same probes, plus
   `docker/scripts/test_router.sh stage`.
+  Evidence: `make stage-up` (`5b-6.4-stageup.log`) -> exit 0, all services healthy;
+  `5b-6.4-probes.log` -> `GET /api/sessions -> 401`, `GET /%61pi/sessions -> 401`, `/api/studio` and
+  `/api/shows` -> 401, `/api/profile` -> `{"logged_in":false,"user":null,"oauth_configured":true}`,
+  `HEAD /api/profile -> 200`, companion state with the bearer -> 200, without it -> 401,
+  `REQUIRE_LOGIN absent from stage api env`; `bash docker/scripts/test_router.sh stage`
+  (`5b-6.4-router.log`) -> `test_router: 67 passed, 0 failed`. The owner signed in with Google on
+  `http://localhost:8788` (2026-10-02, "it worked").
 - [x] 6.5 Consistency read (tier 2) after any post-approval artifact edit.
   Evidence: `panel.md` "Consistency read 2026-10-02" -> scope change: no; every delta requirement
   has a task and a test; the deviations are recorded; `openspec validate require-login --strict` ->
   valid. It is repeated if 6.2-6.4 edit the artifacts.
-- [ ] 6.6 At archive (design D11), edit the Purpose paragraphs of `web-login-experience`,
+- [x] 6.6 At archive (design D11), edit the Purpose paragraphs of `web-login-experience`,
   `ai-topics-chat` and `youtube-audio-import` in `openspec/specs/` to drop the removed modes.
   Verify: `grep -n -i "REQUIRE_LOGIN\|open-network\|anonymous mode" openspec/specs/*/spec.md`
   hits no Purpose paragraph.
+  Evidence: the three Purpose paragraphs are edited (signed-out login view keyed on
+  `auth.logged_in`; "open-network refusal" dropped from ai-topics-chat and youtube-audio-import);
+  the grep's remaining hits are inside requirements that this change's deltas replace at archive,
+  and none is in a Purpose paragraph.

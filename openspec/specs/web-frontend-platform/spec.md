@@ -228,7 +228,7 @@ SHALL start one process serving pages, assets, API, and WebSockets on one origin
 through the dev gate), with Next dev-mode HMR for web edits. There SHALL be no second dev origin
 and no dev proxy. The dev process SHALL bind loopback (`127.0.0.1`), pinned by the dev compose
 file. Outside production mode the server SHALL default `HOST` to `127.0.0.1`, and it SHALL use one
-effective host value both for binding and for its open-network checks. This preserves the
+effective host value both for binding and for its loopback checks (the AI v2 credentials rule). This preserves the
 security posture of the retired Vite dev server's loopback pin: dev-mode source, framework dev
 endpoints, and the HMR socket are not LAN-reachable. LAN device testing is unavailable during the
 Supabase migration, until the stage stack is made reachable through the upstream proxy.
@@ -240,7 +240,12 @@ SHALL NOT fall back to a default data directory. It SHALL refuse to boot when an
 `PGPORT`, `PGUSER`, `PGPASSWORD` or `PGDATABASE` is unset, naming the missing variables and no
 values, before taking the data-directory lock. It SHALL refuse to boot when another server
 process already holds that `DATA_DIR`, before connecting to the catalog, sweeping or creating
-anything in it. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
+anything in it. In every stack, it SHALL refuse to boot when
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL` is unset or blank (a value that is
+empty or only whitespace counts as blank), because no one could sign in, and when `REQUIRE_LOGIN`
+is set to any value, the empty string included, so a stale setting fails loudly instead of being
+ignored; each message names the variable and prints no value. A running server therefore always
+reports `auth.oauth_configured: true`. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
 refused run exits instead of waiting for changes. No package script SHALL read a `server/.env`
 file.
 
@@ -265,6 +270,21 @@ file.
 - **THEN** the second process exits non-zero before connecting to the catalog or removing any
   scratch directory, and the running server is unaffected
 
+#### Scenario: A stale REQUIRE_LOGIN refuses boot
+- **WHEN** the server starts with a valid `AUTOLOGGER_STACK` and `REQUIRE_LOGIN=0` set
+- **THEN** it exits non-zero naming `REQUIRE_LOGIN`, and nothing listens
+
+#### Scenario: Missing Google client refuses boot
+- **WHEN** the server starts with a valid `AUTOLOGGER_STACK` and `GOOGLE_CLIENT_ID` blank
+- **THEN** it exits non-zero naming `GOOGLE_CLIENT_ID`, prints no environment value, and
+  nothing listens
+
+#### Scenario: Whitespace-only sign-in settings count as blank
+- **WHEN** the server starts with a valid `AUTOLOGGER_STACK`, a non-blank `GOOGLE_CLIENT_ID`
+  and `GOOGLE_CLIENT_SECRET`, and `PUBLIC_BASE_URL` set to only spaces
+- **THEN** it exits non-zero naming `PUBLIC_BASE_URL`, prints no environment value, and
+  nothing listens
+
 #### Scenario: No package script reads server/.env
 - **WHEN** every `package.json` script in the repository is inspected
 - **THEN** none passes an env file to Node or tsx
@@ -277,7 +297,7 @@ file.
 #### Scenario: Dev server is loopback-only by default
 - **WHEN** the server starts outside production mode with no `HOST` set
 - **THEN** it listens on `127.0.0.1`, is not reachable from other hosts, and treats itself as
-  loopback-bound for its open-network checks
+  loopback-bound for its loopback checks
 
 ### Requirement: The client island is route-split behind recoverable boundaries
 

@@ -106,44 +106,13 @@ in the session’s summary progress line.
 - **THEN** no new event is created for that row and the summary line’s skipped
   count includes it
 
-### Requirement: Configuration and network gating
-
-`POST /api/shows/:showId/log-import` SHALL be configuration-gated: unless
-`SHEETS_LOG_IMPORT_ENABLED` is `1`, `true`, or `yes` (trimmed,
-case-insensitive), the route SHALL respond `503 { detail }` with detail
-"Google Sheets log import is not configured on this deployment. Set
-SHEETS_LOG_IMPORT_ENABLED=1 to enable it." before any body parsing, job
-creation, or egress. When configured, the route SHALL apply the shared
-open-network refusal predicate (server bound to a non-loopback address with
-`REQUIRE_LOGIN` disabled and no `IP_ALLOWLIST`) and respond `503 { detail }` —
-a run can trigger paid DeepGram transcription, so the endpoint shares the
-spend-per-request posture of youtube-import. Check ordering follows
-youtube-import: show/membership `404` first, then the configuration gate, then
-the open-network refusal, then body validation. `GET /api/log-import/:jobId`
-SHALL NOT be egress-gated — it reads only local in-process state.
-
-#### Scenario: Unconfigured deployment refuses before any egress
-
-- **WHEN** `SHEETS_LOG_IMPORT_ENABLED` is unset and an authorized client POSTs
-  a log-import request for an existing show
-- **THEN** the response is `503 { detail }` naming `SHEETS_LOG_IMPORT_ENABLED`
-  and no fetch is issued and no job is created
-
-#### Scenario: Open-network deployment refuses even when configured
-
-- **WHEN** the deployment sets `SHEETS_LOG_IMPORT_ENABLED=1` but is bound to a
-  non-loopback address with `REQUIRE_LOGIN` disabled and no `IP_ALLOWLIST`
-- **THEN** the POST responds `503 { detail }` and no job is created
-
 ### Requirement: Job authorization and lifecycle
 
 `POST /api/shows/:showId/log-import` SHALL respond `404 { detail: "Show not
-found." }` uniformly for a nonexistent show and for an authenticated requester
-who is not a member of the show’s studio (no existence oracle); anonymous
-requesters (`user == null`: `REQUIRE_LOGIN=0` dev mode, or API-token auth)
-pass, as on sibling routes. `GET /api/log-import/:jobId` SHALL be
-creator-scoped: an authenticated requester who did not create the job receives
-the same `404 { detail: "Log import job not found." }` as an unknown id. Job
+found." }` uniformly for a nonexistent show and for a signed-in requester
+who is not a member of the show’s studio (no existence oracle). Every job
+records the signed-in user who created it. `GET /api/log-import/:jobId` SHALL be
+creator-scoped: any requester other than the job's creator receives the same `404 { detail: "Log import job not found." }` as an unknown id. Job
 records live in process memory: terminal (completed/failed) jobs SHALL become
 prunable one hour after finishing, and the job map SHALL be capped at 200
 entries with the oldest terminal jobs evicted first — queued/running jobs are
@@ -181,3 +150,29 @@ The system SHALL expose:
 
 - **WHEN** a client GETs an unknown job id
 - **THEN** the response is `404` with `{ detail }`
+
+### Requirement: Log import is configuration-gated
+
+`POST /api/shows/:showId/log-import` SHALL be configuration-gated: unless
+`SHEETS_LOG_IMPORT_ENABLED` is `1`, `true`, or `yes` (trimmed,
+case-insensitive), the route SHALL respond `503 { detail }` with detail
+"Google Sheets log import is not configured on this deployment. Set
+SHEETS_LOG_IMPORT_ENABLED=1 to enable it." before any body parsing, job
+creation, or egress. Check ordering follows youtube-import: show/membership
+`404` first, then the configuration gate, then body validation. The route SHALL NOT have any
+network-posture refusal. `GET /api/log-import/:jobId` SHALL NOT be egress-gated — it reads
+only local in-process state.
+
+#### Scenario: Unconfigured deployment refuses before any egress
+
+- **WHEN** `SHEETS_LOG_IMPORT_ENABLED` is unset and an authorized client POSTs
+  a log-import request for an existing show
+- **THEN** the response is `503 { detail }` naming `SHEETS_LOG_IMPORT_ENABLED`
+  and no fetch is issued and no job is created
+
+#### Scenario: Non-loopback bind without an allowlist is not refused
+
+- **WHEN** the deployment sets `SHEETS_LOG_IMPORT_ENABLED=1`, is bound to a non-loopback
+  address with no `IP_ALLOWLIST`, and a signed-in member of the show's studio POSTs a
+  valid request
+- **THEN** no network-posture `503` is returned, and the response is `200 { job_id }`

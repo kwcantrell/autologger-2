@@ -1,7 +1,7 @@
 # youtube-audio-import Specification
 
 ## Purpose
-Defines `youtube-import`: a configuration-gated endpoint that uses an operator-provided `yt-dlp` to download a video's audio and attach it to a session as a single supported-container segment and timeline-anchored take. It covers URL validation, open-network refusal, a bounded and isolated external fetch, global and per-session concurrency limits, atomic failure with no orphaned segment, recording-ordinal assignment, and the optional publish-date write to the episode date.
+Defines `youtube-import`: a configuration-gated endpoint that uses an operator-provided `yt-dlp` to download a video's audio and attach it to a session as a single supported-container segment and timeline-anchored take. It covers URL validation, a bounded and isolated external fetch, global and per-session concurrency limits, atomic failure with no orphaned segment, recording-ordinal assignment, and the optional publish-date write to the episode date.
 
 ## Requirements
 
@@ -36,28 +36,6 @@ before" means "no `yt-dlp` available at all", not "no path variable set".
 - **WHEN** a deployment sets an explicit `yt-dlp` path and receives a valid
   `youtube-import` request
 - **THEN** the server uses that resolved binary and proceeds to fetch and ingest audio
-
-### Requirement: Open-network refusal
-
-Because an import spends bandwidth and disk and reaches a third party on the operator's IP,
-the endpoint SHALL refuse to import — responding `503 {detail}` — when the deployment is in
-the open-network configuration the sibling outbound features (AI chat, AI v2) already refuse
-in: `REQUIRE_LOGIN` disabled **and** a non-loopback bind **and** no `IP_ALLOWLIST`. This
-refusal SHALL be evaluated alongside the configuration gate, before any URL validation or
-subprocess spawn.
-
-#### Scenario: Open-network deployment refuses import
-
-- **WHEN** a deployment with `REQUIRE_LOGIN` disabled, a non-loopback bind, and no
-  `IP_ALLOWLIST` receives a `youtube-import` request (even with `yt-dlp` configured)
-- **THEN** the response is `503 {detail}` and no subprocess is spawned, matching the refusal
-  the AI chat / AI v2 endpoints apply in the same configuration
-
-#### Scenario: Loopback or authenticated deployment is not refused on this basis
-
-- **WHEN** a deployment is loopback-bound, or requires login, or sets an `IP_ALLOWLIST`
-- **THEN** the open-network refusal does not apply and the request proceeds to the normal
-  gate/validation flow
 
 ### Requirement: Request and URL validation
 

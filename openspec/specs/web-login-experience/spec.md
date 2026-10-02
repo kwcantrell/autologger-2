@@ -2,54 +2,17 @@
 
 ## Purpose
 
-The frontend's unauthenticated experience on `REQUIRE_LOGIN=1` deployments with Google
-OAuth configured: a branded full-screen login view that replaces the app shell for
-anonymous visitors on every route (`/`, `/sessions/:id`, and any future route added to
-the client-side router), driven by the existing anonymous-allowed `GET /api/profile`
-payload (`auth.oauth_configured`, `auth.logged_in`) rather than any new API surface.
+The frontend's signed-out experience (login is always required): a branded full-screen login
+view that replaces the app shell for signed-out visitors on every route (`/`, `/sessions/:id`, and any future route added to
+the client-side router), driven by the login-exempt `GET /api/profile` payload
+(`auth.logged_in`) rather than any new API surface.
 Covers the render gate (including loading and profile-fetch-error states), the
 transition into and out of the login view as auth state changes, Google sign-in entry
 via the existing `GET /auth/google/start` route, rendering of `?login_error=<code>`
-failures from the OAuth callback redirect, and returning an anonymous visitor to a
-deep-linked route (`/sessions/:id` or `/teams`) after a successful sign-in. Dev anonymous mode
-(`REQUIRE_LOGIN=0`, no OAuth configured) never triggers this gate and is unaffected.
+failures from the OAuth callback redirect, and returning a signed-out visitor to a
+deep-linked route (`/sessions/:id` or `/teams`) after a successful sign-in.
 
 ## Requirements
-
-### Requirement: Login-page render gate
-Every route of the web app SHALL render a dedicated full-screen login view instead of
-the app shell when, and only when, the `GET /api/profile` payload reports
-`auth.oauth_configured === true` and `auth.logged_in === false` — the gate is a render
-switch mounted above the client-side router, so it covers `/`, `/sessions/:id`, and any
-future route without per-route wiring; there is no `/login` route and the address bar
-is not rewritten. While the profile query is in flight the page SHALL render a neutral
-loading state using the app's existing brand loading treatment (neither the app shell
-nor the login view, and never a bare blank screen). While the login view or loading
-state is shown, the page SHALL NOT issue authenticated `/api/*` requests or WebSocket
-connections — only `GET /api/profile` and static assets.
-
-#### Scenario: Anonymous visitor on an OAuth-configured deployment
-- **WHEN** the app loads at any route and `/api/profile` returns
-  `auth: { oauth_configured: true, logged_in: false }`
-- **THEN** the full-screen login view renders — AutoLogger branding, a Google sign-in
-  button — the app shell (rail, workspace) does not mount, and no authenticated `/api/*`
-  or WebSocket traffic is issued
-
-#### Scenario: Anonymous deep link keeps its URL
-- **WHEN** an anonymous visitor loads `/sessions/<id>` on an OAuth-configured deployment
-- **THEN** the login view renders with the address bar still showing `/sessions/<id>` —
-  no redirect to `/`, and no session data is fetched
-
-#### Scenario: Dev anonymous mode is unaffected
-- **WHEN** the app loads and `/api/profile` returns
-  `auth: { oauth_configured: false, logged_in: false }` (`REQUIRE_LOGIN=0`, no OAuth
-  config)
-- **THEN** the app shell renders exactly as before this change, and the login view never
-  appears
-
-#### Scenario: Authenticated visitor
-- **WHEN** the app loads at any route and `/api/profile` returns `auth.logged_in: true`
-- **THEN** the app shell renders and the login view never appears
 
 ### Requirement: Profile-fetch failure state
 When the `GET /api/profile` query fails with **no profile data available** (initial
@@ -74,8 +37,7 @@ from the existing data.
 
 ### Requirement: Mid-session sign-out transition
 When the app shell is mounted and a subsequent successful profile refetch reports
-`auth.logged_in === false` with `auth.oauth_configured === true` (login session expired
-or revoked), the page SHALL transition to the login view. Loss of unsaved in-page UI
+`auth.logged_in === false` (login session expired or revoked), the page SHALL transition to the login view. Loss of unsaved in-page UI
 state on this transition is accepted. This transition SHALL fire only on a successful
 refetch reporting signed-out — never on a refetch error.
 
@@ -142,8 +104,7 @@ the current location does not match a stashable route (e.g. `/` or
 a retry from the error landing page keeps the original deep link. The affordances
 remain plain links to `/auth/google/start` (their `href` semantics are unchanged); the
 stash write rides the activation synchronously. When the app subsequently renders with
-`auth.logged_in === true` (and only then — mounting the shell in anonymous dev mode
-does not qualify) and a stashed path is present, it SHALL validate the stash and, if
+`auth.logged_in === true` (and only then) and a stashed path is present, it SHALL validate the stash and, if
 valid, replace-navigate to it (no extra history entry); the stash SHALL be cleared on
 every consume path — valid, invalid, or navigation failure — so it is single-use. The
 OAuth callback contract is untouched — success remains `302` to `/` and failures
@@ -161,14 +122,14 @@ SHALL be discarded and the user stays on `/`. The stashed value SHALL never be s
 the server or embedded in the OAuth round-trip.
 
 #### Scenario: Deep link survives the sign-in round-trip
-- **WHEN** an anonymous visitor lands on `/sessions/<id>`, activates Google sign-in, and
+- **WHEN** a signed-out visitor lands on `/sessions/<id>`, activates Google sign-in, and
   completes the OAuth flow (callback 302s to `/` and the profile now reports
   `logged_in: true`)
 - **THEN** the app replace-navigates to `/sessions/<id>`, the stash is cleared, and
   pressing Back does not bounce through an intermediate `/` entry
 
 #### Scenario: Teams deep link survives the sign-in round-trip
-- **WHEN** an anonymous visitor lands on `/teams`, activates Google sign-in, and
+- **WHEN** a signed-out visitor lands on `/teams`, activates Google sign-in, and
   completes the OAuth flow successfully
 - **THEN** the app replace-navigates to `/teams` and the stash is cleared
 
@@ -191,3 +152,36 @@ the server or embedded in the OAuth round-trip.
   ordinary sign-in from `/`, or a returning session cookie)
 - **THEN** the app renders the route in the address bar as-is, with no stash-driven
   navigation
+
+### Requirement: Login view renders whenever signed out
+Every route of the web app SHALL render a dedicated full-screen login view instead of
+the app shell when, and only when, the `GET /api/profile` payload reports
+`auth.logged_in === false` (`auth.oauth_configured` is not consulted) — the gate is a render
+switch mounted above the client-side router, so it covers `/`, `/sessions/:id`, and any
+future route without per-route wiring; there is no `/login` route and the address bar
+is not rewritten. While the profile query is in flight the page SHALL render a neutral
+loading state using the app's existing brand loading treatment (neither the app shell
+nor the login view, and never a bare blank screen). While the login view or loading
+state is shown, the page SHALL NOT issue authenticated `/api/*` requests or WebSocket
+connections — only `GET /api/profile` and static assets.
+
+#### Scenario: Signed-out visitor sees the login view
+- **WHEN** the app loads at any route and `/api/profile` returns
+  `auth: { oauth_configured: true, logged_in: false }`
+- **THEN** the full-screen login view renders — AutoLogger branding, a Google sign-in
+  button — the app shell (rail, workspace) does not mount, and no authenticated `/api/*`
+  or WebSocket traffic is issued
+
+#### Scenario: Signed-out deep link keeps its URL
+- **WHEN** a signed-out visitor loads `/sessions/<id>`
+- **THEN** the login view renders with the address bar still showing `/sessions/<id>` —
+  no redirect to `/`, and no session data is fetched
+
+#### Scenario: The gate ignores oauth_configured
+- **WHEN** the app loads and `/api/profile` returns
+  `auth: { oauth_configured: false, logged_in: false }` (no running server sends this)
+- **THEN** the login view renders; there is no anonymous mode that shows the app shell
+
+#### Scenario: Authenticated visitor
+- **WHEN** the app loads at any route and `/api/profile` returns `auth.logged_in: true`
+- **THEN** the app shell renders and the login view never appears

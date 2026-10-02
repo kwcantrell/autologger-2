@@ -4,28 +4,6 @@
 Defines `topics/generate`: a `CLAUDE_CLI_PATH`-gated, one-shot, non-streaming endpoint that reuses the AI-chat CLI and MCP machinery to derive a session's topics from its transcript. The replace-all is crash-safe (prior topics are untouched until the new set exists), with single-flight, spend and time bounds, a transcript precondition, paged snapshot-stable transcript delivery, and a defined failure mapping.
 
 ## Requirements
-### Requirement: Configuration-gated generation
-
-Topic generation SHALL be gated on the same `claude` CLI configuration the AI chat uses
-(`aiChatConfigured` / `CLAUDE_CLI_PATH`). When unconfigured, `POST
-/api/sessions/:sessionId/topics/generate` SHALL behave identically to its pre-change
-unavailable response (`503`). Because a generation run spends the operator's Anthropic
-budget, the endpoint SHALL additionally refuse (`503`) in the open-network configuration the
-AI chat refuses in (`REQUIRE_LOGIN` off + non-loopback + no `IP_ALLOWLIST`).
-
-#### Scenario: Unconfigured deployment is unchanged
-
-- **WHEN** a deployment with no `CLAUDE_CLI_PATH` receives `POST
-  /api/sessions/:id/topics/generate`
-- **THEN** the response is `503 {detail}`, matching the pre-change unavailable response
-  exactly, and no `claude` subprocess is spawned
-
-#### Scenario: Open-network deployment refuses
-
-- **WHEN** a configured deployment in the open-network config (`REQUIRE_LOGIN` off,
-  non-loopback, no `IP_ALLOWLIST`) receives the request
-- **THEN** the response is `503 {detail}` and no subprocess is spawned, mirroring the AI
-  chat's open-network refusal
 
 ### Requirement: Single-flight and concurrency bounds
 
@@ -164,7 +142,7 @@ than exhausting the bound.
 ### Requirement: Failure mapping
 
 A failure after the gates pass — CLI spawn error, timeout, CLI-signaled error, or a run that
-creates no topics — SHALL respond `502 {detail}` (distinct from the unconfigured/open-network
+creates no topics — SHALL respond `502 {detail}` (distinct from the unconfigured
 `503` and the concurrency `409`), with the pre-run topics left untouched (they were never
 modified; the topics this run created are deleted). The detail is a **fixed, handler-owned**
 message (never the raw CLI output or its internal outcome token).
@@ -254,3 +232,25 @@ not model-output inference.
   `create_topic` (no `create_event`, no `list_topics`), and the spawned CLI's
   `--allowedTools` names the same two tools
 
+### Requirement: Topic generation is configuration-gated
+
+Topic generation SHALL be gated on the same `claude` CLI configuration the AI chat uses
+(`aiChatConfigured` / `CLAUDE_CLI_PATH`). When unconfigured, `POST
+/api/sessions/:sessionId/topics/generate` SHALL behave identically to its pre-change
+unavailable response (`503`). The endpoint SHALL NOT have any network-posture refusal: a
+configured deployment proceeds to the remaining checks for a signed-in caller whatever its bind
+address or `IP_ALLOWLIST`.
+
+#### Scenario: Unconfigured deployment is unchanged
+
+- **WHEN** a deployment with no `CLAUDE_CLI_PATH` receives `POST
+  /api/sessions/:id/topics/generate`
+- **THEN** the response is `503 {detail}`, matching the pre-change unavailable response
+  exactly, and no `claude` subprocess is spawned
+
+#### Scenario: Non-loopback bind without an allowlist is not refused
+
+- **WHEN** a configured deployment bound to a non-loopback address with no `IP_ALLOWLIST`
+  receives the request from a signed-in member of the session's studio
+- **THEN** no network-posture `503` is returned, and the request proceeds to the remaining
+  checks (concurrency, transcript precondition)
