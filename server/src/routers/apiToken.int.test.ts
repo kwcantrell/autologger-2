@@ -155,4 +155,29 @@ describe('session WebSocket upgrade with an API_TOKEN bearer, REQUIRE_LOGIN=1', 
     const s = (await seededSession()).sessionId;
     expect(await attempt(s, 'browser', bearer)).toBe(401);
   });
+
+  /** Raw HTTP GET over the socket; the request-target is sent byte for byte. */
+  function get(path: string, headers: Record<string, string> = {}) {
+    return new Promise<number>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port, path, headers });
+      req.on('response', (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  // gate-decoded-path 3.2: the same encoded spellings over a real socket, as the router forwards them.
+  it('encoded /api spellings get the literal path’s answer over real HTTP', async () => {
+    expect(await get('/api/sessions')).toBe(401);
+    expect(await get('/%61pi/sessions')).toBe(401);
+    expect(await get('/a%70i/sessions')).toBe(401);
+    expect(await get('/%61pi/companion/state')).toBe(401);
+    expect(await get('/%61pi/companion/state', bearer)).toBe(200);
+    expect(await get('/api/%63ompanion/state', bearer)).toBe(200);
+    expect(await get('/%61pi/sessions', bearer)).toBe(401);
+    expect(await get('/%61pi/profile')).toBe(200);
+  });
 });

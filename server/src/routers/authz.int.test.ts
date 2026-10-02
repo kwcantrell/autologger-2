@@ -57,6 +57,19 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
   });
 });
 
+describe('API_TOKEN on an encoded /api spelling (gate-decoded-path D2)', () => {
+  it('a token-only request to /%61pi/sessions/<id>/status is 401, not the session’s status', async () => {
+    const { sessionId: session } = await seededSession();
+    const res = await app.request(
+      `/%61pi/sessions/${session}/status`,
+      { method: 'GET', headers: bearer('test-api-token') },
+      withLogin,
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
+  });
+});
+
 describe('cross-studio masking (task 7.3)', () => {
   it('an authenticated non-member gets 404 — never 403', async () => {
     const outsider = await seedStudio();

@@ -71,7 +71,10 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
   the migration.
 - **Rollout:**
   - Slices are PRs into a `supabase-migration` branch, each under 400 lines. `main` is frozen
-    for the duration.
+    for the duration. One exception so far (owner, 2026-10-02): the security hotfix
+    `gate-decoded-path` (PR #32). The login gate judged the raw path while Hono routed the
+    decoded one, so `/%61pi/...` skipped login. It merged into `main` first (prod not deployed),
+    then into this branch.
   - Cutover is one PR into `main` with a whole-branch audit, followed by a downtime window.
   - The SQLite-to-Postgres import and parity check are rehearsed on dev against the disposable
     `server/data` copy (ADR 0022). At cutover, the owner runs them on the deploy host against

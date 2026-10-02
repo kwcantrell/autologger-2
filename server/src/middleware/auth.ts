@@ -27,7 +27,9 @@ export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   // This is the single place the scope is decided; every reader of
   // `apiTokenAuth` (the login gate below and the AI v2 principal-less refusal) sees it;
   // requireSession and the WS upgrade path do not read it.
-  const path = new URL(c.req.url).pathname;
+  // Both decisions use the percent-decoded path the router matched (gate-decoded-path D1): Hono
+  // routes `/%61pi/x` to `/api/x`, so the raw pathname would let it past the gate.
+  const path = c.req.path;
   const apiTokenAuth =
     path.startsWith('/api/companion/') &&
     requestHasValidApiToken(c.req.raw, c.env.config.API_TOKEN);
