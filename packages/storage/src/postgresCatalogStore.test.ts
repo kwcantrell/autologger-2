@@ -1,7 +1,7 @@
 // postgres-catalog-adapter tasks 2.1 (design D2-D7): placeholder translation, and the connection
 // handling that a real server can't be made to fail on demand, through the `connect` seam.
 import postgres from 'postgres';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CatalogTxMisuseError, CatalogTxTimeoutError } from './catalogErrors';
 import {
   CatalogCommitUnknownError,
@@ -313,5 +313,108 @@ describe('PostgresCatalogDb: connection handling (fake clients)', () => {
       changes: 1,
     });
     await db.close();
+  });
+});
+
+describe('PostgresCatalogDb: retry backoff (catalog-retry-backoff D1-D3)', () => {
+  /** One slot; every body statement fails with `code`; waits are recorded, and run `onSleep`. */
+  function backoffDb(opts: {
+    code?: string;
+    txTimeoutMs?: number;
+    onSleep?: (ms: number, db: PostgresCatalogDb) => void | Promise<void>;
+  }) {
+    const f = fakes((_c, text) =>
+      text.startsWith('UPDATE') ? serverError(opts.code ?? '40001') : undefined,
+    );
+    const waits: number[] = [];
+    let db!: PostgresCatalogDb;
+    db = new PostgresCatalogDb({
+      host: 'h',
+      port: 1,
+      user: 'u',
+      password: 'p',
+      database: 'd',
+      rootMax: 1,
+      txSlots: 1,
+      txTimeoutMs: opts.txTimeoutMs ?? 2000,
+      connect: f.connect,
+      random: () => 0.999,
+      sleep: async (ms) => {
+        waits.push(ms);
+        await opts.onSleep?.(ms, db);
+      },
+    });
+    let runs = 0;
+    const body = async (t: Parameters<Parameters<PostgresCatalogDb['tx']>[0]>[0]) => {
+      runs++;
+      await t.run('UPDATE t SET v = 1');
+    };
+    return { f, db, waits, body, runs: () => runs };
+  }
+
+  it('runs a serialization failure 5 times, waiting below 20, 40, 80 and 160 ms between runs', async () => {
+    const b = backoffDb({});
+    await expect(b.db.tx(b.body)).rejects.toMatchObject({ code: '40001' });
+    expect(b.runs()).toBe(5);
+    expect(b.waits).toHaveLength(4);
+    for (const [i, cap] of [20, 40, 80, 160].entries()) {
+      expect(b.waits[i]).toBeGreaterThan(cap * 0.99);
+      expect(b.waits[i]).toBeLessThan(cap);
+    }
+    await b.db.close();
+  });
+
+  it('holds no connection while it waits: a queued transaction takes the slot', async () => {
+    let other: Promise<string> | undefined;
+    const b = backoffDb({
+      onSleep: async (_ms, db) => {
+        other ??= db.tx(async () => 'other');
+        expect(await other).toBe('other');
+      },
+    });
+    await expect(b.db.tx(b.body)).rejects.toMatchObject({ code: '40001' });
+    await b.db.close();
+  });
+
+  it('does not wait after a non-retryable error, or once closed', async () => {
+    const b = backoffDb({ code: '23505' });
+    await expect(b.db.tx(b.body)).rejects.toMatchObject({ code: '23505' });
+    expect(b.waits).toEqual([]);
+    await b.db.close();
+
+    const c = backoffDb({ onSleep: (_ms, db) => void db.close() });
+    await expect(c.db.tx(c.body)).rejects.toMatchObject({ code: '40001' });
+    expect(c.runs()).toBe(1); // close() during the first wait: no new run starts
+    expect(c.waits).toHaveLength(1);
+  });
+
+  it('caps a wait at the deadline, then times out with no statement and no connection', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(0);
+      // Run 1 fails at t=0; the 20 ms backoff is capped at the 5 ms left, and ends at the deadline.
+      const b = backoffDb({
+        txTimeoutMs: 5,
+        onSleep: (ms) => void vi.setSystemTime(Date.now() + ms),
+      });
+      const sentBefore = () => b.f.clients.reduce((n, c) => n + c.sent.length, 0);
+      const p = b.db.tx(b.body);
+      await expect(p).rejects.toBeInstanceOf(CatalogTxTimeoutError);
+      expect(b.waits).toEqual([5]);
+      expect(b.runs()).toBe(1);
+      const sent = sentBefore();
+      const clients = b.f.clients.length;
+      // Nothing more was sent and no connection was opened for a second run.
+      expect(
+        slotClients(b.f)
+          .flatMap((c) => c.sent)
+          .filter((s) => s.startsWith('BEGIN')),
+      ).toHaveLength(1);
+      expect(sentBefore()).toBe(sent);
+      expect(b.f.clients.length).toBe(clients);
+      await b.db.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -7,7 +7,7 @@ with `GITHUB_BASE_REF=supabase-migration`. Logs go to the session scratchpad as
 
 ## 1. Tests first (design D1, D2, D3)
 
-- [ ] 1.1 Unit test in `postgresCatalogStore.test.ts`, using a fake connection and the injected
+- [x] 1.1 Unit test in `postgresCatalogStore.test.ts`, using a fake connection and the injected
   `random` and `sleep`:
   - a body that always fails with `40001` runs 5 times;
   - the waits requested before runs 2-5 are below 20, 40, 80 and 160 ms (`random` returns
@@ -26,11 +26,22 @@ with `GITHUB_BASE_REF=supabase-migration`. Logs go to the session scratchpad as
     reports the run counts.
 
   Verify: these are red before 2.1. Record the failures.
+  Evidence: `cd packages/storage && npx vitest run src/postgresCatalogStore.test.ts
+  src/postgresCatalogStore.pg.test.ts` (`rb-1.1-red.log`) -> `Tests  5 failed | 40 passed (45)`:
+  - 5 runs -> `expected 3 to be 5` (unit and pg);
+  - close during a wait -> `expected 3 to be 1`;
+  - deadline -> `expected PostgresError: server 40001 ... to be an instance of CatalogTxTimeoutError`;
+  - 8 writers -> `expected [ 'repetition 0: 4/8 exhausted', …(4) ] to deeply equal []`.
+  The holds-no-connection case passed before the change (a guard: there was no wait yet).
 
 ## 2. Backoff (design D1, D2, D3)
 
-- [ ] 2.1 Implement D1-D3 in `PostgresCatalogDb`.
+- [x] 2.1 Implement D1-D3 in `PostgresCatalogDb`.
   Verify: 1.1 green; `packages/storage` suite green; `npm run typecheck` green.
+  Evidence: same command (`rb-2.1-green.log`) -> `Tests  45 passed (45)`; `cd packages/storage &&
+  npx vitest run` (`rb-2.1-storage.log`) -> `Test Files  5 passed (5)`, `Tests  72 passed (72)`;
+  `npm run typecheck` -> exit 0; `npx biome check packages/storage/src/postgresCatalogStore*.ts`
+  -> `No fixes applied`.
 
 ## 3. Docs and verification
 
