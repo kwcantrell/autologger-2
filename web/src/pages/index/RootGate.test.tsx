@@ -133,13 +133,13 @@ describe('RootGate', () => {
     expect(screen.queryByTestId('login-page-sentinel')).toBeNull();
   });
 
-  it('renders AppShell in oauth-unconfigured dev mode (logged out but no gate)', () => {
+  it('renders LoginPage when logged out even if oauth_configured is false (no anonymous mode)', () => {
     useMock({ data: profilePayload({ oauth_configured: false, logged_in: false }) });
 
     renderStrict(<RootGate />);
 
-    expect(screen.getByTestId('app-shell-sentinel')).not.toBeNull();
-    expect(screen.queryByTestId('login-page-sentinel')).toBeNull();
+    expect(screen.getByTestId('login-page-sentinel')).not.toBeNull();
+    expect(screen.queryByTestId('app-shell-sentinel')).toBeNull();
   });
 
   it('stays on AppShell during a background refetch failure (data-first branch)', () => {

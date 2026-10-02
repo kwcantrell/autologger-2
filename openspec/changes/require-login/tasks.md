@@ -207,7 +207,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 4. Web (design D8)
 
-- [ ] 4.1 Test first: `RootGate` renders the login page for
+- [x] 4.1 Test first: `RootGate` renders the login page for
   `auth: {logged_in:false, oauth_configured:false}`, which is the old dev scenario inverted;
   `TeamsRoute` has no anonymous-mode panel.
   Implement:
@@ -215,8 +215,15 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - delete the `TeamsRoute.tsx` anonymous panel and its branch;
   - drop the stale comments in `AppShell.tsx`, `useLoginReturnConsume.ts` and `LoginPage.tsx`;
   - update `AppShell.onboarding.test.tsx` and `EventLogSheet.test.tsx`.
-
   Verify: the web `vitest run` and typecheck are green.
+  Evidence: red (`5b-4.1-red.log`) -> `RootGate ... renders LoginPage when logged out even if
+  oauth_configured is false` failed with `Unable to find an element by:
+  [data-testid="login-page-sentinel"]`; `TeamsRoute ... renders no anonymous-mode panel` failed
+  with `expected <div …(3)><h1 …(1)></h1>…(1)</div> to be null`; `Tests  2 failed | 15 passed`.
+  Green (`5b-4.1-green.log`) -> `cd web && npx vitest run`: `Test Files 107 passed (107)`,
+  `Tests 1383 passed (1383)`; `npm run typecheck -w web` exit 0; `npx biome check` on 12 files ->
+  `No fixes applied`. Stale fixtures fixed in the same sweep (test-only): `eventGenerateLatch`,
+  `BatchImportModal` and `useLoginReturnConsume` tests.
 
 ## 5. Compose, static checks and docs (design D9, D10)
 

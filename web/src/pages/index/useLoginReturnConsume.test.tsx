@@ -57,7 +57,7 @@ describe('useLoginReturnConsume', () => {
     expect(navigateCalls).toEqual([]);
   });
 
-  it('anonymous-shell boot (logged_in false) never consumes even with a stash present', () => {
+  it('logged-out render (logged_in false) never consumes even with a stash present', () => {
     sessionStorage.setItem(LOGIN_RETURN_STASH_KEY, '/sessions/abc');
 
     renderStrict(<Host loggedIn={false} />);

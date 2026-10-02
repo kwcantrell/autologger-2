@@ -60,17 +60,21 @@ function teamsProfile(
   } as unknown as ProfilePayload;
 }
 
-function anonymousProfile(): ProfilePayload {
+// A profile with no user. Unreachable in practice (RootGate renders the login
+// view whenever `auth.logged_in` is false, so AppShell never mounts this
+// route signed out), but `auth.user` is nullable in the type, so pin what the
+// page does with it: no anonymous-mode panel, no team requests.
+function signedOutProfile(): ProfilePayload {
   return {
-    active_studio_id: 'test-studios',
+    active_studio_id: '',
     active_show_id: '',
-    active_studio: { id: 'test-studios', name: 'Test Studios', categories: [] },
-    studios: [{ id: 'test-studios', name: 'Test Studios' }],
+    active_studio: { id: '', name: '', categories: [] },
+    studios: [],
     studio_settings: {},
     shows: [],
     new_session_defaults: { title_prefix: '', default_frame_rate: 30 },
     admin: { restart_supported: false, restart_needs_token: false },
-    auth: { logged_in: false, oauth_configured: false, user: null },
+    auth: { logged_in: false, oauth_configured: true, user: null },
   } as unknown as ProfilePayload;
 }
 
@@ -129,21 +133,22 @@ afterEach(() => {
   setNavigationImplForTesting(null);
 });
 
-describe('dev-anonymous mode', () => {
-  it('renders a signed-in-required notice and issues no /api/teams requests', () => {
-    renderPage(anonymousProfile());
+describe('no anonymous mode (require-login D8)', () => {
+  it('renders no anonymous-mode panel and issues no /api/teams requests for a null user', () => {
+    renderPage(signedOutProfile());
 
     expect(screen.getByTestId('teams-route')).not.toBeNull();
-    expect(document.getElementById('teams-signed-in-required')).not.toBeNull();
+    expect(document.getElementById('teams-signed-in-required')).toBeNull();
+    expect(screen.queryByText(/sign in required/i)).toBeNull();
+    expect(screen.queryByText(/anonymous mode/i)).toBeNull();
     expect(teamsApiCalls()).toHaveLength(0);
   });
 });
 
 describe('back-to-sessions affordance (spec: "Teams page offers a way back in every state")', () => {
-  it('is present in the signed-in-required state and navigates to / via the shared navigate wrapper', () => {
-    renderPage(anonymousProfile());
+  it('is present for a null user and navigates to / via the shared navigate wrapper', () => {
+    renderPage(signedOutProfile());
 
-    expect(document.getElementById('teams-signed-in-required')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /back to sessions/i }));
     expect(navRecord).toEqual(['/']);
   });

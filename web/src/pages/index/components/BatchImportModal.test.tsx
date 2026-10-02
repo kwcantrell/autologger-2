@@ -43,7 +43,7 @@ function profileFixture(): ProfilePayload {
     ],
     new_session_defaults: { default_frame_rate: 24, title_prefix: '' },
     admin: { is_admin: false },
-    auth: { require_login: false, user: null },
+    auth: { logged_in: false, oauth_configured: true, user: null },
   } as unknown as ProfilePayload;
 }
 
