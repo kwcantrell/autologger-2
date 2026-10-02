@@ -127,6 +127,11 @@ export interface ShowBrief {
   title_suffix: 'date' | 'episode';
 }
 
+/** A `GET /api/profile` `shows[]` entry (show-grants D7): the brief show plus whether the caller
+ * can open its sessions. Only the profile carries `can_access`; the `/api/shows` routes don't, so
+ * `ShowBrief` (which `Show` stays assignable to) is unchanged. */
+export type ProfileShow = ShowBrief & { can_access: boolean };
+
 export interface StudioBrief {
   id: string;
   name: string;
@@ -150,6 +155,9 @@ export interface TeamMember {
   given_name: string;
   family_name: string;
   role: TeamRole;
+  /** The member's granted show ids, sorted (show-grants D6). Present only when the caller is the
+   * owner or an admin, like `invites`; `[]` on owner and admin rows. */
+  show_ids?: string[];
 }
 
 export interface TeamInvite {
@@ -200,6 +208,11 @@ export interface TeamRoleChangeBody {
 export interface TeamRoleChangeResponse {
   ok: boolean;
   role: TeamRole;
+}
+
+/** `PUT` and `DELETE /api/teams/:id/shows/:showId/grants/:userId` response (show-grants D5). */
+export interface ShowGrantResponse {
+  ok: true;
 }
 
 /** `POST /api/teams/:id/owner` body (owner-bootstrap D3). */
@@ -285,9 +298,9 @@ export interface ProfilePayload {
   active_studio: { id: string; name: string; categories: ActiveStudioCategory[] };
   studios: StudioBrief[];
   studio_settings: Record<string, Record<string, unknown>>;
-  /** Brief entries only — see `ShowBrief`. Full per-show config comes from
+  /** Brief entries plus `can_access` — see `ProfileShow`. Full per-show config comes from
    * `useStudioShows(studioId)` / `useShow(showId)`. */
-  shows: ShowBrief[];
+  shows: ProfileShow[];
   new_session_defaults: NewSessionDefaults;
   admin: AdminInfo;
   auth: AuthSection;

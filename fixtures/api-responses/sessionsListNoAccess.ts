@@ -1,6 +1,6 @@
 // GENERATED — DO NOT EDIT BY HAND.
 //
-// Captured from a real `GET /api/teams/:id (caller is a team admin)` response by
+// Captured from a real `GET /api/sessions (caller has no access to the active show)` response by
 // `server/src/routers/apiResponseFixtures.int.test.ts` and re-asserted
 // against the live handler on every server test run
 // (web-api-shape-conformance, design D2/D3).
@@ -21,44 +21,30 @@
 import type { Mutable } from './_mutable';
 
 const captured = {
-  "id": "my-crew",
-  "name": "My Crew",
-  "role": "admin",
-  "enabled_admin_count": 1,
-  "members": [
+  "active": [
     {
       "id": "########-####-####-####-############",
-      "email": "olu@example.com",
-      "given_name": "Test",
-      "family_name": "User",
-      "role": "owner",
-      "show_ids": []
-    },
-    {
-      "id": "########-####-####-####-############",
-      "email": "ann@example.com",
-      "given_name": "Test",
-      "family_name": "User",
-      "role": "admin",
-      "show_ids": []
-    },
-    {
-      "id": "########-####-####-####-############",
-      "email": "bo@example.com",
-      "given_name": "Test",
-      "family_name": "User",
-      "role": "member",
-      "show_ids": [
-        "########-####-####-####-############"
-      ]
+      "title": "ATS - 2",
+      "deck_title": "ATS - 2",
+      "show_id": "########-####-####-####-############",
+      "show_code": "ATS",
+      "show_name": "All The Smoke",
+      "episode": "002",
+      "notes": "",
+      "session_status": "active",
+      "frame_rate": 24,
+      "start_offset_frames": 0,
+      "created_at_utc": "####-##-##T##:##:##.###Z",
+      "episode_date": null,
+      "event_count": 0,
+      "is_rolling": false,
+      "current_take": 0,
+      "rolling_timecode": null,
+      "total_runtime_hms": "##:##:##",
+      "archived": false
     }
   ],
-  "invites": [
-    {
-      "email": "pending@example.com",
-      "invited_at_utc": "####-##-##T##:##:##.###Z"
-    }
-  ]
+  "archived": []
 } as const;
 
-export const teamDetailAdmin = captured as Mutable<typeof captured>;
+export const sessionsListNoAccess = captured as Mutable<typeof captured>;

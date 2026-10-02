@@ -153,6 +153,7 @@ function customProfileFixture(): ProfilePayload {
         name: 'Show',
         show_code: 'SHOW',
         title_suffix: 'date',
+        can_access: true,
       },
     ],
     new_session_defaults: { title_prefix: '', default_frame_rate: 24 },

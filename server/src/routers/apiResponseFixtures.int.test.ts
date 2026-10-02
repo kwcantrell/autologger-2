@@ -175,6 +175,9 @@ describe('GET /api/profile', () => {
       code: 'ATS',
       categoriesJson: CATEGORIES_JSON,
     });
+    // A show in the team where Ann is a plain member with no grant: `can_access: false`
+    // (show-grants D7); the owner's ATS is `can_access: true`.
+    await seedShow({ studioId: teamB, name: 'YMHS Weekly', code: 'YW' });
     const userId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
     await catalogFor().auth.authAddMembershipWithRole(userId, teamA, 'owner');
     await catalogFor().auth.authAddMembershipWithRole(userId, teamB, 'member');
@@ -337,6 +340,66 @@ describe('sessions', () => {
         endpoint: 'GET /api/sessions',
         format: 'ts',
         exportName: 'sessionsList',
+      },
+      res,
+    );
+  });
+
+  it('GET /api/sessions for a member without access to the active show matches the captured fixture (blanked entries, show-grants D21)', async () => {
+    const team = await seedStudio({ id: 'my-crew', name: 'My Crew' });
+    const showId = await seedShow({
+      studioId: team,
+      name: 'All The Smoke',
+      code: 'ATS',
+      categoriesJson: CATEGORIES_JSON,
+    });
+    const now = new Date().toISOString();
+    const sessionId = await catalogFor().sessions.createSessionIndex({
+      showId,
+      title: 'ATS - 2',
+      frameRate: 24,
+      startOffsetFrames: 0,
+      episode: '002',
+      notes: 'Private notes',
+      startedAtUtc: now,
+      createdAtUtc: now,
+    });
+    const adminId = await seedUser({ email: 'ann@example.com', sub: 'sub-ann' });
+    await catalogFor().auth.authAddMembershipWithRole(adminId, team, 'admin');
+    const adminCookie = await loginCookie(adminId);
+    // Content and live state the blanked entry must not carry: notes (above), an event, a
+    // rolling take.
+    for (const [path, body] of [
+      [`/api/sessions/${sessionId}/events`, { category: 'cam', message: 'Cut to 2' }],
+      [`/api/sessions/${sessionId}/transport/start`, undefined],
+    ] as const) {
+      const r = await anonApp.request(
+        path,
+        {
+          method: 'POST',
+          headers:
+            body === undefined ? { Cookie: adminCookie } : { ...JSON_HEADERS, Cookie: adminCookie },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        },
+        { ...env },
+      );
+      expect(r.status).toBe(200);
+    }
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    await catalogFor().auth.authSetPrefs(memberId, team, showId);
+
+    const res = await anonApp.request(
+      '/api/sessions',
+      { method: 'GET', headers: { Cookie: await loginCookie(memberId) } },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'sessionsListNoAccess',
+        endpoint: 'GET /api/sessions (caller has no access to the active show)',
+        format: 'ts',
+        exportName: 'sessionsListNoAccess',
       },
       res,
     );
@@ -731,6 +794,13 @@ async function seedTeam(): Promise<{
   };
 }
 
+/** A show in the team granted to the member (show-grants D6: the manager views' `show_ids`). */
+async function grantBoAShow(team: string, memberId: string, grantedBy: string): Promise<string> {
+  const showId = await seedShow({ studioId: team, name: 'All The Smoke', code: 'ATS' });
+  await catalogFor().auth.authGrantShow(memberId, showId, grantedBy, new Date().toISOString());
+  return showId;
+}
+
 describe('teams', () => {
   it('POST /api/teams matches the captured fixture', async () => {
     const cookie = await loginCookie(await seedUser({ email: 'ann@example.com', sub: 'sub-ann' }));
@@ -749,10 +819,11 @@ describe('teams', () => {
     );
   });
 
-  it('GET /api/teams/:id as an admin matches the captured fixture (carries `invites`)', async () => {
-    const { team, adminCookie } = await seedTeam();
+  it('GET /api/teams/:id as an admin matches the captured fixture (carries `invites` and `show_ids`)', async () => {
+    const { team, adminId, adminCookie } = await seedTeam();
     const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
     await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    await grantBoAShow(team, memberId, adminId);
     await app.request(
       `/api/teams/${team}/invites`,
       {
@@ -830,10 +901,11 @@ describe('teams', () => {
     );
   });
 
-  it('GET /api/teams/:id as the owner matches the captured fixture (carries `invites`)', async () => {
-    const { team, ownerCookie } = await seedTeam();
+  it('GET /api/teams/:id as the owner matches the captured fixture (carries `invites` and `show_ids`)', async () => {
+    const { team, ownerId, ownerCookie } = await seedTeam();
     const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
     await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    await grantBoAShow(team, memberId, ownerId);
     await app.request(
       `/api/teams/${team}/invites`,
       {
@@ -899,6 +971,27 @@ describe('teams', () => {
         endpoint: 'POST /api/teams/:id/members/:uid/role',
         format: 'ts',
         exportName: 'teamRoleChange',
+      },
+      res,
+    );
+  });
+
+  it('PUT /api/teams/:id/shows/:showId/grants/:userId matches the captured fixture', async () => {
+    const { team, adminCookie } = await seedTeam();
+    const memberId = await seedUser({ email: 'bo@example.com', sub: 'sub-bo' });
+    await catalogFor().auth.authAddMembershipWithRole(memberId, team, 'member');
+    const showId = await seedShow({ studioId: team, name: 'All The Smoke', code: 'ATS' });
+    const res = await app.request(
+      `/api/teams/${team}/shows/${showId}/grants/${memberId}`,
+      { method: 'PUT', headers: { Cookie: adminCookie } },
+      { ...env },
+    );
+    await expectCapturedResponse(
+      {
+        name: 'showGrantPut',
+        endpoint: 'PUT /api/teams/:id/shows/:showId/grants/:userId',
+        format: 'ts',
+        exportName: 'showGrantPut',
       },
       res,
     );
