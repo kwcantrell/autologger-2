@@ -32,24 +32,32 @@
 // no `/bin`/`/usr/bin`, so any external command looked up via `PATH` would
 // fail to launch.
 
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { SessionIndexStore } from '@autologger/catalog';
 import {
   MEDIA_IMPORT_FIXTURES_DIR,
   YOUTUBE_IMPORT_MAX_CONCURRENT,
   YOUTUBE_IMPORT_TMP_PREFIX,
   youtubeImportGuard,
 } from '@autologger/media-import';
-import { SessionIndexStore } from '@autologger/catalog';
 import type { Clock } from '@autologger/ports';
 import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
-import { app, env, envWith } from '../test/harness';
-import { seededSession } from '../test/helpers';
+import { anonApp, app, env, envWith } from '../test/harness';
+import { catalogFor, seedAccessMatrix, seededSession } from '../test/helpers';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -1067,5 +1075,120 @@ describe('POST /api/sessions/:sessionId/youtube-import — D9 import-anchor wall
     const started = events.find((e) => e.message === 'Recording 1 Started');
     expect(started).toBeDefined();
     expect(started?.wall_time_utc).toBe(seg.started_at_utc);
+  });
+});
+
+// ── Imports re-check access (show-grants D19, owner decision F) ─────────────
+describe('a YouTube import re-checks the caller’s access after the download (show-grants D19)', () => {
+  /** A launcher whose yt-dlp run blocks until `releasePath` exists: it records the invocation
+   * marker, then a node wrapper waits for the release file before running the fixture, so a test
+   * can act "during the download" deterministically. */
+  function gatedBinary(): { binaryPath: string; markerPath: string; release: () => void } {
+    const dir = scratchDir();
+    const markerPath = join(dir, 'invoked.marker');
+    const releasePath = join(dir, 'release');
+    const wrapperPath = join(dir, 'gate.mjs');
+    writeFileSync(
+      wrapperPath,
+      `import { existsSync } from 'node:fs';\n` +
+        `while (!existsSync(${JSON.stringify(releasePath)})) await new Promise((r) => setTimeout(r, 20));\n` +
+        `await import(${JSON.stringify(`file://${FIXTURE_PATH}`)});\n`,
+    );
+    const binaryPath = join(dir, 'yt-dlp');
+    writeFileSync(
+      binaryPath,
+      '#!/bin/sh\n' +
+        `echo invoked >> "${markerPath}"\n` +
+        `echo '{}' > .ytdlp-stub.json\n` +
+        `exec "${process.execPath}" "${wrapperPath}" "$@"\n`,
+    );
+    chmodSync(binaryPath, 0o755);
+    return { binaryPath, markerPath, release: () => writeFileSync(releasePath, 'go') };
+  }
+
+  async function waitFor(cond: () => boolean): Promise<void> {
+    for (let i = 0; i < 400; i++) {
+      if (cond()) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error('condition not met');
+  }
+
+  function scratchEntriesFor(sessionId: string): string[] {
+    return readdirSync(env.ports.audio.scratchRoot()).filter((n) =>
+      n.startsWith(`${YOUTUBE_IMPORT_TMP_PREFIX}${sessionId}-`),
+    );
+  }
+
+  async function post(sessionId: string, cookie: string, bindings: Bindings): Promise<Response> {
+    return anonApp.request(
+      `/api/sessions/${sessionId}/youtube-import`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify(VALID_BODY),
+      },
+      bindings,
+    );
+  }
+
+  /** The session's audio segments and its synthesized take (the Recording N Started/Stopped
+   * event pair the import writes). */
+  async function segmentsAndTake(sessionId: string, cookie: string, bindings: Bindings) {
+    const segs = await anonApp.request(
+      `/api/sessions/${sessionId}/audio/segments`,
+      { headers: { cookie } },
+      bindings,
+    );
+    expect(segs.status).toBe(200);
+    const events = await anonApp.request(
+      `/api/sessions/${sessionId}/events`,
+      { headers: { cookie } },
+      bindings,
+    );
+    expect(events.status).toBe(200);
+    return {
+      segments: ((await segs.json()) as { segments: unknown[] }).segments.length,
+      takeEvents: ((await events.json()) as { total: number }).total,
+    };
+  }
+
+  it('a revoke during the download: the masked 404, no new segment or take, temp dir removed', async () => {
+    const m = await seedAccessMatrix();
+    const { binaryPath, markerPath, release } = gatedBinary();
+    const testEnv = configuredEnv(binaryPath);
+
+    const pending = post(m.sessionId, m.granted.cookie, testEnv);
+    await waitFor(() => existsSync(markerPath)); // the download is under way
+    expect(scratchEntriesFor(m.sessionId)).toHaveLength(1);
+    await catalogFor().auth.authRevokeShow(m.granted.id, m.showId);
+    release();
+    const res = await pending;
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Session not found' });
+    expect(await segmentsAndTake(m.sessionId, m.owner.cookie, testEnv)).toEqual({
+      segments: 0,
+      takeEvents: 0,
+    });
+    expect(scratchEntriesFor(m.sessionId)).toEqual([]);
+  });
+
+  it('a granted import is unchanged: 200, one segment, one take (its Started/Stopped pair)', async () => {
+    const m = await seedAccessMatrix();
+    const { binaryPath, markerPath, release } = gatedBinary();
+    const testEnv = configuredEnv(binaryPath);
+
+    const pending = post(m.sessionId, m.granted.cookie, testEnv);
+    await waitFor(() => existsSync(markerPath));
+    release();
+    const res = await pending;
+
+    expect(res.status).toBe(200);
+    expect(await segmentsAndTake(m.sessionId, m.owner.cookie, testEnv)).toEqual({
+      segments: 1,
+      takeEvents: 2,
+    });
+    expect(scratchEntriesFor(m.sessionId)).toEqual([]);
   });
 });

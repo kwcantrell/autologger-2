@@ -43,7 +43,13 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
+import {
+  canAccessSession,
+  getSessionHub,
+  requireSession,
+  requireUser,
+  timecodeCtx,
+} from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();
@@ -513,6 +519,11 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // this resolves, below.
     const fetched = await fetchYoutubeAudio({ url: urlCheck.href, tempDir, binaryPath });
     const bytes = await readFile(fetched.audioPath);
+
+    // Access re-check (show-grants D19, owner decision F): the download can take minutes, so a
+    // caller who lost access to the session meanwhile gets the gate's masked 404 and nothing is
+    // written; the finally below removes the temp dir.
+    if (!(await canAccessSession(c, sessionId))) throw new ApiError(404, 'Session not found');
 
     // Re-acquire the hub post-download (D1). N is computed before the
     // segment is attached (design D12 — collision-proof, not

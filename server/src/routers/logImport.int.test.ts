@@ -519,3 +519,168 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     },
   );
 });
+
+// ── Imports re-check access (show-grants D19, owner decision F) ─────────────
+describe('the log-import job re-checks its creator’s show access before each sheet (show-grants D19)', () => {
+  const SHEET_ROW = 'almost called a helicopter but just crawled';
+  const CATEGORIES = JSON.stringify([
+    {
+      id: 'cam',
+      name: 'Camera',
+      color: '#112233',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+    },
+    {
+      id: 'other',
+      name: 'Other',
+      color: '#445566',
+      type: 'BUTTON',
+      dropdown_options: [],
+      on_label: '',
+      off_label: '',
+    },
+  ]);
+
+  /** A session with one imported take and timed transcript words, so a sheet imports without
+   * DeepGram (the success-path test's setup). The default user is an admin of the studio. */
+  async function preparedSession(show: string, title: string): Promise<string> {
+    const session = await seedSession({ showId: show, title });
+    const res = await app.request(
+      `/api/sessions/${session}/local-audio-import?duration_s=1800`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'audio/wav' },
+        body: new Uint8Array([0x52, 0x49, 0x46, 0x46]),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    env.ports.sessions.get(session).replaceTranscriptWords([
+      { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
+      { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
+      { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
+      {
+        session_time: '00:08:47',
+        speaker: '0',
+        word: 'helicopter',
+        start_sec: 527.7,
+        end_sec: 528.4,
+      },
+      { session_time: '00:08:48', speaker: '0', word: 'but', start_sec: 528.5, end_sec: 528.7 },
+    ]);
+    return session;
+  }
+
+  async function twoSheetWorkbook(): Promise<Buffer> {
+    const wb = new ExcelJS.Workbook();
+    // The same row on both sheets: each session's transcript matches it.
+    for (const title of ['EP 1', 'EP 2']) {
+      const ws = wb.addWorksheet(title);
+      ws.getCell('A7').value = '8:48';
+      ws.getCell('B7').value = SHEET_ROW;
+      ws.getCell('C7').value = 'Camera';
+    }
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  }
+
+  async function eventMessages(session: string): Promise<string[]> {
+    const res = await app.request(`/api/sessions/${session}/events`, {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { events: Array<{ message: string }> };
+    return body.events.map((e) => e.message);
+  }
+
+  /** Runs a two-sheet import as `creator`, calling `between` once after the first sheet's import
+   * wrote its events (its live-projection mirror call) and before the second sheet. */
+  async function runTwoSheetImport(creator: string, between: () => Promise<void>) {
+    const studio = await seedMemberStudio();
+    const show = await seedShow({ studioId: studio, categoriesJson: CATEGORIES });
+    await catalogFor().auth.authAddMembershipWithRole(creator, studio, 'member');
+    const s1 = await preparedSession(show, 'EP 1');
+    const s2 = await preparedSession(show, 'EP 2');
+    const xlsx = await twoSheetWorkbook();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array(xlsx), { status: 200 })),
+    );
+    const realMirror = env.ports.mirror;
+    let hooked = false;
+    const bindings = envWith(
+      { SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' },
+      {
+        mirror: {
+          mirror: async (sessionId: string) => {
+            await realMirror.mirror(sessionId);
+            if (sessionId === s1 && !hooked) {
+              hooked = true;
+              await between();
+            }
+          },
+        },
+      },
+    );
+    return { studio, show, s1, s2, bindings, hookedRef: () => hooked };
+  }
+
+  async function finished(jobId: string, cookie: string) {
+    let body: { status: string; lines: string[]; error: string | null } | null = null;
+    for (let i = 0; i < 200; i++) {
+      const get = await app.request(`/api/log-import/${jobId}`, { headers: { cookie } }, env);
+      expect(get.status).toBe(200);
+      body = (await get.json()) as { status: string; lines: string[]; error: string | null };
+      if (body.status === 'failed' || body.status === 'completed') return body;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error('job did not finish');
+  }
+
+  it('a member whose grant is revoked after the first sheet: failed, Access revoked., first sheet’s events stay, second’s not written', async () => {
+    const member = await seedUser();
+    const cookie = await loginCookie(member);
+    let showId = '';
+    const run = await runTwoSheetImport(member, async () => {
+      await catalogFor().auth.authRevokeShow(member, showId);
+    });
+    showId = run.show;
+    await grant(member, run.show);
+
+    const post = await postImport(run.show, run.bindings, { cookie });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    const body = await finished(job_id, cookie);
+
+    expect(run.hookedRef(), body.lines.join('\n')).toBe(true);
+    expect(body.status, body.lines.join('\n')).toBe('failed');
+    expect(body.error).toBe('Access revoked.');
+    expect(body.lines[body.lines.length - 1]).toBe('Access revoked; stopping.');
+    expect(body.lines.join('\n')).not.toContain('Done.');
+    expect(await eventMessages(run.s1)).toContain(SHEET_ROW);
+    expect(await eventMessages(run.s2)).not.toContain(SHEET_ROW);
+  });
+
+  it('an admin creator is never stopped (a revoke of their dormant grant changes nothing)', async () => {
+    const admin = await seedUser();
+    const cookie = await loginCookie(admin);
+    let showId = '';
+    const run = await runTwoSheetImport(admin, async () => {
+      await catalogFor().auth.authRevokeShow(admin, showId);
+    });
+    showId = run.show;
+    await catalogFor().auth.authUpsertMembershipRole(admin, run.studio, 'admin');
+    await grant(admin, run.show);
+
+    const post = await postImport(run.show, run.bindings, { cookie });
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+    const body = await finished(job_id, cookie);
+
+    expect(run.hookedRef(), body.lines.join('\n')).toBe(true);
+    expect(body.status, body.lines.join('\n')).toBe('completed');
+    expect(body.error).toBeNull();
+    expect(await eventMessages(run.s1)).toContain(SHEET_ROW);
+    expect(await eventMessages(run.s2)).toContain(SHEET_ROW);
+  });
+});

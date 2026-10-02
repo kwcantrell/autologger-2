@@ -116,7 +116,9 @@ export async function ensureTimedTranscript(input: {
 function jobFailureDetail(err: unknown): string | null {
   const e = err as { code?: unknown; name?: unknown; message?: unknown } | null;
   if (typeof e?.code === 'string' || String(e?.name ?? '').startsWith('Catalog')) {
-    console.warn(`[log-import] catalog failure during a job (${typeof e?.code === 'string' ? e.code : String(e?.name)})`);
+    console.warn(
+      `[log-import] catalog failure during a job (${typeof e?.code === 'string' ? e.code : String(e?.name)})`,
+    );
     return null;
   }
   return err instanceof Error ? err.message : String(err);
@@ -166,6 +168,13 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
       let sessionsFailed = 0;
 
       for (const sheet of sheets) {
+        // Access re-check before each sheet (show-grants D19, owner decision F): a creator who
+        // lost access to the show stops the job; sheets already imported keep their events.
+        if (!(await catalog.auth.authCanAccessShow(job.createdByUserId, showId))) {
+          appendLogImportLine(job.id, 'Access revoked; stopping.');
+          setLogImportStatus(env.ports.clock, job.id, 'failed', 'Access revoked.');
+          return;
+        }
         const title = sheet.name.trim();
         const session = sessions.find((s) => String(s.title ?? '').trim() === title);
         if (!session) {
@@ -208,7 +217,10 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         } catch (err) {
           sessionsFailed += 1;
           const detail = jobFailureDetail(err);
-          appendLogImportLine(job.id, detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`);
+          appendLogImportLine(
+            job.id,
+            detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`,
+          );
           appendLogImportLine(job.id, `Continuing with remaining sheets…`);
           // Per-session failure must not abort the rest of the workbook.
         }
