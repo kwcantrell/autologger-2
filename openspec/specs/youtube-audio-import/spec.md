@@ -4,6 +4,7 @@
 Defines `youtube-import`: a configuration-gated endpoint that uses an operator-provided `yt-dlp` to download a video's audio and attach it to a session as a single supported-container segment and timeline-anchored take. It covers URL validation, open-network refusal, a bounded and isolated external fetch, global and per-session concurrency limits, atomic failure with no orphaned segment, recording-ordinal assignment, and the optional publish-date write to the episode date.
 
 ## Requirements
+
 ### Requirement: Configuration gating
 
 YouTube audio import SHALL be gated on an available `yt-dlp` binary. The gate SHALL be
@@ -231,7 +232,9 @@ value SHALL be a calendar date that the UI renders as the **intended day**: beca
 client date formatter parses a bare `YYYY-MM-DD` as UTC midnight (which renders as the
 previous day for negative-UTC-offset viewers), the change SHALL ensure the displayed date is
 not shifted a day earlier. When `use_publish_date` is false, or the metadata carries no
-usable date, `episode_date` SHALL be left unchanged. The field's presence and type in the
+usable date, `episode_date` SHALL be left unchanged. The episode-date write is best-effort: if
+it fails after the audio is attached, the import SHALL still succeed, `episode_date` SHALL be
+left unchanged, and a warning naming the session and the intended date SHALL be logged. The field's presence and type in the
 session JSON response are unchanged (it was already a nullable field).
 
 #### Scenario: Opt-in sets the episode date to the correct calendar day
@@ -250,6 +253,13 @@ session JSON response are unchanged (it was already a nullable field).
 
 - **WHEN** `use_publish_date: true` but the metadata carries no usable upload date
 - **THEN** the import still succeeds (audio is ingested) and `episode_date` is left unchanged
+
+#### Scenario: A failed episode-date write does not fail the import
+
+- **WHEN** an import with `use_publish_date: true` attaches its audio and the episode-date
+  write then fails
+- **THEN** the response is `200 {ok: true}`, the audio segment is attached once, and a warning
+  names the session and the intended date
 
 ### Requirement: Synchronous single-shot request model
 
@@ -393,4 +403,3 @@ anchored take).
 
 - **WHEN** the server runs against a session that already holds an anchorless imported segment
 - **THEN** that segment is left exactly as it was; only a new import produces an anchored take
-

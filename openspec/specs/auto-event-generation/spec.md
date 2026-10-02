@@ -14,8 +14,8 @@ the client's no-instructions state, the settings indicator) uses this single
 definition. ON_OFF buttons never participate (their on/off phase lives in client-held
 toggle state a generated insert cannot know or update); BUTTON, DROPDOWN, and TEXT
 buttons participate when instruction-bearing.
-## Requirements
 
+## Requirements
 
 ### Requirement: Per-button generation instructions persist on the show
 Each event button (a show `categories[*]` entry) of type BUTTON, DROPDOWN, or TEXT
@@ -69,7 +69,6 @@ extended. These additive shape changes are authorized by this delta. The Compani
 - **THEN** `GET …/show-categories` returns `auto_instructions_present: true`, its
   `categories` entries carry no instruction fields, and the Companion categories
   response is byte-shape identical to today
-
 
 ### Requirement: Gated generation endpoint with pre-spawn preconditions
 The server SHALL expose `POST /api/sessions/:sessionId/events/generate` (added to the
@@ -137,7 +136,6 @@ persisted and are reported nowhere in the error body.
 - **THEN** the route responds `502` with the scrubbed generate-failure detail, no raw
   subprocess output, and the already-inserted events remain persisted
 
-
 ### Requirement: Single orchestrator turn over all instructions
 A generation run SHALL execute as **one** CLI turn driven through the existing
 `driveAiTurn` lifecycle (MCP registration → spawn → outcome → no-orphan cleanup; all
@@ -190,7 +188,6 @@ feed's vocabulary):
 - **THEN** the created event's `message` is exactly "SLATE", indistinguishable in
   vocabulary from a manual press
 
-
 ### Requirement: Generated events append, bounded and attributable
 
 Generation SHALL **append** events by default: when `regenerate` is absent or
@@ -218,7 +215,10 @@ emission semantics), category label/color UI snapshots merged into metadata
 rows), and the catalog live projection (`event_count` / max-timecode mirror)
 so `GET /api/sessions` stays truthful — the run SHALL leave the catalog
 projection current by the time the route responds (on regenerate, current
-**including** the post-success delete's decrement).
+**including** the post-success delete's decrement) whenever the catalog mirror
+write succeeds; if that write fails, the run's own outcome is still returned, a
+warning is logged, and the session's next change rewrites the projection
+(api-contract-freeze "Catalog mirror failures don't fail saved session changes").
 
 #### Scenario: Generate All appends without deleting
 
@@ -254,7 +254,6 @@ projection current by the time the route responds (on regenerate, current
 - **WHEN** a run creates 40 events and completes
 - **THEN** `GET /api/sessions` reflects the updated `event_count` without any
   intervening manual write
-
 
 ### Requirement: Optional generate body for regenerate and selection
 
@@ -350,7 +349,6 @@ zero-created success).
   snapshot's still-present rows are deleted in one transaction with one
   `event.changed` broadcast, with `deleted` reporting that count
 
-
 ### Requirement: Events are anchored at transcript timecodes
 `create_event` SHALL accept a category id (which MUST match the run's snapshot of
 instruction-bearing categories and MUST NOT be `internal` in any casing; other ids are
@@ -394,7 +392,6 @@ T**, and generated events sort among themselves in timecode order.
   or with the id `internal`
 - **THEN** the tool returns a validation error, no row is inserted, and the run
   continues
-
 
 ### Requirement: Generation-density transcript rendering
 For a generation-density turn — an event-generation run or a topic-generation one-shot
@@ -442,7 +439,6 @@ turns keep the existing (unpaged) rendering unchanged.
 - **THEN** the rendered body neutralizes it so no body line matches the marker shape,
   and the only marker in the page is the tool's own trailing one
 
-
 ### Requirement: Auto-generation attribution metadata is server-authoritative
 
 The `auto_generated` and `auto_generate_run_id` metadata keys SHALL be
@@ -472,7 +468,6 @@ regenerate's snapshot sweep still removes any predicate-matching row.
 - **THEN** the stored row still matches the auto predicate and remains
   subject to a later regenerate sweep
 
-
 ### Requirement: Anchored event insert is transactional
 
 The `create_event` write path SHALL compute its anchor basis and perform its insert
@@ -495,7 +490,6 @@ snapshot-id exclusion, and exactly one `event.changed` broadcast per successful 
 #### Scenario: Hub synchronous invariant holds
 - **WHEN** the `createAnchoredEvent` RPC body is inspected
 - **THEN** it contains zero `await` expressions and runs inside a single synchronous transaction
-
 
 ### Requirement: The create_event handler is await-free
 
