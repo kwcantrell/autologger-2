@@ -14,6 +14,8 @@ import {
   takeOauthState,
 } from '../auth/identity';
 import {
+  bootstrapEmailMatch,
+  bootstrapOwnerEmail,
   cookieSecureForRequest,
   googleClientId,
   googleClientSecret,
@@ -163,7 +165,10 @@ authRouter.get('/auth/google/callback', async (c) => {
     console.warn('OAuth callback: id_token subject or email claim contains NUL.');
     return c.redirect('/?login_error=token_invalid', 302);
   }
-  const noNul = (v: unknown) => String(v ?? '').replaceAll('\u0000', '').trim();
+  const noNul = (v: unknown) =>
+    String(v ?? '')
+      .replaceAll('\u0000', '')
+      .trim();
   const gn = noNul(claims.given_name);
   const fn = noNul(claims.family_name);
   const pic = noNul(claims.picture);
@@ -261,6 +266,25 @@ authRouter.get('/auth/google/callback', async (c) => {
       familyName: fn,
       pictureUrl: pic,
     });
+  }
+
+  // owner-bootstrap D7: the bootstrap owner claims every team with no owner, after either branch
+  // (enabled, verified, identity matched) and before the session is issued. It fails open: a
+  // failed claim is logged without the email and the next sign-in retries it.
+  const match = bootstrapEmailMatch(email, bootstrapOwnerEmail(c.env.config));
+  if (match === 'non-ascii') {
+    console.warn('OAuth callback: bootstrap owner claim refused (non-ASCII email)');
+  } else if (match) {
+    try {
+      const ids = await catalog.tx((cat) => cat.auth.authClaimOwnerlessStudios(uid));
+      for (const id of ids) console.info(`OAuth callback: bootstrap owner claimed team ${id}`);
+    } catch (e) {
+      const code =
+        (e as { code?: unknown } | null)?.code ?? (e instanceof Error ? e.name : 'error');
+      console.warn(
+        `OAuth callback: bootstrap owner claim failed (${sanitizeForLog(String(code))})`,
+      );
+    }
   }
 
   const ttlDays = sessionTtlDays(c.env.config);

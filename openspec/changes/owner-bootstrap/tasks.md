@@ -288,7 +288,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 7. Bootstrap claim at sign-in (design D7)
 
-- [ ] 7.1 Test first, in `server/src/routers/auth.int.test.ts` (fake identity, bootstrap email
+- [x] 7.1 Test first, in `server/src/routers/auth.int.test.ts` (fake identity, bootstrap email
   `bootstrap-owner@example.com`):
   - the first sign-in claims `test-studios` and `test-studio-2`; `GET /api/teams/test-studios`
     shows `role: "owner"`; the log has one `bootstrap owner claimed team <id>` line per claimed
@@ -306,8 +306,19 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - a failing claim (a stub catalog that throws on the claim) still gives `302 /` with a cookie,
     and the log line has no email.
   Verify: red before 7.2.
-- [ ] 7.2 Implement the claim in `server/src/routers/auth.ts` after both branches and before
+  Evidence: red against the pre-7.2 `auth.ts`: `cd server && npx vitest run --project integration
+  src/routers/auth.int.test.ts` (`5c-7.1-red.log`) -> `Tests  7 failed | 37 passed (44)` (`the
+  first sign-in claims the former built-ins`, `claims a team another user created as its admin`,
+  the non-ASCII refusal log, the repeat sign-in, the `Bootstrap-Owner@Example.com ` match, the
+  owned-team case, the failing claim's log); the non-matching, `email_unverified` and
+  `account_disabled` cases already passed (nothing claims before 7.2). Green after 7.2 (see 7.2).
+- [x] 7.2 Implement the claim in `server/src/routers/auth.ts` after both branches and before
   `createLoginSession`, through `bootstrapEmailMatch`, logging each claimed id. Verify: 7.1 green; `auth.int`, `teams.int` and `admin.int` green.
+  Evidence: `cd server && npx vitest run --project integration src/routers/auth.int.test.ts
+  src/routers/teams.int.test.ts src/routers/admin.int.test.ts` (`5c-7.2-green.log`) -> `Test
+  Files  3 passed (3)`, `Tests  116 passed (116)`; `npm run typecheck` -> exit 0
+  (`5c-7.2-typecheck.log`). The failure log names the error code only (`bootstrap owner claim
+  failed (Error)` in the stub case), never the email.
 - [ ] 7.3 ADR 0021: replace the 5c line with the slice entry: the owner decisions (owner,
   2026-10-02) as recorded in proposal.md, the post-panel decisions A-D, the "at most one in the database" refinement
   (design OQ4), and the cutover note (prod's Infisical needs
