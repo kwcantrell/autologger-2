@@ -18,7 +18,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 1. Migration: the role check, one owner per team, the seed teams (design D1)
 
-- [ ] 1.1 Test first, in `server/src/test/pg/` (new `teamOwner.pg.test.ts`, plus
+- [x] 1.1 Test first, in `server/src/test/pg/` (new `teamOwner.pg.test.ts`, plus
   `catalogSchema.pg.test.ts`):
   - a second `role = 'owner'` row for one team fails `23505`; a `role = 'superuser'` row fails
     `23514`; two owners in two different teams both insert;
@@ -30,8 +30,16 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - the schema record captures check constraints (`contype = 'c'`) and expects the new check and
     `idx_user_studio_memberships_one_owner`.
   Verify: red before 1.2, green after (`--project pg`).
-- [ ] 1.2 Write `supabase/migrations/20261004000000_team_owner.sql` as design D1 gives it (no
+  Evidence: `cd server && npx vitest run --project pg src/test/pg/teamOwner.pg.test.ts
+  src/test/pg/catalogSchema.pg.test.ts` before 1.2 (`5c-1.1-red.log`) -> `Tests  5 failed | 14
+  passed (19)`: the schema record lacks `$checks` and `idx_user_studio_memberships_one_owner`,
+  `studio_definitions` is `[]`, and `ENOENT ... 20261004000000_team_owner.sql`. After 1.2 green
+  (see 1.2).
+- [x] 1.2 Write `supabase/migrations/20261004000000_team_owner.sql` as design D1 gives it (no
   transaction-control lines). Verify: 1.1 green, and the whole `pg` project green.
+  Evidence: `cd server && npx vitest run --project pg` (`5c-1.2-green.log`) -> `Test Files  6
+  passed (6)`, `Tests  27 passed (27)`; the recorded check is `user_studio_memberships_role_check
+  CHECK ((role = ANY (ARRAY['owner'::text, ...])))`.
 
 ## 2. Built-ins become data; the global defaults go (design D9, D10)
 
