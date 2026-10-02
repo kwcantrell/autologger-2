@@ -688,8 +688,12 @@ Statements:
 Transactions:
 - every transaction SHALL run at the `SERIALIZABLE` isolation level;
 - a transaction that fails on a serialization failure or a deadlock SHALL roll back and run its
-  body again, at most three runs in total. The caller SHALL then receive the last serialization
+  body again, at most five runs in total. The caller SHALL then receive the last serialization
   error;
+- before running the body again after its `n`th run, the adapter SHALL wait a random delay of at
+  least 0 and less than `20 × 2^(n−1)` milliseconds, holding no connection while it waits and
+  never waiting past the transaction's deadline. If the deadline has passed when a run would
+  start, the caller SHALL receive the timeout error, with no statement sent;
 - no other failure SHALL be retried;
 - because a body may run more than once, a transaction body SHALL have no effect outside the
   catalog database;
@@ -734,7 +738,15 @@ Closing:
 
 #### Scenario: Retries are bounded and selective
 - **WHEN** a body hits a serialization failure on every run, or a deadlock on its first run only, or a unique violation
-- **THEN** its body runs exactly three times and the caller receives the serialization failure; or runs twice and commits; or runs once and the caller receives the unique violation
+- **THEN** its body runs exactly five times and the caller receives the serialization failure; or runs twice and commits; or runs once and the caller receives the unique violation
+
+#### Scenario: Contending writers back off and all commit
+- **WHEN** eight transactions concurrently read and then increment the same row
+- **THEN** all eight commit and the row has been incremented eight times
+
+#### Scenario: A backoff that reaches the deadline times out without another run
+- **WHEN** a transaction's backoff wait ends at or after its deadline
+- **THEN** the caller receives the timeout error, no statement of a new run is sent, and no connection is taken or opened for it
 
 #### Scenario: A stalled statement is cancelled at the deadline
 - **WHEN** a transaction's statement is still running at the deadline
