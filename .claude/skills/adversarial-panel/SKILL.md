@@ -24,7 +24,7 @@ and the relevant code. Reviewers do not see each other's findings. The author do
 - **Failure and abuse.** How does this break under bad input, partial failure, concurrency,
   retries, a hostile user, or a prompt injection in data the agent reads? What can't be undone?
 - **Scope and simplicity.** What can be cut? Does anything conflict with existing specs or
-  frozen contracts? Is the change inside the size budget, or should it split?
+  frozen contracts?
 
 ## Record: panel.md
 
@@ -36,11 +36,10 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 
 - [ ] [critical] Export drops rows with null region. Evidence: `psql -c "select count(*) ..."` -> 412
 - [x] [major] No retry bound on the upload call. Resolved: capped at 3 in design.md
-- [x] [minor] Rename `exp2` to `export_v2`. Declined by human: churn outweighs gain
 ```
 
-Severities: `critical` (wrong or unsafe if shipped), `major` (should fix before approval),
-`minor` (optional).
+Severities: `critical` (wrong or unsafe if shipped) and `major` (should fix before approval).
+Report nothing below major: tell each reviewer so, and leave out anything optional.
 
 CI parses this file, so keep to the format:
 

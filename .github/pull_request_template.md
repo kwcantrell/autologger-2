@@ -12,7 +12,7 @@ Change: <openspec change id, or "none" for tier 0>
 
 ## Overrides
 
-<!-- Only if you applied the `no-test-needed` or `size-override` label: the reason, in one line. -->
+<!-- Only if you applied the `no-test-needed` label: the reason, in one line. -->
 
 ## Reviewer checklist
 

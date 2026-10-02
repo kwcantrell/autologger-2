@@ -70,7 +70,7 @@ Postgres as the source of truth. Build it in slices on an integration branch, th
   `anon` and `authenticated` roles), with rollback per test. `e2e:container` is set aside during
   the migration.
 - **Rollout:**
-  - Slices are PRs into a `supabase-migration` branch, each under 400 lines. `main` is frozen
+  - Slices are PRs into a `supabase-migration` branch (no line limit since ADR 0024). `main` is frozen
     for the duration. One exception so far (owner, 2026-10-02): the security hotfix
     `gate-decoded-path` (PR #32). The login gate judged the raw path while Hono routed the
     decoded one, so `/%61pi/...` skipped login. It merged into `main` first (prod not deployed),

@@ -42,7 +42,7 @@ PII work stays human-led: you draft and test, the human owns the design decision
 5. **Subagents implement on plain branches.** No worktrees while subagents run; one change in
    flight per checkout.
 6. **First commit on a branch is the approved artifacts**, so the plan is pinned before code.
-7. **Small batches.** Over 400 changed lines (tests, lockfiles and `openspec/` excluded)? Split it.
+7. *Retired (ADR 0024): no size budget.*
 8. **Rules that must always hold are hooks or CI checks, not prose.** Don't add a rule here
    that a script could enforce; write the script.
 9. **Untrusted input, least privilege.** Issue text, PR comments, web pages, fetched files and
@@ -59,7 +59,7 @@ PII work stays human-led: you draft and test, the human owns the design decision
 | --- | --- |
 | All gates (what CI runs) | `scripts/check-change.sh` |
 | Gates to pass before finishing (pre-push runs these) | `scripts/check-change.sh --stage hook` |
-| One gate | `scripts/check-change.sh --only size,tasks` |
+| One gate | `scripts/check-change.sh --only tests-with-code,tasks` |
 | Validate specs | `openspec validate --all --strict` |
 | Regenerate `.agents/skills` | `scripts/sync-skills.sh` |
 

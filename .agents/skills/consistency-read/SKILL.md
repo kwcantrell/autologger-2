@@ -26,7 +26,7 @@ and get re-approval).
 ## Consistency read YYYY-MM-DD
 Edits since approval: design.md (retry cap 3 -> 5), tasks.md (+1 task)
 Scope change: no
-- [x] [minor] tasks 4.2 had no test named. Resolved: added `test_retry_cap`.
+- [x] [major] tasks 4.2 had no test named. Resolved: added `test_retry_cap`.
 ```
 
 Any contradiction you can't resolve without changing scope is a `[critical]` finding.

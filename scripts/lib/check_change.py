@@ -15,7 +15,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -34,10 +33,10 @@ ARCHIVE = "openspec/changes/archive"
 STAGES = {
     "commit": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor"],
     "hook": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
-             "evidence", "size", "commands"],
+             "evidence", "commands"],
     "pr": ["openspec", "yaml", "workflows", "skills-sync", "guide-size", "change", "risk-floor",
            "approval", "panel", "tasks", "evidence", "artifacts-first", "tests-with-code",
-           "size", "commands", "audit"],
+           "commands", "audit"],
 }
 
 
@@ -91,7 +90,7 @@ def load_config() -> dict:
 
 
 # Settings that exempt files from gates. A PR can change them, but its own gates use the base's.
-EXEMPTION_KEYS = ("managed_paths", "test_globs", "size_exclude", "size_budget")
+EXEMPTION_KEYS = ("managed_paths", "test_globs")
 
 
 def with_base_exemptions(cfg: dict, base: str | None) -> dict:
@@ -384,78 +383,6 @@ def check_tests_with_code(ctx: Context):
     return "PASS", f"{len(source)} source / {len(tests)} test file(s)"
 
 
-def untracked_lines(path: Path, cap: int) -> int:
-    """Lines as git numstat counts them for a new file; 0 for binary or non-regular; stops past cap."""
-    if path.is_symlink():
-        return 1  # git counts a symlink's target path as one line
-    try:
-        if not stat.S_ISREG(path.stat().st_mode):
-            return 0
-        with open(path, "rb") as f:
-            head = f.read(8000)
-            if b"\0" in head:
-                return 0  # binary, as git decides it
-            count, last, chunk = 0, b"", head
-            while chunk:
-                count += chunk.count(b"\n")
-                last = chunk
-                if count > cap:
-                    return count
-                chunk = f.read(1 << 20)
-            return count + (1 if last and not last.endswith(b"\n") else 0)
-    except OSError:
-        return 0
-
-
-def committed_lines(base: str, exclude: list[str]) -> int:
-    """Changed lines against base, every count git's own. A move between two counted paths costs
-    its edits; any other move keeps its delete + add counts, so it's priced by where it lands."""
-    def cost(added: str, deleted: str) -> int:
-        return 0 if added == "-" else int(added) + int(deleted)  # binary counts 0
-
-    plain: dict[str, int] = {}
-    for rec in git("diff", "--numstat", "-z", "--no-renames", base).split("\0"):
-        if rec:
-            added, deleted, path = rec.split("\t", 2)
-            plain[path] = cost(added, deleted)
-    total = sum(n for path, n in plain.items() if not matches(path, exclude))
-    fields = git("diff", "--numstat", "-z", "-M", base).split("\0")  # -M: whatever diff.renames says
-    i = 0
-    while i < len(fields) and fields[i]:
-        added, deleted, path = fields[i].split("\t", 2)
-        if path:  # plain record
-            i += 1
-            continue
-        old, new = fields[i + 1], fields[i + 2]  # rename record: empty path, then old and new
-        i += 3
-        if not matches(old, exclude) and not matches(new, exclude):
-            total += cost(added, deleted) - plain.get(old, 0) - plain.get(new, 0)
-    return total
-
-
-def check_size(ctx: Context):
-    if not ctx.base:
-        return "SKIP", "no base to diff against"
-    budget = int(ctx.cfg.get("size_budget") or 0)
-    if not budget:
-        return "SKIP", "no size_budget"
-    exclude = ((ctx.cfg.get("size_exclude") or []) + (ctx.cfg.get("test_globs") or [])
-               + (ctx.cfg.get("managed_paths") or []) + ["openspec/**"])
-    total = committed_lines(ctx.base, exclude)
-    if not ctx.in_ci:  # CI counts committed diffs only; locally, new files count before commit
-        for path in git("ls-files", "-z", "--others", "--exclude-standard").split("\0"):
-            if path and not matches(path, exclude):
-                total += untracked_lines(ROOT / path, budget - total)
-    if total > budget:
-        if overridden(ctx, "size_budget"):
-            return "WARN", f"{total} changed lines > {budget} (overridden)"
-        if ctx.stage == "hook":
-            return "WARN", (f"{total} changed lines > budget {budget}; the PR gate will fail: split, "
-                            "or ask the human for `size-override`")
-        return "FAIL", f"{total} changed lines > budget {budget}; split the change"
-    return "PASS", f"{total}/{budget} changed lines"
-
-
 class TolerantLoader(yaml.SafeLoader):
     """SafeLoader that reads unknown `!tags` (CloudFormation, Ansible) as plain values.
 
@@ -611,7 +538,6 @@ CHECKS = {
     "evidence": check_evidence,
     "artifacts-first": check_artifacts_first,
     "tests-with-code": check_tests_with_code,
-    "size": check_size,
     "workflows": check_workflows,
     "yaml": check_yaml,
     "skills-sync": check_skills_sync,
@@ -626,7 +552,7 @@ CHECKS = {
 # Checks that read the tier or change directory `change` resolves.
 NEEDS_CHANGE = {"risk-floor", "approval", "panel", "tasks", "evidence", "artifacts-first"}
 # Skipped for a grandfathered change; risk-floor still runs and warns.
-GRANDFATHER_SKIPS = {"approval", "panel", "tasks", "evidence", "artifacts-first", "size"}
+GRANDFATHER_SKIPS = {"approval", "panel", "tasks", "evidence", "artifacts-first"}
 
 
 def main() -> int:
@@ -653,7 +579,7 @@ def main() -> int:
     ctx.stage = "custom" if args.only else args.stage
     ctx.cfg = with_base_exemptions(ctx.cfg, ctx.base)
     ctx.changed = changed_files(ctx.base)
-    # Local override, e.g. LIFECYCLE_OVERRIDE="size_budget: generated client"; CI uses PR labels.
+    # Local override, e.g. LIFECYCLE_OVERRIDE="tests_with_code: generated client"; CI uses PR labels.
     if os.environ.get("LIFECYCLE_OVERRIDE") and not ctx.in_ci:
         ctx.overrides = {os.environ["LIFECYCLE_OVERRIDE"].split(":")[0].strip()}
 
@@ -673,7 +599,7 @@ def main() -> int:
         else:
             status, msg = CHECKS[name](ctx)
         failed |= status == "FAIL"
-        if not args.quiet or status == "FAIL" or (status == "WARN" and name in ("size", "yaml")):
+        if not args.quiet or status == "FAIL" or (status == "WARN" and name == "yaml"):
             print(f"{status:<4}  {name:<16} {msg}")
     return 1 if failed else 0
 
