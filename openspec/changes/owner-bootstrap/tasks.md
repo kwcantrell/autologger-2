@@ -319,10 +319,16 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   Files  3 passed (3)`, `Tests  116 passed (116)`; `npm run typecheck` -> exit 0
   (`5c-7.2-typecheck.log`). The failure log names the error code only (`bootstrap owner claim
   failed (Error)` in the stub case), never the email.
-- [ ] 7.3 ADR 0021: replace the 5c line with the slice entry: the owner decisions (owner,
+- [x] 7.3 ADR 0021: replace the 5c line with the slice entry: the owner decisions (owner,
   2026-10-02) as recorded in proposal.md, the post-panel decisions A-D, the "at most one in the database" refinement
   (design OQ4), and the cutover note (prod's Infisical needs
   `BOOTSTRAP_OWNER_EMAIL` before the first deploy of this image). Verify: the hook gates pass.
+  Evidence: the 5c entry in `docs/decisions/0021-migrate-to-self-hosted-supabase.md` now lists
+  owner decisions 1-6, post-panel A-D, the "at most one owner in the database" and "built-ins are
+  ordinary teams" refinements, and the cutover note. `GITHUB_BASE_REF=supabase-migration
+  scripts/check-change.sh --stage hook` (`5c-7.3-hook.log`) -> exit 0, every gate `PASS`
+  (`openspec validate --strict`, `evidence  every ticked task cites evidence`, `commands  ran
+  ['typecheck', 'test']`).
 
 ## 8. Web (design D12)
 
