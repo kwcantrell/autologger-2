@@ -121,4 +121,6 @@ gate reads only up to the first blank line.
   Evidence: fresh-context read logged in `panel.md` "Consistency read 2026-10-02" -> `Scope change:
   no`, one major (socket close failed open) resolved in d6ae1d6; `openspec validate show-grants
   --strict` -> `Change 'show-grants' is valid`.
-- [ ] 13.4 At archive (design D16), edit the Purpose paragraph of `openspec/specs/team-management/spec.md`: content is no longer role-agnostic; owners and admins reach every show, members reach shows through per-show grants that owners and admins manage; losing access closes the user's session sockets. Verify: `sed -n 3,20p openspec/specs/team-management/spec.md | grep -n -i "role-agnostic"` → no output.
+- [x] 13.4 At archive (design D16), edit the Purpose paragraph of `openspec/specs/team-management/spec.md`: content is no longer role-agnostic; owners and admins reach every show, members reach shows through per-show grants that owners and admins manage; losing access closes the user's session sockets. Verify: `sed -n 3,20p openspec/specs/team-management/spec.md | grep -n -i "role-agnostic"` → no output.
+  Evidence: `sed -n 3,20p openspec/specs/team-management/spec.md | grep -n -i "role-agnostic"` ->
+  no output (exit 1); the Purpose now names role-based access, per-show grants and socket close.

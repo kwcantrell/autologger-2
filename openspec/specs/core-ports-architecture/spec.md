@@ -244,9 +244,11 @@ performed once in middleware; `API_TOKEN` SHALL be honoured only on paths under
 `/api/companion/` (see `api-contract-freeze` "API_TOKEN authenticates only the Companion
 surface"). The middleware's path decisions (login required, `API_TOKEN` scope) SHALL use the same
 percent-decoded path the router matches, so a request that reaches an `/api/*` handler is always
-judged as an `/api/*` request. Resource **authorization** (existence + studio-membership +
-admin-token checks) SHALL be consolidated behind `requireSession`/`authorize` rather than
-re-deriving the login decision. The login-required check SHALL NOT be duplicated between
+judged as an `/api/*` request. Resource **authorization** (existence + show access + admin-token checks; show access is the
+team-management "Member content access" rule: the owner or an admin of the show's team, or a
+member holding a grant for the show) SHALL be consolidated behind `requireSession` and its
+show-level sibling rather than re-deriving the login decision; no session-scoped route SHALL
+check access any other way. The login-required check SHALL NOT be duplicated between
 middleware and per-route helpers. Route helpers MAY assert that a principal is present; a
 missing principal behind the middleware is an internal error (500), not a second login
 decision. The consolidation SHALL preserve these exact behaviors,
@@ -277,6 +279,18 @@ so its default-deny requirements are out of scope for this capability.)
 #### Scenario: Admin token distinguishes unset from wrong
 - **WHEN** an `/api/admin/*` route is called with `ADMIN_TOKEN` unset versus with an invalid token
 - **THEN** it returns `503` (unset) versus `401` (invalid) respectively, and a session cookie alone grants no admin access
+
+#### Scenario: A member without a grant is masked as 404, not 403
+- **WHEN** an authenticated member of a session's studio who holds no grant for the session's show
+  requests that session through any session-scoped route
+- **THEN** the response is `404` "Session not found" (not `403`), identical to the cross-studio
+  response
+
+#### Scenario: Every session-scoped route goes through the one gate
+- **WHEN** the registered route table is enumerated
+- **THEN** every route whose path names a session id, and the show-scoped log import, denies a
+  member without a grant with the masked `404` before reading its body, and a route added later
+  without the gate fails that check
 
 ### Requirement: Untested seams gain characterization tests before reshaping
 
