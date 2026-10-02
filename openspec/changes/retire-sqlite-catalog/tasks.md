@@ -14,7 +14,7 @@ Logs:
 
 ## 1. Record the schema before SQLite goes (design D3)
 
-- [ ] 1.1 Test first: in `server/src/test/pg/catalogSchema.pg.test.ts`, add `it('matches the
+- [x] 1.1 Test first: in `server/src/test/pg/catalogSchema.pg.test.ts`, add `it('matches the
   recorded catalog schema')`. It asserts a literal `EXPECTED_SCHEMA`:
   - per table: ordered columns with `data_type`, `collation_name`, `is_nullable` and
     `column_default`;
@@ -23,21 +23,27 @@ Logs:
   - the unique constraint;
   - each `idx_*` index's full `indexdef`;
   - `it('seeds the recorded shows')` with the two literal `row_to_json` rows.
-
   Steps:
   1. Run once with an empty literal (red: the diff shows the actual schema).
   2. Fill the literal from that output.
   3. Run the whole file in one vitest invocation. The new tests and the existing SQLite parity
      tests are green in that same run, which is the evidence log, so the literal equals the
      SQLite catalog (migrations 0001-0006).
-- [ ] 1.2 Remove the SQLite side of `catalogSchema.pg.test.ts`:
+  Evidence: `4e-1.1-red.log`: `npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts`
+  with empty literals -> `× matches the recorded catalog schema`, `× seeds the recorded shows`,
+  `Tests  2 failed | 14 passed (16)`. `4e-1.1-green.log`: the same single invocation after
+  filling the literals (4 `CREATE INDEX` defs, full `FOREIGN KEY` defs) -> `Tests  16 passed (16)`,
+  the SQLite parity tests and the literal tests green together.
+- [x] 1.2 Remove the SQLite side of `catalogSchema.pg.test.ts`:
   - the `lite` setup, `LiteCol` and `PG_TYPE`;
   - the column parity test and the key parity test;
   - the SQLite seed-show test;
   - the `CATALOG_MIGRATIONS_DIR`, `applyMigrations`/`openCatalogDb` and `better-sqlite3` imports.
-
   Drop "as SQLite does" from the ordering test name, and rewrite the header comment. The file
   stays green on Postgres alone.
+  Evidence: `4e-1.2-green.log`: `npx vitest run --project pg src/test/pg/catalogSchema.pg.test.ts`
+  -> `Tests  13 passed (13)`; `npx tsc --noEmit -p server` -> no output; `rg -n "lite|SQLite"
+  server/src/test/pg/catalogSchema.pg.test.ts` -> only the D3 provenance comments.
 
 ## 2. Shared error classes and KvStore tests on Postgres (design D1, D2)
 
@@ -46,7 +52,6 @@ Logs:
     `autologger_app`;
   - every case uses a plain mutable-`now` clock (no `vi.useFakeTimers()`, no `makeFakeClock`);
   - the adapter is closed in `afterEach`.
-
   Port every behaviour of `kvStore.test.ts`, with the two TTL blocks merged and these
   restatements:
   - the guarded expiry delete, with a wrapper that re-puts between `get`'s `SELECT` and
@@ -54,13 +59,11 @@ Logs:
   - two concurrent takes, with no held transaction: exactly one gets the value;
   - a key/value write made while a catalog transaction is open survives that transaction's
     rollback, and the transaction's own row does not.
-
   Red check: temporarily break the code, and each matching case fails. Then restore it, and the
   cases pass:
   - drop `replaceIf`'s `WHERE value = ?`;
   - make `take` skip its delete;
   - drop the expiry delete's `expires_at <= ?` guard.
-
   Then delete `kvStore.test.ts`.
 - [ ] 2.2 Add `packages/storage/src/catalogErrors.ts` with `CatalogTxMisuseError`,
   `CatalogTxTimeoutError` and `CatalogAdapterBrokenError`, and re-export it from `index.ts`.
@@ -83,7 +86,6 @@ Logs:
   - `server/src/test/migrations.int.test.ts`;
   - `packages/catalog/migrations/`;
   - `CATALOG_MIGRATIONS_DIR` and its `fileURLToPath` import in `packages/catalog/src/index.ts`.
-
   Drop the `migrate` export.
   - Evidence: `npm run typecheck` green, plus
     `rg -n "applyMigrations|openCatalogDb|CATALOG_MIGRATIONS_DIR|catalog/migrations" packages
@@ -97,7 +99,6 @@ Logs:
   - the three `fixturesDir.ts` notes;
   - `session-core/src/fakeClock.test.ts:6`;
   - the `packageBoundaries.repo.test.ts` exemption note.
-
   - Evidence: the repo tests green, plus
     `rg -n -i "AsyncSqlite|asyncCatalogStore|async catalog adapter|applyMigrations|openCatalogDb|CATALOG_MIGRATIONS_DIR|catalog/migrations|migrate\.ts|connection's lock" packages server web test docker README.md`
     → no hits outside the README slice 11 runbook.
@@ -111,13 +112,11 @@ Logs:
   - The case pins the rule against widening.
   - Red check: temporarily widen ALLOW to `packages/[a-z0-9-]+/.*`, and the case fails. Restore
     it.
-
   Then:
   - drop the mount from `compose.dev.yaml`;
   - delete check 5's migrations assertion;
   - narrow check 4's allow pattern to `packages/*/src` and update its message;
   - remove the Dockerfile `api-src` `COPY` and the dev `mkdir` entry.
-
   Green: `check-envs.sh` exits 0, and `test_check_envs.sh` passes, including the new case.
 - [ ] 4.2 Images:
   - `docker build -f docker/Dockerfile --target api .` builds. That target uses `api-src`, which

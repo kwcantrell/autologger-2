@@ -1,16 +1,11 @@
 // catalog-pg-schema design D1-D4, D7: the Postgres catalog schema, the app role and its password.
-// The SQLite side of the parity checks is today's catalog built by `applyMigrations`; this file
-// goes with the SQLite catalog in slice 4e.
+// The schema is checked against a recorded expectation (retire-sqlite-catalog D3).
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { CATALOG_MIGRATIONS_DIR } from '@autologger/catalog';
-import { applyMigrations, openCatalogDb } from '@autologger/storage';
-import type Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import postgres from 'postgres';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   type ConnOptions,
   connOptions,
@@ -40,11 +35,6 @@ const KEY_COLUMN: Record<string, string> = {
   kv: 'key',
   team_invites: 'studio_id',
 };
-const PG_TYPE: Record<string, string> = {
-  TEXT: 'text',
-  INTEGER: 'bigint',
-  REAL: 'double precision',
-};
 const MIGRATION = resolve(
   import.meta.dirname,
   '../../../../supabase/migrations/20261001000000_catalog_schema.sql',
@@ -60,27 +50,216 @@ afterEach(async () => {
   await Promise.all(open.splice(0).map((s) => s.end()));
 });
 
-let lite: Database.Database;
-let liteDir: string;
-beforeAll(() => {
-  liteDir = mkdtempSync(join(tmpdir(), 'autologger-parity-'));
-  lite = openCatalogDb(join(liteDir, 'catalog.db'));
-  applyMigrations(lite, CATALOG_MIGRATIONS_DIR);
-});
-afterAll(() => {
-  lite.close();
-  rmSync(liteDir, { recursive: true, force: true });
-});
+/** Per table: columns, primary key, foreign keys; plus `$unique` and `$indexes`. */
+type SchemaRecord = Record<string, unknown>;
 
-type LiteCol = {
-  name: string;
-  type: string;
-  notnull: number;
-  dflt_value: string | null;
-  pk: number;
+/** The catalog schema as text, for comparison with the recorded expectation (retire-sqlite-catalog D3). */
+async function readSchema(sql: postgres.Sql): Promise<SchemaRecord> {
+  const out: SchemaRecord = {};
+  for (const table of TABLES) {
+    const cols = await sql`
+      select column_name, data_type, collation_name, is_nullable, column_default
+      from information_schema.columns
+      where table_schema = 'catalog' and table_name = ${table}
+      order by ordinal_position`;
+    const pk = await sql`
+      select a.attname from pg_index i
+      join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+      where i.indrelid = ${`catalog.${table}`}::regclass and i.indisprimary
+      order by array_position(i.indkey, a.attnum)`;
+    const fks = await sql`
+      select pg_get_constraintdef(c.oid) as def from pg_constraint c
+      where c.conrelid = ${`catalog.${table}`}::regclass and c.contype = 'f'
+      order by def`;
+    out[table] = {
+      columns: cols.map(
+        (c) =>
+          `${c.column_name} ${c.data_type}${c.collation_name ? ` collate ${c.collation_name}` : ''}` +
+          `${c.is_nullable === 'NO' ? ' not null' : ''}` +
+          `${c.column_default === null ? '' : ` default ${c.column_default}`}`,
+      ),
+      primaryKey: pk.map((r) => r.attname),
+      foreignKeys: fks.map((r) => r.def),
+    };
+  }
+  const uniques = await sql`
+    select conrelid::regclass::text || ' ' || pg_get_constraintdef(oid) as u from pg_constraint
+    where contype = 'u' and connamespace = 'catalog'::regnamespace order by u`;
+  const idx = await sql`
+    select indexdef from pg_indexes
+    where schemaname = 'catalog' and indexname like 'idx\\_%' order by indexname`;
+  out.$unique = uniques.map((r) => r.u);
+  out.$indexes = idx.map((r) => r.indexdef);
+  return out;
+}
+
+// Recorded from the Postgres catalog while it still matched the retired SQLite catalog (migrations
+// 0001-0006) in that catalog's parity tests, in one run (retire-sqlite-catalog D3). A migration that
+// changes the catalog schema updates this record in the same change.
+const EXPECTED_SCHEMA: SchemaRecord = {
+  users: {
+    columns: [
+      'id text collate C not null',
+      'google_sub text collate C not null',
+      'email text collate C not null',
+      "given_name text collate C not null default ''::text",
+      "family_name text collate C not null default ''::text",
+      "picture_url text collate C not null default ''::text",
+      'created_at_utc text collate C not null',
+      'disabled_at_utc text collate C',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
+  user_studio_memberships: {
+    columns: [
+      'user_id text collate C not null',
+      'studio_id text collate C not null',
+      "role text collate C not null default 'member'::text",
+    ],
+    primaryKey: ['user_id', 'studio_id'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  user_prefs: {
+    columns: [
+      'user_id text collate C not null',
+      "active_studio_id text collate C not null default ''::text",
+      "active_show_id text collate C not null default ''::text",
+    ],
+    primaryKey: ['user_id'],
+    foreignKeys: ['FOREIGN KEY (user_id) REFERENCES catalog.users(id) ON DELETE CASCADE'],
+  },
+  studio_definitions: {
+    columns: [
+      'id text collate C not null',
+      'display_name text collate C not null',
+      'sort_order bigint not null default 0',
+      'created_at_utc text collate C not null',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
+  shows: {
+    columns: [
+      'id text collate C not null',
+      'studio_id text collate C not null',
+      'name text collate C not null',
+      'show_code text collate C not null',
+      'next_episode bigint not null default 1',
+      "categories_json text collate C not null default '[]'::text",
+      "event_palette_json text collate C not null default '[]'::text",
+      "event_palette_preset text collate C not null default 'custom'::text",
+      "event_palette_custom_json text collate C not null default '[]'::text",
+      'created_at_utc text collate C not null',
+      "title_suffix text collate C not null default 'date'::text",
+    ],
+    primaryKey: ['id'],
+    foreignKeys: [],
+  },
+  app_settings: {
+    columns: ['key text collate C not null', 'value text collate C not null'],
+    primaryKey: ['key'],
+    foreignKeys: [],
+  },
+  sessions: {
+    columns: [
+      'id text collate C not null',
+      'show_id text collate C',
+      "title text collate C not null default ''::text",
+      'archived bigint not null default 0',
+      'frame_rate double precision not null default 24.0',
+      'start_offset_frames bigint not null default 0',
+      "episode text collate C not null default ''::text",
+      "notes text collate C not null default ''::text",
+      "started_at_utc text collate C not null default ''::text",
+      "created_at_utc text collate C not null default ''::text",
+      'episode_date text collate C',
+      'ui_hidden bigint not null default 0',
+      'event_count bigint not null default 0',
+      'max_timecode_total_frames bigint',
+      'is_rolling bigint not null default 0',
+      'current_take bigint not null default 0',
+      'transport_elapsed_frames bigint not null default 0',
+      'roll_started_at_utc text collate C',
+    ],
+    primaryKey: ['id'],
+    foreignKeys: ['FOREIGN KEY (show_id) REFERENCES catalog.shows(id)'],
+  },
+  kv: {
+    columns: ['key text collate C not null', 'value text collate C not null', 'expires_at bigint'],
+    primaryKey: ['key'],
+    foreignKeys: [],
+  },
+  team_invites: {
+    columns: [
+      'studio_id text collate C not null',
+      'email_norm text collate C not null',
+      'invited_by_user_id text collate C not null',
+      'invited_at_utc text collate C not null',
+    ],
+    primaryKey: ['studio_id', 'email_norm'],
+    foreignKeys: [],
+  },
+  $unique: ['catalog.users UNIQUE (google_sub)'],
+  $indexes: [
+    'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
+    'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
+    'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
+    'CREATE INDEX idx_users_email ON catalog.users USING btree (email)',
+  ],
 };
+const EXPECTED_SHOWS: unknown[] = [
+  {
+    id: 'show-autolog-test',
+    studio_id: 'test-studios',
+    name: 'Autolog Test Show',
+    show_code: 'ATS',
+    next_episode: 1,
+    categories_json:
+      '[{"id":"a1000000-0000-4000-8000-000000000001","name":"Scene","color":"#4a9fd4","type":"BUTTON","dropdown_options":[],"on_label":"","off_label":""},{"id":"a1000000-0000-4000-8000-000000000002","name":"Audio issue","color":"#a86bdc","type":"DROPDOWN","dropdown_options":[{"label":"Lav","needs_context":false},{"label":"Boom","needs_context":false}],"on_label":"","off_label":""},{"id":"a1000000-0000-4000-8000-000000000003","name":"Note","color":"#6bcf7a","type":"TEXT","dropdown_options":[],"on_label":"","off_label":""}]',
+    event_palette_json:
+      '["#4a9fd4","#a86bdc","#6bcf7a","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b"]',
+    event_palette_preset: 'custom',
+    event_palette_custom_json:
+      '["#4a9fd4","#a86bdc","#6bcf7a","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b"]',
+    created_at_utc: '2024-01-01T00:00:00Z',
+    title_suffix: 'episode',
+  },
+  {
+    id: 'show-the-something-podcast',
+    studio_id: 'test-studio-2',
+    name: 'The Something Podcast',
+    show_code: 'TSP',
+    next_episode: 1,
+    categories_json:
+      '[{"id":"b2000000-0000-4000-8000-000000000001","name":"Note","color":"#7cb7ff","type":"TEXT","dropdown_options":[],"on_label":"","off_label":""},{"id":"b2000000-0000-4000-8000-000000000002","name":"Mark","color":"#f4a82e","type":"BUTTON","dropdown_options":[],"on_label":"","off_label":""}]',
+    event_palette_json:
+      '["#7cb7ff","#f4a82e","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b"]',
+    event_palette_preset: 'custom',
+    event_palette_custom_json:
+      '["#7cb7ff","#f4a82e","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b","#64748b"]',
+    created_at_utc: '2024-01-01T00:00:00Z',
+    title_suffix: 'episode',
+  },
+];
 
-describe('schema parity with the SQLite catalog (design D1)', () => {
+describe('the recorded catalog schema (retire-sqlite-catalog D3)', () => {
+  it('matches the recorded catalog schema', async () => {
+    const db = await createTestDatabase();
+    const actual = await readSchema(connect(db.admin));
+    expect(actual).toEqual(EXPECTED_SCHEMA);
+  });
+
+  it('seeds the recorded shows', async () => {
+    const db = await createTestDatabase();
+    const rows = await connect(
+      db.admin,
+    )`select row_to_json(s) as r from catalog.shows s order by id`;
+    expect(rows.map((r) => r.r)).toEqual(EXPECTED_SHOWS);
+  });
+});
+
+describe('catalog schema (design D1)', () => {
   it('has exactly the catalog tables, in schema catalog', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.admin);
@@ -92,105 +271,7 @@ describe('schema parity with the SQLite catalog (design D1)', () => {
     expect(pub[0]?.n).toBe(0);
   });
 
-  it('columns, types, collation, nullability and defaults match', async () => {
-    const db = await createTestDatabase();
-    const sql = connect(db.admin);
-    for (const table of TABLES) {
-      const liteCols = lite.prepare(`PRAGMA table_info(${table})`).all() as LiteCol[];
-      const pgCols = await sql`
-        select column_name, data_type, collation_name, is_nullable, column_default
-        from information_schema.columns
-        where table_schema = 'catalog' and table_name = ${table}
-        order by ordinal_position`;
-      expect(
-        pgCols.map((c) => c.column_name),
-        table,
-      ).toEqual(liteCols.map((c) => c.name));
-      for (const [i, lc] of liteCols.entries()) {
-        const pc = pgCols[i];
-        const where = `${table}.${lc.name}`;
-        expect(pc?.data_type, where).toBe(PG_TYPE[lc.type]);
-        expect(pc?.collation_name, where).toBe(lc.type === 'TEXT' ? 'C' : null);
-        // Postgres primary-key columns are NOT NULL; SQLite text PKs are nullable but never null.
-        expect(pc?.is_nullable, where).toBe(lc.notnull || lc.pk ? 'NO' : 'YES');
-        // Defaults compared by value: each engine evaluates its own default expression.
-        if (lc.dflt_value === null) {
-          expect(pc?.column_default, where).toBeNull();
-        } else {
-          const liteVal = (lite.prepare(`SELECT ${lc.dflt_value} AS v`).get() as { v: unknown }).v;
-          const pgVal = await sql.unsafe(`select (${pc?.column_default})::text as v`);
-          const num = (v: unknown) =>
-            typeof v === 'number' ? v : Number.isNaN(Number(v)) ? v : Number(v);
-          expect(typeof liteVal === 'number' ? num(pgVal[0]?.v) : pgVal[0]?.v, where).toBe(liteVal);
-        }
-      }
-    }
-  });
-
-  it('primary keys, the unique constraint, foreign keys and named indexes match', async () => {
-    const db = await createTestDatabase();
-    const sql = connect(db.admin);
-    for (const table of TABLES) {
-      const liteCols = lite.prepare(`PRAGMA table_info(${table})`).all() as LiteCol[];
-      const litePk = liteCols
-        .filter((c) => c.pk > 0)
-        .sort((a, b) => a.pk - b.pk)
-        .map((c) => c.name);
-      const pgPk = await sql`
-        select a.attname from pg_index i
-        join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
-        where i.indrelid = ${`catalog.${table}`}::regclass and i.indisprimary
-        order by array_position(i.indkey, a.attnum)`;
-      expect(
-        pgPk.map((r) => r.attname),
-        table,
-      ).toEqual(litePk);
-
-      const liteFks = (
-        lite.prepare(`PRAGMA foreign_key_list(${table})`).all() as Array<{
-          table: string;
-          from: string;
-          to: string;
-          on_delete: string;
-        }>
-      ).map((f) => `${f.from}->${f.table}.${f.to} ${f.on_delete}`);
-      const pgFks = await sql`
-        select a.attname || '->' || rc.relname || '.' || ra.attname || ' ' ||
-          case c.confdeltype when 'c' then 'CASCADE' when 'a' then 'NO ACTION'
-            when 'r' then 'RESTRICT' when 'n' then 'SET NULL' else 'SET DEFAULT' end as fk
-        from pg_constraint c
-        join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
-        join pg_class rc on rc.oid = c.confrelid
-        join pg_attribute ra on ra.attrelid = c.confrelid and ra.attnum = c.confkey[1]
-        where c.conrelid = ${`catalog.${table}`}::regclass and c.contype = 'f'`;
-      expect(pgFks.map((r) => r.fk).sort(), table).toEqual(liteFks.sort());
-    }
-    const uniques = await sql`
-      select conrelid::regclass::text as t, array_to_string(array(
-        select attname from pg_attribute where attrelid = conrelid and attnum = any(conkey)), ',') as cols
-      from pg_constraint where contype = 'u' and connamespace = 'catalog'::regnamespace`;
-    expect(uniques.map((r) => `${r.t}(${r.cols})`)).toEqual(['catalog.users(google_sub)']);
-    const liteIdx = lite
-      .prepare(
-        "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL ORDER BY name",
-      )
-      .all() as Array<{ name: string; tbl_name: string }>;
-    const pgIdx = await sql`
-      select indexname as name, tablename as tbl_name from pg_indexes
-      where schemaname = 'catalog' and indexname like 'idx\\_%' order by indexname`;
-    expect(pgIdx.map((r) => ({ ...r }))).toEqual(liteIdx);
-  });
-
-  it('seeds the two shows with the values SQLite has after 0005', async () => {
-    const db = await createTestDatabase();
-    const sql = connect(db.admin);
-    const pgShows = await sql`select row_to_json(s) as r from catalog.shows s order by id`;
-    const liteShows = lite.prepare('SELECT * FROM shows ORDER BY id').all();
-    expect(pgShows.map((r) => r.r)).toEqual(liteShows);
-    expect(liteShows).toHaveLength(2);
-  });
-
-  it('orders text bytewise, as SQLite does', async () => {
+  it('orders text bytewise', async () => {
     const db = await createTestDatabase();
     const sql = connect(db.app);
     for (const [id, name] of [
