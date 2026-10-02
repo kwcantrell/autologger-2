@@ -8,6 +8,7 @@ import {
   useRestoreSession,
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
+import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import type { Session, SessionsResponse } from '../../../api/types';
 import { type ConfirmOptions, useConfirm } from '../../../shared/ui/ConfirmDialog';
 import { Dialog } from '../../../shared/ui/Dialog';
@@ -431,6 +432,28 @@ function ArchivedSessionCard({ session: s }: { session: Session }) {
   );
 }
 
+/** A card of a session whose show the user can't access (show-grants D13; web-home-launch
+ * "Session actions follow show access"): the title as plain text with the no-access hint, no ⋮
+ * menu, no selection. Used for Recent and Archived alike. */
+function NoAccessSessionCard({ session: s }: { session: Session }) {
+  return (
+    <div
+      className={clsx(RAIL_SESSION, 'cursor-default')}
+      data-session-id={s.id}
+      data-no-access="true"
+    >
+      <div className={CARD_LINK}>
+        <div className={DECK_ROW}>
+          <span className={clsx(DECK_TITLE, 'cursor-default')}>{s.title}</span>
+        </div>
+        <div className={META_ROW}>
+          <span className={CARD_META}>No access — ask a team admin</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Rail search match (ui-refresh): case-insensitive on the session title. */
 function matchesFilter(s: Session, filter: string): boolean {
   const q = filter.trim().toLowerCase();
@@ -456,6 +479,7 @@ export function RecentSessionsList({
   onCloseSession,
   filter = '',
 }: Props) {
+  const access = useShowAccess();
   if (isLoading && !sessions) {
     return (
       <output
@@ -514,15 +538,19 @@ export function RecentSessionsList({
       defer
       options={railOsOptions}
     >
-      {visible.map((s) => (
-        <SessionCard
-          key={s.id}
-          session={s}
-          isActive={s.id === activeSessionId}
-          onSelect={() => onSelectSession(s.id)}
-          onClose={onCloseSession}
-        />
-      ))}
+      {visible.map((s) =>
+        access.canAccessShow(s.show_id) ? (
+          <SessionCard
+            key={s.id}
+            session={s}
+            isActive={s.id === activeSessionId}
+            onSelect={() => onSelectSession(s.id)}
+            onClose={onCloseSession}
+          />
+        ) : (
+          <NoAccessSessionCard key={s.id} session={s} />
+        ),
+      )}
     </OverlayScrollbarsComponent>
   );
 }
@@ -535,6 +563,7 @@ export function ArchivedSessionsList({
   /** Rail search query; empty shows everything. */
   filter?: string;
 }) {
+  const access = useShowAccess();
   const visible = sessions.filter((s) => matchesFilter(s, filter));
 
   if (visible.length === 0) {
@@ -553,9 +582,13 @@ export function ArchivedSessionsList({
       defer
       options={railOsOptions}
     >
-      {visible.map((s) => (
-        <ArchivedSessionCard key={s.id} session={s} />
-      ))}
+      {visible.map((s) =>
+        access.canAccessShow(s.show_id) ? (
+          <ArchivedSessionCard key={s.id} session={s} />
+        ) : (
+          <NoAccessSessionCard key={s.id} session={s} />
+        ),
+      )}
     </OverlayScrollbarsComponent>
   );
 }

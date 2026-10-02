@@ -216,3 +216,90 @@ describe('member view', () => {
     expect(screen.queryByTestId('team-orphaned-notice')).toBeNull();
   });
 });
+
+// --- Show-access picker (show-grants D13; spec: team-management "Teams management page",
+// "Granting a show from the team page") ---
+describe('show-access picker', () => {
+  const SHOWS = [
+    { id: 'show-1', name: 'Morning News' },
+    { id: 'show-2', name: 'Evening News' },
+  ].map((s) => ({
+    ...s,
+    studio_id: 'team-a',
+    show_code: s.id.toUpperCase(),
+    title_suffix: 'date',
+    categories: [],
+    event_palette: [],
+    event_palette_preset: 'custom',
+    event_palette_custom: [],
+  }));
+
+  function routes(role: TeamRole) {
+    const members = [
+      { ...OWNER, show_ids: [] },
+      { ...ADMIN, show_ids: [] },
+      { ...MEMBER, show_ids: ['show-2'] },
+    ];
+    mockedApiFetch.mockImplementation(async (path: string, opts?: RequestInit) => {
+      const method = opts?.method ?? 'GET';
+      if (path === 'teams/team-a' && method === 'GET') {
+        return role === 'member' ? detail(role) : detail(role, { members });
+      }
+      if (path === 'shows?studio_id=team-a' && method === 'GET') return { shows: SHOWS };
+      if (path.startsWith('teams/team-a/shows/') && (method === 'PUT' || method === 'DELETE')) {
+        return { ok: true };
+      }
+      throw new Error(`unexpected apiFetch: ${method} ${path}`);
+    });
+  }
+
+  for (const role of ['owner', 'admin'] as const) {
+    it(`${role} view: a checkbox per team show on member rows only, checked from show_ids`, async () => {
+      routes(role);
+      renderCard(role);
+      const panel = await expand(`team-${role}-panel-team-a`);
+
+      expect(within(row(panel, OWNER)).queryByRole('button', { name: 'Show access' })).toBeNull();
+      expect(within(row(panel, ADMIN)).queryByRole('button', { name: 'Show access' })).toBeNull();
+      fireEvent.click(within(row(panel, MEMBER)).getByRole('button', { name: 'Show access' }));
+
+      const morning = await within(row(panel, MEMBER)).findByRole('checkbox', {
+        name: 'Morning News',
+      });
+      const evening = within(row(panel, MEMBER)).getByRole('checkbox', { name: 'Evening News' });
+      expect((morning as HTMLInputElement).checked).toBe(false);
+      expect((evening as HTMLInputElement).checked).toBe(true);
+    });
+  }
+
+  it('toggling a checkbox grants (PUT) or revokes (DELETE) that show', async () => {
+    routes('admin');
+    renderCard('admin');
+    const panel = await expand('team-admin-panel-team-a');
+    fireEvent.click(within(row(panel, MEMBER)).getByRole('button', { name: 'Show access' }));
+
+    fireEvent.click(
+      await within(row(panel, MEMBER)).findByRole('checkbox', { name: 'Morning News' }),
+    );
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith('teams/team-a/shows/show-1/grants/member-1', {
+        method: 'PUT',
+      }),
+    );
+
+    fireEvent.click(within(row(panel, MEMBER)).getByRole('checkbox', { name: 'Evening News' }));
+    await waitFor(() =>
+      expect(mockedApiFetch).toHaveBeenCalledWith('teams/team-a/shows/show-2/grants/member-1', {
+        method: 'DELETE',
+      }),
+    );
+  });
+
+  it('member view: no picker', async () => {
+    routes('member');
+    renderCard('member');
+    const panel = await expand('team-member-panel-team-a');
+    expect(within(panel).queryByRole('button', { name: 'Show access' })).toBeNull();
+    expect(within(panel).queryByRole('checkbox')).toBeNull();
+  });
+});

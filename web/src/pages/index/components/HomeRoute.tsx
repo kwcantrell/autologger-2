@@ -1,4 +1,5 @@
 import { useSessions } from '../../../api/hooks/useSessions';
+import { useShowAccess } from '../../../api/hooks/useShowAccess';
 import { fmtDateOnly } from '../../../shared/utils/fmtDateOnly';
 import { navigate } from '../navigation';
 
@@ -34,10 +35,14 @@ interface Props {
 
 export function HomeRoute({ onNewSession }: Props) {
   const { data: sessions } = useSessions();
+  const access = useShowAccess();
   // Resume card = first entry of the active list (server order, newest
   // created) — spec "Branded home launch surface" / "Home with existing
-  // sessions".
-  const recent = sessions?.active?.[0];
+  // sessions" — and only when the user can open it (show-grants D13).
+  const first = sessions?.active?.[0];
+  const recent = first && access.canAccessShow(first.show_id) ? first : undefined;
+  // New Session only when the active team has a show the user can access.
+  const canCreate = access.accessibleShows(access.activeStudioId).length > 0;
 
   return (
     <div className={HOME_ROUTE} id="home-launch">
@@ -89,22 +94,24 @@ export function HomeRoute({ onNewSession }: Props) {
             </button>
           )}
 
-          <button
-            type="button"
-            className={recent ? 'btn' : 'btn primary'}
-            id="home-new-session"
-            onClick={onNewSession}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M12 5V19M5 12H19"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-            {recent ? 'New session' : 'Start a session'}
-          </button>
+          {canCreate && (
+            <button
+              type="button"
+              className={recent ? 'btn' : 'btn primary'}
+              id="home-new-session"
+              onClick={onNewSession}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 5V19M5 12H19"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {recent ? 'New session' : 'Start a session'}
+            </button>
+          )}
         </div>
       </div>
     </div>

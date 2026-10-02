@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useProfile } from '../../../api/hooks/useProfile';
 import { useSessionStatus } from '../../../api/hooks/useSessionStatus';
 import {
   useArchiveSession,
@@ -7,7 +8,7 @@ import {
   useRestoreSession,
   useUpdateSession,
 } from '../../../api/hooks/useSessions';
-import type { Session, SessionStatus } from '../../../api/types';
+import type { ProfilePayload, Session, SessionStatus } from '../../../api/types';
 import { renderStrict } from '../../../test/renderStrict';
 import { showToast } from '../utils/toast';
 import { ArchivedSessionsList, RecentSessionsList } from './RecentSessionsList';
@@ -45,6 +46,8 @@ vi.mock('../utils/toast', () => ({
   showToast: vi.fn(),
 }));
 
+vi.mock('../../../api/hooks/useProfile', () => ({ useProfile: vi.fn() }));
+
 vi.mock('overlayscrollbars-react', () => ({
   OverlayScrollbarsComponent: ({
     children,
@@ -70,6 +73,32 @@ class StubResizeObserver {
 }
 if (typeof window !== 'undefined' && typeof window.ResizeObserver === 'undefined') {
   window.ResizeObserver = StubResizeObserver as unknown as typeof ResizeObserver;
+}
+
+// show-grants D13: the components read show access from the profile through `useShowAccess`;
+// `useProfile` is mocked at the module boundary. The default profile can access `show-1` (the
+// session fixtures' show) in the active team `studio-1`.
+function accessProfile(
+  shows: Array<{ id: string; studio_id?: string; can_access: boolean }> = [
+    { id: 'show-1', can_access: true },
+  ],
+): ProfilePayload {
+  return {
+    active_studio_id: 'studio-1',
+    active_show_id: shows[0]?.id ?? '',
+    shows: shows.map((s) => ({
+      studio_id: 'studio-1',
+      name: s.id,
+      show_code: s.id.toUpperCase(),
+      title_suffix: 'date',
+      ...s,
+    })),
+    auth: { logged_in: true, oauth_configured: true, user: null },
+  } as unknown as ProfilePayload;
+}
+
+function mockProfile(p: ProfilePayload) {
+  vi.mocked(useProfile).mockReturnValue({ data: p } as unknown as ReturnType<typeof useProfile>);
 }
 
 const updateMutate = vi.fn();
@@ -104,6 +133,7 @@ function sessionFixture(overrides: Partial<Session> = {}): Session {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockProfile(accessProfile());
   vi.mocked(useSessionStatus).mockReturnValue({
     data: undefined,
   } as ReturnType<typeof useSessionStatus>);
@@ -363,5 +393,68 @@ describe('ArchivedSessionCard (archived-list variant)', () => {
     expect(title.tagName).toBe('SPAN');
     expect(within(el).getByText(/· 3 events$/)).toBeTruthy();
     expect(within(el).getByText('01:02:03')).toBeTruthy();
+  });
+});
+
+describe('cards of a show the user can’t access (show-grants D13)', () => {
+  const NO_ACCESS = 'No access — ask a team admin';
+
+  it('an active-list card is a non-openable row: hint, no menu, no selection', () => {
+    const onSelectSession = vi.fn();
+    const { container } = renderRecent(
+      [
+        sessionFixture(),
+        sessionFixture({ id: 'sess-x', title: 'Locked Session', show_id: 'show-x' }),
+      ],
+      { onSelectSession },
+    );
+
+    const locked = card(container, 'sess-x');
+    expect(within(locked).getByText(NO_ACCESS)).not.toBeNull();
+    expect(within(locked).queryByRole('button', { name: 'Session options' })).toBeNull();
+    expect(within(locked).queryByRole('button')).toBeNull();
+    fireEvent.click(within(locked).getByText('Locked Session'));
+    fireEvent.click(locked);
+    fireEvent.keyDown(locked, { key: 'Enter' });
+    expect(onSelectSession).not.toHaveBeenCalled();
+
+    // The accessible card keeps its menu and selection.
+    const open = card(container, 'sess-1');
+    expect(within(open).queryByText(NO_ACCESS)).toBeNull();
+    expect(within(open).getByRole('button', { name: 'Session options' })).not.toBeNull();
+  });
+
+  it('search still filters the non-openable rows', () => {
+    const { container } = renderStrict(
+      <RecentSessionsList
+        sessions={{
+          active: [
+            sessionFixture({ id: 'sess-x', title: 'Locked Alpha', show_id: 'show-x' }),
+            sessionFixture({ id: 'sess-y', title: 'Locked Beta', show_id: 'show-x' }),
+          ],
+          archived: [],
+        }}
+        isLoading={false}
+        activeSessionId=""
+        onSelectSession={() => {}}
+        onCloseSession={() => {}}
+        filter="alpha"
+      />,
+    );
+    expect(container.querySelector('[data-session-id="sess-x"]')).not.toBeNull();
+    expect(container.querySelector('[data-session-id="sess-y"]')).toBeNull();
+  });
+
+  it('an archived card is non-openable too: hint and no menu', () => {
+    const { container } = renderStrict(
+      <ArchivedSessionsList
+        sessions={[
+          sessionFixture({ id: 'arch-x', title: 'Old Locked', show_id: 'show-x', archived: true }),
+        ]}
+      />,
+    );
+    const locked = card(container, 'arch-x');
+    expect(within(locked).getByText(NO_ACCESS)).not.toBeNull();
+    expect(within(locked).queryByRole('button', { name: 'Session options' })).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
+import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import type { ProfilePayload } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
@@ -65,8 +66,10 @@ function BatchImportIcon() {
 const EMPTY_PROGRESS: BatchImportProgressState = { current: null, percent: 0, lines: [] };
 
 export function BatchImportModal({ profile, onClose }: Props) {
-  const shows = profile?.shows ?? [];
-  const defaultShowId = profile?.active_show_id ?? '';
+  // show-grants D13: the picker lists the active team's shows the user can access.
+  const shows = showAccessFrom(profile).accessibleShows(profile?.active_studio_id);
+  const activeShowId = profile?.active_show_id ?? '';
+  const defaultShowId = shows.some((s) => s.id === activeShowId) ? activeShowId : '';
   const queryClient = useQueryClient();
 
   const [showId, setShowId] = useState(defaultShowId || (shows[0]?.id ?? ''));

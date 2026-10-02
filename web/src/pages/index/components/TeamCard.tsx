@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { ApiError } from '../../../api/client';
+import { useStudioShows } from '../../../api/hooks/useShows';
 import {
   useChangeMemberRole,
   useDeleteTeam,
@@ -8,6 +9,7 @@ import {
   useRemoveMember,
   useRenameTeam,
   useRevokeInvite,
+  useSetShowGrant,
   useTeam,
   useTransferOwnership,
 } from '../../../api/hooks/useTeams';
@@ -32,6 +34,9 @@ import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 //   delete; no leave (the owner can't leave until they transfer);
 // - admin: rename, invites, and remove on `member` rows only; no role toggles; leave;
 // - member: the read-only members list and leave.
+// The owner and admin views give each `member` row a "Show access" picker: one checkbox per team
+// show, checked from the row's `show_ids`, toggling a grant (show-grants D13). Owner and admin rows
+// get none: their role reaches every show.
 // A team with no owner shows the no-owner notice: a member sees only the notice, an admin sees it
 // above the admin controls. `enabled_admin_count` is not read (owner decision B).
 
@@ -48,6 +53,82 @@ function RoleBadge({ role }: { role: TeamRole }) {
   );
 }
 
+/** The team's shows as checkboxes for one member, checked from `show_ids`; mounted only while
+ * the row's "Show access" disclosure is open, so `/teams` fetches no show list up front. */
+function ShowAccessList({
+  teamId,
+  member,
+  onError,
+}: {
+  teamId: string;
+  member: TeamMember;
+  onError: (message: string) => void;
+}) {
+  const shows = useStudioShows(teamId);
+  const setGrant = useSetShowGrant(teamId);
+  const granted = new Set(member.show_ids ?? []);
+  if (shows.isError) {
+    return (
+      <p role="alert" className="modal-hint text-[#ff8a8a]">
+        Couldn&apos;t load this team&apos;s shows.
+      </p>
+    );
+  }
+  if (!shows.data) {
+    return (
+      <p className="modal-hint" aria-busy="true">
+        Loading shows…
+      </p>
+    );
+  }
+  const list = shows.data.shows ?? [];
+  if (list.length === 0) return <p className="modal-hint muted">This team has no shows yet.</p>;
+  return (
+    <fieldset className="m-0 flex flex-wrap gap-x-4 gap-y-1 border-0 p-0">
+      <legend className="sr-only">Show access for {member.email}</legend>
+      {list.map((show) => (
+        <label key={show.id} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={granted.has(show.id)}
+            onChange={(e) =>
+              setGrant.mutate(
+                { showId: show.id, userId: member.id, granted: e.target.checked },
+                { onError: (err) => onError(errorMessage(err, 'Show access change failed.')) },
+              )
+            }
+          />
+          {show.name}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function ShowAccessPicker({
+  teamId,
+  member,
+  onError,
+}: {
+  teamId: string;
+  member: TeamMember;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="w-full">
+      <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        Show access
+      </button>
+      {open && (
+        <div className="mt-2" data-testid={`team-show-access-${member.id}`}>
+          <ShowAccessList teamId={teamId} member={member} onError={onError} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemberRow({
   member,
   canChangeRole,
@@ -58,6 +139,7 @@ function MemberRow({
   onTransfer,
   onRemove,
   busy,
+  extra,
 }: {
   member: TeamMember;
   canChangeRole: boolean;
@@ -68,6 +150,8 @@ function MemberRow({
   onTransfer: () => void;
   onRemove: () => void;
   busy: boolean;
+  /** Rendered full-width under the row (the show-access picker on `member` rows). */
+  extra?: ReactNode;
 }) {
   const label = `${member.given_name} ${member.family_name}`.trim() || member.email;
   const anyControl = canChangeRole || canTransfer || canRemove;
@@ -104,6 +188,7 @@ function MemberRow({
           )}
         </span>
       )}
+      {extra}
     </li>
   );
 }
@@ -271,6 +356,11 @@ function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean
                 onDemote={() => handleRoleChange(m.id, 'member')}
                 onTransfer={() => handleTransfer(m.id, m.email)}
                 onRemove={() => handleRemove(m.id, m.email)}
+                extra={
+                  m.role === 'member' ? (
+                    <ShowAccessPicker teamId={detail.id} member={m} onError={setActionError} />
+                  ) : undefined
+                }
               />
             );
           })}

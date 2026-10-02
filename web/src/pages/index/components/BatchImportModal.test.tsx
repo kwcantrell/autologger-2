@@ -16,6 +16,20 @@ vi.mock('../batchImport/stitch', () => ({
 }));
 
 const mockedApiFetch = vi.mocked(apiFetch);
+
+// Radix Select needs these in jsdom to open (the EventButtonsTable.lazyTypeSelect.test.tsx recipe).
+if (typeof Element !== 'undefined' && !Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (typeof Element !== 'undefined' && !Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (typeof Element !== 'undefined' && !Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
 const mockedStitch = vi.mocked(stitchAudioFiles);
 
 function profileFixture(): ProfilePayload {
@@ -32,6 +46,7 @@ function profileFixture(): ProfilePayload {
         show_code: 'YMH',
         title_suffix: 'episode',
         studio_id: 'studio-1',
+        can_access: true,
       },
       {
         id: 'show-2',
@@ -39,6 +54,7 @@ function profileFixture(): ProfilePayload {
         show_code: 'TB',
         title_suffix: 'episode',
         studio_id: 'studio-1',
+        can_access: true,
       },
     ],
     new_session_defaults: { default_frame_rate: 24, title_prefix: '' },
@@ -276,5 +292,27 @@ describe('BatchImportModal', () => {
 
     renderWithQueryClient(<BatchImportModal profile={profileFixture()} onClose={() => {}} />);
     expect(screen.getByTestId('batch-import-progress').textContent).toBe('');
+  });
+});
+
+describe('BatchImportModal — the picker lists accessible shows of the active team (show-grants D13)', () => {
+  it('lists the accessible show only; the default skips an inaccessible active show', () => {
+    const p = profileFixture();
+    p.active_show_id = 'show-2';
+    p.shows = [
+      { ...p.shows[0] },
+      { ...p.shows[1], can_access: false },
+      { ...p.shows[0], id: 'show-3', name: 'Other Team', show_code: 'OT', studio_id: 'studio-2' },
+    ];
+    renderWithQueryClient(<BatchImportModal profile={p} onClose={() => {}} />);
+
+    const trigger = screen.getByLabelText('Show');
+    expect(trigger.textContent).toContain('Your Mom (YMH)');
+    fireEvent.pointerDown(trigger, { pointerType: 'mouse', button: 0 });
+    fireEvent.pointerUp(trigger, { pointerType: 'mouse', button: 0 });
+    fireEvent.click(trigger);
+    // One option, named for the accessible show (the ✓ indicator is aria-hidden).
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: 'Your Mom (YMH)' })).not.toBeNull();
   });
 });

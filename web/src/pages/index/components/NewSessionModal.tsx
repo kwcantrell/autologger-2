@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useState } from 'react';
 import { apiFetch } from '../../../api/client';
 import { useCreateSession } from '../../../api/hooks/useSessions';
+import { showAccessFrom } from '../../../api/hooks/useShowAccess';
 import type { ProfilePayload } from '../../../api/types';
 import { BTN_PRIMARY_SKY } from '../../../shared/theme/classnames';
 import { Dialog } from '../../../shared/ui/Dialog';
@@ -53,8 +54,10 @@ interface Props {
 }
 
 export function NewSessionModal({ profile, onClose, onCreated }: Props) {
-  const shows = profile?.shows ?? [];
-  const defaultShowId = profile?.active_show_id ?? '';
+  // show-grants D13: the picker lists the active team's shows the user can access.
+  const shows = showAccessFrom(profile).accessibleShows(profile?.active_studio_id);
+  const activeShowId = profile?.active_show_id ?? '';
+  const defaultShowId = shows.some((s) => s.id === activeShowId) ? activeShowId : '';
   const defaultFps = profile?.new_session_defaults?.default_frame_rate ?? 24;
   const { preset: initPreset, custom: initCustom } = fpsToPreset(defaultFps);
 
