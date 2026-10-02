@@ -396,7 +396,59 @@ Slice order:
      claims them; the image refuses to boot without `BOOTSTRAP_OWNER_EMAIL`, so **prod's
      Infisical needs `BOOTSTRAP_OWNER_EMAIL` before the first deploy of this image**, and the
      owner of `test-studios` is checked right after the first prod sign-in.
-6. RLS for the permission model above.
+6. RLS for the permission model above. Split (owner, 2026-10-02) so the rule lands in the app
+   first and Postgres mirrors it next:
+   - 6a `show-grants`: the permission model in the app. Implemented 2026-10-02 on
+     `supabase-6a-show-grants`; verification, merge and the live dev and stage checks are
+     pending. Owner decisions (owner, 2026-10-02):
+     1. **split 6a / 6b:** 6a is the permission model in the app, 6b `catalog-rls` is Postgres
+        row-level security that mirrors it;
+     2. **6b uses a dedicated NOLOGIN catalog role** that only `autologger_app` can `SET ROLE`
+        to; the bare `authenticated` role gets nothing and the catalog stays invisible to
+        PostgREST (recorded here, applied in 6b);
+     3. **member view:** a member without a grant sees the show list and each show's session list
+        (titles) but can't open a session (masked `404`, like a non-member); only owners and
+        admins create shows and change team or show settings (`403`);
+     4. **a grant means full access:** a `(user, show)` row gives full session access in that
+        show (open, record, edit, create sessions, imports); `can_write` is stored and always
+        true for now, and the web gets no read-only mode;
+     5. **owners and admins manage grants on the team page**, through
+        `PUT|DELETE /api/teams/:id/shows/:showId/grants/:userId`; a member's grants are deleted
+        when they leave or are removed, or the show is deleted;
+     6. **Companion:** posting presence requires access to that session; the other Companion
+        routes keep acting as a system caller on the session its presence holder can access; a
+        real device credential comes in slice 9.
+
+     After the adversarial panel (owner, 2026-10-02):
+     - **E. open WebSockets close when access is lost:** a revoke, a removal or leave, or a
+       demotion to member closes that user's sockets on the affected sessions (close code
+       `4403`) after the write commits, in this process; the reconnect gets the masked `404`;
+     - **F. imports re-check access:** the log-import job before each sheet (it stops with
+       `Access revoked; stopping.`, and events already written stay), the YouTube import once
+       after its download and before any write;
+     - **G. the session list for a caller without access** keeps its shape but carries titles
+       and dates only (content and live-state fields blanked);
+     - **H. cuts:** no `GET …/grants` route; `can_access` is on profile `shows[]` only, not on
+       the `/api/shows` routes.
+
+     This refines the permission model above: "Members see the show list only" becomes
+     **members see the show list and each show's session titles**, without content (design
+     OQ9). And "a per-show grant with `can_write`" stores `can_write` as a 0/1 flag
+     (`bigint not null default 1`), like the catalog's other flags until the typed-schema
+     follow-up (design OQ7). Cutover: prod's catalog is created at cutover with no grants, so
+     **members start with no show access**; the owner grants shows after the slice 11 import.
+     Owners and admins keep every show. **Follow-up for slices 8/9:** 6a closes sockets only in
+     the one server process. With several processes (slice 8's leases) or Realtime (slice 9),
+     drive the close from the database: a row trigger with `pg_notify` and a `LISTEN`ing server,
+     or Realtime RLS authorization. Spike first how promptly Realtime re-checks policies on a channel a client
+     has already joined.
+   - 6b `catalog-rls`: Postgres row-level security that mirrors 6a. The owner's decision (2 above)
+     is a dedicated NOLOGIN role that only `autologger_app` can `SET ROLE` to, so the bare
+     `authenticated` role (any Google sign-in) gets nothing and PostgREST sees no catalog.
+     Outline: create that role, and write policies that mirror 6a's access rule (owner or admin
+     of the show's team, or a member with a grant for the show). 6a keeps the rule in one SQL
+     predicate (`authCanAccessShow`) so 6b can copy it into a policy. 6a creates no role, no
+     policy and no `SET ROLE`.
 7. Session tables, revision, version checks and the audited overwrite.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
