@@ -58,7 +58,8 @@ describe('one owner per team (owner-bootstrap D1)', () => {
     const sql = await appWithUsers(['u1', 'u2']);
     await sql`insert into user_studio_memberships (user_id, studio_id, role) values ('u1', 'a', 'owner')`;
     await sql`insert into user_studio_memberships (user_id, studio_id, role) values ('u2', 'b', 'owner')`;
-    const n = await sql`select count(*)::int as n from user_studio_memberships where role = 'owner'`;
+    const n =
+      await sql`select count(*)::int as n from user_studio_memberships where role = 'owner'`;
     expect(n[0]?.n).toBe(2);
   });
 });

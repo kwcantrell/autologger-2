@@ -156,7 +156,11 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
   it('creating test-studios through either plane gets the existing-id 400', async () => {
     const viaAdmin = await anonApp.request(
       '/api/admin/studios',
-      { method: 'POST', headers: ADMIN_H, body: JSON.stringify({ id: 'test-studios', display_name: 'X' }) },
+      {
+        method: 'POST',
+        headers: ADMIN_H,
+        body: JSON.stringify({ id: 'test-studios', display_name: 'X' }),
+      },
       ADMIN_ENV,
     );
     expect(viaAdmin.status).toBe(400);
