@@ -212,7 +212,7 @@ in-transaction role read.
 
 ## 6. Docs and integration checks
 
-- [ ] 6.1 ADR 0021:
+- [x] 6.1 ADR 0021:
   - hazards 2-6, 8-13, 15-20 done, #7 verified with no change, #14 partly done (gates), with
     display names on the revisit list;
   - the D11 revisit list as post-migration follow-ups;
@@ -220,12 +220,27 @@ in-transaction role read.
   - the owner's one-PR `size-override`.
   Also the `docs/supabase.md` root deadline note. Verify with
   `grep -n "Revisit after the migration\|4d" docs/decisions/0021-*.md`.
-- [ ] 6.2 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green except
+  Evidence: `grep -n "Revisit after the migration\|   - 4d" docs/decisions/0021-*.md` ->
+  `218:   - 4d \`catalog-concurrency-hazards\`: … Done (2026-10-01), as one`, `252:   - **Revisit
+  after the migration** (4d alternatives not taken, owner 2026-10-01):`. `docs/supabase.md`
+  gained "Catalog time limits".
+- [x] 6.2 `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green except
   size (label); record the counted lines (ceiling about 650).
-- [ ] 6.3 Dev stack:
+  Evidence: `4d-6.2-hook.log` -> exit 0; every gate PASS (`risk-floor 20 high-risk path(s)`,
+  `evidence`, `commands ran ['typecheck', 'test']`), and `WARN  size  777 changed lines > budget
+  400 … ask the human for size-override`. The owner dropped the ceiling (header).
+- [x] 6.3 Dev stack:
   - `make dev-up` (the index migration applies);
   - Companion command, then ack, while a second command lands: `last_command` is the second;
   - two concurrent team creates at the cap: one 400;
   - `docker pause autologger-dev-db-1` for 7 s: a request gets the generic 500 within about
     5-6 s (not 30 s); after unpause, requests succeed.
+  Evidence: `make dev-up` -> exit 0; `4d-6.3-devup.log` -> `applied 20261002000000`, `1 applied`;
+  the app is `healthy`. Companion on the 4c scratch session: command A, then command B, then
+  ack(A) -> `{"ok":false}`, and `/api/companion/state` -> `last_command 6c1acb6a-… False` (B).
+  With `docker pause autologger-dev-db-1`: `GET /api/sessions` -> `paused: 500 in 5.035585s`, and
+  the app log has `CatalogRootTimeoutError: catalog statement timed out; it may still apply`
+  (from `refreshStudioRegistry`). After unpause -> `200 in 0.003286s`, `200`. **Not run live:**
+  the concurrent team-create cap check. Dev has no sign-in, and team routes need a logged-in user
+  (401), so that race is covered only by integration test 2.2.
 - [ ] 6.4 `consistency-read`, then archive.

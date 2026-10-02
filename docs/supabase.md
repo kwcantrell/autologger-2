@@ -135,6 +135,12 @@ window in which both passwords work: between those two steps (a few seconds), an
 catalog connection fails with `28P01` and its request gets a 500. Connections already open keep
 working until the app is recreated.
 
+**Catalog time limits** (catalog-concurrency-hazards). A transaction has a 10 s deadline and is
+retried up to 3 runs on a serialization failure. A statement outside a transaction has a 5 s
+client deadline; each root connection carries one statement, so a queued one is withdrawn at its
+deadline, while one already sent is left to the role's 30 s `statement_timeout` and may still
+apply. Either timeout reaches the client as the generic 500.
+
 **The server's catalog** (catalog-on-postgres) is this schema: the app connects as
 `autologger_app` with the `PG*` env the compose files pass, and refuses to boot without them. It
 never runs migrations. Before listening it waits up to 30 s for the catalog to answer (logging
