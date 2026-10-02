@@ -57,10 +57,12 @@ names the command that fails before the change and passes after it.
 
 ## 4. Verify and archive
 
-- [ ] 4.1 Run `scripts/check-change.sh --stage pr --base origin/supabase-migration` and record the
+- [x] 4.1 Run `scripts/check-change.sh --stage pr --base origin/supabase-migration` and record the
   result. Expected: every gate passes, with no `size` line, except `tasks` until this task is ticked.
-- [ ] 4.2 Consistency read (tier 2), then archive (`skip_specs`). Check:
+  Evidence: `scripts/check-change.sh --stage pr --base origin/supabase-migration` -> PASS openspec, yaml (80), workflows, skills-sync, guide-size (96/150), change (tier 2), risk-floor (8 high-risk paths), approval, panel (6, no open criticals), evidence, artifacts-first, tests-with-code, commands (typecheck, test), audit; FAIL only `tasks` (2 unticked: 4.1, 4.2); no `size` line
+- [x] 4.2 Consistency read (tier 2), then archive (`skip_specs`). Check:
   `openspec validate --all --strict` and `openspec validate --archived --no-interactive` pass.
+  Evidence: consistency read appended to panel.md (no scope change, no findings); `openspec archive retire-size-budget-and-minors -y` -> archived as `2026-10-02-retire-size-budget-and-minors` (skip_specs); `openspec validate --all --strict` -> `27 passed, 0 failed`; `openspec validate --archived --no-interactive` -> `71 passed, 0 failed`
 
 ## At PR (no checkbox)
 
