@@ -69,6 +69,8 @@ describe('main.ts boot order', () => {
         GOOGLE_CLIENT_ID: 'boot-order-client-id',
         GOOGLE_CLIENT_SECRET: 'boot-order-client-secret',
         PUBLIC_BASE_URL: 'http://localhost:8787',
+        // owner-bootstrap D8: also required before the catalog wait.
+        BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
       }),
       45_000,
     );

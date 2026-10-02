@@ -8,6 +8,7 @@
 // runs exactly once, at startup, from the composition root (node/config.ts),
 // and its result is what the pure ytDlpConfigured gate below reads.
 
+import { createHash } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import type { Config } from '@autologger/ports';
@@ -35,6 +36,38 @@ export function googleClientSecret(env: Config): string {
 
 export function oauthConfigured(env: Config): boolean {
   return Boolean(googleClientId(env) && googleClientSecret(env) && publicBaseUrl(env));
+}
+
+// ── Bootstrap owner (owner-bootstrap D8, D16) ───────────────────────────────
+
+/** Trim, then fold only `A`-`Z`: JS `toLowerCase` is Unicode-aware (U+212A KELVIN SIGN folds to
+ * `k`), so it must not be used for the bootstrap match (D16). */
+function asciiEmailNorm(v: string): string {
+  return v.trim().replace(/[A-Z]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) + 32));
+}
+
+/** The configured bootstrap owner email, ASCII-normalized; '' when unset. */
+export function bootstrapOwnerEmail(env: Config): string {
+  return asciiEmailNorm(env.BOOTSTRAP_OWNER_EMAIL || '');
+}
+
+/** Whether a verified token email is the bootstrap owner (D16): `'non-ascii'` when the token email
+ * has any character above U+007F (never a match), else exact equality after ASCII normalization.
+ * A blank configured value matches nothing. */
+export function bootstrapEmailMatch(tokenEmail: string, configured: string): boolean | 'non-ascii' {
+  if ([...tokenEmail].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) return 'non-ascii';
+  const want = asciiEmailNorm(configured);
+  return want !== '' && asciiEmailNorm(tokenEmail) === want;
+}
+
+/** The boot log's masked form (D8): the domain and the first 8 hex of sha256(normalized), never
+ * the local part. */
+export function maskBootstrapOwnerEmail(value: string): string {
+  const norm = asciiEmailNorm(value);
+  const at = norm.lastIndexOf('@');
+  const domain = at >= 0 ? norm.slice(at + 1) : '';
+  const hash = createHash('sha256').update(norm).digest('hex').slice(0, 8);
+  return `${domain || '(no domain)'} #${hash}`;
 }
 
 export function sessionTtlDays(env: Config): number {

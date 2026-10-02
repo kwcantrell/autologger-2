@@ -305,6 +305,7 @@ describe('ai/v2/design — agent credentials refusal (503)', () => {
       HOST: '0.0.0.0',
       GOOGLE_CLIENT_ID: '',
       GOOGLE_CLIENT_SECRET: '',
+      BOOTSTRAP_OWNER_EMAIL: '',
       SESSION_COOKIE: '',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',

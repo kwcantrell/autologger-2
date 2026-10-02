@@ -101,7 +101,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 3. `BOOTSTRAP_OWNER_EMAIL` is required (design D8)
 
-- [ ] 3.1 Test first, then implement:
+- [x] 3.1 Test first, then implement:
   - `server/src/bootGuard.test.ts`: `BOOTSTRAP_OWNER_EMAIL` unset, empty or only spaces gives a
     refusal naming it and no value; a full env gives `null`;
   - `bootGuard.test.ts`: a non-ASCII `BOOTSTRAP_OWNER_EMAIL` (`Kalen@gmail.com`) refuses,
@@ -122,6 +122,21 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   `BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com'`; update `node/config.test.ts`.
   Verify: the named tests red then green; `npm run typecheck` exit 0;
   `docker/scripts/check-envs.sh` and `bash docker/scripts/test_check_envs.sh` pass.
+  Evidence: red: `cd server && npx vitest run --project unit src/bootGuard.test.ts src/env.test.ts
+  src/node/config.test.ts` (`5c-3.1-red.log`) -> `Tests  6 failed | 41 passed (47)` (`refuses a
+  missing, empty or whitespace-only BOOTSTRAP_OWNER_EMAIL`, `refuses a non-ASCII
+  BOOTSTRAP_OWNER_EMAIL`, the three env helpers, the config passthrough); `node --test
+  docker/scripts/compose-run.test.mjs` (`5c-3.1-red-compose.log`) -> `✖ every stack refuses a
+  missing or empty GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET or BOOTSTRAP_OWNER_EMAIL`, `✖ a dev run
+  without BOOTSTRAP_OWNER_EMAIL in Infisical refuses before docker runs` (the key was not yet
+  allowed; the run hung after its failures and was stopped). `bootOrder.int.test.ts` without the
+  new key (`5c-3.1-bootorder-red.log`) -> `expected 'autologger: BOOTSTRAP_OWNER_EMAIL is …' to
+  match /catalog not ready/`. green: `--project unit` -> `Tests  280 passed | 3 skipped (283)`
+  (`5c-3.1-green.log`); `timeout 280 node --test docker/scripts/compose-run.test.mjs` -> `ℹ tests
+  52`, `ℹ pass 52` (`5c-3.1-green-compose.log`); `npx vitest run --project integration
+  src/bootOrder.int.test.ts` -> `Tests  4 passed (4)`; `npm run typecheck` -> exit 0
+  (`5c-3.1-typecheck.log`); `docker/scripts/check-envs.sh` -> `check-envs: ok (all)`; `bash
+  docker/scripts/test_check_envs.sh` -> `47 passed, 0 failed`.
 - [ ] 3.2 Docs for the key: `docs/infisical-secrets.md` (required in every stack, what it does,
   that a blank value refuses boot and `make <env>-up`), the README env table, `server/.env.example`
   and `docker/.env.example`, `docker/.env.dev.example`, `docker/.env.stage.example`. Verify:

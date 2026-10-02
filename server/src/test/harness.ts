@@ -63,6 +63,8 @@ export async function resetTestEnv(): Promise<void> {
       // D1/D7), so oauthConfigured() is true in the base test env.
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-secret',
+      // owner-bootstrap D13: an address no suite signs in with, so no sign-in claims by accident.
+      BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',

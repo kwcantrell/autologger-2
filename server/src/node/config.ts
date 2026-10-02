@@ -82,6 +82,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       HOST: procEnv.HOST || (procEnv.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
       GOOGLE_CLIENT_ID: procEnv.GOOGLE_CLIENT_ID || '',
       GOOGLE_CLIENT_SECRET: procEnv.GOOGLE_CLIENT_SECRET || '',
+      BOOTSTRAP_OWNER_EMAIL: procEnv.BOOTSTRAP_OWNER_EMAIL || '',
       SESSION_COOKIE: procEnv.SESSION_COOKIE || '',
       SESSION_DAYS: procEnv.SESSION_DAYS || '14',
       NEW_USER_ALL_TEAMS: procEnv.NEW_USER_ALL_TEAMS || '0',
