@@ -14,7 +14,7 @@ import {
   CatalogAdapterBrokenError,
   CatalogTxMisuseError,
   CatalogTxTimeoutError,
-} from './asyncCatalogStore';
+} from './catalogErrors';
 
 /** The COMMIT was sent but no reply arrived: the transaction may or may not have committed. Never
  * retried, and no ROLLBACK follows it (design D4). */
@@ -324,7 +324,10 @@ export class PostgresCatalogDb implements CatalogDb {
         q.cancel();
       } catch {}
       q.catch(() => {});
-      throw new CatalogRootTimeoutError('catalog statement timed out before it was sent', Promise.resolve());
+      throw new CatalogRootTimeoutError(
+        'catalog statement timed out before it was sent',
+        Promise.resolve(),
+      );
     }
     throw new CatalogRootTimeoutError(
       'catalog statement timed out; it may still apply',

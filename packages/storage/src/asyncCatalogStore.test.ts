@@ -3,11 +3,8 @@
 // the shared suite (postgres-catalog-adapter design D8); this file adds the SQLite-only ones.
 import Database from 'better-sqlite3';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import {
-  AsyncSqliteCatalogDb,
-  CatalogAdapterBrokenError,
-  CatalogTxMisuseError,
-} from './asyncCatalogStore';
+import { AsyncSqliteCatalogDb } from './asyncCatalogStore';
+import { CatalogAdapterBrokenError, CatalogTxMisuseError } from './catalogErrors';
 import { describeCatalogDbContract, gate, pendingAfter, prompt } from './test/catalogDbContract';
 
 function raw(): Database.Database {

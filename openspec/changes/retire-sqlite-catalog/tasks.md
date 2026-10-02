@@ -47,7 +47,7 @@ Logs:
 
 ## 2. Shared error classes and KvStore tests on Postgres (design D1, D2)
 
-- [ ] 2.1 Test first: add `packages/storage/src/kvStore.pg.test.ts`, following design D2:
+- [x] 2.1 Test first: add `packages/storage/src/kvStore.pg.test.ts`, following design D2:
   - each case runs on a `createTestDatabase()` clone through `PostgresCatalogDb` as
     `autologger_app`;
   - every case uses a plain mutable-`now` clock (no `vi.useFakeTimers()`, no `makeFakeClock`);
@@ -65,10 +65,20 @@ Logs:
   - make `take` skip its delete;
   - drop the expiry delete's `expires_at <= ?` guard.
   Then delete `kvStore.test.ts`.
-- [ ] 2.2 Add `packages/storage/src/catalogErrors.ts` with `CatalogTxMisuseError`,
+  Evidence: `4e-2.1-green.log`: `npx vitest run --project pg src/kvStore.pg.test.ts` (in
+  packages/storage) -> `Tests  13 passed (13)`. Red checks, each restored after:
+  `4e-2.1-red-replaceIf.log` -> `× replaces only when the stored value is the expected one`,
+  `Tests  2 failed | 11 passed`; `4e-2.1-red-take.log` -> `× two concurrent takes: exactly one gets
+  the value`, `Tests  3 failed | 10 passed`; `4e-2.1-red-guard.log` -> `× a key re-put between an
+  expired get's read and its delete survives`, `Tests  1 failed | 12 passed`. `kvStore.test.ts`
+  removed with `git rm`.
+- [x] 2.2 Add `packages/storage/src/catalogErrors.ts` with `CatalogTxMisuseError`,
   `CatalogTxTimeoutError` and `CatalogAdapterBrokenError`, and re-export it from `index.ts`.
   Names, messages and `name` fields stay the same. Doc comments that describe SQLite connections
   are reworded.
+  Evidence: `4e-2.2-tsc.log`: `npx tsc --noEmit` (packages/storage) -> exit 0;
+  `4e-2.2-green.log`: `npx vitest run` (packages/storage, unit + pg) -> `Test Files  7 passed (7)`,
+  `Tests  98 passed (98)`. The SQLite adapter imports the moved classes until 3.1 deletes it.
   - Point `postgresCatalogStore.ts`, `test/catalogDbContract.ts`, `postgresCatalogStore.test.ts`
     and `postgresCatalogStore.pg.test.ts` at it.
   - Storage typecheck plus the unit and pg projects are green.

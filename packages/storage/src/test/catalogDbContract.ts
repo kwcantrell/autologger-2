@@ -5,7 +5,7 @@
 //   c (pid bigint references p(id) deferrable initially deferred).
 import type { CatalogDb } from '@autologger/ports';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { CatalogTxMisuseError, CatalogTxTimeoutError } from '../asyncCatalogStore';
+import { CatalogTxMisuseError, CatalogTxTimeoutError } from '../catalogErrors';
 
 export interface ContractFixture {
   db: CatalogDb;

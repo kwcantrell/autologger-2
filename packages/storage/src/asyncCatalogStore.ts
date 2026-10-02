@@ -8,23 +8,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { CatalogDb } from '@autologger/ports';
 import type { Database } from 'better-sqlite3';
-
-/** The root handle used inside an open transaction, a handle used after its transaction ended,
- * a body that returned while a joined `tx` still ran, or a connection left inside a transaction
- * this adapter did not open. */
-export class CatalogTxMisuseError extends Error {
-  override name = 'CatalogTxMisuseError';
-}
-
-/** A transaction body ran past the adapter's deadline; the transaction was rolled back. */
-export class CatalogTxTimeoutError extends Error {
-  override name = 'CatalogTxTimeoutError';
-}
-
-/** A ROLLBACK failed and the connection is still inside the transaction; restart required. */
-export class CatalogAdapterBrokenError extends Error {
-  override name = 'CatalogAdapterBrokenError';
-}
+import {
+  CatalogAdapterBrokenError,
+  CatalogTxMisuseError,
+  CatalogTxTimeoutError,
+} from './catalogErrors';
 
 interface Connection {
   /** Settles when the last acquirer releases; never rejects. */

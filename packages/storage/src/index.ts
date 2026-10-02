@@ -10,6 +10,7 @@
 
 export * from './asyncCatalogStore';
 export * from './blobStore';
+export * from './catalogErrors';
 export * from './dataDirLock';
 export * from './kvStore';
 export * from './migrate';
