@@ -58,14 +58,10 @@ Size the proposal to the change: a tier 1 proposal can be ten lines.
 | tasks | | | x | An unticked task remains |
 | artifacts-first | | | x | The branch's first commit holds more than the change artifacts |
 | tests-with-code | | | x | Source changed without a test change. Test folders count at any depth; `managed_paths` files are ignored (label `no-test-needed` overrides) |
-| size | | warn | x | Over `size_budget` changed lines, excluding tests, `managed_paths` and `size_exclude`. A moved file counts by where it lands: its edits within counted source, the whole file when it crosses into or out of an exclusion. Locally, untracked files count too, and the hook stage only warns. The label `size-override` overrides; skipped for a grandfathered change |
 | audit | | | x | `lifecycle.commands.audit` fails |
 
-`managed_paths`, `test_globs`, `size_exclude` and `size_budget` are read from the base branch's
+`managed_paths` and `test_globs` are read from the base branch's
 config, so a PR can't exempt itself. Changes to them apply from the next PR.
-
-Untracked scratch files (notes, logs) count toward size locally. Gitignore them, or list them in
-`size_exclude`, if the warning gets noisy.
 
 The Stop hook runs the `hook` stage. pre-commit runs `commit` on commit and `hook` on push.
 CI runs `pr` on pull requests.
@@ -112,7 +108,7 @@ panel, so they would fail every gate. To let one finish (ADR 0014):
 2. The change's branch merges main, so its merge-base has both the list and the directory.
 3. The change's PR body says `Grandfathered: <id>`.
 
-The change then skips the tier, approval, panel, tasks, evidence, artifacts-first and size gates.
+The change then skips the tier, approval, panel, tasks, evidence, artifacts-first gates.
 Every other gate runs, and risk-floor warns about any high-risk paths it touches. Once it's
 archived and merged, the entry no longer matches anything. Remove it in a later PR.
 

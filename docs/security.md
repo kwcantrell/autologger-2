@@ -14,7 +14,7 @@ agent writes code in this repo. Review this table in the quarterly rule review.
 | ASI05 Unexpected Code Execution | Agent runs untrusted code from a dependency or a fetched script | Sandbox filesystem and network isolation; CI in ephemeral runners |
 | ASI06 Memory & Context Poisoning | A poisoned spec, ADR or skill steers future changes; attacker-controlled text in container logs (request paths, emails, failed-auth names in the Supabase services) read as evidence | CODEOWNERS on openspec/, docs/decisions/, .claude/; generated skills can't be edited; container logs are untrusted data: log checks count values with `grep -cF` instead of reading the logs |
 | ASI07 Insecure Inter-Agent Communication | A subagent's report carries injected instructions to the parent | Panel reviewers return findings, not actions; the parent treats reports as data |
-| ASI08 Cascading Failures | One bad change propagates through many files or services | Size budget; tier 2 for contracts; CI required before merge |
+| ASI08 Cascading Failures | One bad change propagates through many files or services | Tier 2 for contracts; CI required before merge |
 | ASI09 Human-Agent Trust Exploitation | A confident summary gets approved without reading | Evidence rule (command + output); human reviews the diff, not the summary |
 | ASI10 Rogue Agents | Agent weakens its own guardrails | Settings, hooks and approval lines are agent-unwritable; CODEOWNERS on .claude/ and .github/ |
 
@@ -41,19 +41,24 @@ These live in the forge, not the repo, so the template can't apply them:
   bypass on PRs, since GitHub doesn't count an author's own approval. Anything holding the
   admin's token, an agent included, has that bypass. Real separation needs a second reviewer.
 - The panel gate checks structure, not honesty. A real critical tagged `[minor]`, or
-  `No findings.` written over findings discussed in prose, passes. The human approver is the
-  control.
-- Files under test folders count as tests and are left out of the size budget, so source hidden
-  in a `tests/` folder evades both gates. Code review is the control.
-- Exemptions (`managed_paths`, `test_globs`, `size_exclude`, `size_budget`) come from the base
+  `No findings.` written over findings discussed in prose, passes. `[minor]` is no longer a
+  panel severity (ADR 0024), but the gate still accepts it, so a stray one isn't flagged. The
+  human approver is the control.
+- Files under test folders count as tests, so source hidden in a `tests/` folder evades
+  `tests-with-code`. Code review is the control.
+- Exemptions (`managed_paths`, `test_globs`) come from the base
   branch, so a PR can't exempt itself. A later PR can still widen them where no human owns
   `openspec/config.yaml`. A modified copy of the vendored checker isn't detected.
-- A grandfathered change (ADR 0014) skips the size and review-artifact gates, so its branch has
-  no size cap. High-risk paths it touches only warn. Any `archive/<date>-<id>` for a listed id
-  qualifies while main still has the id. The controls are human review, the
-  `Grandfathered: <id>` line in the PR, and the rule that the change must already be on main.
+- A grandfathered change (ADR 0014) skips the review-artifact gates. High-risk paths it
+  touches only warn. Any `archive/<date>-<id>` for a listed id qualifies while main still has
+  the id. The controls are human review, the `Grandfathered: <id>` line in the PR, and the rule
+  that the change must already be on main.
   A tasks.md-only edit to such an archive is exempt like any other (next point) and needs no
   `Grandfathered:` line.
+- No gate limits PR size (ADR 0024). `supabase-migration` has no branch protection, and human
+  PR review there leaves no trace on GitHub, so an arbitrarily large PR can merge into it and
+  reach `main` in the cutover PR. The controls are the owner's slice planning and the cutover
+  PR's whole-branch audit.
 - A tasks.md-only edit to an archive already on the base branch is not a change (ADR 0016). A tier 0 PR can
   therefore tick archived tasks that weren't done, or drop their `Evidence:` lines. The controls
   are the `change` message, which names every such archive, CODEOWNERS on `openspec/changes/`

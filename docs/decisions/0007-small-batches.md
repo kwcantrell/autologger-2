@@ -1,7 +1,7 @@
 # 0007: Changes over 400 changed lines are split
 
 - Date: 2026-09-29
-- Status: Accepted
+- Status: Superseded by ADR 0024 (2026-10-02)
 - Rule: Non-negotiable 7; check `size`
 
 ## Context
