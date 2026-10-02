@@ -560,7 +560,11 @@ describe('member writes need owner or admin (show-grants D9)', () => {
 
 describe('profile shows[].can_access (show-grants D7)', () => {
   async function profileShows(cookie: string): Promise<Array<Record<string, unknown>>> {
-    const res = await anonApp.request('/api/profile', { method: 'GET', headers: { cookie } }, { ...env });
+    const res = await anonApp.request(
+      '/api/profile',
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
     expect(res.status).toBe(200);
     return ((await res.json()) as { shows: Array<Record<string, unknown>> }).shows;
   }

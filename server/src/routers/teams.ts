@@ -11,7 +11,9 @@
 // (409 `Transfer ownership first.`); ownership moves only by transfer. Each write re-checks the
 // caller's role and the target's inside its transaction. Session content follows show access
 // (show-grants D3): `requireSession` admits owners and admins of the show's team and members with
-// a grant for the show; the grants themselves are managed here (show-grants D5).
+// a grant for the show; the grants themselves are managed here (show-grants D5). A revoke, a
+// removal, a leave and a demotion to member close the user's sockets on sessions they no longer
+// reach, after the write commits (show-grants D20).
 
 import type { AuthUser, CatalogFacade, Row, TeamRole } from '@autologger/catalog';
 import {
@@ -26,7 +28,7 @@ import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { requireUser } from './_helpers';
+import { closeSocketsAfterAccessLoss, requireUser, teamShowIds } from './_helpers';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422
  * convention) for this family's body validation — "validation errors 400" on
@@ -312,6 +314,8 @@ teamsRouter.delete('/api/teams/:id/shows/:showId/grants/:userId', async (c) => {
     await requireTeamRoleIn(cat, caller.id, teamId, OWNER_OR_ADMIN);
     await cat.auth.authRevokeShow(targetUserId, showId);
   });
+  // After the commit: the target's sockets on this show's sessions close (show-grants D20).
+  await closeSocketsAfterAccessLoss(c, targetUserId, [showId]);
   return c.json({ ok: true });
 });
 
@@ -323,17 +327,23 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   const targetUserId = c.req.param('userId').trim();
   const body = parseTeamBody(teamRoleChangeBodySchema, await c.req.json());
 
-  await c.get('catalog').tx(async (catalog) => {
+  const changed = await c.get('catalog').tx(async (catalog) => {
     await requireTeamRoleIn(catalog, owner.id, teamId, OWNER_ONLY);
     const currentRole = await catalog.auth.authGetMembershipRole(targetUserId, teamId);
     if (currentRole === null) throw new ApiError(404, 'Member not found');
     if (currentRole === 'owner') throw new ApiError(409, OWNER_TARGET_MESSAGE);
-    if (currentRole === body.role) return; // idempotent
+    if (currentRole === body.role) return false; // idempotent
     // Updates an existing membership only, so a raced removal is never undone.
     if (!(await catalog.auth.authSetExistingMembershipRole(targetUserId, teamId, body.role))) {
       throw new ApiError(404, 'Member not found');
     }
+    return true;
   });
+  // After the commit, a demotion to member closes the target's sockets on the team's shows they
+  // hold no grant for (show-grants D20; granted shows keep theirs).
+  if (changed && body.role === 'member') {
+    await closeSocketsAfterAccessLoss(c, targetUserId, await teamShowIds(c, teamId));
+  }
   return c.json({ ok: true, role: body.role });
 });
 
@@ -355,6 +365,8 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
       throw new ApiError(404, 'Member not found');
     }
   });
+  // After the commit: the removed member's sockets in this team close (show-grants D20).
+  await closeSocketsAfterAccessLoss(c, targetUserId, await teamShowIds(c, teamId));
   return c.json({ ok: true });
 });
 
@@ -372,6 +384,8 @@ teamsRouter.post('/api/teams/:id/leave', async (c) => {
       throw new ApiError(404, 'Member not found');
     }
   });
+  // After the commit: the caller's own sockets in this team close (show-grants D20).
+  await closeSocketsAfterAccessLoss(c, user.id, await teamShowIds(c, teamId));
   return c.json({ ok: true });
 });
 

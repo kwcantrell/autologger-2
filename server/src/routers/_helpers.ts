@@ -1,6 +1,7 @@
 // Shared router helpers — the session and show access gates (_session_access_gate,
-// requireShowAccess, canAccessSession; show-grants D3), per-session hub resolution, timecode
-// context, and marked-at parsing.
+// requireShowAccess, canAccessSession; show-grants D3), closing sockets after access is lost
+// (closeSocketsAfterAccessLoss; show-grants D20), per-session hub resolution, timecode context,
+// and marked-at parsing.
 
 import type { AuthUser, Row } from '@autologger/catalog';
 import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
@@ -88,6 +89,41 @@ export async function canAccessSession(c: Context<AppEnv>, sessionId: string): P
   const row = await catalog.sessions.getSessionIndexRow(sessionId, { includeHidden: true });
   if (row === null || row.show_id == null || !String(row.show_id)) return false;
   return catalog.auth.authCanAccessShow(user.id, String(row.show_id));
+}
+
+/** The WebSocket close code for a socket whose user lost access to its session (show-grants D20;
+ * api-contract-freeze "Session sockets close when access is lost"). */
+export const ACCESS_LOST_CLOSE_CODE = 4403;
+
+/** Close `userId`'s session sockets on the shows in `showIds` they can no longer access
+ * (show-grants D20). Call it only AFTER the write that removed the access has committed, so the
+ * access check below reads the committed state: a show the user still reaches (a grant that
+ * survived, an admin role) keeps its sockets. In-process only (owner decision E); a failure here
+ * never fails the committed write, whose response has already been decided. */
+export async function closeSocketsAfterAccessLoss(
+  c: Context<AppEnv>,
+  userId: string,
+  showIds: readonly string[],
+): Promise<void> {
+  try {
+    const catalog = c.get('catalog');
+    const lost: string[] = [];
+    for (const showId of showIds) {
+      if (!(await catalog.auth.authCanAccessShow(userId, showId))) lost.push(showId);
+    }
+    const sessionIds = await catalog.sessions.listSessionIdsForShows(lost);
+    if (sessionIds.length === 0) return;
+    c.env.ports.sessions.closeUserSockets(userId, new Set(sessionIds), ACCESS_LOST_CLOSE_CODE);
+  } catch (e) {
+    // Name and code only: a database error's message can echo the values involved.
+    const err = e as { name?: unknown; code?: unknown } | null;
+    console.error('closeSocketsAfterAccessLoss failed', { name: err?.name, code: err?.code });
+  }
+}
+
+/** The ids of every show of a team, for `closeSocketsAfterAccessLoss` after a team-wide loss. */
+export async function teamShowIds(c: Context<AppEnv>, teamId: string): Promise<string[]> {
+  return (await c.get('catalog').shows.listShowsForStudio(teamId)).map((r) => String(r.id));
 }
 
 /** _parse_optional_marked_at — validate an ISO-8601 instant; throw 400 on garbage. */
