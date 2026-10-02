@@ -113,7 +113,7 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
   // After the commit, an upsert that leaves the user a member closes their sockets on the team's
   // shows they hold no grant for (show-grants D20).
   if ((body.role ?? 'member') === 'member') {
-    await closeSocketsAfterAccessLoss(c, userId, await teamShowIds(c, sid));
+    await closeSocketsAfterAccessLoss(c, userId, () => teamShowIds(c, sid));
   }
   return c.json({ ok: true });
 });
@@ -127,7 +127,7 @@ adminRouter.delete('/api/admin/users/:userId/memberships/:studioId', async (c) =
   // authRemoveMembership deletes the member's grants in the team in the same transaction (D2);
   // after it commits, their sockets in the team close (show-grants D20).
   await catalog.auth.authRemoveMembership(String(row.id), studioId);
-  await closeSocketsAfterAccessLoss(c, String(row.id), await teamShowIds(c, studioId));
+  await closeSocketsAfterAccessLoss(c, String(row.id), () => teamShowIds(c, studioId));
   return c.json({ ok: true });
 });
 

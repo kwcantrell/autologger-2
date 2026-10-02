@@ -261,7 +261,11 @@ export interface SessionHubFacade {
  */
 export interface SessionHubRegistryFacade {
   get: (sessionId: string) => SessionHubFacade;
-  closeUserSockets: (userId: string, sessionIds: ReadonlySet<string>, code: number) => number;
+  closeUserSockets: (
+    userId: string,
+    sessionIds: ReadonlySet<string> | 'all',
+    code: number,
+  ) => number;
   evictIdle: (idleMs?: number) => void;
   startSweeper: () => void;
 }
@@ -789,10 +793,11 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   /** Close `userId`'s sockets on the named sessions with `code` (show-grants D20: `4403` when the
    * user lost access to them). Walks only the hubs already live in this process and never
-   * instantiates one: a session with no live hub has no socket to close. Returns how many. */
-  closeUserSockets(userId: string, sessionIds: ReadonlySet<string>, code: number): number {
+   * instantiates one: a session with no live hub has no socket to close. `'all'` closes the
+   * user's sockets on every live hub (the fail-closed path). Returns how many. */
+  closeUserSockets(userId: string, sessionIds: ReadonlySet<string> | 'all', code: number): number {
     let closed = 0;
-    for (const id of sessionIds) {
+    for (const id of sessionIds === 'all' ? [...this.hubs.keys()] : sessionIds) {
       const hub = this.hubs.get(id);
       if (hub) closed += hub.closeUserSockets(userId, code);
     }

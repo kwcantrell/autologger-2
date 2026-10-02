@@ -751,6 +751,21 @@ describe('SessionHubRegistry', () => {
 });
 
 describe('SessionHubRegistry.closeUserSockets (show-grants D20)', () => {
+  it("'all' closes that user's sockets on every live hub (the fail-closed path)", () => {
+    const reg = new SessionHubRegistry(dir);
+    const m1 = fakeWs();
+    const m3 = fakeWs();
+    const other1 = fakeWs();
+    reg.get('sess-1').attachSocket(m1, 'browser', 'user-m');
+    reg.get('sess-3').attachSocket(m3, 'browser', 'user-m');
+    reg.get('sess-1').attachSocket(other1, 'browser', 'user-o');
+
+    expect(reg.closeUserSockets('user-m', 'all', 4403)).toBe(2);
+    expect(m1.closed).toEqual([4403]);
+    expect(m3.closed).toEqual([4403]);
+    expect(other1.closed).toEqual([]);
+  });
+
   type FakeWs = {
     send(d: string): void;
     close(code?: number): void;

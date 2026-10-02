@@ -52,7 +52,7 @@ design implements:
 - **H. Cuts:** no `GET …/grants` route; `can_access` on profile `shows[]` only, with a web
   `ProfileShow` type (D5, D7).
 
-Decisions marked **(proposed; owner confirms at approval)** are listed in proposal.md "For the
+Decisions marked **(proposed; owner confirmed at approval, 2026-10-02)** are listed in proposal.md "For the
 approver": D6, D10's token-only presence, D11 and D13's member Settings view.
 
 ## Goals / Non-Goals
@@ -178,7 +178,7 @@ target's leave: the leave's membership delete conflicts with the grant's `FOR SH
 either the leave commits first (grant `404`) or the grant commits first and the leave's
 `authRemoveMembership` deletes it (D2). Under `SERIALIZABLE` both orders are retried as today.
 
-### D6. Team detail `members[].show_ids` (proposed; owner confirms at approval)
+### D6. Team detail `members[].show_ids` (proposed; owner confirmed at approval, 2026-10-02)
 `GET /api/teams/:id`, when the caller is `owner` or `admin` (the same gate as `invites`,
 `teams.ts:157`), adds `show_ids` to each member entry from one
 `authListShowGrantsInStudio(teamId)` query: the member's granted show ids, sorted; `[]` for owner
@@ -234,10 +234,10 @@ session and answer exactly as when there is none, so existence doesn't leak:
   helper, which all four call).
 
 `commands/wait` and `commands/:id/ack` read no session and are unchanged. **Token-only callers
-(no user) are unchanged (proposed; owner confirms at approval):** they are the Companion's device
+(no user) are unchanged (proposed; owner confirmed at approval, 2026-10-02):** they are the Companion's device
 credential, the system caller until slice 9.
 
-### D11. Grants and role changes (proposed; owner confirms at approval)
+### D11. Grants and role changes (proposed; owner confirmed at approval, 2026-10-02)
 Promote, demote and transfer don't touch grants (team-management "Show grants"). The access query
 ignores grants for owners and admins, so a stored grant is inert while its holder is a manager
 and applies again after a demotion. *Alternative:* delete on promotion. Rejected: it would make a
@@ -264,7 +264,7 @@ without a grant gets the identifier-free busy response, as a non-member does.
 - **Session cards** (`RecentSessionsList.tsx`): a card whose `show_id` the user can't access
   renders as a plain-text title with "No access — ask a team admin", no ⋮ menu and no navigation;
   archived cards likewise.
-- **Settings** (`HomeSettingsModal.tsx`) **(proposed; owner confirms at approval)**: stays on
+- **Settings** (`HomeSettingsModal.tsx`) **(proposed; owner confirmed at approval, 2026-10-02)**: stays on
   the rail for everyone. When the selected team's
   role is `member`, the team defaults (frame rate) and show editing sections are not rendered,
   "Add show" is hidden, and `handleSave` omits `settings` and `show_updates`. This deviates from

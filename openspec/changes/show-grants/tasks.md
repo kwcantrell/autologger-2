@@ -72,6 +72,12 @@ gate reads only up to the first blank line.
   Evidence: `cd packages/session-core && npx vitest run src/SessionHub.test.ts` before 8.2 (`6a-8.1-red-unit.log`) -> `Tests  2 failed | 40 passed (42)`: `TypeError: reg.closeUserSockets is not a function`. `cd server && npx vitest run --project integration src/routers/sessionWs.access.int.test.ts` before 8.2 (`6a-8.1-red.log`) -> `Tests  6 failed | 1 passed (7)`: the revoke, remove, leave, support delete, team-plane demotion and support-plane upsert cases each `Error: timeout` waiting for the `4403` close. The unrelated-revoke test already passes (nothing closes sockets today). Green after 8.2 (see 8.2).
 - [x] 8.2 Implement: `packages/session-core` (`attachSocket` user id, `closeUserSockets` on the registry), `server/src/routers/sessionWs.ts` (pass the user id), a `closeSocketsAfterAccessLoss` helper, and its calls after commit in `teams.ts` (revoke, remove, leave, role change to member) and `admin.ts` (membership delete, upsert to member). Verify: 8.1 green; `companion-ws.int`, `teams.int`, `admin.int` green; `npm run typecheck` exit 0.
   Evidence: `cd packages/session-core && npx vitest run` (`6a-8.2-green-unit.log`) -> `Test Files  12 passed (12)`, `Tests  160 passed (160)`; `cd server && npx vitest run --project integration src/routers/sessionWs.access.int.test.ts src/routers/companion-ws.int.test.ts src/routers/teams.int.test.ts src/routers/admin.int.test.ts` (`6a-8.2-green.log`) -> `Test Files  4 passed (4)`, `Tests  94 passed (94)`; `npm run typecheck` (`6a-8.2-typecheck.log`) -> exit 0. The session ids come from a new read, `catalog.sessions.listSessionIdsForShows` (D20's `SELECT id FROM sessions WHERE show_id IN (…)`, hidden sessions included); every close call runs after its route's `catalog.tx` returns.
+  Post-consistency-read fix (fail closed): `closeSocketsAfterAccessLoss` now takes the team's show
+  ids lazily inside its try, so a failing read never 500s a committed write, and any failure closes
+  every socket of the user (`closeUserSockets(userId, 'all', 4403)`). Red:
+  `npx vitest run --project unit src/routers/_helpers.test.ts` -> `2 failed | 4 passed`; session-core
+  `'all'` test -> `1 failed | 42 passed`. Green: `6 passed (6)`; session-core `161 passed`;
+  `--project integration sessionWs.access teams admin` -> `91 passed (91)`; typecheck exit 0.
 
 ## 9. Imports re-check access (design D19)
 

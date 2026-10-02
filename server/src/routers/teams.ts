@@ -342,7 +342,7 @@ teamsRouter.post('/api/teams/:id/members/:userId/role', async (c) => {
   // After the commit, a demotion to member closes the target's sockets on the team's shows they
   // hold no grant for (show-grants D20; granted shows keep theirs).
   if (changed && body.role === 'member') {
-    await closeSocketsAfterAccessLoss(c, targetUserId, await teamShowIds(c, teamId));
+    await closeSocketsAfterAccessLoss(c, targetUserId, () => teamShowIds(c, teamId));
   }
   return c.json({ ok: true, role: body.role });
 });
@@ -366,7 +366,7 @@ teamsRouter.delete('/api/teams/:id/members/:userId', async (c) => {
     }
   });
   // After the commit: the removed member's sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, targetUserId, await teamShowIds(c, teamId));
+  await closeSocketsAfterAccessLoss(c, targetUserId, () => teamShowIds(c, teamId));
   return c.json({ ok: true });
 });
 
@@ -385,7 +385,7 @@ teamsRouter.post('/api/teams/:id/leave', async (c) => {
     }
   });
   // After the commit: the caller's own sockets in this team close (show-grants D20).
-  await closeSocketsAfterAccessLoss(c, user.id, await teamShowIds(c, teamId));
+  await closeSocketsAfterAccessLoss(c, user.id, () => teamShowIds(c, teamId));
   return c.json({ ok: true });
 });
 

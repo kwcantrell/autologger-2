@@ -103,12 +103,13 @@ export const ACCESS_LOST_CLOSE_CODE = 4403;
 export async function closeSocketsAfterAccessLoss(
   c: Context<AppEnv>,
   userId: string,
-  showIds: readonly string[],
+  showIds: readonly string[] | (() => Promise<readonly string[]>),
 ): Promise<void> {
   try {
     const catalog = c.get('catalog');
+    const shows = typeof showIds === 'function' ? await showIds() : showIds;
     const lost: string[] = [];
-    for (const showId of showIds) {
+    for (const showId of shows) {
       if (!(await catalog.auth.authCanAccessShow(userId, showId))) lost.push(showId);
     }
     const sessionIds = await catalog.sessions.listSessionIdsForShows(lost);
@@ -117,7 +118,13 @@ export async function closeSocketsAfterAccessLoss(
   } catch (e) {
     // Name and code only: a database error's message can echo the values involved.
     const err = e as { name?: unknown; code?: unknown } | null;
-    console.error('closeSocketsAfterAccessLoss failed', { name: err?.name, code: err?.code });
+    console.error("closeSocketsAfterAccessLoss failed; closing all of the user's sockets", {
+      name: err?.name,
+      code: err?.code,
+    });
+    // Fail closed: the write committed, so close every socket of the user; one that still has
+    // access reconnects through the gate.
+    c.env.ports.sessions.closeUserSockets(userId, 'all', ACCESS_LOST_CLOSE_CODE);
   }
 }
 

@@ -250,7 +250,7 @@ create.
 The web app SHALL follow the same rule (web-home-launch "Session actions follow show access"),
 and its Settings modal SHALL stay reachable for a member: a member's view SHALL hide the team
 defaults and the show editing controls, and its save SHALL NOT send team or show settings
-(proposed; the owner confirms at approval).
+(owner, 2026-10-02, confirmed at approval).
 
 #### Scenario: A member without a grant is masked
 - **WHEN** a member with no grant for show S requests a session of S, its events, an export, its
