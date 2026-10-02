@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   catalogFor,
   loginCookie,
+  SEED_CATEGORY_ID,
+  seedAccessMatrix,
   seededSession,
   seedSession,
   seedShow,
@@ -620,5 +622,125 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     );
     const statusBody = (await statusRes.json()) as { deck_title: string };
     expect(statusBody.deck_title).toBe('—');
+  });
+});
+
+// show-grants D8, D21: session creation needs show access, decided in the create's transaction;
+// the session list keeps its scope and shape and blanks content for a caller without access.
+describe('POST /api/sessions needs show access (show-grants D8)', () => {
+  const J = { 'content-type': 'application/json' };
+  const create = (cookie: string, body: Record<string, unknown>) =>
+    anonApp.request(
+      '/api/sessions',
+      { method: 'POST', headers: { ...J, cookie }, body: JSON.stringify(body) },
+      { ...env },
+    );
+  const sessionsOf = async (showId: string) =>
+    (await catalogFor().sessions.listSessionsForShow(showId)).map((r) => String(r.id));
+
+  it('an ungranted member gets 403 No access to this show. and no session exists; a granted member gets 200', async () => {
+    const m = await seedAccessMatrix();
+    await catalogFor().auth.authSetPrefs(m.ungranted.id, m.studioId, m.showId);
+    await catalogFor().auth.authSetPrefs(m.granted.id, m.studioId, m.showId);
+    const before = await sessionsOf(m.showId);
+
+    const denied = await create(m.ungranted.cookie, {
+      show_id: m.showId,
+      episode: '9',
+      frame_rate: 24,
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ detail: 'No access to this show.' });
+    expect(await sessionsOf(m.showId)).toEqual(before);
+
+    const ok = await create(m.granted.cookie, { show_id: m.showId, episode: '9', frame_rate: 24 });
+    expect(ok.status).toBe(200);
+    const { id } = (await ok.json()) as { id: string };
+    expect((await sessionsOf(m.showId)).sort()).toEqual([...before, id].sort());
+  });
+
+  it('the existing 400 checks come before the access 403', async () => {
+    const m = await seedAccessMatrix();
+    await catalogFor().auth.authSetPrefs(m.ungranted.id, m.studioId, m.showId);
+    const unknown = await create(m.ungranted.cookie, { show_id: 'no-such-show', frame_rate: 24 });
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toEqual({ detail: 'Unknown show_id.' });
+    const foreignShow = await seedShow({ studioId: await seedStudio() });
+    const foreign = await create(m.ungranted.cookie, { show_id: foreignShow, frame_rate: 24 });
+    expect(foreign.status).toBe(400);
+    expect(await foreign.json()).toEqual({ detail: 'Show does not belong to the active team.' });
+  });
+});
+
+describe('GET /api/sessions for a show without access (show-grants D21)', () => {
+  const J = { 'content-type': 'application/json' };
+  type Entry = Record<string, unknown>;
+  const list = async (cookie: string): Promise<{ active: Entry[]; archived: Entry[] }> => {
+    const res = await anonApp.request(
+      '/api/sessions',
+      { method: 'GET', headers: { cookie } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as { active: Entry[]; archived: Entry[] };
+  };
+  const live = ['rolling_timecode', 'total_runtime_hms'];
+  const stable = (e: Entry) =>
+    Object.fromEntries(Object.entries(e).filter(([k]) => !live.includes(k)));
+
+  it('lists the active show with titles and dates only for an ungranted member; granted and admin entries are unchanged', async () => {
+    const m = await seedAccessMatrix();
+    for (const who of [m.ungranted, m.granted, m.admin]) {
+      await catalogFor().auth.authSetPrefs(who.id, m.studioId, m.showId);
+    }
+    await env.ports.catalog.run(
+      'UPDATE sessions SET notes = ? WHERE id = ?',
+      'secret notes',
+      m.sessionId,
+    );
+    const ev = await anonApp.request(
+      `/api/sessions/${m.sessionId}/events`,
+      {
+        method: 'POST',
+        headers: { ...J, cookie: m.admin.cookie },
+        body: JSON.stringify({ category: SEED_CATEGORY_ID, message: 'hello' }),
+      },
+      { ...env },
+    );
+    expect(ev.status).toBe(200);
+    const roll = await anonApp.request(
+      `/api/sessions/${m.sessionId}/transport/start`,
+      { method: 'POST', headers: { cookie: m.admin.cookie } },
+      { ...env },
+    );
+    expect(roll.status).toBe(200);
+
+    const admin = await list(m.admin.cookie);
+    const full = admin.active.find((e) => e.id === m.sessionId) as Entry;
+    expect(full).toMatchObject({
+      notes: 'secret notes',
+      event_count: 1,
+      is_rolling: true,
+      current_take: 1,
+    });
+    expect(full.rolling_timecode).not.toBeNull();
+
+    const granted = await list(m.granted.cookie);
+    expect(granted.active.map(stable)).toEqual(admin.active.map(stable));
+    expect(granted.archived.map(stable)).toEqual(admin.archived.map(stable));
+
+    const blind = await list(m.ungranted.cookie);
+    expect(blind.active.map((e) => e.id)).toEqual(admin.active.map((e) => e.id));
+    const entry = blind.active.find((e) => e.id === m.sessionId) as Entry;
+    expect(Object.keys(entry).sort()).toEqual(Object.keys(full).sort());
+    expect(entry).toEqual({
+      ...full,
+      notes: '',
+      event_count: 0,
+      is_rolling: false,
+      current_take: 0,
+      rolling_timecode: null,
+      total_runtime_hms: '00:00:00',
+    });
   });
 });

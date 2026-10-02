@@ -443,9 +443,9 @@ describe('show create and admin membership add vs team delete (#13, #14)', () =>
   it('a show create racing the team delete gets 400 Unknown studio id. and no show exists', async () => {
     const { team, cookies } = await teamWithAdmins(2);
     const gated = new GatedCatalog(env.ports.catalog);
-    const h = gated.holdAfter(
-      /^SELECT 1 FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/,
-    );
+    // Held after the team-exists read: the role read that follows is FOR SHARE (show-grants D9),
+    // so holding after it would block the delete on the membership row lock.
+    const h = gated.holdAfter(/^SELECT 1 FROM studio_definitions WHERE id = \?$/);
     const create = send(
       'POST',
       '/api/shows',

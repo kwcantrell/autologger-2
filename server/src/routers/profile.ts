@@ -57,6 +57,14 @@ profileRouter.put('/api/profile', async (c) => {
   if (!(await catalog.auth.authUserHasStudio(user.id, rawSid))) {
     return c.json({ detail: 'No access to that team.' }, 403);
   }
+  // Team and show settings are owner or admin only (show-grants D9), checked before any write so a
+  // member's request writes nothing at all.
+  if (body.settings != null || body.show_updates?.length) {
+    const role = await catalog.auth.authGetMembershipRole(user.id, rawSid);
+    if (role !== 'owner' && role !== 'admin') {
+      return c.json({ detail: 'Admin role required.' }, 403);
+    }
+  }
 
   if (body.settings != null) {
     await catalog.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError

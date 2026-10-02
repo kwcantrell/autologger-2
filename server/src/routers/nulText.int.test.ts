@@ -20,7 +20,8 @@ const NUL = '\u0000';
 
 async function member(): Promise<{ studioId: string; cookie: string }> {
   const studioId = await seedStudio();
-  const userId = await seedUser({ studios: [studioId] });
+  // An admin: creating a show needs owner or admin (show-grants D9).
+  const userId = await seedUser({ studios: [studioId], role: 'admin' });
   return { studioId, cookie: await loginCookie(userId) };
 }
 
