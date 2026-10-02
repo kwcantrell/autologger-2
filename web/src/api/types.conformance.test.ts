@@ -58,7 +58,6 @@ import eventCreate from '../../../fixtures/api-responses/eventCreate.json';
 import eventsList from '../../../fixtures/api-responses/eventsList.json';
 import logImportJobCreate from '../../../fixtures/api-responses/logImportJobCreate.json';
 import { logImportJobStatus } from '../../../fixtures/api-responses/logImportJobStatus';
-import { profileAnonymous } from '../../../fixtures/api-responses/profileAnonymous';
 import { profileAuthenticated } from '../../../fixtures/api-responses/profileAuthenticated';
 import { profileLoggedOutOauth } from '../../../fixtures/api-responses/profileLoggedOutOauth';
 import sessionCreate from '../../../fixtures/api-responses/sessionCreate.json';
@@ -166,7 +165,7 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
   });
 
   it('/api/profile `active_studio.categories` carries bare label strings', () => {
-    const check: ProfilePayload['active_studio'] = profileAnonymous.active_studio;
+    const check: ProfilePayload['active_studio'] = profileAuthenticated.active_studio;
     const dropdown = check.categories.find(
       (c: ActiveStudioCategory) => c.type === 'DROPDOWN',
     ) as ActiveStudioCategory;
@@ -182,14 +181,14 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
     // incompatibility at all. The runtime guard below fails loudly if a
     // re-capture ever reorders them, rather than letting the two directives
     // silently start passing for the wrong reason.
-    expect(profileAnonymous.active_studio.categories[1].type).toBe('DROPDOWN');
+    expect(profileAuthenticated.active_studio.categories[1].type).toBe('DROPDOWN');
     expect(showCategories.categories[1].type).toBe('DROPDOWN');
 
     // Both directives fail to compile ("unused '@ts-expect-error' directive")
     // the moment someone collapses the split back into one type — which is the
     // regression this finding exists to prevent.
     // @ts-expect-error `string[]` is not `DropdownOption[]`
-    const wrongWay: Category = profileAnonymous.active_studio.categories[1];
+    const wrongWay: Category = profileAuthenticated.active_studio.categories[1];
     // @ts-expect-error `DropdownOption[]` is not `string[]`
     const otherWay: ActiveStudioCategory = showCategories.categories[1];
     expect(wrongWay.id).toBe(otherWay.id);
@@ -201,7 +200,7 @@ describe('CW-2 — `dropdown_options` is two different shapes on two endpoints',
     // assignment is precisely NOT a conformance check — so neither type was
     // fixture-checked before this, even though both were named in the file.
     const fromShowCategories: Category = showCategories.categories[1];
-    const fromProfile: ActiveStudioCategory = profileAnonymous.active_studio.categories[1];
+    const fromProfile: ActiveStudioCategory = profileAuthenticated.active_studio.categories[1];
     expect(fromShowCategories.dropdown_options).toEqual([
       { label: 'Lav', needs_context: false },
       { label: 'Boom', needs_context: true },
@@ -450,31 +449,29 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
   // type-level check alone would pass on a fat entry, since additive tolerance
   // is deliberate everywhere else in this file.
   it('`profile.shows[]` entries are ShowBrief — no categories, no palettes', () => {
-    const brief: ShowBrief = profileAnonymous.shows[0];
+    const brief: ShowBrief = profileAuthenticated.shows[0];
     expect(brief.id).toBeTruthy();
     expect(['date', 'episode']).toContain(brief.title_suffix);
 
-    for (const fixture of [profileAnonymous, profileAuthenticated]) {
-      const show = fixture.shows[0];
-      expect(Object.keys(show).sort()).toEqual([
-        'id',
-        'name',
-        'show_code',
-        'studio_id',
-        'title_suffix',
-      ]);
-      expect('categories' in show).toBe(false);
-      expect('event_palette' in show).toBe(false);
-      expect('event_palette_preset' in show).toBe(false);
-      expect('event_palette_custom' in show).toBe(false);
-      // These directives go UNUSED (a compile error) the moment a re-capture
-      // starts emitting the field again — which is the signal to re-check
-      // `ShowBrief` and the two lazy hooks, not to delete the lines.
-      // @ts-expect-error `categories` is not on the captured brief entry
-      expect(show.categories).toBeUndefined();
-      // @ts-expect-error `event_palette` is not on the captured brief entry
-      expect(show.event_palette).toBeUndefined();
-    }
+    const show = profileAuthenticated.shows[0];
+    expect(Object.keys(show).sort()).toEqual([
+      'id',
+      'name',
+      'show_code',
+      'studio_id',
+      'title_suffix',
+    ]);
+    expect('categories' in show).toBe(false);
+    expect('event_palette' in show).toBe(false);
+    expect('event_palette_preset' in show).toBe(false);
+    expect('event_palette_custom' in show).toBe(false);
+    // These directives go UNUSED (a compile error) the moment a re-capture
+    // starts emitting the field again — which is the signal to re-check
+    // `ShowBrief` and the two lazy hooks, not to delete the lines.
+    // @ts-expect-error `categories` is not on the captured brief entry
+    expect(show.categories).toBeUndefined();
+    // @ts-expect-error `event_palette` is not on the captured brief entry
+    expect(show.event_palette).toBeUndefined();
   });
 
   it('a full `Show` is NOT assignable from a brief profile entry', () => {
@@ -483,7 +480,7 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
     // keeps reading `profile.shows[]` as `Show` fails to compile rather than
     // rendering an empty category list at runtime.
     // @ts-expect-error ShowBrief is missing categories + the three palettes
-    const wrongWay: Show = profileAnonymous.shows[0];
+    const wrongWay: Show = profileAuthenticated.shows[0];
     expect(wrongWay.id).toBeTruthy();
   });
 

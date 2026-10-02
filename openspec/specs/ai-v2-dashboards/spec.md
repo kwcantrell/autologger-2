@@ -29,17 +29,6 @@ code, or WS emission changes.
 - **WHEN** AI v2 is disabled but the AI chat is configured
 - **THEN** AI v2 routes respond `503` and the AI chat continues to serve normally
 
-### Requirement: Open-network refusal
-Because a design turn spends the operator's credentials, AI v2 SHALL refuse to serve turns when
-authentication is disabled on a reachable network: when login is disabled AND the server is bound
-to a non-loopback address with no IP allowlist, AI v2 routes SHALL respond `503` with an
-actionable detail, independent of the general auth gate. Loopback-bound anonymous development is
-unaffected.
-
-#### Scenario: Anonymous LAN deployment refuses design turns
-- **WHEN** login is disabled and the bind is non-loopback with no allowlist
-- **THEN** AI v2 routes respond `503` and no subprocess is spawned
-
 ### Requirement: Agent credentials
 A configured workspace-scoped API key SHALL be used in preference to the operator's interactive
 login, and the login SHALL NOT be used while a key is configured. When no key is configured, the
@@ -60,8 +49,7 @@ configured key SHALL refuse to serve design turns.
 `POST /api/sessions/:sessionId/ai/v2/design` SHALL accept a JSON body carrying the user's message
 and, optionally, an identifier resuming a previous design conversation. Checks SHALL be evaluated
 in this order, matching existing session sub-routes: authentication → session resolution/scoping
-(`404` for nonexistent, deleted, or out-of-studio sessions) → configuration gate and open-network
-refusal (`503`) → body validation (`422` schema, `400` malformed JSON) → turn slot (`409`). No
+(`404` for nonexistent, deleted, or out-of-studio sessions) → configuration gate (`503`) → body validation (`422` schema, `400` malformed JSON) → turn slot (`409`). No
 guard path SHALL spawn a subprocess. All error bodies SHALL use the repo's `{ detail }` shape.
 
 #### Scenario: Invalid body rejected without side effects

@@ -157,7 +157,7 @@ function customProfileFixture(): ProfilePayload {
     ],
     new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
     admin: { restart_supported: false, restart_needs_token: false },
-    auth: { logged_in: false, oauth_configured: false, user: null },
+    auth: { logged_in: false, oauth_configured: true, user: null },
   };
 }
 
@@ -250,7 +250,7 @@ function mockRoutes(
           shows: [],
           new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
           admin: { restart_supported: false, restart_needs_token: false },
-          auth: { logged_in: false, oauth_configured: false, user: null },
+          auth: { logged_in: false, oauth_configured: true, user: null },
         }
       );
     }
@@ -469,7 +469,7 @@ describe('event feed — Auto Generate menu and custom selection', () => {
           shows: [],
           new_session_defaults: { title_prefix: '', default_frame_rate: 24 },
           admin: { restart_supported: false, restart_needs_token: false },
-          auth: { logged_in: false, oauth_configured: false, user: null },
+          auth: { logged_in: false, oauth_configured: true, user: null },
         };
       }
       if (path.includes('/events')) {

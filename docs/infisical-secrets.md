@@ -77,9 +77,13 @@ Other rules:
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ADMIN_TOKEN`, plus
   `API_TOKEN` if Companion is used (at least 32 random bytes).
 - **`GOOGLE_CLIENT_ID` is also read by GoTrue** (gotrue-sign-in D3), as the audience of the ID
-  tokens it accepts. It is public, so it has no secret scope. Stage and prod refuse to start
-  without it; dev runs without one (sign-in is off there). `GOOGLE_CLIENT_SECRET` stays with the
-  app only.
+  tokens it accepts. It is public, so it has no secret scope. `GOOGLE_CLIENT_SECRET` stays with
+  the app only.
+- **Every stack needs Google sign-in** (require-login). `compose-run` refuses dev, stage and prod
+  unless both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and the server refuses to boot
+  without them. Dev needs its own Google OAuth client (authorized redirect
+  `http://localhost:8787/auth/google/callback`) and an `API_TOKEN` in `autologger-dev`, set also
+  in the dev Companion connection; without it the dev Companion gets `401`.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in Infisical.** `DEV_PORT=9000 make dev-up` no longer overrides them, because

@@ -90,8 +90,10 @@ environment's `GOOGLE_CLIENT_ID` (gotrue-sign-in, ADR 0021 slice 5a). Email, pho
 sign-in are off and auto-confirm is off, so a user can be created only from a Google identity.
 The browser never talks to GoTrue: the app keeps its own Google flow and, once it has verified the
 ID token, exchanges it with GoTrue (`POST http://auth:9999/token?grant_type=id_token`) over
-`auth-app`. The GoTrue user id is the catalog user's id. Dev has no Google client, so its GoTrue
-refuses every token. There is no CORS and no public GoTrue route.
+`auth-app`. The GoTrue user id is the catalog user's id. Every stack, dev included, needs
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (require-login): `compose-run` refuses a stack
+without both. Dev uses its own Google client (redirect `http://localhost:8787/auth/google/callback`)
+and needs `API_TOKEN` too; without it the dev Companion gets `401`. There is no CORS and no public GoTrue route.
 
 To check a running stack: `sh docker/supabase/test_gateway.sh dev` (or `stage`). It prints
 statuses only.

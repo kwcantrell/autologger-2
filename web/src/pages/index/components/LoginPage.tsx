@@ -5,8 +5,8 @@ import { stashLoginReturnPathIfDeepLink } from '../../../shared/utils/loginRetur
 const brandStripUrl = assetSrc(brandStripAsset);
 
 // --- LoginPage (add-login-screen, task 2.1) ---
-// Full-screen branded login view for OAuth-configured deployments. Mounted by
-// the root gate (task 2.2) only when `auth.oauth_configured && !auth.logged_in`;
+// Full-screen branded login view. Mounted by the root gate whenever
+// `!auth.logged_in` (require-login D8: there is no anonymous mode);
 // this component itself issues no network traffic. Both entry controls are
 // plain anchors to the existing `GET /auth/google/start` route — first-time
 // Google sign-in creates the account automatically in the callback's new-user

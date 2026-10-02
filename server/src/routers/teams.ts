@@ -22,6 +22,7 @@ import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
+import { requireUser } from './_helpers';
 
 /** The frozen contract calls out `400` (not the codebase-wide ZodError→422
  * convention) for this family's body validation — "validation errors 400" on
@@ -50,19 +51,14 @@ function isPlausibleEmail(email: string): boolean {
   return email.length > 0 && email.length <= 254 && EMAIL_SHAPE_RE.test(email);
 }
 
-function requireUser(c: Context<AppEnv>): AuthUser {
-  const user = c.get('user');
-  if (user === null) throw new ApiError(401, 'Login required.');
-  return user;
-}
-
 function requireNotBuiltin(teamId: string): void {
   if (BUILTIN_STUDIO_ORDER.includes(teamId)) {
     throw new ApiError(400, 'Built-in teams are managed by support, not self-serve.');
   }
 }
 
-/** requireTeamMember (design D3): 401 with no user; the built-in guard runs
+/** requireTeamMember (design D3): a signed-in user (the login gate 401s before this; require-login
+ * D3); the built-in guard runs
  * before membership is even consulted; masked 404 for a team the caller isn't
  * a member of (nonexistent and foreign teams are indistinguishable). */
 async function requireTeamMember(

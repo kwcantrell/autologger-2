@@ -39,30 +39,25 @@ describe('creator principal', () => {
     expect(job.createdByUserId).toBe('user-1');
     expect(getLogImportJob(clock, job.id)?.createdByUserId).toBe('user-1');
   });
-
-  it('stores null for an anonymous creator', () => {
-    const job = createLogImportJob(clock, null);
-    expect(getLogImportJob(clock, job.id)?.createdByUserId).toBeNull();
-  });
 });
 
 describe('terminal-TTL pruning', () => {
   it('prunes a completed job more than an hour after it finished', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'completed');
     tick(HOUR_MS + 1);
     expect(getLogImportJob(clock, job.id)).toBeNull();
   });
 
   it('keeps a completed job within the TTL window', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'completed');
     tick(HOUR_MS - 1);
     expect(getLogImportJob(clock, job.id)?.status).toBe('completed');
   });
 
   it('measures the TTL from finish time, not creation time', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'running');
     tick(3 * HOUR_MS); // long-running import
     setLogImportStatus(clock, job.id, 'completed');
@@ -73,15 +68,15 @@ describe('terminal-TTL pruning', () => {
   });
 
   it('prunes failed jobs the same way as completed ones', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'failed', 'boom');
     tick(HOUR_MS + 1);
     expect(getLogImportJob(clock, job.id)).toBeNull();
   });
 
   it('never TTL-prunes a queued or running job, however old', () => {
-    const queued = createLogImportJob(clock, null);
-    const running = createLogImportJob(clock, null);
+    const queued = createLogImportJob(clock, 'user-1');
+    const running = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, running.id, 'running');
     tick(10 * HOUR_MS);
     expect(getLogImportJob(clock, queued.id)?.status).toBe('queued');
@@ -89,10 +84,10 @@ describe('terminal-TTL pruning', () => {
   });
 
   it('also prunes on insert, not just on lookup', () => {
-    const stale = createLogImportJob(clock, null);
+    const stale = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, stale.id, 'completed');
     tick(HOUR_MS + 1);
-    const fresh = createLogImportJob(clock, null); // insert triggers the sweep
+    const fresh = createLogImportJob(clock, 'user-1'); // insert triggers the sweep
     // Read the map without another sweep dependency: the stale job is gone.
     expect(getLogImportJob(clock, stale.id)).toBeNull();
     expect(getLogImportJob(clock, fresh.id)).not.toBeNull();
@@ -101,14 +96,14 @@ describe('terminal-TTL pruning', () => {
 
 describe('finishedAtMs stamping', () => {
   it('is null while queued and stays null through running', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     expect(job.finishedAtMs).toBeNull();
     setLogImportStatus(clock, job.id, 'running');
     expect(getLogImportJob(clock, job.id)?.finishedAtMs).toBeNull();
   });
 
   it('stamps the current time on completion', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     tick(5 * 60 * 1000); // 5 minutes of "work"
     setLogImportStatus(clock, job.id, 'completed');
     expect(getLogImportJob(clock, job.id)?.finishedAtMs).toBe(clock.now());
@@ -116,14 +111,14 @@ describe('finishedAtMs stamping', () => {
   });
 
   it('stamps the current time on failure, same as completion', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     tick(1000);
     setLogImportStatus(clock, job.id, 'failed', 'boom');
     expect(getLogImportJob(clock, job.id)?.finishedAtMs).toBe(clock.now());
   });
 
   it('clears finishedAtMs if a terminal job is moved back to a non-terminal status', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'completed');
     expect(getLogImportJob(clock, job.id)?.finishedAtMs).not.toBeNull();
     setLogImportStatus(clock, job.id, 'running');
@@ -131,7 +126,7 @@ describe('finishedAtMs stamping', () => {
   });
 
   it('re-stamps to the later time when a job transitions terminal twice', () => {
-    const job = createLogImportJob(clock, null);
+    const job = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, job.id, 'completed');
     const firstStamp = getLogImportJob(clock, job.id)?.finishedAtMs;
     tick(30 * 1000);
@@ -150,14 +145,14 @@ describe('size cap (200), oldest-terminal-first eviction', () => {
   it('evicts the oldest terminal jobs once the map exceeds the cap', () => {
     const terminal: string[] = [];
     for (let i = 0; i < 200; i++) {
-      const job = createLogImportJob(clock, null);
+      const job = createLogImportJob(clock, 'user-1');
       // Half finish immediately (recently — inside the TTL window).
       if (i < 100) {
         setLogImportStatus(clock, job.id, 'completed');
         terminal.push(job.id);
       }
     }
-    const extra = createLogImportJob(clock, null); // 201st insert triggers eviction
+    const extra = createLogImportJob(clock, 'user-1'); // 201st insert triggers eviction
     expect(getLogImportJob(clock, extra.id)).not.toBeNull();
     // Exactly the single oldest terminal job was evicted to satisfy the cap.
     expect(getLogImportJob(clock, terminal[0] as string)).toBeNull();
@@ -167,7 +162,7 @@ describe('size cap (200), oldest-terminal-first eviction', () => {
   it('never evicts queued/running jobs, even when the map exceeds the cap', () => {
     const live: string[] = [];
     for (let i = 0; i < 205; i++) {
-      const job = createLogImportJob(clock, null);
+      const job = createLogImportJob(clock, 'user-1');
       setLogImportStatus(clock, job.id, 'running');
       live.push(job.id);
     }
@@ -178,11 +173,11 @@ describe('size cap (200), oldest-terminal-first eviction', () => {
   });
 
   it('evicts terminal jobs to make room while preserving live ones', () => {
-    const first = createLogImportJob(clock, null);
+    const first = createLogImportJob(clock, 'user-1');
     setLogImportStatus(clock, first.id, 'completed');
     const liveIds: string[] = [];
     for (let i = 0; i < 200; i++) {
-      const job = createLogImportJob(clock, null);
+      const job = createLogImportJob(clock, 'user-1');
       liveIds.push(job.id);
     }
     // The lone (oldest) terminal job was evicted; all 200 live jobs remain.

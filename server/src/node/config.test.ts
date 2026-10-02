@@ -24,7 +24,6 @@ function freshProcEnv(overrides: Record<string, string | undefined> = {}) {
     PUBLIC_BASE_URL: 'https://example.com',
     GOOGLE_CLIENT_ID: '',
     GOOGLE_CLIENT_SECRET: '',
-    REQUIRE_LOGIN: '0',
     // Dummy catalog settings: the adapter connects lazily, so nothing here dials them
     // (catalog-on-postgres A14). Port 1 is never listening.
     PGHOST: '127.0.0.1',

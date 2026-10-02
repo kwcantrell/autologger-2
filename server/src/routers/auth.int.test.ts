@@ -3,7 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
 import { GatedCatalog } from '../test/gatedCatalog';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
 import {
   makeKeypair,
@@ -70,7 +70,7 @@ async function runCallback(
     mockGoTrue(opts.gotrue ?? { id: `gt-${opts.sub}`, sub: String(opts.sub) });
   const state = opts.state ?? 'state-spike';
   await putOauthState(env.ports.kv, state);
-  return app.request(
+  return anonApp.request(
     `/auth/google/callback?code=${opts.code ?? 'abc'}&state=${state}`,
     { method: 'GET' },
     envOverride,
@@ -110,7 +110,7 @@ describe('callback -- concurrent replay of one state', () => {
     mockGoTrue({ id: 'gt-sub-replay', sub: 'sub-replay' });
     await putOauthState(env.ports.kv, 'state-replay');
     const callback = () =>
-      app.request(
+      anonApp.request(
         '/auth/google/callback?code=abc&state=state-replay',
         { method: 'GET' },
         OAUTH_ENV,
@@ -124,7 +124,7 @@ describe('callback -- concurrent replay of one state', () => {
 
 describe('GET /auth/google/start', () => {
   it('redirects to Google and stores a CSRF state', async () => {
-    const res = await app.request('/auth/google/start', { method: 'GET' }, OAUTH_ENV);
+    const res = await anonApp.request('/auth/google/start', { method: 'GET' }, OAUTH_ENV);
     expect(res.status).toBe(302);
     const loc = new URL(res.headers.get('location') ?? '');
     expect(loc.host).toBe('accounts.google.com');
@@ -134,7 +134,7 @@ describe('GET /auth/google/start', () => {
   });
 
   it('503 when OAuth is not configured', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/start',
       { method: 'GET' },
       envWith({ GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: 'secret' }),
@@ -161,7 +161,7 @@ describe('callback -- error branches', () => {
   // replacing the former JSON 400/503 bodies.
 
   it('redirects with login_error=provider_error on ?error=', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/callback?error=access_denied',
       { method: 'GET' },
       OAUTH_ENV,
@@ -172,7 +172,7 @@ describe('callback -- error branches', () => {
   });
 
   it('redirects with login_error=oauth_not_configured when OAuth not configured', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/callback?code=x&state=y',
       { method: 'GET' },
       envWith({ GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: 'secret' }),
@@ -183,14 +183,18 @@ describe('callback -- error branches', () => {
   });
 
   it('redirects with login_error=missing_params on missing code/state', async () => {
-    const res = await app.request('/auth/google/callback?code=abc', { method: 'GET' }, OAUTH_ENV);
+    const res = await anonApp.request(
+      '/auth/google/callback?code=abc',
+      { method: 'GET' },
+      OAUTH_ENV,
+    );
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/?login_error=missing_params');
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
   it('redirects with login_error=state_invalid on unknown/expired state', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/callback?code=abc&state=never-stored',
       { method: 'GET' },
       OAUTH_ENV,
@@ -203,7 +207,7 @@ describe('callback -- error branches', () => {
   it('redirects with login_error=exchange_failed when the token exchange fails', async () => {
     mockGoogleToken({ error: 'invalid_grant' }, 400);
     await putOauthState(env.ports.kv, 'state-tokfail');
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/callback?code=abc&state=state-tokfail',
       { method: 'GET' },
       OAUTH_ENV,
@@ -225,7 +229,7 @@ describe('callback -- error branches', () => {
     mockGoogleToken({ id_token: idToken });
     mockGoogleJwks(other.publicJwk);
     await putOauthState(env.ports.kv, 'state-badsig');
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/google/callback?code=abc&state=state-badsig',
       { method: 'GET' },
       OAUTH_ENV,
@@ -251,7 +255,7 @@ describe('callback -- error branches', () => {
     mockGoogleToken({ access_token: 'opaque-access-token' }); // no id_token field
     const state = 'state-no-idtoken';
     await putOauthState(env.ports.kv, state);
-    const res = await app.request(
+    const res = await anonApp.request(
       `/auth/google/callback?code=abc&state=${state}`,
       { method: 'GET' },
       OAUTH_ENV,
@@ -293,7 +297,7 @@ describe('callback -- error branches', () => {
       throw new Error('kv unavailable');
     });
     try {
-      const res = await app.request(
+      const res = await anonApp.request(
         `/auth/google/callback?code=abc&state=${state}`,
         { method: 'GET' },
         OAUTH_ENV,
@@ -346,7 +350,7 @@ describe('callback -- error branches', () => {
     // lands relative to the cut.
     expect(prefix.length + filler.length).toBeGreaterThan(256);
     try {
-      const res = await app.request(
+      const res = await anonApp.request(
         `/auth/google/callback?error=${encodeURIComponent(hostile)}`,
         { method: 'GET' },
         OAUTH_ENV,
@@ -636,7 +640,7 @@ describe('callback -- Supabase Auth exchange', () => {
 describe('logout', () => {
   it('GET clears the session cookie and redirects', async () => {
     const cookie = await loginCookie(await seedUser({}));
-    const res = await app.request(
+    const res = await anonApp.request(
       '/auth/logout',
       { method: 'GET', headers: { Cookie: cookie } },
       OAUTH_ENV,
@@ -647,7 +651,7 @@ describe('logout', () => {
   });
 
   it('POST logout also redirects', async () => {
-    const res = await app.request('/auth/logout', { method: 'POST' }, OAUTH_ENV);
+    const res = await anonApp.request('/auth/logout', { method: 'POST' }, OAUTH_ENV);
     expect(res.status).toBe(302);
   });
 });

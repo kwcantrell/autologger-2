@@ -21,8 +21,8 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type FrontendBridge, wireApp } from './app';
 import type { AppEnv, Bindings } from './appEnv';
-import { env, envWith } from './test/harness';
-import { seededSession, setCompanionPresence } from './test/helpers';
+import { defaultUser, env, envWith } from './test/harness';
+import { COMPANION_BEARER, seededSession, setCompanionPresence } from './test/helpers';
 import { captureHonoUpgradeHandler, installUpgradeDispatcher } from './upgradeDispatch';
 
 interface StubFrontend {
@@ -117,9 +117,13 @@ function rawUpgradeProbe(port: number, path: string): Promise<string> {
   });
 }
 
-function connectSessionWs(port: number, sessionId: string): Promise<WebSocket> {
+/** Opens a session WebSocket as the default signed-in member (require-login D12). */
+async function connectSessionWs(port: number, sessionId: string): Promise<WebSocket> {
+  const { cookie } = await defaultUser();
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`, {
+      headers: { cookie },
+    } as unknown as string[]);
     ws.addEventListener('open', () => resolve(ws));
     ws.addEventListener('error', (e) => reject(e));
   });
@@ -153,7 +157,7 @@ describe('real upgrade dispatcher (server/src/upgradeDispatch.ts, wired the way 
     setCompanionPresence('c1', s);
     const cmd = await fetch(`http://127.0.0.1:${port}/api/companion/command`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...COMPANION_BEARER },
       body: JSON.stringify({ type: 'record-start' }),
     });
     expect(cmd.status).toBe(200);

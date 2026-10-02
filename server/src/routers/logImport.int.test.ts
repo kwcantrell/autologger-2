@@ -6,19 +6,22 @@ import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app, env, envWith } from '../test/harness';
-import { loginCookie, seedSession, seedShow, seedStudio, seedUser } from '../test/helpers';
+import {
+  loginCookie,
+  seedMemberStudio,
+  seedSession,
+  seedShow,
+  seedStudio,
+  seedUser,
+} from '../test/helpers';
 
 const NOT_CONFIGURED_DETAIL =
   'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
 const SHOW_NOT_FOUND_DETAIL = 'Show not found.';
-const OPEN_NETWORK_DETAIL =
-  'Google Sheets log import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing logs.';
 
 /** The base test env leaves SHEETS_LOG_IMPORT_ENABLED unset (503); suites that
- * exercise configured behavior opt in per-request, the envWith pattern. The
- * loopback HOST pin sidesteps the open-network refusal (the youtube-import
- * configuredEnv precedent — the base env is open-network by default). */
+ * exercise configured behavior opt in per-request, the envWith pattern (the
+ * youtube-import configuredEnv precedent pins a loopback HOST too). */
 const enabledEnv = () => envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' });
 
 const BODY = JSON.stringify({
@@ -42,6 +45,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Polls a job to a terminal status with the given headers, so its background run never outlives
+ * the test (it reads the per-test env, which teardown removes). */
+async function settleJob(jobId: string, headers: Record<string, string> = {}): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const res = await app.request(`/api/log-import/${jobId}`, { headers }, env);
+    const body = (await res.json()) as { status?: string };
+    if (body.status === 'failed' || body.status === 'completed') return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error('job did not finish');
+}
+
 describe('log-import job HTTP surface', () => {
   it('404s unknown job ids', async () => {
     const res = await app.request('/api/log-import/no-such-job', {}, env);
@@ -54,32 +69,9 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('503s when SHEETS_LOG_IMPORT_ENABLED is unset, even for an existing show', async () => {
-    const studio = await seedStudio();
+    const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio });
     const res = await postImport(show, env);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
-  });
-
-  it('503s with the open-network detail when configured but REQUIRE_LOGIN is off on a non-loopback bind', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const openNetwork = envWith({
-      SHEETS_LOG_IMPORT_ENABLED: '1',
-      REQUIRE_LOGIN: '0',
-      HOST: '0.0.0.0',
-      IP_ALLOWLIST: '',
-    });
-    const res = await postImport(show, openNetwork);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ detail: OPEN_NETWORK_DETAIL });
-  });
-
-  it('a deployment that is BOTH unconfigured AND open-network-refused returns the NOT_CONFIGURED detail (config gate first)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const bothConditions = envWith({ REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' });
-    const res = await postImport(show, bothConditions);
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
   });
@@ -95,7 +87,7 @@ describe('log-import job HTTP surface', () => {
   });
 
   it('returns a job_id and eventually fails when fetch is not xlsx', async () => {
-    const studio = await seedStudio();
+    const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio });
     vi.stubGlobal(
       'fetch',
@@ -171,6 +163,29 @@ describe('log-import job HTTP surface', () => {
     expect(await res.json()).toEqual({ detail: 'Log import job not found.' });
   });
 
+  it('GET job 404s for a signed-in non-member of the show’s studio (require-login D3)', async () => {
+    const studio = await seedMemberStudio();
+    const show = await seedShow({ studioId: studio });
+    const outsider = await seedUser({ studios: [await seedStudio()] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
+    );
+
+    const post = await postImport(show); // the default member starts it
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+
+    const res = await app.request(
+      `/api/log-import/${job_id}`,
+      { headers: { cookie: await loginCookie(outsider) } },
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Log import job not found.' });
+    await settleJob(job_id);
+  });
+
   // ── Pipeline end-to-end (pr-3-review test-gap wave) ────────────────────────
   // Every other test in this file stops at the HTTP surface; this one observes
   // the import's OUTPUT — real event rows created in the session — through the
@@ -178,7 +193,7 @@ describe('log-import job HTTP surface', () => {
   // transcript sync (syncLogRowsToSeams) → category mapping → event creation.
 
   it('success path: a matched sheet syncs against the transcript and creates real events with the expected timecodes and categories', async () => {
-    const studio = await seedStudio();
+    const studio = await seedMemberStudio();
     // mapLogCategory requires an OTHER category; 'Camera' exercises the
     // type-cell → category match, '' the OTHER fallback.
     const show = await seedShow({
@@ -303,21 +318,6 @@ describe('log-import job HTTP surface', () => {
     expect(adBreak?.category).toBe('other');
     expect(adBreak?.timecode_total_frames).toBe(12936);
   });
-
-  it('anonymous GET still works in dev mode (user resolves to null, matching sibling-route scoping)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
-    );
-
-    // Anonymous creator (REQUIRE_LOGIN=0 base env) → anonymous poll succeeds.
-    const post = await postImport(show);
-    const { job_id } = (await post.json()) as { job_id: string };
-    const res = await app.request(`/api/log-import/${job_id}`, {}, env);
-    expect(res.status).toBe(200);
-  });
 });
 
 // ── Cross-package `instanceof` pin: TranscriptGenerateError arriving with
@@ -385,7 +385,7 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
   }
 
   it('a catalog failure shows a generic line without the database error text, and the server warns (catalog-concurrency-hazards D9)', async () => {
-    const studio = await seedStudio();
+    const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio });
     const title = 'Catalog Failure Session';
     await seedSession({ showId: show, title });
@@ -417,7 +417,7 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     'a "no_audio" TranscriptGenerateError (non-retryable) matches the FINAL catch\'s instanceof ' +
       '-> exact frozen-wrapped job line, no DeepGram call made',
     async () => {
-      const studio = await seedStudio();
+      const studio = await seedMemberStudio();
       const show = await seedShow({ studioId: studio });
       const title = 'No Audio Session';
       await seedSession({ showId: show, title });
@@ -456,7 +456,7 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     'an "upstream" TranscriptGenerateError retries once, hitting BOTH the retry-check and ' +
       'retry-failure instanceof sites -> exact frozen-wrapped job lines, DeepGram called twice',
     async () => {
-      const studio = await seedStudio();
+      const studio = await seedMemberStudio();
       const show = await seedShow({ studioId: studio });
       const title = 'Upstream Retry Session';
       const session = await seedSession({ showId: show, title });

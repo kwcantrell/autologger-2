@@ -13,8 +13,7 @@ import { LoginPage } from './components/LoginPage';
 //   no data, pending  -> brand loading treatment (initial load in flight)
 //   no data, error     -> retryable error panel (initial-load failure only)
 //   data present,
-//     oauth_configured
-//     && !logged_in    -> LoginPage (also the mid-session sign-out case: a
+//     !logged_in       -> LoginPage (also the mid-session sign-out case: a
 //                         successful refetch that flips to signed-out lands
 //                         here on the next render)
 //   data present,
@@ -105,7 +104,9 @@ export function RootGate() {
     return <LoadingState />;
   }
 
-  if (data.auth.oauth_configured && !data.auth.logged_in) {
+  // Keyed on `logged_in` alone (require-login D8): there is no anonymous
+  // mode, so `oauth_configured` is not consulted.
+  if (!data.auth.logged_in) {
     return <LoginPage />;
   }
 

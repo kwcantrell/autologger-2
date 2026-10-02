@@ -174,7 +174,7 @@ const captured = {
   },
   "auth": {
     "logged_in": true,
-    "oauth_configured": false,
+    "oauth_configured": true,
     "user": {
       "id": "########-####-####-####-############",
       "email": "ann@example.com",

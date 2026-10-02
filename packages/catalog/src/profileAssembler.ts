@@ -7,7 +7,6 @@ import {
   DEFAULT_STUDIO_ID,
   emptyActiveStudioApiDict,
   newSessionTitlePrefix,
-  SETTING_ACTIVE_SHOW,
   studioToApiDict,
 } from '@autologger/domain';
 import type { AuthStore } from './authStore';
@@ -22,10 +21,7 @@ import type { StudioRegistry } from './studioRegistry';
  * externally-reached surface per the membership criterion, so it is NOT on
  * this facade. Property-style function types (design D3). */
 export interface ProfileAssemblerFacade {
-  getEffectiveStudioForUser: (
-    user: AuthUser | null,
-    oauthConfigured: boolean,
-  ) => Promise<StudioProfile | null>;
+  getEffectiveStudioForUser: (user: AuthUser) => Promise<StudioProfile | null>;
   profilePayload: (user: AuthUser | null, ctx: ProfileCtx) => Promise<Record<string, unknown>>;
 }
 
@@ -76,14 +72,8 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
     return [await this.studios.loadStudioProfile(studioId), activeShowId, alset, activeShows];
   }
 
-  async getEffectiveStudioForUser(
-    user: AuthUser | null,
-    oauthConfigured: boolean,
-  ): Promise<StudioProfile | null> {
-    if (user === null) {
-      if (oauthConfigured) return null;
-      return this.studios.resolveActiveStudio();
-    }
+  /** The signed-in user's effective studio (require-login D5: there is no anonymous caller). */
+  async getEffectiveStudioForUser(user: AuthUser): Promise<StudioProfile | null> {
     const [prof] = await this.profileStudioForUser(user.id);
     return prof;
   }
@@ -129,7 +119,9 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
   async profilePayload(user: AuthUser | null, ctx: ProfileCtx): Promise<Record<string, unknown>> {
     const { oauthConfigured, adminMeta } = ctx;
 
-    if (user === null && oauthConfigured) {
+    // Signed out (require-login D5: there is no anonymous mode, so this is the only null-user
+    // payload).
+    if (user === null) {
       return {
         active_studio_id: '',
         active_show_id: '',
@@ -138,43 +130,6 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
         studio_settings: await this.studios.allStudioSettingsForAllowedStudios(new Set()),
         shows: [],
         new_session_defaults: { title_prefix: 'Episode ', default_frame_rate: 24.0 },
-        admin: adminMeta,
-        auth: await this.authSection(user, oauthConfigured),
-      };
-    }
-
-    if (user === null) {
-      const active = await this.studios.resolveActiveStudio();
-      const showsRaw = await this.shows.listShowsForStudio(active.id);
-      let activeShowId = '';
-      const rawActiveShow = String((await this.studios.getSetting(SETTING_ACTIVE_SHOW)) ?? '').trim();
-      if (rawActiveShow && showsRaw.some((r) => String(r.id) === rawActiveShow)) {
-        activeShowId = rawActiveShow;
-      } else if (showsRaw.length) {
-        activeShowId = String(showsRaw[0].id);
-        await this.studios.setSetting(SETTING_ACTIVE_SHOW, activeShowId);
-      } else {
-        await this.studios.setSetting(SETTING_ACTIVE_SHOW, '');
-      }
-      const studioSettings = await this.studios.allStudioSettingsForAllowedStudios(null);
-      const studiosForList = this.studios.listStudiosBrief();
-      const showsOut: Record<string, unknown>[] = [];
-      for (const s of studiosForList) {
-        // Reuse the active studio's rows fetched above (finding 5.7).
-        const rows = s.id === active.id ? showsRaw : await this.shows.listShowsForStudio(s.id);
-        for (const r of rows) showsOut.push(showBriefApiDict(r));
-      }
-      return {
-        active_studio_id: active.id,
-        active_show_id: activeShowId,
-        active_studio: studioToApiDict(active),
-        studios: studiosForList,
-        studio_settings: studioSettings,
-        shows: showsOut,
-        new_session_defaults: {
-          title_prefix: newSessionTitlePrefix(active.show_title_format),
-          default_frame_rate: active.default_frame_rate,
-        },
         admin: adminMeta,
         auth: await this.authSection(user, oauthConfigured),
       };

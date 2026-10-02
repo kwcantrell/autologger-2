@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
 import { app, env, envWith } from '../test/harness';
 import {
+  COMPANION_BEARER,
   seededSession,
   seedSession,
   seedShow,
@@ -10,9 +11,13 @@ import {
   setCompanionPresence,
 } from '../test/helpers';
 
-const J = { 'content-type': 'application/json' };
+const J = { 'content-type': 'application/json', ...COMPANION_BEARER };
 async function state(): Promise<Record<string, unknown>> {
-  const res = await app.request('/api/companion/state', { method: 'GET' }, { ...env });
+  const res = await app.request(
+    '/api/companion/state',
+    { method: 'GET', headers: COMPANION_BEARER },
+    { ...env },
+  );
   return (await res.json()) as Record<string, unknown>;
 }
 
@@ -151,7 +156,11 @@ describe('categories + commands/wait', () => {
   it('returns the active session show categories', async () => {
     const s = (await seededSession()).sessionId;
     await setCompanionPresence('c1', s);
-    const res = await app.request('/api/companion/categories', { method: 'GET' }, { ...env });
+    const res = await app.request(
+      '/api/companion/categories',
+      { method: 'GET', headers: COMPANION_BEARER },
+      { ...env },
+    );
     expect(res.status).toBe(200);
     expect(Array.isArray(((await res.json()) as { categories: unknown[] }).categories)).toBe(true);
   });
@@ -180,7 +189,11 @@ describe('categories + commands/wait', () => {
       ]),
     });
     await setCompanionPresence('c1', sessionId);
-    const res = await app.request('/api/companion/categories', { method: 'GET' }, { ...env });
+    const res = await app.request(
+      '/api/companion/categories',
+      { method: 'GET', headers: COMPANION_BEARER },
+      { ...env },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       session_id: sessionId,
@@ -207,7 +220,7 @@ describe('categories + commands/wait', () => {
   it('commands/wait with timeout=0 returns empty immediately', async () => {
     const res = await app.request(
       '/api/companion/commands/wait?timeout=0',
-      { method: 'GET' },
+      { method: 'GET', headers: COMPANION_BEARER },
       { ...env },
     );
     expect(res.status).toBe(200);

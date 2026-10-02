@@ -25,7 +25,6 @@ const baseConfig: Config = {
   HOST: '127.0.0.1',
   GOOGLE_CLIENT_ID: '',
   GOOGLE_CLIENT_SECRET: '',
-  REQUIRE_LOGIN: '0',
   SESSION_COOKIE: 'autologger_sid',
   SESSION_DAYS: '14',
   NEW_USER_ALL_TEAMS: '0',

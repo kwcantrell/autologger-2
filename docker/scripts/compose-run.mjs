@@ -187,10 +187,13 @@ export function checkSupabaseKeys(secrets, nowSec = Math.floor(Date.now() / 1000
   return warnings;
 }
 
-// gotrue-sign-in D3: stage and prod sign in through GoTrue, which accepts only tokens for this
-// client id; without it every sign-in would fail quietly, so refuse to start instead. Dev has none.
+// gotrue-sign-in D3, require-login D1: every stack signs in through Google (GoTrue accepts only
+// tokens for this client id) and login is always required, so a stack without the client would
+// boot to a server no one can use. Refuse before compose starts instead. Values are trimmed.
 export function checkSignInClient(env, secrets) {
-  if (env !== 'dev' && !secrets.get('GOOGLE_CLIENT_ID')) refuse(`GOOGLE_CLIENT_ID is unset or empty in Infisical ${env} (sign-in needs it; see docs/infisical-secrets.md)`);
+  for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']) {
+    if (!(secrets.get(k) ?? '').trim()) refuse(`${k} is unset or blank in Infisical ${env} (login is always required; see docs/infisical-secrets.md)`);
+  }
 }
 
 export function checkProdTags(secrets) {

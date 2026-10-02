@@ -15,7 +15,7 @@
 // matching the transcript-words/generate sibling: authentication
 // (authContext middleware, 401) → session resolution/scoping (requireSession,
 // 404 — masks unauthorized sessions before anything below) → configuration
-// gate + open-network refusal (503) → body validation (422 schema / 400
+// gate (503) → body validation (422 schema / 400
 // malformed JSON) → foreign/stale claude_session_id (422, before any
 // subprocess) → single-flight & process-wide concurrency (409). All error
 // bodies are the repo `{ detail }` shape; none of these steps spawns.
@@ -31,7 +31,6 @@ import {
   aiChatConfigured,
   aiChatMaxBudgetUsd,
   aiChatMaxConcurrent,
-  aiChatOpenNetworkRefused,
   aiChatTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
@@ -57,9 +56,6 @@ export const AI_CHAT_ALLOWED_TOOLS = [
 
 const NOT_CONFIGURED_DETAIL =
   'AI chat is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
-const OPEN_NETWORK_DETAIL =
-  'AI chat is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const FOREIGN_CLAUDE_SESSION_ID_DETAIL =
   'claude_session_id was not issued for this session. Omit it to start a new conversation, or resume with the ' +
   "id from this session's most recent done event.";
@@ -104,13 +100,10 @@ aiRouter.post('/api/sessions/:sessionId/ai/chat', async (c) => {
   // masked as 404 before the config/single-flight state below can leak.
   await requireSession(c, sessionId);
 
-  // 3. Configuration gate + open-network refusal — both 503, before body parse
-  // and before any spawn (design D8).
+  // 3. Configuration gate — 503, before body parse and before any spawn
+  // (design D8).
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
-  }
-  if (aiChatOpenNetworkRefused(c.env.config)) {
-    throw new ApiError(503, OPEN_NETWORK_DETAIL);
   }
 
   // 4. Body validation — ZodError → 422, malformed JSON → 400 (global onError),

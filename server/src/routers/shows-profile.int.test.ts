@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
@@ -75,7 +75,7 @@ describe('GET /api/studio + /api/profile', () => {
     });
   });
 
-  it('anonymous: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
+  it('default member: active studio with shows pins shows[] + active_show_id (frozen shape)', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Anon Pin Show', code: 'AP' });
 
@@ -138,7 +138,7 @@ describe('GET /api/studio + /api/profile', () => {
 });
 
 describe('PUT /api/profile', () => {
-  it('sets the active studio (anonymous)', async () => {
+  it('sets the active studio (signed in)', async () => {
     const sid = await activeStudioId();
     const res = await app.request(
       '/api/profile',
@@ -152,7 +152,29 @@ describe('PUT /api/profile', () => {
     expect(res.status).toBe(200);
   });
 
-  it('400 when active_studio_id is missing (anonymous)', async () => {
+  it('anonymous PUT is 401 Login required and writes nothing (require-login D5)', async () => {
+    const sid = await activeStudioId();
+    const show = await seedShow({ studioId: sid, name: 'Anon Write Show', code: 'AW' });
+    const settings = () =>
+      env.ports.catalog.all<{ key: string; value: string }>(
+        "SELECT key, value FROM app_settings WHERE key IN ('active_studio_id', 'active_show_id') ORDER BY key",
+      );
+    const before = await settings();
+    const res = await anonApp.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ active_studio_id: sid, active_show_id: show }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
+    expect(await settings()).toEqual(before);
+  });
+
+  it('400 when active_studio_id is missing (signed in)', async () => {
     const res = await app.request(
       '/api/profile',
       { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' },
@@ -250,16 +272,13 @@ describe('shows', () => {
     expect(((await res.json()) as { show: { id: string } }).show.id).toBe(showId);
   });
 
-  it('GET /api/shows/:showId 404s for an anonymous caller when OAuth is configured', async () => {
+  it('GET /api/shows/:showId is 401 Login required for an anonymous caller', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
 
-    const res = await app.request(
-      `/api/shows/${showId}`,
-      { method: 'GET' },
-      envWith({ GOOGLE_CLIENT_ID: 'test-client-id' }),
-    );
-    expect(res.status).toBe(404);
+    const res = await anonApp.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('422 on POST /api/shows with a missing name', async () => {

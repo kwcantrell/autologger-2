@@ -33,12 +33,11 @@ import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
   aiChatMaxConcurrent,
-  aiChatOpenNetworkRefused,
   topicGenerateMaxBudgetUsd,
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
@@ -105,14 +104,12 @@ async function resolveCatalogSessionTitle(
 }
 
 /** Whether the requester may see the lock holder's session identifiers.
- * Mirrors `requireSession`'s studio-membership scope exactly (including the
- * dev-anonymous `user === null` case, which sees everything on every sibling
- * route): a logged-in non-member gets the busy-ness fact but never the
+ * Mirrors `requireSession`'s studio-membership scope exactly (always checked,
+ * require-login D3): a non-member gets the busy-ness fact but never the
  * holder's session id or title — the same existence/title oracle sibling
  * routes close by 404ing non-members. */
 async function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
-  const user = c.get('user');
-  if (user === null) return true;
+  const user = requireUser(c);
   const catalog = c.get('catalog');
   const studioId = await catalog.sessions.getSessionStudioId(sessionId);
   return studioId !== null && (await catalog.auth.authUserHasStudio(user.id, studioId));
@@ -238,9 +235,6 @@ transcribeRouter.get('/api/sessions/:sessionId/topics', async (c) => {
 // `generateTopicsTurn`) and released in this handler's own `finally`, mirroring
 // `ai.ts`'s per-endpoint slot lifecycle (409 wording is generate-specific).
 
-const TOPIC_GENERATE_OPEN_NETWORK_DETAIL =
-  'Topic generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
-  'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const NO_TRANSCRIPT_DETAIL = 'This session has no transcript words to generate topics from.';
 // Names EVERY possible slot holder (the registry is shared with AI chat,
 // AI v2, and event generation; wording change authorized by the
@@ -259,13 +253,10 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
   const sessionId = c.req.param('sessionId');
   await requireSession(c, sessionId);
 
-  // Configuration gate + open-network refusal — both 503, before any spawn,
-  // byte-identical unconfigured detail to the pre-change stub (task 1.1).
+  // Configuration gate — 503, before any spawn, byte-identical unconfigured
+  // detail to the pre-change stub (task 1.1).
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, UNAVAILABLE);
-  }
-  if (aiChatOpenNetworkRefused(c.env.config)) {
-    throw new ApiError(503, TOPIC_GENERATE_OPEN_NETWORK_DETAIL);
   }
 
   // Transcript precondition (design D4) — 400 before any spawn.

@@ -28,7 +28,7 @@ export function getConfigFields(): SomeCompanionConfigField[] {
     {
       type: 'textinput',
       id: 'token',
-      label: 'API token (only if REQUIRE_LOGIN=1)',
+      label: 'API token (required)',
       width: 8,
       default: '',
     },

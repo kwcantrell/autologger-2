@@ -4,8 +4,6 @@ import type { ProfileCtx } from '@autologger/catalog';
 import { profileUpdateBodySchema } from '@autologger/contract';
 import {
   normalizeEventPaletteNine,
-  SETTING_ACTIVE_SHOW,
-  SETTING_ACTIVE_STUDIO,
   studioToApiDict,
   validateCategoriesList,
   validateEventPalettePreset,
@@ -14,6 +12,7 @@ import type { Config } from '@autologger/ports';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { adminMeta, oauthConfigured } from '../env';
+import { requireUser } from './_helpers';
 
 export const profileRouter = new Hono<AppEnv>();
 
@@ -23,10 +22,7 @@ function ctx(config: Config): ProfileCtx {
 
 profileRouter.get('/api/studio', async (c) => {
   const catalog = c.get('catalog');
-  const prof = await catalog.profile.getEffectiveStudioForUser(
-    c.get('user'),
-    oauthConfigured(c.env.config),
-  );
+  const prof = await catalog.profile.getEffectiveStudioForUser(requireUser(c));
   if (prof === null) return c.json({ detail: 'No team access.' }, 403);
   return c.json(studioToApiDict(prof));
 });
@@ -39,14 +35,12 @@ profileRouter.get('/api/profile', async (c) => {
 profileRouter.put('/api/profile', async (c) => {
   const catalog = c.get('catalog');
   const body = profileUpdateBodySchema.parse(await c.req.json());
-  const user = c.get('user');
-  if (user === null && oauthConfigured(c.env.config))
-    return c.json({ detail: 'Login required.' }, 401);
+  const user = requireUser(c);
 
   const rawSid = (body.active_studio_id ?? '').trim();
 
   // Logged-in user with no team memberships: only name edits allowed.
-  if (user !== null && (await catalog.auth.authListStudioIdsForUser(user.id)).length === 0) {
+  if ((await catalog.auth.authListStudioIdsForUser(user.id)).length === 0) {
     if (rawSid || body.settings != null || body.show_updates?.length) {
       return c.json({ detail: 'No team access.' }, 403);
     }
@@ -60,7 +54,7 @@ profileRouter.put('/api/profile', async (c) => {
 
   if (!rawSid) return c.json({ detail: 'active_studio_id is required.' }, 400);
   if (!catalog.studios.isKnownStudio(rawSid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(await catalog.auth.authUserHasStudio(user.id, rawSid))) {
+  if (!(await catalog.auth.authUserHasStudio(user.id, rawSid))) {
     return c.json({ detail: 'No access to that team.' }, 403);
   }
 
@@ -117,17 +111,9 @@ profileRouter.put('/api/profile', async (c) => {
     nextShow = showsNow.length ? String(showsNow[0].id) : '';
   }
 
-  if (user === null) {
-    // One transaction, so concurrent anonymous updates never mix one's show with another's team.
-    await catalog.tx(async (cat) => {
-      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
-      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
-    });
-  } else {
-    await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
-  }
+  await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
 
-  if (user !== null && (body.given_name != null || body.family_name != null)) {
+  if (body.given_name != null || body.family_name != null) {
     const gn = (body.given_name ?? user.given_name).trim().slice(0, 200);
     const fn = (body.family_name ?? user.family_name).trim().slice(0, 200);
     await catalog.auth.authUpdateUserNames(user.id, gn, fn);

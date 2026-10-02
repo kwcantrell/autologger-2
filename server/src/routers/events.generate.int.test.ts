@@ -3,7 +3,7 @@
 // property (the ai.int.test.ts pattern — see that file's SPAWN OBSERVATION
 // note; the load-bearing no-spawn proof here is `neverSpawned`, backed by the
 // fixtures' own on-disk argv recording):
-//   session 404-mask → CLAUDE_CLI_PATH 503 → open-network 503 →
+//   session 404-mask → CLAUDE_CLI_PATH 503 →
 //   anchored-transcript 400 → no-instructions 400 → aggregate-bound 400 →
 //   shared AI slot 409
 // plus the configured behaviors: 200 {created, cap_hit} against REAL
@@ -14,7 +14,7 @@
 //
 // Frozen-surface self-check: this suite asserts only statuses/shapes the
 // auto-event-generation delta authorizes for this NEW route — 404 (unchanged
-// requireSession mask), 503 ×2 (unconfigured / open-network), 400 ×3
+// requireSession mask), 503 (unconfigured), 400 ×3
 // (anchorless transcript / no instructions / aggregate bound), 409 ×2
 // (session-busy / at-capacity, reworded shared details), 200 {created,
 // cap_hit}, 502 {detail} opaque — and the reworded 409 detail on the
@@ -34,11 +34,10 @@ import {
   INSTRUCTION_OPEN,
 } from '@autologger/ai-runtime/eventGeneratePrompt';
 import { SessionIndexStore } from '@autologger/catalog';
-import { SETTING_ACTIVE_SHOW, SETTING_ACTIVE_STUDIO } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { app, env, envWith } from '../test/harness';
+import { app, defaultUser, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain } from '../test/helpers';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
@@ -179,7 +178,6 @@ function configuredEnv(
     {
       CLAUDE_CLI_PATH: cliPath,
       HOST: '127.0.0.1',
-      REQUIRE_LOGIN: '0',
       ...overrides,
     },
     portOverrides,
@@ -316,7 +314,7 @@ describe('events/generate — guard ladder', () => {
   it('1. unknown session masks as 404 even when everything else would 503 (mask before config)', async () => {
     const res = await generateReq(
       'no-such-session',
-      envWith({ CLAUDE_CLI_PATH: '', HOST: '0.0.0.0', REQUIRE_LOGIN: '0' }),
+      envWith({ CLAUDE_CLI_PATH: '', HOST: '0.0.0.0' }),
     );
     expect(res.status).toBe(404);
     expect(neverSpawned('no-such-session')).toBe(true);
@@ -328,26 +326,6 @@ describe('events/generate — guard ladder', () => {
     const res = await generateReq(sessionId, envWith({ CLAUDE_CLI_PATH: '' }));
     expect(res.status).toBe(503);
     expect(await detailOf(res)).toMatch(/CLAUDE_CLI_PATH/);
-    expect(neverSpawned(sessionId)).toBe(true);
-  });
-
-  it('3. open-network refusal → 503 BEFORE the transcript guard (no transcript seeded, still 503)', async () => {
-    const { sessionId } = await newSession();
-    // Deliberately NO transcript: if the anchored-transcript 400 ran first
-    // we would see 400 here instead of the open-network 503.
-    const res = await generateReq(
-      sessionId,
-      envWith({
-        CLAUDE_CLI_PATH: EVENTS_SUCCESS_FIXTURE,
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-      }),
-    );
-    expect(res.status).toBe(503);
-    const detail = await detailOf(res);
-    expect(detail).toMatch(/network|allowlist|loopback|login/i);
-    expect(detail).not.toMatch(/CLAUDE_CLI_PATH/);
     expect(neverSpawned(sessionId)).toBe(true);
   });
 
@@ -798,8 +776,7 @@ describe('events/generate — configured behavior (real create_event MCP round t
       // catalog projection was mirrored by the ROUTE — no manual write — so
       // GET /api/sessions serves the updated event_count.
       const cat = catalogFor();
-      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, studioId);
-      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, showId);
+      await cat.auth.authSetPrefs((await defaultUser()).id, studioId, showId);
       const listRes = await app.request('/api/sessions', { method: 'GET' }, { ...env });
       expect(listRes.status).toBe(200);
       const listBody = (await listRes.json()) as { active: Array<Record<string, unknown>> };

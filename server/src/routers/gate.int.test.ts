@@ -1,41 +1,99 @@
 import { describe, expect, it } from 'vitest';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   adminHeader,
   loginCookie,
+  seededSession,
   seedSession,
   seedShow,
   seedStudio,
   seedUser,
 } from '../test/helpers';
 
-const withLogin = envWith({ REQUIRE_LOGIN: '1' });
+const withLogin = envWith({});
 
 describe('auth gate', () => {
-  it('blocks an unauthenticated /api/* when REQUIRE_LOGIN=1 (401)', async () => {
-    const res = await app.request('/api/sessions', { method: 'GET' }, withLogin);
+  it('blocks an unauthenticated /api/* (401)', async () => {
+    const res = await anonApp.request('/api/sessions', { method: 'GET' }, withLogin);
     expect(res.status).toBe(401);
   });
 
   it('allows GET /api/profile anonymously even under strict login', async () => {
-    const res = await app.request('/api/profile', { method: 'GET' }, withLogin);
+    const res = await anonApp.request('/api/profile', { method: 'GET' }, withLogin);
     expect(res.status).toBe(200);
   });
 
   it('admin routes 503 when ADMIN_TOKEN unconfigured, 401 on a wrong token', async () => {
     // .dev.vars provides an ADMIN_TOKEN in this env, so force-clear it for the 503 path.
-    const noToken = await app.request(
+    const noToken = await anonApp.request(
       '/api/admin/users',
       { method: 'GET' },
       envWith({ ADMIN_TOKEN: '' }),
     );
     expect(noToken.status).toBe(503);
-    const bad = await app.request(
+    const bad = await anonApp.request(
       '/api/admin/users',
       { method: 'GET', headers: adminHeader('wrong') },
       envWith({ ADMIN_TOKEN: 'right' }),
     );
     expect(bad.status).toBe(401);
+  });
+});
+
+// require-login D2/D7: login is always required. The route table is the source (the same one
+// gate-decoded-path uses), so a route added later without a named exemption fails here; this also
+// closes the masking risk of the harness's default signed-in `app`.
+describe('login is always required (require-login)', () => {
+  const LOGIN_REQUIRED = { detail: 'Login required.' };
+  const exempt = (method: string, path: string) =>
+    (path === '/api/profile' && (method === 'GET' || method === 'HEAD')) ||
+    path.startsWith('/api/admin/');
+
+  it('every registered /api route with no credentials is 401 Login required, except the named exemptions', async () => {
+    const routes = anonApp.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));
+    expect(routes.length).toBeGreaterThan(40);
+    const wrong: string[] = [];
+    for (const r of routes) {
+      if (exempt(r.method, r.path)) continue;
+      const path = r.path.replace(/:[^/]+/g, 'x');
+      const res = await anonApp.request(path, { method: r.method }, { ...env });
+      const body = res.status === 401 ? await res.json() : null;
+      if (res.status !== 401 || JSON.stringify(body) !== JSON.stringify(LOGIN_REQUIRED)) {
+        wrong.push(`${r.method} ${r.path} -> ${res.status} ${JSON.stringify(body)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it('GET and HEAD /api/profile are exempt: 200, signed out, OAuth configured', async () => {
+    const get = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as { auth: { logged_in: boolean; oauth_configured: boolean } };
+    expect(body.auth.logged_in).toBe(false);
+    expect(body.auth.oauth_configured).toBe(true);
+    const head = await anonApp.request('/api/profile', { method: 'HEAD' }, { ...env });
+    expect(head.status).toBe(200);
+  });
+
+  it('/api/admin/* keeps its token rules (401 admin-token detail, not Login required)', async () => {
+    const none = await anonApp.request('/api/admin/users', { method: 'GET' }, { ...env });
+    expect(none.status).toBe(401);
+    expect(await none.json()).toEqual({ detail: 'Invalid or missing admin token.' });
+    const ok = await anonApp.request(
+      '/api/admin/users',
+      { method: 'GET', headers: adminHeader('test-admin-token') },
+      { ...env },
+    );
+    expect(ok.status).toBe(200);
+  });
+
+  it('API_TOKEN on /api/companion/state is 200', async () => {
+    const res = await anonApp.request(
+      '/api/companion/state',
+      { method: 'GET', headers: { Authorization: 'Bearer test-api-token' } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
   });
 });
 
@@ -50,15 +108,15 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
     '/%61%70%69/sessions',
     '/api/s%65ssions',
   ])('%s with no credentials is 401 Login required', async (path) => {
-    const res = await app.request(path, { method: 'GET' }, withLogin);
+    const res = await anonApp.request(path, { method: 'GET' }, withLogin);
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('/%61pi/companion/state: 401 without the token, 200 with it', async () => {
-    const anon = await app.request('/%61pi/companion/state', { method: 'GET' }, withLogin);
+    const anon = await anonApp.request('/%61pi/companion/state', { method: 'GET' }, withLogin);
     expect(anon.status).toBe(401);
-    const tok = await app.request(
+    const tok = await anonApp.request(
       '/%61pi/companion/state',
       { method: 'GET', headers: bearer },
       withLogin,
@@ -67,7 +125,7 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
   });
 
   it('a valid token on /api/%63ompanion/state is honoured like /api/companion/state', async () => {
-    const res = await app.request(
+    const res = await anonApp.request(
       '/api/%63ompanion/state',
       { method: 'GET', headers: bearer },
       withLogin,
@@ -76,7 +134,7 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
   });
 
   it.each(['/%61pi/profile', '/api/pro%66ile'])('GET %s stays login-exempt', async (path) => {
-    const res = await app.request(path, { method: 'GET' }, withLogin);
+    const res = await anonApp.request(path, { method: 'GET' }, withLogin);
     expect(res.status).toBe(200);
   });
 
@@ -84,22 +142,22 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
     '/%61pi/admin/users',
     '/api/%61dmin/users',
   ])('%s keeps the admin-token rules', async (path) => {
-    const res = await app.request(
+    const res = await anonApp.request(
       path,
       { method: 'GET', headers: adminHeader('wrong') },
-      envWith({ REQUIRE_LOGIN: '1', ADMIN_TOKEN: 'right' }),
+      envWith({ ADMIN_TOKEN: 'right' }),
     );
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Invalid or missing admin token.' });
   });
 
   it('every registered /api route answers /%61pi<rest> exactly as /api<rest>', async () => {
-    const routes = app.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));
+    const routes = anonApp.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));
     expect(routes.length).toBeGreaterThan(40);
     for (const r of routes) {
       const rest = r.path.slice('/api'.length).replace(/:[^/]+/g, 'x');
-      const literal = await app.request(`/api${rest}`, { method: r.method }, withLogin);
-      const encoded = await app.request(`/%61pi${rest}`, { method: r.method }, withLogin);
+      const literal = await anonApp.request(`/api${rest}`, { method: r.method }, withLogin);
+      const encoded = await anonApp.request(`/%61pi${rest}`, { method: r.method }, withLogin);
       expect(`${r.method} ${r.path} -> ${encoded.status}`).toBe(
         `${r.method} ${r.path} -> ${literal.status}`,
       );
@@ -126,9 +184,7 @@ describe('tenancy', () => {
 
 describe('validation + caps', () => {
   it('422 on a log body with oversized metadata', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
+    const { sessionId: session } = await seededSession();
     const res = await app.request(
       `/api/sessions/${session}/events`,
       {
@@ -142,9 +198,7 @@ describe('validation + caps', () => {
   });
 
   it('413 on an oversized audio upload (Content-Length over cap)', async () => {
-    const studio = await seedStudio();
-    const show = await seedShow({ studioId: studio });
-    const session = await seedSession({ showId: show });
+    const { sessionId: session } = await seededSession();
     const res = await app.request(
       `/api/sessions/${session}/audio/segments`,
       { method: 'POST', headers: { 'content-length': String(60 * 1024 * 1024) }, body: 'x' },

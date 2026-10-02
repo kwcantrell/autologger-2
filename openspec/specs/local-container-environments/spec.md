@@ -139,14 +139,16 @@ The following SHALL be settable through the Infisical `dev` environment:
 - `AI_V2_ENABLED`
 - `AI_V2_API_KEY`
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+- `API_TOKEN`
 
-Sign-in is optional:
-- With the Google keys empty, dev is anonymous.
-- With them set, Google sign-in works against `PUBLIC_BASE_URL=http://localhost:${DEV_PORT}`,
-  which the compose file pins.
-- The documentation SHALL state:
-  - the redirect URI the OAuth client needs;
-  - that while OAuth is configured, anonymous requests see an empty show list.
+Sign-in is required, as in every stack:
+- The Infisical `dev` environment SHALL hold its own Google OAuth client
+  (`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`); without it, dev refuses to start (see
+  "Secrets come from Infisical, one environment per stack").
+- Google sign-in works against `PUBLIC_BASE_URL=http://localhost:${DEV_PORT}`, which the
+  compose file pins.
+- The documentation SHALL state the redirect URI the OAuth client needs, and that dev needs
+  the Google client and an `API_TOKEN` in the Infisical `dev` environment.
 
 #### Scenario: Server edit hot-reloads
 - **WHEN** the dev environment is up and a file under `server/src/` is edited on the host
@@ -162,9 +164,9 @@ Sign-in is optional:
   - the dev environment is up;
   - the host `~/.claude/.credentials.json` holds a Claude login;
   - the Infisical `dev` environment sets `DEEPGRAM_API_KEY`, `SHEETS_LOG_IMPORT_ENABLED=1`,
-    and `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`
-- **THEN** none of these is answered with its "not configured", open-network-refusal, or
-  credentials-refusal `503`:
+    and `AI_V2_ENABLED=1`, and no `AI_V2_API_KEY`;
+  - a signed-in member of the session's team makes the calls
+- **THEN** none of these is answered with its "not configured" or credentials-refusal `503`:
   - AI chat;
   - `topics/generate`;
   - `events/generate`;
@@ -179,11 +181,14 @@ Sign-in is optional:
   `http://localhost:<DEV_PORT>/`
 - **THEN** the callback completes on that origin, and `/api/profile` reports the user
 
+#### Scenario: Dev is not anonymous
+- **WHEN** the dev environment is up and `GET /api/sessions` is sent with no session cookie
+- **THEN** the response is `401` `{"detail": "Login required."}`
+
 ### Requirement: Dev app binds loopback behind a Host/Origin gate
 The dev app SHALL bind `127.0.0.1` inside its container. The compose file SHALL pin these
 as literal values, never `${…}` references, in the app's `environment:`:
 - `HOST=127.0.0.1`
-- `REQUIRE_LOGIN=0`
 - `TRUST_PROXY=0`
 - `IP_ALLOWLIST=` (empty)
 - `DATA_DIR`
@@ -211,8 +216,7 @@ Published ports:
   routes and key checks").
 - No dev or stage published port SHALL be `8080`.
 
-Because the bind is loopback, both the open-network refusal and the AI v2 credentials rule
-pass. Only the host (through the published loopback port) and containers on the dev
+Because the bind is loopback, the AI v2 credentials rule passes. Only the host (through the published loopback port) and containers on the dev
 network (through the gate) can reach the app. The app also joins the two-member `catalog`
 network, whose only other member is `db`, and the two-member `auth-app` network, whose only
 other member is `auth`; the gate SHALL refuse every connection whose source address is in the
@@ -222,8 +226,8 @@ the gate for exactly the reach the loopback rule assumes.
 
 #### Scenario: Loopback posture
 - **WHEN** the dev app starts with the pinned environment
-- **THEN** the server reports a loopback bind, prints no open-network warning, and neither
-  the open-network refusal nor the AI v2 credentials refusal is in effect
+- **THEN** the server reports a loopback bind, and the AI v2 credentials refusal is not in
+  effect
 
 #### Scenario: DNS-rebound request is rejected
 - **WHEN** a request reaches the dev port with `Host: evil.example:8787`
@@ -337,7 +341,8 @@ Things stage keeps from production:
 One variable, `STAGE_PORT`, SHALL drive both the published port and `PUBLIC_BASE_URL`. The
 Makefile SHALL supply placeholders for `compose.yaml`'s required `WEB_TAG`, `API_TAG`, and
 `PUBLIC_BASE_URL`, because compose interpolates the base file before the merge.
-`REQUIRE_LOGIN=1` and `TRUST_PROXY=1` SHALL remain as `compose.yaml` pins them.
+`TRUST_PROXY=1` SHALL remain as `compose.yaml` pins it. Stage does not set `REQUIRE_LOGIN`;
+the server refuses to boot when it is set.
 
 The documentation SHALL state:
 - that stage needs its own Google OAuth client, with authorized redirect URI
@@ -381,7 +386,8 @@ The dev environment SHALL include a `companion` service. The service SHALL:
 
 The connection's base URL SHALL be entered once in the Companion UI, and the documentation
 SHALL give its value. Companion reaches the dev app through the app's gate on the dev
-network, anonymously.
+network, authenticating with the `API_TOKEN` from the Infisical `dev` environment, which is
+also entered once in the Companion UI.
 
 The build's per-Dockerfile ignore file SHALL be in allowlist form. It begins by excluding
 everything, then re-admits only the root manifest, the lockfile, and the `companion/`
@@ -393,7 +399,8 @@ sources.
 - **AND** the packaged manifest in the image carries `runtime.apiVersion` `1.14.x`
 
 #### Scenario: Dev Companion drives the app
-- **WHEN** a dev Companion connection is configured with the documented base URL
+- **WHEN** a dev Companion connection is configured with the documented base URL and the
+  dev `API_TOKEN`
 - **THEN**:
   - it reaches status OK;
   - a Companion "log event" action creates an event visible in the dev app.
@@ -498,7 +505,7 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
    included).
 5. A `packages/*/src` directory is not mounted.
 6. A dev posture pin is not a literal in the raw file, or resolves to a different value.
-7. Stage's or prod's `REQUIRE_LOGIN=1` is missing or has a different value.
+7. Stage's or prod's `TRUST_PROXY=1` is missing or has a different value.
 8. Stage mounts a host path under the home directory.
 9. A compose file resolves, without `-p`, to a project name other than its declared one.
 10. A router gateway variable is set in `compose.yaml`, or is set anywhere to a value that
@@ -678,7 +685,9 @@ the fix and prints no secret value, when:
 - login fails, including a TLS verification failure. The message SHALL NOT suggest disabling
   verification or using plain HTTP;
 - the environment injects any name outside its allowed names. The message SHALL list only
-  offending names that are valid identifiers.
+  offending names that are valid identifiers;
+- `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is unset or empty in the environment. This
+  applies to every stack, dev included, because the server refuses to boot without them.
 
 **Secret handling.** The client secret and the access token SHALL NOT appear on any command line
 and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be fetched
@@ -706,6 +715,11 @@ and the fetch SHALL be refused as a whole if any secret fails validation.
 - **WHEN** `make stage-up` runs with no `.env.infisical.stage`
 - **THEN** it exits non-zero with a message naming `docker/infisical-credentials.example`,
   and starts nothing
+
+#### Scenario: Dev without a Google client is refused
+- **WHEN** the Infisical `dev` environment has no `GOOGLE_CLIENT_SECRET`, and `make dev-up` runs
+- **THEN** it exits non-zero naming `GOOGLE_CLIENT_SECRET`, prints no value, and runs no
+  docker command
 
 #### Scenario: Plain HTTP is refused
 - **WHEN** `.env.infisical.dev` sets an `http://` Infisical URL and `make dev-up` runs

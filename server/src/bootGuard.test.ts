@@ -14,6 +14,9 @@ const ok = {
   PGUSER: 'autologger_app',
   PGPASSWORD: 'secret-value',
   PGDATABASE: 'postgres',
+  GOOGLE_CLIENT_ID: 'client-id-value',
+  GOOGLE_CLIENT_SECRET: 'client-secret-value',
+  PUBLIC_BASE_URL: 'https://autologger.example',
 };
 
 describe('checkBootEnv', () => {
@@ -46,6 +49,35 @@ describe('checkBootEnv', () => {
     const sentinel = 'sentinel-value-should-not-appear';
     expect(checkBootEnv({ ...ok, AUTOLOGGER_STACK: sentinel })).not.toContain(sentinel);
     expect(checkBootEnv({ ...ok, DATA_DIR: sentinel })).not.toContain(sentinel);
+  });
+  // require-login D1: login is always required, so a server no one can sign in to never boots.
+  it('accepts a full env (null)', () => {
+    expect(checkBootEnv(ok)).toBeNull();
+  });
+  it('refuses REQUIRE_LOGIN present with any value, empty included, naming it', () => {
+    for (const v of ['0', '1', '']) {
+      const msg = checkBootEnv({ ...ok, REQUIRE_LOGIN: v });
+      expect(msg, JSON.stringify(v)).toMatch(/REQUIRE_LOGIN/);
+    }
+  });
+  it('refuses a missing, blank or whitespace-only sign-in setting, naming it', () => {
+    for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'PUBLIC_BASE_URL']) {
+      for (const v of [undefined, '', '   ', '\t\n']) {
+        const msg = checkBootEnv({ ...ok, [k]: v });
+        expect(msg, `${k}=${JSON.stringify(v)}`).toMatch(new RegExp(k));
+      }
+    }
+  });
+  it('never puts a sign-in value into the message', () => {
+    for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'PUBLIC_BASE_URL']) {
+      const msg = checkBootEnv({ ...ok, [k]: '' }) ?? '';
+      for (const v of ['client-id-value', 'client-secret-value', 'https://autologger.example']) {
+        expect(msg).not.toContain(v);
+      }
+    }
+    const msg = checkBootEnv({ ...ok, REQUIRE_LOGIN: 'sentinel-value-should-not-appear' }) ?? '';
+    expect(msg).not.toContain('sentinel-value-should-not-appear');
+    expect(msg).not.toContain('client-secret-value');
   });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');

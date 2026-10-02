@@ -2,7 +2,7 @@
 // 1.1/1.2) + the real turn runner, JSONL→SSE relay (task 3.3), and spend/
 // lifecycle bounds (task 3.4). Locks the guard ORDER and the "spawns nothing
 // on a rejected turn" property:
-//   auth (401) → session resolution/scoping (404) → config / open-network gate
+//   auth (401) → session resolution/scoping (404) → config gate
 //   (503) → body validation (422/400) → foreign claude_session_id (422) →
 //   single-flight & concurrency (409).
 //
@@ -63,11 +63,10 @@ import { AiMcpListener, getAiMcpListener } from '@autologger/ai-runtime/aiMcpSer
 // produces (which is identical whether ai.ts passes the tools explicitly or
 // omits and falls back to the runner's own default; see that test's comment).
 import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
-import type { Clock, Config } from '@autologger/ports';
+import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { aiChatOpenNetworkRefused } from '../env';
-import { app, env, envWith } from '../test/harness';
+import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -171,10 +170,7 @@ function loopbackEnv(
   overrides: Record<string, unknown> = {},
   portOverrides: Partial<Bindings['ports']> = {},
 ) {
-  return envWith(
-    { CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0', ...overrides },
-    portOverrides,
-  );
+  return envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', ...overrides }, portOverrides);
 }
 
 /** Same as `loopbackEnv`, but CLAUDE_CLI_PATH points at the real hermetic
@@ -206,12 +202,16 @@ function post(
 }
 
 describe('ai/chat — auth gate (first)', () => {
-  it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
+  it('401 with no credentials, before any other check', async () => {
     const s = await seededSession();
     // fixtureEnv (not loopbackEnv's bogus CLI): a real, resolvable CLI, so
     // `neverSpawned` genuinely proves the auth guard — not a misconfigured
     // path — is what stopped the subprocess (see SPAWN OBSERVATION note).
-    const res = await post(s, { message: 'hi' }, fixtureEnv({ REQUIRE_LOGIN: '1' }));
+    const res = await anonApp.request(
+      `/api/sessions/${s}/ai/chat`,
+      { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
+      fixtureEnv(),
+    );
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
@@ -236,7 +236,7 @@ describe('ai/chat — session resolution masks before 503/409', () => {
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ REQUIRE_LOGIN: '1', CLAUDE_CLI_PATH: '', HOST: '0.0.0.0' }),
+      envWith({ CLAUDE_CLI_PATH: '', HOST: '0.0.0.0' }),
       { ...J, Cookie: await loginCookie(outsider) },
     );
     expect(res.status).toBe(404);
@@ -266,81 +266,8 @@ describe('ai/chat — configuration gate (503)', () => {
   });
 });
 
-describe('ai/chat — open-network refusal (503)', () => {
-  it('503 for anonymous + non-loopback + no allowlist, with a distinct detail, spawning nothing', async () => {
-    const s = await seededSession();
-    // fixture-backed (not CLI's bogus path) — see the header note: a real,
-    // resolvable CLI path is what makes `neverSpawned` prove THIS guard
-    // stopped the subprocess, not just that a bogus path never resolves.
-    const res = await post(
-      s,
-      { message: 'hi' },
-      envWith({
-        CLAUDE_CLI_PATH: FIXTURE_CLI,
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-      }),
-    );
-    expect(res.status).toBe(503);
-    const detail = ((await res.json()) as { detail: string }).detail;
-    expect(detail).toMatch(/network|allowlist|loopback|login/i);
-    expect(detail).not.toMatch(/not configured/i);
-    expect(spawnSpy).not.toHaveBeenCalled();
-    expect(neverSpawned(s)).toBe(true);
-  });
-
-  // The "allowlist lifts the refusal" branch can't be exercised over HTTP: with
-  // an allowlist set, ipAllowlistMiddleware 403s the socket-less test client
-  // before the route runs. Exercise the pure predicate directly instead.
-  it('predicate: refuses only anonymous + non-loopback + no-allowlist binds', () => {
-    const base: Config = {
-      PUBLIC_BASE_URL: '',
-      HOST: '0.0.0.0',
-      GOOGLE_CLIENT_ID: '',
-      GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '0',
-      SESSION_COOKIE: '',
-      SESSION_DAYS: '14',
-      NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '',
-      IP_ALLOWLIST: '',
-      TRUST_PROXY: '',
-      API_TOKEN: '',
-      ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '',
-      DEEPGRAM_MODEL: '',
-      CLAUDE_CLI_PATH: CLI,
-      AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '',
-      AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_BUDGET_USD: '',
-      EVENT_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_CREATED_EVENTS: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
-      AI_V2_ENABLED: '',
-      AI_V2_API_KEY: '',
-      AI_V2_MAX_BUDGET_USD: '',
-      AI_V2_CREDENTIAL_SOURCE_PATH: '',
-    };
-    // anonymous + non-loopback + no allowlist → refused
-    expect(aiChatOpenNetworkRefused(base)).toBe(true);
-    // unset HOST defaults to 0.0.0.0 (non-loopback) → refused
-    expect(aiChatOpenNetworkRefused({ ...base, HOST: '' })).toBe(true);
-    // login required → not refused
-    expect(aiChatOpenNetworkRefused({ ...base, REQUIRE_LOGIN: '1' })).toBe(false);
-    // allowlist present → not refused
-    expect(aiChatOpenNetworkRefused({ ...base, IP_ALLOWLIST: '10.0.0.0/8' })).toBe(false);
-    // loopback binds → not refused
-    for (const h of ['127.0.0.1', '::1', 'localhost']) {
-      expect(aiChatOpenNetworkRefused({ ...base, HOST: h })).toBe(false);
-    }
-  });
-
-  it('loopback-bound anonymous dev still serves (guards pass → 200 SSE, real relay spawns)', async () => {
+describe('ai/chat — a configured turn serves', () => {
+  it('loopback-bound: guards pass → 200 SSE, real relay spawns', async () => {
     const s = await seededSession();
     // Accept-Encoding is deliberate: the /api/* compress middleware must skip
     // SSE (Transfer-Encoding: chunked + text/event-stream, both excluded) even

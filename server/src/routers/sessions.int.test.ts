@@ -380,7 +380,7 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
     const foreign = await app.request(
       `/api/sessions/${foreignSession}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
 
     for (const res of [nonexistent, hidden, foreign]) {
@@ -397,7 +397,7 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({
@@ -414,7 +414,7 @@ describe('tenancy', () => {
     const res = await app.request(
       `/api/sessions/${session}/ws`,
       { headers: { Cookie: outsider } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
     expect(res.status).toBe(404);
   });
@@ -432,7 +432,7 @@ describe('tenancy', () => {
         headers: { Cookie: cookie, 'content-type': 'application/json' },
         body: JSON.stringify({ title: 'x', start_offset_frames: 0 }),
       },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
     expect(res.status).toBe(404);
   });
@@ -449,7 +449,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     const userId = await seedUser({ studios: [studio] });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
-    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+    const reqEnv = envWith({});
 
     const listRes = await app.request(
       '/api/sessions',
@@ -483,7 +483,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     const res = await app.request(
       `/api/sessions/${session}`,
       { method: 'GET', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string; session_status: string };
@@ -530,7 +530,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     const foreign = await app.request(
       `/api/sessions/${foreignSession}`,
       { method: 'GET', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      envWith({}),
     );
 
     for (const res of [nonexistent, hidden, foreign]) {
@@ -558,7 +558,7 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     const userId = await seedUser({ studios: [studio] });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
-    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+    const reqEnv = envWith({});
 
     const listRes = await app.request(
       '/api/sessions',
@@ -593,7 +593,7 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     const userId = await seedUser({ studios: [studio] });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
-    const reqEnv = envWith({ REQUIRE_LOGIN: '1' });
+    const reqEnv = envWith({});
 
     const listRes = await app.request(
       '/api/sessions',

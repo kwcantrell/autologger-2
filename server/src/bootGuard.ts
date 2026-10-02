@@ -1,4 +1,5 @@
-// src/bootGuard.ts — the server boots only inside a compose stack (retire-host-dev D1).
+// src/bootGuard.ts — the server boots only inside a compose stack (retire-host-dev D1), with
+// sign-in configured (require-login D1).
 // The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR and the catalog's
 // PG* settings (catalog-on-postgres D2); a host run has none. Messages name variables only, never
 // their values.
@@ -11,6 +12,13 @@ export const STACKS: readonly string[] = ['dev', 'stage', 'prod'];
 /** The catalog's connection settings, passed by the compose stacks (docker/compose*.yaml). */
 export const CATALOG_PG_VARS = ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE'] as const;
 
+/** The settings sign-in needs (require-login D1); `oauthConfigured()` in env.ts reads the same. */
+export const SIGN_IN_VARS = [
+  'GOOGLE_CLIENT_ID',
+  'GOOGLE_CLIENT_SECRET',
+  'PUBLIC_BASE_URL',
+] as const;
+
 /** A refusal message, or null when the server may boot. */
 export function checkBootEnv(env: Record<string, string | undefined>): string | null {
   if (!STACKS.includes(env.AUTOLOGGER_STACK ?? '')) {
@@ -22,6 +30,15 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   const missing = CATALOG_PG_VARS.filter((k) => !env[k]);
   if (missing.length) {
     return `catalog connection settings missing: ${missing.join(', ')} (the compose stacks set them).`;
+  }
+  // require-login D1: login is always required, so the removed switch must not linger, and a
+  // server no one can sign in to never boots (the same trimmed rule as `oauthConfigured()`).
+  if (env.REQUIRE_LOGIN !== undefined) {
+    return 'REQUIRE_LOGIN was removed: login is always required. Unset it (compose and Infisical must not set it).';
+  }
+  const signIn = SIGN_IN_VARS.filter((k) => !(env[k] ?? '').trim());
+  if (signIn.length) {
+    return `sign-in settings missing or blank: ${signIn.join(', ')} (login is always required; set the Google client in Infisical, see docs/infisical-secrets.md).`;
   }
   return null;
 }

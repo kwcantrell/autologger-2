@@ -4,7 +4,7 @@
 //   ADMIN_TOKEN=... npx tsx server/scripts/bootstrapMemberships.example.ts memberships.json \
 //       [--base-url http://127.0.0.1:8080] [--dry-run]
 //
-// Why: after REQUIRE_LOGIN goes 0 -> 1 on anonymous-era data, the first Google
+// Why: login is always required, so on anonymous-era data the first Google
 // user has no teams. This grants them via the existing, frozen ADMIN_TOKEN
 // endpoints (it only CALLS them; it adds no API surface):
 //   GET    /api/admin/users

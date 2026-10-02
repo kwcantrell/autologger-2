@@ -10,7 +10,7 @@ import {
   requestHasValidApiToken,
   resolveSessionUser,
 } from '../auth/identity';
-import { requireLoginEnabled, sessionCookieName } from '../env';
+import { sessionCookieName } from '../env';
 
 export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
   const catalog = createCatalog(c.env.ports.catalog);
@@ -35,11 +35,10 @@ export const authContext: MiddlewareHandler<AppEnv> = async (c, next) => {
     requestHasValidApiToken(c.req.raw, c.env.config.API_TOKEN);
   c.set('apiTokenAuth', apiTokenAuth);
 
-  if (requireLoginEnabled(c.env.config)) {
-    const method = c.req.method.toUpperCase();
-    if (apiRequestRequiresLogin(path, method) && !user && !apiTokenAuth) {
-      return c.json({ detail: 'Login required.' }, 401);
-    }
+  // Login is always required (require-login D2): the one place the 401 decision is made.
+  const method = c.req.method.toUpperCase();
+  if (apiRequestRequiresLogin(path, method) && !user && !apiTokenAuth) {
+    return c.json({ detail: 'Login required.' }, 401);
   }
 
   await next();

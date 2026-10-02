@@ -1,9 +1,10 @@
 # ai-topics-chat Specification
 
 ## Purpose
-Defines the per-session AI chat: a `CLAUDE_CLI_PATH`-gated `POST /api/sessions/:sessionId/ai/chat` endpoint that runs a locked-down `claude` CLI subprocess with a session-scoped MCP toolset and streams the reply as SSE. It also covers multi-turn continuity bound to the autologger session, ephemeral history, spend, concurrency and lifecycle bounds, open-network refusal, and the AI tab in the web client.
+Defines the per-session AI chat: a `CLAUDE_CLI_PATH`-gated `POST /api/sessions/:sessionId/ai/chat` endpoint that runs a locked-down `claude` CLI subprocess with a session-scoped MCP toolset and streams the reply as SSE. It also covers multi-turn continuity bound to the autologger session, ephemeral history, spend, concurrency and lifecycle bounds, and the AI tab in the web client.
 
 ## Requirements
+
 ### Requirement: Configuration-gated AI chat endpoint
 The AI chat SHALL be gated on a `CLAUDE_CLI_PATH` environment variable naming the
 `claude` CLI executable (absolute path or a name resolvable on `PATH`). When the variable
@@ -23,21 +24,6 @@ existing route, shape, status code, or WS emission changes.
   valid chat message
 - **THEN** the response is `200` with an SSE stream of the reply
 
-### Requirement: Open-network refusal
-Because a chat turn spends the operator's Anthropic credentials, the endpoint SHALL
-refuse to serve turns when authentication is disabled on a reachable network: when
-`REQUIRE_LOGIN` is disabled AND the server is bound to a non-loopback address with no IP
-allowlist, `POST …/ai/chat` SHALL respond `503` with an actionable detail, independent of
-the general auth gate. Loopback-bound anonymous dev is unaffected.
-
-#### Scenario: Anonymous LAN deployment refuses chat
-- **WHEN** `REQUIRE_LOGIN` is disabled and the bind is non-loopback with no allowlist
-- **THEN** `POST …/ai/chat` responds `503` and no subprocess is spawned
-
-#### Scenario: Loopback anonymous dev still serves
-- **WHEN** `REQUIRE_LOGIN` is disabled and the server is loopback-bound
-- **THEN** the chat endpoint serves turns normally
-
 ### Requirement: Chat request contract
 `POST /api/sessions/:sessionId/ai/chat` SHALL accept a JSON body
 `{ message: string, claude_session_id?: string }` where `message` is 1–8000 characters
@@ -45,8 +31,7 @@ after trimming and `claude_session_id`, when present, is a non-empty string. The
 SHALL evaluate checks in this order, matching the `transcript-words/generate` sibling:
 authentication → session resolution/scoping (`404` for nonexistent, deleted, or
 out-of-studio sessions, exactly as sibling session sub-routes such as
-`POST /api/sessions/:sessionId/events`) → open-network refusal / configuration gate
-(`503`) → body validation → single-flight (`409`). Body validation SHALL use the repo's
+`POST /api/sessions/:sessionId/events`) → configuration gate (`503`) → body validation → single-flight (`409`). Body validation SHALL use the repo's
 existing semantics — `422 { detail: issues }` for schema violations (the global `ZodError`
 mapping) and `400` for malformed JSON — and MUST NOT spawn a subprocess. All error bodies
 SHALL be the repo's `{ detail }` shape.
@@ -355,7 +340,7 @@ across tab switches, the liveness refresh, the Stop control, and the not-configu
 The README SHALL document the AI chat feature: that enabling it sends session transcript
 and topic content to Anthropic via the operator's `claude` CLI credentials, that turns
 consume the operator's Anthropic quota/spend (with the concurrency ceiling and per-turn
-budget as the bounds), the `CLAUDE_CLI_PATH` gate, the open-network refusal, the security
+budget as the bounds), the `CLAUDE_CLI_PATH` gate, the security
 posture (no operator hooks/plugins/CLAUDE.md, MCP-only toolset, no host shell/filesystem
 access), the requirement to run the server as the logged-in operator (and that
 node-on-PATH / proxy vars may be needed), and the minimum tested CLI version.
@@ -365,6 +350,5 @@ node-on-PATH / proxy vars may be needed), and the minimum tested CLI version.
 #### Scenario: Disclosure ships with the feature
 - **WHEN** the change is archived
 - **THEN** the README contains the AI chat section with egress, spend/bounds, gating,
-  open-network refusal, and lockdown documented, and `.env.example` lists the new
+  and lockdown documented, and `.env.example` lists the new
   variables
-

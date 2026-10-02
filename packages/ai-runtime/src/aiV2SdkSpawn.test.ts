@@ -23,7 +23,7 @@
 //     The recorder file gains exactly one line. This proves the seam can
 //     DETECT a spawn, not merely that spawning never happens.
 //   - NEGATIVE: a guard chain shaped like the design endpoint's real guard
-//     order (spec: auth -> session 404 -> config/open-network 503 -> body
+//     order (spec: auth -> session 404 -> config/credentials 503 -> body
 //     422/400 -> slot 409) returns early on every rejecting branch WITHOUT
 //     calling `attemptDesignTurnSpawn`. Task 2.2 owns the real guard chain;
 //     `simulateGuardedAttempt` below is the pattern it must follow — this
@@ -148,13 +148,13 @@ describe('AI v2 SDK-path no-spawn assertion seam (task 0.9)', () => {
     type GuardOutcome =
       | 'unauthenticated'
       | 'session-not-found-or-out-of-studio'
-      | 'unconfigured-or-open-network'
+      | 'unconfigured-or-credentials-refused'
       | 'invalid-body'
       | 'slot-busy'
       | 'allowed';
 
     // Shaped like the design endpoint's real guard order (spec "Design turn
-    // contract"): auth -> session 404 -> config/open-network 503 -> body
+    // contract"): auth -> session 404 -> config/credentials 503 -> body
     // 422/400 -> slot 409. Task 2.2 owns the real implementation; this is
     // the pattern it must follow — every rejecting branch returns BEFORE
     // `attemptDesignTurnSpawn` is ever called.
@@ -162,7 +162,7 @@ describe('AI v2 SDK-path no-spawn assertion seam (task 0.9)', () => {
       switch (outcome) {
         case 'unauthenticated':
         case 'session-not-found-or-out-of-studio':
-        case 'unconfigured-or-open-network':
+        case 'unconfigured-or-credentials-refused':
         case 'invalid-body':
         case 'slot-busy':
           return undefined; // rejected: never reaches attemptDesignTurnSpawn
@@ -178,7 +178,7 @@ describe('AI v2 SDK-path no-spawn assertion seam (task 0.9)', () => {
     const rejectingOutcomes: GuardOutcome[] = [
       'unauthenticated',
       'session-not-found-or-out-of-studio',
-      'unconfigured-or-open-network',
+      'unconfigured-or-credentials-refused',
       'invalid-body',
       'slot-busy',
     ];

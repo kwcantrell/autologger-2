@@ -104,20 +104,6 @@ function profileFixture(
   } as unknown as ProfilePayload;
 }
 
-function anonymousProfileFixture(): ProfilePayload {
-  return {
-    active_studio_id: 'test-studios',
-    active_show_id: '',
-    active_studio: { id: 'test-studios', name: 'Test Studios', categories: [] },
-    studios: [{ id: 'test-studios', name: 'Test Studios' }],
-    studio_settings: {},
-    shows: [],
-    new_session_defaults: { title_prefix: '', default_frame_rate: 30 },
-    admin: { restart_supported: false, restart_needs_token: false },
-    auth: { logged_in: false, oauth_configured: false, user: null },
-  } as unknown as ProfilePayload;
-}
-
 function renderShell(client: QueryClient) {
   const memory = memoryLocation({ path: '/', record: true });
   setNavigationImplForTesting((path, options) => memory.navigate(path, options));
@@ -161,16 +147,6 @@ describe('zero-membership onboarding (design D8)', () => {
     // can ever appear here.
     expect(document.getElementById('v6-btn-settings')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('dev-anonymous mode is unaffected (logged_in: false) — normal shell renders', async () => {
-    mockedApiFetch.mockResolvedValue(anonymousProfileFixture());
-
-    renderShell(makeClient());
-
-    await waitFor(() => expect(screen.getByTestId('session-route')).not.toBeNull());
-    expect(screen.getByTestId('rail')).not.toBeNull();
-    expect(screen.queryByTestId('onboarding-panel')).toBeNull();
   });
 
   it('a logged-in user with at least one team sees the normal shell, not onboarding', async () => {

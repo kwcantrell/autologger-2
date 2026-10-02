@@ -132,10 +132,9 @@ failure/timeout or a group over DeepGram's 2 GB upload limit (`502`). At most on
 run is in flight per process at a time.
 
 **Setting `DEEPGRAM_API_KEY` sends recorded session audio to DeepGram's cloud API and enables
-billed, metered calls — every generate request is a paid request.** Under `REQUIRE_LOGIN=0`
-(open LAN-studio box) any client that can reach the server can trigger those calls; there is
-no additional auth gate beyond `REQUIRE_LOGIN`. Only set the key on a box you operate and are
-prepared to pay for.
+billed, metered calls — every generate request is a paid request.** Any signed-in member of
+the session's studio can trigger those calls; there is no additional gate beyond login. Only
+set the key on a box you operate and are prepared to pay for.
 
 ### YouTube audio import
 
@@ -157,10 +156,7 @@ unsupported produced container (no segment attached); `200 {ok: true}` on succes
 **Egress and spend disclosure.** Enabling this (by either route — configured path or bare
 `PATH`) makes the server issue outbound HTTP requests to YouTube and download third-party
 audio to local disk for every import — there is no metered API cost, but it is real network
-egress on the operator's behalf. As with `DEEPGRAM_API_KEY`, the endpoint additionally refuses
-(`503`, no subprocess spawned) in the open-network configuration — `REQUIRE_LOGIN` disabled,
-a non-loopback bind, and no `IP_ALLOWLIST` — mirroring the AI chat / AI v2 refusal, so this is
-never left reachable to an anonymous LAN client. Only run this on a box you operate and are
+egress on the operator's behalf, for any signed-in member. Only run this on a box you operate and are
 prepared to have make YouTube requests on your behalf.
 
 **`ffmpeg` note.** The spawned `yt-dlp` child's `PATH` is pinned to the resolved binary's own
@@ -191,9 +187,7 @@ when an operator has set `SHEETS_LOG_IMPORT_ENABLED` **and** a user starts an im
 unconfigured deployment never contacts Google. Note the DeepGram interaction above: on a
 deployment with `DEEPGRAM_API_KEY` set, an import over sessions without transcripts triggers
 billed transcript generation. Only enable this on a box you operate and are prepared to have
-make Google requests on your behalf. Like the other spend-per-request features (YouTube
-import, AI chat), the POST also refuses with `503` on an open-network deployment
-(`REQUIRE_LOGIN` disabled + non-loopback bind + no `IP_ALLOWLIST`), even when enabled.
+make Google requests on your behalf.
 
 ### AI chat (Claude CLI)
 
@@ -205,7 +199,7 @@ session-scoped toolset.
 **Topic generation (`…/topics/generate`), the one-shot sibling.** The "Generate topics"
 button is a separate, **non-conversational** consumer of the same CLI/MCP machinery: gated on
 the same `CLAUDE_CLI_PATH` (unset/blank keeps the endpoint's frozen `503`, byte-for-byte
-unchanged for unconfigured deployments), the same open-network refusal below, and the same
+unchanged for unconfigured deployments) and the same
 per-session single-flight / process-wide concurrency ceiling (`AI_CHAT_MAX_CONCURRENT`) as
 the chat — a generate and a chat turn on the same session are mutually exclusive, since both
 spend the operator's Anthropic budget on that session. Unlike the chat — whose toolset has no
@@ -268,13 +262,6 @@ that runs long is killed after `AI_CHAT_TIMEOUT_SEC` (default `300` seconds) —
 guaranteed backstop; a client disconnect (Stop button or closed tab) also kills the
 subprocess but is best-effort only.
 
-**Open-network refusal.** Because a turn spends the operator's Anthropic credentials, the
-endpoint additionally refuses to serve turns (`503`, independent of the general auth gate)
-when `REQUIRE_LOGIN` is disabled **and** the server is bound to a non-loopback address **and**
-no `IP_ALLOWLIST` is set — the same "open LAN-studio box" scenario the DeepGram warning
-above calls out, closed off specifically for this paid endpoint. A loopback-bound anonymous
-dev server is unaffected.
-
 **Security posture.** The spawned CLI is locked down to exactly the autologger toolset and
 nothing else:
 
@@ -334,8 +321,8 @@ shapes — the boolean plus the `auto_instruction` fields on the full show seria
 delta.
 
 The feed tab's AUTO GENERATE button starts one **synchronous** run: gated on the same
-`CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`), the same
-open-network refusal, and the same per-session single-flight / process-wide ceiling
+`CLAUDE_CLI_PATH` as the AI chat (unset/blank keeps the endpoint's frozen `503`) and the same
+per-session single-flight / process-wide ceiling
 (`AI_CHAT_MAX_CONCURRENT`). The server snapshots the session's frame rate, transcript, and
 instruction-bearing categories at run start (mid-run edits affect the next run, not this
 one), then drives a **single orchestrator CLI turn** through the same locked-down one-shot
@@ -379,7 +366,7 @@ in the feed. Timecodes are transcript-derived, never the run-time clock: the sto
 existing timecode↔wall anchor pairs, so a generated event at timecode T sorts between the
 manual events that bracket T even across recording pauses.
 
-**Statuses.** `503 {detail}` unconfigured or open-network (nothing spawned); `400 {detail}`
+**Statuses.** `503 {detail}` unconfigured (nothing spawned); `400 {detail}`
 pre-spawn when the session has no transcript words, no words with session-time anchors, no
 instruction-bearing button, or the instructions exceed the aggregate pre-spawn bound
 (`EVENT_GENERATE_MAX_INSTRUCTION_BYTES`, default `24576` total instruction bytes /
@@ -437,14 +424,12 @@ per-session single-flight slot and process-wide concurrency ceiling as the AI ch
 (`AI_CHAT_MAX_CONCURRENT`) — the two paid features bound the operator's exposure together, not
 separately.
 
-**Configuration gating and the open-network refusal — CRUD is deliberately different.** The design
-and answer routes carry the full guard chain: config gate (`503`), the open-network refusal
-(`503`, same "REQUIRE_LOGIN disabled + non-loopback + no IP_ALLOWLIST" check the AI chat uses,
-since a turn spends money), and the agent-credentials refusal (`503`, no key and no loopback
-fallback available). Anonymous access on a reachable, non-loopback network is refused for **turns**
-specifically. The dashboard **CRUD** routes (`GET|PUT|DELETE .../ai/v2/dashboard`) are gated on
+**Configuration gating — CRUD is deliberately different.** The design
+and answer routes carry the full guard chain: config gate (`503`) and the agent-credentials
+refusal (`503`, no key and no loopback fallback available). The dashboard **CRUD** routes
+(`GET|PUT|DELETE .../ai/v2/dashboard`) are gated on
 `AI_V2_ENABLED` (`503`) and on the same device-token/principal-less refusal (masked `404`), but are
-**deliberately not** gated on the open-network refusal or the credentials refusal — a dashboard
+**deliberately not** gated on the credentials refusal — a dashboard
 read/write/delete spawns no subprocess and spends nothing, so it follows the app's ordinary auth
 posture instead of the paid-endpoint one. This is a considered design decision (recorded in the
 `ai-v2-dashboards` OpenSpec change), not an oversight — a future change should not "fix" it by
@@ -558,7 +543,7 @@ server/src/
     oauth_google.ts        IdentityVerifier port: authorize URL, code exchange, ID-token verify (← oauth_google.py)
     identity.ts             Login sessions + CSRF, bearer compare, gate rule (← auth_identity.py)
   middleware/
-    auth.ts                 Per-request context + REQUIRE_LOGIN gate      (← app.py auth_identity_and_gate);
+    auth.ts                 Per-request context + login gate              (← app.py auth_identity_and_gate);
                              constructs the per-request Catalog via @autologger/catalog's createCatalog
     ipAllowlist.ts           CIDR allowlist on client IP                   (← app.py ip_allowlist_middleware)
   routers/
@@ -809,19 +794,19 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET\|POST /api/sessions/{id}/events` (GET adds `has_auto_generated`, whole-session; POST silently strips the reserved `auto_generated`/`auto_generate_run_id` metadata keys from client input) · `PUT\|DELETE …/events/{eid}` | `routers/events.py` |
 | `GET …/status` · `POST …/transport/start\|stop` · `GET …/show-categories` | `routers/events.py` |
 | `…/audio-recording-lease` (claim/heartbeat/release) · `GET …/ws` | `routers/events.py` |
-| `POST …/events/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
+| `POST …/events/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript/no-anchors/no-instructions/over-instruction-bound/malformed-body/`regenerate`+`selection` combo/selection-matches-no-instructions · **200** `{created, cap_hit}` configured success, plus `deleted` when `regenerate:true` (append-only; regenerate deletes the prior `auto_generated` snapshot only after a successful run creates ≥1 event — zero-created success and `502` leave prior rows intact, `deleted` reflects the post-success removal) · **502** CLI-turn-failure (already-inserted events persist) (see "Event auto-generation" above) | `routers/events.ts` (new, auto-generate-event-logs + event-generate-menu) |
 | `GET\|POST …/audio/segments` · `POST …/segments/sync-from-disk` · range `GET …/segments/{id}` · `PUT …/waveform` | `routers/audio.py` |
 | `GET\|POST\|PATCH\|DELETE …/transcript-words` · `…/topics` | `routers/transcribe.py` |
 | `GET /api/transcript-generation/status` → **200** `{in_flight:false}` idle · **200** busy fields when held (`session_id`, `session_title`, `started_at`) | `routers/transcribe.py` |
 | `…/transcript-words/generate` → **503** unconfigured · **200** `{words}` configured (see "Transcript generation" above) | `routers/transcribe.py` |
-| `POST …/topics/generate` → **503** unconfigured/open-network · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
+| `POST …/topics/generate` → **503** unconfigured · **409** concurrent-turn/at-capacity · **400** no-transcript · **200** `{topics}` configured success (crash-safe replace-all) · **502** CLI-turn-failure/zero-topics (prior topics unchanged) (see "AI chat (Claude CLI)" below) | `routers/transcribe.py` |
 | `…/transcribe.csv` → **503** | (unavailable) |
 | `POST …/local-audio-import` → **400** missing/invalid `duration_s`/empty body/missing Content-Type · **404** session · **409** rolling · **413** oversize body · **200** `{ok: true}` success (local file attach+anchor; requires `duration_s`; optional `X-Audio-Seam-Parts`; not YouTube) | `routers/sessions.py` |
-| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured/open-network · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
+| `POST /api/shows/:showId/log-import` → **404** show/non-member · **503** unconfigured · **400** bad body · **200** `{ job_id }` configured success (public Sheets log import job; see "Google Sheets log import" above) | — |
 | `GET /api/log-import/:jobId` → **404** unknown/not-creator · **200** `{ status, lines, error }` | — |
-| `POST …/youtube-import` → **503** unconfigured/open-network · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
-| `POST …/ai/chat` → **503** unconfigured/open-network · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
-| `POST …/ai/v2/design` → **503** unconfigured/open-network/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
+| `POST …/youtube-import` → **503** unconfigured · **400** bad/non-allowlisted url · **409** concurrent-session/at-capacity · **200** `{ok: true}` configured success · **502** download/extract/bound/container/blob-write failure (see "YouTube audio import" above) | `routers/sessions.py` |
+| `POST …/ai/chat` → **503** unconfigured · **200** `text/event-stream` configured (see "AI chat" below) | `routers/ai.ts` (new, ai-topics-chat) |
+| `POST …/ai/v2/design` → **503** unconfigured/credentials · **200** `text/event-stream` configured (SSE: `delta`\|`question`\|`dashboard`\|`done`\|`error`) · `POST …/ai/v2/answer` → answer round trip, **200** `{ok:true}` (see "AI v2 dashboards" below) | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET\|PUT\|DELETE …/ai/v2/dashboard` → dashboard persistence: **200** `{config}` (GET: `{config:null}` if none) \| `{ok:true}` (DELETE), **422** invalid/bounds-exceeded, **400** malformed | `routers/aiV2.ts` (new, ai-v2-dashboards) |
 | `GET …/export.csv` · `…/export.jsonl` | `routers/exports.py` / `export.py` |
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
@@ -848,15 +833,14 @@ tight loop.
   of `X-Forwarded-For` (and `X-Forwarded-Proto` for cookie-secure decisions) is trusted
   instead — there is no cloud edge to pre-validate those headers, so leave `TRUST_PROXY=0`
   unless this process sits behind a proxy you control.
-- **`REQUIRE_LOGIN` defaults ON** (gate decision E1) — every `/api` route requires a session
-  or bearer token unless you explicitly set `REQUIRE_LOGIN=0`.
+- **Login is always required** (require-login) — every `/api` route needs a session, except
+  `GET`/`HEAD /api/profile`, `/api/admin/*` (`ADMIN_TOKEN`) and the `API_TOKEN` bearer on
+  `/api/companion/*`. The server refuses to boot if `REQUIRE_LOGIN` is set (it was removed) or
+  if `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL` is blank.
 - **`NEW_USER_ALL_TEAMS` is deprecated and ignored** (teams-self-serve) — a new user's Google
   sign-in receives exactly the memberships materialized from pending email invites (possibly
   none), never a blanket grant. The key stays parsed (no env-shape break); a truthy value logs
   one deprecation warning at startup and otherwise changes nothing.
-- **Startup warning on open binds** — if the process binds to a non-loopback host with
-  `REQUIRE_LOGIN=0` and no `IP_ALLOWLIST`, `main.ts` prints a loud warning: every `/api` route
-  is reachable from the network.
 - **Google ID-token verification** fetches Google's JWKS via the global `fetch` and
   `jose`'s `createLocalJWKSet` (10-minute in-memory cache, one refetch on an unrecognized
   `kid` to ride out key rotation) — `jose`'s `node:https`-based remote-JWKS helper is not
@@ -881,15 +865,14 @@ only: nothing reads `server/.env`. The stacks take values from Infisical
 | `DATA_DIR` | *(required, absolute; the stacks pin `/data`)* | Root for per-session DBs, audio blobs and temp staging (the catalog is Postgres; a legacy `catalog.db` is left untouched). |
 | `HOST` | `127.0.0.1` outside production, `0.0.0.0` in production | Network **interface to bind**. `127.0.0.1` = loopback-only (reachable only on-box / via a local reverse proxy); `0.0.0.0` = all interfaces (LAN/internet). |
 | `PORT` | `8787` | TCP port to listen on. |
-| `PUBLIC_BASE_URL` | *(empty; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
-| `REQUIRE_LOGIN` | `1` | When on, every `/api` route needs a session **or** a bearer token. Set `0` only for an open, trusted LAN box (triggers the open-bind startup warning). |
-| `IP_ALLOWLIST` | *(empty = off)* | CSV of allowed IPs/CIDRs (v4 + v6), enforced **before** auth. Empty disables it; a non-matching client gets `403`. A network-origin gate, orthogonal to `REQUIRE_LOGIN`. |
+| `PUBLIC_BASE_URL` | *(required; `.env.example` ships `http://127.0.0.1:8787`)* | Externally-visible origin the server **advertises** — used to build the Google OAuth callback (`…/auth/google/callback`). Must match the browser URL *and* the redirect URI registered in Google Cloud. Behind a proxy this differs from `HOST` (e.g. `https://autologger.example.com`). |
+| `IP_ALLOWLIST` | *(empty = off)* | CSV of allowed IPs/CIDRs (v4 + v6), enforced **before** auth. Empty disables it; a non-matching client gets `403`. A network-origin gate, orthogonal to login. |
 | `TRUST_PROXY` | `0` | When `1`, read the client IP from the first `X-Forwarded-For` hop (and `X-Forwarded-Proto` for secure-cookie decisions) instead of the raw socket. Enable **only** behind a proxy you control that overwrites `X-Forwarded-For` — otherwise the header is spoofable and can bypass `IP_ALLOWLIST`. |
 | `COOKIE_SECURE` | *(auto)* | Force the session cookie's `Secure` flag on/off. Blank = auto: secure when the request itself arrived over HTTPS, **or** when `TRUST_PROXY=1` and the proxy set `X-Forwarded-Proto: https`. |
 | `API_TOKEN` | *(empty)* | Companion machine bearer token. A request with `Authorization: Bearer <API_TOKEN>` passes the login gate **only on `/api/companion/*`**; everywhere else (other `/api/*` routes, the session WebSocket, `/auth/*`, `/api/admin/*`) it is ignored and the request is handled as if it carried no credential (`/api/admin/*` keeps its own `ADMIN_TOKEN`). The Companion module uses it. |
 | `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
 | `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth credentials. OAuth is available only when both are set **and** `PUBLIC_BASE_URL` is set. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
 present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
@@ -898,7 +881,7 @@ transcript generation, `YTDLP_PATH` (or a `yt-dlp` on `PATH`) for YouTube import
 `CLAUDE_CLI_PATH` for AI chat / topics / event generation / v2 dashboards.
 
 **Typical public HTTPS-behind-a-proxy setup:** `HOST=127.0.0.1` (Node reachable only via the
-proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, `REQUIRE_LOGIN=1`, and an
+proxy), `PUBLIC_BASE_URL=https://your.domain`, `TRUST_PROXY=1`, and an
 `API_TOKEN` for the Companion module (scoped to `/api/companion/*`) — optionally an `IP_ALLOWLIST` to further restrict access.
 
 ## Known parity windows (spec)
@@ -1045,19 +1028,18 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 |-----|----------|-----|
 | `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in; with `REQUIRE_LOGIN=1` there is no other way in for people. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
 | `API_TOKEN` | if Companion is used | Companion bearer token, **≥ 32 random bytes**. Authenticates **only** `/api/companion/*`. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
 | `DEEPGRAM_API_KEY` | optional | Enables transcript generation (else `503`). **Sends recorded audio to DeepGram's cloud STT and spends money.** |
 | `AI_V2_API_KEY` | leave unset | AI v2 stays **off**; see security notes. |
 
-The compose `environment` block fixes `REQUIRE_LOGIN=1`, `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
-`PUBLIC_BASE_URL` — literals there take precedence over the allowlist, so no Infisical value can
-switch login off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
+The compose `environment` block fixes `TRUST_PROXY=1`, `COOKIE_SECURE=1` and
+`PUBLIC_BASE_URL` — literals there take precedence over the allowlist. Login is always required;
+no setting switches it off. The image itself sets `NODE_ENV=production`, `DATA_DIR=/data`, `HOST=0.0.0.0`,
 `PORT=8787`, `YTDLP_PATH=/opt/ytdlp/yt-dlp` and `CLAUDE_CLI_PATH`, so YouTube import and the
-Claude-CLI features (AI chat, topics, event generation) are *available*; `REQUIRE_LOGIN=1` is what
-satisfies their open-network refusal. `IP_ALLOWLIST` is not set by default.
+Claude-CLI features (AI chat, topics, event generation) are *available*. `IP_ALLOWLIST` is not set by default.
 
 Every service has `restart: unless-stopped`, `init: true`, json-file log rotation (10 MB × 5)
 and a healthcheck that needs no extra tools (`api`: `GET /api/profile`, `web`: `GET /`, `router`:
@@ -1162,7 +1144,7 @@ the post-repoint "verify from outside" list proves the callback.
   your Pangolin: from outside send `curl -H 'X-Forwarded-For: 1.2.3.4' …` to an endpoint that
   reports the client IP (or check server logs) and confirm `1.2.3.4` is **not** what `api`
   sees.
-- **Anonymous-era data.** Moving from `REQUIRE_LOGIN=0` to `1` means existing sessions and
+- **Anonymous-era data.** With login always required, existing sessions and
   teams become visible to a signed-in user only after memberships are granted (below).
 - **Registry credentials.** Never commit `.env`, PATs, or tokens; the images are built with a
   root `.dockerignore` that excludes `**/data`, `**/.env*` and other secret-shaped files.
@@ -1420,7 +1402,7 @@ existing configuration.
 | Files | `docker/compose.dev.yaml` | `compose.yaml` + `docker/compose.stage.yaml` | `compose.yaml` |
 | Secrets | Infisical `dev` | Infisical `stage` | Infisical `prod` |
 | Shape | single-process hot-reload (`npm run dev`), plus Companion | split `web`/`api`/`router`, built locally | split, pinned registry images |
-| Login | anonymous (`REQUIRE_LOGIN=0`); Google sign-in optional | `REQUIRE_LOGIN=1`, Google sign-in | `REQUIRE_LOGIN=1` |
+| Login | always required: Google sign-in (own dev client) | always required: Google sign-in | always required: Google sign-in |
 | Host port (`127.0.0.1`) | app gate `DEV_PORT` (8787), Companion gate `DEV_COMPANION_PORT` (8000) | router `STAGE_PORT` (8788) | router `ROUTER_PORT` (8080) |
 | Claude login | host `~/.claude/.credentials.json` only (rw bind) | own login in a named volume (`make stage-claude-login`) | own login in the home volume |
 | AI v2 | works on the login, no key | needs `AI_V2_API_KEY` | needs `AI_V2_API_KEY` |
@@ -1440,7 +1422,7 @@ Create `.env.infisical.dev` / `.env.infisical.stage` from `docker/infisical-cred
 **Never put production secrets in dev or stage**: use separate, low-limit keys and a separate dev
 OAuth client. A compromised dependency inside a dev container can read the mounted Claude login
 and the dev secrets, and egress is unrestricted. Only the keys in `docker/secrets-env.yaml` reach
-a container; the security-relevant ones (`HOST`, `REQUIRE_LOGIN`, `TRUST_PROXY`, `IP_ALLOWLIST`,
+a container; the security-relevant ones (`HOST`, `TRUST_PROXY`, `IP_ALLOWLIST`,
 `DATA_DIR`, `PUBLIC_BASE_URL`, ...) are pinned in compose. Ports (`DEV_PORT`, `STAGE_PORT`) are
 set in Infisical; `DEV_PORT=9000 make dev-up` no longer overrides them.
 
@@ -1465,15 +1447,15 @@ shares the app's network namespace and is the only listener, published on host l
 (`127.0.0.1:${DEV_PORT}`). The gate rejects any request whose `Host` is not
 `127.0.0.1:<port>`, `localhost:<port>` or `app:8787`, and any non-GET/HEAD or WebSocket-upgrade
 request whose `Origin` is present and foreign. That stops DNS rebinding and cross-origin writes.
-Because the bind is a true loopback bind, the server's open-network refusal and AI v2's
-loopback-only login rule both pass with no server change.
+Because the bind is a true loopback bind, AI v2's loopback-only login rule passes with no
+server change.
 
 - **Reach:** host loopback and containers on the dev network (Companion). Nothing else.
 - **Never publish the gate beyond loopback, and never join other networks to it.** That would
   turn it into exactly the multi-user exposure the AI v2 rule forbids. `make check` enforces
   loopback-only publishing and the literal pins.
-- Any local process or user on the host can use the dev app anonymously with your Claude
-  login.
+- Any local process or user on the host holding a dev session or the dev `API_TOKEN` can use
+  the dev app with your Claude login.
 - Source subtrees (`server/src`, `web/src`, each `packages/*/src`, ...) are mounted
   **read-only**, so hot reload works from host edits (Linux file watching only; Docker Desktop is
   not supported). A dependency-manifest, lockfile or config change needs `make dev-build`.
@@ -1525,7 +1507,8 @@ loopback. The connection is entered once by hand (not provisioned):
 2. **Connections -> Add connection ->** **AutoLogger** (the module loads from the local-dev
    module path; it is not in the registry).
 3. Set the server URL to **`http://app:8787`** (Companion reaches the dev app through the app's
-   gate on the dev network). Leave the API token empty: dev is anonymous.
+   gate on the dev network). Set the API token to `API_TOKEN` from
+   Infisical `dev`; without it every Companion request gets `401`.
 
 Notes:
 - The log-event action needs an **active session with live presence**: open a session in a
@@ -1539,13 +1522,13 @@ Notes:
 - The Companion build prints a build-context listing (`context-audit`) only on **uncached**
   builds; the build fails if a file outside the allowlist enters the context.
 
-### Optional dev sign-in
+### Dev sign-in
 
-Set both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Infisical `dev` (a dev-only OAuth client,
+Dev requires sign-in. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Infisical `dev` (a dev-only OAuth client,
 never production's) and register the redirect URI
 `http://localhost:8787/auth/google/callback` (your `DEV_PORT`). Open dev at
-`http://localhost:<DEV_PORT>/`. Caveat: **while OAuth is configured, anonymous requests see an
-empty show list**; sign in to see shows. Leave both empty for anonymous dev.
+`http://localhost:<DEV_PORT>/` and sign in. Without both values `compose-run` refuses to start dev
+(and the server refuses to boot). Also set `API_TOKEN` for the dev Companion.
 
 Other integrations are off unless set in Infisical `dev`: `DEEPGRAM_API_KEY` (transcripts; sends audio
 to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import works from the
@@ -1554,7 +1537,7 @@ to DeepGram), `SHEETS_LOG_IMPORT_ENABLED=1`, `AI_V2_ENABLED=1`. YouTube import w
 ### Stage
 
 Stage is an overlay on `compose.yaml`, built locally for your native architecture, behaving as
-prod: `REQUIRE_LOGIN=1` and real Google sign-in. Fill Infisical `stage` (`STAGE_PORT`, OAuth client,
+prod: login required, real Google sign-in. Fill Infisical `stage` (`STAGE_PORT`, OAuth client,
 `API_TOKEN`, `ADMIN_TOKEN`, optional keys), then `make stage-up`, then `make stage-claude-login`
 for AI chat.
 
@@ -1733,8 +1716,8 @@ restarts). The session WebSocket (`/api/sessions/:id/ws`) and Next's dev HMR soc
 `prepare()`, and (per the exclusion above) a config-only edit under `web/**` doesn't trigger
 one; run `make dev-restart`. Every other `web/src/**` edit gets normal HMR.
 
-**Dev auth is anonymous by design**: the dev stack pins `REQUIRE_LOGIN=0`. Google sign-in in
-dev needs real `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` in Infisical `dev`.
+**Dev requires login**, like stage and prod: sign in with dev's own Google client (see
+"Dev sign-in").
 
 If dev auth is misconfigured (login required but no session), the first symptom is an
 opaque WebSocket drop — the 401 fires before the upgrade, so the browser sees a bare
@@ -1774,8 +1757,7 @@ build cannot read the workspace-hoisted dependencies and fails to start. Run
 dependency-free esbuild bundle with a correct `runtime.apiVersion`), then either import it
 via Companion's **"Import module package"**, or extract it into a directory you pass to
 `--extra-module-path`. Configure the connection with the **Server URL**
-(e.g. `http://127.0.0.1:8787`) and, only if the server runs with the `API_TOKEN` env var set
-(`REQUIRE_LOGIN=1`), the **API token**.
+(e.g. `http://127.0.0.1:8787`) and the **API token** (the server's `API_TOKEN`; required).
 
 > `@companion-module/base` is pinned to `~1.14.0` (stable 1.x). Companion 4.3.4 rejects the
 > newer 2.1.x line, and its 2.0.x alpha removed the `runEntrypoint` API this module uses. A
@@ -1798,12 +1780,11 @@ WebSocket, so HTTPS works with no extra setup).
      `https://autologger.example.com` (a trailing slash is stripped automatically).
    - **API token** — see step 3.
    - **Poll interval (ms)** — default `1000` (clamped to 250–10000).
-3. **Authenticate (public / `REQUIRE_LOGIN=1` servers)** — the module authenticates by
+3. **Authenticate (every server)** — the module authenticates by
    sending `Authorization: Bearer <token>`, which the server accepts only when it equals its
    **`API_TOKEN`** env var. So set `API_TOKEN=<a-long-random-secret>` in the stack's Infisical
    environment, run `make <env>-up`, and paste the **same** secret into the connection's **API token**
-   field. Leave it blank only on an open LAN box running `REQUIRE_LOGIN=0` (never a
-   public one). If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
+   field; without it every request gets `401`. If the server is behind a proxy and uses `IP_ALLOWLIST`, set `TRUST_PROXY=1`
    so the client IP is read from the forwarded header.
 4. **Open a browser on a session** — the module acts on **whichever session an open browser
    reports as active** (via presence); it does not pick a session itself. Load the server in a

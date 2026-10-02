@@ -16,13 +16,6 @@ export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';
 }
 
-/** Gate decision E1: login is REQUIRED unless explicitly disabled. */
-export function requireLoginEnabled(env: Config): boolean {
-  const v = (env.REQUIRE_LOGIN || '').trim().toLowerCase();
-  if (!v) return true;
-  return !['0', 'false', 'no'].includes(v);
-}
-
 export function newUserAllTeamsEnabled(env: Config): boolean {
   const v = (env.NEW_USER_ALL_TEAMS || '0').trim().toLowerCase();
   return !['0', 'false', 'no'].includes(v);
@@ -73,27 +66,12 @@ export function adminTokenConfigured(env: Config): boolean {
   return Boolean((env.ADMIN_TOKEN || '').trim());
 }
 
-// ── Shared: open-network refusal ────────────────────────────────────────────
-// Every outbound, spend-something-per-request feature (AI chat, AI v2,
-// YouTube import, Sheets log import) refuses to serve when auth is open on a
-// reachable network —
-// REQUIRE_LOGIN disabled AND no IP_ALLOWLIST AND a non-loopback bind. One
-// core predicate, three feature-named call sites (kept as separate exported
-// functions — not a single shared export — so each feature's call site/tests
-// read the same way the DeepGram/AI-chat precedents already do).
-
 /** True when the configured bind host is loopback; unset HOST defaults to
- * 0.0.0.0 (non-loopback), matching the serve() default. Also the boot-time
- * warning's predicate (main.ts). */
+ * 0.0.0.0 (non-loopback), matching the serve() default. AI v2's credentials
+ * refusal reads it (aiV2CredentialsRefused). */
 export function loopbackHostname(env: Config): boolean {
   const hostname = (env.HOST || '').trim() || '0.0.0.0';
   return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
-}
-
-function openNetworkRefused(env: Config): boolean {
-  if (requireLoginEnabled(env)) return false;
-  if ((env.IP_ALLOWLIST || '').trim()) return false;
-  return !loopbackHostname(env);
 }
 
 // ── AI topics chat (ai-topics-chat, design D5/D8) ───────────────────────────
@@ -125,18 +103,9 @@ export function aiChatMaxBudgetUsd(env: Config): number {
   return Number.isFinite(n) && n > 0 ? n : 0.5;
 }
 
-/** Open-network refusal (spec "Open-network refusal", design D8): refuse to spend
- * the operator's Anthropic credentials when auth is disabled on a reachable
- * network — REQUIRE_LOGIN disabled AND a non-loopback bind AND no IP allowlist.
- * Mirrors the boot-time warning in main.ts; unset HOST defaults to 0.0.0.0
- * (non-loopback), matching the serve() default. */
-export function aiChatOpenNetworkRefused(env: Config): boolean {
-  return openNetworkRefused(env);
-}
-
 // ── Topic generation (topic-generation, design D6) ──────────────────────────
 // `topics/generate` reuses the AI chat's CLI/MCP/gate/registry (aiChatConfigured,
-// aiChatOpenNetworkRefused, aiChatTurns, AI_CHAT_MAX_CONCURRENT) as-is, but a
+// aiChatTurns, AI_CHAT_MAX_CONCURRENT) as-is, but a
 // one-shot generate reads the WHOLE transcript in a single turn -- a bigger
 // workload than an incremental chat message -- so spend/time bounds are their
 // own dedicated config, defaulted higher than the chat's, rather than reused
@@ -171,7 +140,7 @@ export function topicGenerateTimeoutSec(env: Config): number {
 
 // ── Event auto-generation (auto-generate-event-logs, design D8) ────────────
 // `events/generate` reuses the AI chat's/topic-generate's CLI/MCP/gate/
-// registry (aiChatConfigured, aiChatOpenNetworkRefused, aiChatTurns,
+// registry (aiChatConfigured, aiChatTurns,
 // AI_CHAT_MAX_CONCURRENT) as-is, but its own one-shot run is a LARGE
 // workload: the full transcript at generation density, an instruction sweep
 // per instruction-bearing category/option, and a create_event tool round-trip
@@ -267,20 +236,10 @@ export function aiV2MaxBudgetUsd(env: Config): number {
   return Number.isFinite(n) && n > 0 ? n : 0.5;
 }
 
-/** Open-network refusal (spec "Open-network refusal"): same shape as
- * aiChatOpenNetworkRefused, evaluated independently for AI v2's own routes —
- * REQUIRE_LOGIN disabled AND a non-loopback bind AND no IP_ALLOWLIST. This is
- * about the GENERAL auth gate being open on a reachable network; it is
- * distinct from aiV2CredentialsRefused below, which fires regardless of
- * REQUIRE_LOGIN. */
-export function aiV2OpenNetworkRefused(env: Config): boolean {
-  return openNetworkRefused(env);
-}
-
 /** Agent credentials (spec "Agent credentials", design D9): the interactive
  * `claude login` fallback is permitted ONLY on a loopback bind. When no
  * workspace key is configured AND the bind is non-loopback, AI v2 MUST refuse
- * to serve turns — independent of REQUIRE_LOGIN/IP_ALLOWLIST (a normal
+ * to serve turns — independent of IP_ALLOWLIST (a normal
  * multi-user deployment with login required, but no configured key, bound
  * non-loopback, would otherwise spend the OPERATOR'S OWN personal claude.ai
  * subscription on every authenticated user's turn; Anthropic does not permit
@@ -335,16 +294,6 @@ export function ytDlpConfigured(env: Config): boolean {
   return Boolean(env.YTDLP_RESOLVED_PATH);
 }
 
-/** Open-network refusal (spec "Open-network refusal", design D9): same shape
- * as aiChatOpenNetworkRefused/aiV2OpenNetworkRefused — an import spends
- * bandwidth/disk and reaches a third party on the operator's IP, so it
- * refuses (503) whenever REQUIRE_LOGIN is disabled AND no IP_ALLOWLIST is
- * set AND the bind is non-loopback. This neutralizes the unauthenticated-
- * reachability edge of the PATH-inclusive config gate above. */
-export function youtubeImportOpenNetworkRefused(env: Config): boolean {
-  return openNetworkRefused(env);
-}
-
 // ── Google Sheets log import ────────────────────────────────────────────────
 
 /** Gate: the Sheets log import runs only when the operator EXPLICITLY opts in
@@ -356,13 +305,6 @@ export function youtubeImportOpenNetworkRefused(env: Config): boolean {
  * job-status GET is not gated (it reads local state only). */
 export function sheetsLogImportConfigured(env: Config): boolean {
   return ['1', 'true', 'yes'].includes((env.SHEETS_LOG_IMPORT_ENABLED || '').trim().toLowerCase());
-}
-
-/** Sheets log import can trigger paid DeepGram transcription of session audio,
- * so it shares the open-network refusal of the other spend-per-request
- * features (see the shared predicate above). */
-export function sheetsLogImportOpenNetworkRefused(env: Config): boolean {
-  return openNetworkRefused(env);
 }
 
 /** _admin_meta — restart is not supported (no supervised process; gate decision E2). */

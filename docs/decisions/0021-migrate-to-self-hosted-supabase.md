@@ -324,7 +324,31 @@ Slice order:
        `20261003000000`). **Binding on slice 11:** the import must not bring back users,
        memberships, prefs, invites or `session:` KV rows (or must re-key them through GoTrue),
        and its parity check expects those tables empty;
-   - 5b `require-login`: remove `REQUIRE_LOGIN=0` and the anonymous branches;
+   - 5b `require-login`: login is always required; `REQUIRE_LOGIN` and the anonymous branches
+     are removed. Implemented 2026-10-02; live checks pending (the owner's dev Google client and
+     `API_TOKEN`, then the dev and stage checks). Owner decisions:
+     - **dev gets a real Google client** (redirect `http://localhost:8787/auth/google/callback`)
+       and an `API_TOKEN` in Infisical `autologger-dev`; without the token the dev Companion
+       gets `401`. `compose-run` refuses every stack, dev included, without both Google values;
+     - **boot refuses** when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL` is
+       blank, and when `REQUIRE_LOGIN` is set to any value, so a stale `0` fails loudly;
+     - **the open-network `503`s are deleted** (AI chat, AI v2, topic generation, event
+       generation, YouTube import, Sheets log import): they fired only with login off.
+       `HEAD /api/profile` is login-exempt like `GET`;
+     - one PR with the `size-override` label (about 550-650 counted lines, mostly deletions);
+     - the test harness signs in a narrowed default member (built-in studios and seeded
+       sessions only), and a route-table test expects `401` from every non-exempt `/api` route.
+
+     It builds on the hotfix `gate-decoded-path` (the gate judges the decoded path; a repo test
+     now bans raw-path security decisions in middleware and routers). Moving every integration
+     test onto the signed-in path exposed `40001` retry exhaustion in concurrent session creates,
+     which triggered `catalog-retry-backoff`. Cutover and rollback:
+     - the new image run with `main`'s compose (`REQUIRE_LOGIN: "1"`) refuses to boot and
+       crash-loops under `restart: unless-stopped`. That fails closed but is an outage, so the
+       cutover deploys the integration branch's compose with its image;
+     - rolling back to the old image with the new compose is safe: the old server treats an
+       unset `REQUIRE_LOGIN` as login required;
+     - prod's `api` must not have `REQUIRE_LOGIN` set by hand (Infisical can't inject it).
    - 5c `owner-bootstrap`: the `owner` role (one per studio, in the database), the bootstrap
      owner (`BOOTSTRAP_OWNER_EMAIL`: that verified email becomes owner of every studio without
      one, at sign-in), and dropping the built-in studios.

@@ -95,7 +95,6 @@ services:
       PORT: "8787"
       YTDLP_PATH: /opt/ytdlp/yt-dlp
       CLAUDE_CLI_PATH: /usr/local/bin/claude
-      REQUIRE_LOGIN: "1"
       TRUST_PROXY: "1"
       COOKIE_SECURE: "1"
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in Infisical prod to the public https origin}

@@ -32,9 +32,8 @@
 // individual principal SHALL NOT be accepted on these routes" — stated
 // normatively rather than left emergent; masked as 404, NOT 401/403, same
 // pattern as requireSession, so a device token learns nothing from the
-// response) → configuration gate + open-network refusal + agent-credentials
-// refusal (503, spec "Configuration-gated AI v2 endpoints" / "Open-network
-// refusal" / "Agent credentials") → body validation (422 schema / 400
+// response) → configuration gate + agent-credentials refusal (503, spec
+// "Configuration-gated AI v2 endpoints" / "Agent credentials") → body validation (422 schema / 400
 // malformed JSON, spec scenario "Invalid body rejected without side
 // effects") → turn slot (409, spec "Spend and concurrency bounds" — shared
 // with the AI chat's OWN registry BY DESIGN: "acquire a slot from the same
@@ -84,18 +83,14 @@ import {
   aiV2Configured,
   aiV2CredentialsRefused,
   aiV2MaxBudgetUsd,
-  aiV2OpenNetworkRefused,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession } from './_helpers';
+import { getSessionHub, requireSession, requireUser } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
 const NOT_CONFIGURED_DETAIL =
   'AI v2 is not configured on this deployment. Set AI_V2_ENABLED=1 to enable it.';
-const OPEN_NETWORK_DETAIL =
-  'AI v2 is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const CREDENTIALS_REFUSED_DETAIL =
   'AI v2 has no AI_V2_API_KEY configured and the server is bound to a non-loopback address; the interactive ' +
   '`claude login` fallback is loopback-only. Configure AI_V2_API_KEY or bind to loopback (HOST=127.0.0.1).';
@@ -136,36 +131,27 @@ const PRIMARY_DASHBOARD_ID = 'primary';
 /**
  * Design D7 / Phase-3 fix wave: "Authentication mechanisms that do not
  * identify an individual principal SHALL NOT be accepted on these routes."
- * A shared `API_TOKEN` device token leaves `c.get('user') === null`
- * (`requireSession` deliberately skips the studio-membership check for it,
- * since that check is session-scoped, not principal-scoped — a device
- * token would otherwise pass for ANY session). Refused here, masked as 404
+ * A shared `API_TOKEN` device token leaves `c.get('user') === null`. Since
+ * require-login D3 `requireSession` itself asserts a signed-in user (a null
+ * user there is an internal error), so this refusal is reached only if that
+ * ever changes. Refused here, masked as 404
  * (never 401/403, which would leak that the session exists/is accessible)
  * — call this IMMEDIATELY after `requireSession` and BEFORE the
- * config/open-network/credentials 503 gate, so a device token learns
+ * config/credentials 503 gate, so a device token learns
  * nothing about configuration or in-flight state either. Shared by BOTH
  * `/design` and `/answer` so the two routes cannot drift on this check.
  *
- * Deliberately gated on `apiTokenAuth` (set by the `authContext` middleware
- * from `requestHasValidApiToken`) rather than on `user === null` alone:
- * `user` is ALSO `null` for plain anonymous access with no credentials at
- * all (this repo's documented dev convention — "Dev auth is anonymous",
- * `REQUIRE_LOGIN=0`, no cookie, no token), which every earlier guard
- * (`aiV2OpenNetworkRefused` for a non-loopback bind, or the accepted
- * loopback/allowlisted-network trust boundary otherwise) already covers and
- * is NOT the vulnerability this fix closes — refusing it here too would
- * regress that existing, intentionally-permitted anonymous path. The actual
- * hole is specifically an authenticated-but-principal-less DEVICE token
- * bypassing per-user studio scoping, so only `user === null &&
- * apiTokenAuth` is refused.
+ * Gated on `apiTokenAuth` (set by the `authContext` middleware from
+ * `requestHasValidApiToken`): the hole it closes is an authenticated but
+ * principal-less DEVICE token bypassing per-user studio scoping. There is no
+ * anonymous access any more (require-login: the login gate 401s first).
  *
  * NOTE (containerize-split-images): `API_TOKEN` is now scoped to `/api/companion/*` in
  * `authContext`, so `apiTokenAuth` is never true on the AI v2 routes and the refusal below is
  * unreachable over HTTP. It is kept as defence in depth in case the scope ever widens.
  *
- * Returns the (possibly still-null, for the permitted anonymous case)
- * `AuthUser`; callers that need a guaranteed non-null principal (the answer
- * route, which has no legitimate anonymous-answer path) re-check.
+ * Returns the `AuthUser` (typed nullable for this defence-in-depth path;
+ * the answer route asserts it with `requireUser`).
  */
 function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string): AuthUser | null {
   const user = c.get('user');
@@ -192,17 +178,17 @@ function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string):
  *   3. The 503 gate SET named by `gates` — a PARAMETER, deliberately NOT
  *      uniform across routes (fact-check S10):
  *      - 'design-turn' (/design, /answer): `aiV2Configured` +
- *        `aiV2OpenNetworkRefused` + `aiV2CredentialsRefused`, in that
- *        order — these routes lead to a turn that spends the operator's
- *        credentials, which is what the two refusal predicates exist for.
+ *        `aiV2CredentialsRefused`, in that order — these routes lead to a
+ *        turn that spends the operator's credentials, which is what the
+ *        refusal predicate exists for.
  *      - 'configured-only' (dashboard GET/PUT/DELETE): `aiV2Configured`
  *        ONLY. See the dashboard block comment below ("Deliberately NOT
- *        gated on aiV2OpenNetworkRefused/aiV2CredentialsRefused…") for why
- *        the CRUD routes must never inherit the other two gates.
+ *        gated on aiV2CredentialsRefused…") for why the CRUD routes must
+ *        never inherit the other gate.
  *
- * Returns the (possibly null, for the permitted anonymous case) principal —
- * the PUT dashboard route binds it for `createdBy`; the answer route
- * re-checks non-null for its own no-anonymous-answer rule (its step 6).
+ * Returns the principal (signed in behind the login gate) — the PUT
+ * dashboard route binds it for `createdBy`; the answer route asserts it with
+ * `requireUser` (its step 6).
  */
 async function guardAiV2Route(
   c: Context<AppEnv>,
@@ -216,9 +202,6 @@ async function guardAiV2Route(
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
   if (gates === 'design-turn') {
-    if (aiV2OpenNetworkRefused(c.env.config)) {
-      throw new ApiError(503, OPEN_NETWORK_DETAIL);
-    }
     if (aiV2CredentialsRefused(c.env.config)) {
       throw new ApiError(503, CREDENTIALS_REFUSED_DETAIL);
     }
@@ -233,10 +216,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // gate set): session scoping (404, masked before config/credentials/
   // single-flight state can leak) -> device-token refusal (404, masked
   // identically to requireSession's own "Session not found") -> config +
-  // open-network + agent-credentials gates (all 503, before body parse and
-  // before any spawn — design D7/D9, spec "Unauthorized session is masked
-  // as 404" / "Configuration-gated AI v2 endpoints" / "Open-network
-  // refusal" / "Agent credentials"). No guard below this line can ever run
+  // agent-credentials gates (all 503, before body parse and before any
+  // spawn — design D7/D9, spec "Unauthorized session is masked as 404" /
+  // "Configuration-gated AI v2 endpoints" / "Agent credentials"). No guard
+  // below this line can ever run
   // for a device token.
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
 
@@ -271,19 +254,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // >=128-bit turn id, scoping this turn's pending questions so an answer's
   // (sessionId, turnId, requestId) triple can never resolve a DIFFERENT
   // turn's question, even one on the same session. The initiating PRINCIPAL
-  // is recorded too, not just session access. `requireIndividualPrincipal`
-  // above already refused the API_TOKEN/device-token case (`user === null
-  // && apiTokenAuth`) with a 404 before this line, so THAT path can no
-  // longer reach here principal-less (Phase-3 fix wave; defence in depth now
-  // that API_TOKEN is Companion-scoped and cannot reach this route) — but `user` can
-  // still legitimately be `null` for plain anonymous dev-mode access
-  // (`REQUIRE_LOGIN=0`, no credentials at all; see the helper's doc
-  // comment), which is why `principalUserId` keeps its `string | null`
-  // type: a safe degraded state (the question simply times out via
-  // abandonment, task 3.3), not a security bypass, per the registry's own
-  // docs — a `null` principal can never equal any real answering user id.
+  // is recorded too, not just session access: the signed-in user
+  // (`requireSession` in the prologue already asserted one; require-login D3).
   const turnId = generatePendingQuestionId();
-  const principalUserId = c.get('user')?.id ?? null;
+  const principalUserId = requireUser(c).id;
 
   return streamSSE(c, async (stream) => {
     const workspace = createDesignTurnWorkspace();
@@ -396,7 +370,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
 // session as 404"). Guard order matches the design route EXACTLY through
 // body validation — auth (401) → session resolution/scoping (404) →
 // principal-less (device-token) refusal (404, design D7, Phase-3 fix wave)
-// → configuration/open-network/agent-credentials gate (503) → body
+// → configuration/agent-credentials gate (503) → body
 // validation (422/400) — then adds an ANSWER-SPECIFIC authz layer on top:
 // the answering principal must be the SAME principal that initiated the
 // turn, and the (sessionId, turnId, requestId) triple must name a question
@@ -415,14 +389,11 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   // was posed, refused up front rather than left to fall out of the
   // `resolveAnswer` comparison below) uses the SAME ANSWER_NOT_FOUND_DETAIL
   // as "no matching pending question" so the response never reveals which
-  // reason applied, and runs BEFORE the config/open-network gate so a
+  // reason applied, and runs BEFORE the config/credentials gate so a
   // device token learns nothing about configuration either (Phase-3 fix
-  // wave). NOTE: that refusal covers ONLY the device-token case (see
-  // requireIndividualPrincipal's doc comment) — `user` may still
-  // legitimately be `null` here for plain anonymous dev-mode access
-  // (`REQUIRE_LOGIN=0`, no credentials at all), which is handled separately
-  // at step 6 below, since it must still be allowed to reach the
-  // config/body-validation gates first.
+  // wave). That refusal covers only the device-token case (see
+  // requireIndividualPrincipal's doc comment); there is no anonymous caller
+  // (require-login), and step 6 asserts the signed-in user.
   await guardAiV2Route(c, sessionId, ANSWER_NOT_FOUND_DETAIL, 'design-turn');
 
   // 5. Body validation — ZodError → 422 (also rejects an 'option' answer
@@ -432,19 +403,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   // malformed JSON → 400 (both via the global onError handler in app.ts).
   const body = aiV2AnswerRequestSchema.parse(await c.req.json());
 
-  // 6. The remaining principal-less case: plain anonymous access with no
-  // credentials at all (`user === null`, `apiTokenAuth` false — step 3
-  // above only refuses the DEVICE-TOKEN case, itself unreachable over HTTP now that
-  // API_TOKEN is Companion-scoped; kept as defence in depth). `resolveAnswer` needs a
-  // concrete principal id to match against the turn's recorded initiator,
-  // and no anonymous caller can ever legitimately equal it (a `null`
-  // initiator, e.g. an anonymous `/design` turn, is itself unanswerable by
-  // design — see aiV2PendingQuestions.ts), so this is refused with the
-  // SAME masked detail rather than reaching `user.id` on a `null` value.
-  const user = c.get('user');
-  if (user === null) {
-    throw new ApiError(404, ANSWER_NOT_FOUND_DETAIL);
-  }
+  // 6. The answering principal. `resolveAnswer` matches it against the
+  // turn's recorded initiator. Login is always required, so a null user here
+  // is an internal error (require-login D3), not a second login decision.
+  const user = requireUser(c);
 
   // 7. Resolve the pending question. `resolveAnswer` itself enforces BOTH
   // the (sessionId, turnId, requestId) match AND the principal match,
@@ -494,11 +456,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 //      the per-session dashboard-count bound (422, same store call)
 //   -> store operation.
 //
-// Deliberately NOT gated on aiV2OpenNetworkRefused/aiV2CredentialsRefused:
-// both exist because "a design turn spends the operator's credentials" over
-// a paid external API call (spec "Open-network refusal" / "Agent
-// credentials"). A dashboard CRUD operation never spawns a subprocess or
-// spends anything — gating it on those two would block a user's OWN
+// Deliberately NOT gated on aiV2CredentialsRefused: it exists because "a
+// design turn spends the operator's credentials" over a paid external API
+// call (spec "Agent credentials"). A dashboard CRUD operation never spawns a
+// subprocess or spends anything — gating it on that would block a user's OWN
 // direct-manipulation edits (spec "Dashboards are edited directly, not only
 // by conversation") for a reason that doesn't apply to them. Flagged
 // explicitly in this task's report for gate review.

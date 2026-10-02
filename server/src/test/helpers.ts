@@ -1,7 +1,7 @@
 import { Catalog } from '@autologger/catalog';
 import { createLoginSession } from '../auth/identity';
 import { sessionCookieName } from '../env';
-import { env } from './harness';
+import { defaultUser, env } from './harness';
 
 export function catalogFor(): Catalog {
   return new Catalog(env.ports.catalog);
@@ -18,6 +18,14 @@ const uid = (p: string): string => {
 export async function seedStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
   const id = opts.id ?? uid('studio');
   await catalogFor().studios.adminCreateStudio(id, opts.name ?? `Studio ${id}`);
+  return id;
+}
+
+/** `seedStudio` plus a `member` membership for the default signed-in user (harness `app`), for
+ * suites whose default caller works in a studio they seed themselves (require-login D7). */
+export async function seedMemberStudio(opts: { id?: string; name?: string } = {}): Promise<string> {
+  const id = await seedStudio(opts);
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, id, 'member');
   return id;
 }
 
@@ -89,7 +97,8 @@ export async function seedSession(opts: {
   });
 }
 
-/** Seed the standard studio → show → session chain in one call (code-health-tail
+/** Seed the standard studio → show → session chain in one call; the default signed-in user
+ * (harness `app`) is made a `member` of the new studio (code-health-tail
  * task 5.1, finding 5.10) — the fixture nearly every router int test needs.
  * Returns all three ids so callers can grab whichever layer they assert on
  * (most want `.sessionId`; cross-studio tests also read `.studioId`).
@@ -102,6 +111,8 @@ export async function seededSession(opts: { categoriesJson?: string } = {}): Pro
   sessionId: string;
 }> {
   const studioId = await seedStudio();
+  // The default signed-in caller is a member of every seededSession studio (require-login D7).
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, studioId, 'member');
   const showId = await seedShow({ studioId, categoriesJson: opts.categoriesJson });
   const sessionId = await seedSession({ showId });
   return { studioId, showId, sessionId };
@@ -136,6 +147,10 @@ export async function loginCookie(userId: string): Promise<string> {
 export function adminHeader(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
+
+/** The harness `API_TOKEN` as a bearer: what the Companion sends on `/api/companion/*`. The
+ * wrapped harness `app` never signs those paths in (require-login D7). */
+export const COMPANION_BEARER: Record<string, string> = { Authorization: 'Bearer test-api-token' };
 
 /** Register companion presence so primarySession() resolves to sessionId. */
 export function setCompanionPresence(

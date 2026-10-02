@@ -18,7 +18,7 @@ import type { UpgradeWebSocket } from 'hono/ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv, Bindings } from '../appEnv';
-import { env } from '../test/harness';
+import { defaultUser, env } from '../test/harness';
 import { seedSession, seedShow, seedStudio } from '../test/helpers';
 
 const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
@@ -80,7 +80,10 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     '/api',
     '/auth',
   ])('unmatched GET %s 404s from Hono without invoking the bridge (spec "API routes never reach the frontend bridge")', async (path) => {
-    const res = await app.request(path, {}, envWithIO());
+    // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
+    // (require-login: login is always required; either way the bridge is never invoked).
+    const { cookie } = await defaultUser();
+    const res = await app.request(path, { headers: { cookie } }, envWithIO());
     expect(res.status).toBe(404);
     expect(stub.handle).not.toHaveBeenCalled();
   });
@@ -134,7 +137,10 @@ describe('frontend bridge dispatch — GET-only catch-all (design D1, spec "Next
     '/sessions/abc/',
     '/admin/users/',
   ])('trailing slash %s 404s without invoking the bridge', async (path) => {
-    const res = await app.request(path, {}, envWithIO());
+    // Signed in, so an unmatched /api path reaches Hono's 404 rather than the login gate's 401
+    // (require-login: login is always required; either way the bridge is never invoked).
+    const { cookie } = await defaultUser();
+    const res = await app.request(path, { headers: { cookie } }, envWithIO());
     expect(res.status).toBe(404);
     expect(stub.handle).not.toHaveBeenCalled();
   });

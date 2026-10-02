@@ -87,7 +87,7 @@ describe('unavailable endpoints (503)', () => {
 // Frozen-surface self-check: this suite asserts only the statuses/shapes
 // authorized by openspec/changes/topic-generation/specs/api-contract-freeze/
 // spec.md's status matrix — 503 (unconfigured, byte-identical to pre-change),
-// 503 (open-network, distinct detail), 400 (no-transcript), 409 (busy/at-
+// 400 (no-transcript), 409 (busy/at-
 // capacity), 200 {topics} (success, shape matches GET …/topics), 502
 // (failure, fixed detail, prior topics byte-for-byte unchanged) — plus the
 // unchanged 404 (requireSession) and transcribe.csv's unchanged 503. No
@@ -154,7 +154,6 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
       {
         CLAUDE_CLI_PATH: cliPath,
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
         ...overrides,
       },
       portOverrides,
@@ -234,25 +233,6 @@ describe('topics/generate — configured behavior (topic-generation)', () => {
     expect(await res.json()).toEqual({
       detail: 'Transcription is unavailable on this deployment.',
     });
-    expect(neverSpawned(s)).toBe(true);
-  });
-
-  it('open-network + configured: 503 with a distinct detail, no spawn', async () => {
-    const s = await newSession();
-    seedTranscript(s);
-    const res = await generateReq(
-      s,
-      envWith({
-        CLAUDE_CLI_PATH: SUCCESS_STREAM_FIXTURE,
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-      }),
-    );
-    expect(res.status).toBe(503);
-    const detail = ((await res.json()) as { detail: string }).detail;
-    expect(detail).toMatch(/network|allowlist|loopback|login/i);
-    expect(detail).not.toBe('Transcription is unavailable on this deployment.');
     expect(neverSpawned(s)).toBe(true);
   });
 
@@ -526,7 +506,7 @@ describe('topics/generate — page-coverage gate on the crash-safe swap', () => 
     app.request(
       `/api/sessions/${sessionId}/topics/generate`,
       { method: 'POST' },
-      envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+      envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1' }),
     );
 
   // Every strict subset of the snapshot's pages, including the two the gate
@@ -939,11 +919,7 @@ describe('transcript generation', () => {
     const mySession = await seedSession({ showId: myShow });
     const cookie = await loginCookie(await seedUser({ studios: [myStudio] }));
 
-    const res = await generate(
-      mySession,
-      { headers: { Cookie: cookie } },
-      deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
-    );
+    const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
     expect(res.status).toBe(409);
     const body = (await res.json()) as { detail: string };
     // The identifier-free generic detail — never the holder's id or title.
@@ -973,7 +949,7 @@ describe('transcript generation', () => {
       const res = await generate(
         mySession,
         { headers: { Cookie: cookie } },
-        deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+        deepgramConfiguredEnv(),
       );
       expect(res.status).toBe(409);
       const body = (await res.json()) as { detail: string };
@@ -997,11 +973,7 @@ describe('transcript generation', () => {
     const mySession = await seedSession({ showId: myShow });
     const cookie = await loginCookie(await seedUser({ studios: [myStudio, holderStudio] }));
 
-    const res = await generate(
-      mySession,
-      { headers: { Cookie: cookie } },
-      deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
-    );
+    const res = await generate(mySession, { headers: { Cookie: cookie } }, deepgramConfiguredEnv());
     expect(res.status).toBe(409);
     const body = (await res.json()) as { detail: string };
     expect(body.detail).toContain('Visible Holder Title');
@@ -1081,7 +1053,7 @@ describe('transcript generation', () => {
       const res = await generate(
         mySession,
         { headers: { Cookie: cookie } },
-        deepgramConfiguredEnv({ REQUIRE_LOGIN: '1' }),
+        deepgramConfiguredEnv(),
       );
       expect(res.status).toBe(409);
       // Exact match on the package's `generationInFlightDetail(...)` output
@@ -1268,15 +1240,19 @@ describe('transcript generation lock status', () => {
   });
 
   it('busy with missing catalog row: session_title is null', async () => {
-    const ghostId = 'ghost-session-no-row';
+    // A member may view the holder, but the catalog lookup finds no (visible) session row: the
+    // session is hidden. (A holder with no row at all has no studio, so no signed-in caller can
+    // view it; only the removed anonymous mode could — require-login.)
+    const { sessionId } = await seededSession();
+    await env.ports.catalog.run('UPDATE sessions SET ui_hidden = 1 WHERE id = ?', sessionId);
     const startedAtMs = 1_700_000_000_000;
-    expect(transcriptGenerationLock.tryAcquire(ghostId, startedAtMs)).toBe(true);
+    expect(transcriptGenerationLock.tryAcquire(sessionId, startedAtMs)).toBe(true);
 
     const res = await status();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       in_flight: true,
-      session_id: ghostId,
+      session_id: sessionId,
       session_title: null,
       started_at: new Date(startedAtMs).toISOString(),
     });
@@ -1286,8 +1262,7 @@ describe('transcript generation lock status', () => {
   // holder can belong to a studio the requester is not a member of. Sibling
   // routes close the existence/title oracle by 404ing non-members; here
   // busy-ness stays truthful but the identifiers are nulled (same key set,
-  // null values). The anonymous `busy:` test above pins the dev-mode
-  // (REQUIRE_LOGIN=0, user === null) full-detail behavior.
+  // null values). The `busy:` test above pins the member's full-detail view.
 
   it('busy for a logged-in NON-member of the holder’s studio: identifiers are null, busy-ness truthful', async () => {
     const holderStudio = await seedStudio();
@@ -1302,7 +1277,7 @@ describe('transcript generation lock status', () => {
     const res = await app.request(
       '/api/transcript-generation/status',
       { method: 'GET', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      { ...env },
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -1325,7 +1300,7 @@ describe('transcript generation lock status', () => {
     const res = await app.request(
       '/api/transcript-generation/status',
       { method: 'GET', headers: { Cookie: cookie } },
-      envWith({ REQUIRE_LOGIN: '1' }),
+      { ...env },
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({

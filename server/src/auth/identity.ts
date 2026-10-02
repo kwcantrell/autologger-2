@@ -118,9 +118,10 @@ export function requestHasValidAdminToken(req: Request, adminToken: string): boo
   return timingSafeEqual(got, expected);
 }
 
-/** GET /api/profile is the only anonymous API when strict login is on; /api/admin/* is token-gated. */
+/** GET (and HEAD, which Hono serves through the GET handler) /api/profile is the only anonymous
+ * API; /api/admin/* is token-gated (require-login D2). */
 export function apiRequestRequiresLogin(path: string, method: string): boolean {
-  if (path === '/api/profile' && method === 'GET') return false;
+  if (path === '/api/profile' && (method === 'GET' || method === 'HEAD')) return false;
   if (path.startsWith('/api/admin/')) return false;
   return path.startsWith('/api/');
 }

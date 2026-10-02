@@ -13,8 +13,8 @@ import { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { wireApp } from '../app';
 import type { AppEnv } from '../appEnv';
-import { env } from '../test/harness';
-import { seededSession, setCompanionPresence } from '../test/helpers';
+import { defaultUser, env } from '../test/harness';
+import { COMPANION_BEARER, seededSession, setCompanionPresence } from '../test/helpers';
 
 let server: ServerType;
 let port: number;
@@ -37,9 +37,13 @@ beforeAll(async () => {
 
 afterAll(() => server.close());
 
-function connect(sessionId: string): Promise<WebSocket> {
+/** Opens a session WebSocket as the default signed-in member (require-login D12). */
+async function connect(sessionId: string): Promise<WebSocket> {
+  const { cookie } = await defaultUser();
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/sessions/${sessionId}/ws`, {
+      headers: { cookie },
+    } as unknown as string[]);
     ws.addEventListener('open', () => resolve(ws));
     ws.addEventListener('error', (e) => reject(e));
   });
@@ -63,7 +67,7 @@ describe('companion WebSocket relay (Node)', () => {
     setCompanionPresence('c1', s);
     const cmd = await fetch(`http://127.0.0.1:${port}/api/companion/command`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...COMPANION_BEARER },
       body: JSON.stringify({ type: 'record-start' }),
     });
     expect(cmd.status).toBe(200);

@@ -100,9 +100,7 @@ export function AppShell() {
   const { mutateAsync: runYoutubeImport } = useYoutubeImport();
 
   // Post-login deep-link return (design D6): keyed explicitly on
-  // `auth.logged_in === true`, never on this component merely mounting —
-  // dev anonymous mode mounts AppShell with `logged_in: false` and must
-  // never consume a stashed path.
+  // `auth.logged_in === true`, never on this component merely mounting.
   useLoginReturnConsume(profile?.auth.logged_in === true);
 
   const closeRail = useCallback(() => setRailOpen(false), []);
@@ -247,9 +245,7 @@ export function AppShell() {
   // Zero-membership onboarding (teams-self-serve, task 6.3; design D8): a
   // render switch INSIDE the authed shell, keyed on `logged_in && teams
   // .length === 0` — never on `studios` emptiness alone, so this can't
-  // misfire for dev-anonymous (whose profile always reports the built-in
-  // studio in `studios` but has `logged_in: false` / `user: null`) or for a
-  // still-loading profile (`profile === undefined`). A team-less logged-in
+  // misfire for a still-loading profile (`profile === undefined`). A team-less logged-in
   // user has no active studio to drive the rail/workspace, so this replaces
   // the whole shell rather than degrading part of it.
   const needsOnboarding = profile?.auth.logged_in && profile.auth.user?.teams.length === 0;
