@@ -2,127 +2,22 @@
 
 ## Purpose
 
-Self-serve team lifecycle for the web app: every membership carries a role (`admin` or
-`member`), authenticated users can create their own teams and manage them through the
-`/api/teams/*` endpoint family and the `/teams` web UI, admins invite members by email
-(materializing against existing users immediately or as a pending invite consumed at
-first verified sign-in), and a global last-enabled-admin invariant prevents a team from
-losing all its admins through any self-serve operation. Built-in teams (`test-studios`,
-`test-studio-2`) stay excluded from this surface and remain support-managed through the
-frozen admin plane. Content operations (sessions, events, shows, studio settings) stay
-role-agnostic — this capability governs team membership and lifecycle, not content
-access.
+Self-serve team lifecycle for the web app: every membership carries a role (`owner`, `admin`
+or `member`), authenticated users can create their own teams (becoming their owner) and manage
+them through the `/api/teams/*` endpoint family and the `/teams` web UI. Each team has at most
+one owner, enforced in the database; the owner anchors the team (it cannot leave, be removed or
+be demoted without transferring ownership) and alone changes roles and deletes the team, while
+admins rename, invite and remove members. Invites materialize against existing users
+immediately or as a pending invite consumed at first verified sign-in. The bootstrap owner
+(`BOOTSTRAP_OWNER_EMAIL`) claims every ownerless team at sign-in. Teams once
+hardcoded in the product (`test-studios`, `test-studio-2`) are ordinary teams. Content operations (sessions, events,
+shows, studio settings) stay role-agnostic — this capability governs team membership and
+lifecycle, not content access.
 
 ## Requirements
 
-### Requirement: Membership roles
-Every team membership SHALL carry a role, `admin` or `member`. Team-management
-operations (rename, delete, invite, revoke invite, change a member's role, remove a
-member) SHALL require the caller to be an authenticated `admin` of that team. Content
-operations (sessions, events, shows, studio settings) SHALL remain role-agnostic —
-any member keeps the access they have today, and the per-session authorization path
-(`requireSession`) SHALL NOT consult roles. All `/api/teams/*` endpoints SHALL
-require an authenticated user (`401` otherwise). For a team the caller is not a member of, team
-endpoints SHALL respond with a masked `404` (existence not confirmed, matching the
-sessions posture); for a team the caller is a member of without the required role,
-`403`. Built-in teams (`test-studios`, `test-studio-2`) are excluded from the ENTIRE
-`/api/teams/:id` management surface — every operation on a built-in id, by any
-caller, SHALL be rejected with a `400` validation error (they remain support-managed
-through the frozen admin plane).
-
-#### Scenario: Admin manages, member cannot
-- **WHEN** a team `admin` renames the team and a plain `member` of the same team
-  attempts the same rename
-- **THEN** the admin's request succeeds and the member's responds `403`
-
-#### Scenario: Non-member cannot probe a team
-- **WHEN** an authenticated user who is not a member of team T calls any
-  `/api/teams/T/*` operation, and another user calls the same operation for a team
-  id that does not exist
-- **THEN** both receive the same masked `404`
-
-#### Scenario: Built-ins rejected on every management route
-- **WHEN** any authenticated user (member of the built-in or not) calls any
-  `/api/teams/:id/*` operation — rename, delete, invite, revoke, role change,
-  remove, or leave — against a built-in team id
-- **THEN** the request is rejected with `400` and nothing changes
-
-#### Scenario: Content access is role-blind
-- **WHEN** a `member` (not admin) works with shows, sessions, and events in their
-  team
-- **THEN** every content operation behaves exactly as before this change
-
-### Requirement: Self-serve team creation
-Any authenticated user SHALL be able to create a team, providing a slug id and a
-display name. Validation SHALL reuse the existing admin-path slug validator (the
-`STUDIO_ID_SLUG_RE` regex — lowercase, starts with a letter, letters/digits/hyphens,
-2–63 chars — not merely length bounds), reject built-in ids and duplicates, and
-require a non-empty display name ≤200 chars. The creator SHALL become the team's
-sole initial `admin`. Team ids SHALL be immutable after creation (rename changes
-only the display name). **Creation cap (DoS control, gate ruling 2026-07-14):** a
-user who is already `admin` of 20 or more non-built-in teams SHALL receive a `400`
-with an actionable message instead of a new team; the support plane is not subject
-to the cap.
-
-#### Scenario: Create and own a team
-- **WHEN** a signed-in user creates team `my-crew` with display name "My Crew"
-- **THEN** the team exists, appears in the creator's profile teams with
-  `role: "admin"`, and the creator can immediately perform admin operations on it
-
-#### Scenario: Reserved and duplicate ids rejected
-- **WHEN** a user attempts to create a team with a built-in id (e.g. `test-studios`)
-  or an id that already exists
-- **THEN** the request fails with a validation error and no team is created
-
-#### Scenario: Creation cap
-- **WHEN** a user who is already admin of 20 non-built-in teams attempts to create
-  another
-- **THEN** the request is rejected with `400` and an actionable message
-
-### Requirement: Team lifecycle and last-admin protection
-Team admins SHALL be able to rename their team, promote a `member` to `admin`,
-demote an `admin` to `member` (including themselves), remove a member, and delete
-the team; any member SHALL be able to leave a team. Deleting a team SHALL keep the
-existing rule: it is rejected while the team still has shows. Deleting SHALL remove
-the team's memberships, pending invites, definition row, and settings blob — through
-the same store method the admin plane uses, so both planes cascade identically.
-
-**Last-admin protection is a global invariant, not an operation list:** no operation
-on this surface — demote, remove, leave, or any membership upsert side effect —
-SHALL reduce a team's count of **enabled** admins (admins whose accounts are not
-disabled) to zero; a violating request SHALL be rejected with `409` and change
-nothing. The admin count and the mutation SHALL execute within a single catalog
-transaction (the check is race-free only inside the transaction).
-
-**Revocation latency:** removal, leave, and delete take effect at the next
-authorization check (HTTP request or WebSocket establishment); live connections and
-already-mounted workspaces are not force-terminated — this is the accepted semantic,
-consistent with the latched-resolution behavior of the session UI.
-
-#### Scenario: Promote, demote, remove
-- **WHEN** a team admin promotes member M to admin, then demotes them back, then
-  removes them
-- **THEN** each operation succeeds in turn and the members list reflects it
-
-#### Scenario: Last enabled admin cannot be stripped
-- **WHEN** a team's only other admin account is disabled and any actor attempts to
-  demote the sole enabled admin, remove them, or that admin attempts to leave
-- **THEN** the operation is rejected with `409` and the membership is unchanged
-
-#### Scenario: Delete blocks on shows
-- **WHEN** an admin attempts to delete a team that still has shows
-- **THEN** the request is rejected (same behavior as the existing admin-plane
-  delete) and the team survives
-
-#### Scenario: Removed member's live session is not severed mid-flight
-- **WHEN** an admin removes member M while M has a session workspace open in that
-  team
-- **THEN** M's next authorization-checked interaction (new HTTP request or WS
-  connect) is denied, but the removal request itself does not terminate M's live
-  connections
-
 ### Requirement: Email invites
-Team admins SHALL invite people by email. Emails SHALL be normalized as
+Team admins and the owner SHALL invite people by email. Emails SHALL be normalized as
 lowercase-trimmed exact strings — normalization performed in application code
 (JS `toLowerCase().trim()`) identically at invite time and sign-in time, never via
 SQL `lower()` (ASCII-only folding) — with no Gmail-style alias canonicalization.
@@ -131,11 +26,11 @@ normalized email matches the email of record of one or more existing user rows
 (**including disabled accounts** — membership is inert while disabled and this
 avoids unmaterializable pendings), `member` membership SHALL be granted immediately
 to every matching user; a matching user who already holds membership is left
-untouched (existing role preserved — an invite is never a role downgrade and cannot
-interact with last-admin protection). If no user matches, a pending invite SHALL be
+untouched (existing role preserved — an invite never changes a role, the owner's
+included). If no user matches, a pending invite SHALL be
 recorded (one per team+email; re-inviting is idempotent). **Pending-invite cap (DoS
 control, gate ruling 2026-07-14):** a team SHALL hold at most 200 pending invites;
-further invites are rejected `400`. Admins SHALL be able to list and revoke their
+further invites are rejected `400`. Admins and the owner SHALL be able to list and revoke their
 team's pending invites; revocation is idempotent (`200` whether or not the invite
 existed); a revoked invite never materializes.
 
@@ -157,9 +52,9 @@ the admin's remedy is to re-invite the address the account actually uses.
 
 #### Scenario: Inviting an existing member is a no-op
 - **WHEN** an admin invites the email of a user who is already a member — including
-  the team's sole admin
+  the team's owner
 - **THEN** the request succeeds with no change to the existing membership or role
-  (the sole admin is not demoted)
+  (the owner is not demoted)
 
 #### Scenario: Invite before first sign-in
 - **WHEN** an admin invites `New.Person@Example.com`, and later a Google account
@@ -183,13 +78,15 @@ the admin's remedy is to re-invite the address the account actually uses.
 ### Requirement: NEW_USER_ALL_TEAMS deprecated
 The server SHALL ignore the `NEW_USER_ALL_TEAMS` environment variable: new users
 receive exactly the memberships materialized from pending invites (possibly none),
-never a blanket grant. When the variable is set, the server SHALL log a one-time
+never a blanket grant. The one addition is the bootstrap owner, who also becomes owner of every
+ownerless team at sign-in ("Bootstrap owner"); that claim does not read this variable. When the
+variable is set, the server SHALL log a one-time
 deprecation warning at startup. Documentation (`README`, `.env.example`) SHALL
 reflect the deprecation.
 
 #### Scenario: Blanket grant no longer happens
 - **WHEN** the server runs with `NEW_USER_ALL_TEAMS=1` and a user with no pending
-  invites signs in for the first time
+  invites, whose email is not the bootstrap owner's, signs in for the first time
 - **THEN** the new user has zero team memberships and a deprecation warning was
   logged at startup
 
@@ -198,101 +95,32 @@ When an authenticated user's profile reports no team memberships, the web app SH
 render an onboarding state offering to create their first team in place of the
 team-dependent views (`/`'s workspace, which cannot function without a team, and
 equivalently `/teams`), and completing that creation SHALL
-land the user in the new team as its admin with the app usable (team active,
+land the user in the new team as its owner with the app usable (team active,
 show-creation reachable). Users whose invites materialized at sign-in never see this
-state — they land in their invited team.
+state — they land in their invited team. A new user's active team and show SHALL NOT be seeded
+from any global setting: they start empty, and the first team the user can reach applies.
 
 #### Scenario: First-team onboarding
 - **WHEN** a newly signed-up user with zero memberships loads `/`
-- **THEN** the onboarding state renders with a create-team affordance, and
-  completing it lands them in the created team as admin
-
-### Requirement: Concurrent team writes
-Every team write SHALL decide its outcome from the state it commits against, so concurrent
-requests end as if they had run one after the other.
-
-- **Admin re-check.** A team admin write (rename, delete, invite, revoke, role change, remove)
-  SHALL re-check the caller's admin role inside the catalog transaction that performs the write.
-  A caller demoted or removed by a concurrently committed request SHALL receive the status that
-  check gives when run alone (`403`, or the masked `404`), and SHALL change nothing. The early
-  role check stays, so the order of statuses (`401`, `404`, `403`, then validation `400`) is
-  unchanged.
-- **Creation.** The cap count, the team definition and the creator's admin membership SHALL be
-  written in one transaction. Concurrent creates SHALL NOT take a user past the creation cap.
-  Id validation, including the built-in reservation, SHALL come first. Then, inside the
-  transaction:
-  - an id that still has shows SHALL be refused with `400`;
-  - any membership rows, pending invite rows and settings left under the id SHALL be removed
-    before the creator is added, so a reused id starts with only its creator and default
-    settings.
-
-  The admin plane's team creation SHALL apply the same refusal and removal.
-- **Invites.** The user lookup, the pending-invite cap and the grant or pending row SHALL be
-  written in one transaction. Concurrent invites SHALL NOT take a team past the cap.
-- **Role change.** A role change SHALL update an existing membership only. When the target is not
-  a member when the change commits, the request SHALL get `404 Member not found`, and no
-  membership SHALL be created.
-- **Removal.** Removing a member SHALL check the membership inside the transaction that removes
-  it. A removal whose target is already gone SHALL get `404`.
-- **Show creation.** Creating a show SHALL check, inside its transaction, that the team exists
-  (a defined team or a built-in one) and that the caller may use it. A show SHALL NOT be created
-  for a team deleted concurrently; that request gets `400 Unknown studio id.`.
-- **Admin plane.** The admin-plane membership add SHALL re-check the team inside its
-  transaction. The admin plane's membership removal, account disable and membership upsert
-  SHALL NOT be subject to last-admin protection (api-contract-freeze, "Admin add-membership role
-  field"). A race between one of them and any team-plane demote, remove or leave SHALL end as
-  some serial order of the two requests.
-- **Cross-team independence.** Team-scoped reads and writes SHALL NOT make writes in another team
-  fail. Concurrent writes in two different teams SHALL both succeed.
-
-#### Scenario: A demoted admin's in-flight delete changes nothing
-- **WHEN** admin B's team delete has passed its early role check, and admin A's demotion of B commits before B's delete transaction
-- **THEN** B's request gets `403` and the team still exists
-
-#### Scenario: Concurrent creates respect the cap
-- **WHEN** a user who admins 19 non-built-in teams sends two team creates at the same time
-- **THEN** exactly one succeeds and the other gets the cap `400`
-
-#### Scenario: A reused team id starts empty
-- **WHEN** an invite for team `acme` races the deletion of `acme`, and later another user creates a team `acme`
-- **THEN** the new team has only its creator as a member, no pending invites, and default settings
-
-#### Scenario: A built-in id is never purged
-- **WHEN** a user tries to create a team with the built-in id `test-studios`
-- **THEN** the request gets the existing `400`, and every existing `test-studios` membership is unchanged
-
-#### Scenario: Writes in different teams don't conflict
-- **WHEN** two users create two different teams at the same time, and two admins of two different teams invite at the same time
-- **THEN** all four requests succeed
-
-#### Scenario: Concurrent invites respect the pending cap
-- **WHEN** a team holds 199 pending invites and two invites for different new emails arrive at the same time
-- **THEN** exactly one is recorded and the other gets the cap `400`
-
-#### Scenario: A promotion racing a removal does not resurrect the member
-- **WHEN** an admin promotes member M while another admin removes M, and the removal commits first
-- **THEN** the promotion gets `404 Member not found` and M has no membership
-
-#### Scenario: A raced double removal
-- **WHEN** two admins remove the same member at the same time
-- **THEN** one gets `200` and the other gets `404`
-
-#### Scenario: No show for a deleted team
-- **WHEN** a show create for team T has passed its checks, and the deletion of T commits before the show is inserted
-- **THEN** the show create gets `400 Unknown studio id.`, and no show references T
+- **THEN** the onboarding state renders with a create-team affordance that says the user will
+  be the team's owner, and completing it lands them in the created team as owner
 
 ### Requirement: Teams management page
 The web app SHALL provide team management at the `/teams` route, reachable from the
-app shell: the user's teams with their role in each, a create-team affordance, and —
-for teams where the user is `admin` — management controls (rename, members list with
-roles, invite by email, pending-invite list with revoke, promote/demote, remove
-member, delete team). For teams where the user is a plain `member`, the view SHALL
-be read-only (members list) plus a leave affordance; pending invites SHALL NOT be
-shown to non-admins. A member's view of a team with zero enabled admins SHALL state
-that the team has no admins and needs support (no self-heal affordance exists by
-design). Built-in team memberships SHALL render as read-only legacy entries with no
-management or leave affordances. Mutations SHALL be reflected in the UI without a manual reload. Errors
-surfaced by the last-admin protection, caps, and validation rules SHALL be presented
+app shell: the user's teams with their role in each and a create-team affordance. Each team
+SHALL render one of three views, by the user's role in it:
+- **owner:** rename, members list with roles, invite by email, pending-invite list with revoke,
+  promote/demote, remove member, "Transfer ownership" on each other member, and delete team. No
+  leave affordance.
+- **admin:** rename, members list with roles, invite by email, pending-invite list with revoke,
+  and remove on `member` rows. No role toggles, no transfer, no delete; a leave affordance.
+- **member:** the read-only members list plus a leave affordance; pending invites SHALL NOT be
+  shown.
+
+A view of a team that has no owner SHALL show a notice that the team has no owner and needs
+support; an admin's view keeps its admin controls under the notice. There are no built-in team rows: every team
+renders by role. Mutations SHALL be reflected in the UI without a manual reload. Errors
+surfaced by the owner rules, caps, and validation rules SHALL be presented
 as actionable messages, not silent failures.
 
 The `/teams` route SHALL remain a full citizen of the app shell: the shell's settings
@@ -305,8 +133,13 @@ path's no-open-session guard applies).
 
 #### Scenario: Admin sees controls, member does not
 - **WHEN** a user who is admin of team A and member of team B opens `/teams`
-- **THEN** team A shows the full management controls (including pending invites) and
-  team B shows the read-only view with leave
+- **THEN** team A shows rename, invites (including pending invites) and remove on member rows,
+  with no role toggles, transfer or delete; and team B shows the read-only view with leave
+
+#### Scenario: Owner sees role and ownership controls
+- **WHEN** the owner of team A opens `/teams`
+- **THEN** team A shows the admin controls plus role toggles, "Transfer ownership" on other
+  members, and delete, and shows no leave affordance
 
 #### Scenario: Invite flow round-trip
 - **WHEN** an admin invites an email from `/teams` and then revokes it
@@ -314,10 +147,10 @@ path's no-open-session guard applies).
   after revoking, without a page reload
 
 #### Scenario: Orphaned team is visible as such
-- **WHEN** a member opens `/teams` for a team whose only admins are disabled or
-  removed (support-plane action)
-- **THEN** the team renders with a no-admins-contact-support notice instead of
-  management controls
+- **WHEN** a member opens `/teams` for a team that has no owner (a former built-in before the
+  bootstrap claim, or after a support-plane action)
+- **THEN** the team renders with a no-owner-contact-support notice instead of management
+  controls
 
 #### Scenario: Signed-out visitor gets the login view
 - **WHEN** `/teams` is loaded by a signed-out visitor
@@ -338,3 +171,295 @@ path's no-open-session guard applies).
   `/` and `/teams`)
 - **THEN** the modal remains open and functional, and the shell's Settings state never
   desynchronizes from what is rendered
+
+### Requirement: Team roles: owner, admin and member
+Every team membership SHALL carry a role: `owner`, `admin` or `member`. A team SHALL have at
+most one `owner`, and the catalog SHALL refuse a second one. All `/api/teams/*` endpoints SHALL
+require an authenticated user (`401` otherwise). For a team the caller is not a member of, team
+endpoints SHALL respond with a masked `404` (existence not confirmed, matching the sessions
+posture). For a team the caller is a member of without the required role, they SHALL respond
+`403`. Team-management operations SHALL require these roles:
+
+| Operation | owner | admin | member |
+| --- | --- | --- | --- |
+| rename | yes | yes | `403` |
+| invite, revoke an invite | yes | yes | `403` |
+| remove a `member` | yes | yes | `403` |
+| remove an `admin` | yes | `403` | `403` |
+| change a role (promote or demote) | yes | `403` | `403` |
+| delete the team | yes | `403` | `403` |
+| transfer ownership | yes | `403` | `403` |
+| leave | `409` | yes | yes |
+
+No operation on this surface SHALL target the owner: removing the owner or changing the owner's
+role SHALL be refused with `409` and change nothing, whoever the caller is. Content operations
+(sessions, events, shows, studio settings) SHALL remain role-agnostic: any member keeps the
+access they have today, and the per-session authorization path (`requireSession`) SHALL NOT
+consult roles. There are no built-in teams: every team, `test-studios` and `test-studio-2`
+included, is managed through this surface.
+
+#### Scenario: Admin manages, member cannot
+- **WHEN** a team `admin` renames the team and a plain `member` of the same team attempts the
+  same rename
+- **THEN** the admin's request succeeds and the member's responds `403`
+
+#### Scenario: Only the owner changes roles and deletes
+- **WHEN** a team `admin` attempts to promote a member, demote another admin, or delete the
+  team
+- **THEN** each request responds `403` and nothing changes, and the same requests by the owner
+  succeed (the delete subject to the shows rule)
+
+#### Scenario: Non-member cannot probe a team
+- **WHEN** an authenticated user who is not a member of team T calls any `/api/teams/T/*`
+  operation, and another user calls the same operation for a team id that does not exist
+- **THEN** both receive the same masked `404`
+
+#### Scenario: Former built-ins are ordinary teams
+- **WHEN** the owner of `test-studios` (after the bootstrap claim) renames it, and a non-member
+  calls any `/api/teams/test-studios/*` operation
+- **THEN** the rename succeeds and the non-member gets the masked `404`; no request gets the old
+  built-in `400`
+
+#### Scenario: Content access is role-blind
+- **WHEN** a `member` (not admin or owner) works with shows, sessions, and events in their team
+- **THEN** every content operation behaves exactly as it does for the owner
+
+### Requirement: Self-serve team creation makes the creator owner
+Any authenticated user SHALL be able to create a team, providing a slug id and a display name.
+Validation SHALL reuse the existing admin-path slug validator (the `STUDIO_ID_SLUG_RE` regex —
+lowercase, starts with a letter, letters/digits/hyphens, 2–63 chars — not merely length bounds),
+reject ids that already exist, and require a non-empty display name ≤200 chars. The creator
+SHALL become the team's `owner` and its only member. Team ids SHALL be immutable after creation
+(rename changes only the display name). **Creation cap (DoS control, gate ruling 2026-07-14):**
+a user who already owns 20 or more teams SHALL receive a `400` with an actionable message
+instead of a new team; teams the user only admins or belongs to SHALL NOT count, and the support
+plane is not subject to the cap.
+
+#### Scenario: Create and own a team
+- **WHEN** a signed-in user creates team `my-crew` with display name "My Crew"
+- **THEN** the team exists, the response and the creator's profile teams carry
+  `role: "owner"`, and the creator can immediately perform owner operations on it
+
+#### Scenario: Existing ids rejected
+- **WHEN** a user attempts to create a team with the id `test-studios`, or any id that already
+  exists
+- **THEN** the request fails with the "already exists" `400` and no team is created or changed
+
+#### Scenario: Creation cap counts owned teams
+- **WHEN** a user who owns 20 teams attempts to create another, and a user who owns 19 teams and
+  admins 5 more attempts the same
+- **THEN** the first is rejected with `400` and an actionable message, and the second succeeds
+
+### Requirement: Owner-anchored team lifecycle
+The owner and admins SHALL be able to rename their team and remove a `member`. Only the owner
+SHALL be able to promote a `member` to `admin`, demote an `admin` to `member`, remove an
+`admin`, transfer ownership, and delete the team. Any member other than the owner SHALL be able
+to leave. Deleting a team SHALL keep the existing rule: it is rejected while the team still has
+shows. Deleting SHALL remove the team's memberships, pending invites, definition row, and
+settings blob — through the same store method the admin plane uses, so both planes cascade
+identically.
+
+**The owner anchors the team.** The owner SHALL NOT leave, be removed or have their role changed
+through this surface; each such request SHALL be rejected with `409` (`Transfer ownership
+first.`) and change nothing. Last-admin protection SHALL NOT exist: an owner may demote or
+remove every admin, and a team whose only admin-capable member is the owner is valid.
+
+**Transfer.** `POST /api/teams/:id/owner {user_id}` SHALL make `user_id` the owner and the
+previous owner an `admin`, in one catalog transaction. The target SHALL be a current member of
+the team (`404 Member not found` otherwise) whose account is enabled (`400` otherwise). A
+transfer to the caller themselves SHALL succeed and change nothing.
+
+**Revocation latency:** removal, leave, demotion, transfer and delete take effect at the next
+authorization check (HTTP request or WebSocket establishment); live connections and
+already-mounted workspaces are not force-terminated — this is the accepted semantic, consistent
+with the latched-resolution behavior of the session UI.
+
+#### Scenario: Promote, demote, remove
+- **WHEN** a team owner promotes member M to admin, then demotes them back, then removes them
+- **THEN** each operation succeeds in turn and the members list reflects it
+
+#### Scenario: An admin removes members but not admins
+- **WHEN** admin A removes member M, and then attempts to remove admin B
+- **THEN** M's removal succeeds, and the attempt on B responds `403` and B keeps their membership
+
+#### Scenario: The owner cannot leave or be stripped
+- **WHEN** the owner attempts to leave, and an admin or the owner attempts to remove the owner or
+  change the owner's role
+- **THEN** each request responds `409` with `Transfer ownership first.` and the owner's
+  membership is unchanged
+
+#### Scenario: Transfer ownership
+- **WHEN** owner O transfers ownership of the team to member M
+- **THEN** M is the owner, O is an `admin`, the team has exactly one owner, and O can now leave
+
+#### Scenario: Transfer to a non-member or a disabled account
+- **WHEN** the owner transfers ownership to a user who is not a member of the team, and then to a
+  member whose account is disabled
+- **THEN** the first responds `404 Member not found`, the second responds `400`, and the owner is
+  unchanged
+
+#### Scenario: Delete blocks on shows
+- **WHEN** the owner attempts to delete a team that still has shows
+- **THEN** the request is rejected (same behavior as the existing admin-plane delete) and the
+  team survives
+
+#### Scenario: Removed member's live session is not severed mid-flight
+- **WHEN** an admin removes member M while M has a session workspace open in that team
+- **THEN** M's next authorization-checked interaction (new HTTP request or WS connect) is denied,
+  but the removal request itself does not terminate M's live connections
+
+### Requirement: Concurrent team and ownership writes
+Every team write SHALL decide its outcome from the state it commits against, so concurrent
+requests end as if they had run one after the other.
+
+- **Role re-check.** A team write (rename, delete, invite, revoke, role change, remove, transfer)
+  SHALL re-check the caller's role inside the catalog transaction that performs the write. A
+  caller demoted, removed or no longer owner because of a concurrently committed request SHALL
+  receive the status that check gives when run alone (`403`, or the masked `404`), and SHALL
+  change nothing. The early role check stays, so the order of statuses (`401`, `404`, `403`,
+  then validation `400`) is unchanged.
+- **Target re-check.** The target's membership and role SHALL be read inside the same
+  transaction: a target that is gone gets `404 Member not found`, and a target that is the owner
+  when the write commits gets the owner `409`.
+- **Creation.** The cap count, the team definition and the creator's owner membership SHALL be
+  written in one transaction. Concurrent creates SHALL NOT take a user past the creation cap. Id
+  validation SHALL come first. Then, inside the transaction:
+  - an id that still has shows SHALL be refused with `400`;
+  - any membership rows, pending invite rows and settings left under the id SHALL be removed
+    before the creator is added, so a reused id starts with only its creator and default
+    settings.
+
+  The admin plane's team creation SHALL apply the same refusal and removal.
+- **Invites.** The user lookup, the pending-invite cap and the grant or pending row SHALL be
+  written in one transaction. Concurrent invites SHALL NOT take a team past the cap.
+- **Role change.** A role change SHALL update an existing membership only. When the target is not
+  a member when the change commits, the request SHALL get `404 Member not found`, and no
+  membership SHALL be created.
+- **Removal.** Removing a member SHALL check the membership inside the transaction that removes
+  it. A removal whose target is already gone SHALL get `404`.
+- **Transfer.** The demotion of the old owner and the promotion of the target SHALL commit
+  together or not at all. Whatever the interleaving of transfers, leaves, removals, the bootstrap
+  claim and the admin plane's owner upsert, a team SHALL never have two owners, and a team that
+  had an owner SHALL still have exactly one after any of these team-plane writes.
+- **Show creation.** Creating a show SHALL check, inside its transaction, that the team exists (a
+  defined team) and that the caller may use it. A show SHALL NOT be created for a team deleted
+  concurrently; that request gets `400 Unknown studio id.`.
+- **Admin plane.** The admin-plane membership add SHALL re-check the team inside its transaction.
+  The admin plane's membership removal, account disable and non-owner membership upsert SHALL NOT
+  be subject to the owner rules of this surface (api-contract-freeze, "Admin add-membership role
+  field"). A race between one of them and any team-plane write SHALL end as some serial order of
+  the two requests.
+- **Cross-team independence.** Team-scoped reads and writes SHALL NOT make writes in another team
+  fail. Concurrent writes in two different teams SHALL both succeed.
+
+#### Scenario: A demoted admin's in-flight rename changes nothing
+- **WHEN** admin B's rename has passed its early role check, and the owner's demotion of B
+  commits before B's rename transaction
+- **THEN** B's request gets `403` and the team keeps its name
+
+#### Scenario: Concurrent creates respect the cap
+- **WHEN** a user who owns 19 teams sends two team creates at the same time
+- **THEN** exactly one succeeds and the other gets the cap `400`
+
+#### Scenario: A reused team id starts empty
+- **WHEN** an invite for team `acme` races the deletion of `acme`, and later another user creates
+  a team `acme`
+- **THEN** the new team has only its creator as a member, no pending invites, and default settings
+
+#### Scenario: Two concurrent transfers leave one owner
+- **WHEN** the owner sends two transfers of the same team, to members M and N, at the same time
+- **THEN** one succeeds, the other gets `403`, and the team has exactly one owner, M or N, with
+  the old owner an `admin`
+
+#### Scenario: A transfer racing the target's leave
+- **WHEN** the owner transfers ownership to member M while M leaves the team
+- **THEN** either the leave commits first and the transfer gets `404 Member not found`, or the
+  transfer commits first and M's leave gets `409`; in both cases the team has exactly one owner
+
+#### Scenario: Writes in different teams don't conflict
+- **WHEN** two users create two different teams at the same time, and two admins of two different
+  teams invite at the same time
+- **THEN** all four requests succeed
+
+#### Scenario: Concurrent invites respect the pending cap
+- **WHEN** a team holds 199 pending invites and two invites for different new emails arrive at the
+  same time
+- **THEN** exactly one is recorded and the other gets the cap `400`
+
+#### Scenario: A promotion racing a removal does not resurrect the member
+- **WHEN** the owner promotes member M while an admin removes M, and the removal commits first
+- **THEN** the promotion gets `404 Member not found` and M has no membership
+
+#### Scenario: A raced double removal
+- **WHEN** two admins remove the same member at the same time
+- **THEN** one gets `200` and the other gets `404`
+
+#### Scenario: No show for a deleted team
+- **WHEN** a show create for team T has passed its checks, and the deletion of T commits before
+  the show is inserted
+- **THEN** the show create gets `400 Unknown studio id.`, and no show references T
+
+### Requirement: Bootstrap owner
+The server SHALL read one email address from `BOOTSTRAP_OWNER_EMAIL`. The match SHALL be exact
+ASCII: both sides are trimmed and ASCII-lowercased (only `A`-`Z` fold), never Unicode-folded. A
+sign-in whose verified email contains any non-ASCII character SHALL NOT claim (the sign-in still
+succeeds, and the refusal is logged). On every successful Google sign-in, new account or
+existing, whose verified email matches that address this way, the signed-in user SHALL become `owner` of every team
+that has no owner when the claim commits: an existing membership is upgraded to `owner`, and
+otherwise an `owner` membership is created. The claim SHALL NOT change a team that already has
+an owner, and SHALL NOT change any other membership: existing admins stay admins. A sign-in by
+any other email SHALL claim nothing. Sign-ins that are refused (unverified email, disabled
+account, identity mismatch) SHALL claim nothing.
+
+The claim SHALL run after the account is created or updated and before the login session is
+issued. If it fails, the server SHALL log the failure without the email value and the sign-in
+SHALL still succeed (fail open); the next sign-in retries it. Concurrent claims and team-plane
+writes SHALL NOT give a team two owners. No migration SHALL assign an owner: teams that exist
+without one (the former built-ins, teams created through the admin plane, teams whose owner
+support removed) stay ownerless until a bootstrap sign-in or a support-plane owner upsert.
+Every team without an owner is claimed, whoever created it (owner decision A, 2026-10-02). The
+claim SHALL log the id of each team it claimed, and never the email.
+
+#### Scenario: First sign-in claims the ownerless teams
+- **WHEN** a fresh catalog holds the ownerless teams `test-studios` and `test-studio-2`, and the
+  bootstrap email signs in for the first time
+- **THEN** the new user is `owner` of both, `GET /api/teams/test-studios` shows
+  `role: "owner"`, and the log names `test-studios` and `test-studio-2` as claimed
+
+#### Scenario: A repeat sign-in claims teams that became ownerless
+- **WHEN** the bootstrap owner has signed in before, support then creates a team through the
+  admin plane, and the bootstrap owner signs in again
+- **THEN** the bootstrap owner is `owner` of the new team, and their other memberships are
+  unchanged
+
+#### Scenario: An owned team is untouched and admins stay admins
+- **WHEN** team T has owner O and admin A, team U has no owner and admin A, and the bootstrap
+  email signs in
+- **THEN** T's owner is still O, the bootstrap user is `owner` of U, and A is still an `admin` of
+  both
+
+#### Scenario: Other emails claim nothing
+- **WHEN** a user whose verified email differs from `BOOTSTRAP_OWNER_EMAIL` signs in while
+  ownerless teams exist
+- **THEN** no membership is created or changed by the sign-in
+
+#### Scenario: The email matches after normalization
+- **WHEN** `BOOTSTRAP_OWNER_EMAIL` is ` Owner@Example.com ` and the Google email is
+  `owner@example.com`
+- **THEN** the sign-in claims the ownerless teams
+
+#### Scenario: A non-ASCII email never matches
+- **WHEN** `BOOTSTRAP_OWNER_EMAIL` is `kalen@gmail.com` and a verified Google email is
+  `Kalen@gmail.com` (U+212A KELVIN SIGN, which JS `toLowerCase` folds to `k`)
+- **THEN** the sign-in succeeds, claims nothing, and logs that the claim was refused
+
+#### Scenario: Teams other users created are claimed
+- **WHEN** team `my-studio`, created by user C before this change, has admin C and no owner, and
+  the bootstrap email signs in
+- **THEN** the bootstrap user is `owner` of `my-studio`, C is still an `admin`, and the log names
+  `my-studio`
+
+#### Scenario: A failed claim does not block sign-in
+- **WHEN** the claim's catalog write fails during the bootstrap owner's sign-in
+- **THEN** the callback still responds `302 /` with a login session, and the failure is logged
+  without the email value

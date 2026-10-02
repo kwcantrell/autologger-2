@@ -379,7 +379,10 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   valid`. Its minor note (6.1's rescue test didn't disable the old owner) is fixed: the test now
   disables O first; `npx vitest run --project integration src/routers/admin.int.test.ts` -> `Tests
   18 passed (18)`.
-- [ ] 9.4 At archive (design D14), edit the Purpose paragraph of
+- [x] 9.4 At archive (design D14), edit the Purpose paragraph of
   `openspec/specs/team-management/spec.md`: roles are owner, admin and member; the owner anchors
   the team; no built-in teams; no last-admin invariant. Verify: `grep -n -i "built-in\|last-admin"
   openspec/specs/team-management/spec.md` hits no Purpose line.
+  Evidence: `sed -n 3,17p openspec/specs/team-management/spec.md | grep -n -i "built-in\|last-admin"`
+  -> no output (exit 1); the Purpose now names owner, admin and member, the owner anchor, the
+  bootstrap owner, and the former hardcoded teams as ordinary teams.
