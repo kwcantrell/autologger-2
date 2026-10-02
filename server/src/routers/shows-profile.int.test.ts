@@ -152,6 +152,28 @@ describe('PUT /api/profile', () => {
     expect(res.status).toBe(200);
   });
 
+  it('anonymous PUT is 401 Login required and writes nothing (require-login D5)', async () => {
+    const sid = await activeStudioId();
+    const show = await seedShow({ studioId: sid, name: 'Anon Write Show', code: 'AW' });
+    const settings = () =>
+      env.ports.catalog.all<{ key: string; value: string }>(
+        "SELECT key, value FROM app_settings WHERE key IN ('active_studio_id', 'active_show_id') ORDER BY key",
+      );
+    const before = await settings();
+    const res = await anonApp.request(
+      '/api/profile',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ active_studio_id: sid, active_show_id: show }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
+    expect(await settings()).toEqual(before);
+  });
+
   it('400 when active_studio_id is missing (signed in)', async () => {
     const res = await app.request(
       '/api/profile',

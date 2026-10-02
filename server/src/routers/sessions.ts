@@ -22,7 +22,6 @@ import {
   formatRuntimeHms,
   formatSmpte,
   isoZ,
-  SETTING_ACTIVE_SHOW,
   sessionDeckDisplayTitle,
   toTotalFrames,
   transportTimecode,
@@ -42,7 +41,7 @@ import {
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { oauthConfigured, ytDlpConfigured } from '../env';
+import { ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
 import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
@@ -113,30 +112,20 @@ function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unkno
 sessionsRouter.get('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = requireUser(c);
-  const active = await catalog.profile.getEffectiveStudioForUser(
-    user,
-    oauthConfigured(c.env.config),
-  );
+  const active = await catalog.profile.getEffectiveStudioForUser(user);
   if (active === null) return c.json({ active: [], archived: [] });
 
   const shows = await catalog.shows.listShowsForStudio(active.id);
   const validShowIds = new Set(shows.map((r) => String(r.id)));
   // `stored` is the raw value read, so the repair below applies only if it is still there.
-  let stored: string | null;
-  if (user === null) {
-    stored = await catalog.studios.getSetting(SETTING_ACTIVE_SHOW);
-  } else {
-    const prow = await catalog.auth.authGetPrefs(user.id);
-    stored = prow ? ((prow.active_show_id as string | null) ?? null) : null;
-  }
+  const prow = await catalog.auth.authGetPrefs(user.id);
+  const stored = prow ? ((prow.active_show_id as string | null) ?? null) : null;
   const rawActiveShow = String(stored ?? '').trim();
   let activeShowId = validShowIds.has(rawActiveShow) ? rawActiveShow : '';
   if (!activeShowId && shows.length) {
     activeShowId = String(shows[0].id);
     // Conditional, so a profile update committed meanwhile wins (catalog-concurrency-hazards D8).
-    if (user === null)
-      await catalog.studios.setSettingIf(SETTING_ACTIVE_SHOW, stored, activeShowId);
-    else await catalog.auth.authReplaceActiveShowIf(user.id, active.id, stored, activeShowId);
+    await catalog.auth.authReplaceActiveShowIf(user.id, active.id, stored, activeShowId);
   }
   if (!activeShowId) return c.json({ active: [], archived: [] });
 
@@ -154,10 +143,7 @@ sessionsRouter.post('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
   const user = requireUser(c);
   const body = newSessionBodySchema.parse(await c.req.json());
-  const active = await catalog.profile.getEffectiveStudioForUser(
-    user,
-    oauthConfigured(c.env.config),
-  );
+  const active = await catalog.profile.getEffectiveStudioForUser(user);
   if (active === null) throw new ApiError(403, 'No team access.');
 
   const showRow = await catalog.shows.getShowRow(body.show_id.trim());

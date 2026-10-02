@@ -176,7 +176,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `REQUIRE_LOGIN` key/title left in test `envWith` literals is removed (`apiToken` loses
   `openLogin`), and `ai-runtime`'s guard-order comments and test label say
   `config/credentials 503`.
-- [ ] 3.2 Remove the anonymous active team and show (D5):
+- [x] 3.2 Remove the anonymous active team and show (D5):
   - the `sessions.ts` list branch;
   - the `profile.ts` `PUT` anonymous transaction;
   - `profileAssembler.getEffectiveStudioForUser(user: AuthUser)`;
@@ -189,6 +189,21 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `oauth_configured` taken from `ctx`; an anonymous `PUT /api/profile` writes nothing (401 from
   the middleware; the settings rows are unchanged).
   Verify: the catalog, server and web suites are green.
+  Evidence: red `5b-3.2-red.log`: catalog `× oauth_configured is taken from ctx (false)` (`Error:
+  the global active studio must not be read for a signed-out caller`); the anonymous `PUT
+  /api/profile` case (`shows-profile`, 401 + `app_settings` rows unchanged) already passed, since
+  the middleware has 401'd it since 2.2 (recorded). Green: `npm run typecheck` exit 0
+  (`5b-3.2-typecheck.log`); catalog `Tests  36 passed (36)` (`5b-3.2-catalog-green.log`); web
+  `Test Files  107 passed (107)`, `Tests  1383 passed` (`5b-3.2-web-green.log`); server
+  `5b-3.2-green-run3.log`: `Tests  935 passed | 3 skipped (938)`. Not clean every run:
+  `sessions.int` "concurrent same-clock creates for the same show never duplicate a title"
+  failed with a `40001` 500 in `5b-3.2-green.log` and `5b-3.2-green-run2.log` (and once in
+  `5b-1.1-red.log`); it passes alone 6/6. It is the signed-in `POST /api/sessions` path (the
+  harness now signs in) exhausting the adapter's 3 SERIALIZABLE tries under full-suite load:
+  not anonymous behavior, and left for the owner. Also: `profileAuthenticated` /
+  `profileLoggedOutOauth` stay; the conformance test's category and `shows[]` checks moved
+  to `profileAuthenticated` (the signed-out capture has no categories or shows), and the
+  signed-out shape stays checked by `profileLoggedOutOauth`.
 
 ## 4. Web (design D8)
 

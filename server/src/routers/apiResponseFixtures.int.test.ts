@@ -156,36 +156,11 @@ describe('GET /api/admin/users', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Profile — every branch of `profilePayload` (audit row 1: three of them)
+// Profile — every branch of `profilePayload` (audit row 1; the anonymous one went with
+// require-login, leaving two)
 // ---------------------------------------------------------------------------
 
 describe('GET /api/profile', () => {
-  it('anonymous (oauth unconfigured) matches the captured fixture', async () => {
-    const studioId = await activeStudioId();
-    await (await initedCatalog()).studios.saveStudioSettingsBlob(studioId, {
-      categories: CATEGORIES,
-      show_title_format: 'ATS',
-      default_frame_rate: 24,
-    });
-    await seedShow({
-      studioId,
-      name: 'All The Smoke',
-      code: 'ATS',
-      categoriesJson: CATEGORIES_JSON,
-    });
-
-    const res = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
-    await expectCapturedResponse(
-      {
-        name: 'profileAnonymous',
-        endpoint: 'GET /api/profile (anonymous, oauth unconfigured)',
-        format: 'ts',
-        exportName: 'profileAnonymous',
-      },
-      res,
-    );
-  });
-
   it('authenticated matches the captured fixture', async () => {
     const teamA = await seedStudio({ id: 'my-crew', name: 'My Crew' });
     const teamB = await seedStudio({ id: 'ymhs', name: 'YMHS' });
@@ -222,8 +197,8 @@ describe('GET /api/profile', () => {
   });
 
   it('logged-out with oauth configured matches the captured fixture', async () => {
-    // The third branch the audit records for `profilePayload` (row 1, branch
-    // i): same key set, but an empty active studio and empty studios/shows.
+    // The signed-out branch (audit row 1, branch i): same key set, but an
+    // empty active studio and empty studios/shows.
     const res = await anonApp.request(
       '/api/profile',
       { method: 'GET' },

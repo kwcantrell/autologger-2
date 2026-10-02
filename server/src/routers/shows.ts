@@ -12,7 +12,6 @@ import {
 } from '@autologger/domain';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { oauthConfigured } from '../env';
 import { requireUser } from './_helpers';
 
 export const showsRouter = new Hono<AppEnv>();
@@ -23,10 +22,7 @@ showsRouter.get('/api/shows', async (c) => {
 
   let sid = (c.req.query('studio_id') ?? '').trim();
   if (!sid) {
-    const eff = await catalog.profile.getEffectiveStudioForUser(
-      user,
-      oauthConfigured(c.env.config),
-    );
+    const eff = await catalog.profile.getEffectiveStudioForUser(user);
     if (eff === null) return c.json({ shows: [] });
     sid = eff.id;
   }

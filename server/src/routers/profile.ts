@@ -4,8 +4,6 @@ import type { ProfileCtx } from '@autologger/catalog';
 import { profileUpdateBodySchema } from '@autologger/contract';
 import {
   normalizeEventPaletteNine,
-  SETTING_ACTIVE_SHOW,
-  SETTING_ACTIVE_STUDIO,
   studioToApiDict,
   validateCategoriesList,
   validateEventPalettePreset,
@@ -24,10 +22,7 @@ function ctx(config: Config): ProfileCtx {
 
 profileRouter.get('/api/studio', async (c) => {
   const catalog = c.get('catalog');
-  const prof = await catalog.profile.getEffectiveStudioForUser(
-    requireUser(c),
-    oauthConfigured(c.env.config),
-  );
+  const prof = await catalog.profile.getEffectiveStudioForUser(requireUser(c));
   if (prof === null) return c.json({ detail: 'No team access.' }, 403);
   return c.json(studioToApiDict(prof));
 });
@@ -116,15 +111,7 @@ profileRouter.put('/api/profile', async (c) => {
     nextShow = showsNow.length ? String(showsNow[0].id) : '';
   }
 
-  if (user === null) {
-    // One transaction, so concurrent anonymous updates never mix one's show with another's team.
-    await catalog.tx(async (cat) => {
-      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
-      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
-    });
-  } else {
-    await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
-  }
+  await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
 
   if (body.given_name != null || body.family_name != null) {
     const gn = (body.given_name ?? user.given_name).trim().slice(0, 200);
