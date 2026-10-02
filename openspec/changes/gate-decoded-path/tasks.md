@@ -42,16 +42,18 @@ scratchpad as `hf-<task>-<red|green>.log`.
   `@playwright/test`/`playwright`/`playwright-core` 1.61.1 into `node_modules` (it had been
   installed from `supabase-migration`, which dropped Playwright).
   `node -e "require('better-sqlite3')"` -> `better-sqlite3 ok`.
-- [ ] 3.2 Stage live check, with owner permission for `make stage-up` (stage is built from this
-  branch). `docker/scripts/test_router.sh` doesn't exist on `main`, so the check is curl through
-  the stage router. Verify:
-  - `/%61pi/sessions` and `/%61pi/companion/state` without credentials give 401;
-  - `/api/sessions` gives 401;
-  - `/api/profile` and `/%61pi/profile` give 200;
-  - `/api/companion/state` with the stage token gives 200.
-- [ ] 3.3 Owner: merge. Prod is not deployed (owner, 2026-10-02), so there is no redeploy or
-  incident review. Prod's first deploy is built from a commit that contains this fix; verify
-  then with `curl https://<prod>/%61pi/sessions` -> 401.
-- [ ] 3.4 Merge `main` into `supabase-migration` before 5b's first commit. Add a line to ADR 0021
-  on that branch recording this freeze exception. Verify: `git merge-base --is-ancestor`
-  shows the fix commit in `supabase-migration`, and the server suite there is green.
+- [x] 3.2 Real-HTTP check. Stage runs the Supabase integration branch and can't be rebuilt from
+  `main` without tearing it down, so this check uses a real socket instead. In
+  `server/src/routers/apiToken.int.test.ts`, the real-server suite (`serve()` on 127.0.0.1)
+  sends raw request-targets: `/api/sessions`, `/%61pi/sessions`, `/a%70i/sessions`,
+  `/%61pi/companion/state` (with and without the token), `/api/%63ompanion/state` with the token,
+  a token on `/%61pi/sessions`, and `/%61pi/profile`. The router's forwarding of encoded prefixes
+  is unchanged and was already observed through the stage router (panel: `/%61pi/sessions -> 200`).
+  Verify: red against the pre-fix `auth.ts`, green with the fix.
+  Evidence:
+  - with `auth.ts` from 8e74b53 (temporarily restored):
+    `npx vitest run src/routers/apiToken.int.test.ts -t "real HTTP"` (`hf-3.2-red.log`) ->
+    `AssertionError: expected 200 to be 401`, `Tests  1 failed | 11 skipped`;
+  - with the fix restored: `npx vitest run src/routers/apiToken.int.test.ts`
+    (`hf-3.2-green.log`) -> `Tests  12 passed (12)`;
+  - `npx biome check` -> `No fixes applied`.

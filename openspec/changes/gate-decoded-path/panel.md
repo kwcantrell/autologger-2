@@ -34,3 +34,11 @@ Scope change: no. The code, spec deltas, tests and contract impact are unchanged
 - No task does something a non-goal excludes: there is no Caddyfile edit and no upgrade dispatcher change.
 - No contradiction between design and specs: D1 (`c.req.path`) matches both deltas.
 - [x] [minor] Panel majors 1 and 2 cite "task 3.3 adds the incident review" and "Forensics", which the edit removed. Resolved: these are historical panel records. The current proposal records that there is no deployed exposure, and that without request logs only a data inspection could reveal access on old code.
+
+## Consistency read 2026-10-02 (2)
+Edits since the first read: tasks.md (3.2 is now a real-HTTP test instead of a stage rebuild; 3.3 and 3.4 are removed), proposal.md (+ "After merge" with the former 3.3 and 3.4). CI's `tasks` gate failed on #32 with `3 unticked task(s)`: 3.3 and 3.4 can only happen after merge, and 3.2 would have torn down the integration stage.
+Scope change: no. The fix, the spec deltas and the contract impact are unchanged; one test is added (`apiToken.int.test.ts`, real socket).
+- Every spec-delta requirement still has a task and a test. The real-HTTP test also covers both new scenarios over a socket.
+- No task does something a non-goal excludes: no Caddyfile or upgrade-dispatcher change.
+- No design/spec contradiction.
+- [x] [minor] The stage router hop isn't re-run against the fixed server. Resolved: the router's forwarding is unchanged and was observed during the panel; the server-side decision is now tested over a real socket.

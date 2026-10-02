@@ -84,3 +84,12 @@ None.
   could only be found by inspecting the data. This is why the fix must precede the first deploy.
 - **Slice 5b:** the same fix is carried on `supabase-migration` (merge `main` into it, or
   cherry-pick).
+
+## After merge
+
+These are outside tasks.md, because they follow the merge:
+- **The owner:** prod's first deploy is built from a commit that contains this fix; verify then
+  with `curl https://<prod>/%61pi/sessions` -> 401.
+- **The agent, with the owner's go-ahead:** merge `main` into `supabase-migration` before 5b's
+  first commit, resolve the `gate`/`authz`/`apiToken` test conflicts (the async rewrite there),
+  add a line to ADR 0021 recording this freeze exception, and re-run the server suite there.
