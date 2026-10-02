@@ -213,11 +213,20 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   src/routers/authz.int.test.ts` (`5c-5.2-green.log`) -> `Test Files  2 passed (2)`, `Tests  62
   passed (62)`; `npm run typecheck` -> exit 0 (`5c-5.2-typecheck.log`). The cap message follows
   design D5: `You already own 20 teams; the limit has been reached.`
-- [ ] 5.3 Test first, in `server/src/routers/teams.race.int.test.ts` (replacing the last-admin
+- [x] 5.3 Test first, in `server/src/routers/teams.race.int.test.ts` (replacing the last-admin
   races): two concurrent transfers to different members; a transfer racing the target's leave;
   the owner's demotion of admin B racing B's rename; each run asserts exactly one owner at the
   end. Fix anything they expose in 5.2's code. Verify: green 5 runs in a row
   (`5c-5.3-race-{1..5}.log`).
+  Evidence: the new races (`two concurrent transfers to different members: one 200, one 403,
+  exactly one owner`, `a transfer racing the target’s leave` in both orders, `the owner’s
+  demotion of admin B racing B’s rename`) passed on their first run against 5.2's code, so
+  nothing needed fixing. The file's teams now seed `ids[0]` as owner (the deleting caller), the
+  delete re-check race became "an owner who transferred ownership mid-delete gets 403", and the
+  cap gate matches the `role = 'owner'` count. `cd server && npx vitest run --project
+  integration src/routers/teams.race.int.test.ts`, 5 runs (`5c-5.3-race-{1..5}.log`) -> each
+  `Tests  18 passed (18)`, including `concurrent creates by a user owning 19 teams: one 200, one
+  400` (red after 4.2, green now).
 - [ ] 5.4 Recapture the fixtures in `server/src/routers/apiResponseFixtures.int.test.ts`:
   `teamCreate`, `teamDetailAdmin`, `teamDetailMember`, `teamRoleChange`, `profileAuthenticated`,
   and new `teamOwnerTransfer` and `teamDetailOwner` captures (seed the caller as owner, not
