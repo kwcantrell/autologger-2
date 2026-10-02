@@ -275,3 +275,52 @@ describe('the transcript-generation lock status follows show access (show-grants
     });
   });
 });
+
+describe('the Companion table: a cookie caller without access sees no active session (show-grants D10, D15)', () => {
+  const routes: Array<{ method: string; path: string; body?: unknown }> = [
+    { method: 'GET', path: '/api/companion/state' },
+    { method: 'GET', path: '/api/companion/categories' },
+    { method: 'POST', path: '/api/companion/log', body: { category_id: 'cam', message: 'x' } },
+    { method: 'POST', path: '/api/companion/transport', body: { action: 'start' } },
+    { method: 'POST', path: '/api/companion/command', body: { type: 'play-toggle' } },
+  ];
+  const send = async (r: (typeof routes)[number], who: TestCaller) => {
+    const res = await anonApp.request(
+      r.path,
+      {
+        method: r.method,
+        headers: { cookie: who.cookie, 'content-type': 'application/json' },
+        body: r.body === undefined ? undefined : JSON.stringify(r.body),
+      },
+      { ...env },
+    );
+    return { status: res.status, body: await res.text() };
+  };
+
+  it.each(routes)('$method $path', async (r) => {
+    const m = await seedAccessMatrix();
+    const idle = await send(r, m.ungranted);
+    await env.ports.presence.upsert('teammate-tab', {
+      session_id: m.sessionId,
+      visible: true,
+      is_playing: false,
+      updated: env.ports.clock.now(),
+    });
+    const denied = await send(r, m.ungranted);
+    if (r.path === '/api/companion/state') {
+      const a = JSON.parse(denied.body) as Record<string, unknown>;
+      const b = JSON.parse(idle.body) as Record<string, unknown>;
+      expect({ ...a, connected_clients: 0 }).toEqual({ ...b, connected_clients: 0 });
+    } else {
+      expect(denied).toEqual(idle);
+      expect(denied.status).toBe(409);
+    }
+    const allowed = await send(r, m.granted);
+    expect(allowed.status).toBe(200);
+    if (r.path === '/api/companion/state') {
+      expect((JSON.parse(allowed.body) as { active_session_id: string }).active_session_id).toBe(
+        m.sessionId,
+      );
+    }
+  });
+});
