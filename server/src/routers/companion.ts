@@ -261,8 +261,10 @@ companionRouter.post('/api/companion/commands/:commandId/ack', async (c) => {
       last.ok = body.ok;
       last.error = body.error ?? null;
       last.delivered_to = body.client_id;
-      await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
-      return c.json({ ok: true });
+      // Only while A is still the latest command: a newer one stored meanwhile wins, and this ack
+      // gets the superseded-command answer (catalog-concurrency-hazards D7).
+      const marked = await c.env.ports.kv.replaceIf(LAST_COMMAND_KEY, lastRaw, JSON.stringify(last));
+      return c.json({ ok: marked });
     }
   }
   return c.json({ ok: false });

@@ -4,8 +4,8 @@ The first commit on `supabase-4d-catalog-concurrency-hazards` is
 `openspec/changes/catalog-concurrency-hazards/` only. The PR targets `supabase-migration`, and the
 gates run with `GITHUB_BASE_REF=supabase-migration`.
 
-The PR needs the owner's `size-override` label. The ceiling is about 650 counted lines; past it,
-stop and ask to split (owner, 2026-10-01).
+The PR needs the owner's `size-override` label. The ceiling was about 650 counted lines; at 576
+after 4.2, the owner raised it to about 700 rather than split (2026-10-01).
 
 Logs: keep the full output of every test and gate run under the session scratchpad as
 `4d-<task>-<red|green>.log`, and name the log in each `Evidence:` line. Each "test first" item is
@@ -162,14 +162,30 @@ in-transaction role read.
   sid and the date. The generate pin (`events.generate.int.test.ts`) now expects 200 plus the
   warning. `4d-4.2-green.log`: whole server `npx vitest run` -> `Tests  909 passed | 3 skipped`;
   the only failure (promise hygiene) was fixed in 4.1. `npm run typecheck` is clean.
-- [ ] 4.3 Test first: a `kvStore` unit test for `replaceIf` (true, false on mismatch, false when
+- [x] 4.3 Test first: a `kvStore` unit test for `replaceIf` (true, false on mismatch, false when
   expired). Server, with `ports.kv` on a gated catalog: ack(A) held after its read, command B
   lands, then ack(A) gives `{ok:false}` and `last_command` is B. Red, then D7. Green.
-- [ ] 4.4 Test first: a held `GET /api/sessions` repair racing `PUT /api/profile`, logged in and
+  Evidence: `4d-4.3-red.log` -> `TypeError: s.replaceIf is not a function` ×2; server ->
+  `expected { ok: true } to deeply equal { ok: false }`. `replaceIf` was added to the port and the
+  store, and the ack uses it. `4d-4.3-green.log` -> storage `kvStore.test.ts` `Tests  16 passed
+  (16)`, `companion.int` `Tests  16 passed (16)`.
+- [x] 4.4 Test first: a held `GET /api/sessions` repair racing `PUT /api/profile`, logged in and
   anonymous, keeps the profile's choice. Red, then D8. Green.
-- [ ] 4.5 Test first: a log-import job whose catalog statement fails shows `Failed "<title>"`
+  Evidence: `4d-4.4-red.log` (the repair write held before it is sent) -> logged in and anonymous
+  both `expected '<first show>' to be '<chosen>'`. The anonymous test first stores the team's
+  settings, so the held write is the repair and not the settings default. Added
+  `authReplaceActiveShowIf` (conditional upsert on `active_show_id` only) and `setSettingIf`; the
+  anonymous `PUT /api/profile` writes in one transaction. `4d-4.4-green.log`: race + sessions +
+  `shows-profile` + fixtures -> `Tests  88 passed (88)`.
+- [x] 4.5 Test first: a log-import job whose catalog statement fails shows `Failed "<title>"`
   without the error text, and the server warns. A domain error (no audio segments) keeps its
   message. Red, then D9. Green.
+  Evidence: `4d-4.5-red.log` -> `expected [ 'Fetching spreadsheet…', …(5) ] to include 'Failed
+  “Catalog Failure Session”'` (the line carried the `40001` text). The job builds its own
+  `createCatalog(...)` + `init()`; `jobFailureDetail` redacts errors with a string `code` or a
+  `Catalog*` name and warns. `4d-4.5-green.log`: `logImport.int` -> `Tests  14 passed (14)`; the
+  existing domain-message case ("Transcript generation failed: …") still passes.
+  `packageBoundaries` + `promiseHygiene` -> `Tests  98 passed (98)`.
 
 ## 5. Adapter and ops (design D10)
 

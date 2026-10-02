@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SessionIndexStore } from '@autologger/catalog';
 import { clearLogImportJobs } from '@autologger/log-import';
 import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
@@ -382,6 +383,35 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     }
     throw new Error(`job did not finish, last status=${body?.status}`);
   }
+
+  it('a catalog failure shows a generic line without the database error text, and the server warns (catalog-concurrency-hazards D9)', async () => {
+    const studio = await seedStudio();
+    const show = await seedShow({ studioId: studio });
+    const title = 'Catalog Failure Session';
+    await seedSession({ showId: show, title });
+    const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(xlsx, { status: 200 })));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spy = vi
+      .spyOn(SessionIndexStore.prototype, 'getSessionJoinedRow')
+      .mockRejectedValue(
+        Object.assign(new Error('could not serialize access due to read/write dependencies among transactions'), {
+          name: 'PostgresError',
+          code: '40001',
+        }),
+      );
+    try {
+      const post = await postImport(show, deepgramConfiguredEnv());
+      const { job_id } = (await post.json()) as { job_id: string };
+      const body = await pollJob(job_id);
+      expect(body.lines).toContain(`Failed “${title}”`);
+      expect(body.lines.join('\n')).not.toMatch(/serialize/);
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/40001/);
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
+    }
+  });
 
   it(
     'a "no_audio" TranscriptGenerateError (non-retryable) matches the FINAL catch\'s instanceof ' +

@@ -118,8 +118,11 @@ profileRouter.put('/api/profile', async (c) => {
   }
 
   if (user === null) {
-    await catalog.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
-    await catalog.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
+    // One transaction, so concurrent anonymous updates never mix one's show with another's team.
+    await catalog.tx(async (cat) => {
+      await cat.studios.setSetting(SETTING_ACTIVE_SHOW, nextShow);
+      await cat.studios.setSetting(SETTING_ACTIVE_STUDIO, rawSid);
+    });
   } else {
     await catalog.auth.authSetPrefs(user.id, rawSid, nextShow);
   }

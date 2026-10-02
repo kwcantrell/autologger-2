@@ -39,6 +39,7 @@ export interface StudioRegistryFacade {
   refreshAfterWrite: () => Promise<void>;
   saveStudioSettingsBlob: (studioId: string, blob: Record<string, unknown>) => Promise<void>;
   setSetting: (key: string, value: string) => Promise<void>;
+  setSettingIf: (key: string, expected: string | null, value: string) => Promise<void>;
   studioNamesDict: () => Record<string, string>;
   studioOrderTuple: () => string[];
 }
@@ -110,6 +111,25 @@ export class StudioRegistry implements StudioRegistryFacade {
       key,
       value,
     );
+  }
+
+  /** Set `key` only if it still holds `expected` (null: only if missing), so a concurrent write
+   * wins (catalog-concurrency-hazards D8). */
+  async setSettingIf(key: string, expected: string | null, value: string): Promise<void> {
+    if (expected === null) {
+      await this.db.run(
+        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING',
+        key,
+        value,
+      );
+    } else {
+      await this.db.run(
+        'UPDATE app_settings SET value = ? WHERE key = ? AND value = ?',
+        value,
+        key,
+        expected,
+      );
+    }
   }
 
   // -- studio settings blobs ---------------------------------------------------

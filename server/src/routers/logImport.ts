@@ -1,3 +1,4 @@
+import { createCatalog } from '@autologger/catalog';
 import type { CategoryRecord } from '@autologger/domain';
 import {
   appendLogImportLine,
@@ -112,6 +113,18 @@ export async function ensureTimedTranscript(input: {
   }
 }
 
+/** A job line's detail: the error's own message for domain failures, which operators act on;
+ * null for a catalog or database-driver failure, whose text can carry internals, so it is only
+ * logged (catalog-concurrency-hazards D9). */
+function jobFailureDetail(err: unknown): string | null {
+  const e = err as { code?: unknown; name?: unknown; message?: unknown } | null;
+  if (typeof e?.code === 'string' || String(e?.name ?? '').startsWith('Catalog')) {
+    console.warn(`[log-import] catalog failure during a job (${typeof e?.code === 'string' ? e.code : String(e?.name)})`);
+    return null;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
   const catalog = c.get('catalog');
@@ -161,6 +174,9 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   void (async () => {
     setLogImportStatus(env.ports.clock, job.id, 'running');
     try {
+      // The job outlives its request, so it builds its own catalog (catalog-concurrency-hazards D9).
+      const catalog = createCatalog(env.ports.catalog);
+      await catalog.init();
       appendLogImportLine(job.id, 'Fetching spreadsheet…');
       const sheets = await fetchPublicWorkbookSheets(spreadsheetUrl);
       appendLogImportLine(job.id, `Loaded ${sheets.length} sheet(s).`);
@@ -211,8 +227,8 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
           sessionsOk += 1;
         } catch (err) {
           sessionsFailed += 1;
-          const detail = err instanceof Error ? err.message : String(err);
-          appendLogImportLine(job.id, `Failed “${title}”: ${detail}`);
+          const detail = jobFailureDetail(err);
+          appendLogImportLine(job.id, detail === null ? `Failed “${title}”` : `Failed “${title}”: ${detail}`);
           appendLogImportLine(job.id, `Continuing with remaining sheets…`);
           // Per-session failure must not abort the rest of the workbook.
         }
@@ -240,9 +256,9 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
         setLogImportStatus(env.ports.clock, job.id, 'completed');
       }
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      appendLogImportLine(job.id, `Failed: ${detail}`);
-      setLogImportStatus(env.ports.clock, job.id, 'failed', detail);
+      const detail = jobFailureDetail(err);
+      appendLogImportLine(job.id, detail === null ? 'Failed' : `Failed: ${detail}`);
+      setLogImportStatus(env.ports.clock, job.id, 'failed', detail ?? 'Import failed.');
     }
   })();
 

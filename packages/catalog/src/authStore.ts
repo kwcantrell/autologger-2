@@ -47,6 +47,12 @@ export interface AuthStoreFacade {
   authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
   authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
   authGetMembershipRoleForShare: (userId: string, studioId: string) => Promise<TeamRole | null>;
+  authReplaceActiveShowIf: (
+    userId: string,
+    studioId: string,
+    expected: string | null,
+    next: string,
+  ) => Promise<void>;
   authSetExistingMembershipRole: (
     userId: string,
     studioId: string,
@@ -227,6 +233,26 @@ export class AuthStore implements AuthStoreFacade {
       userId,
       activeStudioId,
       activeShowId,
+    );
+  }
+
+  /** Repair the active show only if it is still `expected` (the value the caller read), creating
+   * the row with `studioId` if it is missing; the studio column is never touched, so a concurrent
+   * profile update wins (catalog-concurrency-hazards D8). Postgres only. */
+  async authReplaceActiveShowIf(
+    userId: string,
+    studioId: string,
+    expected: string | null,
+    next: string,
+  ): Promise<void> {
+    await this.db.run(
+      `INSERT INTO user_prefs (user_id, active_studio_id, active_show_id) VALUES (?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET active_show_id = excluded.active_show_id
+       WHERE user_prefs.active_show_id IS NOT DISTINCT FROM ?`,
+      userId,
+      studioId,
+      next,
+      expected,
     );
   }
 
