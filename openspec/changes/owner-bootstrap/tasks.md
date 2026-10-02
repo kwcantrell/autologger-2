@@ -363,12 +363,22 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 9. Verification
 
-- [ ] 9.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify:
+- [x] 9.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify:
   exit 0, every gate PASS (`5c-9.1-hook.log`).
-- [ ] 9.2 Run the server `integration` and `pg` projects 5 times in a row (`5c-flake-{1..5}.log`).
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> `exit 0`;
+  `PASS openspec`, `PASS change tier 2`, `PASS risk-floor 12 high-risk path(s) touched`, `PASS
+  evidence`, `PASS commands ran ['typecheck', 'test']`.
+- [x] 9.2 Run the server `integration` and `pg` projects 5 times in a row (`5c-flake-{1..5}.log`).
   Verify: every run green; any flake is named with its test and reported to the owner.
-- [ ] 9.3 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`.
+  Evidence: `cd server && npx vitest run --project integration --project pg` x5 -> runs 1-5 each
+  `exit 0  Tests  716 passed (716)`; no flake.
+- [x] 9.3 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`.
   Verify: `openspec validate owner-bootstrap --strict` -> valid.
+  Evidence: fresh-context read logged in `panel.md` "Consistency read 2026-10-02" -> `Scope change:
+  no`, `No findings.`; `openspec validate owner-bootstrap --strict` -> `Change 'owner-bootstrap' is
+  valid`. Its minor note (6.1's rescue test didn't disable the old owner) is fixed: the test now
+  disables O first; `npx vitest run --project integration src/routers/admin.int.test.ts` -> `Tests
+  18 passed (18)`.
 - [ ] 9.4 At archive (design D14), edit the Purpose paragraph of
   `openspec/specs/team-management/spec.md`: roles are owner, admin and member; the owner anchors
   the team; no built-in teams; no last-admin invariant. Verify: `grep -n -i "built-in\|last-admin"

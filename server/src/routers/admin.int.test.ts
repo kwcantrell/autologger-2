@@ -226,6 +226,13 @@ describe('admin owner upsert (owner-bootstrap 6.1, design D6)', () => {
 
   it("role: 'owner' makes the target owner and the old owner admin (exactly one owner)", async () => {
     const { owner } = await teamWithOwner();
+    // The spec's rescue case: the old owner is disabled.
+    const d = await anonApp.request(
+      `/api/admin/users/${owner}/disable`,
+      { method: 'POST', headers: H },
+      ADMIN_ENV,
+    );
+    expect(d.status).toBe(200);
     const target = await seedUser({});
     const res = await post(target, { studio_id: 'test-studios', role: 'owner' });
     expect(res.status).toBe(200);
