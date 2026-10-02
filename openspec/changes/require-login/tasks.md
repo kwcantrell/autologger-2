@@ -20,10 +20,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - the wrapped `app` adds the default cookie only when there is no `cookie` header (any case),
     no `authorization` header, and the path is not under `/api/companion/`;
   - `anonApp` exported.
-
-  Keep `REQUIRE_LOGIN: '0'` for now, so this step changes only who the caller is.
-  Verify: the server suite runs. Record every failure: each must be a suite named in D7/D12 that
-  encodes anonymous behavior. Nothing else may fail.
   Evidence: `cd server && npx vitest run` -> `5b-1.1-red.log`: `Tests  61 failed | 879 passed`
   (baseline `5b-baseline.log`: `940 passed`). Failing suites: `activeShow.race` (anonymous case),
   `apiToken` (2, REQUIRE_LOGIN=1 anonymous), `gate` (7: anonymous 401s, plus 413/422 cases on a
@@ -39,14 +35,16 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   or an anonymous caller. Harness choice: the default user is created on first use (wrapped
   `app` or `seededSession()`), so the admin users capture keeps no extra user (D7's stated
   invariant).
+
+  Keep `REQUIRE_LOGIN: '0'` for now, so this step changes only who the caller is.
+  Verify: the server suite runs. Record every failure: each must be a suite named in D7/D12 that
+  encodes anonymous behavior. Nothing else may fail.
 - [x] 1.2 Convert the suites D7 and D12 name:
   - auth, role and anonymous suites go to `anonApp` or explicit cookies (`gate`, `authz`,
     `apiToken`, `teams`, `admin`, `shows-profile` signed-out, `activeShow.race`);
   - Companion suites use the bearer;
   - `events.generate` sets user prefs;
   - the real-server suites (`upgradeDispatch`, `companion-ws`) send a cookie or the bearer.
-
-  Verify: the server suite is green.
   Evidence: `cd server && npx vitest run` -> `5b-1.2-green.log`: `Test Files  76 passed | 2
   skipped (78)`, `Tests  936 passed | 3 skipped (939)`. `anonApp`: `gate` (auth and
   encoded-path cases), `apiToken` (whole file; "token-only is inert under open login" deleted),
@@ -65,6 +63,8 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   Note: `sessions.int` "concurrent same-clock creates" hit a `40001` 500 once under full-suite
   load in `5b-1.1-red.log` (signed-in path, after the adapter's 3 tries); it passed 3/3 alone and
   in this run.
+
+  Verify: the server suite is green.
 
 ## 2. Login is always required (design D1, D2, D3, D13)
 
@@ -86,8 +86,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
     - `API_TOKEN` on `/api/companion/state` gives 200.
   - The raw-path repo test (D13).
   - `bootOrder.int.test.ts`: its env gains the Google values and `PUBLIC_BASE_URL`.
-
-  Red before 2.2, green after (the repo test may already pass; record that).
   Evidence: red `5b-2.1-red.log` (`vitest run bootGuard rawPath.repo gate bootOrder` + `node
   --test docker/scripts/compose-run.test.mjs`): `× refuses REQUIRE_LOGIN present with any value`,
   `× refuses a missing, blank or whitespace-only sign-in setting`, `× every registered /api route
@@ -95,6 +93,8 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   HEAD /api/profile are exempt` (`expected false to be true`, oauth_configured); compose-run
   `Missing expected exception: dev` / `dev GOOGLE_CLIENT_ID`, and the dev-run case exited 0
   (`ℹ fail 3`). `rawPath.repo.test.ts` and `bootOrder` already passed (recorded). Green: see 2.2.
+
+  Red before 2.2, green after (the repo test may already pass; record that).
 - [x] 2.2 Implement D1 and D2:
   - the `checkBootEnv` refusals (trimmed);
   - `compose-run.mjs` `checkSignInClient` requires both Google values in every stack;
@@ -103,8 +103,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - delete `requireLoginEnabled`, `Config.REQUIRE_LOGIN` (`packages/ports`,
     `server/src/node/config.ts`) and the harness's temporary `REQUIRE_LOGIN`;
   - update `env.test.ts`, `node/config.test.ts` and `upgradeDispatch.test.ts`.
-
-  Verify: 2.1 green, `npm run typecheck`, and `node --test docker/scripts/compose-run.test.mjs`.
   Evidence: `5b-2.2-green.log`: the 2.1 files plus `env`, `node/config`, `upgradeDispatch`
   unit: `Test Files  7 passed (7)`, `Tests  84 passed (84)`; compose-run `ℹ pass 51`, `ℹ fail 0`.
   `npm run typecheck` exit 0 (`5b-2.2-typecheck.log`). Forced follow-ons (deleting
@@ -120,19 +118,13 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   running server has OAuth configured, D6). Full suite `5b-2.2-suite.log` before those
   follow-ons: the only remaining failures afterwards are 3.1/3.2 targets (open-network 503 cases,
   `profileAnonymous` capture).
+
+  Verify: 2.1 green, `npm run typecheck`, and `node --test docker/scripts/compose-run.test.mjs`.
 - [x] 2.3 Implement D3:
   - `requireUser` moves to `_helpers.ts`; a null user is an internal error (500), not a 401;
   - `requireSession` uses it and always checks membership;
   - the D3 route list uses it (including `GET /api/studio`); `teams.ts` uses the shared helper;
   - `packages/log-import`: `createdByUserId: string`.
-
-  Test first:
-  - calling the helper directly, `requireSession` and `requireUser` with a null user throw the
-    internal error, not an `ApiError(401)`;
-  - a non-member gets 404 on `GET /api/shows/:id` and on the Sheets job status, and sees no
-    holder in the topics-generate busy detail.
-
-  Verify: the server suite and typecheck are green.
   Evidence: red `5b-2.3-red.log`: `× requireUser with a null user throws the internal error`,
   `× requireSession with a null user throws the internal error instead of skipping membership`
   (`TypeError: requireUser is not a function` / `instanceof assertion needs a constructor`); the
@@ -150,6 +142,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   them. Follow-on: `jobStore.test.ts` "stores null for an anonymous creator" deleted, other cases
   pass `'user-1'`.
 
+  Test first:
+  - calling the helper directly, `requireSession` and `requireUser` with a null user throw the
+    internal error, not an `ApiError(401)`;
+  - a non-member gets 404 on `GET /api/shows/:id` and on the Sheets job status, and sees no
+    holder in the topics-generate busy detail.
+
+  Verify: the server suite and typecheck are green.
+
 ## 3. Anonymous state and open-network refusals removed (design D4, D5, D6, D12)
 
 - [x] 3.1 Delete the open-network refusals:
@@ -158,10 +158,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - the `main.ts` warning;
   - their tests in `ai`, `aiV2`, `transcribe`, `sessions.youtubeImport`, `events.generate`,
     `logImport` and `env.test.ts`.
-
-  Verify: `grep -rn "OpenNetwork\|open-network\|REQUIRE_LOGIN" server/src packages web/src` hits
-  only the boot refusal and its tests, the AI v2 credentials-refusal tests still pass, and the
-  suite is green.
   Evidence: the grep -> only `server/src/bootGuard.ts:36-37` and `server/src/bootGuard.test.ts`
   (57-78). `npm run typecheck` exit 0 (`5b-3.1-typecheck.log`). Server `5b-3.1-green.log`:
   `Tests  1 failed | 934 passed | 3 skipped (938)`; the one failure is the `profileAnonymous`
@@ -176,19 +172,15 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `REQUIRE_LOGIN` key/title left in test `envWith` literals is removed (`apiToken` loses
   `openLogin`), and `ai-runtime`'s guard-order comments and test label say
   `config/credentials 503`.
+
+  Verify: `grep -rn "OpenNetwork\|open-network\|REQUIRE_LOGIN" server/src packages web/src` hits
+  only the boot refusal and its tests, the AI v2 credentials-refusal tests still pass, and the
+  suite is green.
 - [x] 3.2 Remove the anonymous active team and show (D5):
   - the `sessions.ts` list branch;
   - the `profile.ts` `PUT` anonymous transaction;
   - `profileAssembler.getEffectiveStudioForUser(user: AuthUser)`;
   - `profilePayload(null)` always returns the signed-out shape.
-
-  Delete `fixtures/api-responses/profileAnonymous.ts` and its capture entry, and point
-  `web/src/api/types.conformance.test.ts` at `profileLoggedOutOauth`. Leave `auth.ts:234` and
-  `sessionIndexStore.ts:372` alone (5c).
-  Test first: the catalog unit test `profilePayload(null, ctx)` returns the signed-out shape with
-  `oauth_configured` taken from `ctx`; an anonymous `PUT /api/profile` writes nothing (401 from
-  the middleware; the settings rows are unchanged).
-  Verify: the catalog, server and web suites are green.
   Evidence: red `5b-3.2-red.log`: catalog `× oauth_configured is taken from ctx (false)` (`Error:
   the global active studio must not be read for a signed-out caller`); the anonymous `PUT
   /api/profile` case (`shows-profile`, 401 + `app_settings` rows unchanged) already passed, since
@@ -204,6 +196,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `profileLoggedOutOauth` stay; the conformance test's category and `shows[]` checks moved
   to `profileAuthenticated` (the signed-out capture has no categories or shows), and the
   signed-out shape stays checked by `profileLoggedOutOauth`.
+
+  Delete `fixtures/api-responses/profileAnonymous.ts` and its capture entry, and point
+  `web/src/api/types.conformance.test.ts` at `profileLoggedOutOauth`. Leave `auth.ts:234` and
+  `sessionIndexStore.ts:372` alone (5c).
+  Test first: the catalog unit test `profilePayload(null, ctx)` returns the signed-out shape with
+  `oauth_configured` taken from `ctx`; an anonymous `PUT /api/profile` writes nothing (401 from
+  the middleware; the settings rows are unchanged).
+  Verify: the catalog, server and web suites are green.
 
 ## 4. Web (design D8)
 
