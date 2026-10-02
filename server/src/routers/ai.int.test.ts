@@ -63,10 +63,9 @@ import { AiMcpListener, getAiMcpListener } from '@autologger/ai-runtime/aiMcpSer
 // produces (which is identical whether ai.ts passes the tools explicitly or
 // omits and falls back to the runner's own default; see that test's comment).
 import * as aiTurnModule from '@autologger/ai-runtime/aiTurn';
-import type { Clock, Config } from '@autologger/ports';
+import type { Clock } from '@autologger/ports';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { aiChatOpenNetworkRefused } from '../env';
 import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
@@ -292,56 +291,6 @@ describe('ai/chat — open-network refusal (503)', () => {
     expect(detail).not.toMatch(/not configured/i);
     expect(spawnSpy).not.toHaveBeenCalled();
     expect(neverSpawned(s)).toBe(true);
-  });
-
-  // The "allowlist lifts the refusal" branch can't be exercised over HTTP: with
-  // an allowlist set, ipAllowlistMiddleware 403s the socket-less test client
-  // before the route runs. Exercise the pure predicate directly instead.
-  it('predicate: refuses only anonymous + non-loopback + no-allowlist binds', () => {
-    const base: Config = {
-      PUBLIC_BASE_URL: '',
-      HOST: '0.0.0.0',
-      GOOGLE_CLIENT_ID: '',
-      GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '0',
-      SESSION_COOKIE: '',
-      SESSION_DAYS: '14',
-      NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '',
-      IP_ALLOWLIST: '',
-      TRUST_PROXY: '',
-      API_TOKEN: '',
-      ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '',
-      DEEPGRAM_MODEL: '',
-      CLAUDE_CLI_PATH: CLI,
-      AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '',
-      AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_BUDGET_USD: '',
-      EVENT_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_CREATED_EVENTS: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
-      AI_V2_ENABLED: '',
-      AI_V2_API_KEY: '',
-      AI_V2_MAX_BUDGET_USD: '',
-      AI_V2_CREDENTIAL_SOURCE_PATH: '',
-    };
-    // anonymous + non-loopback + no allowlist → refused
-    expect(aiChatOpenNetworkRefused(base)).toBe(true);
-    // unset HOST defaults to 0.0.0.0 (non-loopback) → refused
-    expect(aiChatOpenNetworkRefused({ ...base, HOST: '' })).toBe(true);
-    // login required → not refused
-    expect(aiChatOpenNetworkRefused({ ...base, REQUIRE_LOGIN: '1' })).toBe(false);
-    // allowlist present → not refused
-    expect(aiChatOpenNetworkRefused({ ...base, IP_ALLOWLIST: '10.0.0.0/8' })).toBe(false);
-    // loopback binds → not refused
-    for (const h of ['127.0.0.1', '::1', 'localhost']) {
-      expect(aiChatOpenNetworkRefused({ ...base, HOST: h })).toBe(false);
-    }
   });
 
   it('loopback-bound anonymous dev still serves (guards pass → 200 SSE, real relay spawns)', async () => {

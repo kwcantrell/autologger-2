@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { anonApp, app, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 async function activeStudioId(): Promise<string> {
@@ -250,16 +250,13 @@ describe('shows', () => {
     expect(((await res.json()) as { show: { id: string } }).show.id).toBe(showId);
   });
 
-  it('GET /api/shows/:showId 404s for an anonymous caller when OAuth is configured', async () => {
+  it('GET /api/shows/:showId is 401 Login required for an anonymous caller', async () => {
     const sid = await activeStudioId();
     const showId = await seedShow({ studioId: sid, name: 'Gated Show', code: 'GS' });
 
-    const res = await anonApp.request(
-      `/api/shows/${showId}`,
-      { method: 'GET' },
-      envWith({ GOOGLE_CLIENT_ID: 'test-client-id' }),
-    );
-    expect(res.status).toBe(404);
+    const res = await anonApp.request(`/api/shows/${showId}`, { method: 'GET' }, { ...env });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
   it('422 on POST /api/shows with a missing name', async () => {

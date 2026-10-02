@@ -9,7 +9,6 @@ import { Hono } from 'hono';
 import { wireApp } from './app';
 import type { AppEnv } from './appEnv';
 import { checkBootEnv } from './bootGuard';
-import { loopbackHostname, requireLoginEnabled } from './env';
 import { createBindings } from './node/config';
 import { createNextFrontend } from './node/nextFrontend';
 import { purgeExpiredAtBoot, startPeriodicPurge } from './startupPurge';
@@ -77,23 +76,6 @@ const webDir = join(dirname(fileURLToPath(import.meta.url)), '../../web');
 const frontend = await createNextFrontend({ dev, dir: webDir });
 if (!dev && !frontend) {
   console.warn('frontend not built (serving API only)');
-}
-
-// Gate decision E1: login defaults ON. If the operator explicitly opened the
-// API (REQUIRE_LOGIN=0) on a non-loopback bind with no allowlist, say so loudly.
-// Same predicate the per-feature open-network refusals read (env.ts).
-const loopback = loopbackHostname(bindings.config);
-if (
-  !loopback &&
-  !requireLoginEnabled(bindings.config) &&
-  !(bindings.config.IP_ALLOWLIST || '').trim()
-) {
-  console.warn(
-    '\n' +
-      '!!! WARNING: AutoLogger is binding to a NON-LOOPBACK interface with\n' +
-      '!!! REQUIRE_LOGIN=0 and no IP_ALLOWLIST. Every /api route is open to\n' +
-      '!!! the network. Set REQUIRE_LOGIN=1, an IP_ALLOWLIST, or HOST=127.0.0.1.\n',
-  );
 }
 
 const app = new Hono<AppEnv>();

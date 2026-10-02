@@ -8,7 +8,6 @@ export interface Config {
   HOST: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  REQUIRE_LOGIN: string;
   SESSION_COOKIE: string;
   SESSION_DAYS: string;
   NEW_USER_ALL_TEAMS: string;

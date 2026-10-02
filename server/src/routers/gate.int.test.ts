@@ -40,6 +40,63 @@ describe('auth gate', () => {
   });
 });
 
+// require-login D2/D7: login is always required. The route table is the source (the same one
+// gate-decoded-path uses), so a route added later without a named exemption fails here; this also
+// closes the masking risk of the harness's default signed-in `app`.
+describe('login is always required (require-login)', () => {
+  const LOGIN_REQUIRED = { detail: 'Login required.' };
+  const exempt = (method: string, path: string) =>
+    (path === '/api/profile' && (method === 'GET' || method === 'HEAD')) ||
+    path.startsWith('/api/admin/');
+
+  it('every registered /api route with no credentials is 401 Login required, except the named exemptions', async () => {
+    const routes = anonApp.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));
+    expect(routes.length).toBeGreaterThan(40);
+    const wrong: string[] = [];
+    for (const r of routes) {
+      if (exempt(r.method, r.path)) continue;
+      const path = r.path.replace(/:[^/]+/g, 'x');
+      const res = await anonApp.request(path, { method: r.method }, { ...env });
+      const body = res.status === 401 ? await res.json() : null;
+      if (res.status !== 401 || JSON.stringify(body) !== JSON.stringify(LOGIN_REQUIRED)) {
+        wrong.push(`${r.method} ${r.path} -> ${res.status} ${JSON.stringify(body)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it('GET and HEAD /api/profile are exempt: 200, signed out, OAuth configured', async () => {
+    const get = await anonApp.request('/api/profile', { method: 'GET' }, { ...env });
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as { auth: { logged_in: boolean; oauth_configured: boolean } };
+    expect(body.auth.logged_in).toBe(false);
+    expect(body.auth.oauth_configured).toBe(true);
+    const head = await anonApp.request('/api/profile', { method: 'HEAD' }, { ...env });
+    expect(head.status).toBe(200);
+  });
+
+  it('/api/admin/* keeps its token rules (401 admin-token detail, not Login required)', async () => {
+    const none = await anonApp.request('/api/admin/users', { method: 'GET' }, { ...env });
+    expect(none.status).toBe(401);
+    expect(await none.json()).toEqual({ detail: 'Invalid or missing admin token.' });
+    const ok = await anonApp.request(
+      '/api/admin/users',
+      { method: 'GET', headers: adminHeader('test-admin-token') },
+      { ...env },
+    );
+    expect(ok.status).toBe(200);
+  });
+
+  it('API_TOKEN on /api/companion/state is 200', async () => {
+    const res = await anonApp.request(
+      '/api/companion/state',
+      { method: 'GET', headers: { Authorization: 'Bearer test-api-token' } },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
 // gate-decoded-path D2: Hono routes on the percent-decoded path, so the gate must judge that same
 // path. `/%61pi/x` IS `/api/x` to the router (and the Caddy router forwards it as such).
 describe('encoded spellings of /api paths get the literal path’s answer', () => {

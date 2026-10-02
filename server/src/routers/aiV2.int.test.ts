@@ -49,7 +49,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
-import { aiV2CredentialsRefused, aiV2OpenNetworkRefused } from '../env';
+import { aiV2CredentialsRefused } from '../env';
 import { anonApp, app, env, envWith } from '../test/harness';
 import {
   loginCookie,
@@ -287,48 +287,6 @@ describe('ai/v2/design — open-network refusal (503)', () => {
     expect(detail).not.toMatch(/not configured/i);
     expect(spawnSpy).not.toHaveBeenCalled();
   });
-
-  it('predicate: aiV2OpenNetworkRefused refuses only anonymous + non-loopback + no-allowlist binds', () => {
-    const base: Config = {
-      PUBLIC_BASE_URL: '',
-      HOST: '0.0.0.0',
-      GOOGLE_CLIENT_ID: '',
-      GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '0',
-      SESSION_COOKIE: '',
-      SESSION_DAYS: '14',
-      NEW_USER_ALL_TEAMS: '0',
-      COOKIE_SECURE: '',
-      IP_ALLOWLIST: '',
-      TRUST_PROXY: '',
-      API_TOKEN: '',
-      ADMIN_TOKEN: '',
-      DEEPGRAM_API_KEY: '',
-      DEEPGRAM_MODEL: '',
-      CLAUDE_CLI_PATH: '',
-      AI_CHAT_TIMEOUT_SEC: '',
-      AI_CHAT_MAX_CONCURRENT: '',
-      AI_CHAT_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_MAX_BUDGET_USD: '',
-      TOPIC_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_BUDGET_USD: '',
-      EVENT_GENERATE_TIMEOUT_SEC: '',
-      EVENT_GENERATE_MAX_CREATED_EVENTS: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_BYTES: '',
-      EVENT_GENERATE_MAX_INSTRUCTION_ENTRIES: '',
-      AI_V2_ENABLED: '1',
-      AI_V2_API_KEY: 'k',
-      AI_V2_MAX_BUDGET_USD: '',
-      AI_V2_CREDENTIAL_SOURCE_PATH: '',
-    };
-    expect(aiV2OpenNetworkRefused(base)).toBe(true);
-    expect(aiV2OpenNetworkRefused({ ...base, HOST: '' })).toBe(true); // unset ⇒ 0.0.0.0
-    expect(aiV2OpenNetworkRefused({ ...base, REQUIRE_LOGIN: '1' })).toBe(false);
-    expect(aiV2OpenNetworkRefused({ ...base, IP_ALLOWLIST: '10.0.0.0/8' })).toBe(false);
-    for (const h of ['127.0.0.1', '::1', 'localhost']) {
-      expect(aiV2OpenNetworkRefused({ ...base, HOST: h })).toBe(false);
-    }
-  });
 });
 
 describe('ai/v2/design — agent credentials refusal (503, distinct from open-network)', () => {
@@ -371,13 +329,12 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
     expect(spawnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('predicate: aiV2CredentialsRefused is independent of REQUIRE_LOGIN/IP_ALLOWLIST', () => {
+  it('predicate: aiV2CredentialsRefused is independent of IP_ALLOWLIST', () => {
     const base: Config = {
       PUBLIC_BASE_URL: '',
       HOST: '0.0.0.0',
       GOOGLE_CLIENT_ID: '',
       GOOGLE_CLIENT_SECRET: '',
-      REQUIRE_LOGIN: '1',
       SESSION_COOKIE: '',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',
@@ -591,41 +548,26 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
 // anonymous one. The principal-less refusal in `requireIndividualPrincipal` therefore cannot fire
 // over HTTP any more (no AI v2 route lives under /api/companion/); it stays as defence in depth.
 describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, design D10)', () => {
-  it('a token-only request behaves as an anonymous one: same status as no Authorization header', async () => {
+  it('a token-only request behaves as an anonymous one: both 401 "Login required.", nothing spawned', async () => {
+    const s = (await seededSession()).sessionId;
     const tokenEnv = () =>
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
         AI_V2_API_KEY: '',
         API_TOKEN: 'device-secret',
       });
-    const anon = await post((await seededSession()).sessionId, { message: 'hi' }, tokenEnv());
-    await anon.text();
-    spawnSpy.mockClear();
-    const res = await post((await seededSession()).sessionId, { message: 'hi' }, tokenEnv(), {
-      ...J,
-      Authorization: 'Bearer device-secret',
-    });
-    await res.text();
+    const req = (headers: Record<string, string>) =>
+      anonApp.request(
+        `/api/sessions/${s}/ai/v2/design`,
+        { method: 'POST', headers, body: JSON.stringify({ message: 'hi' }) },
+        tokenEnv(),
+      );
+    const anon = await req(J);
+    const res = await req({ ...J, Authorization: 'Bearer device-secret' });
     expect(res.status).toBe(anon.status);
-    expect(res.status).toBe(200);
-  });
-
-  it('a token-only request hits the config gate like anonymous (503 when AI v2 is unconfigured)', async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await post(
-      s,
-      { message: 'hi' },
-      envWith({
-        AI_V2_ENABLED: '', // unconfigured
-        HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
-        API_TOKEN: 'device-secret',
-      }),
-      { ...J, Authorization: 'Bearer device-secret' },
-    );
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual(await anon.json());
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
@@ -1001,23 +943,6 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it("(c') under REQUIRE_LOGIN=0 a token-only answer is handled as anonymous: the config gate answers first (503 when unconfigured)", async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await postAnswer(
-      s,
-      { turnId: 'turn-1', requestId: 'req-1', answers: [{ kind: 'text', text: 'x' }] },
-      envWith({
-        AI_V2_ENABLED: '', // unconfigured
-        HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
-        API_TOKEN: 'device-secret',
-      }),
-      { ...J, Authorization: 'Bearer device-secret' },
-    );
-    expect(res.status).toBe(503);
-    expect(spawnSpy).not.toHaveBeenCalled();
-  });
-
   it('(b) a foreign turn/request id is rejected even from the correct principal, with session access', async () => {
     const { sessionId: s, studioId } = await seededSession();
     const initiator = await seedUser({ studios: [studioId] });
@@ -1319,17 +1244,16 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
 
   it('a token-only GET is inert: identical to the same request with no Authorization (design D10)', async () => {
     const s = (await seededSession()).sessionId;
-    const e = () =>
-      envWith({
-        AI_V2_ENABLED: '1',
-        HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
-        API_TOKEN: 'device-secret',
-      });
-    const anon = await getDashboard(s, e());
-    const tok = await getDashboard(s, e(), { ...J, Authorization: 'Bearer device-secret' });
+    const e = () => envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', API_TOKEN: 'device-secret' });
+    const path = `/api/sessions/${s}/ai/v2/dashboard`;
+    const anon = await anonApp.request(path, { headers: J }, e());
+    const tok = await anonApp.request(
+      path,
+      { headers: { ...J, Authorization: 'Bearer device-secret' } },
+      e(),
+    );
     expect(tok.status).toBe(anon.status);
-    expect(tok.status).toBe(200);
+    expect(tok.status).toBe(401);
     expect(await tok.json()).toEqual(await anon.json());
   });
 

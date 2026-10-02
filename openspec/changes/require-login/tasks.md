@@ -68,7 +68,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 2. Login is always required (design D1, D2, D3, D13)
 
-- [ ] 2.1 Test first:
+- [x] 2.1 Test first:
   - `bootGuard` unit cases:
     - `REQUIRE_LOGIN` set to `0`, `1` or empty gives a refusal that names `REQUIRE_LOGIN`;
     - blank or whitespace-only `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `PUBLIC_BASE_URL`
@@ -88,7 +88,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - `bootOrder.int.test.ts`: its env gains the Google values and `PUBLIC_BASE_URL`.
 
   Red before 2.2, green after (the repo test may already pass; record that).
-- [ ] 2.2 Implement D1 and D2:
+  Evidence: red `5b-2.1-red.log` (`vitest run bootGuard rawPath.repo gate bootOrder` + `node
+  --test docker/scripts/compose-run.test.mjs`): `× refuses REQUIRE_LOGIN present with any value`,
+  `× refuses a missing, blank or whitespace-only sign-in setting`, `× every registered /api route
+  with no credentials is 401 Login required` (timed out serving anonymous requests), `× GET and
+  HEAD /api/profile are exempt` (`expected false to be true`, oauth_configured); compose-run
+  `Missing expected exception: dev` / `dev GOOGLE_CLIENT_ID`, and the dev-run case exited 0
+  (`ℹ fail 3`). `rawPath.repo.test.ts` and `bootOrder` already passed (recorded). Green: see 2.2.
+- [x] 2.2 Implement D1 and D2:
   - the `checkBootEnv` refusals (trimmed);
   - `compose-run.mjs` `checkSignInClient` requires both Google values in every stack;
   - `authContext` checks login unconditionally;
@@ -98,6 +105,21 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - update `env.test.ts`, `node/config.test.ts` and `upgradeDispatch.test.ts`.
 
   Verify: 2.1 green, `npm run typecheck`, and `node --test docker/scripts/compose-run.test.mjs`.
+  Evidence: `5b-2.2-green.log`: the 2.1 files plus `env`, `node/config`, `upgradeDispatch`
+  unit: `Test Files  7 passed (7)`, `Tests  84 passed (84)`; compose-run `ℹ pass 51`, `ℹ fail 0`.
+  `npm run typecheck` exit 0 (`5b-2.2-typecheck.log`). Forced follow-ons (deleting
+  `requireLoginEnabled`/`Config.REQUIRE_LOGIN`): the `main.ts` warning block goes now (it read
+  `requireLoginEnabled`); `openNetworkRefused` is stubbed to `false` until 3.1; the open-network
+  predicate tests that named `REQUIRE_LOGIN` in a `Config` literal (`env.test.ts` describe,
+  `ai`/`aiV2` predicate cases) are deleted now for typecheck; `aiV2CredentialsRefused`'s
+  predicate test keeps passing without the key. Harness: `GOOGLE_CLIENT_ID: 'test-client-id'`, no
+  `REQUIRE_LOGIN`. Tests that encoded anonymous success: `shows-profile` anonymous show read is
+  now 401; `staticServing` unmatched `/api` 404 case signs in; `aiV2` token-only "inert" cases
+  compare through `anonApp` (both 401), and its two `REQUIRE_LOGIN=0` 503 cases are deleted;
+  `fixtures/api-responses/profileAuthenticated.ts` `oauth_configured` is now `true` (every
+  running server has OAuth configured, D6). Full suite `5b-2.2-suite.log` before those
+  follow-ons: the only remaining failures afterwards are 3.1/3.2 targets (open-network 503 cases,
+  `profileAnonymous` capture).
 - [ ] 2.3 Implement D3:
   - `requireUser` moves to `_helpers.ts`; a null user is an internal error (500), not a 401;
   - `requireSession` uses it and always checks membership;

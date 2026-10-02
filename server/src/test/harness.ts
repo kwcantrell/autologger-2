@@ -60,12 +60,10 @@ export async function resetTestEnv(): Promise<void> {
     made = createBindings({
       DATA_DIR: dir,
       PUBLIC_BASE_URL: 'https://example.com',
-      // Empty: the historical test vars set GOOGLE_CLIENT_ID="" so
-      // oauthConfigured() is false in the base test env (anonymous /api/studio
-      // and PUT /api/profile depend on it). OAuth suites opt in via envWith.
-      GOOGLE_CLIENT_ID: '',
+      // Sign-in is configured, as the boot guard requires of every running server (require-login
+      // D1/D7), so oauthConfigured() is true in the base test env.
+      GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-secret',
-      REQUIRE_LOGIN: '0', // the historical test default; gate tests override per-request
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',

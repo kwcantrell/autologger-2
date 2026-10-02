@@ -16,13 +16,6 @@ export function sessionCookieName(env: Config): string {
   return (env.SESSION_COOKIE || '').trim() || 'autologger_sid';
 }
 
-/** Gate decision E1: login is REQUIRED unless explicitly disabled. */
-export function requireLoginEnabled(env: Config): boolean {
-  const v = (env.REQUIRE_LOGIN || '').trim().toLowerCase();
-  if (!v) return true;
-  return !['0', 'false', 'no'].includes(v);
-}
-
 export function newUserAllTeamsEnabled(env: Config): boolean {
   const v = (env.NEW_USER_ALL_TEAMS || '0').trim().toLowerCase();
   return !['0', 'false', 'no'].includes(v);
@@ -90,10 +83,10 @@ export function loopbackHostname(env: Config): boolean {
   return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
 }
 
-function openNetworkRefused(env: Config): boolean {
-  if (requireLoginEnabled(env)) return false;
-  if ((env.IP_ALLOWLIST || '').trim()) return false;
-  return !loopbackHostname(env);
+// require-login: login is always required, so auth is never open and this never refuses. The
+// predicate, its exports and their call sites are deleted in task 3.1.
+function openNetworkRefused(_env: Config): boolean {
+  return false;
 }
 
 // ── AI topics chat (ai-topics-chat, design D5/D8) ───────────────────────────

@@ -65,6 +65,10 @@ describe('main.ts boot order', () => {
         PGUSER: 'autologger_app',
         PGPASSWORD: 'unused',
         PGDATABASE: 'postgres',
+        // require-login D1: the sign-in settings the boot guard requires before the catalog wait.
+        GOOGLE_CLIENT_ID: 'boot-order-client-id',
+        GOOGLE_CLIENT_SECRET: 'boot-order-client-secret',
+        PUBLIC_BASE_URL: 'http://localhost:8787',
       }),
       45_000,
     );
