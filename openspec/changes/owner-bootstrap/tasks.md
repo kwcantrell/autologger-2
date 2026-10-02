@@ -137,11 +137,18 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   src/bootOrder.int.test.ts` -> `Tests  4 passed (4)`; `npm run typecheck` -> exit 0
   (`5c-3.1-typecheck.log`); `docker/scripts/check-envs.sh` -> `check-envs: ok (all)`; `bash
   docker/scripts/test_check_envs.sh` -> `47 passed, 0 failed`.
-- [ ] 3.2 Docs for the key: `docs/infisical-secrets.md` (required in every stack, what it does,
+- [x] 3.2 Docs for the key: `docs/infisical-secrets.md` (required in every stack, what it does,
   that a blank value refuses boot and `make <env>-up`), the README env table, `server/.env.example`
   and `docker/.env.example`, `docker/.env.dev.example`, `docker/.env.stage.example`. Verify:
   `grep -rn BOOTSTRAP_OWNER_EMAIL README.md docs/infisical-secrets.md server/.env.example docker/`
   hits each, and the hook gates pass.
+  Evidence: docs committed in 308533a. `grep -rln BOOTSTRAP_OWNER_EMAIL README.md
+  docs/infisical-secrets.md server/.env.example docker/` (`5c-3.2-grep.log`) lists `README.md`,
+  `docs/infisical-secrets.md`, `server/.env.example`, `docker/.env.example`,
+  `docker/.env.dev.example`, `docker/.env.stage.example` (plus `docker/secrets-env.yaml` and the
+  compose-run script and test). Its hook run waited for the `adminUsers` recapture (6.1): after
+  6.1, `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`
+  (`5c-3.2-hook.log`) -> exit 0, every gate `PASS` (`commands  ran ['typecheck', 'test']`).
 
 ## 4. Owner role in the catalog stores (design D1, D4, D5, D7, D11)
 
