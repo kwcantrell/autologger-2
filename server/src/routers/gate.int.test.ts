@@ -39,6 +39,74 @@ describe('auth gate', () => {
   });
 });
 
+// gate-decoded-path D2: Hono routes on the percent-decoded path, so the gate must judge that same
+// path. `/%61pi/x` IS `/api/x` to the router (and the Caddy router forwards it as such).
+describe('encoded spellings of /api paths get the literal path’s answer', () => {
+  const bearer = { Authorization: 'Bearer test-api-token' };
+
+  it.each([
+    '/%61pi/sessions',
+    '/a%70i/sessions',
+    '/%61%70%69/sessions',
+    '/api/s%65ssions',
+  ])('%s with no credentials is 401 Login required', async (path) => {
+    const res = await app.request(path, { method: 'GET' }, withLogin);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Login required.' });
+  });
+
+  it('/%61pi/companion/state: 401 without the token, 200 with it', async () => {
+    const anon = await app.request('/%61pi/companion/state', { method: 'GET' }, withLogin);
+    expect(anon.status).toBe(401);
+    const tok = await app.request(
+      '/%61pi/companion/state',
+      { method: 'GET', headers: bearer },
+      withLogin,
+    );
+    expect(tok.status).toBe(200);
+  });
+
+  it('a valid token on /api/%63ompanion/state is honoured like /api/companion/state', async () => {
+    const res = await app.request(
+      '/api/%63ompanion/state',
+      { method: 'GET', headers: bearer },
+      withLogin,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it.each(['/%61pi/profile', '/api/pro%66ile'])('GET %s stays login-exempt', async (path) => {
+    const res = await app.request(path, { method: 'GET' }, withLogin);
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    '/%61pi/admin/users',
+    '/api/%61dmin/users',
+  ])('%s keeps the admin-token rules', async (path) => {
+    const res = await app.request(
+      path,
+      { method: 'GET', headers: adminHeader('wrong') },
+      envWith({ REQUIRE_LOGIN: '1', ADMIN_TOKEN: 'right' }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ detail: 'Invalid or missing admin token.' });
+  });
+
+  it('every registered /api route answers /%61pi<rest> exactly as /api<rest>', async () => {
+    const routes = app.routes.filter((r) => r.method !== 'ALL' && r.path.startsWith('/api/'));
+    expect(routes.length).toBeGreaterThan(40);
+    for (const r of routes) {
+      const rest = r.path.slice('/api'.length).replace(/:[^/]+/g, 'x');
+      const literal = await app.request(`/api${rest}`, { method: r.method }, withLogin);
+      const encoded = await app.request(`/%61pi${rest}`, { method: r.method }, withLogin);
+      expect(`${r.method} ${r.path} -> ${encoded.status}`).toBe(
+        `${r.method} ${r.path} -> ${literal.status}`,
+      );
+    }
+  });
+});
+
 describe('tenancy', () => {
   it('returns 404 for a session outside the caller’s studio', async () => {
     const studioA = seedStudio();
