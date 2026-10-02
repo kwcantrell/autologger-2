@@ -4,7 +4,6 @@
 // "Membership roles" / "Self-serve team creation" / "Team lifecycle and
 // last-admin protection" / "Email invites" requirements.
 
-import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
 import { anonApp, env } from '../test/harness';
 import { catalogFor, loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
@@ -125,26 +124,21 @@ describe('auth: 403 member-on-admin-route', () => {
   });
 });
 
-describe('built-in teams excluded wholesale', () => {
-  it('400s every /api/teams/:id/* operation on both built-in ids', async () => {
-    const userId = await seedUser();
-    const cookie = await loginCookie(userId);
-    for (const bid of BUILTIN_STUDIO_ORDER) {
-      const cases: Array<[string, string, unknown?]> = [
-        ['GET', `/api/teams/${bid}`],
-        ['PATCH', `/api/teams/${bid}`, { display_name: 'x' }],
-        ['DELETE', `/api/teams/${bid}`],
-        ['POST', `/api/teams/${bid}/invites`, { email: 'a@example.com' }],
-        ['DELETE', `/api/teams/${bid}/invites/a@example.com`],
-        ['POST', `/api/teams/${bid}/members/${userId}/role`, { role: 'admin' }],
-        ['DELETE', `/api/teams/${bid}/members/${userId}`],
-        ['POST', `/api/teams/${bid}/leave`],
-      ];
-      for (const [method, path, body] of cases) {
-        const res = await req(method, path, { cookie, body });
-        expect(res.status, `${method} ${path}`).toBe(400);
-      }
-    }
+// owner-bootstrap D9: the former built-ins are ordinary teams on the team plane.
+describe('former built-ins are ordinary teams', () => {
+  it('a member of test-studios gets 200 on GET /api/teams/test-studios', async () => {
+    const { cookie } = await addToTeam('test-studios', 'member');
+    const res = await req('GET', '/api/teams/test-studios', { cookie });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; name: string; role: string };
+    expect(body).toMatchObject({ id: 'test-studios', name: 'Test Studio', role: 'member' });
+  });
+
+  it('a non-member gets the masked 404 on GET /api/teams/test-studios', async () => {
+    const cookie = await loginCookie(await seedUser());
+    const res = await req('GET', '/api/teams/test-studios', { cookie });
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { detail: string }).detail).toBe('Team not found');
   });
 });
 
@@ -165,13 +159,18 @@ describe('POST /api/teams — self-serve creation', () => {
     expect(body.name).toBe('My Crew');
   });
 
-  it('rejects a built-in id, no team created', async () => {
-    const cookie = await loginCookie(await seedUser());
+  it('rejects a former built-in id as an existing team, no membership created', async () => {
+    const userId = await seedUser();
+    const cookie = await loginCookie(userId);
     const res = await req('POST', '/api/teams', {
       cookie,
       body: { id: 'test-studios', display_name: 'Nope' },
     });
     expect(res.status).toBe(400);
+    expect(((await res.json()) as { detail: string }).detail).toBe(
+      'A team with that id already exists.',
+    );
+    expect(await catalogFor().auth.authGetMembershipRole(userId, 'test-studios')).toBeNull();
   });
 
   it('rejects a duplicate id', async () => {

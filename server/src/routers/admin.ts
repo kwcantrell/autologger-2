@@ -3,7 +3,7 @@
 // restart (adminMeta already returns restart_supported:false).
 
 import { adminMembershipBodySchema, adminStudioCreateBodySchema } from '@autologger/contract';
-import { BUILTIN_STUDIO_ORDER, ValidationError } from '@autologger/domain';
+import { ValidationError } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { requestHasValidAdminToken } from '../auth/identity';
@@ -24,12 +24,13 @@ function requireAdminToken(c: Context<AppEnv>): void {
 adminRouter.get('/api/admin/users', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const builtin = new Set(BUILTIN_STUDIO_ORDER);
   const names = catalog.studios.studioNamesDict();
+  // `builtin` stays in the frozen shape, always false: there are no built-in teams
+  // (owner-bootstrap D9).
   const studiosCatalog = catalog.studios.studioOrderTuple().map((sid) => ({
     id: sid,
     name: names[sid],
-    builtin: builtin.has(sid),
+    builtin: false,
   }));
   const usersOut: Record<string, unknown>[] = [];
   for (const r of await catalog.auth.authListUsersAdmin()) {
@@ -59,10 +60,9 @@ adminRouter.post('/api/admin/studios', async (c) => {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
-  const builtin = new Set(BUILTIN_STUDIO_ORDER);
   const names = catalog.studios.studioNamesDict();
   const id = body.id.trim();
-  return c.json({ studio: { id, name: names[id], builtin: builtin.has(id) } });
+  return c.json({ studio: { id, name: names[id], builtin: false } });
 });
 
 adminRouter.delete('/api/admin/studios/:studioId', async (c) => {

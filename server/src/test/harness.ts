@@ -6,7 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Catalog } from '@autologger/catalog';
-import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { createTestDatabase } from '../../../test/pg/testDb';
@@ -86,7 +85,8 @@ export async function resetTestEnv(): Promise<void> {
   current = { ...made, dir, defaultUser: null };
 }
 
-/** The default signed-in caller (require-login D7): a plain `member` of the built-in studios only.
+/** The default signed-in caller (require-login D7): a plain `member` of the two seed teams
+ * (`test-studios`, `test-studio-2`; owner-bootstrap D13) only.
  * `seededSession()` adds the same membership for its fresh studio; `seedStudio` adds none, so team
  * and admin suites see no extra member. Created on first use (the wrapped `app` adding its cookie,
  * or `seededSession()`), so a suite that never signs in as it — the admin users capture — sees no
@@ -105,7 +105,7 @@ export function defaultUser(): Promise<{ id: string; cookie: string }> {
       familyName: 'User',
       pictureUrl: '',
     });
-    for (const sid of BUILTIN_STUDIO_ORDER) {
+    for (const sid of ['test-studios', 'test-studio-2']) {
       await catalog.auth.authAddMembershipWithRole(id, sid, 'member');
     }
     const raw = await createLoginSession(cur.bindings.ports.kv, id, 14);

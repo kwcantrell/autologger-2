@@ -38,7 +38,6 @@ export interface AuthStoreFacade {
   authGetPrefs: (userId: string) => Promise<Row | null>;
   authEnsurePrefsRow: (userId: string) => Promise<void>;
   authSetPrefs: (userId: string, activeStudioId: string, activeShowId: string) => Promise<void>;
-  authSeedPrefsFromGlobals: (userId: string, activeStudioId: string, activeShowId: string) => Promise<void>;
   authListUsersAdmin: () => Promise<Row[]>;
   authGetUserRowAny: (userId: string) => Promise<Row | null>;
   authSetUserDisabled: (userId: string, disabled: boolean) => Promise<void>;
@@ -258,17 +257,6 @@ export class AuthStore implements AuthStoreFacade {
       next,
       expected,
     );
-  }
-
-  async authSeedPrefsFromGlobals(userId: string, activeStudioId: string, activeShowId: string): Promise<void> {
-    // Read, then write, in one transaction (async-catalog-stores D2).
-    await this.db.tx(async (t) => {
-      const a = this.withDb(t);
-      const row = await a.authGetPrefs(userId);
-      if (row !== null && String(row.active_studio_id ?? '').trim()) return;
-      await a.authEnsurePrefsRow(userId);
-      await a.authSetPrefs(userId, activeStudioId, activeShowId);
-    });
   }
 
   // -- admin: users ------------------------------------------------------------

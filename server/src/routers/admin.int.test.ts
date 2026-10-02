@@ -25,6 +25,23 @@ describe('admin auth', () => {
   });
 });
 
+describe('admin-plane builtin flag (owner-bootstrap D9)', () => {
+  it('studios_catalog reports builtin: false for the former built-ins', async () => {
+    const res = await anonApp.request('/api/admin/users', { method: 'GET', headers: H }, ADMIN_ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      studios_catalog: Array<{ id: string; builtin: boolean }>;
+    };
+    const former = body.studios_catalog.filter((s) =>
+      ['test-studios', 'test-studio-2'].includes(s.id),
+    );
+    expect(former).toEqual([
+      { id: 'test-studios', name: 'Test Studio', builtin: false },
+      { id: 'test-studio-2', name: 'Test Studio 2', builtin: false },
+    ]);
+  });
+});
+
 describe('admin studios', () => {
   it('creates then deletes a studio', async () => {
     const create = await anonApp.request(

@@ -1,11 +1,6 @@
 // Auth routes — ported from src/autologger/web/routers/auth.py.
 
-import {
-  DEFAULT_STUDIO_ID,
-  normalizeEmail,
-  SETTING_ACTIVE_SHOW,
-  SETTING_ACTIVE_STUDIO,
-} from '@autologger/domain';
+import { normalizeEmail } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
@@ -229,11 +224,8 @@ authRouter.get('/auth/google/callback', async (c) => {
       });
       // A concurrent first sign-in for this sub won (catalog-concurrency-hazards D5).
       if (newUid === null) return null;
-      await cat.auth.authSeedPrefsFromGlobals(
-        newUid,
-        (await cat.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
-        (await cat.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
-      );
+      // No prefs seed (owner-bootstrap D10): a new user's prefs start empty, so their first team
+      // (or onboarding) applies.
       // Materialize pending invites ONLY when the id_token asserts a
       // verified email (team-management delta, "Email invites") -- the
       // email claim becomes an authorization join key here, so an

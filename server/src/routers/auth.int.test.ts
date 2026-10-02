@@ -511,6 +511,27 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     // test below for that assertion.
   });
 
+  it('a new user is not seeded from the global active team and show (owner-bootstrap D10)', async () => {
+    await env.ports.catalog.run(
+      `INSERT INTO app_settings (key, value) VALUES ('active_studio_id', 'test-studios'),
+         ('active_show_id', 'show-autolog-test')
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    );
+    const res = await runCallback({
+      sub: 'sub-no-global-seed',
+      email: 'no-global-seed@example.com',
+      state: 'state-no-global-seed',
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    const uid = String((await catalogFor().auth.authGetUserByGoogleSub('sub-no-global-seed'))?.id);
+    const prefs = await catalogFor().auth.authGetPrefs(uid);
+    if (prefs !== null) {
+      expect(String(prefs.active_studio_id ?? '')).toBe('');
+      expect(String(prefs.active_show_id ?? '')).toBe('');
+    }
+  });
+
   it('a disabled account signing in is redirected without a cookie or any write (design D11)', async () => {
     const sub = 'sub-disabled';
     const userId = await seedUser({ sub, email: 'disabled@example.com' });

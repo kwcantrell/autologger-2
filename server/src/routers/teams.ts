@@ -3,9 +3,8 @@
 // contract (api-contract-freeze delta, "Team management endpoint family").
 //
 // Authorization posture (design D3): every route requires a logged-in user
-// (401 otherwise — dev-anonymous has no user identity); a wholesale built-in
-// guard runs before membership/role checks (400 on any `test-studios` /
-// `test-studio-2` operation); team-scoped routes mask non-membership as a 404
+// (401 otherwise — dev-anonymous has no user identity); there are no built-in teams
+// (owner-bootstrap D9); team-scoped routes mask non-membership as a 404
 // indistinguishable from a nonexistent team; admin-only routes 403 a plain
 // member. `requireSession` and content routers are untouched — role checks
 // live ONLY here.
@@ -17,7 +16,7 @@ import {
   teamRenameBodySchema,
   teamRoleChangeBodySchema,
 } from '@autologger/contract';
-import { BUILTIN_STUDIO_ORDER, normalizeEmail, ValidationError } from '@autologger/domain';
+import { normalizeEmail, ValidationError } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import type { ZodTypeAny, z } from 'zod';
 import type { AppEnv } from '../appEnv';
@@ -51,22 +50,14 @@ function isPlausibleEmail(email: string): boolean {
   return email.length > 0 && email.length <= 254 && EMAIL_SHAPE_RE.test(email);
 }
 
-function requireNotBuiltin(teamId: string): void {
-  if (BUILTIN_STUDIO_ORDER.includes(teamId)) {
-    throw new ApiError(400, 'Built-in teams are managed by support, not self-serve.');
-  }
-}
-
 /** requireTeamMember (design D3): a signed-in user (the login gate 401s before this; require-login
- * D3); the built-in guard runs
- * before membership is even consulted; masked 404 for a team the caller isn't
- * a member of (nonexistent and foreign teams are indistinguishable). */
+ * D3); masked 404 for a team the caller isn't a member of (nonexistent and foreign teams are
+ * indistinguishable). Former built-ins are ordinary teams (owner-bootstrap D9). */
 async function requireTeamMember(
   c: Context<AppEnv>,
   teamId: string,
 ): Promise<{ user: AuthUser; role: TeamRole }> {
   const user = requireUser(c);
-  requireNotBuiltin(teamId);
   const role = await c.get('catalog').auth.authGetMembershipRole(user.id, teamId);
   if (role === null) throw new ApiError(404, 'Team not found');
   return { user, role };
@@ -90,13 +81,10 @@ async function requireTeamAdminIn(cat: CatalogFacade, userId: string, teamId: st
   if (role !== 'admin') throw new ApiError(403, 'Admin role required.');
 }
 
-/** Count of non-built-in teams the user currently admins — self-serve
- * creation cap (design D10). Single indexed query (phase-2 review: replaced
- * an N+1 over every membership the user holds, which didn't scale with a
- * user's total membership count even though the cap only bounds admin'd
- * teams). */
+/** Count of teams the user currently admins — self-serve creation cap (design D10). Single
+ * indexed query. */
 async function countOwnedNonBuiltinTeams(catalog: CatalogFacade, userId: string): Promise<number> {
-  return await catalog.auth.authCountAdminTeams(userId, [...BUILTIN_STUDIO_ORDER]);
+  return await catalog.auth.authCountAdminTeams(userId, []);
 }
 
 /** Last-admin protection is a global invariant (design: team-management

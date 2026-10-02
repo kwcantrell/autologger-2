@@ -252,6 +252,11 @@ describe('profile + misc helpers', () => {
     expect(profile).toMatchObject({ id: 'studio-x', name: 'Studio X' });
     expect(Array.isArray(profile.categories)).toBe(true);
   });
+  it('the default categories do not depend on the team id (owner-bootstrap D9)', () => {
+    const names = (id: string) => defaultSettingsBlob(id).categories.map((c) => c.name);
+    expect(names('test-studio-2')).toEqual(['Scene', 'Audio issue', 'Note']);
+    expect(names('')).toEqual(names('test-studio-2'));
+  });
   it('studioConfigKey contains the studio id', () => {
     expect(studioConfigKey('abc')).toContain('abc');
   });

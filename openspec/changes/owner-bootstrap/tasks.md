@@ -43,7 +43,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 2. Built-ins become data; the global defaults go (design D9, D10)
 
-- [ ] 2.1 Test first:
+- [x] 2.1 Test first:
   - catalog (`server/src/test/catalog.int.test.ts`, `authStore.int.test.ts`):
     - a fresh catalog's registry lists `test-studios`, `test-studio-2` first and in order, then
       created teams;
@@ -62,7 +62,16 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
     (a member of `test-studios` gets `200` on `GET /api/teams/test-studios`; a non-member gets
     the masked `404`).
   Verify: red before 2.2.
-- [ ] 2.2 Implement D9 and D10:
+  Evidence: red before 2.2: `cd server && npx vitest run --project integration
+  src/test/catalog.int.test.ts src/test/authStore.int.test.ts src/routers/auth.int.test.ts
+  src/routers/admin.int.test.ts src/routers/teams.int.test.ts` (`5c-2.1-red.log`) -> `Tests  10
+  failed | 119 passed (129)` (e.g. `creating test-studios through either plane`, `studios_catalog
+  reports builtin: false`, `a new user is not seeded from the global active team and show`); `cd
+  packages/catalog && npx vitest run src/sessionIndexStore.test.ts` -> `3 failed | 4 passed (7)`;
+  `cd packages/domain && npx vitest run src/studio.test.ts` -> `2 failed | 24 passed (26)`
+  (`5c-2.1-red-catalog.log`, `5c-2.1-red-domain.log`). Green after 2.2 (`5c-2.1-green.log`): `Test
+  Files  5 passed (5)`, `Tests  129 passed (129)`.
+- [x] 2.2 Implement D9 and D10:
   - `packages/domain/src/studio.ts`: delete `BUILTIN_STUDIO_ORDER`, `BUILTIN_STUDIO_NAMES`,
     `DEFAULT_STUDIO_ID`, `LEGACY_STUDIO_MAP`, `SETTING_ACTIVE_STUDIO`, `SETTING_ACTIVE_SHOW` and
     the `test-studio-2` category branch (update `studio.test.ts`);
@@ -81,6 +90,14 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   Verify: 2.1 green; `npm run typecheck` exit 0; the catalog, domain and server suites green;
   `grep -rn "BUILTIN_STUDIO\|DEFAULT_STUDIO_ID\|LEGACY_STUDIO_MAP\|SETTING_ACTIVE_\|resolveActiveStudio\|authSeedPrefsFromGlobals" packages server/src web/src --include=*.ts --include=*.tsx`
   has no hit outside web (web's `BUILTIN_TEAM_IDS` goes in 8.2).
+  Evidence: `npm run typecheck` -> exit 0 (`5c-2.2-typecheck.log`). `cd packages/domain && npx
+  vitest run` -> `Tests  50 passed (50)`; `cd packages/catalog && npx vitest run` -> `Tests  39
+  passed (39)`; `cd server && npx vitest run --project unit` -> `Tests  274 passed | 3 skipped
+  (277)` (`5c-2.2-unit.log`); `--project integration` -> `Tests  1 failed | 648 passed (649)`
+  (`5c-2.2-int.log`): the one failure is `apiResponseFixtures.int.test.ts > GET /api/admin/users`,
+  whose diff is only `"builtin": true` -> `false` for the two former built-ins, the capture task
+  6.1 recaptures. The grep (`5c-2.2-grep.log`) hits only
+  `web/src/pages/index/components/OnboardingPanel.tsx:18` and `TeamsRoute.tsx:26` (web, 8.2).
 
 ## 3. `BOOTSTRAP_OWNER_EMAIL` is required (design D8)
 

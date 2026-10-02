@@ -1,12 +1,20 @@
 import { ValidationError } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { env } from './harness';
-import { catalogFor, seedSession, seedShow, seedStudio, seedUser } from './helpers';
+import { anonApp, env, envWith } from './harness';
+import {
+  adminHeader,
+  catalogFor,
+  loginCookie,
+  seedSession,
+  seedShow,
+  seedStudio,
+  seedUser,
+} from './helpers';
 
 describe('catalog studio + auth stores', () => {
   it('creates a studio that appears in the registry after init()', async () => {
     // The StudioRegistry is in-memory: isKnownStudio/listStudiosBrief read
-    // `this.names`, populated by init() from studio_definitions + built-ins.
+    // `this.names`, populated by init() from studio_definitions.
     // So seed → init() (loads the new row) → it is now known.
     const id = await seedStudio({ name: 'Acme' });
     const cat = catalogFor();
@@ -113,5 +121,120 @@ describe('catalog transactions', () => {
         "SELECT COUNT(*) AS n FROM studio_definitions WHERE id = 'dup-team'",
       ),
     ).toEqual({ n: 1 });
+  });
+});
+
+// owner-bootstrap D9: the former built-ins are studio_definitions rows (migration 20261004000000),
+// so the registry, creation, deletion, rename and settings treat them as ordinary teams.
+describe('former built-in teams are data (owner-bootstrap D9)', () => {
+  const ADMIN_ENV = envWith({ ADMIN_TOKEN: 'former-builtin-admin' });
+  const ADMIN_H = { ...adminHeader('former-builtin-admin'), 'content-type': 'application/json' };
+
+  async function teamAdminCookie(team: string): Promise<string> {
+    const user = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(user, team, 'admin');
+    return loginCookie(user);
+  }
+
+  it('a fresh registry lists test-studios and test-studio-2 first, in order, then created teams', async () => {
+    await seedStudio({ id: 'zz-created' });
+    await seedStudio({ id: 'aa-created' });
+    const cat = catalogFor();
+    await cat.init();
+    expect(cat.studios.studioOrderTuple()).toEqual([
+      'test-studios',
+      'test-studio-2',
+      'aa-created',
+      'zz-created',
+    ]);
+    expect(cat.studios.studioNamesDict()).toMatchObject({
+      'test-studios': 'Test Studio',
+      'test-studio-2': 'Test Studio 2',
+    });
+  });
+
+  it('creating test-studios through either plane gets the existing-id 400', async () => {
+    const viaAdmin = await anonApp.request(
+      '/api/admin/studios',
+      { method: 'POST', headers: ADMIN_H, body: JSON.stringify({ id: 'test-studios', display_name: 'X' }) },
+      ADMIN_ENV,
+    );
+    expect(viaAdmin.status).toBe(400);
+    expect(((await viaAdmin.json()) as { detail: string }).detail).toBe(
+      'A team with that id already exists.',
+    );
+    const cookie = await loginCookie(await seedUser());
+    const viaTeams = await anonApp.request(
+      '/api/teams',
+      {
+        method: 'POST',
+        headers: { Cookie: cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'test-studios', display_name: 'X' }),
+      },
+      { ...env },
+    );
+    expect(viaTeams.status).toBe(400);
+    expect(((await viaTeams.json()) as { detail: string }).detail).toBe(
+      'A team with that id already exists.',
+    );
+  });
+
+  it('deleting a former built-in is refused only for its shows, on either plane', async () => {
+    const viaAdmin = await anonApp.request(
+      '/api/admin/studios/test-studios',
+      { method: 'DELETE', headers: ADMIN_H },
+      ADMIN_ENV,
+    );
+    expect(viaAdmin.status).toBe(400);
+    expect(((await viaAdmin.json()) as { detail: string }).detail).toMatch(/still has 1 show/);
+    const cookie = await teamAdminCookie('test-studio-2');
+    const viaTeams = await anonApp.request(
+      '/api/teams/test-studio-2',
+      { method: 'DELETE', headers: { Cookie: cookie } },
+      { ...env },
+    );
+    expect(viaTeams.status).toBe(400);
+    expect(((await viaTeams.json()) as { detail: string }).detail).toMatch(/still has 1 show/);
+    // With its show gone the former built-in deletes like any team.
+    await env.ports.catalog.run("DELETE FROM shows WHERE studio_id = 'test-studios'");
+    const again = await anonApp.request(
+      '/api/admin/studios/test-studios',
+      { method: 'DELETE', headers: ADMIN_H },
+      ADMIN_ENV,
+    );
+    expect(again.status).toBe(200);
+    expect(await catalogFor().studios.studioExists('test-studios')).toBe(false);
+  });
+
+  it('renameStudio renames a former built-in', async () => {
+    await catalogFor().studios.renameStudio('test-studios', 'Renamed Studio');
+    const cat = catalogFor();
+    await cat.init();
+    expect(cat.studios.studioNamesDict()['test-studios']).toBe('Renamed Studio');
+  });
+
+  it('getStudioSettingsBlob of an unknown team returns the default and persists nothing', async () => {
+    const before = await env.ports.catalog.all(
+      "SELECT key, value FROM app_settings WHERE key LIKE 'studio_config:%' ORDER BY key",
+    );
+    const cat = catalogFor();
+    await cat.init();
+    const blob = (await cat.studios.getStudioSettingsBlob('nope')) as {
+      categories: Array<{ name: string }>;
+    };
+    expect(blob.categories.map((c) => c.name)).toEqual(['Scene', 'Audio issue', 'Note']);
+    const after = await env.ports.catalog.all(
+      "SELECT key, value FROM app_settings WHERE key LIKE 'studio_config:%' ORDER BY key",
+    );
+    expect(after).toEqual(before);
+  });
+
+  it('a user whose only membership names an unknown team gets a null profile studio', async () => {
+    const user = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(user, 'no-such-team', 'member');
+    const cat = catalogFor();
+    await cat.init();
+    const [profile] = await cat.profile.profileStudioForUser(user);
+    expect(profile).toBeNull();
   });
 });
