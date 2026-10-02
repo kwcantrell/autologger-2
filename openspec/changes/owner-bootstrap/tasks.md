@@ -212,7 +212,11 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   Evidence: `cd server && npx vitest run --project integration src/routers/teams.int.test.ts
   src/routers/authz.int.test.ts` (`5c-5.2-green.log`) -> `Test Files  2 passed (2)`, `Tests  62
   passed (62)`; `npm run typecheck` -> exit 0 (`5c-5.2-typecheck.log`). The cap message follows
-  design D5: `You already own 20 teams; the limit has been reached.`
+  design D5: `You already own 20 teams; the limit has been reached.` Found later by the hook run:
+  `catalog.int.test.ts` "deleting a former built-in is refused only for its shows" deleted through
+  the team plane as an admin (`expected 403 to be 400`); its helper now seeds an owner, and the full
+  `--project integration` run is green (`5c-6.1-int-full.log`: `Test Files  45 passed (45)`,
+  `Tests  679 passed (679)`).
 - [x] 5.3 Test first, in `server/src/routers/teams.race.int.test.ts` (replacing the last-admin
   races): two concurrent transfers to different members; a transfer racing the target's leave;
   the owner's demotion of admin B racing B's rename; each run asserts exactly one owner at the

@@ -130,9 +130,10 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
   const ADMIN_ENV = envWith({ ADMIN_TOKEN: 'former-builtin-admin' });
   const ADMIN_H = { ...adminHeader('former-builtin-admin'), 'content-type': 'application/json' };
 
-  async function teamAdminCookie(team: string): Promise<string> {
+  /** A signed-in owner of `team` (team delete is owner-only, owner-bootstrap D2). */
+  async function teamOwnerCookie(team: string): Promise<string> {
     const user = await seedUser();
-    await catalogFor().auth.authAddMembershipWithRole(user, team, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(user, team, 'owner');
     return loginCookie(user);
   }
 
@@ -191,7 +192,7 @@ describe('former built-in teams are data (owner-bootstrap D9)', () => {
     );
     expect(viaAdmin.status).toBe(400);
     expect(((await viaAdmin.json()) as { detail: string }).detail).toMatch(/still has 1 show/);
-    const cookie = await teamAdminCookie('test-studio-2');
+    const cookie = await teamOwnerCookie('test-studio-2');
     const viaTeams = await anonApp.request(
       '/api/teams/test-studio-2',
       { method: 'DELETE', headers: { Cookie: cookie } },
