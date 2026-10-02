@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
 import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
 import { ApiError } from '../httpError';
-import { timecodeCtx } from './_helpers';
+import { requireUser, timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
 
@@ -128,19 +128,15 @@ function jobFailureDetail(err: unknown): string | null {
 logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
   const catalog = c.get('catalog');
-  const user = c.get('user');
+  const user = requireUser(c);
   const show = await catalog.shows.getShowRow(showId);
   if (!show) throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-  // Studio-membership scope (the requireSession pattern in _helpers.ts): an
-  // authenticated user who isn't a member of the show's studio gets the SAME
-  // 404 as a nonexistent show — no existence oracle. An anonymous requester
-  // (user === null: REQUIRE_LOGIN=0 dev mode, or API-token auth) passes,
-  // exactly as on every sibling route.
-  if (user !== null) {
-    const studioId = String(show.studio_id ?? '');
-    if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
-      throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-    }
+  // Studio-membership scope (the requireSession pattern in _helpers.ts): a
+  // user who isn't a member of the show's studio gets the SAME 404 as a
+  // nonexistent show — no existence oracle (always checked, require-login D3).
+  const studioId = String(show.studio_id ?? '');
+  if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
+    throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
   }
 
   // Configuration gate AFTER the 404 scope check (the youtube-import ordering
@@ -165,7 +161,7 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) throw new ApiError(400, 'spreadsheet_url is required.');
 
-  const job = createLogImportJob(c.env.ports.clock, user?.id ?? null);
+  const job = createLogImportJob(c.env.ports.clock, user.id);
   const env = c.env;
   const mirror = env.ports.mirror;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
@@ -266,14 +262,12 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
 });
 
 logImportRouter.get('/api/log-import/:jobId', (c) => {
-  const user = c.get('user');
+  const user = requireUser(c);
   const job = getLogImportJob(c.env.ports.clock, c.req.param('jobId'));
-  // Creator scope: an authenticated requester who didn't create the job gets
-  // the SAME 404 as an unknown id — no existence oracle. Anonymous requesters
-  // (REQUIRE_LOGIN=0 dev mode, or API-token auth) pass, mirroring the
-  // studio-membership pattern on sibling routes. Not egress-gated: this route
-  // only reads local in-process state.
-  if (!job || (user !== null && job.createdByUserId !== user.id)) {
+  // Creator scope: a requester who didn't create the job gets the SAME 404 as
+  // an unknown id — no existence oracle (always checked, require-login D3).
+  // Not egress-gated: this route only reads local in-process state.
+  if (!job || job.createdByUserId !== user.id) {
     throw new ApiError(404, JOB_NOT_FOUND_DETAIL);
   }
   return c.json({

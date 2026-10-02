@@ -44,7 +44,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
 
 export const sessionsRouter = new Hono<AppEnv>();
@@ -112,7 +112,7 @@ function serializeSessionEntry(c: Context<AppEnv>, s: Row): Record<string, unkno
 
 sessionsRouter.get('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
-  const user = c.get('user');
+  const user = requireUser(c);
   const active = await catalog.profile.getEffectiveStudioForUser(
     user,
     oauthConfigured(c.env.config),
@@ -134,7 +134,8 @@ sessionsRouter.get('/api/sessions', async (c) => {
   if (!activeShowId && shows.length) {
     activeShowId = String(shows[0].id);
     // Conditional, so a profile update committed meanwhile wins (catalog-concurrency-hazards D8).
-    if (user === null) await catalog.studios.setSettingIf(SETTING_ACTIVE_SHOW, stored, activeShowId);
+    if (user === null)
+      await catalog.studios.setSettingIf(SETTING_ACTIVE_SHOW, stored, activeShowId);
     else await catalog.auth.authReplaceActiveShowIf(user.id, active.id, stored, activeShowId);
   }
   if (!activeShowId) return c.json({ active: [], archived: [] });
@@ -151,7 +152,7 @@ sessionsRouter.get('/api/sessions', async (c) => {
 
 sessionsRouter.post('/api/sessions', async (c) => {
   const catalog = c.get('catalog');
-  const user = c.get('user');
+  const user = requireUser(c);
   const body = newSessionBodySchema.parse(await c.req.json());
   const active = await catalog.profile.getEffectiveStudioForUser(
     user,

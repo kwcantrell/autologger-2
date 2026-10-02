@@ -120,7 +120,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   running server has OAuth configured, D6). Full suite `5b-2.2-suite.log` before those
   follow-ons: the only remaining failures afterwards are 3.1/3.2 targets (open-network 503 cases,
   `profileAnonymous` capture).
-- [ ] 2.3 Implement D3:
+- [x] 2.3 Implement D3:
   - `requireUser` moves to `_helpers.ts`; a null user is an internal error (500), not a 401;
   - `requireSession` uses it and always checks membership;
   - the D3 route list uses it (including `GET /api/studio`); `teams.ts` uses the shared helper;
@@ -133,6 +133,22 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
     holder in the topics-generate busy detail.
 
   Verify: the server suite and typecheck are green.
+  Evidence: red `5b-2.3-red.log`: `× requireUser with a null user throws the internal error`,
+  `× requireSession with a null user throws the internal error instead of skipping membership`
+  (`TypeError: requireUser is not a function` / `instanceof assertion needs a constructor`); the
+  non-member cases (`shows-profile` "404s for a logged-in non-member", the new `logImport` "GET
+  job 404s for a signed-in non-member", `transcribe` 409/status redaction for a non-member)
+  already passed (recorded). Implementation: `MissingPrincipalError` (plain `Error` -> the
+  existing `onError` 500 `Internal Server Error` + redacted `unhandled error` log). Green:
+  `npm run typecheck` exit 0 (`5b-2.3-typecheck.log`); `packages/log-import` `Tests  32 passed`;
+  server `5b-2.3-green.log`: `Tests  10 failed | 933 passed`, and every failure is a 3.1/3.2
+  deletion target: the six open-network 503 cases (`ai`, `aiV2`, `events.generate`,
+  `logImport`, `sessions.youtubeImport`, `transcribe`), three `ai` `registrationCount` checks
+  cascading from the `ai` open-network case's leaked turn, and the `profileAnonymous` capture
+  (plus one unhandled rejection from the `logImport` open-network case's job outliving its
+  test). The predicate is stubbed `false` since 2.2, so those cases can't pass until 3.1 deletes
+  them. Follow-on: `jobStore.test.ts` "stores null for an anonymous creator" deleted, other cases
+  pass `'user-1'`.
 
 ## 3. Anonymous state and open-network refusals removed (design D4, D5, D6, D12)
 

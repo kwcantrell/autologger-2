@@ -11,11 +11,10 @@ export interface LogImportJob {
    * the job FINISHED, so a long-running import isn't reaped the moment it
    * completes. */
   finishedAtMs: number | null;
-  /** Creator principal: the authenticated user's id, or null for an anonymous
-   * request (REQUIRE_LOGIN=0 dev mode, or API-token auth). The status GET
-   * route 404s any authenticated requester whose id differs — same shape as
-   * the studio-membership scope on sibling routes. */
-  createdByUserId: string | null;
+  /** Creator principal: the signed-in user's id (login is always required,
+   * require-login D3). The status GET route 404s any requester whose id
+   * differs — same shape as the studio-membership scope on sibling routes. */
+  createdByUserId: string;
 }
 
 /** Terminal (completed/failed) jobs are prunable this long after finishing. */
@@ -57,7 +56,7 @@ function pruneJobs(nowMs: number): void {
   }
 }
 
-export function createLogImportJob(clock: Clock, createdByUserId: string | null): LogImportJob {
+export function createLogImportJob(clock: Clock, createdByUserId: string): LogImportJob {
   const now = clock.now();
   pruneJobs(now);
   const id = crypto.randomUUID();

@@ -49,6 +49,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** Polls a job to a terminal status with the given headers, so its background run never outlives
+ * the test (it reads the per-test env, which teardown removes). */
+async function settleJob(jobId: string, headers: Record<string, string> = {}): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const res = await app.request(`/api/log-import/${jobId}`, { headers }, env);
+    const body = (await res.json()) as { status?: string };
+    if (body.status === 'failed' || body.status === 'completed') return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error('job did not finish');
+}
+
 describe('log-import job HTTP surface', () => {
   it('404s unknown job ids', async () => {
     const res = await app.request('/api/log-import/no-such-job', {}, env);
@@ -176,6 +188,29 @@ describe('log-import job HTTP surface', () => {
     );
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ detail: 'Log import job not found.' });
+  });
+
+  it('GET job 404s for a signed-in non-member of the show’s studio (require-login D3)', async () => {
+    const studio = await seedMemberStudio();
+    const show = await seedShow({ studioId: studio });
+    const outsider = await seedUser({ studios: [await seedStudio()] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
+    );
+
+    const post = await postImport(show); // the default member starts it
+    expect(post.status).toBe(200);
+    const { job_id } = (await post.json()) as { job_id: string };
+
+    const res = await app.request(
+      `/api/log-import/${job_id}`,
+      { headers: { cookie: await loginCookie(outsider) } },
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Log import job not found.' });
+    await settleJob(job_id);
   });
 
   // ── Pipeline end-to-end (pr-3-review test-gap wave) ────────────────────────

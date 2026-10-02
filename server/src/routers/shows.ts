@@ -13,13 +13,13 @@ import {
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { oauthConfigured } from '../env';
+import { requireUser } from './_helpers';
 
 export const showsRouter = new Hono<AppEnv>();
 
 showsRouter.get('/api/shows', async (c) => {
   const catalog = c.get('catalog');
-  const user = c.get('user');
-  if (user === null && oauthConfigured(c.env.config)) return c.json({ shows: [] });
+  const user = requireUser(c);
 
   let sid = (c.req.query('studio_id') ?? '').trim();
   if (!sid) {
@@ -31,7 +31,7 @@ showsRouter.get('/api/shows', async (c) => {
     sid = eff.id;
   }
   if (!catalog.studios.isKnownStudio(sid)) return c.json({ detail: 'Unknown studio id.' }, 400);
-  if (user !== null && !(await catalog.auth.authUserHasStudio(user.id, sid))) {
+  if (!(await catalog.auth.authUserHasStudio(user.id, sid))) {
     return c.json({ detail: 'Unknown studio id.' }, 404);
   }
   const out = (await catalog.shows.listShowsForStudio(sid)).map(showApiDict);
@@ -42,20 +42,18 @@ showsRouter.get('/api/shows', async (c) => {
 // emits only `showBriefApiDict` entries, so a client that needs a show's
 // categories or palettes without knowing (or caring about) its studio fetches
 // it here; the studio-scoped list route above serves the "every show in this
-// studio" case. Auth mirrors that list route — anonymous is allowed only while
-// OAuth is unconfigured, and a logged-in caller must be a member of the show's
-// studio. Both the unknown-id and the not-a-member outcomes are the SAME 404
+// studio" case. Auth mirrors that list route: the caller must be a member of
+// the show's studio (require-login D3). Both the unknown-id and the not-a-member outcomes are the SAME 404
 // with the same body: a distinguishable 403 would turn this route into an
 // existence oracle for other tenants' show ids.
 showsRouter.get('/api/shows/:showId', async (c) => {
   const catalog = c.get('catalog');
-  const user = c.get('user');
+  const user = requireUser(c);
   const notFound = () => c.json({ detail: 'Show not found.' }, 404);
-  if (user === null && oauthConfigured(c.env.config)) return notFound();
 
   const row = await catalog.shows.getShowRow(c.req.param('showId'));
   if (row === null) return notFound();
-  if (user !== null && !(await catalog.auth.authUserHasStudio(user.id, String(row.studio_id)))) {
+  if (!(await catalog.auth.authUserHasStudio(user.id, String(row.studio_id)))) {
     return notFound();
   }
   return c.json({ show: showApiDict(row) });
@@ -64,9 +62,7 @@ showsRouter.get('/api/shows/:showId', async (c) => {
 showsRouter.post('/api/shows', async (c) => {
   const catalog = c.get('catalog');
   const body = showCreateBodySchema.parse(await c.req.json());
-  const user = c.get('user');
-  if (user === null && oauthConfigured(c.env.config))
-    return c.json({ detail: 'Login required.' }, 401);
+  const user = requireUser(c);
 
   const code = (body.show_code ?? '').trim().toUpperCase() || suggestedShowCode(body.name);
   if (!code) return c.json({ detail: 'Show code is required.' }, 400);
@@ -84,7 +80,7 @@ showsRouter.post('/api/shows', async (c) => {
   // deleted meanwhile never gets a show (catalog-concurrency-hazards D3).
   const created = await catalog.tx(async (cat) => {
     if (!(await cat.studios.studioExists(body.studio_id))) return 400 as const;
-    if (user !== null && !(await cat.auth.authUserHasStudio(user.id, body.studio_id))) {
+    if (!(await cat.auth.authUserHasStudio(user.id, body.studio_id))) {
       return 404 as const;
     }
     return cat.shows.createShow({

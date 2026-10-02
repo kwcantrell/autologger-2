@@ -38,7 +38,7 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
@@ -105,14 +105,12 @@ async function resolveCatalogSessionTitle(
 }
 
 /** Whether the requester may see the lock holder's session identifiers.
- * Mirrors `requireSession`'s studio-membership scope exactly (including the
- * dev-anonymous `user === null` case, which sees everything on every sibling
- * route): a logged-in non-member gets the busy-ness fact but never the
+ * Mirrors `requireSession`'s studio-membership scope exactly (always checked,
+ * require-login D3): a non-member gets the busy-ness fact but never the
  * holder's session id or title — the same existence/title oracle sibling
  * routes close by 404ing non-members. */
 async function requesterCanViewSession(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
-  const user = c.get('user');
-  if (user === null) return true;
+  const user = requireUser(c);
   const catalog = c.get('catalog');
   const studioId = await catalog.sessions.getSessionStudioId(sessionId);
   return studioId !== null && (await catalog.auth.authUserHasStudio(user.id, studioId));
