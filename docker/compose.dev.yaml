@@ -50,7 +50,6 @@ services:
       DATA_DIR: /data
       HOST: 127.0.0.1
       PORT: "8786"
-      REQUIRE_LOGIN: "0"
       TRUST_PROXY: "0"
       IP_ALLOWLIST: ""
       YTDLP_PATH: /opt/ytdlp/yt-dlp

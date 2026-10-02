@@ -1,6 +1,6 @@
 # AutoLogger STAGE environment (containerized-dev-env, design D5 / D6 / D7 / D13).
 # An overlay on the production compose.yaml: same images' build, same routing, same posture
-# (REQUIRE_LOGIN=1, TRUST_PROXY=1), served on plain http://localhost:${STAGE_PORT:-8788}.
+# (TRUST_PROXY=1; login is always required, require-login), served on plain http://localhost:${STAGE_PORT:-8788}.
 #
 # Always invoked from the repo root through the Makefile (docker/scripts/compose-run.mjs), as:
 #   WEB_TAG=stage API_TAG=stage PUBLIC_BASE_URL=http://localhost:8788 \
@@ -10,7 +10,8 @@
 # Secrets come from Infisical `stage` through prod's allowlist (docker/secrets-env.yaml).
 #
 # Invariants a future reader must not "helpfully" undo:
-#   * Do NOT set REQUIRE_LOGIN or TRUST_PROXY here: stage inherits prod's posture unchanged.
+#   * Do NOT set TRUST_PROXY here: stage inherits prod's posture unchanged. REQUIRE_LOGIN no
+#     longer exists; the server refuses to boot if it is set (require-login D1).
 #   * Do NOT mount the host ~/.claude: stage keeps compose.yaml's /home/node named volume
 #     (project-scoped, so it is stage's own). AI v2 therefore needs AI_V2_API_KEY, as in prod.
 #   * The router publishes ONLY STAGE_PORT on the literal 127.0.0.1; ROUTER_PORT is never used.

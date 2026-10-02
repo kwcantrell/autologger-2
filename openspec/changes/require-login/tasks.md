@@ -227,10 +227,16 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 5. Compose, static checks and docs (design D9, D10)
 
-- [ ] 5.1 Remove `REQUIRE_LOGIN` from `compose.yaml` and `docker/compose.dev.yaml`. Update
+- [x] 5.1 Remove `REQUIRE_LOGIN` from `compose.yaml` and `docker/compose.dev.yaml`. Update
   `check-envs.sh`: invariants 6 and 7 drop it (`TRUST_PROXY` stays pinned), and it leaves the
   `unset` list and `dev-custom.env`.
   Verify: `docker/scripts/check-envs.sh` and `docker/scripts/test_check_envs.sh` pass.
+  Evidence: with the compose pins removed first, `docker/scripts/check-envs.sh` (`5b-5.1-red.log`)
+  -> exit 1, `FAIL [invariant 6] dev: a posture pin (HOST/REQUIRE_LOGIN/...) is not a literal`,
+  `FAIL [invariant 7] stage: api REQUIRE_LOGIN is not "1"`. After the check-envs edits
+  (`5b-5.1-green.log`) -> `check-envs: ok (all)`, exit 0; `bash docker/scripts/test_check_envs.sh`
+  (`5b-5.1-guards.log`) -> `test_check_envs: 47 passed, 0 failed`. The stage overlay's header
+  comment is updated too.
 - [ ] 5.2 Docs:
   - README: the env table and the auth section, where `REQUIRE_LOGIN`, anonymous dev mode and
     the open-network refusals go;

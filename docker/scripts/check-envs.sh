@@ -26,7 +26,7 @@ cd "$ROOT"
 # The caller's shell must not influence the result: every interpolated variable falls back to
 # its compose default, and the placeholder env files below supply any non-default value.
 unset DEV_PORT DEV_COMPANION_PORT STAGE_PORT ROUTER_PORT ROUTER_FRONT_GW ROUTER_BACK_GW \
-  WEB_TAG API_TAG PUBLIC_BASE_URL HOST REQUIRE_LOGIN TRUST_PROXY \
+  WEB_TAG API_TAG PUBLIC_BASE_URL HOST TRUST_PROXY \
   IP_ALLOWLIST DATA_DIR PORT 2>/dev/null || true
 # supabase-db D4, supabase-services D4: one sentinel per Supabase secret, so invariant 16 can find
 # each value anywhere; SB_SCOPE is the services each may appear in (same table as compose-run.mjs).
@@ -100,13 +100,12 @@ resolve() {
 # ---------------------------------------------------------------- placeholder env files ------
 # Empty files force every default; the *custom* files use non-default, distinct numeric ports so
 # the published-port / GATE_PORT / PUBLIC_BASE_URL coupling is proven, not coincidental. The
-# HOST/REQUIRE_LOGIN/... lines would win over a mutated `${HOST:-...}` style pin.
+# HOST/TRUST_PROXY/... lines would win over a mutated `${HOST:-...}` style pin.
 : >"$TMP/empty.env"
 cat >"$TMP/dev-custom.env" <<'EOF'
 DEV_PORT=18787
 DEV_COMPANION_PORT=18000
 HOST=0.0.0.0
-REQUIRE_LOGIN=1
 TRUST_PROXY=1
 IP_ALLOWLIST=0.0.0.0/0
 DATA_DIR=/x
@@ -133,7 +132,6 @@ check_no_8080_numeric() { # json label
 
 # Invariant 7 (stage, prod): the api posture pins survive.
 check_posture_prodlike() { # json label
-  jq_ok 7 "$2: api REQUIRE_LOGIN is not \"1\"" "$1" '.services.api.environment.REQUIRE_LOGIN=="1"'
   jq_ok 7 "$2: api TRUST_PROXY is not \"1\"" "$1" '.services.api.environment.TRUST_PROXY=="1"'
 }
 
@@ -310,17 +308,17 @@ check_dev() {
   # 6: dev posture pins are literals in the raw file (only PUBLIC_BASE_URL and the D4
   # AUTOLOGGER_STACK sentinel and the catalog's PGPASSWORD, catalog-pg-schema D5, may hold a variable),
   # and the resolved values match (the custom env file tries to flip every one of them).
-  jq_ok 6 "dev: a posture pin (HOST/REQUIRE_LOGIN/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
+  jq_ok 6 "dev: a posture pin (HOST/TRUST_PROXY/IP_ALLOWLIST/DATA_DIR/PORT) is not a literal in the raw file, or another app env value contains a variable" "$R" \
     '.services.app.environment|envmap
-     | .HOST=="127.0.0.1" and .REQUIRE_LOGIN=="0" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
+     | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"
        and .PUBLIC_BASE_URL=="http://localhost:${DEV_PORT:-8787}"
        and (.AUTOLOGGER_STACK//""|startswith("${AUTOLOGGER_STACK:?"))
        and (.PGPASSWORD|startswith("${APP_DB_PASSWORD:?")) and .PGUSER=="autologger_app" and .PGHOST=="db"
        and ([to_entries[]|select(.key!="PUBLIC_BASE_URL" and .key!="AUTOLOGGER_STACK" and .key!="PGPASSWORD")|.value|tostring|contains("$")]|any|not)'
   for f in "$D" "$C"; do
-    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 REQUIRE_LOGIN=0 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
+    jq_ok 6 "dev: a resolved posture pin differs from HOST=127.0.0.1 TRUST_PROXY=0 IP_ALLOWLIST= DATA_DIR=/data PORT=8786" "$f" \
       '.services.app.environment
-       | .HOST=="127.0.0.1" and .REQUIRE_LOGIN=="0" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"'
+       | .HOST=="127.0.0.1" and .TRUST_PROXY=="0" and .IP_ALLOWLIST=="" and .DATA_DIR=="/data" and .PORT=="8786"'
   done
   jq_ok 6 "dev: resolved PUBLIC_BASE_URL is not http://localhost:<published DEV_PORT>" "$C" \
     '.services.app.environment.PUBLIC_BASE_URL==("http://localhost:"+.services.app.ports[0].published)'
