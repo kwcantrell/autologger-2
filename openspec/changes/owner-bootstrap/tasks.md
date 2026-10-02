@@ -252,7 +252,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 6. Support plane: owner upsert (design D6)
 
-- [ ] 6.1 Test first, in `server/src/routers/admin.int.test.ts`: a membership POST with
+- [x] 6.1 Test first, in `server/src/routers/admin.int.test.ts`: a membership POST with
   `role: "owner"` makes the target owner and the old owner `admin` (exactly one owner); for the
   current owner it changes nothing; a body without `role` for the current owner gets `409
   Explicit role required to change the team owner.` and changes nothing, while an explicit
@@ -262,6 +262,18 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   implement: `adminMembershipBodySchema` role enum gains `owner`; `admin.ts` calls
   `authSetOwner` for `owner` and refuses the role-less owner demotion inside the transaction; `server/scripts/bootstrapMemberships.example.ts` accepts `owner`
   (its header and validation). Verify: red then green; `bootstrapMemberships.int.test.ts` green.
+  Evidence: red: `cd server && npx vitest run --project integration
+  src/routers/admin.int.test.ts` (`5c-6.1-red.log`) -> `Tests  3 failed | 15 passed (18)`
+  (`role: 'owner' makes the target owner and the old owner admin`, `role: 'owner' for the current
+  owner changes nothing`, `a role-less body for the current owner gets 409`); the explicit-admin,
+  legacy-body and `builtin: false` cases already passed. A new `bootstrapMemberships.int.test.ts`
+  case (`accepts role "owner"`) was red (`5c-6.1-red-bootstrap.log`): `Error: invalid role for
+  dana@example.com: owner`. Green: `npx vitest run --project integration
+  src/test/bootstrapMemberships.int.test.ts src/routers/admin.int.test.ts` (`5c-6.1-green.log`)
+  -> `Test Files  2 passed (2)`, `Tests  24 passed (24)`. `npm run fixtures:capture -w server`
+  (`5c-6.1-capture.log`) changes only `adminUsers.json` (`"builtin": true` -> `false`, twice);
+  `apiResponseFixtures.int.test.ts` assert-only -> `Tests  32 passed (32)`
+  (`5c-6.1-fixtures-green.log`). `npm run typecheck` -> exit 0 (`5c-6.1-typecheck.log`).
 
 ## 7. Bootstrap claim at sign-in (design D7)
 

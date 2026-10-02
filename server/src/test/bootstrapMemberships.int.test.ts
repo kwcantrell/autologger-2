@@ -98,6 +98,17 @@ describe('bootstrapMemberships', () => {
     expect(s.exitCode).toBe(1);
   });
 
+  it('accepts role "owner" and makes the user the team owner (owner-bootstrap D6)', async () => {
+    const dana = await seedUser({ email: 'dana@example.com' });
+    const cfg = parseConfig({
+      teams: [{ id: 'owned-team', display_name: 'Owned' }],
+      memberships: [{ email: 'dana@example.com', team: 'owned-team', role: 'owner' }],
+    });
+    const { s } = await run(cfg);
+    expect(s.exitCode).toBe(0);
+    expect(await catalogFor().auth.authGetMembershipRole(dana, 'owned-team')).toBe('owner');
+  });
+
   it('parseConfig rejects malformed input', () => {
     expect(() => parseConfig({})).toThrow();
     expect(() =>

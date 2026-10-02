@@ -18,8 +18,10 @@
 //     "memberships": [{ "email": "alice@example.com", "team": "main-team", "role": "admin" },
 //                     { "email": "bob@example.com",   "team": "main-team" }]
 //   }
-// "role" is optional ("admin" | "member"). "teams" is optional: a listed team is
-// created only if absent from the catalog.
+// "role" is optional ("owner" | "admin" | "member"). "owner" makes the user the team's owner and
+// demotes any current owner to admin (owner-bootstrap D6). A role-less entry for a team's current
+// owner is refused by the endpoint (409); give an explicit role. "teams" is optional: a listed
+// team is created only if absent from the catalog.
 //
 // Idempotency: an existing team is skipped; a user already in the team with no
 // "role" given is a no-op; with a "role" the POST is repeated (the endpoint is
@@ -39,7 +41,7 @@ import { fileURLToPath } from 'node:url';
 
 export interface BootstrapConfig {
   teams?: Array<{ id: string; display_name: string }>;
-  memberships: Array<{ email: string; team: string; role?: 'admin' | 'member' }>;
+  memberships: Array<{ email: string; team: string; role?: 'owner' | 'admin' | 'member' }>;
 }
 
 export interface BootstrapOptions {
@@ -73,7 +75,7 @@ export function parseConfig(raw: unknown): BootstrapConfig {
     if (!m || typeof m.email !== 'string' || typeof m.team !== 'string') {
       throw new Error('each membership needs string "email" and "team"');
     }
-    if (m.role !== undefined && m.role !== 'admin' && m.role !== 'member') {
+    if (m.role !== undefined && m.role !== 'owner' && m.role !== 'admin' && m.role !== 'member') {
       throw new Error(`invalid role for ${m.email}: ${String(m.role)}`);
     }
   }

@@ -87,11 +87,26 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
     if (!(await catalog.studios.studioExists(sid))) throw new ApiError(400, 'Unknown team id.');
     const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
     if (row === null) throw new ApiError(404, 'User not found.');
+    const userId = String(row.id);
+    // owner-bootstrap D6: an owner upsert demotes the current owner to admin and makes the target
+    // owner, in this transaction, so the team never has two owners.
+    if (body.role === 'owner') {
+      await catalog.auth.authSetOwner(sid, userId);
+      return;
+    }
+    // A role-less body defaults to 'member', which would demote the owner by accident (owner
+    // decision C): refuse it; an explicit role still applies.
+    if (
+      body.role === undefined &&
+      (await catalog.auth.authGetMembershipRole(userId, sid)) === 'owner'
+    ) {
+      throw new ApiError(409, 'Explicit role required to change the team owner.');
+    }
     // Upsert (not the ON CONFLICT DO NOTHING of authAddMemberships): with the role
     // column present, a re-POST on an existing membership must update its role
     // (defaulting to 'member' when absent) — the orphaned-team rescue path
     // (teams-self-serve) needs promotion to actually take effect, not no-op.
-    await catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
+    await catalog.auth.authUpsertMembershipRole(userId, sid, body.role ?? 'member');
   });
   return c.json({ ok: true });
 });

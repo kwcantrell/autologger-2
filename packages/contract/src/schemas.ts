@@ -123,7 +123,8 @@ export type AdminStudioCreateBody = z.infer<typeof adminStudioCreateBodySchema>;
 
 export const adminMembershipBodySchema = z.object({
   studio_id: z.string().min(1).max(120),
-  role: z.enum(['admin', 'member']).optional(),
+  // owner-bootstrap D6: `owner` demotes the current owner to admin in the same transaction.
+  role: z.enum(['owner', 'admin', 'member']).optional(),
 });
 export type AdminMembershipBody = z.infer<typeof adminMembershipBodySchema>;
 

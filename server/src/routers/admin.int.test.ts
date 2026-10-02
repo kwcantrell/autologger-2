@@ -203,3 +203,85 @@ describe('admin add-membership role field (teams-self-serve, task 4.1)', () => {
     expect(await catalogFor().auth.authGetMembershipRole(user, 'test-studios')).toBe('member');
   });
 });
+
+describe('admin owner upsert (owner-bootstrap 6.1, design D6)', () => {
+  const post = (userId: string, body: unknown) =>
+    anonApp.request(
+      `/api/admin/users/${userId}/memberships`,
+      { method: 'POST', headers: H, body: JSON.stringify(body) },
+      ADMIN_ENV,
+    );
+  const roleOf = (userId: string, team: string) =>
+    catalogFor().auth.authGetMembershipRole(userId, team);
+  async function owners(team: string): Promise<string[]> {
+    return (await catalogFor().auth.authListTeamMembers(team))
+      .filter((m) => m.role === 'owner')
+      .map((m) => m.id);
+  }
+  async function teamWithOwner(): Promise<{ owner: string }> {
+    const owner = await seedUser({});
+    await catalogFor().auth.authAddMembershipWithRole(owner, 'test-studios', 'owner');
+    return { owner };
+  }
+
+  it("role: 'owner' makes the target owner and the old owner admin (exactly one owner)", async () => {
+    const { owner } = await teamWithOwner();
+    const target = await seedUser({});
+    const res = await post(target, { studio_id: 'test-studios', role: 'owner' });
+    expect(res.status).toBe(200);
+    expect(await roleOf(target, 'test-studios')).toBe('owner');
+    expect(await roleOf(owner, 'test-studios')).toBe('admin');
+    expect(await owners('test-studios')).toEqual([target]);
+  });
+
+  it("role: 'owner' for the current owner changes nothing", async () => {
+    const { owner } = await teamWithOwner();
+    const res = await post(owner, { studio_id: 'test-studios', role: 'owner' });
+    expect(res.status).toBe(200);
+    expect(await owners('test-studios')).toEqual([owner]);
+  });
+
+  it('a role-less body for the current owner gets 409 and changes nothing', async () => {
+    const { owner } = await teamWithOwner();
+    const res = await post(owner, { studio_id: 'test-studios' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { detail: string }).detail).toBe(
+      'Explicit role required to change the team owner.',
+    );
+    expect(await roleOf(owner, 'test-studios')).toBe('owner');
+  });
+
+  it("an explicit role: 'admin' for the owner succeeds and leaves the team ownerless", async () => {
+    const { owner } = await teamWithOwner();
+    const res = await post(owner, { studio_id: 'test-studios', role: 'admin' });
+    expect(res.status).toBe(200);
+    expect(await roleOf(owner, 'test-studios')).toBe('admin');
+    expect(await owners('test-studios')).toEqual([]);
+  });
+
+  it('a legacy body still creates a member while the team has an owner', async () => {
+    await teamWithOwner();
+    const user = await seedUser({});
+    const res = await post(user, { studio_id: 'test-studios' });
+    expect(res.status).toBe(200);
+    expect(await roleOf(user, 'test-studios')).toBe('member');
+  });
+
+  it('builtin is false in every studios_catalog entry and in a created studio', async () => {
+    const create = await anonApp.request(
+      '/api/admin/studios',
+      {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({ id: 'builtin-false-team', display_name: 'BF' }),
+      },
+      ADMIN_ENV,
+    );
+    expect(create.status).toBe(200);
+    expect(((await create.json()) as { studio: { builtin: boolean } }).studio.builtin).toBe(false);
+    const res = await anonApp.request('/api/admin/users', { method: 'GET', headers: H }, ADMIN_ENV);
+    const body = (await res.json()) as { studios_catalog: Array<{ id: string; builtin: boolean }> };
+    expect(body.studios_catalog.map((s) => s.id)).toContain('builtin-false-team');
+    expect(body.studios_catalog.every((s) => s.builtin === false)).toBe(true);
+  });
+});
