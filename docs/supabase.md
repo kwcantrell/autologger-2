@@ -7,9 +7,9 @@ prod) has its own self-hosted Supabase:
 - a gateway, `supabase-gw`.
 
 Studio and postgres-meta are deferred to a later slice. Use `make dev-psql` for admin work.
-Nothing in the app uses Supabase yet: the catalog moves in slice 4 and sign-in in slice 5. Slice 4a
-created the catalog's schema and the app's database role and network path; the app still runs on
-SQLite until 4c. Prod
+The app uses only Supabase's Postgres so far: the catalog moved in slice 4, and sign-in moves in
+slice 5. Slice 4a created the catalog's schema and the app's database role and network path; since
+4c the app's catalog runs on Postgres, and 4e removed the SQLite catalog code. Prod
 gets the definitions only. Its keys and first start wait for the cutover.
 
 ## Layout

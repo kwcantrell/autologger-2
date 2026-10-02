@@ -158,7 +158,7 @@ Logs:
 
 ## 5. Docs and specs
 
-- [ ] 5.1 Update:
+- [x] 5.1 Update:
   - README:
     - line 21 (better-sqlite3 now covers session hubs and the `DATA_DIR` lock);
     - the package map (lines 632-648: catalog, storage, the removed
@@ -166,7 +166,13 @@ Logs:
     - line 1365 (the rollback note's forward-only pointer moves to `supabase/migrations/` and
       `docker/supabase/migrate.sh`);
   - `docs/supabase.md:12`.
-- [ ] 5.2 ADR 0021:
+  Evidence: `git diff README.md docs/supabase.md`: line 21 now lists postgres.js for the catalog and
+  better-sqlite3 for session DBs + the lock; the package map names `postgresCatalogStore.ts`,
+  `catalogErrors.ts`, `dataDirLock.ts` and drops `migrate.ts`/`asyncCatalogStore.ts`/
+  `catalog/migrations/`; the rollback note points at `supabase/migrations/` + `migrate.sh`.
+  `rg -n -i "AsyncSqlite|asyncCatalogStore|applyMigrations|openCatalogDb|CATALOG_MIGRATIONS_DIR|catalog/migrations|storage/src/migrate\.ts" packages server web test docker README.md`
+  -> no hits (exit 1).
+- [x] 5.2 ADR 0021:
   - a 4e entry recording the decisions:
     - one PR, `size-override`;
     - migrations deleted, kept in `c783b99` (0001-0006) and `main` (0001-0005);
@@ -178,6 +184,11 @@ Logs:
   - line 244's "until 4e" wording;
   - a revisit-list item: the stale SQLite wording in the frozen `api-contract-freeze` spec
     (`SQLITE_FULL` at :596, the `shows.next_episode` column at :895).
+  Evidence: `git diff docs/decisions/0021-migrate-to-self-hosted-supabase.md`: the 4e entry
+  (one PR + `size-override`; `c783b99`/`main`; expected prod `_migrations` 0001-0005 and the
+  slice 11 refusal + explicit columns; recorded schema; KvStore on Postgres; dev mount and `api`
+  copy gone), 0006 wording "both retired in 4e", and two revisit items (the `api-contract-freeze`
+  SQLite wording; the observed session-create retry exhaustion).
 - [ ] 5.3 Gates and review:
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` is green, apart from
     size (overridden by the label);

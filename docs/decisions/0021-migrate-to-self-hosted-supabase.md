@@ -241,10 +241,27 @@ Slice order:
      - #20: settings defaults are written without a transaction (`ON CONFLICT DO NOTHING`, a
        compare-and-set repair), never for a team that no longer exists;
      - per-team indexes on `user_studio_memberships (studio_id)` and `shows (studio_id)` (owner,
-       after the panel), mirrored in SQLite `0006` to keep schema parity until 4e. On small
+       after the panel), mirrored in SQLite `0006` for schema parity (both retired in 4e). On small
        tables SERIALIZABLE still tracks reads by page, so writes in different teams can retry
        once.
-   - 4e `retire-sqlite-catalog`.
+   - 4e `retire-sqlite-catalog`. Done (2026-10-01), as one PR over the size budget (owner:
+     `size-override`; about 600 counted lines, mostly deletions):
+     - the SQLite catalog adapter, its migrator, the six SQLite migrations and their tests are
+       deleted; the catalog has one implementation, on Postgres. `better-sqlite3` stays for the
+       per-session databases (until slice 7) and the `DATA_DIR` lock;
+     - the old SQL is kept in git: `c783b99` has 0001-0006 and `main` has 0001-0005 (owner:
+       delete, history keeps it). 0006 (indexes only) never reached prod;
+     - prod's legacy `catalog.db` was built by `main`, so its `_migrations` is expected to be
+       exactly 0001-0005. Nothing in the repo confirms it. The slice 11 import must refuse a
+       source whose `_migrations` set differs (a file below 0005 lacks the 0004 admin backfill and
+       the 0005 `title_suffix` backfill), and must copy every column explicitly, so Postgres's
+       `title_suffix` default `'date'` never replaces a backfilled `'episode'`;
+     - the Postgres-versus-SQLite parity test became a recorded expectation of the catalog
+       schema (full foreign keys and index definitions, seed shows), captured while parity still
+       passed; a schema migration updates it in the same change;
+     - the KvStore tests run on Postgres, including a new case for "a key/value call never joins
+       a catalog transaction";
+     - the dev mount and its env check, and the `api` image copy of the migrations, are gone.
 
    Follow-ups:
    - after the migration, revisit a typed catalog schema (`timestamptz`, `jsonb`, `boolean`)
@@ -261,6 +278,11 @@ Slice order:
      - the 5 s root deadline's value, and a distinct timeout for root writes;
      - registry display names that go stale across awaits (#14);
      - an email-indexed user lookup, so an invite doesn't read all of `users`;
+     - stale SQLite wording in the frozen `api-contract-freeze` spec: `SQLITE_FULL` as the example
+       commit failure, and "the SQLite column `shows.next_episode`" (4e panel);
+     - two concurrent session creates for one show can exhaust the 3 SERIALIZABLE runs under
+       load (seen once in a full `npm test` during 4e, as a 500 from `40001`; it passed 8/8
+       alone); one more instance of the retry-exhaustion item above;
    - `docker/supabase/init/roles.sql` may leave `SUPABASE_ROLES_PASSWORD` in
      `pg_stat_statements` and the DDL log at init.
 5. Supabase Auth, the bootstrap owner, anonymous mode removed.

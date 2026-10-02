@@ -18,7 +18,9 @@ module consume (see Endpoints below; the contract is frozen).
 - **Hono** — routing + middleware (ported from `web/app.py` + routers)
 - **Zod** — request validation at the route boundary (ported from `web/schemas.py`)
 - **jose** — Google ID-token verification against Google's JWKS
-- **better-sqlite3** — catalog DB + one DB file per session
+- **postgres.js** — the catalog (users, teams, shows, sessions index, KV) on self-hosted Supabase
+  Postgres (ADR 0021)
+- **better-sqlite3** — one DB file per session, and the `DATA_DIR` single-server lock
 - **filesystem blobs** — audio bytes (replaces R2)
 - **in-process SessionHub per session** — replaces the Durable Object; live spine for events,
   transport, audio metadata, recording lease, transcript words, topics, and WebSocket fan-out
@@ -629,23 +631,18 @@ packages/                 Source-only npm workspace packages (no build step; ser
                             middleware/auth.ts's per-request construct-then-init() lifecycle)
     authStore.ts / profileAssembler.ts / sessionIndexStore.ts / showsStore.ts / studioRegistry.ts /
     sessionTitleDerivation.ts
-    index.ts                 Exports CATALOG_MIGRATIONS_DIR (resolved via import.meta.url) —
-                             the package owns migrations/*.sql (schema and stores evolve
-                             together, design D7); the directory-generic migrator that applies
-                             them stays in @autologger/storage
-  catalog/migrations/       Catalog DDL, filename-ordered (0001_init.sql through
-                           0006_team_indexes.sql: init + seeded built-in shows, sessions
-                           index + live projection, kv table, team roles/invites, title suffix,
-                           per-team indexes)
-  storage/src/             @autologger/storage — the SQLite/filesystem persistence adapters
-                           (L1; deps: ports only; better-sqlite3 peerDependency) moved from
-                           server/src/node/ (persistence-package-extraction task 2.2)
-    migrate.ts               openCatalogDb + the directory-generic applyMigrations (filename-
-                             ordered .sql, transactional) — takes any migrations dir, wired to
-                             the catalog package's CATALOG_MIGRATIONS_DIR by node/config.ts
-    asyncCatalogStore.ts     AsyncSqliteCatalogDb — the CatalogDb port over better-sqlite3: one
-                             FIFO lock per connection, transaction-scoped handles, misuse
-                             guards (the implementation catalog/ speaks to, never imports)
+    index.ts                 Package entry and createCatalog. The catalog schema itself is the
+                             Postgres schema in supabase/migrations/ (the SQLite migrations
+                             were retired in ADR 0021 slice 4e)
+  storage/src/             @autologger/storage — the persistence adapters (L1; deps: ports
+                           only; better-sqlite3 peerDependency for the DATA_DIR lock) moved
+                           from server/src/node/ (persistence-package-extraction task 2.2)
+    postgresCatalogStore.ts  PostgresCatalogDb — the CatalogDb port over postgres.js:
+                             SERIALIZABLE transactions with retry, deadlines, transaction-scoped
+                             handles, misuse guards (the implementation catalog/ speaks to,
+                             never imports)
+    catalogErrors.ts         The transaction contract's errors (misuse, timeout, closed)
+    dataDirLock.ts           The DATA_DIR single-server lock
     kvStore.ts               KV replacement (login sessions, OAuth CSRF, Companion presence) on
                              the catalog adapter (atomic take for OAuth state); clock is a
                              required constructor parameter
@@ -1362,7 +1359,8 @@ Because the cutover replaces `catalog.db`, run it again in the window (step 3f).
   `make prod-pull prod-up`, wait for `healthy`; then the same for `WEB_TAG`/`web`. The HTTP/WS contract is frozen, so a new `api` under an old `web` is
   safe. Volumes carry state across recreation.
 - **Rollback is forward-only for data.** Re-pinning an older tag is safe only if no database
-  migration ran in between (migrations are forward-only, `packages/storage/src/migrate.ts`);
+  migration ran in between (migrations are forward-only: `supabase/migrations/`, applied by
+  `docker/supabase/migrate.sh`);
   otherwise restore a backup taken before the upgrade. Repointing Pangolin at the *old host*
   drops every write made since cutover (they exist only in the volume) — take a final backup
   first if you might want them.
