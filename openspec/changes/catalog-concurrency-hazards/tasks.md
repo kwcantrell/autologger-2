@@ -243,4 +243,8 @@ in-transaction role read.
   (from `refreshStudioRegistry`). After unpause -> `200 in 0.003286s`, `200`. **Not run live:**
   the concurrent team-create cap check. Dev has no sign-in, and team routes need a logged-in user
   (401), so that race is covered only by integration test 2.2.
-- [ ] 6.4 `consistency-read`, then archive.
+- [x] 6.4 `consistency-read`, then archive.
+  Evidence: `panel.md` "Consistency read 2026-10-01": edits since `53f9a7c` are the D12/R2
+  measurement wording and the tasks evidence, with no scope change. Every requirement maps to a
+  test, and 2 minor findings are resolved. `check-change.sh --only panel` -> `PASS  panel  46
+  finding(s), no open criticals`. The archive follows in its own commit.

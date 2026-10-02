@@ -68,3 +68,35 @@ Checks with no issue:
 - [x] [minor] panel.md marked the original A20 finding resolved by the dropped approach, and had no re-panel section. Resolved: the line is amended, and this section was added.
 - [x] [minor] The spec bullet named only demotion and wasn't a SHALL. Resolved: it now has a SHALL covering demote, remove and leave, and cites the freeze spec.
 - [x] [minor] README's migration listing stopped at 0005. Resolved: it now says 0006.
+
+## Consistency read 2026-10-01
+Edits since the re-approval (`53f9a7c`):
+- design.md D12 and R2: the task 2.7 measurement. On small tables, writes in different teams can still retry once (index-page SIREAD locks); both succeed, which is what the spec requires.
+- tasks.md: ticks and evidence; the header records the owner raising, then dropping, the size ceiling (777 counted lines; `size-override`).
+
+Scope change: no. No contract and no accepted risk changed. The "Cross-team independence" requirement ("SHALL both succeed") holds, and only the design's stronger wording ("no longer conflict") was corrected.
+
+Each requirement was checked against shipped code and its test:
+- **team-management "Concurrent team writes":**
+  - admin re-check: 2.1;
+  - creation, the cap, a reused id and the built-in guard: 2.2;
+  - the invite cap: 2.3;
+  - role change and removal: 2.4;
+  - show create and the admin membership add: 2.6;
+  - cross-team: 2.7;
+  - the admin-plane bullet is unchanged by design (re-panel).
+- **api-contract-freeze:**
+  - mirror failure: `mirrorFailure.int`, 4.2;
+  - concurrent first sign-in: 3.1;
+  - log-import lines: 4.5;
+  - the YouTube success row (best-effort date and mirror): 4.2.
+- **catalog-database:**
+  - mirror order, including a timed-out write, close and independent sessions: `sessionMirror.test`, 4.1;
+  - settings defaults: 3.2;
+  - periodic purge: 5.2.
+- **core-ports-architecture:** `replaceIf`: 4.3; the root deadline: 5.1, plus the live pause check in 6.3.
+- **auto-event-generation:** the generate pin, updated in 4.2. **youtube-audio-import:** the episode date, 4.2.
+- **Non-goals:** none crossed. The only schema change is the two additive indexes, plus their SQLite mirror for parity (recorded in task 1.2 and D12). No new status codes, no FKs, no `live_revision`.
+
+- [x] [minor] Design D12 overstated the index's effect ("no longer conflict"). Resolved: corrected with the 2.7 measurement, and the revisit list in ADR 0021 covers a rate limit for floods.
+- [x] [minor] The live cap check in 6.3 couldn't run on dev (no sign-in). Resolved: noted in 6.3; covered by integration test 2.2.
