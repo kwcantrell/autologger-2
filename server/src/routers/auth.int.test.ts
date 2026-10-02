@@ -2,6 +2,7 @@ import { AuthStore } from '@autologger/catalog';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { putOauthState } from '../auth/identity';
+import { GatedCatalog } from '../test/gatedCatalog';
 import { app, env, envWith } from '../test/harness';
 import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
 import {
@@ -559,5 +560,34 @@ describe('logout', () => {
   it('POST logout also redirects', async () => {
     const res = await app.request('/auth/logout', { method: 'POST' }, OAUTH_ENV);
     expect(res.status).toBe(302);
+  });
+});
+
+// api-contract-freeze "Concurrent first sign-in succeeds" (catalog-concurrency-hazards D5): two
+// tabs finishing a first sign-in for one Google account both land signed in to one user.
+describe('callback -- concurrent first sign-in for one sub', () => {
+  it('both callbacks redirect to / with a cookie, and one user exists', async () => {
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(/^SELECT \* FROM users WHERE google_sub = \?$/);
+    const held = runCallback(
+      { sub: 'sub-twin', email: 'twin@example.com', state: 'state-twin-a' },
+      envWith(
+        { GOOGLE_CLIENT_ID: CLIENT, GOOGLE_CLIENT_SECRET: 'secret', PUBLIC_BASE_URL: 'http://127.0.0.1:8787' },
+        { catalog: gated },
+      ),
+    );
+    await h.reached;
+    const other = await runCallback({ sub: 'sub-twin', email: 'twin@example.com', state: 'state-twin-b' });
+    h.release();
+    for (const res of [other, await held]) {
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/');
+      expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+    }
+    const n = await env.ports.catalog.first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM users WHERE google_sub = ?',
+      'sub-twin',
+    );
+    expect(Number(n?.n)).toBe(1);
   });
 });

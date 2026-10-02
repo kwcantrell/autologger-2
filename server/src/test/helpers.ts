@@ -25,13 +25,15 @@ export async function seedUser(
   opts: { email?: string; sub?: string; studios?: string[] } = {},
 ): Promise<string> {
   const cat = catalogFor();
-  const id = await cat.auth.authCreateUserGoogle({
+  const created = await cat.auth.authCreateUserGoogle({
     email: opts.email ?? `${uid('user')}@example.com`,
     googleSub: opts.sub ?? uid('sub'),
     givenName: 'Test',
     familyName: 'User',
     pictureUrl: '',
   });
+  if (created === null) throw new Error(`seedUser: a user with that sub already exists`);
+  const id = created;
   if (opts.studios?.length) await cat.auth.authAddMemberships(id, opts.studios);
   return id;
 }

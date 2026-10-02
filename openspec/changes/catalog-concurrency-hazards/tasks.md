@@ -113,13 +113,25 @@ in-transaction role read.
 
 ## 3. Sign-in and settings (design D4, D5)
 
-- [ ] 3.1 Test first, in `auth.int.test.ts`: two first-sign-in callbacks for one `sub` with
+- [x] 3.1 Test first, in `auth.int.test.ts`: two first-sign-in callbacks for one `sub` with
   different states both give 302 with a cookie, and one user exists. Red (`500`), then D5. Green.
-- [ ] 3.2 Test first, `server/src/test/settingsDefaults.int.test.ts`:
+  Evidence: `4d-3.1-red.log` (one callback held after its `google_sub` lookup) -> `AssertionError:
+  expected 500 to be 302`, and the 500's redacted log line names `23505`.
+  `authCreateUserGoogle` now uses `ON CONFLICT (google_sub) DO NOTHING RETURNING id` and returns
+  `null` on conflict; the callback then takes the existing-user path. `4d-3.1-green.log`:
+  `auth.int` + `nulText.int` -> `Tests  34 passed (34)`. `npm test -w packages/catalog` ->
+  `Tests  34 passed (34)`.
+- [x] 3.2 Test first, `server/src/test/settingsDefaults.int.test.ts`:
   - five concurrent `GET /api/profile` for a new team all give 200, with one settings row;
   - a deleted team's settings read writes no row;
   - a corrupt blob is repaired once.
   Red, then D4. Green.
+  Evidence: these are store-level tests, because the hazard is a registry snapshot taken before a
+  delete (the middleware's `init()`). `4d-3.2-red.log` -> `× a read through a snapshot taken
+  before the team was deleted stores nothing`, `expected [ Array(1) ] to deeply equal []`. The
+  five concurrent reads and the corrupt-blob repair passed before too (regression pins).
+  `4d-3.2-green.log`: settings + `shows-profile` + fixtures -> `Tests  56 passed (56)`. `npm test
+  -w packages/catalog` -> `Tests  34 passed (34)`.
 
 ## 4. Session mirror and Companion (design D6-D9)
 

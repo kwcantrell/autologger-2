@@ -25,7 +25,7 @@ export interface AuthStoreFacade {
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }) => Promise<string>;
+  }) => Promise<string | null>;
   authUpdateUserProfile: (
     userId: string,
     fields: { email?: string; givenName?: string; familyName?: string; pictureUrl?: string },
@@ -106,12 +106,15 @@ export class AuthStore implements AuthStoreFacade {
     givenName: string;
     familyName: string;
     pictureUrl: string;
-  }): Promise<string> {
-    const uid = crypto.randomUUID();
-    await this.db.run(
+  }): Promise<string | null> {
+    // null when a user with this Google subject already exists: a concurrent first sign-in won
+    // (catalog-concurrency-hazards D5); the caller then takes the existing-user path.
+    const row = await this.db.first<Row>(
       `INSERT INTO users (id, google_sub, email, given_name, family_name, picture_url, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      uid,
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (google_sub) DO NOTHING
+       RETURNING id`,
+      crypto.randomUUID(),
       opts.googleSub,
       opts.email,
       opts.givenName,
@@ -119,7 +122,7 @@ export class AuthStore implements AuthStoreFacade {
       opts.pictureUrl,
       nowIso(),
     );
-    return uid;
+    return row === null ? null : String(row.id);
   }
 
   async authUpdateUserProfile(

@@ -117,32 +117,45 @@ export class StudioRegistry implements StudioRegistryFacade {
   async getStudioSettingsBlob(studioIdIn: string): Promise<Record<string, unknown>> {
     let studioId = studioIdIn;
     if (!this.isKnownStudio(studioId)) studioId = DEFAULT_STUDIO_ID;
-    // Self-healing read (deliberate, ported behavior): a missing/corrupt blob
-    // is rewritten with defaults during the read. Read and rewrite share one
-    // transaction, so a concurrent first save is never clobbered
-    // (async-catalog-stores D2).
-    return this.db.tx(async (t) => {
-      const r = this.withDb(t);
-      const resetToDefault = async (): Promise<Record<string, unknown>> => {
-        const blob = defaultSettingsBlob(studioId);
-        await r.setSetting(studioConfigKey(studioId), JSON.stringify(blob));
-        return blob as unknown as Record<string, unknown>;
-      };
-      const raw = await r.getSetting(studioConfigKey(studioId));
-      if (!raw) return resetToDefault();
+    const key = studioConfigKey(studioId);
+    const base = defaultSettingsBlob(studioId) as unknown as Record<string, unknown>;
+    const parse = (raw: string | null): Record<string, unknown> | null => {
+      if (!raw) return null;
       let data: unknown;
       try {
         data = JSON.parse(raw);
       } catch {
-        return resetToDefault();
+        return null;
       }
-      if (!data || typeof data !== 'object' || Array.isArray(data)) return resetToDefault();
-      const base = defaultSettingsBlob(studioId);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
       const merged: Record<string, unknown> = { ...base, ...(data as Record<string, unknown>) };
-      const dataCats = (data as Record<string, unknown>).categories;
-      if (!Array.isArray(dataCats)) merged.categories = base.categories;
+      if (!Array.isArray((data as Record<string, unknown>).categories)) {
+        merged.categories = base.categories;
+      }
       return merged;
-    });
+    };
+    // Self-healing read (deliberate, ported behavior), without a transaction that concurrent
+    // first reads could conflict on (catalog-concurrency-hazards D4): a missing blob is inserted
+    // only if still missing and the team exists; a corrupt one is replaced only if unchanged.
+    const raw = await this.getSetting(key);
+    const stored = parse(raw);
+    if (stored) return stored;
+    if (raw) {
+      await this.db.run(
+        'UPDATE app_settings SET value = ? WHERE key = ? AND value = ?',
+        JSON.stringify(base),
+        key,
+        raw,
+      );
+    } else {
+      if (!(await this.studioExists(studioId))) return base;
+      await this.db.run(
+        'INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING',
+        key,
+        JSON.stringify(base),
+      );
+    }
+    return parse(await this.getSetting(key)) ?? base;
   }
 
   async saveStudioSettingsBlob(studioId: string, blob: Record<string, unknown>): Promise<void> {
