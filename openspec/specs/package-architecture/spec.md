@@ -41,8 +41,9 @@ the `Config` type; may depend on `domain` and `contract` if a signature requires
 and layer 1, established by the `persistence-package-extraction` change:
 `@autologger/session-core` (the per-session spine; may depend on `domain`, `contract`,
 `ports`), `@autologger/catalog` (the catalog domain stores and facade; may depend on
-`domain` and `ports`), and `@autologger/storage` (the SQLite/filesystem persistence
-adapters; may depend on `ports`). Layer-1 packages are siblings: no L1 package SHALL
+`domain` and `ports`), and `@autologger/storage` (the persistence adapters:
+the Postgres catalog and key/value store, the data-directory lock, and filesystem storage;
+may depend on `ports`). Layer-1 packages are siblings: no L1 package SHALL
 import another L1 package. Allowed edges are permissions, not mandates — a package
 declares an edge only when an import needs it.
 
@@ -211,25 +212,6 @@ otherwise.
 #### Scenario: Conformance chain green after restructuring
 - **WHEN** the server fixture-capture test and the web conformance tests run after this change
 - **THEN** both pass with the fixture directory in its established location and no fixture regenerated with different content
-
-### Requirement: The catalog package owns the catalog schema migrations
-
-The catalog schema migration files (`*.sql`, filename-ordered) SHALL live in
-`@autologger/catalog`, which SHALL export the resolved migrations directory path for the
-migrator. Until the SQLite catalog is removed (ADR 0021 slice 4e), only tests run it; the server's
-catalog is the Postgres schema, migrated by the stack's migrations service. The migrator itself (`openCatalogDb` /
-`applyMigrations`) SHALL live in `@autologger/storage` and SHALL remain
-directory-generic. The migration behavior — filename ordering, `_migrations` tracking,
-one transaction per file, full ordered set applied to a fresh database — SHALL be
-unchanged by the move.
-
-#### Scenario: Fresh database migrates identically after the move
-- **WHEN** the migrator runs against a new, empty SQLite catalog file
-- **THEN** the full ordered migration set applies from the catalog package's exported directory, recording the same migration **name set and application order** in `_migrations` and producing the same resulting schema as before the move (`applied_at_utc` timestamps naturally differ)
-
-#### Scenario: Already-migrated database is untouched
-- **WHEN** the migrator runs against a SQLite catalog file that was already migrated
-- **THEN** no migration re-applies
 
 ### Requirement: Feature services are packages in a flat layer above persistence
 
