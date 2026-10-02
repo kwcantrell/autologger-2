@@ -106,10 +106,16 @@ the failure line) and green after.
   `Tests  41 passed (41)`. `5a-4.2-server.log`: `npx vitest run` (server) -> `Test Files  74
   passed | 2 skipped`, `Tests  924 passed | 3 skipped`; `5a-4.2-tsc.log`: `npm run typecheck` ->
   exit 0. The fetch stub now matches origin+path (`mockGoTrue`, `pendingMocks` added).
-- [ ] 4.3 Test first: a `server/src/test/pg/` race test. Two `authCreateUserGoogle` calls with the
+- [x] 4.3 Test first: a `server/src/test/pg/` race test. Two `authCreateUserGoogle` calls with the
   same id and subject run in overlapping transactions, held by a barrier. One returns the id, the
   other returns `null`, and there is no 23505. It is red against the targeted
   `ON CONFLICT (google_sub)`.
+  Evidence: `server/src/test/pg/authCreateUser.pg.test.ts`. `5a-4.3-red.log` (store temporarily back
+  on `ON CONFLICT (google_sub)`): `npx vitest run --project pg src/test/pg/authCreateUser.pg.test.ts`
+  -> `× an id already held by another Google account returns null, not a unique violation`,
+  `PostgresError: duplicate key value violates unique constraint "users_pkey"`, `Tests  1 failed |
+  1 passed`. The overlapping same-subject case passes either way (the arbiter's wait catches it);
+  it stays as a guard. `5a-4.3-green.log` (target-less clause restored): `Tests  2 passed (2)`.
 
 ## 5. Drop pre-GoTrue users (design D8)
 
