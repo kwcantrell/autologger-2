@@ -1,6 +1,7 @@
 #!/bin/sh
 # docker/scripts/test_check_envs.sh -- regression cases for check-envs.sh invariants 14 and 15
-# (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1).
+# (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1), and
+# invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -183,6 +184,12 @@ expect "a non-internal catalog network is caught" "$d" fail "invariant 16] prod"
 d=$SCRATCH/gatedeny; snapshot "$d"
 sed -i '/^      GATE_DENY_SUBNET: /d' "$d/docker/compose.dev.yaml"
 expect "an app gate that admits the catalog subnet is caught" "$d" fail "invariant 16] dev"
+
+# ---- retire-sqlite-catalog (invariant 4): app source binds stay under packages/*/src
+d=$SCRATCH/pkgnonsrc; snapshot "$d"
+# An existing non-src package path, so the existence check can't be what refuses it.
+sed -i 's#^      - { type: bind, source: ./packages/catalog/src, target: /app/packages/catalog/src, read_only: true }$#&\n      - { type: bind, source: ./packages/catalog/package.json, target: /app/packages/catalog/package.json, read_only: true }#' "$d/docker/compose.dev.yaml"
+expect "a package bind outside src is caught" "$d" fail "invariant 4] dev: a read-only bind source is not under"
 
 echo "test_check_envs: $PASS passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

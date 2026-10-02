@@ -1,7 +1,7 @@
 // CatalogDb port (spec: core-ports-architecture "Catalog persistence is asynchronous…", "The
 // catalog transaction contract" and "The Postgres catalog adapter"; ADR 0021 slices 3-4).
-// `@autologger/storage` implements it over SQLite (`AsyncSqliteCatalogDb`, wired today) and over
-// postgres.js (`PostgresCatalogDb`, wired in slice 4c).
+// `@autologger/storage` implements it over postgres.js (`PostgresCatalogDb`, wired since slice 4c;
+// the SQLite implementation was retired in slice 4e).
 //
 // `tx` passes its body a handle scoped to the transaction, with this same interface; `tx` on
 // that handle joins the enclosing transaction (no savepoint). Any error inside the transaction,

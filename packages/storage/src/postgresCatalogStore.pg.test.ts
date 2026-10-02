@@ -3,7 +3,7 @@
 // the app's least-privilege role, one cloned database per adapter.
 import postgres from 'postgres';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CatalogAdapterBrokenError, CatalogTxTimeoutError } from './asyncCatalogStore';
+import { CatalogAdapterBrokenError, CatalogTxTimeoutError } from './catalogErrors';
 import { CatalogInvalidTextError, PostgresCatalogDb } from './postgresCatalogStore';
 import { describeCatalogDbContract, gate, prompt } from './test/catalogDbContract';
 import { createTestDatabase, type TestDatabase } from './test/pgDb';

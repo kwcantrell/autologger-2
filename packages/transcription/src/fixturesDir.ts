@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Resolved path to this package's fixtures directory (design D4 — the
- * `@autologger/catalog`'s `CATALOG_MIGRATIONS_DIR` pattern for shipping
+ * `new URL(..., import.meta.url)` pattern for shipping
  * non-TS assets from a source-only package, applied unchanged). Holds
  * `audio/` (10 committed tiny test-audio files) and
  * `deepgram-enrichment-response.json` (a captured real DeepGram response

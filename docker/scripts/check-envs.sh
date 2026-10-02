@@ -320,8 +320,8 @@ check_dev() {
   BINDS='[.services|to_entries[]|.key as $s|(.value.volumes//[])[]|select(.type=="bind")|{s:$s,src:(.source|norm),tgt:.target,ro:(.read_only//false),cp:(.bind.create_host_path)}]'
   jq_ok 4 "dev: the read-write bind mounts are not exactly app's \${HOME}/.claude/.credentials.json -> /home/node/.claude/.credentials.json with create_host_path false" "$D" \
     "$BINDS | map(select(.ro|not)) == [{s:\"app\",src:(\$home+\"/.claude/.credentials.json\"),tgt:\"/home/node/.claude/.credentials.json\",ro:false,cp:false}]"
-  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/(src|migrations)|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations|docker/supabase-gw\\.Caddyfile|docker/supabase/init/[a-z]+\\.sql)(/.*)?$'
-  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, packages/catalog/migrations, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh, supabase/migrations, docker/supabase-gw.Caddyfile or docker/supabase/init/*.sql (or names repo root, a data segment, .. or a .env file)" "$D" \
+  ALLOW='^(server/(src|scripts)|web/(src|public)|packages/[a-z0-9-]+/src|docker/dev-gate\\.Caddyfile|docker/supabase/migrate\\.sh|supabase/migrations|docker/supabase-gw\\.Caddyfile|docker/supabase/init/[a-z]+\\.sql)(/.*)?$'
+  jq_ok 4 "dev: a read-only bind source is not under server/src, server/scripts, web/src, web/public, packages/*/src, docker/dev-gate.Caddyfile, docker/supabase/migrate.sh, supabase/migrations, docker/supabase-gw.Caddyfile or docker/supabase/init/*.sql (or names repo root, a data segment, .. or a .env file)" "$D" \
     "$BINDS | map(select(.ro)) | all(.src | startswith(\$root+\"/\") and (ltrimstr(\$root+\"/\") | test(\"$ALLOW\") and (test(\"(^|/)(data|\\\\.\\\\.|\\\\.)(/|\$)\")|not) and (test(\"(^|/)\\\\.env[^/]*\$\")|not)))"
   jq_ok 4 "dev: the gate Caddyfile bind is not read-only" "$D" \
     "$BINDS | map(select(.src|endswith(\"/docker/dev-gate.Caddyfile\"))) | length==2 and all(.ro)"
@@ -338,14 +338,12 @@ check_dev() {
      | ($v|map(select(.target=="/data"))|length==1 and .[0].type=="volume" and .[0].source=="dev-data")
        and ($v|map(select(.target=="/home/node"))|length==1 and .[0].type=="volume" and .[0].source=="dev-home")'
 
-  # 5: every packages/* directory has its src mounted (and, for catalog, its migrations).
+  # 5: every packages/* directory has its src mounted.
   for d in packages/*/; do
     n=$(basename "$d")
     jq_ok 5 "dev: packages/$n/src is not mounted read-only at /app/packages/$n/src" "$D" \
       '.services.app.volumes|map(select(.type=="bind" and .source==($root+"/packages/"+$n+"/src") and .target==("/app/packages/"+$n+"/src") and (.read_only==true)))|length==1' --arg n "$n"
   done
-  jq_ok 5 "dev: packages/catalog/migrations is not mounted read-only" "$D" \
-    '.services.app.volumes|map(select(.type=="bind" and .source==($root+"/packages/catalog/migrations") and .target=="/app/packages/catalog/migrations" and (.read_only==true)))|length==1'
 
   hostile_ports dev compose_dev DEV_PORT
   hostile_ports dev compose_dev DEV_COMPANION_PORT

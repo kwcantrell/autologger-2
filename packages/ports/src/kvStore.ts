@@ -1,7 +1,7 @@
 // KvStore port (spec: core-ports-architecture): the value-based KV over the
-// catalog `kv` table today (`server/src/node/kvStore.ts`'s `KvStore` class) —
-// login sessions, OAuth CSRF, Companion last_command. Async so a networked backend can replace
-// SQLite without changing call sites (ADR 0021 slice 3, async-session-callers D2).
+// catalog `kv` table (`@autologger/storage`'s `KvStore` class) — login sessions, OAuth CSRF,
+// Companion last_command. Async, so the catalog moved to Postgres without changing call sites
+// (ADR 0021 slices 3-4, async-session-callers D2).
 
 export interface KvStore {
   get(key: string): Promise<string | null>;

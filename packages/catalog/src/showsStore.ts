@@ -44,8 +44,8 @@ function titleSuffixApiValue(raw: unknown): 'date' | 'episode' {
 /** _show_api_dict — the per-show shape the React app's api/types.ts expects.
  * session-title-suffix (design D1/D7, api-contract-freeze delta): emits
  * `title_suffix` and OMITS `next_episode` — the column is soft-retained in
- * SQLite but no longer a live product field (see `createShow`/
- * `updateShowFields` below and `0005_show_title_suffix.sql`). */
+ * the catalog but no longer a live product field (see `createShow`/
+ * `updateShowFields` below; former SQLite migration 0005). */
 export function showApiDict(r: Row): Record<string, unknown> {
   const pal = normalizeEventPaletteNine(hexColorsFromJson(r.event_palette_json));
   const presetRaw = String(r.event_palette_preset ?? '')
@@ -175,8 +175,8 @@ export class ShowsStore implements ShowsStoreFacade {
 
   async listShowsForStudio(studioId: string): Promise<Row[]> {
     return this.db.all<Row>(
-      // ASCII-case-insensitive, ties bytewise; lower() under COLLATE "C" folds ASCII only, as
-      // SQLite's NOCASE did (catalog-on-postgres D4).
+      // ASCII-case-insensitive, ties bytewise; lower() under COLLATE "C" folds ASCII only, which
+      // keeps the order the retired SQLite catalog's NOCASE gave (catalog-on-postgres D4).
       'SELECT * FROM shows WHERE studio_id = ? ORDER BY lower(name), name',
       studioId,
     );
@@ -195,7 +195,7 @@ export class ShowsStore implements ShowsStoreFacade {
     // (design D1, gate ruling 2026-08-02) — left at its column default (1)
     // and never bumped (see sessionIndexStore.ts createSessionIndex). The
     // INSERT omits title_suffix so newly created shows pick up the column
-    // default 'date' (0005_show_title_suffix.sql, design D7).
+    // default 'date' (former SQLite migration 0005, design D7).
     await this.db.run(
       `INSERT INTO shows
          (id, studio_id, name, show_code, next_episode, categories_json,

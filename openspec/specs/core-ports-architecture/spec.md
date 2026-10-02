@@ -665,52 +665,10 @@ leaking writes:
 - **WHEN** a body returns while a `tx()` it started on its handle is still running
 - **THEN** the transaction rolls back, the caller's promise rejects, and the unfinished body's later writes are refused
 
-### Requirement: The SQLite catalog adapter serialises each connection
-
-Until it is removed (ADR 0021 slice 4e), the SQLite adapter SHALL run at most one
-transaction at a time on a connection. Every adapter instance on that connection SHALL share one
-lock. Root-handle statements and transactions SHALL wait until any open transaction ends, and
-SHALL be served in the order they were called.
-
-The adapter SHALL also:
-- roll back and release a transaction that runs past its deadline;
-- refuse to work on a connection left inside a transaction it did not open;
-- after a rollback fails, refuse every later call instead of serving a connection that is still
-  inside a transaction.
-
-The server SHALL NOT use this adapter; its catalog runs on the Postgres adapter (see
-catalog-database, "The server's catalog runs on Postgres"). Code that shares one SQLite connection
-between catalog stores and a key/value store SHALL share one instance of this adapter, so no
-statement on that connection bypasses the lock.
-
-#### Scenario: Outside statements wait for an open transaction
-- **WHEN** a root statement is issued while another transaction is awaiting
-- **THEN** it runs only after that transaction ends, and sees its committed writes, or none of them if it rolled back
-
-#### Scenario: Callers are served in call order
-- **WHEN** a transaction, a root write and a second transaction are called in that order
-- **THEN** their effects apply in that order
-
-#### Scenario: Two adapters on one connection share the lock
-- **WHEN** two adapter instances wrap the same connection and one opens a transaction
-- **THEN** the other instance's statements wait for it
-
-#### Scenario: A stalled transaction is released
-- **WHEN** a transaction body does not settle before the deadline
-- **THEN** the transaction rolls back, the caller receives a timeout error, and the next caller proceeds
-
-#### Scenario: A failed rollback stops the adapter
-- **WHEN** a rollback fails and the connection is still inside the transaction
-- **THEN** the failing call rejects with its own first error, every later or queued call rejects with a broken-adapter error, and none writes to the connection
-
-#### Scenario: A broken connection stops a supervised server
-- **WHEN** a server runs in a supervised deployment
-- **THEN** its catalog is served by the Postgres adapter, never by this one, so no failed SQLite catalog rollback can stop it; the Postgres adapter retires a bad connection instead
-
 ### Requirement: The Postgres catalog adapter
 
 A Postgres implementation of the catalog port SHALL meet "The catalog transaction contract",
-proven by the same contract test suite the SQLite adapter runs. That suite SHALL include a
+proven by the catalog transaction contract test suite. That suite SHALL include a
 statement the body starts without awaiting: if it fails, the transaction fails.
 
 Statements:
@@ -758,7 +716,7 @@ Closing:
 
 #### Scenario: The shared contract holds on Postgres
 - **WHEN** the catalog transaction contract suite runs against the Postgres adapter, as the app's least-privilege role
-- **THEN** every case passes as it does against the SQLite adapter
+- **THEN** every case passes
 
 #### Scenario: A dropped failing statement fails the transaction
 - **WHEN** a transaction body starts a write that violates a unique key without awaiting it, and returns

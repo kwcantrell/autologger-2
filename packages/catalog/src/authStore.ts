@@ -419,7 +419,7 @@ export class AuthStore implements AuthStoreFacade {
 
   // -- teams-self-serve: email invites (design D2) ------------------------------
   // emailNorm is always pre-normalized by the caller (JS toLowerCase().trim());
-  // these methods never apply SQL lower() — see 0004_team_roles_and_invites.sql.
+  // these methods never apply SQL lower() (former SQLite migration 0004).
 
   /** Idempotent upsert of a pending invite (one row per team+email; re-inviting
    * refreshes invited_by/invited_at). */

@@ -257,7 +257,6 @@ Bind mounts:
   `docker/supabase/init/`. Each of these SHALL also be read-only. The runner script and the
   migrations directory SHALL be mounted only into `migrate`, the gateway configuration only into
   `supabase-gw`, and the init SQL only into `db`.
-- The mounted source subtrees SHALL include `packages/catalog/migrations`.
 - The only read-write bind mount SHALL be the host `~/.claude/.credentials.json` file,
   mounted at the runtime user's `~/.claude/.credentials.json`. This gives the dev CLI and
   Agent SDK the operator's Claude login.

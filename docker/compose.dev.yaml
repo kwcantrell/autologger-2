@@ -78,7 +78,6 @@ services:
       - { type: bind, source: ./web/public, target: /app/web/public, read_only: true }
       - { type: bind, source: ./packages/ai-runtime/src, target: /app/packages/ai-runtime/src, read_only: true }
       - { type: bind, source: ./packages/catalog/src, target: /app/packages/catalog/src, read_only: true }
-      - { type: bind, source: ./packages/catalog/migrations, target: /app/packages/catalog/migrations, read_only: true }
       - { type: bind, source: ./packages/contract/src, target: /app/packages/contract/src, read_only: true }
       - { type: bind, source: ./packages/domain/src, target: /app/packages/domain/src, read_only: true }
       - { type: bind, source: ./packages/log-import/src, target: /app/packages/log-import/src, read_only: true }

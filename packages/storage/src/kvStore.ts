@@ -1,8 +1,8 @@
 // Value-based KV over the catalog kv table (login sessions, OAuth CSRF,
 // companion last_command). Lazy expiry on get; purgeExpired() runs once at
-// startup — no background sweep (spec: scope #3). Runs on the async catalog
-// adapter, so it shares the catalog connection's lock and waits for an open
-// catalog transaction instead of joining it (async-catalog-adapter D5).
+// startup and every 10 minutes (catalog-concurrency-hazards). Runs on the catalog
+// adapter's root handle, so a call never joins an open catalog transaction
+// (core-ports-architecture "The Postgres catalog adapter").
 //
 // Moved from server/src/node/kvStore.ts (persistence-package-extraction task
 // 2.2): the former `= systemClock` default imported the composition root's
@@ -28,8 +28,8 @@ export class KvStore implements KvStorePort {
     if (!row) return null;
     const now = this.clock.now();
     if (row.expires_at !== null && row.expires_at <= now) {
-      // Conditional: the read and this delete are separate lock acquisitions, so a value re-put
-      // in between must survive (async-catalog-adapter D5).
+      // Conditional: the read and this delete are separate statements, so a value re-put in
+      // between must survive (retire-sqlite-catalog D2 tests it).
       await this.db.run('DELETE FROM kv WHERE key = ? AND expires_at <= ?', key, now);
       return null;
     }

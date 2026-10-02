@@ -176,9 +176,10 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
    * title/episode derivation, run inside ONE catalog transaction so the
    * Date-mode collision read (existing titles for the show) and the session
    * INSERT can never observe/produce a duplicate title under concurrent
-   * same-tick creates: both run inside one `CatalogDb.tx`, which holds the
-   * connection's lock across its awaits (async-catalog-stores D3), so nothing
-   * else can run between the SELECT and the INSERT below. Throws `ValidationError` (mapped to `400` by the router)
+   * same-tick creates: both run inside one `CatalogDb.tx`, which is
+   * SERIALIZABLE and retried on conflict (core-ports-architecture "The Postgres
+   * catalog adapter"), so concurrent creates behave as if run one after the
+   * other between the SELECT and the INSERT below. Throws `ValidationError` (mapped to `400` by the router)
    * for the two derivation-time rejections named in the spec: a blank
    * trimmed show code, and a blank episode under Episode-suffix derivation.
    */

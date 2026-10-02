@@ -2,14 +2,14 @@
 // handling that a real server can't be made to fail on demand, through the `connect` seam.
 import postgres from 'postgres';
 import { describe, expect, it } from 'vitest';
-import { CatalogTxMisuseError, CatalogTxTimeoutError } from './asyncCatalogStore';
+import { CatalogTxMisuseError, CatalogTxTimeoutError } from './catalogErrors';
 import {
   CatalogCommitUnknownError,
   CatalogInvalidTextError,
   CatalogRootTimeoutError,
   type PgClient,
-  type PgResult,
   type PgClientOptions,
+  type PgResult,
   PostgresCatalogDb,
   toPg,
 } from './postgresCatalogStore';
@@ -126,8 +126,15 @@ describe('PostgresCatalogDb: root deadline (catalog-concurrency-hazards D10)', (
       };
     };
     const db = new PostgresCatalogDb({
-      host: 'h', port: 1, user: 'u', password: 'p', database: 'd',
-      rootMax: 1, txSlots: 1, rootTimeoutMs: 50, connect,
+      host: 'h',
+      port: 1,
+      user: 'u',
+      password: 'p',
+      database: 'd',
+      rootMax: 1,
+      txSlots: 1,
+      rootTimeoutMs: 50,
+      connect,
     });
     return { db, calls, opts: () => rootOpts };
   }
@@ -144,7 +151,9 @@ describe('PostgresCatalogDb: root deadline (catalog-concurrency-hazards D10)', (
 
   it('a sent statement past the deadline rejects without a cancel and settles when it finishes', async () => {
     const r = hangingRoot(true);
-    const err = (await r.db.run('UPDATE t SET v = 1').catch((e: unknown) => e)) as CatalogRootTimeoutError;
+    const err = (await r.db
+      .run('UPDATE t SET v = 1')
+      .catch((e: unknown) => e)) as CatalogRootTimeoutError;
     expect(err).toBeInstanceOf(CatalogRootTimeoutError);
     expect(r.calls[0]?.cancelled).toBe(false);
     let settled = false;
