@@ -14,11 +14,11 @@ import {
   setCompanionPresence,
 } from '../test/helpers';
 
-const withLogin = envWith({ REQUIRE_LOGIN: '1' });
+const withLogin = envWith({});
 const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
 
 describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
-  it('reaches a session in a studio it is not a member of, under REQUIRE_LOGIN=1', async () => {
+  it('reaches a session in a studio it is not a member of', async () => {
     const { sessionId: session } = await seededSession();
     setCompanionPresence('authz-c1', session);
     // Machine client: bearer API_TOKEN, no cookie, no user, no membership anywhere.
@@ -32,7 +32,7 @@ describe('API_TOKEN machine clients (task 7.1 — the Companion path)', () => {
     expect(body.session?.id).toBe(session);
   });
 
-  it('a wrong API token is NOT authenticated: 401 under REQUIRE_LOGIN=1', async () => {
+  it('a wrong API token is NOT authenticated: 401', async () => {
     const res = await anonApp.request(
       '/api/companion/state',
       { method: 'GET', headers: bearer('wrong-token') },
@@ -118,7 +118,7 @@ describe('admin token semantics (task 7.3)', () => {
     const res = await anonApp.request(
       '/api/admin/users',
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },
-      envWith({ ADMIN_TOKEN: 'right', REQUIRE_LOGIN: '1' }),
+      envWith({ ADMIN_TOKEN: 'right' }),
     );
     expect(res.status).toBe(401);
   });

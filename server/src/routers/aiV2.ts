@@ -32,9 +32,8 @@
 // individual principal SHALL NOT be accepted on these routes" — stated
 // normatively rather than left emergent; masked as 404, NOT 401/403, same
 // pattern as requireSession, so a device token learns nothing from the
-// response) → configuration gate + open-network refusal + agent-credentials
-// refusal (503, spec "Configuration-gated AI v2 endpoints" / "Open-network
-// refusal" / "Agent credentials") → body validation (422 schema / 400
+// response) → configuration gate + agent-credentials refusal (503, spec
+// "Configuration-gated AI v2 endpoints" / "Agent credentials") → body validation (422 schema / 400
 // malformed JSON, spec scenario "Invalid body rejected without side
 // effects") → turn slot (409, spec "Spend and concurrency bounds" — shared
 // with the AI chat's OWN registry BY DESIGN: "acquire a slot from the same
@@ -84,7 +83,6 @@ import {
   aiV2Configured,
   aiV2CredentialsRefused,
   aiV2MaxBudgetUsd,
-  aiV2OpenNetworkRefused,
 } from '../env';
 import { ApiError } from '../httpError';
 import { getSessionHub, requireSession, requireUser } from './_helpers';
@@ -93,9 +91,6 @@ export const aiV2Router = new Hono<AppEnv>();
 
 const NOT_CONFIGURED_DETAIL =
   'AI v2 is not configured on this deployment. Set AI_V2_ENABLED=1 to enable it.';
-const OPEN_NETWORK_DETAIL =
-  'AI v2 is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const CREDENTIALS_REFUSED_DETAIL =
   'AI v2 has no AI_V2_API_KEY configured and the server is bound to a non-loopback address; the interactive ' +
   '`claude login` fallback is loopback-only. Configure AI_V2_API_KEY or bind to loopback (HOST=127.0.0.1).';
@@ -142,7 +137,7 @@ const PRIMARY_DASHBOARD_ID = 'primary';
  * ever changes. Refused here, masked as 404
  * (never 401/403, which would leak that the session exists/is accessible)
  * — call this IMMEDIATELY after `requireSession` and BEFORE the
- * config/open-network/credentials 503 gate, so a device token learns
+ * config/credentials 503 gate, so a device token learns
  * nothing about configuration or in-flight state either. Shared by BOTH
  * `/design` and `/answer` so the two routes cannot drift on this check.
  *
@@ -183,13 +178,13 @@ function requireIndividualPrincipal(c: Context<AppEnv>, notFoundDetail: string):
  *   3. The 503 gate SET named by `gates` — a PARAMETER, deliberately NOT
  *      uniform across routes (fact-check S10):
  *      - 'design-turn' (/design, /answer): `aiV2Configured` +
- *        `aiV2OpenNetworkRefused` + `aiV2CredentialsRefused`, in that
- *        order — these routes lead to a turn that spends the operator's
- *        credentials, which is what the two refusal predicates exist for.
+ *        `aiV2CredentialsRefused`, in that order — these routes lead to a
+ *        turn that spends the operator's credentials, which is what the
+ *        refusal predicate exists for.
  *      - 'configured-only' (dashboard GET/PUT/DELETE): `aiV2Configured`
  *        ONLY. See the dashboard block comment below ("Deliberately NOT
- *        gated on aiV2OpenNetworkRefused/aiV2CredentialsRefused…") for why
- *        the CRUD routes must never inherit the other two gates.
+ *        gated on aiV2CredentialsRefused…") for why the CRUD routes must
+ *        never inherit the other gate.
  *
  * Returns the principal (signed in behind the login gate) — the PUT
  * dashboard route binds it for `createdBy`; the answer route asserts it with
@@ -207,9 +202,6 @@ async function guardAiV2Route(
     throw new ApiError(503, NOT_CONFIGURED_DETAIL);
   }
   if (gates === 'design-turn') {
-    if (aiV2OpenNetworkRefused(c.env.config)) {
-      throw new ApiError(503, OPEN_NETWORK_DETAIL);
-    }
     if (aiV2CredentialsRefused(c.env.config)) {
       throw new ApiError(503, CREDENTIALS_REFUSED_DETAIL);
     }
@@ -224,10 +216,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
   // gate set): session scoping (404, masked before config/credentials/
   // single-flight state can leak) -> device-token refusal (404, masked
   // identically to requireSession's own "Session not found") -> config +
-  // open-network + agent-credentials gates (all 503, before body parse and
-  // before any spawn — design D7/D9, spec "Unauthorized session is masked
-  // as 404" / "Configuration-gated AI v2 endpoints" / "Open-network
-  // refusal" / "Agent credentials"). No guard below this line can ever run
+  // agent-credentials gates (all 503, before body parse and before any
+  // spawn — design D7/D9, spec "Unauthorized session is masked as 404" /
+  // "Configuration-gated AI v2 endpoints" / "Agent credentials"). No guard
+  // below this line can ever run
   // for a device token.
   await guardAiV2Route(c, sessionId, SESSION_NOT_FOUND_DETAIL, 'design-turn');
 
@@ -378,7 +370,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
 // session as 404"). Guard order matches the design route EXACTLY through
 // body validation — auth (401) → session resolution/scoping (404) →
 // principal-less (device-token) refusal (404, design D7, Phase-3 fix wave)
-// → configuration/open-network/agent-credentials gate (503) → body
+// → configuration/agent-credentials gate (503) → body
 // validation (422/400) — then adds an ANSWER-SPECIFIC authz layer on top:
 // the answering principal must be the SAME principal that initiated the
 // turn, and the (sessionId, turnId, requestId) triple must name a question
@@ -397,7 +389,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
   // was posed, refused up front rather than left to fall out of the
   // `resolveAnswer` comparison below) uses the SAME ANSWER_NOT_FOUND_DETAIL
   // as "no matching pending question" so the response never reveals which
-  // reason applied, and runs BEFORE the config/open-network gate so a
+  // reason applied, and runs BEFORE the config/credentials gate so a
   // device token learns nothing about configuration either (Phase-3 fix
   // wave). That refusal covers only the device-token case (see
   // requireIndividualPrincipal's doc comment); there is no anonymous caller
@@ -464,11 +456,10 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/answer', async (c) => {
 //      the per-session dashboard-count bound (422, same store call)
 //   -> store operation.
 //
-// Deliberately NOT gated on aiV2OpenNetworkRefused/aiV2CredentialsRefused:
-// both exist because "a design turn spends the operator's credentials" over
-// a paid external API call (spec "Open-network refusal" / "Agent
-// credentials"). A dashboard CRUD operation never spawns a subprocess or
-// spends anything — gating it on those two would block a user's OWN
+// Deliberately NOT gated on aiV2CredentialsRefused: it exists because "a
+// design turn spends the operator's credentials" over a paid external API
+// call (spec "Agent credentials"). A dashboard CRUD operation never spawns a
+// subprocess or spends anything — gating it on that would block a user's OWN
 // direct-manipulation edits (spec "Dashboards are edited directly, not only
 // by conversation") for a reason that doesn't apply to them. Flagged
 // explicitly in this task's report for gate review.

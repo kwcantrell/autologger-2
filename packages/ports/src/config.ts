@@ -4,7 +4,7 @@
 export interface Config {
   PUBLIC_BASE_URL: string;
   /** Bind interface (also read directly by main.ts for serve()); surfaced here so
-   * the AI-chat open-network refusal can see the bind without a second env read. */
+   * AI v2's credentials refusal can see the bind without a second env read. */
   HOST: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;

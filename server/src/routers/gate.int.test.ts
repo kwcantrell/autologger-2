@@ -10,10 +10,10 @@ import {
   seedUser,
 } from '../test/helpers';
 
-const withLogin = envWith({ REQUIRE_LOGIN: '1' });
+const withLogin = envWith({});
 
 describe('auth gate', () => {
-  it('blocks an unauthenticated /api/* when REQUIRE_LOGIN=1 (401)', async () => {
+  it('blocks an unauthenticated /api/* (401)', async () => {
     const res = await anonApp.request('/api/sessions', { method: 'GET' }, withLogin);
     expect(res.status).toBe(401);
   });
@@ -145,7 +145,7 @@ describe('encoded spellings of /api paths get the literal path’s answer', () =
     const res = await anonApp.request(
       path,
       { method: 'GET', headers: adminHeader('wrong') },
-      envWith({ REQUIRE_LOGIN: '1', ADMIN_TOKEN: 'right' }),
+      envWith({ ADMIN_TOKEN: 'right' }),
     );
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Invalid or missing admin token.' });

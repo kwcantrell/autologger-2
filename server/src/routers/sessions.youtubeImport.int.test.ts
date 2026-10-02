@@ -57,9 +57,6 @@ const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 // module-private constants (not exported) so these tests assert the EXACT
 // response body, not just a status code or a loose substring match.
 const NOT_CONFIGURED_DETAIL = 'YouTube import is unavailable on this deployment.';
-const OPEN_NETWORK_DETAIL =
-  'YouTube import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing third-party audio.';
 const BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
@@ -119,13 +116,12 @@ function neverSpawned(markerPath: string): boolean {
   return !existsSync(markerPath);
 }
 
-/** Configured + NOT open-network-refused (design D9): loopback bind, login
- * not required, no allowlist. Individual tests layer further overrides. */
+/** Configured (design D9): loopback bind, no allowlist. Individual tests
+ * layer further overrides. */
 function configuredEnv(binaryPath: string, overrides: Record<string, unknown> = {}): Bindings {
   return envWith({
     YTDLP_RESOLVED_PATH: binaryPath,
     HOST: '127.0.0.1',
-    REQUIRE_LOGIN: '0',
     IP_ALLOWLIST: '',
     ...overrides,
   });
@@ -179,46 +175,8 @@ describe('unconfigured deployment — byte-for-byte 503 (matrix; spec "No yt-dlp
     expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
     // No binary is configured at all in this scenario, so there is
     // structurally nothing a marker file could observe (the gate throws
-    // before any binary path is even referenced) — the open-network-refusal
-    // and 400/409 tests below are where a REAL configured binary's silence
+    // before any binary path is even referenced) — the 400/409 tests below are where a REAL configured binary's silence
     // is the falsifiable "no spawn" proof.
-  });
-});
-
-// ── Phase 5 review must-cover: 503-precedence ───────────────────────────────
-
-describe('503-precedence — unconfigured wins over the open-network refusal (Phase 5 review must-cover)', () => {
-  it('a deployment that is BOTH unconfigured AND open-network-refused returns the legacy NOT_CONFIGURED detail, not the open-network detail', async () => {
-    const session = (await seededSession()).sessionId;
-    // REQUIRE_LOGIN off + non-loopback + no allowlist == open-network-refused
-    // ...AND YTDLP_RESOLVED_PATH is left at its base-env default (null) ==
-    // unconfigured — both conditions hold simultaneously.
-    const bothConditions = envWith({ REQUIRE_LOGIN: '0', HOST: '0.0.0.0', IP_ALLOWLIST: '' });
-    const res = await postImport(session, VALID_BODY, bothConditions);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ detail: NOT_CONFIGURED_DETAIL });
-  });
-});
-
-// ── Matrix row 2: open-network refusal ──────────────────────────────────────
-
-describe('open-network refusal — 503, no spawn even though yt-dlp IS configured (spec D9)', () => {
-  it('REQUIRE_LOGIN disabled + non-loopback bind + no IP_ALLOWLIST refuses even a configured deployment', async () => {
-    const session = (await seededSession()).sessionId;
-    const { binaryPath, markerPath } = freshBinary();
-    const res = await postImport(
-      session,
-      VALID_BODY,
-      envWith({
-        YTDLP_RESOLVED_PATH: binaryPath,
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-      }),
-    );
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ detail: OPEN_NETWORK_DETAIL });
-    expect(neverSpawned(markerPath)).toBe(true);
   });
 });
 
@@ -419,7 +377,6 @@ describe('bare yt-dlp on PATH counts as configured (matrix; spec "Bare yt-dlp on
       envWith({
         YTDLP_RESOLVED_PATH: resolved,
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
         IP_ALLOWLIST: '',
       }),
     );
@@ -601,7 +558,6 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
         DATA_DIR: dataDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
-        REQUIRE_LOGIN: '0',
       });
       const scratchRoot = boot.bindings.ports.audio.scratchRoot();
       await boot.close();
@@ -623,7 +579,6 @@ describe('crash-orphan scratch-dir sweep (design D6, re-run of the startup wirin
         DATA_DIR: dataDir,
         PUBLIC_BASE_URL: 'https://example.com',
         GOOGLE_CLIENT_SECRET: 'test-secret',
-        REQUIRE_LOGIN: '0',
       });
       try {
         expect(existsSync(strayDir)).toBe(false); // swept
@@ -1093,7 +1048,6 @@ describe('POST /api/sessions/:sessionId/youtube-import — D9 import-anchor wall
           {
             YTDLP_RESOLVED_PATH: binaryPath,
             HOST: '127.0.0.1',
-            REQUIRE_LOGIN: '0',
             IP_ALLOWLIST: '',
           },
           { clock },

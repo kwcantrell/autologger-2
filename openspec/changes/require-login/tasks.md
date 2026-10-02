@@ -152,7 +152,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 3. Anonymous state and open-network refusals removed (design D4, D5, D6, D12)
 
-- [ ] 3.1 Delete the open-network refusals:
+- [x] 3.1 Delete the open-network refusals:
   - `env.ts` predicate and exports (`loopbackHostname` stays);
   - the six routers' detail constants and checks;
   - the `main.ts` warning;
@@ -162,6 +162,20 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   Verify: `grep -rn "OpenNetwork\|open-network\|REQUIRE_LOGIN" server/src packages web/src` hits
   only the boot refusal and its tests, the AI v2 credentials-refusal tests still pass, and the
   suite is green.
+  Evidence: the grep -> only `server/src/bootGuard.ts:36-37` and `server/src/bootGuard.test.ts`
+  (57-78). `npm run typecheck` exit 0 (`5b-3.1-typecheck.log`). Server `5b-3.1-green.log`:
+  `Tests  1 failed | 934 passed | 3 skipped (938)`; the one failure is the `profileAnonymous`
+  capture that 3.2 deletes; the AI v2 credentials-refusal cases (`aiV2.int` "agent credentials
+  refusal (503)", the per-route gate-set suite, the `aiV2CredentialsRefused` predicate) pass.
+  `ai-runtime` `aiV2SdkSpawn.test.ts` `Tests  4 passed`. Deleted: `openNetworkRefused` and the
+  four exports in `env.ts` (`loopbackHostname` kept), the six routers' `*_OPEN_NETWORK_DETAIL`
+  constants and checks (events step comments renumbered), and the open-network cases in `ai`,
+  `aiV2`, `transcribe`, `sessions.youtubeImport` (incl. the "unconfigured wins over open-network"
+  precedence case), `events.generate` (ladder case 3), `logImport` (incl. its precedence case);
+  the `main.ts` warning and the `env.test.ts` predicate cases went in 2.2. Follow-ons: every
+  `REQUIRE_LOGIN` key/title left in test `envWith` literals is removed (`apiToken` loses
+  `openLogin`), and `ai-runtime`'s guard-order comments and test label say
+  `config/credentials 503`.
 - [ ] 3.2 Remove the anonymous active team and show (D5):
   - the `sessions.ts` list branch;
   - the `profile.ts` `PUT` anonymous transaction;

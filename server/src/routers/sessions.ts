@@ -2,8 +2,8 @@
 // pure catalog reads (no hub wake); create initializes the catalog index row
 // and the session hub.
 // YouTube import (youtube-audio-import, design D1/D2/D3/D6/D7/D8/D9, task 5.3):
-// config-gated + open-network-refused (mirroring the AI chat/AI v2 outbound
-// features), URL-allowlist-validated, per-session + global concurrency
+// config-gated (mirroring the AI chat/AI v2 outbound features),
+// URL-allowlist-validated, per-session + global concurrency
 // bounded, downloads via the operator-provided `yt-dlp` binary into a
 // per-request scratch-root temp dir, and ingests through the SAME
 // addAudioSegment → ports.audio.put → rollback-on-failure path the recorder
@@ -42,7 +42,7 @@ import {
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
-import { oauthConfigured, youtubeImportOpenNetworkRefused, ytDlpConfigured } from '../env';
+import { oauthConfigured, ytDlpConfigured } from '../env';
 import { ApiError } from '../httpError';
 import { getSessionHub, requireSession, requireUser, timecodeCtx } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
@@ -282,9 +282,6 @@ sessionsRouter.delete('/api/sessions/:sessionId', async (c) => {
 // the pre-pipeline stub's for the not-configured case (api-contract-freeze:
 // "byte-for-byte unchanged" for deployments with no yt-dlp available).
 const YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL = 'YouTube import is unavailable on this deployment.';
-const YOUTUBE_IMPORT_OPEN_NETWORK_DETAIL =
-  'YouTube import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing third-party audio.';
 const YOUTUBE_IMPORT_BAD_BODY_DETAIL = 'Invalid youtube-import request body.';
 const YOUTUBE_IMPORT_BAD_URL_DETAIL =
   'url must be an http(s) link to youtube.com, youtu.be, or music.youtube.com.';
@@ -450,15 +447,12 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
   const sessionRow = await requireSession(c, sessionId);
   const ctx = timecodeCtx(sessionRow);
 
-  // Configuration gate, THEN open-network refusal (matches the AI chat/AI v2
-  // sibling ordering in ai.ts/aiV2.ts) — a deployment with no yt-dlp at all
-  // stays byte-for-byte its pre-change 503, regardless of network config.
+  // Configuration gate (matches the AI chat/AI v2 sibling ordering in
+  // ai.ts/aiV2.ts) — a deployment with no yt-dlp at all stays byte-for-byte
+  // its pre-change 503.
   const binaryPath = c.env.config.YTDLP_RESOLVED_PATH;
   if (!ytDlpConfigured(c.env.config) || !binaryPath) {
     throw new ApiError(503, YOUTUBE_IMPORT_NOT_CONFIGURED_DETAIL);
-  }
-  if (youtubeImportOpenNetworkRefused(c.env.config)) {
-    throw new ApiError(503, YOUTUBE_IMPORT_OPEN_NETWORK_DETAIL);
   }
 
   // Body + URL validation (400) — before any concurrency claim or spawn.

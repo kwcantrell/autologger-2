@@ -44,7 +44,6 @@ import type { AppEnv } from '../appEnv';
 import {
   aiChatConfigured,
   aiChatMaxConcurrent,
-  aiChatOpenNetworkRefused,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
@@ -250,16 +249,13 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
 // auto-event-generation delta. Guard ORDER (spec "Gated generation endpoint
 // with pre-spawn preconditions" — nothing spawns, and no MCP registration
 // exists, until every guard passes): session 404-mask → CLAUDE_CLI_PATH 503 →
-// open-network 503 → anchored-transcript 400 → no-instructions 400 →
+// anchored-transcript 400 → no-instructions 400 →
 // aggregate-instruction-bound 400 → shared AI slot 409. The slot is acquired
 // HERE and released in this handler's own `finally` (router-owned slot
 // lifecycle, the transcribe.ts pattern).
 
 const EVENT_GENERATE_NOT_CONFIGURED_DETAIL =
   'Event generation is not configured on this deployment. Set CLAUDE_CLI_PATH to the claude CLI to enable it.';
-const EVENT_GENERATE_OPEN_NETWORK_DETAIL =
-  'Event generation is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no ' +
-  'IP_ALLOWLIST. Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before using a paid AI endpoint.';
 const EVENT_GENERATE_NO_TRANSCRIPT_DETAIL =
   'This session has no transcript words to generate events from. Generate or import a transcript first.';
 const EVENT_GENERATE_NO_ANCHORS_DETAIL =
@@ -450,24 +446,20 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
   }
   const body = parsedBody.data;
 
-  // 2 + 3. Configuration gate + open-network refusal — both 503, before any
-  // spawn (a run spends the operator's Anthropic budget and writes into the
-  // session).
+  // 2. Configuration gate — 503, before any spawn (a run spends the
+  // operator's Anthropic budget and writes into the session).
   if (!aiChatConfigured(c.env.config)) {
     throw new ApiError(503, EVENT_GENERATE_NOT_CONFIGURED_DETAIL);
-  }
-  if (aiChatOpenNetworkRefused(c.env.config)) {
-    throw new ApiError(503, EVENT_GENERATE_OPEN_NETWORK_DETAIL);
   }
 
   // The show's categories are read BEFORE the word snapshot below, so the
   // snapshot-to-registration window holds no storage call or await
-  // (async-session-callers D4). Their checks still run in step 5's order.
+  // (async-session-callers D4). Their checks still run in step 4's order.
   const catalog = c.get('catalog');
   const rawCategories =
     (await catalog.sessions.getSessionShowCategories(sessionId))?.categories ?? [];
 
-  // 4. Anchored-transcript precondition — a run without session-time anchors
+  // 3. Anchored-transcript precondition — a run without session-time anchors
   // could only invent timecodes. This read doubles as the run's WORD SNAPSHOT
   // (spec "snapshot at run start"; Phase-3 review carry): no `await` occurs
   // between here and the turn registration, so nothing can interleave.
@@ -479,7 +471,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     throw new ApiError(400, EVENT_GENERATE_NO_ANCHORS_DETAIL);
   }
 
-  // 5. Instruction-bearing categories (the single imported definition, never
+  // 4. Instruction-bearing categories (the single imported definition, never
   // re-derived) — a show with none has nothing to detect.
   const bearing = rawCategories.filter(categoryIsInstructionBearing);
   if (bearing.length === 0) {
@@ -493,7 +485,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     throw new ApiError(400, EVENT_GENERATE_NO_INSTRUCTIONS_DETAIL);
   }
 
-  // 6. Aggregate pre-spawn instruction bound (design D8) — either half
+  // 5. Aggregate pre-spawn instruction bound (design D8) — either half
   // tripping fails fast, before the CLI ever spawns.
   const { bytes, entries } = instructionAggregate(categories, (body.selection?.length ?? 0) === 0);
   const maxBytes = eventGenerateMaxInstructionBytes(c.env.config);
@@ -507,7 +499,7 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     );
   }
 
-  // 7. Single-flight (per session) + process-wide ceiling — 409, spawning
+  // 6. Single-flight (per session) + process-wide ceiling — 409, spawning
   // nothing. Same registry as AI chat/AI v2/topics; released in this
   // handler's own finally (release BEFORE the projection — see the finally).
   const slot = aiChatTurns.tryAcquire(sessionId, aiChatMaxConcurrent(c.env.config));

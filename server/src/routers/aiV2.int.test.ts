@@ -2,7 +2,7 @@
 // (tasks 2.1/2.2). Locks the guard ORDER and the "spawns nothing on a
 // guard-rejected path" property, mirroring ai.int.test.ts's structure for
 // the sibling ai-topics-chat route:
-//   auth (401) → session resolution/scoping (404) → config / open-network /
+//   auth (401) → session resolution/scoping (404) → config /
 //   agent-credentials gate (503) → body validation (422/400) → turn slot
 //   (409, shared with the AI chat's OWN registry by design).
 //
@@ -143,7 +143,6 @@ function loopbackEnv(
     {
       AI_V2_ENABLED: '1',
       HOST: '127.0.0.1',
-      REQUIRE_LOGIN: '0',
       AI_V2_API_KEY: '',
       ...overrides,
     },
@@ -178,12 +177,12 @@ function postAnswer(
 }
 
 describe('ai/v2/design — auth gate (first)', () => {
-  it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
+  it('401 with no credentials, before any other check', async () => {
     const s = (await seededSession()).sessionId;
     const res = await anonApp.request(
       `/api/sessions/${s}/ai/v2/design`,
       { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-      loopbackEnv({ REQUIRE_LOGIN: '1' }),
+      loopbackEnv(),
     );
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -205,12 +204,10 @@ describe('ai/v2/design — session resolution masks before 503/409', () => {
     // if the config/slot gates ran before session scoping we'd see 503/409
     // instead of 404, leaking either signal to a caller with no access.
     aiChatTurns.tryAcquire(s, 2);
-    const res = await post(
-      s,
-      { message: 'hi' },
-      envWith({ AI_V2_ENABLED: '', HOST: '0.0.0.0', REQUIRE_LOGIN: '1' }),
-      { ...J, Cookie: await loginCookie(outsider) },
-    );
+    const res = await post(s, { message: 'hi' }, envWith({ AI_V2_ENABLED: '', HOST: '0.0.0.0' }), {
+      ...J,
+      Cookie: await loginCookie(outsider),
+    });
     expect(res.status).toBe(404);
     expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -246,7 +243,6 @@ describe('ai/v2/design — configuration gate (503)', () => {
       envWith({
         AI_V2_ENABLED: '',
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '0',
         CLAUDE_CLI_PATH: '/fake/claude',
       }),
     );
@@ -256,7 +252,7 @@ describe('ai/v2/design — configuration gate (503)', () => {
     const chatRes = await app.request(
       `/api/sessions/${s}/ai/chat`,
       { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0', CLAUDE_CLI_PATH: '' }),
+      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', CLAUDE_CLI_PATH: '' }),
     );
     // AI chat's OWN gate (CLAUDE_CLI_PATH unset) decides its 503 — a
     // different detail string than AI v2's, proving no shared config state.
@@ -267,38 +263,13 @@ describe('ai/v2/design — configuration gate (503)', () => {
   });
 });
 
-describe('ai/v2/design — open-network refusal (503)', () => {
-  it('503 for anonymous + non-loopback + no allowlist, with a distinct detail, spawning nothing', async () => {
-    const s = (await seededSession()).sessionId;
-    const res = await post(
-      s,
-      { message: 'hi' },
-      envWith({
-        AI_V2_ENABLED: '1',
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-        AI_V2_API_KEY: 'k',
-      }),
-    );
-    expect(res.status).toBe(503);
-    const detail = ((await res.json()) as { detail: string }).detail;
-    expect(detail).toMatch(/network|allowlist|loopback|login/i);
-    expect(detail).not.toMatch(/not configured/i);
-    expect(spawnSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('ai/v2/design — agent credentials refusal (503, distinct from open-network)', () => {
-  it('503 when no key is configured and the bind is non-loopback, even with login REQUIRED', async () => {
+describe('ai/v2/design — agent credentials refusal (503)', () => {
+  it('503 when no key is configured and the bind is non-loopback, even for a signed-in member', async () => {
     const { sessionId: s, studioId } = await seededSession();
-    // REQUIRE_LOGIN=1 (not disabled!) so aiV2OpenNetworkRefused would be
-    // false here — proving this is a DIFFERENT predicate, not a duplicate of
-    // the open-network check.
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' }),
+      envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' }),
       { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) },
     );
     expect(res.status).toBe(503);
@@ -314,7 +285,6 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
       { message: 'hi' },
       envWith({
         AI_V2_ENABLED: '1',
-        REQUIRE_LOGIN: '1',
         HOST: '0.0.0.0',
         AI_V2_API_KEY: 'workspace-key',
       }),
@@ -361,8 +331,7 @@ describe('ai/v2/design — agent credentials refusal (503, distinct from open-ne
       AI_V2_MAX_BUDGET_USD: '',
       AI_V2_CREDENTIAL_SOURCE_PATH: '',
     };
-    // Non-loopback, no key, REQUIRE_LOGIN=1, allowlist set — every knob that
-    // lifts aiV2OpenNetworkRefused is present, yet credentials still refuse.
+    // Non-loopback, no key, allowlist set — the allowlist does not lift it.
     expect(aiV2CredentialsRefused(base)).toBe(true);
     expect(aiV2CredentialsRefused({ ...base, AI_V2_API_KEY: 'k' })).toBe(false);
     for (const h of ['127.0.0.1', '::1', 'localhost']) {
@@ -475,7 +444,7 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
       const chatRes = await app.request(
         `/api/sessions/${s}/ai/chat`,
         { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+        envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1' }),
       );
       expect(chatRes.status).toBe(200);
       try {
@@ -510,7 +479,7 @@ describe('ai/v2/design — turn slot (409), shared with the AI chat registry by 
         const chatRes = await app.request(
           `/api/sessions/${s}/ai/chat`,
           { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+          envWith({ CLAUDE_CLI_PATH: FIXTURE_CLI, HOST: '127.0.0.1' }),
         );
         expect(chatRes.status).toBe(409);
         expect(((await chatRes.json()) as { detail: string }).detail).toMatch(
@@ -571,17 +540,12 @@ describe('ai/v2/design — API_TOKEN is inert (handled exactly as anonymous, des
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it('under REQUIRE_LOGIN=1 a token-only request is 401 "Login required." and spawns nothing', async () => {
+  it('a token-only request is 401 "Login required." and spawns nothing', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await post(
-      s,
-      { message: 'hi' },
-      loopbackEnv({ REQUIRE_LOGIN: '1', API_TOKEN: 'device-secret' }),
-      {
-        ...J,
-        Authorization: 'Bearer device-secret',
-      },
-    );
+    const res = await post(s, { message: 'hi' }, loopbackEnv({ API_TOKEN: 'device-secret' }), {
+      ...J,
+      Authorization: 'Bearer device-secret',
+    });
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -803,7 +767,7 @@ describe("ai/v2/design — the route hands the AI runtime the REQUEST's own inje
 // ── task 3.2 — POST …/ai/v2/answer ──────────────────────────────────────────
 
 describe('ai/v2/answer — guard chain mirrors the design route through body validation (task 3.2)', () => {
-  it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
+  it('401 with no credentials, before any other check', async () => {
     const s = (await seededSession()).sessionId;
     const res = await anonApp.request(
       `/api/sessions/${s}/ai/v2/answer`,
@@ -816,7 +780,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
           answers: [{ kind: 'text', text: 'x' }],
         }),
       },
-      loopbackEnv({ REQUIRE_LOGIN: '1' }),
+      loopbackEnv(),
     );
     expect(res.status).toBe(401);
   });
@@ -837,7 +801,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
     const res = await postAnswer(
       s,
       { turnId: 't', requestId: 'r', answers: [{ kind: 'text', text: 'x' }] },
-      envWith({ AI_V2_ENABLED: '', HOST: '0.0.0.0', REQUIRE_LOGIN: '1' }),
+      envWith({ AI_V2_ENABLED: '', HOST: '0.0.0.0' }),
       { ...J, Cookie: await loginCookie(outsider) },
     );
     expect(res.status).toBe(404);
@@ -911,7 +875,7 @@ describe('ai/v2/answer — guard chain mirrors the design route through body val
 // ── task 3.1/3.2/3.3 — gate-intent verification (design D7's hard constraints) ──
 
 describe('ai/v2/answer — principal binding: access to the session is not enough (design D7)', () => {
-  it('(c) a token-only request is inert: it cannot answer a pending question (401 under REQUIRE_LOGIN=1), which stays pending', async () => {
+  it('(c) a token-only request is inert: it cannot answer a pending question (401), which stays pending', async () => {
     const { sessionId: s } = await seededSession();
     const initiator = await seedUser({}); // the real principal that "started" the turn
     aiV2PendingQuestions.register(
@@ -928,7 +892,6 @@ describe('ai/v2/answer — principal binding: access to the session is not enoug
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '127.0.0.1',
-        REQUIRE_LOGIN: '1',
         AI_V2_API_KEY: '',
         API_TOKEN: 'device-secret',
       }),
@@ -1170,10 +1133,9 @@ describe('ai/v2/design + ai/v2/answer — a real onQuestion round trip through t
 // Guard order mirrors design/answer through the config gate: auth (401) ->
 // session resolution/scoping (404) -> principal-less/device-token refusal
 // (404) -> AI v2 config gate (503) -> body validation (422, PUT only) ->
-// store operation. Deliberately NOT gated on open-network/credentials
-// refusal (see aiV2.ts's route doc comment) — these tests configure a
-// non-loopback/no-allowlist env for the "still works" cases specifically to
-// prove that.
+// store operation. Deliberately NOT gated on the credentials refusal (see
+// aiV2.ts's route doc comment) — these tests configure a non-loopback,
+// no-key env for the "still works" cases specifically to prove that.
 
 function getDashboard(
   sessionId: string,
@@ -1235,10 +1197,7 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
 
   it('GET returns 503 when AI v2 is unconfigured ("every AI v2 route")', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await getDashboard(
-      s,
-      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
-    );
+    const res = await getDashboard(s, envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1' }));
     expect(res.status).toBe(503);
   });
 
@@ -1257,14 +1216,13 @@ describe('ai/v2/dashboard — read scoped exactly as the session (spec "Dashboar
     expect(await tok.json()).toEqual(await anon.json());
   });
 
-  it('GET still works on a non-loopback, no-allowlist bind (NOT gated by open-network refusal, unlike design/answer)', async () => {
+  it('GET still works on a non-loopback, no-key bind (NOT gated by the credentials refusal, unlike design/answer)', async () => {
     const s = (await seededSession()).sessionId;
     const res = await getDashboard(
       s,
       envWith({
         AI_V2_ENABLED: '1',
         HOST: '0.0.0.0',
-        REQUIRE_LOGIN: '0',
         IP_ALLOWLIST: '',
         AI_V2_API_KEY: '',
       }),
@@ -1287,12 +1245,11 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     expect(res.status).toBe(404);
   });
 
-  it('a token-only PUT/DELETE under REQUIRE_LOGIN=1 is 401 and nothing is stored', async () => {
+  it('a token-only PUT/DELETE is 401 and nothing is stored', async () => {
     const s = (await seededSession()).sessionId;
     const deviceEnv = envWith({
       AI_V2_ENABLED: '1',
       HOST: '127.0.0.1',
-      REQUIRE_LOGIN: '1',
       API_TOKEN: 'device-secret',
     });
     const headers = { ...J, Authorization: 'Bearer device-secret' };
@@ -1310,7 +1267,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     const res = await putDashboard(
       s,
       { garbage: true },
-      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1', REQUIRE_LOGIN: '0' }),
+      envWith({ AI_V2_ENABLED: '', HOST: '127.0.0.1' }),
     );
     expect(res.status).toBe(503);
   });
@@ -1416,26 +1373,24 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
 
 // ── code-health-tail 2.3 (finding 2.11) — guardAiV2Route's gate set is a ──
 // PER-ROUTE parameter, not uniform (fact-check S10): under the SAME env,
-// /design and /answer 503 on the open-network/credentials refusals while
+// /design and /answer 503 on the credentials refusal while
 // every dashboard-CRUD route still serves. A shared prologue that
 // accidentally uniformized the gate set (giving the CRUD routes all three
 // gates, or the design/answer routes only one) would satisfy "all five
 // routes use the helper" and still fail here — this suite pins the
 // DIFFERENCE itself, not helper adoption.
 describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameterized, not uniform)', () => {
-  /** BOTH refusal predicates true at once: anonymous + non-loopback + no
-   * allowlist (aiV2OpenNetworkRefused) and no key + non-loopback
+  /** The credentials refusal is true: no key + non-loopback
    * (aiV2CredentialsRefused). Fresh env per request (app.ts invariant). */
   const refusedEnv = () =>
     envWith({
       AI_V2_ENABLED: '1',
       HOST: '0.0.0.0',
-      REQUIRE_LOGIN: '0',
       IP_ALLOWLIST: '',
       AI_V2_API_KEY: '',
     });
 
-  it('under an open-network + credentials-refused env, /design and /answer 503 while dashboard PUT/GET/DELETE serve', async () => {
+  it('under a credentials-refused env, /design and /answer 503 while dashboard PUT/GET/DELETE serve', async () => {
     const s = (await seededSession()).sessionId;
 
     const designRes = await post(s, { message: 'hi' }, refusedEnv());
@@ -1449,7 +1404,7 @@ describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameteri
     expect(answerRes.status).toBe(503);
 
     // The dashboard-CRUD routes never spend the operator's credentials, so
-    // they are deliberately NOT gated on either refusal (see aiV2.ts's
+    // they are deliberately NOT gated on that refusal (see aiV2.ts's
     // dashboard block comment) — the full write/read/delete cycle works.
     const putRes = await putDashboard(s, VALID_DASHBOARD, refusedEnv());
     expect(putRes.status).toBe(200);
@@ -1460,11 +1415,10 @@ describe('ai/v2 — per-route 503 gate sets differ (guardAiV2Route is parameteri
     expect(delRes.status).toBe(200);
   });
 
-  it('under a credentials-only-refused env (login REQUIRED lifts open-network), /design still 503s while dashboard GET serves', async () => {
+  it('under a credentials-refused env with an explicit member cookie, /design still 503s while dashboard GET serves', async () => {
     const { sessionId: s, studioId } = await seededSession();
     const headers = { ...J, Cookie: await loginCookie(await seedUser({ studios: [studioId] })) };
-    const credsEnv = () =>
-      envWith({ AI_V2_ENABLED: '1', REQUIRE_LOGIN: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' });
+    const credsEnv = () => envWith({ AI_V2_ENABLED: '1', HOST: '0.0.0.0', AI_V2_API_KEY: '' });
 
     const designRes = await post(s, { message: 'hi' }, credsEnv(), headers);
     expect(designRes.status).toBe(503);

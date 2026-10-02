@@ -16,7 +16,7 @@
 //
 // THE CONTRACT CALLERS MUST HONOR: call `attemptDesignTurnSpawn` only after
 // every guard in the design endpoint's order (spec: authentication → session
-// resolution/scoping `404` → configuration/open-network `503` → body
+// resolution/scoping `404` → configuration/credentials `503` → body
 // validation `422`/`400` → turn slot `409`) has already passed. A
 // guard-rejected request must return BEFORE this function is ever called —
 // that is what makes "no guard path spawns" observable: nothing upstream of

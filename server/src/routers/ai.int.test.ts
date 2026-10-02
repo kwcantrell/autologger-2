@@ -2,7 +2,7 @@
 // 1.1/1.2) + the real turn runner, JSONL→SSE relay (task 3.3), and spend/
 // lifecycle bounds (task 3.4). Locks the guard ORDER and the "spawns nothing
 // on a rejected turn" property:
-//   auth (401) → session resolution/scoping (404) → config / open-network gate
+//   auth (401) → session resolution/scoping (404) → config gate
 //   (503) → body validation (422/400) → foreign claude_session_id (422) →
 //   single-flight & concurrency (409).
 //
@@ -170,10 +170,7 @@ function loopbackEnv(
   overrides: Record<string, unknown> = {},
   portOverrides: Partial<Bindings['ports']> = {},
 ) {
-  return envWith(
-    { CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', REQUIRE_LOGIN: '0', ...overrides },
-    portOverrides,
-  );
+  return envWith({ CLAUDE_CLI_PATH: CLI, HOST: '127.0.0.1', ...overrides }, portOverrides);
 }
 
 /** Same as `loopbackEnv`, but CLAUDE_CLI_PATH points at the real hermetic
@@ -205,7 +202,7 @@ function post(
 }
 
 describe('ai/chat — auth gate (first)', () => {
-  it('401 when REQUIRE_LOGIN=1 and no credentials, before any other check', async () => {
+  it('401 with no credentials, before any other check', async () => {
     const s = await seededSession();
     // fixtureEnv (not loopbackEnv's bogus CLI): a real, resolvable CLI, so
     // `neverSpawned` genuinely proves the auth guard — not a misconfigured
@@ -213,7 +210,7 @@ describe('ai/chat — auth gate (first)', () => {
     const res = await anonApp.request(
       `/api/sessions/${s}/ai/chat`,
       { method: 'POST', headers: J, body: JSON.stringify({ message: 'hi' }) },
-      fixtureEnv({ REQUIRE_LOGIN: '1' }),
+      fixtureEnv(),
     );
     expect(res.status).toBe(401);
     expect(spawnSpy).not.toHaveBeenCalled();
@@ -239,7 +236,7 @@ describe('ai/chat — session resolution masks before 503/409', () => {
     const res = await post(
       s,
       { message: 'hi' },
-      envWith({ REQUIRE_LOGIN: '1', CLAUDE_CLI_PATH: '', HOST: '0.0.0.0' }),
+      envWith({ CLAUDE_CLI_PATH: '', HOST: '0.0.0.0' }),
       { ...J, Cookie: await loginCookie(outsider) },
     );
     expect(res.status).toBe(404);
@@ -269,31 +266,8 @@ describe('ai/chat — configuration gate (503)', () => {
   });
 });
 
-describe('ai/chat — open-network refusal (503)', () => {
-  it('503 for anonymous + non-loopback + no allowlist, with a distinct detail, spawning nothing', async () => {
-    const s = await seededSession();
-    // fixture-backed (not CLI's bogus path) — see the header note: a real,
-    // resolvable CLI path is what makes `neverSpawned` prove THIS guard
-    // stopped the subprocess, not just that a bogus path never resolves.
-    const res = await post(
-      s,
-      { message: 'hi' },
-      envWith({
-        CLAUDE_CLI_PATH: FIXTURE_CLI,
-        REQUIRE_LOGIN: '0',
-        HOST: '0.0.0.0',
-        IP_ALLOWLIST: '',
-      }),
-    );
-    expect(res.status).toBe(503);
-    const detail = ((await res.json()) as { detail: string }).detail;
-    expect(detail).toMatch(/network|allowlist|loopback|login/i);
-    expect(detail).not.toMatch(/not configured/i);
-    expect(spawnSpy).not.toHaveBeenCalled();
-    expect(neverSpawned(s)).toBe(true);
-  });
-
-  it('loopback-bound anonymous dev still serves (guards pass → 200 SSE, real relay spawns)', async () => {
+describe('ai/chat — a configured turn serves', () => {
+  it('loopback-bound: guards pass → 200 SSE, real relay spawns', async () => {
     const s = await seededSession();
     // Accept-Encoding is deliberate: the /api/* compress middleware must skip
     // SSE (Transfer-Encoding: chunked + text/event-stream, both excluded) even

@@ -17,10 +17,9 @@ import { seededSession } from '../test/helpers';
 
 const TOKEN = 'test-api-token';
 const bearer: Record<string, string> = { Authorization: `Bearer ${TOKEN}` };
-const withLogin = envWith({ REQUIRE_LOGIN: '1' });
-const openLogin = envWith({ REQUIRE_LOGIN: '0' });
+const withLogin = envWith({});
 
-describe('token-only requests, REQUIRE_LOGIN=1', () => {
+describe('token-only requests', () => {
   it('GET /api/companion/state is 200 with the frozen state shape', async () => {
     const res = await anonApp.request('/api/companion/state', { headers: bearer }, withLogin);
     expect(res.status).toBe(200);
@@ -47,16 +46,18 @@ describe('token-only requests, REQUIRE_LOGIN=1', () => {
 
 describe('/auth/* and /api/admin/* with an API_TOKEN bearer', () => {
   it('POST /auth/logout is handled identically with and without the token', async () => {
-    for (const e of [withLogin, openLogin]) {
-      const anon = await anonApp.request('/auth/logout', { method: 'POST' }, e);
-      const tok = await anonApp.request('/auth/logout', { method: 'POST', headers: bearer }, e);
-      expect(tok.status).toBe(anon.status);
-      expect(await tok.text()).toBe(await anon.text());
-    }
+    const anon = await anonApp.request('/auth/logout', { method: 'POST' }, withLogin);
+    const tok = await anonApp.request(
+      '/auth/logout',
+      { method: 'POST', headers: bearer },
+      withLogin,
+    );
+    expect(tok.status).toBe(anon.status);
+    expect(await tok.text()).toBe(await anon.text());
   });
 
   it('/api/admin/users: API_TOKEN is not the admin token (401); ADMIN_TOKEN still works', async () => {
-    const e = envWith({ REQUIRE_LOGIN: '1', ADMIN_TOKEN: 'right' });
+    const e = envWith({ ADMIN_TOKEN: 'right' });
     const asApi = await anonApp.request('/api/admin/users', { headers: bearer }, e);
     expect(asApi.status).toBe(401);
     const asAdmin = await anonApp.request(
@@ -70,24 +71,23 @@ describe('/auth/* and /api/admin/* with an API_TOKEN bearer', () => {
 
 describe('AI v2 dashboard with an API_TOKEN bearer', () => {
   const dash = (id: string) => `/api/sessions/${id}/ai/v2/dashboard`;
-  const aiEnv = (login: '0' | '1') =>
-    envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1', REQUIRE_LOGIN: login });
+  const aiEnv = () => envWith({ AI_V2_ENABLED: '1', HOST: '127.0.0.1' });
 
-  it('REQUIRE_LOGIN=1: token-only is 401 "Login required." like anonymous', async () => {
+  it('token-only is 401 "Login required." like anonymous', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await anonApp.request(dash(s), { headers: bearer }, aiEnv('1'));
+    const res = await anonApp.request(dash(s), { headers: bearer }, aiEnv());
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ detail: 'Login required.' });
   });
 
-  it('REQUIRE_LOGIN=1: anonymous is 401', async () => {
+  it('anonymous is 401', async () => {
     const s = (await seededSession()).sessionId;
-    const res = await anonApp.request(dash(s), {}, aiEnv('1'));
+    const res = await anonApp.request(dash(s), {}, aiEnv());
     expect(res.status).toBe(401);
   });
 });
 
-describe('session WebSocket upgrade with an API_TOKEN bearer, REQUIRE_LOGIN=1', () => {
+describe('session WebSocket upgrade with an API_TOKEN bearer', () => {
   let server: ServerType;
   let port: number;
 

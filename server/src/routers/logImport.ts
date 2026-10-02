@@ -16,7 +16,7 @@ import { generateTranscriptWords, TranscriptGenerateError } from '@autologger/tr
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
-import { sheetsLogImportConfigured, sheetsLogImportOpenNetworkRefused } from '../env';
+import { sheetsLogImportConfigured } from '../env';
 import { ApiError } from '../httpError';
 import { requireUser, timecodeCtx } from './_helpers';
 
@@ -24,9 +24,6 @@ export const logImportRouter = new Hono<AppEnv>();
 
 const SHEETS_LOG_IMPORT_NOT_CONFIGURED_DETAIL =
   'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
-const SHEETS_LOG_IMPORT_OPEN_NETWORK_DETAIL =
-  'Google Sheets log import is refused: the server is bound to a non-loopback address with REQUIRE_LOGIN disabled and no IP_ALLOWLIST. ' +
-  'Enable login, set an IP_ALLOWLIST, or bind to loopback (HOST=127.0.0.1) before importing logs.';
 const SHOW_NOT_FOUND_DETAIL = 'Show not found.';
 const JOB_NOT_FOUND_DETAIL = 'Log import job not found.';
 
@@ -144,12 +141,6 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   // unconfigured deployments 503 before any body parsing or job creation.
   if (!sheetsLogImportConfigured(c.env.config)) {
     throw new ApiError(503, SHEETS_LOG_IMPORT_NOT_CONFIGURED_DETAIL);
-  }
-  // Open-network refusal AFTER the config gate (the youtube-import/AI-chat
-  // ordering): a run can trigger paid DeepGram transcription, so an open
-  // deployment must not expose it even when the operator opted in.
-  if (sheetsLogImportOpenNetworkRefused(c.env.config)) {
-    throw new ApiError(503, SHEETS_LOG_IMPORT_OPEN_NETWORK_DETAIL);
   }
 
   let raw: unknown;
