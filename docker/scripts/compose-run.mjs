@@ -187,6 +187,12 @@ export function checkSupabaseKeys(secrets, nowSec = Math.floor(Date.now() / 1000
   return warnings;
 }
 
+// gotrue-sign-in D3: stage and prod sign in through GoTrue, which accepts only tokens for this
+// client id; without it every sign-in would fail quietly, so refuse to start instead. Dev has none.
+export function checkSignInClient(env, secrets) {
+  if (env !== 'dev' && !secrets.get('GOOGLE_CLIENT_ID')) refuse(`GOOGLE_CLIENT_ID is unset or empty in Infisical ${env} (sign-in needs it; see docs/infisical-secrets.md)`);
+}
+
 export function checkProdTags(secrets) {
   for (const k of ['WEB_TAG', 'API_TAG']) {
     const v = secrets.get(k);
@@ -485,6 +491,7 @@ async function main(argv, ownEnv) {
   });
   const secrets = validateSecrets(fetched, allowedNames(env));
   for (const w of checkSupabaseKeys(secrets)) process.stderr.write(`compose-run: warning: ${w}\n`);
+  checkSignInClient(env, secrets);
 
   // H6, H12: the child environment, built from nothing.
   const childEnv = Object.create(null);

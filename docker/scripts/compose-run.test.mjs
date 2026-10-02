@@ -690,3 +690,15 @@ describe('published ports with the Supabase gateway (supabase-services D4)', () 
     assert.throws(() => checkResolved('stage', { name: 'autologger-stage', services: { router: port(8788) } }), /expected set/);
   });
 });
+
+describe('sign-in client id (gotrue-sign-in D3)', () => {
+  it('stage and prod refuse an empty GOOGLE_CLIENT_ID; dev may run without one', async () => {
+    const { checkSignInClient } = await import('./compose-run.mjs');
+    for (const env of ['stage', 'prod']) {
+      assert.throws(() => checkSignInClient(env, new Map()), /GOOGLE_CLIENT_ID/, env);
+      assert.throws(() => checkSignInClient(env, new Map([['GOOGLE_CLIENT_ID', '']])), /GOOGLE_CLIENT_ID/, env);
+      assert.doesNotThrow(() => checkSignInClient(env, new Map([['GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com']])), env);
+    }
+    assert.doesNotThrow(() => checkSignInClient('dev', new Map()));
+  });
+});

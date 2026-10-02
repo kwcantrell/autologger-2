@@ -58,12 +58,19 @@ the failure line) and green after.
 
 ## 3. GoTrue configuration (design D3)
 
-- [ ] 3.1 Test first: a `compose-run.mjs` unit test shows that `checkResolved` (or the env check)
+- [x] 3.1 Test first: a `compose-run.mjs` unit test shows that `checkResolved` (or the env check)
   refuses stage and prod when `GOOGLE_CLIENT_ID` is empty and accepts dev. Then:
   - set GoTrue's Google and sign-up env (auto-confirm stays unset);
   - add the stage/prod requirement to `compose-run.mjs`;
   - update `docker/supabase/test_gateway.sh`'s settings case: sign-up enabled, `google` enabled,
     email off. It runs against dev in 6.2.
+  Evidence: `5a-3.1-red.log`: `node --test --test-name-pattern="sign-in client id"
+  docker/scripts/compose-run.test.mjs` -> `TypeError: checkSignInClient is not a function`.
+  `5a-3.1-green.log`: `node --test docker/scripts/compose-run.test.mjs` -> `tests 49`, `pass 49`,
+  `fail 0`. GoTrue env landed with 2.1's commit (Google enabled, client id from the allowlist key,
+  sign-up open, auto-confirm unset). `make dev-up` -> exit 0; `5a-3.1-gateway.log`:
+  `sh docker/supabase/test_gateway.sh dev` -> `ok settings: "disable_signup":false`, `"google":true`,
+  `"email":false`, `"mailer_autoconfirm":false`, `test_gateway (dev): 50 passed, 0 failed`.
 
 ## 4. Server bridge (design D1-D4, D9)
 
