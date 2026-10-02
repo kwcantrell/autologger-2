@@ -138,8 +138,9 @@ the web stops reading it (D8). Removing the field would change a frozen shape, s
 Changes to `server/src/test/harness.ts` and `helpers.ts`:
 - **Base config:** `GOOGLE_CLIENT_ID: 'test-client-id'`, `GOOGLE_CLIENT_SECRET` and
   `PUBLIC_BASE_URL` as today, and no `REQUIRE_LOGIN`.
-- **Default user:** `resetTestEnv` seeds a default user with role `member` in the built-in studios
-  only. `seededSession()` (and `seedSession` when given a fresh studio through `seededSession`)
+- **Default user:** a default user with role `member` in the built-in studios only. It is
+  created lazily, the first time the wrapped `app` or `seededSession()` needs it, not eagerly in
+  `resetTestEnv`. An eager user appeared in the `adminUsers` capture (implementation finding). `seededSession()` (and `seedSession` when given a fresh studio through `seededSession`)
   adds the same membership for its studio.
 - **No auto-membership in `seedStudio`.** Team and admin suites see no extra member, so their
   member counts and the `adminUsers` capture don't change.
@@ -149,7 +150,9 @@ Changes to `server/src/test/harness.ts` and `helpers.ts`:
   - it has no `authorization` header;
   - its path is not under `/api/companion/`, so Companion suites must send the bearer like the
     real client, and a forgotten bearer fails rather than silently running as a user.
-- **`anonApp`** is the raw app, exported for unauthenticated requests.
+- **`anonApp`** is the raw app, exported for unauthenticated requests. Two helpers were added
+  during implementation: `seedMemberStudio()`, a studio the default user belongs to, and
+  `COMPANION_BEARER`.
 - **Explicit cookies or `anonApp`.** Suites that test auth, roles or anonymous behavior use one of
   them: `gate`, `authz`, `apiToken`, `teams`, `admin`, the `shows-profile` signed-out cases and
   `activeShow.race`.

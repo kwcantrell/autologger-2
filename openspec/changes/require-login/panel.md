@@ -39,3 +39,28 @@ Tier: 2 · Reviewers: assumption tester, failure and abuse, scope and simplicity
 - [x] [minor] The proposal names an event-generation open-network row in `api-contract-freeze`; there is none (only YouTube line 474 and topics line 587). Evidence: `grep -n "open-network config" openspec/specs/api-contract-freeze/spec.md`. Resolved: the proposal is corrected.
 - [x] [minor] The boot refusals sit in `web-frontend-platform` "Single-process development" but apply to every stack. Evidence: `grep -n REQUIRE_LOGIN .../specs/web-frontend-platform/spec.md` -> `22`, `49`. Kept: that requirement holds the existing boot guard (`AUTOLOGGER_STACK`, `DATA_DIR`, `PG*`), so all boot refusals stay in one place.
 - [x] [minor] Stale references outside the Impact list and grep scope: `server/scripts/bootstrapMemberships.example.ts:7`, web comments. Evidence: `grep -rn -i "REQUIRE_LOGIN|anonymous" web/src server/scripts | grep -v test`. Resolved: tasks 4.1 and 5.2 list them.
+
+## Consistency read 2026-10-02
+Edits since approval (bd27f4b, rebased):
+- design.md D7: the default user is created lazily, and the helpers `seedMemberStudio` and `COMPANION_BEARER` were added;
+- tasks.md: evidence and ticks only.
+
+Implementation deviations, from the server agent's report, with no artifact change needed:
+- 2.2 pulled some 3.1 work forward: the `main.ts` warning, an `openNetworkRefused` stub, and deleting predicate tests that set `REQUIRE_LOGIN` on `Config`;
+- more suites were converted than D12 names (`logImport`, `sessions.localAudioImport`, the `gate` 413/422 cases, `staticServing`, `transcribe`'s missing-row case, `auth.int`, `nulText`);
+- anonymous-only tests were deleted (`aiV2` "created_by null", `logImport` dev-mode GET, `jobStore` null creator);
+- `profileAuthenticated` was re-captured with `oauth_configured: true`.
+
+All of these follow from "no anonymous caller" and add no behavior.
+
+Scope change: no. The spec deltas are untouched since approval.
+- Every spec-delta requirement has a task and a test:
+  - boot refusals -> `bootGuard` tests (2.1/2.2);
+  - login required, decoded path, HEAD exemption -> the `gate.int` route table (2.1);
+  - helper assertion -> the `requireUser`/`requireSession` unit cases (2.3);
+  - open-network removals (3.1), anonymous settings and the signed-out profile (3.2), web gate and Teams (4.1), compose and check-envs (5.1);
+  - Purpose paragraphs -> 6.6.
+- No task does something a non-goal excludes: `oauth_configured` is kept, the stored settings rows are kept, `API_TOKEN` is unchanged, and nothing from 5c is done.
+- No design/spec contradiction.
+- [x] [major] Concurrent signed-in session creates exhausted SERIALIZABLE retries (`40001` -> 500), failing 3 of about 9 full server suites once the harness was signed in. Evidence: `5b-1.1-red.log`, `5b-3.2-green.log` -> `sessions.int ... concurrent same-clock creates` 500. Resolved: owner chose a separate change, `catalog-retry-backoff` (PR #34, merged into `supabase-migration`); after rebasing, the server suite passed 5 runs in a row (`5b-flake-{1..5}.log` -> `Tests  935 passed | 3 skipped (938)` each).
+- [x] [minor] Size grew past the estimate: 824 counted lines after group 3, about 1,020 with the docs. Resolved: the owner chose one PR with `size-override`; README and the deleted fixture account for most of the growth.

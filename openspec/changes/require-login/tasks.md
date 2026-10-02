@@ -35,7 +35,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   or an anonymous caller. Harness choice: the default user is created on first use (wrapped
   `app` or `seededSession()`), so the admin users capture keeps no extra user (D7's stated
   invariant).
-
   Keep `REQUIRE_LOGIN: '0'` for now, so this step changes only who the caller is.
   Verify: the server suite runs. Record every failure: each must be a suite named in D7/D12 that
   encodes anonymous behavior. Nothing else may fail.
@@ -63,7 +62,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   Note: `sessions.int` "concurrent same-clock creates" hit a `40001` 500 once under full-suite
   load in `5b-1.1-red.log` (signed-in path, after the adapter's 3 tries); it passed 3/3 alone and
   in this run.
-
   Verify: the server suite is green.
 
 ## 2. Login is always required (design D1, D2, D3, D13)
@@ -93,7 +91,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   HEAD /api/profile are exempt` (`expected false to be true`, oauth_configured); compose-run
   `Missing expected exception: dev` / `dev GOOGLE_CLIENT_ID`, and the dev-run case exited 0
   (`ℹ fail 3`). `rawPath.repo.test.ts` and `bootOrder` already passed (recorded). Green: see 2.2.
-
   Red before 2.2, green after (the repo test may already pass; record that).
 - [x] 2.2 Implement D1 and D2:
   - the `checkBootEnv` refusals (trimmed);
@@ -118,7 +115,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   running server has OAuth configured, D6). Full suite `5b-2.2-suite.log` before those
   follow-ons: the only remaining failures afterwards are 3.1/3.2 targets (open-network 503 cases,
   `profileAnonymous` capture).
-
   Verify: 2.1 green, `npm run typecheck`, and `node --test docker/scripts/compose-run.test.mjs`.
 - [x] 2.3 Implement D3:
   - `requireUser` moves to `_helpers.ts`; a null user is an internal error (500), not a 401;
@@ -141,13 +137,11 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   test). The predicate is stubbed `false` since 2.2, so those cases can't pass until 3.1 deletes
   them. Follow-on: `jobStore.test.ts` "stores null for an anonymous creator" deleted, other cases
   pass `'user-1'`.
-
   Test first:
   - calling the helper directly, `requireSession` and `requireUser` with a null user throw the
     internal error, not an `ApiError(401)`;
   - a non-member gets 404 on `GET /api/shows/:id` and on the Sheets job status, and sees no
     holder in the topics-generate busy detail.
-
   Verify: the server suite and typecheck are green.
 
 ## 3. Anonymous state and open-network refusals removed (design D4, D5, D6, D12)
@@ -172,7 +166,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `REQUIRE_LOGIN` key/title left in test `envWith` literals is removed (`apiToken` loses
   `openLogin`), and `ai-runtime`'s guard-order comments and test label say
   `config/credentials 503`.
-
   Verify: `grep -rn "OpenNetwork\|open-network\|REQUIRE_LOGIN" server/src packages web/src` hits
   only the boot refusal and its tests, the AI v2 credentials-refusal tests still pass, and the
   suite is green.
@@ -196,7 +189,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   `profileLoggedOutOauth` stay; the conformance test's category and `shows[]` checks moved
   to `profileAuthenticated` (the signed-out capture has no categories or shows), and the
   signed-out shape stays checked by `profileLoggedOutOauth`.
-
   Delete `fixtures/api-responses/profileAnonymous.ts` and its capture entry, and point
   `web/src/api/types.conformance.test.ts` at `profileLoggedOutOauth`. Leave `auth.ts:234` and
   `sessionIndexStore.ts:372` alone (5c).
@@ -248,7 +240,6 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
     `API_TOKEN`; without the token the dev Companion gets 401;
   - ADR 0021: the slice 5b entry, the owner decisions, and the cutover and rollback notes (design
     Risks).
-
   Verify: `grep -rn REQUIRE_LOGIN --exclude-dir=node_modules --exclude-dir=archive .` hits only:
   `docs/superpowers/` (historical plans), ADR text about the removal, and the boot guard and its
   tests.
@@ -263,8 +254,13 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 6. Verification
 
-- [ ] 6.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`; it is
+- [x] 6.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`; it is
   green except the size gate, which is over budget by the owner's choice (`size-override`).
+  Evidence: `5b-6.1-hook.log` -> exit 0; every gate PASS (openspec, yaml, workflows, skills-sync,
+  guide-size, change, risk-floor, evidence, `commands  ran ['typecheck', 'test']`); `WARN  size
+  1022 changed lines > budget 400` (owner: one PR, `size-override`). Server suite after rebasing
+  onto `catalog-retry-backoff`: 5 runs in a row, `Tests  935 passed | 3 skipped (938)` each
+  (`5b-flake-{1..5}.log`).
 - [ ] 6.2 Owner step: create the dev Google OAuth client (redirect
   `http://localhost:8787/auth/google/callback`), put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   and `API_TOKEN` in Infisical `autologger-dev`, and set the token in the dev Companion module.
@@ -274,12 +270,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   - the owner signs in with Google on `http://localhost:8787`;
   - `GET /api/companion/state` with the bearer gives 200; without `API_TOKEN` in dev, the
     Companion gets 401 (expected).
-
   Negative check: a compose-run with `GOOGLE_CLIENT_SECRET` withheld (scratch override) refuses.
   Running `bootGuardCli` in the app container with `REQUIRE_LOGIN=0` added prints the refusal.
 - [ ] 6.4 Stage live check, with owner permission for `make stage-up`: the same probes, plus
   `docker/scripts/test_router.sh stage`.
-- [ ] 6.5 Consistency read (tier 2) after any post-approval artifact edit.
+- [x] 6.5 Consistency read (tier 2) after any post-approval artifact edit.
+  Evidence: `panel.md` "Consistency read 2026-10-02" -> scope change: no; every delta requirement
+  has a task and a test; the deviations are recorded; `openspec validate require-login --strict` ->
+  valid. It is repeated if 6.2-6.4 edit the artifacts.
 - [ ] 6.6 At archive (design D11), edit the Purpose paragraphs of `web-login-experience`,
   `ai-topics-chat` and `youtube-audio-import` in `openspec/specs/` to drop the removed modes.
   Verify: `grep -n -i "REQUIRE_LOGIN\|open-network\|anonymous mode" openspec/specs/*/spec.md`
