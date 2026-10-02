@@ -6,15 +6,33 @@ scratchpad as `hf-<task>-<red|green>.log`.
 
 ## 1. Regression tests first (design D2)
 
-- [ ] 1.1 Add the D2 cases to `server/src/routers/gate.int.test.ts` and `authz.int.test.ts`.
+- [x] 1.1 Add the D2 cases to `server/src/routers/gate.int.test.ts` and `authz.int.test.ts`.
   Verify: the cases D2 names as red fail before 2.1 (for example, no-credential `/%61pi/sessions`
   gets 200; record the failure lines). The guard cases pass both before and after.
+  Evidence: `cd server && npx vitest run src/routers/gate.int.test.ts src/routers/authz.int.test.ts`
+  (`hf-1.1-red.log`) -> `Tests  9 failed | 16 passed (25)`:
+  - `/%61pi/sessions with no credentials is 401` -> `expected 200 to be 401`, and the same for
+    `/a%70i`, `/%61%70%69` and the authz token-only `/%61pi/sessions/<id>/status`;
+  - `/api/%63ompanion/state` with the token -> `expected 401 to be 200`;
+  - `GET /api/pro%66ile` -> `expected 401 to be 200`;
+  - `/api/%61dmin/users` -> `{ detail: 'Login required.' }` instead of the admin-token detail;
+  - the table case -> `expected 'GET /api/sessions/:sessionId/ws -> 404' to be '... -> 401'`.
+
+  The encoded later segments of `profile` and `admin` were red too. The panel's probe predicted
+  this (`oldGate: true`), although D2 listed them as guards. `/api/s%65ssions`, `/%61pi/profile`
+  and `/%61pi/admin/users` passed before the fix (guards).
 
 ## 2. Fix (design D1)
 
-- [ ] 2.1 In `server/src/middleware/auth.ts`, use `c.req.path` for both the `API_TOKEN` scope and
+- [x] 2.1 In `server/src/middleware/auth.ts`, use `c.req.path` for both the `API_TOKEN` scope and
   the login decision, and update the comment.
   Verify: 1.1 green, and the full server suite is green.
+  Evidence:
+  - `hf-2.1-green.log` -> `Tests  25 passed (25)`;
+  - `cd server && npx vitest run` (`hf-2.1-suite.log`) -> `Test Files  54 passed | 2 skipped (56)`,
+    `Tests  806 passed | 3 skipped (809)`;
+  - `cd server && npx tsc --noEmit -p .` -> exit 0;
+  - `npx biome check` on the 3 changed files -> `No fixes applied`.
 
 ## 3. Verification
 
