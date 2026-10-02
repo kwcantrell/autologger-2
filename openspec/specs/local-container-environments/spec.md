@@ -214,9 +214,10 @@ Published ports:
 Because the bind is loopback, both the open-network refusal and the AI v2 credentials rule
 pass. Only the host (through the published loopback port) and containers on the dev
 network (through the gate) can reach the app. The app also joins the two-member `catalog`
-network, whose only other member is `db`; the gate SHALL refuse every connection whose source
-address is in the dev `catalog` subnet, and `make check` SHALL fail when the gate's refused
-subnet differs from the `catalog` network's. The design SHALL record that this relies on
+network, whose only other member is `db`, and the two-member `auth-app` network, whose only
+other member is `auth`; the gate SHALL refuse every connection whose source address is in the
+dev `catalog` or `auth-app` subnet, and `make check` SHALL fail when the gate's refused subnets
+differ from those two networks' subnets. The design SHALL record that this relies on
 the gate for exactly the reach the loopback rule assumes.
 
 #### Scenario: Loopback posture
@@ -243,6 +244,10 @@ the gate for exactly the reach the loopback rule assumes.
 #### Scenario: Postgres cannot reach the dev app
 - **WHEN** a request to the gate's port comes from an address in the dev `catalog` subnet, with
   `Host: app:8787`
+- **THEN** the gate refuses it, and the app never sees it
+
+#### Scenario: The gate refuses the auth service
+- **WHEN** a request to the gate's port comes from an address in the dev `auth-app` subnet
 - **THEN** the gate refuses it, and the app never sees it
 
 ### Requirement: Dev isolates data and secrets, sharing only the operator's Claude login
@@ -404,7 +409,9 @@ a single app subnet, and ports distinct from both. Each project's `db` network S
 pinned subnet: `172.28.12.0/24` for prod, `172.28.22.0/24` for stage, and `172.28.31.0/24` for
 dev. Each project's `supabase` network (pinned `172.28.13.0/24` prod, `172.28.23.0/24` stage,
 `172.28.32.0/24` dev) and `edge` network (pinned `172.28.14.0/24` prod, `172.28.24.0/24` stage,
-`172.28.33.0/24` dev) SHALL be its own. Its Postgres and Supabase storage volumes SHALL be
+`172.28.33.0/24` dev), `auth-egress` network (pinned `172.28.16.0/24` prod, `172.28.27.0/24`
+stage, `172.28.35.0/24` dev) and `auth-app` network (pinned `172.28.17.0/24` prod,
+`172.28.28.0/24` stage, `172.28.36.0/24` dev) SHALL be its own. Its Postgres and Supabase storage volumes SHALL be
 scoped to that project. Each environment's `SUPABASE_PORT` SHALL differ from every other
 published port of every environment on the host.
 
@@ -513,12 +520,18 @@ It SHALL fail, naming the violated invariant, when any of the following holds:
     - a service other than `supabase-gw`, `auth`, `rest`, `realtime` and `storage` joins the `supabase`
       network, or a service other than `supabase-gw` joins the `edge` network, or `supabase-gw`
       joins `db`;
+    - `auth`'s networks are not exactly `db`, `supabase`, `auth-egress` and `auth-app`; a service
+      other than `auth` joins `auth-egress`; the `auth-app` network's members are not exactly
+      `auth` and the app service (dev `app`; stage and prod `api`); or the stage or prod `api`
+      joins networks other than `back`, `catalog` and `auth-app`;
     - a Supabase service other than `supabase-gw` publishes a port, or `supabase-gw` publishes
       anything other than one `127.0.0.1` port mapped to its listener;
-    - the `db`, `supabase` or `catalog` network is not internal, does not isolate the host from
-      it (no host address on the bridge), or is not on that environment's pinned subnet
-      (`catalog`: prod `172.28.15.0/24`, stage `172.28.25.0/24`, dev `172.28.34.0/24`); or the
-      `edge` network is not on its pinned subnet;
+    - the `db`, `supabase`, `catalog` or `auth-app` network is not internal, does not isolate the
+      host from it (no host address on the bridge), or is not on that environment's pinned subnet
+      (`catalog`: prod `172.28.15.0/24`, stage `172.28.25.0/24`, dev `172.28.34.0/24`;
+      `auth-app`: prod `172.28.17.0/24`, stage `172.28.28.0/24`, dev `172.28.36.0/24`); or the
+      `edge` or `auth-egress` network is not on its pinned subnet (`auth-egress`: prod
+      `172.28.16.0/24`, stage `172.28.27.0/24`, dev `172.28.35.0/24`);
     - the image of `db`, `migrate`, `auth`, `rest`, `realtime`, `storage` or `supabase-gw` is not
       pinned by `@sha256:` digest;
     - the placeholder value given for any Supabase secret appears anywhere (environment, command,
@@ -595,6 +608,14 @@ It SHALL need only `docker`, `jq`, and a POSIX shell.
 #### Scenario: Clean tree passes
 - **WHEN** `make check` runs on the committed files
 - **THEN** it exits zero
+
+#### Scenario: A second member of the auth egress network is caught
+- **WHEN** `rest`, or the app service, is joined to the `auth-egress` network
+- **THEN** `make check` exits non-zero and names invariant 16
+
+#### Scenario: A third member of the auth-app network is caught
+- **WHEN** `rest`, or the dev `companion`, is joined to the `auth-app` network
+- **THEN** `make check` exits non-zero and names invariant 16
 
 ### Requirement: Secrets come from Infisical, one environment per stack
 Each stack SHALL read its secrets and its compose interpolation values from one Infisical
@@ -863,7 +884,10 @@ It SHALL also:
 - drop any client `X-Forwarded-Path` toward storage;
 - never write either API key, or any other secret, to its logs.
 
-The four services SHALL start with GoTrue sign-up disabled and no sign-in provider enabled.
+GoTrue SHALL start with Google as its only enabled sign-in provider, accepting ID tokens whose
+audience is the environment's `GOOGLE_CLIENT_ID`; email, phone and anonymous sign-in SHALL stay
+disabled, so a new user can be created only from a Google identity. GoTrue SHALL NOT auto-confirm
+email addresses, so it links identities by email only when the address is verified.
 
 #### Scenario: A request without a key is refused
 - **WHEN** `GET /rest/v1/` arrives with no `apikey`
@@ -900,3 +924,8 @@ The four services SHALL start with GoTrue sign-up disabled and no sign-in provid
 #### Scenario: Keys stay out of the gateway log
 - **WHEN** an upstream is stopped and a request with the service-role key gets `502`
 - **THEN** the gateway's log contains neither API key
+
+#### Scenario: Only Google can create a user
+- **WHEN** the gateway's `/auth/v1/settings` is read with the anon key
+- **THEN** it reports sign-up enabled, `google` as the only enabled external provider, and email,
+  phone and anonymous sign-in disabled

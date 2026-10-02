@@ -196,11 +196,16 @@ These properties SHALL hold:
   `catalog` network, internal and host-isolated in the same way and on its own pinned subnet,
   whose only other member SHALL be `api`: `api` reaches Postgres there as the catalog's client,
   connecting as the `autologger_app` role with `APP_DB_PASSWORD`, never with the superuser
-  password, and reaches no Supabase service. A `supabase` network, internal and
+  password. `auth` SHALL also join an `auth-app` network, internal and host-isolated in the same
+  way and on its own pinned subnet, whose only other member SHALL be `api`: `api` reaches
+  `auth` there for sign-in, holds no Supabase key, and reaches no other Supabase service. `auth`
+  SHALL also join an `auth-egress` network, not internal, on its own pinned subnet, that no other
+  service joins, so GoTrue can reach Google. A `supabase` network, internal and
   host-isolated in the same way and on its own pinned subnet, SHALL join `supabase-gw` to those
   four services and to nothing else. `supabase-gw` SHALL publish its port through an `edge`
   network that no other service joins. None of the `db`, `supabase` and `edge` networks SHALL be
-  joined by `router`, `web` or `api`, and `router` and `web` SHALL NOT join `catalog`.
+  joined by `router`, `web` or `api`, and `router` and `web` SHALL NOT join `catalog`,
+  `auth-app` or `auth-egress`.
 - **Single replica:** `api` SHALL have a fixed `container_name`, so it cannot be scaled past
   one replica.
 - **Volumes:** `api` SHALL mount persistent volumes for `DATA_DIR` and for the runtime
@@ -266,6 +271,11 @@ These properties SHALL hold:
 - **WHEN** the prod configuration is resolved with `APP_DB_PASSWORD` set
 - **THEN** the value appears in `api` and `migrate` only, and `api`'s Postgres user is
   `autologger_app`
+
+#### Scenario: The app reaches only the auth service among Supabase services
+- **WHEN** the prod configuration is resolved
+- **THEN** `api`'s networks are exactly `back`, `catalog` and `auth-app`; `auth-app`'s members are
+  exactly `api` and `auth`; and `auth-egress`'s only member is `auth`
 
 ### Requirement: Deployment behind a TLS-terminating proxy is configured explicitly
 The compose defaults and deployment documentation SHALL set:

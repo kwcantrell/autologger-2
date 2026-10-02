@@ -64,6 +64,8 @@ is the stable identifier for the failure class:
 | Unknown, reused, or expired CSRF state | `state_invalid` |
 | Authorization-code token exchange failed | `exchange_failed` |
 | Missing `id_token`, id_token verification failed (including a failed JWKS fetch), or missing `sub` claim | `token_invalid` |
+| The verified id_token's `email_verified` claim is not `true`, or its email is empty | `email_unverified` |
+| Supabase Auth unreachable, timed out, or refused the verified Google ID token; its user does not hold exactly one Google identity with the verified `sub`; or its user id differs from the account's id for this `sub`, or belongs to an account with another `sub` | `identity_unavailable` |
 
 Frozen surface: the redirect mechanism (`302`, `Location: /?login_error=<code>`, empty
 body, no `Set-Cookie`) and the meaning and stability of each code listed above — a code,
@@ -76,8 +78,9 @@ not a blanket conversion. In particular, `state_invalid` covers only the case wh
 state lookup completes and reports the state absent; a thrown or failed store read is an
 unexpected internal error and stays `500`. Any uncaught throw (KV, catalog, other
 infrastructure) propagates to the app's ordinary `500` handler; the deliberate
-caught-and-classified exceptions are the token exchange (→ `exchange_failed`) and
-id_token verification including its JWKS fetch (→ `token_invalid`). The handler MUST NOT
+caught-and-classified exceptions are the token exchange (→ `exchange_failed`),
+id_token verification including its JWKS fetch (→ `token_invalid`), and the Supabase Auth
+exchange (→ `identity_unavailable`). The handler MUST NOT
 blanket-convert all errors to redirects.
 
 Diagnostic detail (the former JSON `detail` strings, including operator guidance such as
@@ -88,7 +91,9 @@ request/provider-derived values are normative in the change's design and tests, 
 this contract.
 
 The success path SHALL remain byte-identical in behavior: set the session cookie and
-`302` to `/` with no query parameters.
+`302` to `/` with no query parameters. Before any account is read or created, the verified
+Google ID token SHALL be exchanged with Supabase Auth, and the account's id SHALL be the
+Supabase Auth user id.
 
 #### Scenario: User cancels at Google
 - **WHEN** Google redirects to `/auth/google/callback?error=access_denied`
@@ -124,7 +129,8 @@ The success path SHALL remain byte-identical in behavior: set the session cookie
   `Location: /?login_error=token_invalid` and sets no cookie
 
 #### Scenario: Success path unchanged
-- **WHEN** the callback completes successfully (valid state, exchange, and id_token)
+- **WHEN** the callback completes successfully (valid state, exchange, id_token, and Supabase
+  Auth exchange)
 - **THEN** the server sets the session cookie and responds `302` with `Location: /`,
   exactly as before this change
 
@@ -133,6 +139,28 @@ The success path SHALL remain byte-identical in behavior: set the session cookie
   write throws after successful verification, or the CSRF-state read itself throws)
 - **THEN** the response is the app's ordinary `500` error — no `login_error` redirect,
   no cookie
+
+#### Scenario: Supabase Auth unavailable
+- **WHEN** the Google ID token verifies, but Supabase Auth is unreachable, times out, or refuses
+  the token
+- **THEN** the server responds `302` with `Location: /?login_error=identity_unavailable`, sets no
+  cookie, and creates or changes no account
+
+#### Scenario: A new account takes the Supabase Auth id
+- **WHEN** a Google account signs in for the first time and Supabase Auth returns user id `U`
+- **THEN** the created account's id is `U`
+
+#### Scenario: An account whose id differs from Supabase Auth's is refused
+- **WHEN** an account exists for the Google subject with id `A`, and Supabase Auth returns a
+  different user id `B`, or Supabase Auth returns id `A` for a Google subject whose account does
+  not exist while account `A` belongs to another subject
+- **THEN** the server responds `302` with `Location: /?login_error=identity_unavailable`, sets no
+  cookie, and leaves every account unchanged
+
+#### Scenario: An unverified Google email is refused
+- **WHEN** the id_token verifies but its `email_verified` claim is absent or not `true`
+- **THEN** the server responds `302` with `Location: /?login_error=email_unverified`, sets no
+  cookie, does not call Supabase Auth, and creates or changes no account
 
 ### Requirement: Session deep-link HTML route
 `GET /sessions/:id`, where `:id` is a single non-empty path segment, SHALL respond
@@ -326,7 +354,8 @@ failure `302 /?login_error=<code>`) is untouched.
 ### Requirement: Disabled-account sign-in redirect
 When the OAuth callback completes token verification for a Google `sub` whose user
 row exists but is disabled, the server SHALL respond `302` with
-`Location: /?login_error=account_disabled`, set no cookie, and change nothing —
+`Location: /?login_error=account_disabled`, set no cookie, and change no catalog account
+(Supabase Auth may record the sign-in attempt in its own user record) —
 replacing the current latent `500` (the new-user branch violating the unique
 `google_sub` constraint). `account_disabled` joins the login-error code set under
 its existing additive-open rule (clients treat unrecognized codes as a generic
@@ -336,7 +365,7 @@ otherwise untouched.
 #### Scenario: Disabled user signs in
 - **WHEN** a user whose account is disabled completes the Google OAuth flow
 - **THEN** the callback responds `302` to `/?login_error=account_disabled` with no
-  cookie, and no user row is created or modified
+  cookie, and no catalog account is created or modified
 
 ### Requirement: Transcript generation lock status endpoint
 `GET /api/transcript-generation/status` SHALL be frozen surface with:
