@@ -332,16 +332,34 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 8. Web (design D12)
 
-- [ ] 8.1 Test first: `TeamCard` tests (owner view: role toggles, transfer, delete, no leave;
+- [x] 8.1 Test first: `TeamCard` tests (owner view: role toggles, transfer, delete, no leave;
   admin view: rename, invites, remove on member rows only, no role toggles, no delete, leave;
   member view unchanged; no-owner notice for a member and above the admin panel for an admin);
   `useTeams.test.tsx`: `useTransferOwnership` posts `{user_id}` and invalidates the detail and
   profile. Verify: red before 8.2.
-- [ ] 8.2 Implement: `web/src/api/types.ts` (`TeamRole`, transfer body and response),
+  Evidence: new `web/src/pages/index/components/TeamCard.test.tsx` (owner, admin and member views,
+  transfer and delete with confirm, the no-owner notice for a member and above the admin panel),
+  `useTeams.test.tsx` `useTransferOwnership`, and `TeamsRoute.test.tsx` updated (former built-ins
+  render as ordinary cards, the owner `409` surfaced, the notice keyed on the owner, the cap
+  message). Red: `cd web && npx vitest run src/pages/index/components/TeamCard.test.tsx
+  src/pages/index/components/TeamsRoute.test.tsx src/api/hooks/useTeams.test.tsx`
+  (`5c-8.1-red.log`) -> `Test Files  3 failed (3)`, `Tests  11 failed | 17 passed (28)` (e.g.
+  `shows role toggles, transfer and remove on other members, delete, and no leave`,
+  `useTransferOwnership posts {user_id} to …/owner`, `render as ordinary expandable team
+  cards`). Green after 8.2 (see 8.2).
+- [x] 8.2 Implement: `web/src/api/types.ts` (`TeamRole`, transfer body and response),
   `web/src/api/hooks/useTeams.ts`, `TeamCard.tsx`, `TeamsRoute.tsx` (delete `BUILTIN_TEAM_IDS` and
   `BuiltinTeamRow`; update `TeamsRoute.test.tsx`), `OnboardingPanel.tsx` copy ("you'll be its
   owner"). Verify: `cd web && npx vitest run` green, `npm run typecheck -w web` exit 0,
   `npx biome check` on the changed files clean.
+  Evidence: the `types.ts` items landed with 5.4's conformance check; here `useTransferOwnership`,
+  the `TeamCard` owner/admin/member views (`ManagePanel` with `isOwner`, `TeamView` choosing the
+  view and the no-owner notice from the members' roles), `TeamsRoute.tsx` without
+  `BUILTIN_TEAM_IDS`/`BuiltinTeamRow`, and the onboarding copy. The three files above
+  (`5c-8.2-targeted.log`) -> `Test Files  3 passed (3)`, `Tests  28 passed (28)`; `cd web && npx
+  vitest run` (`5c-8.2-web.log`) -> `Test Files  108 passed (108)`, `Tests  1393 passed (1393)`;
+  `npm run typecheck -w web` -> exit 0 (`5c-8.2-web-typecheck.log`); `npx biome check` on the 8
+  changed web files -> `Checked 8 files ... No fixes applied.` (`5c-8.2-biome.log`).
 
 ## 9. Verification
 

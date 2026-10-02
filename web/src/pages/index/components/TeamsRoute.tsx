@@ -19,13 +19,8 @@ import { TeamCard } from './TeamCard';
 // here in practice; the type allows it, and that case renders only the back
 // affordance and mounts nothing that could issue an `/api/teams/*` request.
 //
-// Built-in team ids (`test-studios`, `test-studio-2`) are excluded from the
-// ENTIRE self-serve management surface server-side (team-management spec,
-// "Built-ins rejected on every management route") — rendering them as
-// expandable TeamCards would 400/404 on first expand, so they get their own
-// static, non-expandable row instead. Mirrors `BUILTIN_STUDIO_ORDER` in
-// `server/src/studio.ts` — extend both if a third built-in lands.
-const BUILTIN_TEAM_IDS = ['test-studios', 'test-studio-2'];
+// There are no built-in teams (owner-bootstrap D9): every team, `test-studios` and
+// `test-studio-2` included, renders as a TeamCard by the caller's role.
 
 const PAGE_WRAP = 'relative z-[1] mx-auto w-full max-w-[48rem] px-5 py-10';
 const PAGE_TITLE =
@@ -38,34 +33,15 @@ const STATE_BUTTON =
   'box-border flex h-11 w-full cursor-pointer items-center justify-center rounded-v5-sm border border-v5-border-strong bg-[rgba(255,255,255,0.03)] px-4 text-[0.8125rem] font-semibold tracking-[0.04em] text-v5-muted [transition:border-color_0.15s_ease,background_0.15s_ease,color_0.15s_ease] hover-always:bg-[rgba(255,255,255,0.05)] hover-always:text-v5-text';
 const BACK_WRAP = 'relative z-[1] mx-auto w-full max-w-[25rem] px-5 pb-10';
 
-function BuiltinTeamRow({ team }: { team: TeamMembershipBrief }) {
-  return (
-    <li
-      data-testid={`team-row-${team.id}`}
-      className="glass-panel rounded-v5-lg px-4 py-3 text-v5-text"
-    >
-      <span>{team.name}</span>
-      <span className="ml-2 rounded-v5-sm border border-v5-border-strong bg-white/5 px-2 py-0.5 text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-v5-muted">
-        {team.role}
-      </span>
-      <span className="ml-2 text-[0.75rem] text-v5-muted">Legacy team — managed by support.</span>
-    </li>
-  );
-}
-
 function TeamsList({ teams }: { teams: TeamMembershipBrief[] }) {
   if (teams.length === 0) {
     return <p className="modal-hint">You&apos;re not on any teams yet.</p>;
   }
   return (
     <ul className="space-y-3" data-testid="teams-list">
-      {teams.map((team) =>
-        BUILTIN_TEAM_IDS.includes(team.id) ? (
-          <BuiltinTeamRow key={team.id} team={team} />
-        ) : (
-          <TeamCard key={team.id} team={team} />
-        ),
-      )}
+      {teams.map((team) => (
+        <TeamCard key={team.id} team={team} />
+      ))}
     </ul>
   );
 }

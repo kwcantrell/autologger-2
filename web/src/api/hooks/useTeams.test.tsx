@@ -14,6 +14,7 @@ import {
   useRenameTeam,
   useRevokeInvite,
   useTeam,
+  useTransferOwnership,
 } from './useTeams';
 
 // --- useTeam + team mutation hook tests (teams-self-serve, task 6.1; design
@@ -206,6 +207,25 @@ describe('mutation invalidation wiring', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(client.getQueryState(teamKeys.detail('my-crew'))).toBeUndefined();
+    expect(client.getQueryState(['profile'])?.isInvalidated).toBe(true);
+  });
+  it('useTransferOwnership posts {user_id} to …/owner and invalidates both keys (owner-bootstrap D12)', async () => {
+    mockedApiFetch.mockResolvedValue({ ok: true });
+    const client = makeClient();
+    seedFresh(client, teamKeys.detail('my-crew'), { id: 'my-crew' });
+    seedFresh(client, ['profile'], {});
+
+    const { result } = renderHook(() => useTransferOwnership('my-crew'), {
+      wrapper: wrapperFor(client),
+    });
+    result.current.mutate('user-2');
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockedApiFetch).toHaveBeenCalledWith('teams/my-crew/owner', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: 'user-2' }),
+    });
+    expect(client.getQueryState(teamKeys.detail('my-crew'))?.isInvalidated).toBe(true);
     expect(client.getQueryState(['profile'])?.isInvalidated).toBe(true);
   });
 });

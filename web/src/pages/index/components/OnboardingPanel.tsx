@@ -14,8 +14,8 @@ import { CreateTeamForm } from './CreateTeamForm';
 // (task 6.1), the refetched profile now carries the new team in
 // `auth.user.teams[]`, AppShell's onboarding condition flips to false on the
 // next render, and the normal shell takes over showing the new team as
-// active (server sets creator prefs when unset, mirroring
-// `authSeedPrefsFromGlobals`'s spirit — design D8).
+// active (a new user's prefs start empty, so the first team they can reach
+// applies — owner-bootstrap D10). The creator is the new team's owner.
 
 const PAGE =
   'relative z-[1] flex min-h-screen min-h-[100dvh] w-full items-center justify-center px-5 py-10';
@@ -31,7 +31,7 @@ export function OnboardingPanel() {
       <div className={PANEL}>
         <h1 className={TITLE}>Create your first team</h1>
         <p className={COPY}>
-          You&apos;re not on any teams yet. Create one to get started — you&apos;ll be its admin.
+          You&apos;re not on any teams yet. Create one to get started — you&apos;ll be its owner.
         </p>
         <CreateTeamForm />
       </div>

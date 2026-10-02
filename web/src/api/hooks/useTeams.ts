@@ -6,9 +6,11 @@ import type {
   TeamCreateResponse,
   TeamDetail,
   TeamInviteBody,
+  TeamOwnerTransferBody,
+  TeamOwnerTransferResponse,
   TeamRenameBody,
   TeamRenameResponse,
-  TeamRole,
+  TeamRoleChangeBody,
   TeamRoleChangeResponse,
 } from '../types';
 
@@ -33,8 +35,8 @@ function teamPath(teamId: string, ...segments: string[]): string {
 
 /**
  * `GET /api/teams/:id` detail. Disabled for the empty id (mirrors
- * `useSession`'s empty-id gate) — callers pass `''` when a team card is
- * collapsed or is a built-in/read-only entry that must never fetch detail.
+ * `useSession`'s empty-id gate) — callers pass `''` while a team card is
+ * collapsed, so it never fetches detail.
  */
 export function useTeam(teamId: string) {
   return useQuery({
@@ -109,7 +111,7 @@ export function useRevokeInvite(teamId: string) {
 export function useChangeMemberRole(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, role }: { userId: string; role: TeamRole }) =>
+    mutationFn: ({ userId, role }: { userId: string; role: TeamRoleChangeBody['role'] }) =>
       apiFetch<TeamRoleChangeResponse>(
         teamPath(teamId, 'members', encodeURIComponent(userId), 'role'),
         { method: 'POST', body: JSON.stringify({ role }) },
@@ -137,5 +139,19 @@ export function useLeaveTeam(teamId: string) {
       qc.removeQueries({ queryKey: teamKeys.detail(teamId) });
       qc.invalidateQueries({ queryKey: ['profile'] });
     },
+  });
+}
+
+/** `POST /api/teams/:id/owner` (owner-bootstrap D3, D12): hands ownership to `userId`; the
+ * caller becomes an admin, so both the detail and the profile's role go stale. */
+export function useTransferOwnership(teamId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      apiFetch<TeamOwnerTransferResponse>(teamPath(teamId, 'owner'), {
+        method: 'POST',
+        body: JSON.stringify({ user_id: userId } satisfies TeamOwnerTransferBody),
+      }),
+    onSuccess: () => invalidateTeam(qc, teamId),
   });
 }
