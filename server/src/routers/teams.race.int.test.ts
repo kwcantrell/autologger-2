@@ -129,10 +129,10 @@ async function leaveOrphans(team: string, strangerId: string): Promise<void> {
 }
 
 describe('team creation (#9, #18)', () => {
-  it('concurrent creates by a user at 19 teams: one 200, one 400', async () => {
+  it('concurrent creates by a user owning 19 teams: one 200, one 400', async () => {
     const userId = await seedUser();
     for (let i = 0; i < 19; i++) {
-      await catalogFor().auth.authAddMembershipWithRole(userId, await seedStudio(), 'admin');
+      await catalogFor().auth.authAddMembershipWithRole(userId, await seedStudio(), 'owner');
     }
     const cookie = await loginCookie(userId);
     const gated = new GatedCatalog(env.ports.catalog);
@@ -142,7 +142,7 @@ describe('team creation (#9, #18)', () => {
     const b = await send('POST', '/api/teams', cookie, { id: 'cap-b', display_name: 'B' });
     h.release();
     expect([b.status, (await a).status].sort()).toEqual([200, 400]);
-    const owned = await catalogFor().auth.authCountAdminTeams(userId, ['test-studios', 'test-studio-2']);
+    const owned = await catalogFor().auth.authCountOwnedTeams(userId);
     expect(owned).toBe(20);
   });
 

@@ -81,10 +81,10 @@ async function requireTeamAdminIn(cat: CatalogFacade, userId: string, teamId: st
   if (role !== 'admin') throw new ApiError(403, 'Admin role required.');
 }
 
-/** Count of teams the user currently admins — self-serve creation cap (design D10). Single
- * indexed query. */
+/** Count of teams the user owns — self-serve creation cap (design D10, owner-bootstrap D5).
+ * Single indexed query. */
 async function countOwnedNonBuiltinTeams(catalog: CatalogFacade, userId: string): Promise<number> {
-  return await catalog.auth.authCountAdminTeams(userId, []);
+  return await catalog.auth.authCountOwnedTeams(userId);
 }
 
 /** Last-admin protection is a global invariant (design: team-management

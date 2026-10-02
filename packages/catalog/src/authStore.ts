@@ -5,7 +5,8 @@ import type { Row } from '@autologger/domain';
 import { normalizeEmail, nowIso } from '@autologger/domain';
 import type { CatalogDb } from '@autologger/ports';
 
-export type TeamRole = 'admin' | 'member';
+/** Team roles (owner-bootstrap D1): at most one `owner` per team, enforced by the database. */
+export type TeamRole = 'owner' | 'admin' | 'member';
 
 /** Consumption-based facade surface (persistence-package-extraction design D3):
  * the 29 members reached externally via `catalog.auth.x()` in `server/src`
@@ -44,7 +45,10 @@ export interface AuthStoreFacade {
   authRemoveMembership: (userId: string, studioId: string) => Promise<boolean>;
   authAddMembershipWithRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
   authUpsertMembershipRole: (userId: string, studioId: string, role: TeamRole) => Promise<void>;
-  authCountAdminTeams: (userId: string, excludeStudioIds: string[]) => Promise<number>;
+  authCountOwnedTeams: (userId: string) => Promise<number>;
+  authTransferOwnership: (studioId: string, fromUserId: string, toUserId: string) => Promise<void>;
+  authSetOwner: (studioId: string, userId: string) => Promise<void>;
+  authClaimOwnerlessStudios: (userId: string) => Promise<string[]>;
   authGetMembershipRole: (userId: string, studioId: string) => Promise<TeamRole | null>;
   authGetMembershipRoleForShare: (userId: string, studioId: string) => Promise<TeamRole | null>;
   authReplaceActiveShowIf: (
@@ -334,19 +338,67 @@ export class AuthStore implements AuthStoreFacade {
     return res.changes > 0;
   }
 
-  /** Count of teams the user admins, excluding the given studio ids (the
-   * built-ins) — a single indexed query for the self-serve creation cap
-   * (phase-2 review: avoids an N+1 over every membership the user holds). */
-  async authCountAdminTeams(userId: string, excludeStudioIds: string[]): Promise<number> {
-    const placeholders = excludeStudioIds.map(() => '?').join(', ');
-    const exclude = excludeStudioIds.length > 0 ? `AND studio_id NOT IN (${placeholders})` : '';
+  /** Count of teams the user owns — a single indexed query for the self-serve creation cap
+   * (owner-bootstrap D5). */
+  async authCountOwnedTeams(userId: string): Promise<number> {
     const row = await this.db.first<Row>(
-      `SELECT COUNT(*) AS n FROM user_studio_memberships
-       WHERE user_id = ? AND role = 'admin' ${exclude}`,
+      `SELECT COUNT(*) AS n FROM user_studio_memberships WHERE user_id = ? AND role = 'owner'`,
       userId,
-      ...excludeStudioIds,
     );
     return Number(row?.n ?? 0);
+  }
+
+  /** Hand a team's ownership from its owner to an existing member, who becomes owner while the
+   * old owner becomes admin, in one transaction (owner-bootstrap D3). Demote first: the one-owner
+   * index is checked row by row, so promoting first would collide with the old owner's row. Throws
+   * (rolling back) when the source is not the owner or the target has no membership. */
+  async authTransferOwnership(studioId: string, fromUserId: string, toUserId: string): Promise<void> {
+    await this.db.tx(async (t) => {
+      const demoted = await t.run(
+        `UPDATE user_studio_memberships SET role = 'admin'
+         WHERE studio_id = ? AND user_id = ? AND role = 'owner'`,
+        studioId,
+        fromUserId,
+      );
+      if (demoted.changes === 0) throw new Error('ownership transfer: the source is not the owner');
+      const promoted = await t.run(
+        `UPDATE user_studio_memberships SET role = 'owner' WHERE studio_id = ? AND user_id = ?`,
+        studioId,
+        toUserId,
+      );
+      if (promoted.changes === 0) throw new Error('ownership transfer: the target is not a member');
+    });
+  }
+
+  /** Make `userId` the team's owner, demoting any other current owner to admin, in one
+   * transaction (owner-bootstrap D6, the support plane's owner upsert). A no-op for the current
+   * owner. */
+  async authSetOwner(studioId: string, userId: string): Promise<void> {
+    await this.db.tx(async (t) => {
+      await t.run(
+        `UPDATE user_studio_memberships SET role = 'admin'
+         WHERE studio_id = ? AND role = 'owner' AND user_id <> ?`,
+        studioId,
+        userId,
+      );
+      await this.withDb(t).authUpsertMembershipRole(userId, studioId, 'owner');
+    });
+  }
+
+  /** The bootstrap claim (owner-bootstrap D7): make `userId` owner of every team that has no
+   * owner, inserting or upgrading only the claimant's rows, so other members keep their roles.
+   * Returns the claimed team ids. */
+  async authClaimOwnerlessStudios(userId: string): Promise<string[]> {
+    const rows = await this.db.all<Row>(
+      `INSERT INTO user_studio_memberships (user_id, studio_id, role)
+       SELECT ?, d.id, 'owner' FROM studio_definitions d
+       WHERE NOT EXISTS (SELECT 1 FROM user_studio_memberships m
+                         WHERE m.studio_id = d.id AND m.role = 'owner')
+       ON CONFLICT (user_id, studio_id) DO UPDATE SET role = 'owner'
+       RETURNING studio_id`,
+      userId,
+    );
+    return rows.map((r) => String(r.studio_id));
   }
 
   /** Role of (user, team), or null if no membership. */
@@ -372,8 +424,8 @@ export class AuthStore implements AuthStoreFacade {
     return row === null ? null : (String(row.role) as TeamRole);
   }
 
-  /** Count of ENABLED admins for a team — the last-admin-protection invariant is
-   * over enabled admins only (a disabled admin row must not satisfy it). */
+  /** Count of ENABLED admins for a team, reported as `enabled_admin_count`. Only `admin` rows
+   * count: the owner is not an admin here (owner-bootstrap owner decision B). */
   async authCountEnabledAdmins(studioId: string): Promise<number> {
     const row = await this.db.first<Row>(
       `SELECT COUNT(*) AS n
@@ -397,7 +449,7 @@ export class AuthStore implements AuthStoreFacade {
        FROM user_studio_memberships m
        JOIN users u ON u.id = m.user_id
        WHERE m.studio_id = ?
-       ORDER BY m.role ASC, u.email ASC`,
+       ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.email ASC`,
       studioId,
     );
     return rows.map((r) => ({

@@ -145,7 +145,7 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
 
 ## 4. Owner role in the catalog stores (design D1, D4, D5, D7, D11)
 
-- [ ] 4.1 Test first, in `server/src/test/authStore.int.test.ts`:
+- [x] 4.1 Test first, in `server/src/test/authStore.int.test.ts`:
   - `authCountOwnedTeams` counts `owner` rows only;
   - `authTransferOwnership` swaps owner and admin in one transaction, and throws (changing
     nothing) when the target has no membership or the source is not the owner;
@@ -158,10 +158,23 @@ Test commands: server tiers are `cd server && npx vitest run --project <unit|int
   - `authCountEnabledAdmins` still counts enabled `admin` rows only (the owner is not counted;
     owner decision B).
   Verify: red before 4.2.
-- [ ] 4.2 Implement in `packages/catalog/src/authStore.ts` (`TeamRole` gains `owner`; facade
+  Evidence: red before 4.2: `cd server && npx vitest run --project integration
+  src/test/authStore.int.test.ts` (`5c-4.1-red.log`) -> `Tests  8 failed | 24 passed (32)`
+  (`authCountOwnedTeams counts owner memberships only`, `authListTeamMembers orders owner, admin,
+  member`, the three `authTransferOwnership`, two `authSetOwner` and the
+  `authClaimOwnerlessStudios` cases); `authCountEnabledAdmins does not count the owner` already
+  passed (query unchanged, owner decision B). Green after 4.2 (see 4.2).
+- [x] 4.2 Implement in `packages/catalog/src/authStore.ts` (`TeamRole` gains `owner`; facade
   and class): the methods above, replacing `authCountAdminTeams`; the `CASE` order;
   `authCountEnabledAdmins` unchanged. Switch the `teams.ts` cap call to `authCountOwnedTeams`. Verify: 4.1 green;
   `npm run typecheck` exit 0.
+  Evidence: `cd server && npx vitest run --project integration src/test/authStore.int.test.ts`
+  (`5c-4.2-green.log`) -> `Tests  32 passed (32)`; `npm run typecheck` -> exit 0
+  (`5c-4.2-typecheck.log`). `teams.race.int.test.ts` called the removed `authCountAdminTeams`, so
+  its cap race now seeds owned teams and counts with `authCountOwnedTeams`. Full `--project
+  integration` (`5c-4.2-int.log`) -> `Tests  3 failed | 652 passed (655)`: the `adminUsers`
+  capture (6.1), and the two cap tests (`teams.int` "creation cap", `teams.race.int` "concurrent
+  creates by a user owning 19 teams"), red until 5.2 creates teams as `owner`.
 
 ## 5. Team routes: owner rules and transfer (design D2, D3, D4, D5, D13)
 
