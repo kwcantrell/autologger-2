@@ -41,6 +41,7 @@ import {
   YOUTUBE_IMPORT_TMP_PREFIX,
   youtubeImportGuard,
 } from '@autologger/media-import';
+import { SessionIndexStore } from '@autologger/catalog';
 import type { Clock } from '@autologger/ports';
 import { recordingStartAnchors } from '@autologger/transcription';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -255,6 +256,36 @@ describe('body/URL validation — 400, no spawn', () => {
 // identical, seekable, episode_date (tasks 6.1 + 6.2) ───────────────────────
 
 describe('configured success (matrix: youtu.be accepted + success + episode_date; task 6.2 byte-identical/seekable)', () => {
+  it('a failed episode-date write still answers 200 with one segment, mirrors the take, and warns with the date (youtube-audio-import, catalog-concurrency-hazards D6)', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const testEnv = configuredEnv(binaryPath);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dateSpy = vi
+      .spyOn(SessionIndexStore.prototype, 'setSessionEpisodeDate')
+      .mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'CONNECTION_CLOSED' }));
+    try {
+      const res = await postImport(
+        session,
+        { url: 'https://youtu.be/abc123', use_publish_date: true },
+        testEnv,
+      );
+      expect(res.status).toBe(200);
+      expect((await listSegments(session, testEnv)).segments).toHaveLength(1);
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+        new RegExp(`${session}.*2024-01-1[45]`),
+      );
+      const row = await env.ports.catalog.first<{ event_count: number }>(
+        'SELECT event_count FROM sessions WHERE id = ?',
+        session,
+      );
+      expect(Number(row?.event_count)).toBeGreaterThan(0);
+    } finally {
+      dateSpy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('200 {ok:true}; exactly one new segment, byte-identical to the produced file, retrievable/seekable via the blob route; use_publish_date writes the un-shifted episode_date', async () => {
     const session = (await seededSession()).sessionId;
     const { binaryPath, markerPath } = freshBinary(); // default success mode: ext m4a, upload_date "20240115"

@@ -179,21 +179,20 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const { event, projection } = getSessionHub(c, sid).addEvent({
+  const { event } = getSessionHub(c, sid).addEvent({
     category: cat.id,
     message: body.message,
     metadataJson: JSON.stringify(meta),
     markedAtUtc: null,
     ctx: timecodeCtx(row),
   });
-  await catalog.sessions.projectSessionLive(sid, projection);
+  await c.env.ports.mirror.mirror(sid);
   return c.json(enrichEventRpc(event, profile));
 });
 
 companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
   const { sid, row } = await requireActiveSession(c);
-  const catalog = c.get('catalog');
   const ctx = timecodeCtx(row);
   const hub = getSessionHub(c, sid);
   let action: 'start' | 'stop' = body.action === 'start' ? 'start' : 'stop';
@@ -201,8 +200,8 @@ companionRouter.post('/api/companion/transport', async (c) => {
     const tr = hub.transportSnapshot(ctx);
     action = tr.is_rolling ? 'stop' : 'start';
   }
-  const { state, projection } = action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
-  await catalog.sessions.projectSessionLive(sid, projection);
+  const { state } = action === 'start' ? hub.startTake(ctx) : hub.stopTake(ctx);
+  await c.env.ports.mirror.mirror(sid);
   return c.json({
     ok: true,
     is_rolling: Boolean(state.is_rolling),

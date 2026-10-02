@@ -171,16 +171,16 @@ eventsRouter.post('/api/sessions/:sessionId/audio-recording-lease/release', asyn
 eventsRouter.post('/api/sessions/:sessionId/transport/start', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state, projection } = getSessionHub(c, sessionId).startTake(timecodeCtx(row));
-  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  const { state } = getSessionHub(c, sessionId).startTake(timecodeCtx(row));
+  await c.env.ports.mirror.mirror(sessionId);
   return c.json(state);
 });
 
 eventsRouter.post('/api/sessions/:sessionId/transport/stop', async (c) => {
   const sessionId = c.req.param('sessionId');
   const row = await requireSession(c, sessionId);
-  const { state, projection } = getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
-  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  const { state } = getSessionHub(c, sessionId).stopTake(timecodeCtx(row));
+  await c.env.ports.mirror.mirror(sessionId);
   return c.json(state);
 });
 
@@ -231,14 +231,15 @@ eventsRouter.post('/api/sessions/:sessionId/events', async (c) => {
     if (catDef !== null) meta = mergeCategoryUiSnapshotsIntoMetadata(meta, catDef);
   }
   const marked = parseOptionalMarkedAt(body.marked_at_utc);
-  const { event, projection } = getSessionHub(c, sessionId).addEvent({
+  const { event } = getSessionHub(c, sessionId).addEvent({
     category: body.category,
     message: body.message,
     metadataJson: JSON.stringify(meta),
     markedAtUtc: marked,
     ctx: timecodeCtx(row),
   });
-  await catalog.sessions.projectSessionLive(sessionId, projection);
+  // Ordered, and a failure only warns: the event is already saved (catalog-concurrency-hazards D6).
+  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -633,8 +634,9 @@ eventsRouter.post('/api/sessions/:sessionId/events/generate', async (c) => {
     // SHALL leave the catalog projection current by the time the route
     // responds") — the run's inserts persist either way. The hub is
     // RE-ACQUIRED after the potentially multi-minute turn (idle hubs close
-    // their DB handles and reopen lazily).
-    await catalog.sessions.projectSessionLive(sessionId, getSessionHub(c, sessionId).ensure());
+    // their DB handles and reopen lazily). A failed mirror write only warns, so the run's own
+    // outcome is returned (catalog-concurrency-hazards D6).
+    await c.env.ports.mirror.mirror(sessionId);
   }
 });
 
@@ -690,7 +692,7 @@ eventsRouter.put('/api/sessions/:sessionId/events/:eventId', async (c) => {
     metadataJson: JSON.stringify(meta),
   });
   if (result === null) throw new ApiError(404, 'Event not found.');
-  await catalog.sessions.projectSessionLive(sessionId, result.projection);
+  await c.env.ports.mirror.mirror(sessionId);
   return c.json(enrichEventRpc(result.event, profile));
 });
 
@@ -698,9 +700,9 @@ eventsRouter.delete('/api/sessions/:sessionId/events/:eventId', async (c) => {
   const sessionId = c.req.param('sessionId');
   const eventId = c.req.param('eventId');
   await requireSession(c, sessionId);
-  const { ok, projection } = getSessionHub(c, sessionId).deleteEvent(eventId);
+  const { ok } = getSessionHub(c, sessionId).deleteEvent(eventId);
   if (!ok) throw new ApiError(404, 'Event not found.');
-  await c.get('catalog').sessions.projectSessionLive(sessionId, projection);
+  await c.env.ports.mirror.mirror(sessionId);
   return c.json({ ok: true });
 });
 

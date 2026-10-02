@@ -4,6 +4,7 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { createCatalog } from '@autologger/catalog';
 import { sweepStaleYoutubeImportTempDirs } from '@autologger/media-import';
 import { SessionHubRegistry } from '@autologger/session-core';
 import {
@@ -15,6 +16,7 @@ import {
 import type { Bindings } from '../appEnv';
 import { CATALOG_PG_VARS } from '../bootGuard';
 import { GoogleIdentityVerifier } from '../auth/oauth_google';
+import { SessionMirror } from '../sessionMirror';
 import { aiV2UsesLoginFallback, newUserAllTeamsEnabled, resolveYtDlpPath } from '../env';
 import { PresenceRegistry } from './presence';
 import { systemClock } from './systemClock';
@@ -51,6 +53,11 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   });
   const kv = new KvStore(catalogDb, clock);
   const registry = new SessionHubRegistry(join(dataDir, 'sessions'), clock);
+  const sessionIndex = createCatalog(catalogDb).sessions;
+  const mirror = new SessionMirror({
+    snapshot: (sid) => registry.get(sid).ensure(),
+    project: (sid, projection) => sessionIndex.projectSessionLive(sid, projection),
+  });
   const audioBlobStore = new BlobStore(join(dataDir, 'blobs'), join(dataDir, 'tmp'));
   // Startup hygiene (design D6, task 5.4): remove any youtube-import per-request
   // temp dir orphaned by a crash/kill that skipped the route handler's own
@@ -65,6 +72,7 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
       catalog: catalogDb,
       kv,
       sessions: registry,
+      mirror,
       audio: audioBlobStore,
       presence: new PresenceRegistry(clock),
     },
@@ -141,6 +149,8 @@ export function createBindings(procEnv: Record<string, string | undefined>): {
   return {
     bindings,
     close: async () => {
+      // Before the hubs close, so no mirror write reopens one.
+      await mirror.close();
       registry.closeAll();
       try {
         await catalogDb.close();

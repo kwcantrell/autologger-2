@@ -135,14 +135,20 @@ in-transaction role read.
 
 ## 4. Session mirror and Companion (design D6-D9)
 
-- [ ] 4.1 Test first, `server/src/sessionMirror.test.ts` (fake catalog and registry):
+- [x] 4.1 Test first, `server/src/sessionMirror.test.ts` (fake catalog and registry):
   - a call made while a link runs gets a later link that reads the newer state;
   - a failure warns and resolves;
   - a root timeout waits for `settled` before the next link;
   - sessions are independent;
   - after `close()`, calls are no-ops and no hub is opened.
   Red, then `SessionMirror` and `ports.mirror`. Green.
-- [ ] 4.2 Test first, server integration with `projectSessionLive` failing
+  Evidence: `4d-4.1-red.log` -> `Cannot find module './sessionMirror'`. `4d-4.1-green.log` ->
+  `Tests  5 passed (5)` (one test fixed: the cross-session case needed a per-session block).
+  `promiseHygiene.repo.test.ts` flagged a promise comparison and a promise used as a condition;
+  rewritten with a sequence number. `promiseHygiene` + mirror -> `Tests  21 passed (21)`.
+  `ports.mirror` is built in `createBindings`, and `close()` awaits it before
+  `registry.closeAll()`.
+- [x] 4.2 Test first, server integration with `projectSessionLive` failing
   (`vi.spyOn(SessionIndexStore.prototype, …)`):
   - an event log gives 200 with the event saved once, and a warning;
   - the next event heals the projection;
@@ -150,6 +156,12 @@ in-transaction role read.
   - YouTube import gives 200 when the episode-date write fails (warning names the sid and date);
   - generate returns its outcome (update the `events.generate.int.test.ts:1033` pin).
   Red, then switch the A2 call sites and the import paths to `ports.mirror`. Green.
+  Evidence: `4d-4.2-red.log` -> `expected 500 to be 200` (event log), `expected +0 to be 2`
+  (local import never mirrored), `expected 502 to be 200` (YouTube episode date). All nine call
+  sites and both imports now use `ports.mirror`; the episode date is caught and warned with the
+  sid and the date. The generate pin (`events.generate.int.test.ts`) now expects 200 plus the
+  warning. `4d-4.2-green.log`: whole server `npx vitest run` -> `Tests  909 passed | 3 skipped`;
+  the only failure (promise hygiene) was fixed in 4.1. `npm run typecheck` is clean.
 - [ ] 4.3 Test first: a `kvStore` unit test for `replaceIf` (true, false on mismatch, false when
   expired). Server, with `ports.kv` on a gated catalog: ack(A) held after its read, command B
   lands, then ack(A) gives `{ok:false}` and `last_command` is B. Red, then D7. Green.
