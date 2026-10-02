@@ -1,13 +1,11 @@
 // @autologger/catalog package entry (persistence-package-extraction task
 // 3.2). The Catalog facade + its five domain stores (studios/shows/auth/
 // sessions/profile) + sessionTitleDerivation, moved from server/src/db/.
-// Depends on @autologger/domain + @autologger/ports only — no
-// better-sqlite3: Catalog speaks the CatalogDb port, never the driver
-// (design D1/D7), so the schema-migration `.sql` files can live here
-// (schema and stores evolve together) while the directory-generic migrator
-// (`openCatalogDb`/`applyMigrations`) stays in `@autologger/storage`.
+// Depends on @autologger/domain + @autologger/ports only: Catalog speaks the
+// CatalogDb port, never a driver (design D1/D7). The catalog schema is the
+// Postgres schema in supabase/migrations/ (ADR 0021 slice 4; the SQLite
+// migrations were retired in slice 4e).
 
-import { fileURLToPath } from 'node:url';
 import type { CatalogDb } from '@autologger/ports';
 import { Catalog, type CatalogFacade } from './catalog';
 
@@ -18,15 +16,6 @@ export * from './sessionIndexStore';
 export * from './sessionTitleDerivation';
 export * from './showsStore';
 export * from './studioRegistry';
-
-/**
- * Resolved path to this package's catalog schema migration `.sql` files
- * (design D7 — the catalog package owns the migrations; the migrator that
- * applies them is directory-generic and lives in `@autologger/storage`).
- * Resolved via `import.meta.url` from inside the package so it works
- * identically under `tsx` (dev/prod) and vitest, regardless of process cwd.
- */
-export const CATALOG_MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
 
 /**
  * Sanctioned non-composition-root construction path (design D3): `Catalog`

@@ -85,13 +85,16 @@ Logs:
 
 ## 3. Delete the SQLite catalog (design D4, D6)
 
-- [ ] 3.1 Delete `packages/storage/src/asyncCatalogStore.ts` and `asyncCatalogStore.test.ts`.
+- [x] 3.1 Delete `packages/storage/src/asyncCatalogStore.ts` and `asyncCatalogStore.test.ts`.
   Drop `pendingAfter` from `test/catalogDbContract.ts`: only the SQLite test imports it, and
   `server/src/test/gatedCatalog.int.test.ts` has its own local copy. Drop the export from
   `index.ts`.
   - Evidence: storage unit and pg projects green, plus
     `rg -n AsyncSqliteCatalogDb packages server web test` → no hits.
-- [ ] 3.2 Delete:
+  Evidence: `4e-3.1-green.log`: `npx vitest run` (packages/storage) -> `Test Files  6 passed (6)`,
+  `Tests  72 passed (72)`; `npx tsc --noEmit` -> exit 0. `rg -n AsyncSqliteCatalogDb packages server
+  web test` -> no hits once 3.3's comment edits landed (before them: 3 comment-only hits).
+- [x] 3.2 Delete:
   - `packages/storage/src/migrate.ts` and `migrate.test.ts`;
   - `server/src/test/migrations.int.test.ts`;
   - `packages/catalog/migrations/`;
@@ -100,7 +103,14 @@ Logs:
   - Evidence: `npm run typecheck` green, plus
     `rg -n "applyMigrations|openCatalogDb|CATALOG_MIGRATIONS_DIR|catalog/migrations" packages
     server web test docker` → only the hits task 4.1 removes.
-- [ ] 3.3 Update the comments that name deleted code (design D6):
+  Evidence: `4e-3.2-tsc.log`: `npm run typecheck` -> exit 0. `4e-3.x-npmtest-2.log`: `npm test`
+  -> exit 0; server `Tests  910 passed | 3 skipped (913)`, storage, web and the rest green. The
+  first full run (`4e-3.x-npmtest.log`) had one failure, `× concurrent same-clock creates for the
+  same show never duplicate a title`: a 500 from `PostgresError` `40001` once the 3 runs were
+  spent. That path changed by comment only. The test passes 8/8 alone (`4e-flake-1..8.log`); it is
+  the 4d retry-exhaustion residual on ADR 0021's revisit list, reported to the owner. The grep's
+  remaining hits are README (5.1) and docker (4.1) only.
+- [x] 3.3 Update the comments that name deleted code (design D6):
   - `packages/ports/src/catalogDb.ts` and `ports/src/kvStore.ts:4`;
   - storage `index.ts` header and `kvStore.ts` (lines 3-5 and 31-32);
   - `postgresCatalogStore.ts` (lines 2, 147, 338);
@@ -112,6 +122,10 @@ Logs:
   - Evidence: the repo tests green, plus
     `rg -n -i "AsyncSqlite|asyncCatalogStore|async catalog adapter|applyMigrations|openCatalogDb|CATALOG_MIGRATIONS_DIR|catalog/migrations|migrate\.ts|connection's lock" packages server web test docker README.md`
     → no hits outside the README slice 11 runbook.
+  Evidence: the same `npm test` run (`4e-3.x-npmtest-2.log`, repo tests included) -> exit 0. The
+  grep (without README and docker, which are tasks 4.1/5.1) -> no hits. Also fixed
+  `sessionIndexStore.ts:180` ("holds the connection's lock" -> SERIALIZABLE with retry), which the
+  grep found.
 
 ## 4. Dev image and compose (design D5)
 

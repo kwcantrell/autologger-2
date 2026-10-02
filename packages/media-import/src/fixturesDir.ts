@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Resolved path to this package's fixtures directory (design D4 — the
- * `@autologger/catalog`'s `CATALOG_MIGRATIONS_DIR` pattern for shipping a
+ * `new URL(..., import.meta.url)` pattern for shipping a
  * non-TS asset directory from a source-only package, applied unchanged).
  * Holds `fake-ytdlp.mjs`, the hermetic yt-dlp test double read by this
  * package's own `ytdlp.test.ts` and by the staying `server/src/routers/

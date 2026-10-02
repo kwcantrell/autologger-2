@@ -3,7 +3,7 @@
 // expiry is provable with zero real elapsed time. tick() advances the fake
 // Clock and vitest's timer queue in lockstep — the shared-time-base guarantee
 // under test. The KV-TTL and presence-freshness suites that used to live here
-// moved beside the modules they test (node/kvStore.test.ts,
+// moved beside the modules they test (storage's kvStore.pg.test.ts,
 // node/presence.test.ts — code-health-tail task 5.2); the shared helper is
 // ./test/fakeClock (this package's own copy, per the duplicate-per-package
 // policy — persistence-package-extraction task 4.3).

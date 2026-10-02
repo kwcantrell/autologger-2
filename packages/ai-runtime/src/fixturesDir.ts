@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Resolved path to this package's fixtures directory (design D4 — the
- * `@autologger/catalog`'s `CATALOG_MIGRATIONS_DIR` pattern for shipping
+ * `new URL(..., import.meta.url)` pattern for shipping
  * non-TS assets from a source-only package, applied unchanged). Holds the
  * four moving AI fixtures (task 3.3). Resolved via `import.meta.url` from
  * inside the package so it works identically under `tsx` (dev/prod) and

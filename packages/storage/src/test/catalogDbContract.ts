@@ -44,21 +44,6 @@ export async function prompt<T>(p: Promise<T>, ms = 1000): Promise<T> {
   return r as T;
 }
 
-/** Resolves true if `p` is still pending after `ms`. */
-export async function pendingAfter(p: Promise<unknown>, ms = 20): Promise<boolean> {
-  let settled = false;
-  p.then(
-    () => {
-      settled = true;
-    },
-    () => {
-      settled = true;
-    },
-  );
-  await new Promise((r) => setTimeout(r, ms));
-  return !settled;
-}
-
 const INSERT = 'INSERT INTO t (k, v) VALUES (?, ?)';
 
 export function describeCatalogDbContract(name: string, target: ContractTarget): void {

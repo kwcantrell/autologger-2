@@ -1,5 +1,5 @@
 // Asynchronous catalog query layer over postgres.js (postgres-catalog-adapter design D1-D7; ADR 0021
-// slice 4b). The same transaction contract as `AsyncSqliteCatalogDb`, on a server that runs callers
+// slice 4b). The catalog port's transaction contract, on a server that runs callers
 // concurrently: root statements use an ordinary pool, and each transaction holds one of a fixed set
 // of single-connection clients. postgres.js's own `reserve()` and `begin()` crash the process when a
 // statement reaches a connection whose socket has closed (design A5-A7), so the adapter tracks each
@@ -144,7 +144,7 @@ interface Slot {
   holder: Attempt | null;
 }
 
-/** The SQLite adapter's TxState, plus what one run on a real connection needs (design D4). */
+/** One transaction run's state on a real connection (design D4). */
 interface Attempt {
   open: boolean;
   failed: boolean;
@@ -338,8 +338,8 @@ export class PostgresCatalogDb implements CatalogDb {
     );
   }
 
-  /** As in SQLite: the root handle inside an open transaction would escape it, and work left over
-   * from a failed transaction must not run (design D4). */
+  /** The transaction contract: the root handle inside an open transaction would escape it, and
+   * work left over from a failed transaction must not run (design D4). */
   private guardRoot(): void {
     const a = current.getStore();
     if (!a) return;
