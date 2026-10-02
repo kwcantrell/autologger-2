@@ -17,8 +17,10 @@ gate reads only up to the first blank line.
 
 ## 1. Migration: `show_grants` (design D1)
 
-- [ ] 1.1 Test first, in `server/src/test/pg/` (new `showGrants.pg.test.ts`, plus `catalogSchema.pg.test.ts`): a grant for (U, A) inserts with `can_write = 1` by default; a second (U, A) fails `23505`; a grant naming a missing user or show fails `23503`; deleting show A deletes U's grant on A and leaves U's grant on B; deleting user U deletes the rest; `TABLES` and `KEY_COLUMN` gain `show_grants`, and the recorded expectation gains its columns, primary key, both foreign keys (`on delete cascade`) and `idx_show_grants_show`; the app-role read/write test and the "no API role holds a catalog privilege" loop cover the new table. Verify: red before 1.2.
-- [ ] 1.2 Write `supabase/migrations/20261005000000_show_grants.sql` as design D1 gives it (a header comment naming ADR 0021 slice 6a; no transaction-control lines). Verify: 1.1 green and the whole `pg` project green (`--project pg`).
+- [x] 1.1 Test first, in `server/src/test/pg/` (new `showGrants.pg.test.ts`, plus `catalogSchema.pg.test.ts`): a grant for (U, A) inserts with `can_write = 1` by default; a second (U, A) fails `23505`; a grant naming a missing user or show fails `23503`; deleting show A deletes U's grant on A and leaves U's grant on B; deleting user U deletes the rest; `TABLES` and `KEY_COLUMN` gain `show_grants`, and the recorded expectation gains its columns, primary key, both foreign keys (`on delete cascade`) and `idx_show_grants_show`; the app-role read/write test and the "no API role holds a catalog privilege" loop cover the new table. Verify: red before 1.2.
+  Evidence: `cd server && npx vitest run --project pg src/test/pg/showGrants.pg.test.ts src/test/pg/catalogSchema.pg.test.ts` before 1.2 (`6a-1.1-red.log`) -> `Tests  8 failed | 9 passed (17)`: `PostgresError: relation "catalog.show_grants" does not exist` (schema record, table list, app-role read/write, API-role loop, and all four new grant tests). Green after 1.2 (see 1.2).
+- [x] 1.2 Write `supabase/migrations/20261005000000_show_grants.sql` as design D1 gives it (a header comment naming ADR 0021 slice 6a; no transaction-control lines). Verify: 1.1 green and the whole `pg` project green (`--project pg`).
+  Evidence: `cd server && npx vitest run --project pg` (`6a-1.2-green.log`) -> `Test Files  7 passed (7)`, `Tests  31 passed (31)`.
 
 ## 2. Catalog: the access query and the grant store (design D2)
 
