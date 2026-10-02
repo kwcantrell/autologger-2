@@ -36,7 +36,12 @@ scratchpad as `hf-<task>-<red|green>.log`.
 
 ## 3. Verification
 
-- [ ] 3.1 Run `scripts/check-change.sh --stage hook`; it is green.
+- [x] 3.1 Run `scripts/check-change.sh --stage hook`; it is green.
+  Evidence: `scripts/check-change.sh --stage hook` -> every gate PASS, including `size  4/400 changed
+  lines` and `commands  ran ['typecheck', 'test']`. This was after the owner unpacked the pinned
+  `@playwright/test`/`playwright`/`playwright-core` 1.61.1 into `node_modules` (it had been
+  installed from `supabase-migration`, which dropped Playwright).
+  `node -e "require('better-sqlite3')"` -> `better-sqlite3 ok`.
 - [ ] 3.2 Stage live check, with owner permission for `make stage-up` (stage is built from this
   branch). `docker/scripts/test_router.sh` doesn't exist on `main`, so the check is curl through
   the stage router. Verify:
