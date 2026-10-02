@@ -1,7 +1,8 @@
 #!/bin/sh
 # docker/scripts/test_check_envs.sh -- regression cases for check-envs.sh invariants 14 and 15
 # (infisical-secrets tasks 2.1, 2.2), 16 and the invariant 4 exceptions (supabase-db task 2.1), and
-# invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1).
+# invariant 4's packages/*/src rule (retire-sqlite-catalog task 4.1), and the auth networks
+# (gotrue-sign-in task 2.1).
 # Each case copies the working tree (tracked + untracked, git-ignored files excluded, so no env file or data directory is copied) to a scratch dir,
 # applies one mutation, runs the check there and asserts the outcome.
 #
@@ -162,11 +163,11 @@ sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, catalog
 expect "rest on the catalog network is caught" "$d" fail "invariant 16]"
 
 d=$SCRATCH/appdb; snapshot "$d"
-sed -i 's/^    networks: \[dev, catalog\]$/    networks: [dev, catalog, db]/' "$d/docker/compose.dev.yaml"
+sed -i 's/^    networks: \[dev, catalog, auth-app\]$/    networks: [dev, catalog, auth-app, db]/' "$d/docker/compose.dev.yaml"
 expect "the dev app on the shared db network is caught" "$d" fail "invariant 16] dev"
 
 d=$SCRATCH/apidb; snapshot "$d"
-sed -i 's/^    networks: \[back, catalog\]$/    networks: [back, catalog, db]/' "$d/compose.yaml"
+sed -i 's/^    networks: \[back, catalog, auth-app\]$/    networks: [back, catalog, auth-app, db]/' "$d/compose.yaml"
 expect "the prod api on the shared db network is caught" "$d" fail "invariant 16] prod"
 
 d=$SCRATCH/nsshare; snapshot "$d"
@@ -184,6 +185,43 @@ expect "a non-internal catalog network is caught" "$d" fail "invariant 16] prod"
 d=$SCRATCH/gatedeny; snapshot "$d"
 sed -i '/^      GATE_DENY_SUBNET: /d' "$d/docker/compose.dev.yaml"
 expect "an app gate that admits the catalog subnet is caught" "$d" fail "invariant 16] dev"
+
+# ---- gotrue-sign-in (invariants 3, 16): auth-egress has only auth; auth-app is auth plus the app
+d=$SCRATCH/restegress; snapshot "$d"
+sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, auth-egress]/' "$d/$SBF"
+expect "rest on the auth egress network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/appegress; snapshot "$d"
+sed -i 's/^    networks: \[dev, catalog, auth-app\]$/    networks: [dev, catalog, auth-app, auth-egress]/' "$d/docker/compose.dev.yaml"
+expect "the dev app on the auth egress network is caught" "$d" fail "] dev"
+
+d=$SCRATCH/restauthapp; snapshot "$d"
+sed -i 's/^    command: \["postgrest"\]$/&\n    networks: [db, supabase, auth-app]/' "$d/$SBF"
+expect "rest on the auth-app network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/compauthapp; snapshot "$d"
+sed -i 's/^    networks: \[dev\]$/    networks: [dev, auth-app]/' "$d/docker/compose.dev.yaml"
+expect "the dev companion on the auth-app network is caught" "$d" fail "] dev"
+
+d=$SCRATCH/authappinternal; snapshot "$d"
+sed -i '/^  auth-app:$/,/internal: true/{/^    internal: true$/d}' "$d/compose.yaml"
+expect "a non-internal auth-app network is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/egresssubnet; snapshot "$d"
+sed -i 's/172\.28\.27\.0/172.28.29.0/' "$d/docker/compose.stage.yaml"
+expect "an auth egress network off its pinned subnet is caught" "$d" fail "invariant 16] stage"
+
+d=$SCRATCH/authnoapp; snapshot "$d"
+sed -i 's/^    networks: \[db, supabase, auth-egress, auth-app\]$/    networks: [db, supabase, auth-egress]/' "$d/$SBF"
+expect "auth off the auth-app network is caught" "$d" fail "invariant 16]"
+
+d=$SCRATCH/apiextra; snapshot "$d"
+sed -i 's/^    networks: \[back, catalog, auth-app\]$/    networks: [back, catalog, auth-app, extra]/; s/^networks:$/networks:\n  extra: {}/' "$d/compose.yaml"
+expect "the prod api on a network outside back, catalog and auth-app is caught" "$d" fail "invariant 16] prod"
+
+d=$SCRATCH/gatedenyauth; snapshot "$d"
+sed -i 's#^      GATE_DENY_SUBNET: .*$#      GATE_DENY_SUBNET: 172.28.34.0/24#' "$d/docker/compose.dev.yaml"
+expect "an app gate that admits the auth-app subnet is caught" "$d" fail "invariant 16] dev"
 
 # ---- retire-sqlite-catalog (invariant 4): app source binds stay under packages/*/src
 d=$SCRATCH/pkgnonsrc; snapshot "$d"

@@ -65,3 +65,11 @@ networks:
     ipam: !override
       config:
         - subnet: 172.28.25.0/24
+  auth-egress:
+    ipam: !override
+      config:
+        - subnet: 172.28.27.0/24
+  auth-app:
+    ipam: !override
+      config:
+        - subnet: 172.28.28.0/24

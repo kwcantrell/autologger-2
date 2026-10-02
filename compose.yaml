@@ -83,7 +83,7 @@ services:
     init: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    networks: [back, catalog]
+    networks: [back, catalog, auth-app]
     # Secrets and tunables (GOOGLE_*, API_TOKEN, ADMIN_TOKEN, DEEPGRAM_API_KEY, ...) come from the
     # shared allowlist, passed through from Infisical `prod`. The literals in `environment` below
     # win over it, so no Infisical value can flip the posture or relocate the image's paths.
@@ -163,6 +163,21 @@ networks:
     ipam:
       config:
         - subnet: 172.28.14.0/24
+  # Sign-in (gotrue-sign-in D6): `auth-egress` is GoTrue's only way out (to Google), and only
+  # `auth` joins it; `auth-app` is internal and host-isolated, with exactly two members, `auth` and
+  # the app, so the app reaches GoTrue for the sign-in exchange and nothing else of Supabase.
+  auth-egress:
+    ipam:
+      config:
+        - subnet: 172.28.16.0/24
+  auth-app:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.17.0/24
 
 volumes:
   autologger-data:

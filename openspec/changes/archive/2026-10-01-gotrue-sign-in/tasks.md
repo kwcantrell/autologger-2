@@ -1,0 +1,204 @@
+# Tasks
+
+The first commit on `supabase-5a-gotrue-sign-in` holds only `openspec/changes/gotrue-sign-in/`.
+The PR targets `supabase-migration`, and the gates run with
+`GITHUB_BASE_REF=supabase-migration`. Every `make stage-up` needs the owner's permission. The live
+Google sign-in (6.2) is done by the owner in a browser.
+
+Logs: keep every test and gate run under the session scratchpad as `5a-<task>-<red|green>.log`,
+and name the log in each `Evidence:` line. Each "test first" item is red before its change (record
+the failure line) and green after.
+
+## 1. Probe (design A9, A10, A12) before any code
+
+- [x] 1.1 On dev, apply the D3 GoTrue env and the D6 networks as an uncommitted override and run
+  `make dev-up`. Check:
+  - auth is `healthy` with Google enabled, an empty client id and no secret (A10);
+  - from `auth`, Google's OIDC config is fetched over `auth-egress` (A9's network half);
+  - from the app, `auth:9999/health` answers over `auth-app`;
+  - from `auth`, a request to the app's gate port is refused (A12).
+  Revert the override.
+  Evidence: `5a-1.1-probe.log` (dev, override applied via `compose-run.mjs dev resolved 'compose
+  up -d'`, since `check-envs.sh` refuses it until task 2: `5a-1.1-checkenvs-override.log`):
+  auth `healthy`, `GOOGLE_ENABLED=true CLIENT_ID_len=0 SIGNUP_DISABLED=false`, networks
+  `auth-app auth-egress db supabase`; `/settings` -> `"google":true`, `"disable_signup":false`,
+  `"mailer_autoconfirm":false`, `"email":false`; from auth, Google's OIDC config ->
+  `"issuer": "https://accounts.google.com"`; from app, `auth:9999/health` -> `200 {"version":
+  "v2.196.0"`; grant with a bogus token -> `400 ... "Bad ID token"`; auth -> gate `app:8787` ->
+  connection aborted, no response (same as db's catalog peer: curl `000 exit=52`; dev peer
+  companion -> `status 200`). Override reverted (`git checkout`), `make dev-up` -> exit 0 (auth back
+  on `db supabase`), probe networks removed.
+
+## 2. Networks and static checks (design D6, D7)
+
+- [x] 2.1 Test first: add `test_check_envs.sh` guard cases, each red before the rule exists:
+  - `rest` joins `auth-egress`;
+  - the app joins `auth-egress`;
+  - `rest` joins `auth-app`;
+  - dev `companion` joins `auth-app`;
+  - `auth-app` is not internal;
+  - `auth-egress` is off its pinned subnet;
+  - auth leaves `auth-app`;
+  - prod `api` joins `supabase`;
+  - the gate's deny list lacks the `auth-app` subnet.
+  Then make the changes:
+  - add the networks to `compose.yaml`, `docker/compose.stage.yaml` and `docker/compose.dev.yaml`,
+    with auth's networks in `docker/supabase-services.yaml` and the app joined to `auth-app`;
+  - make `GATE_DENY_SUBNET` the two-subnet list, and update the `dev-gate.Caddyfile` comment;
+  - in `check-envs.sh`, update invariant 3 (the dev app network set) and add the invariant 16
+    rules (auth, `auth-egress`, `auth-app`, the `api` network set, subnets, the gate list).
+  Green: `check-envs.sh all` passes, and `test_check_envs.sh` passes every case.
+  Evidence: `5a-2.1-red.log` (compose edits and the updated equality checks in, new rules not yet):
+  `FAIL a non-internal auth-app network is caught`, `FAIL an auth egress network off its pinned
+  subnet is caught`, `FAIL the prod api on a network outside back, catalog and auth-app is caught`,
+  plus two older cases whose `sed` patterns named the old network lists (updated to the new lines).
+  The other six new cases were already caught by the updated invariant 3/16 equality checks.
+  `5a-2.1-green.log`: `sh docker/scripts/test_check_envs.sh` -> `test_check_envs: 47 passed, 0
+  failed`; `5a-2.1-checkenvs.log`: `sh docker/scripts/check-envs.sh all` -> exit 0.
+
+## 3. GoTrue configuration (design D3)
+
+- [x] 3.1 Test first: a `compose-run.mjs` unit test shows that `checkResolved` (or the env check)
+  refuses stage and prod when `GOOGLE_CLIENT_ID` is empty and accepts dev. Then:
+  - set GoTrue's Google and sign-up env (auto-confirm stays unset);
+  - add the stage/prod requirement to `compose-run.mjs`;
+  - update `docker/supabase/test_gateway.sh`'s settings case: sign-up enabled, `google` enabled,
+    email off. It runs against dev in 6.2.
+  Evidence: `5a-3.1-red.log`: `node --test --test-name-pattern="sign-in client id"
+  docker/scripts/compose-run.test.mjs` -> `TypeError: checkSignInClient is not a function`.
+  `5a-3.1-green.log`: `node --test docker/scripts/compose-run.test.mjs` -> `tests 49`, `pass 49`,
+  `fail 0`. GoTrue env landed with 2.1's commit (Google enabled, client id from the allowlist key,
+  sign-up open, auto-confirm unset). `make dev-up` -> exit 0; `5a-3.1-gateway.log`:
+  `sh docker/supabase/test_gateway.sh dev` -> `ok settings: "disable_signup":false`, `"google":true`,
+  `"email":false`, `"mailer_autoconfirm":false`, `test_gateway (dev): 50 passed, 0 failed`.
+
+## 4. Server bridge (design D1-D4, D9)
+
+- [x] 4.1 Test first: `server/src/auth/gotrue.test.ts` against an injected fake `fetch`. Each case
+  is red, then implement `server/src/auth/gotrue.ts`:
+  - a 200 with one matching Google identity returns `{id}`;
+  - zero, two, or a non-matching Google identity → `identity mismatch`;
+  - a 400, 429 or 500 → `status <n>`, with no body text in the message;
+  - a timeout → `timeout`;
+  - a network error → `network`;
+  - a missing, empty or NUL `user.id` → `malformed`.
+  Evidence: `5a-4.1-red.log`: `npx vitest run --project unit src/auth/gotrue.test.ts` -> `Error:
+  Cannot find module './gotrue'`. `5a-4.1-green.log`: the same -> `Tests  7 passed (7)`;
+  `npx tsc --noEmit -p server` -> no output; `npx biome check` clean.
+- [x] 4.2 Test first, in `routers/auth.int.test.ts`. First fix `server/src/test/oauth.ts` so its
+  fetch stub keys on origin and path, and add `mockGoTrue`. Then:
+  - a new user's catalog id is the GoTrue id;
+  - `email_verified` false or absent → `email_unverified`, GoTrue is never called, and no user is
+    created;
+  - GoTrue down, 4xx or timeout → `identity_unavailable`, no cookie, no user row;
+  - an existing row with a different id → `identity_unavailable`, and the row is unchanged;
+  - GoTrue's id owned by another subject's row → `identity_unavailable`;
+  - a disabled user is still `account_disabled`, and no catalog row changes;
+  - every existing callback and NUL case stays green, with GoTrue mocked.
+  Then change the callback and `authCreateUserGoogle({id, …})` with a target-less
+  `ON CONFLICT DO NOTHING`. Test helpers (`seedUser`) pass an id.
+  Evidence: `5a-4.2-red.log`: `npx vitest run --project integration src/routers/auth.int.test.ts
+  src/routers/nulText.int.test.ts` -> `Tests  9 failed | 32 passed (41)` (`× email_verified: false --
+  refused with email_unverified`, `× a new user's account id is the Supabase Auth user id`,
+  `× Supabase Auth unreachable gives identity_unavailable`, `× a Supabase Auth id owned by another
+  Google account is refused`, …). First green run caught the reverse-id check refusing the
+  concurrent twin (same subject); fixed to refuse only another subject. `5a-4.2-green.log`: ->
+  `Tests  41 passed (41)`. `5a-4.2-server.log`: `npx vitest run` (server) -> `Test Files  74
+  passed | 2 skipped`, `Tests  924 passed | 3 skipped`; `5a-4.2-tsc.log`: `npm run typecheck` ->
+  exit 0. The fetch stub now matches origin+path (`mockGoTrue`, `pendingMocks` added).
+- [x] 4.3 Test first: a `server/src/test/pg/` race test. Two `authCreateUserGoogle` calls with the
+  same id and subject run in overlapping transactions, held by a barrier. One returns the id, the
+  other returns `null`, and there is no 23505. It is red against the targeted
+  `ON CONFLICT (google_sub)`.
+  Evidence: `server/src/test/pg/authCreateUser.pg.test.ts`. `5a-4.3-red.log` (store temporarily back
+  on `ON CONFLICT (google_sub)`): `npx vitest run --project pg src/test/pg/authCreateUser.pg.test.ts`
+  -> `× an id already held by another Google account returns null, not a unique violation`,
+  `PostgresError: duplicate key value violates unique constraint "users_pkey"`, `Tests  1 failed |
+  1 passed`. The overlapping same-subject case passes either way (the arbiter's wait catches it);
+  it stays as a guard. `5a-4.3-green.log` (target-less clause restored): `Tests  2 passed (2)`.
+
+## 5. Drop pre-GoTrue users (design D8)
+
+- [x] 5.1 Test first: a `server/src/test/pg/` test seeds a clone with a user, a membership, prefs, an
+  invite, a `session:` KV row, a `csrf:` KV row, a studio and a show, then applies the new
+  migration's SQL:
+  - the first five are gone;
+  - the `csrf:` row, the studio and the show remain;
+  - a second application deletes nothing more.
+  Then add `supabase/migrations/<ts>_drop_pre_gotrue_users.sql` (no BEGIN/COMMIT) and run
+  `docker/supabase/test_migrate.sh`.
+  Evidence: `5a-5.1-red.log`: `npx vitest run --project pg
+  src/test/pg/dropPreGotrueUsers.pg.test.ts` -> `Error: ENOENT ... 20261003000000_drop_pre_gotrue_users.sql`.
+  `5a-5.1-green.log`: that test plus `catalogSchema.pg.test.ts` (the template now applies the new
+  migration too) -> `Tests  14 passed (14)`; both runs leave `{users:0, memberships:0, prefs:0,
+  invites:0, sessions:0, csrf:1, studios:1, shows:1}`. `5a-5.1-test_migrate.log`:
+  `sh docker/supabase/test_migrate.sh` -> `test_migrate: 35 passed, 0 failed`.
+
+## 6. Docs, live checks, gates
+
+- [x] 6.1 Update the docs:
+  - `docs/supabase.md`: the networks table, Google on GoTrue, auth egress and its reach;
+  - `docs/infisical-secrets.md`: `GOOGLE_CLIENT_ID` is also read by GoTrue and required on stage
+    and prod;
+  - README: the sign-in flow, `email_unverified` and `identity_unavailable` in the `login_error`
+    list.
+  - ADR 0021:
+    - the slice 5 split and owner decisions (5a/5b/5c; server bridge; bootstrap by email;
+      Companion unchanged; verified emails only; no GoTrue token revocation);
+    - the reversal of "supabase-js on the server is for Auth admin";
+    - the 5a entry;
+    - the binding slice 11 note (no user, membership, prefs, invite or login-session import);
+    - these revisit items:
+      - a foreign key from `catalog.users` to `auth.users`;
+      - a GoTrue egress allowlist (internet, LAN and host reach today);
+      - a sign-up allowlist and a per-user rate limit on the grant;
+      - revoking unused GoTrue sessions (slice 9);
+      - GoTrue email linking of two verified Google accounts (slice 9);
+      - slice 6 RLS must grant nothing to a bare `authenticated` role;
+      - a service on a two-member app network can reach the app's port.
+  Evidence: `git diff docs README.md`: `docs/supabase.md` networks table gains `auth-egress`
+  (.16/.27/.35) and `auth-app` (.17/.28/.36) plus the GoTrue paragraph (Google only, the
+  server-side exchange, no CORS); `docs/infisical-secrets.md` gains the `GOOGLE_CLIENT_ID` rule;
+  README:834 lists `email_unverified` and `identity_unavailable`; ADR 0021 slice 5 entry (5a/5b/5c,
+  decisions, the reversal, the slice 11 binding note on item 11) and seven `(5a)` revisit items.
+- [x] 6.2 Live checks:
+  - `make dev-up`:
+    - auth is `healthy`;
+    - `test_gateway.sh dev` passes;
+    - the gate refuses the auth subnet.
+  - `make stage-up` (with the owner's permission), then once it finishes, the owner signs in with
+    Google at `http://localhost:8788`:
+    - `auth.users` and `catalog.users` hold one row with the same id;
+    - `auth.identities` holds one Google identity with the verified subject (A2's live half, and
+      Go's TLS trust for A9);
+    - `/api/profile` reports `logged_in: true`;
+    - logout works;
+    - with `auth` stopped, sign-in redirects with `login_error=identity_unavailable`;
+    - `test_gateway.sh stage` passes.
+    If the real token is refused for lack of a GoTrue secret, stop and ask the owner (design D3).
+  Evidence: dev: `5a-6.2-dev-up.log` (`make dev-up` exit 0), `5a-6.2-gateway-dev.log`
+  (`test_gateway (dev): 50 passed, 0 failed`), `5a-6.2-dev-live.log` (migrations through
+  `20261003000000`, the gate aborts auth's request, app -> `auth health 200`, profile 200).
+  Stage (owner allowed `make stage-up`): `5a-6.2-stage-up.log` exit 0, api and auth `healthy`,
+  0 users after the migration; `5a-6.2-gateway-stage.log` -> `test_gateway (stage): 50 passed,
+  0 failed`; auth `CLIENT_ID_len=72`, and app -> `auth health 200`.
+  `5a-6.2-stage-signin.log`, after the owner's Google sign-in:
+  - one `auth.users` row and one `catalog.users` row with the same id (`9b383da1…`);
+  - the email is confirmed;
+  - exactly one Google identity, whose `provider_id` equals the catalog `google_sub`;
+  - one login session;
+  - no GoTrue secret was configured, so the real token was accepted without one.
+
+  The owner reached the app signed in (stage has `REQUIRE_LOGIN=1`). The owner signed out, leaving
+  0 `session:` rows. With `autologger-stage-auth-1` stopped, the owner's sign-in showed the
+  generic "Sign-in didn't complete" message, the api logged `OAuth callback: Supabase Auth
+  exchange failed network` (the `identity_unavailable` branch), and the counts stayed `1|1|0`
+  (no new user, no session). Auth was restarted and is `healthy`.
+- [x] 6.3 Gates:
+  - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` passes;
+  - `openspec validate gotrue-sign-in --strict` passes;
+  - append the consistency read to `panel.md`.
+  Evidence: `5a-6.3-hook.log`: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage
+  hook` -> exit 0, every gate PASS including `size 242/400 changed lines` and `commands ran
+  ['typecheck', 'test']`. `openspec validate gotrue-sign-in --strict` -> valid. Consistency read
+  appended to `panel.md` (scope change: no).

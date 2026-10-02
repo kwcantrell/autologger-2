@@ -53,7 +53,10 @@ for p in /REST/v1/ /rest/v1// /rest/v1/%2F /Rest/V1/; do check_in "rest root tri
 check "auth without a key" 401 "$(req none /auth/v1/health)"
 check "auth health with the anon key" 200 "$(req anon /auth/v1/health)"
 check "auth settings with the anon key" 200 "$(req anon /auth/v1/settings)"
-grep -q '"disable_signup":true' "$T/body" && check "sign-up is disabled" yes yes || check "sign-up is disabled" yes no
+# gotrue-sign-in D3: Google is the only provider and the only way to sign up; auto-confirm is off.
+for want in '"disable_signup":false' '"google":true' '"email":false' '"phone":false' '"anonymous_users":false' '"mailer_autoconfirm":false'; do
+  grep -q "$want" "$T/body" && check "settings: $want" yes yes || check "settings: $want" yes no
+done
 for p in /auth/v1/verify /auth/v1/callback /auth/v1/authorize; do
   s=$(req none "$p")
   if [ "$s" != 401 ] && [ "$s" != 403 ] && [ "$s" != 404 ] && from_service; then check "open route $p reaches auth without a key" yes yes; else check "open route $p reaches auth without a key" yes "no ($s)"; fi

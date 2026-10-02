@@ -67,7 +67,7 @@ services:
     # namespace owner, which is this service.
     ports:
       - "127.0.0.1:${DEV_PORT:-8787}:8787"
-    networks: [dev, catalog]
+    networks: [dev, catalog, auth-app]
     volumes:
       - dev-data:/data
       - dev-next:/app/web/.next
@@ -126,8 +126,9 @@ services:
       GATE_PORT: ${DEV_PORT:-8787}
       UPSTREAM_PORT: "8786"
       GATE_EXTRA_HOST: app:8787
-      # The dev catalog subnet: its only other member is db, which the gate refuses outright.
-      GATE_DENY_SUBNET: 172.28.34.0/24
+      # The dev catalog and auth-app subnets: their only other members are db and auth, which the
+      # gate refuses outright (gotrue-sign-in D7).
+      GATE_DENY_SUBNET: 172.28.34.0/24 172.28.36.0/24
     volumes:
       - ./docker/dev-gate.Caddyfile:/etc/caddy/Caddyfile:ro
     logging: *logging
@@ -221,6 +222,21 @@ networks:
     ipam:
       config:
         - subnet: 172.28.33.0/24
+  # Sign-in (gotrue-sign-in D6): `auth-egress` is GoTrue's only way out (to Google), and only
+  # `auth` joins it; `auth-app` is internal and host-isolated, with exactly two members, `auth` and
+  # the app, so the app reaches GoTrue for the sign-in exchange and nothing else of Supabase.
+  auth-egress:
+    ipam:
+      config:
+        - subnet: 172.28.35.0/24
+  auth-app:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.28.36.0/24
 
 volumes:
   dev-data:
