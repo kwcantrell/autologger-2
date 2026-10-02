@@ -29,11 +29,16 @@ gets the definitions only. Its keys and first start wait for the cutover.
   | `catalog` | yes | `db` and the app only (dev `app`, stage/prod `api`) | 172.28.15.0/24 | .25 | .34 |
   | `supabase` | yes | `supabase-gw`, `auth`, `rest`, `realtime`, `storage` | 172.28.13.0/24 | .23 | .32 |
   | `edge` | no (it publishes the port) | `supabase-gw` only | 172.28.14.0/24 | .24 | .33 |
+  | `auth-egress` | no (GoTrue's way out, to Google) | `auth` only | 172.28.16.0/24 | .27 | .35 |
+  | `auth-app` | yes | `auth` and the app only (dev `app`, stage/prod `api`) | 172.28.17.0/24 | .28 | .36 |
 
   Nothing on the host can connect to Postgres or to a service directly. `docker/supabase/test_gateway.sh` checks this.
-  The app reaches Postgres only over `catalog`, so it can't reach the Supabase services, and they
-  can't reach it. In dev, `app-gate` also refuses any connection from the `catalog` subnet
-  (`GATE_DENY_SUBNET`).
+  The app reaches Postgres only over `catalog`, and GoTrue only over `auth-app`, for sign-in; it
+  can't reach the other Supabase services. In dev, `app-gate` also refuses any connection from the
+  `catalog` and `auth-app` subnets (`GATE_DENY_SUBNET`). In stage and prod, `db` and `auth` can
+  reach the `api` port over their two-member networks; the API still needs a login.
+  `auth-egress` reaches the internet, the LAN and the host's bridge address, not only Google
+  (accepted for now; ADR 0021 revisit list).
 - **Volumes.**
   - `<project>_supabase-db` (data) and `<project>_supabase-db-config` (the pgsodium root key)
     are **one unit**. Back them up, restore them and delete them together. A data volume without
@@ -80,8 +85,13 @@ never replaced. Realtime gets the `Host` it uses to find its tenant (`realtime-d
 gateway's upstream-error log is turned off, because it would print the `apikey` header. Debug
 with each service's own logs.
 
-GoTrue runs with sign-up disabled and no sign-in provider. Google arrives in slice 5, together
-with CORS and auth's internet access.
+GoTrue's only sign-in provider is Google, and it accepts ID tokens whose audience is the
+environment's `GOOGLE_CLIENT_ID` (gotrue-sign-in, ADR 0021 slice 5a). Email, phone and anonymous
+sign-in are off and auto-confirm is off, so a user can be created only from a Google identity.
+The browser never talks to GoTrue: the app keeps its own Google flow and, once it has verified the
+ID token, exchanges it with GoTrue (`POST http://auth:9999/token?grant_type=id_token`) over
+`auth-app`. The GoTrue user id is the catalog user's id. Dev has no Google client, so its GoTrue
+refuses every token. There is no CORS and no public GoTrue route.
 
 To check a running stack: `sh docker/supabase/test_gateway.sh dev` (or `stage`). It prints
 statuses only.

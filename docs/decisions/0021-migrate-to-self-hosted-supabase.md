@@ -283,15 +283,52 @@ Slice order:
      - two concurrent session creates for one show can exhaust the 3 SERIALIZABLE runs under
        load (seen once in a full `npm test` during 4e, as a 500 from `40001`; it passed 8/8
        alone); one more instance of the retry-exhaustion item above;
+     - (5a) a foreign key from `catalog.users` to `auth.users`;
+     - (5a) an egress allowlist for GoTrue: `auth-egress` reaches the internet, the LAN and the
+       host's bridge address, while GoTrue holds `JWT_SECRET` and its database password;
+     - (5a) a sign-up allowlist and a per-user rate limit on the id_token grant (GoTrue limits
+       `/token` per IP, and every exchange comes from the app's address);
+     - (5a, slice 9) revoking the unused GoTrue sessions each sign-in leaves, and GoTrue's email
+       linking of two *verified* Google accounts that share an address (the catalog refuses it,
+       but GoTrue would merge them; consider manual linking);
+     - (5a, slice 6) RLS must grant nothing to a bare `authenticated` role, since any Google
+       user can hold one;
+     - (5a) a service on a two-member app network (`db` on `catalog`, `auth` on `auth-app`) can
+       reach the stage/prod `api` port;
    - `docker/supabase/init/roles.sql` may leave `SUPABASE_ROLES_PASSWORD` in
      `pg_stat_statements` and the DDL log at init.
-5. Supabase Auth, the bootstrap owner, anonymous mode removed.
+5. Supabase Auth, the bootstrap owner, anonymous mode removed. Split (owner, 2026-10-02) into:
+   - 5a `gotrue-sign-in`: GoTrue becomes the identity of record. Done (2026-10-02). Owner
+     decisions:
+     - **server bridge:** the browser flow, routes, cookie and Google redirect URI are unchanged;
+       after verifying Google's ID token the server exchanges it with GoTrue's id_token grant
+       (`http://auth:9999`, over a new two-member `auth-app` network; no Supabase key in the app),
+       and the GoTrue user id becomes the catalog user's id. This reverses "supabase-js on the
+       server is for Auth admin" above: the app holds no service-role key;
+     - **verified emails only:** an ID token without `email_verified: true` gets
+       `login_error=email_unverified` before GoTrue is called; GoTrue's auto-confirm stays off,
+       so its email-based account linking acts only on verified addresses. The exchange also
+       requires exactly one Google identity with the verified subject, and any id mismatch with
+       the catalog gets `login_error=identity_unavailable` (the panel's critical finding);
+     - GoTrue's tokens are discarded, not revoked; Companion keeps `API_TOKEN` (its device
+       credential is slice 9's);
+     - GoTrue gets egress over a new `auth-egress` network that only it joins; Google is its only
+       provider; `GOOGLE_CLIENT_ID` (public) is required on stage and prod;
+     - existing users, memberships, prefs, invites and login sessions are deleted (migration
+       `20261003000000`). **Binding on slice 11:** the import must not bring back users,
+       memberships, prefs, invites or `session:` KV rows (or must re-key them through GoTrue),
+       and its parity check expects those tables empty;
+   - 5b `require-login`: remove `REQUIRE_LOGIN=0` and the anonymous branches;
+   - 5c `owner-bootstrap`: the `owner` role (one per studio, in the database), the bootstrap
+     owner (`BOOTSTRAP_OWNER_EMAIL`: that verified email becomes owner of every studio without
+     one, at sign-in), and dropping the built-in studios.
 6. RLS for the permission model above.
 7. Session tables, revision, version checks and the audited overwrite.
 8. Session leases.
 9. Realtime replaces the WebSocket protocol.
 10. Blobs to Supabase Storage.
-11. The import script, parity check, cutover runbook and rollback plan.
+11. The import script, parity check, cutover runbook and rollback plan. It must not import users,
+    memberships, prefs, invites or login sessions (slice 5a above).
 
 ## Evidence
 

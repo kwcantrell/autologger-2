@@ -76,6 +76,10 @@ Other rules:
   `latest` is refused.
 - **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ADMIN_TOKEN`, plus
   `API_TOKEN` if Companion is used (at least 32 random bytes).
+- **`GOOGLE_CLIENT_ID` is also read by GoTrue** (gotrue-sign-in D3), as the audience of the ID
+  tokens it accepts. It is public, so it has no secret scope. Stage and prod refuse to start
+  without it; dev runs without one (sign-in is off there). `GOOGLE_CLIENT_SECRET` stays with the
+  app only.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in Infisical.** `DEV_PORT=9000 make dev-up` no longer overrides them, because

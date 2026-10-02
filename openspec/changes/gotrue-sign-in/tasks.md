@@ -136,7 +136,7 @@ the failure line) and green after.
 
 ## 6. Docs, live checks, gates
 
-- [ ] 6.1 Update the docs:
+- [x] 6.1 Update the docs:
   - `docs/supabase.md`: the networks table, Google on GoTrue, auth egress and its reach;
   - `docs/infisical-secrets.md`: `GOOGLE_CLIENT_ID` is also read by GoTrue and required on stage
     and prod;
@@ -156,6 +156,11 @@ the failure line) and green after.
       - GoTrue email linking of two verified Google accounts (slice 9);
       - slice 6 RLS must grant nothing to a bare `authenticated` role;
       - a service on a two-member app network can reach the app's port.
+  Evidence: `git diff docs README.md`: `docs/supabase.md` networks table gains `auth-egress`
+  (.16/.27/.35) and `auth-app` (.17/.28/.36) plus the GoTrue paragraph (Google only, the
+  server-side exchange, no CORS); `docs/infisical-secrets.md` gains the `GOOGLE_CLIENT_ID` rule;
+  README:834 lists `email_unverified` and `identity_unavailable`; ADR 0021 slice 5 entry (5a/5b/5c,
+  decisions, the reversal, the slice 11 binding note on item 11) and seven `(5a)` revisit items.
 - [ ] 6.2 Live checks:
   - `make dev-up`:
     - auth is `healthy`;

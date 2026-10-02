@@ -831,7 +831,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 
-**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie.
+**Auth callback failure redirects:** `GET /auth/google/callback` failure responses are `302` redirects to `/?login_error=<code>` where `<code>` is one of: `provider_error`, `oauth_not_configured`, `missing_params`, `state_invalid`, `exchange_failed`, `token_invalid`, `email_unverified`, `identity_unavailable`, `account_disabled`. The code set is additive-open. Success path unchanged: `302 /` with session cookie. Only Google accounts with a verified email sign in (`email_unverified` otherwise); the verified ID token is then exchanged with Supabase Auth, whose user id is the account id, and `identity_unavailable` means Supabase Auth was unreachable, refused it, or returned an identity that doesn't match the account (gotrue-sign-in).
 
 WebSocket messages broadcast by the SessionHub: `event.changed` · `transport.changed` ·
 `audio.changed` · `lease.changed` · `command` (Companion → browser). The frontend consumes
