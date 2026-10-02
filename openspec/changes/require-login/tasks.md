@@ -14,7 +14,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
 
 ## 1. Test harness signs in a narrowed default member (design D7, D12)
 
-- [ ] 1.1 Change `server/src/test/harness.ts` and `helpers.ts` as D7 describes:
+- [x] 1.1 Change `server/src/test/harness.ts` and `helpers.ts` as D7 describes:
   - a default `member` in the built-in studios and in each `seededSession()` studio; no
     auto-membership in `seedStudio`;
   - the wrapped `app` adds the default cookie only when there is no `cookie` header (any case),
@@ -24,6 +24,21 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   Keep `REQUIRE_LOGIN: '0'` for now, so this step changes only who the caller is.
   Verify: the server suite runs. Record every failure: each must be a suite named in D7/D12 that
   encodes anonymous behavior. Nothing else may fail.
+  Evidence: `cd server && npx vitest run` -> `5b-1.1-red.log`: `Tests  61 failed | 879 passed`
+  (baseline `5b-baseline.log`: `940 passed`). Failing suites: `activeShow.race` (anonymous case),
+  `apiToken` (2, REQUIRE_LOGIN=1 anonymous), `gate` (7: anonymous 401s, plus 413/422 cases on a
+  `seedStudio` session the default member can't see), `shows-profile` (anonymous 404), `teams`
+  (anonymous 401), `events.generate` (:807 anonymous list), `apiResponseFixtures` (4: anonymous
+  profile captures, dev-anonymous busy holder, log-import on a non-member show), `ai` (4: the
+  REQUIRE_LOGIN=1 anonymous case now gets 200 and leaks its MCP registration, cascading into 3
+  `registrationCount` checks), `aiV2` (3 anonymous), `logImport` (9: anonymous dev-mode GET and
+  shows seeded with `seedStudio`, which anonymous could see), `sessions.localAudioImport` (26: a
+  file-local `seedStudio` chain anonymous could see -> `expected 404 to be 200`), `transcribe` (1:
+  ghost holder visible only to anonymous), `auth` (1: the OAuth callback test's one-shot
+  `kv.put` spy caught the default cookie's login session). Every failure is anonymous visibility
+  or an anonymous caller. Harness choice: the default user is created on first use (wrapped
+  `app` or `seededSession()`), so the admin users capture keeps no extra user (D7's stated
+  invariant).
 - [ ] 1.2 Convert the suites D7 and D12 name:
   - auth, role and anonymous suites go to `anonApp` or explicit cookies (`gate`, `authz`,
     `apiToken`, `teams`, `admin`, `shows-profile` signed-out, `activeShow.race`);

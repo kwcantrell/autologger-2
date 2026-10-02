@@ -1,7 +1,7 @@
 import { Catalog } from '@autologger/catalog';
 import { createLoginSession } from '../auth/identity';
 import { sessionCookieName } from '../env';
-import { env } from './harness';
+import { defaultUser, env } from './harness';
 
 export function catalogFor(): Catalog {
   return new Catalog(env.ports.catalog);
@@ -89,7 +89,8 @@ export async function seedSession(opts: {
   });
 }
 
-/** Seed the standard studio → show → session chain in one call (code-health-tail
+/** Seed the standard studio → show → session chain in one call; the default signed-in user
+ * (harness `app`) is made a `member` of the new studio (code-health-tail
  * task 5.1, finding 5.10) — the fixture nearly every router int test needs.
  * Returns all three ids so callers can grab whichever layer they assert on
  * (most want `.sessionId`; cross-studio tests also read `.studioId`).
@@ -102,6 +103,8 @@ export async function seededSession(opts: { categoriesJson?: string } = {}): Pro
   sessionId: string;
 }> {
   const studioId = await seedStudio();
+  // The default signed-in caller is a member of every seededSession studio (require-login D7).
+  await catalogFor().auth.authAddMembershipWithRole((await defaultUser()).id, studioId, 'member');
   const showId = await seedShow({ studioId, categoriesJson: opts.categoriesJson });
   const sessionId = await seedSession({ showId });
   return { studioId, showId, sessionId };

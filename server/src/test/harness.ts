@@ -5,14 +5,23 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Catalog } from '@autologger/catalog';
+import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
+import { createTestDatabase } from '../../../test/pg/testDb';
 import { wireApp } from '../app';
 import type { AppEnv, Bindings } from '../appEnv';
+import { createLoginSession } from '../auth/identity';
+import { sessionCookieName } from '../env';
 import { createBindings } from '../node/config';
-import { createTestDatabase } from '../../../test/pg/testDb';
 
-let current: { bindings: Bindings; close(): Promise<void>; dir: string } | null = null;
+let current: {
+  bindings: Bindings;
+  close(): Promise<void>;
+  dir: string;
+  defaultUser: Promise<{ id: string; cookie: string }> | null;
+} | null = null;
 
 export async function resetTestEnv(): Promise<void> {
   await teardownTestEnv();
@@ -76,7 +85,35 @@ export async function resetTestEnv(): Promise<void> {
     else process.env.HOME = originalHome;
     rmSync(fakeHome, { recursive: true, force: true });
   }
-  current = { ...made, dir };
+  current = { ...made, dir, defaultUser: null };
+}
+
+/** The default signed-in caller (require-login D7): a plain `member` of the built-in studios only.
+ * `seededSession()` adds the same membership for its fresh studio; `seedStudio` adds none, so team
+ * and admin suites see no extra member. Created on first use (the wrapped `app` adding its cookie,
+ * or `seededSession()`), so a suite that never signs in as it — the admin users capture — sees no
+ * extra user either. */
+export function defaultUser(): Promise<{ id: string; cookie: string }> {
+  const cur = current;
+  if (!cur) throw new Error('test env not initialized — is setup.int.ts registered?');
+  cur.defaultUser ??= (async () => {
+    const catalog = new Catalog(cur.bindings.ports.catalog);
+    const id = crypto.randomUUID();
+    await catalog.auth.authCreateUserGoogle({
+      id,
+      email: 'default-user@example.com',
+      googleSub: 'default-user-sub',
+      givenName: 'Default',
+      familyName: 'User',
+      pictureUrl: '',
+    });
+    for (const sid of BUILTIN_STUDIO_ORDER) {
+      await catalog.auth.authAddMembershipWithRole(id, sid, 'member');
+    }
+    const raw = await createLoginSession(cur.bindings.ports.kv, id, 14);
+    return { id, cookie: `${sessionCookieName(cur.bindings.config)}=${raw}` };
+  })();
+  return cur.defaultUser;
 }
 
 export async function teardownTestEnv(): Promise<void> {
@@ -156,4 +193,53 @@ export function envWith(
 const upgradeStub = (() => async (c: { text(b: string, s: number): Response }) =>
   c.text('WebSocket unavailable in HTTP tests', 426)) as unknown as UpgradeWebSocket;
 
-export const app = wireApp(new Hono<AppEnv>(), upgradeStub);
+/** The raw app: requests reach it exactly as sent, so a request with no credentials is
+ * anonymous. Suites that test auth, roles or anonymous behavior use this (require-login D7). */
+export const anonApp = wireApp(new Hono<AppEnv>(), upgradeStub);
+
+/** Add the default user's cookie only when the request carries no `cookie` header (any case),
+ * no `authorization` header, and its path is not under `/api/companion/` — Companion suites send
+ * the bearer like the real client, so a forgotten bearer fails instead of running as a user. */
+async function withDefaultCookie(req: Request): Promise<Request> {
+  if (!current) return req;
+  if (req.headers.has('cookie') || req.headers.has('authorization')) return req;
+  let path = new URL(req.url).pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // keep the raw path
+  }
+  if (path.startsWith('/api/companion/')) return req;
+  const headers = new Headers(req.headers);
+  headers.set('cookie', (await defaultUser()).cookie);
+  return new Request(req, { headers });
+}
+
+type AppFetch = typeof anonApp.fetch;
+type AppRequest = typeof anonApp.request;
+
+const wrappedFetch: AppFetch = async (req, ...rest) =>
+  anonApp.fetch(await withDefaultCookie(req), ...rest);
+
+// Mirrors Hono's own `request`: build the Request, then go through the wrapped fetch.
+const wrappedRequest: AppRequest = (input, requestInit, envArg, executionCtx) => {
+  let req: Request;
+  if (input instanceof Request) {
+    req = requestInit ? new Request(input, requestInit) : input;
+  } else {
+    const s = input.toString();
+    const url = /^https?:\/\//.test(s) ? s : `http://localhost${s.startsWith('/') ? s : `/${s}`}`;
+    req = new Request(url, requestInit);
+  }
+  return wrappedFetch(req, envArg, executionCtx);
+};
+
+/** The app most suites use: it signs in the default member unless the request brings its own
+ * credentials (see `withDefaultCookie`). Everything other than `fetch`/`request` is the raw app. */
+export const app: typeof anonApp = new Proxy(anonApp, {
+  get(target, p, receiver) {
+    if (p === 'fetch') return wrappedFetch;
+    if (p === 'request') return wrappedRequest;
+    return Reflect.get(target, p, receiver);
+  },
+});
