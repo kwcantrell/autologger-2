@@ -11,14 +11,23 @@ the failure line) and green after.
 
 ## 1. Probe (design A9, A10, A12) before any code
 
-- [ ] 1.1 On dev, apply the D3 GoTrue env and the D6 networks as an uncommitted override and run
+- [x] 1.1 On dev, apply the D3 GoTrue env and the D6 networks as an uncommitted override and run
   `make dev-up`. Check:
   - auth is `healthy` with Google enabled, an empty client id and no secret (A10);
   - from `auth`, Google's OIDC config is fetched over `auth-egress` (A9's network half);
   - from the app, `auth:9999/health` answers over `auth-app`;
   - from `auth`, a request to the app's gate port is refused (A12).
-
   Revert the override.
+  Evidence: `5a-1.1-probe.log` (dev, override applied via `compose-run.mjs dev resolved 'compose
+  up -d'`, since `check-envs.sh` refuses it until task 2: `5a-1.1-checkenvs-override.log`):
+  auth `healthy`, `GOOGLE_ENABLED=true CLIENT_ID_len=0 SIGNUP_DISABLED=false`, networks
+  `auth-app auth-egress db supabase`; `/settings` -> `"google":true`, `"disable_signup":false`,
+  `"mailer_autoconfirm":false`, `"email":false`; from auth, Google's OIDC config ->
+  `"issuer": "https://accounts.google.com"`; from app, `auth:9999/health` -> `200 {"version":
+  "v2.196.0"`; grant with a bogus token -> `400 ... "Bad ID token"`; auth -> gate `app:8787` ->
+  connection aborted, no response (same as db's catalog peer: curl `000 exit=52`; dev peer
+  companion -> `status 200`). Override reverted (`git checkout`), `make dev-up` -> exit 0 (auth back
+  on `db supabase`), probe networks removed.
 
 ## 2. Networks and static checks (design D6, D7)
 
@@ -32,14 +41,12 @@ the failure line) and green after.
   - auth leaves `auth-app`;
   - prod `api` joins `supabase`;
   - the gate's deny list lacks the `auth-app` subnet.
-
   Then make the changes:
   - add the networks to `compose.yaml`, `docker/compose.stage.yaml` and `docker/compose.dev.yaml`,
     with auth's networks in `docker/supabase-services.yaml` and the app joined to `auth-app`;
   - make `GATE_DENY_SUBNET` the two-subnet list, and update the `dev-gate.Caddyfile` comment;
   - in `check-envs.sh`, update invariant 3 (the dev app network set) and add the invariant 16
     rules (auth, `auth-egress`, `auth-app`, the `api` network set, subnets, the gate list).
-
   Green: `check-envs.sh all` passes, and `test_check_envs.sh` passes every case.
 
 ## 3. GoTrue configuration (design D3)
@@ -71,7 +78,6 @@ the failure line) and green after.
   - GoTrue's id owned by another subject's row → `identity_unavailable`;
   - a disabled user is still `account_disabled`, and no catalog row changes;
   - every existing callback and NUL case stays green, with GoTrue mocked.
-
   Then change the callback and `authCreateUserGoogle({id, …})` with a target-less
   `ON CONFLICT DO NOTHING`. Test helpers (`seedUser`) pass an id.
 - [ ] 4.3 Test first: a `server/src/test/pg/` race test. Two `authCreateUserGoogle` calls with the
@@ -87,7 +93,6 @@ the failure line) and green after.
   - the first five are gone;
   - the `csrf:` row, the studio and the show remain;
   - a second application deletes nothing more.
-
   Then add `supabase/migrations/<ts>_drop_pre_gotrue_users.sql` (no BEGIN/COMMIT) and run
   `docker/supabase/test_migrate.sh`.
 
@@ -127,7 +132,6 @@ the failure line) and green after.
     - logout works;
     - with `auth` stopped, sign-in redirects with `login_error=identity_unavailable`;
     - `test_gateway.sh stage` passes.
-
     If the real token is refused for lack of a GoTrue secret, stop and ask the owner (design D3).
 - [ ] 6.3 Gates:
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` passes;
