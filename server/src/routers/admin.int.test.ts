@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { anonApp, envWith } from '../test/harness';
-import { adminHeader, catalogFor, seedUser } from '../test/helpers';
+import { adminHeader, catalogFor, seedShow, seedStudio, seedUser } from '../test/helpers';
 
 const TOKEN = 'sweep-admin-token';
 const ADMIN_ENV = envWith({ ADMIN_TOKEN: TOKEN });
@@ -115,6 +115,31 @@ describe('admin user memberships + disable/enable', () => {
       ADMIN_ENV,
     );
     expect(del.status).toBe(200);
+  });
+
+  it("the support membership delete deletes the member's grants in that team only (show-grants D2)", async () => {
+    const cat = catalogFor();
+    const user = await seedUser({});
+    const team = await seedStudio();
+    const other = await seedStudio();
+    const show = await seedShow({ studioId: team });
+    const otherShow = await seedShow({ studioId: other });
+    const now = new Date().toISOString();
+    for (const [studio, s] of [
+      [team, show],
+      [other, otherShow],
+    ]) {
+      await cat.auth.authAddMembershipWithRole(user, studio, 'member');
+      await cat.auth.authGrantShow(user, s, user, now);
+    }
+    const del = await anonApp.request(
+      `/api/admin/users/${user}/memberships/${team}`,
+      { method: 'DELETE', headers: H },
+      ADMIN_ENV,
+    );
+    expect(del.status).toBe(200);
+    expect(await cat.auth.authListShowGrants(show)).toEqual([]);
+    expect((await cat.auth.authListShowGrants(otherShow)).map((r) => r.user_id)).toEqual([user]);
   });
 
   it('disable then enable a user', async () => {

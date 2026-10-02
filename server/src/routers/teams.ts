@@ -156,6 +156,16 @@ teamsRouter.get('/api/teams/:id', async (c) => {
     members,
   };
   if (role === 'admin' || role === 'owner') {
+    // show-grants D6: each member's granted show ids, for managers only (like `invites`). An owner
+    // or admin row is `[]`: their role gives access, and a stored grant is inert while they hold it.
+    const granted = new Map<string, string[]>();
+    for (const g of await catalog.auth.authListShowGrantsInStudio(teamId)) {
+      granted.set(g.user_id, [...(granted.get(g.user_id) ?? []), g.show_id]);
+    }
+    body.members = members.map((m) => ({
+      ...m,
+      show_ids: m.role === 'member' ? [...(granted.get(m.id) ?? [])].sort() : [],
+    }));
     body.invites = (await catalog.auth.authListInvitesForTeam(teamId)).map((r) => ({
       email: String(r.email_norm),
       invited_at_utc: String(r.invited_at_utc),
@@ -255,6 +265,52 @@ teamsRouter.delete('/api/teams/:id/invites/:email', async (c) => {
   await c.get('catalog').tx(async (cat) => {
     await requireTeamRoleIn(cat, admin.id, teamId, OWNER_OR_ADMIN);
     await cat.auth.authDeleteInvite(teamId, emailNorm);
+  });
+  return c.json({ ok: true });
+});
+
+// -- PUT/DELETE /api/teams/:id/shows/:showId/grants/:userId — show grants (owner or admin) --
+// show-grants D5. Status order: 401 (login gate), masked 404 team, 403 role, 404 show, 404 target.
+// No body (any body is ignored). There is no GET: managers read grants from the team detail.
+
+/** The show, which must belong to the team (`404 Show not found.` otherwise). */
+async function requireTeamShow(c: Context<AppEnv>, teamId: string, showId: string): Promise<Row> {
+  const show = await c.get('catalog').shows.getShowRow(showId);
+  if (show === null || String(show.studio_id) !== teamId) {
+    throw new ApiError(404, 'Show not found.');
+  }
+  return show;
+}
+
+teamsRouter.put('/api/teams/:id/shows/:showId/grants/:userId', async (c) => {
+  const teamId = c.req.param('id').trim();
+  const { user: caller } = await requireTeamRole(c, teamId, OWNER_OR_ADMIN);
+  const showId = c.req.param('showId');
+  await requireTeamShow(c, teamId, showId);
+  const targetUserId = c.req.param('userId').trim();
+  await c.get('catalog').tx(async (cat) => {
+    await requireTeamRoleIn(cat, caller.id, teamId, OWNER_OR_ADMIN);
+    // The target's membership is read FOR SHARE, so a leave or removal racing this grant either
+    // commits first (404 here on the re-run) or deletes the grant after it (show-grants D5).
+    const targetRole = await cat.auth.authGetMembershipRoleForShare(targetUserId, teamId);
+    if (targetRole === null) throw new ApiError(404, 'Member not found');
+    // An owner or admin already reaches every show of the team: nothing to store.
+    if (targetRole !== 'member') return;
+    await cat.auth.authGrantShow(targetUserId, showId, caller.id, new Date().toISOString());
+  });
+  return c.json({ ok: true });
+});
+
+teamsRouter.delete('/api/teams/:id/shows/:showId/grants/:userId', async (c) => {
+  const teamId = c.req.param('id').trim();
+  const { user: caller } = await requireTeamRole(c, teamId, OWNER_OR_ADMIN);
+  const showId = c.req.param('showId');
+  await requireTeamShow(c, teamId, showId);
+  const targetUserId = c.req.param('userId').trim();
+  // Idempotent, also for a non-member target (like invite revocation).
+  await c.get('catalog').tx(async (cat) => {
+    await requireTeamRoleIn(cat, caller.id, teamId, OWNER_OR_ADMIN);
+    await cat.auth.authRevokeShow(targetUserId, showId);
   });
   return c.json({ ok: true });
 });
