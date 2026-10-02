@@ -109,7 +109,16 @@ gate reads only up to the first blank line.
 
 ## 13. Verification
 
-- [ ] 13.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify: exit 0, every gate PASS (`6a-13.1-hook.log`).
-- [ ] 13.2 Run the server `integration` and `pg` projects 5 times in a row (`cd server && npx vitest run --project integration --project pg`, `6a-flake-{1..5}.log`). Verify: every run green; any flake is named with its test and reported to the owner.
-- [ ] 13.3 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`. Verify: `openspec validate show-grants --strict` → valid.
+- [x] 13.1 Run `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook`. Verify: exit 0, every gate PASS (`6a-13.1-hook.log`).
+  Evidence: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` -> `exit 0`;
+  `PASS openspec`, `PASS change tier 2`, `PASS risk-floor 28 high-risk path(s) touched`, `PASS evidence`,
+  `PASS commands ran ['typecheck', 'test']`.
+- [x] 13.2 Run the server `integration` and `pg` projects 5 times in a row (`cd server && npx vitest run --project integration --project pg`, `6a-flake-{1..5}.log`). Verify: every run green; any flake is named with its test and reported to the owner.
+  Evidence: `cd server && npx vitest run --project integration --project pg` x5 -> runs 1-5 each
+  `exit 0  Tests  800 passed (800)`; no flake. After the fail-closed fix (d6ae1d6) one more run ->
+  `exit 0  Tests  800 passed (800)` (`6a-flake-post-fix.log`).
+- [x] 13.3 Consistency read (tier 2) after any post-approval artifact edit, logged in `panel.md`. Verify: `openspec validate show-grants --strict` → valid.
+  Evidence: fresh-context read logged in `panel.md` "Consistency read 2026-10-02" -> `Scope change:
+  no`, one major (socket close failed open) resolved in d6ae1d6; `openspec validate show-grants
+  --strict` -> `Change 'show-grants' is valid`.
 - [ ] 13.4 At archive (design D16), edit the Purpose paragraph of `openspec/specs/team-management/spec.md`: content is no longer role-agnostic; owners and admins reach every show, members reach shows through per-show grants that owners and admins manage; losing access closes the user's session sockets. Verify: `sed -n 3,20p openspec/specs/team-management/spec.md | grep -n -i "role-agnostic"` → no output.
