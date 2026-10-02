@@ -18,7 +18,7 @@ import { z } from 'zod';
 import type { AppEnv, Bindings } from '../appEnv';
 import { sheetsLogImportConfigured } from '../env';
 import { ApiError } from '../httpError';
-import { requireUser, timecodeCtx } from './_helpers';
+import { requireShowAccess, requireUser, timecodeCtx } from './_helpers';
 
 export const logImportRouter = new Hono<AppEnv>();
 
@@ -124,17 +124,10 @@ function jobFailureDetail(err: unknown): string | null {
 
 logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
   const showId = c.req.param('showId');
-  const catalog = c.get('catalog');
   const user = requireUser(c);
-  const show = await catalog.shows.getShowRow(showId);
-  if (!show) throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-  // Studio-membership scope (the requireSession pattern in _helpers.ts): a
-  // user who isn't a member of the show's studio gets the SAME 404 as a
-  // nonexistent show — no existence oracle (always checked, require-login D3).
-  const studioId = String(show.studio_id ?? '');
-  if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
-    throw new ApiError(404, SHOW_NOT_FOUND_DETAIL);
-  }
+  // Show access (show-grants D3): a user who can't access the show (a non-member, or a member
+  // without a grant) gets the SAME 404 as a nonexistent show — no existence oracle.
+  const show = await requireShowAccess(c, showId, SHOW_NOT_FOUND_DETAIL);
 
   // Configuration gate AFTER the 404 scope check (the youtube-import ordering
   // in sessions.ts): the outbound docs.google.com fetch is operator opt-in —

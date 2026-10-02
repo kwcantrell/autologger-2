@@ -389,11 +389,11 @@ describe('POST /api/sessions/:sessionId/youtube-import (requireSession guard, pr
     }
   });
 
-  it('a member of the session’s studio still reaches the 503 stub (guard passes through)', async () => {
+  it('an admin of the session’s studio still reaches the 503 stub (guard passes through)', async () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio });
     const session = await seedSession({ showId: show });
-    const cookie = await loginCookie(await seedUser({ studios: [studio] }));
+    const cookie = await loginCookie(await seedUser({ studios: [studio], role: 'admin' }));
     const res = await app.request(
       `/api/sessions/${session}/youtube-import`,
       { method: 'POST', headers: { Cookie: cookie } },
@@ -446,7 +446,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio });
     const session = await seedSession({ showId: show, episode: '042' });
-    const userId = await seedUser({ studios: [studio] });
+    const userId = await seedUser({ studios: [studio], role: 'admin' });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({});
@@ -476,7 +476,7 @@ describe('GET /api/sessions/:sessionId (detail endpoint)', () => {
     const showA = await seedShow({ studioId: studioA });
     const showB = await seedShow({ studioId: studioB });
     const session = await seedSession({ showId: showA });
-    const userId = await seedUser({ studios: [studioA, studioB] });
+    const userId = await seedUser({ studios: [studioA, studioB], role: 'admin' });
     await catalogFor().auth.authSetPrefs(userId, studioB, showB);
     const cookie = await loginCookie(userId);
 
@@ -555,7 +555,7 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio, code: 'HD' });
     const session = await seedSession({ showId: show, episode: '7', title: 'HD_260802' });
-    const userId = await seedUser({ studios: [studio] });
+    const userId = await seedUser({ studios: [studio], role: 'admin' });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({});
@@ -590,7 +590,7 @@ describe('deck_title equals stored title (D5) — list/detail/status', () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio, code: 'HD' });
     const session = await seedSession({ showId: show, episode: '7', title: '' });
-    const userId = await seedUser({ studios: [studio] });
+    const userId = await seedUser({ studios: [studio], role: 'admin' });
     await catalogFor().auth.authSetPrefs(userId, studio, show);
     const cookie = await loginCookie(userId);
     const reqEnv = envWith({});

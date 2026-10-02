@@ -7,6 +7,7 @@ import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { app, env, envWith } from '../test/harness';
 import {
+  catalogFor,
   loginCookie,
   seedMemberStudio,
   seedSession,
@@ -38,6 +39,11 @@ function postImport(showId: string, bindings = enabledEnv(), headers: Record<str
     },
     bindings,
   );
+}
+
+/** Give a team member access to a show (show-grants D2). */
+async function grant(userId: string, showId: string): Promise<void> {
+  await catalogFor().auth.authGrantShow(userId, showId, userId, new Date().toISOString());
 }
 
 afterEach(() => {
@@ -115,10 +121,11 @@ describe('log-import job HTTP surface', () => {
     throw new Error(`job did not finish, last status=${status}`);
   });
 
-  it('POST succeeds for a studio member with the gate configured, and the creator can poll the job', async () => {
+  it('POST succeeds for a studio member granted the show with the gate configured, and the creator can poll the job', async () => {
     const studio = await seedStudio();
     const show = await seedShow({ studioId: studio });
     const member = await seedUser({ studios: [studio] });
+    await grant(member, show);
     const memberCookie = await loginCookie(member);
     vi.stubGlobal(
       'fetch',
@@ -145,6 +152,8 @@ describe('log-import job HTTP surface', () => {
     const show = await seedShow({ studioId: studio });
     const creator = await seedUser({ studios: [studio] });
     const otherMember = await seedUser({ studios: [studio] });
+    await grant(creator, show);
+    await grant(otherMember, show);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response('<!DOCTYPE html><html></html>', { status: 200 })),
@@ -390,16 +399,20 @@ describe('cross-package instanceof pin: TranscriptGenerateError in ensureTimedTr
     const title = 'Catalog Failure Session';
     await seedSession({ showId: show, title });
     const xlsx = await xlsxBytes(title, { timecode: '0:01', message: 'hello', type: '' });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(xlsx, { status: 200 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(xlsx, { status: 200 })),
+    );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const spy = vi
-      .spyOn(SessionIndexStore.prototype, 'getSessionJoinedRow')
-      .mockRejectedValue(
-        Object.assign(new Error('could not serialize access due to read/write dependencies among transactions'), {
+    const spy = vi.spyOn(SessionIndexStore.prototype, 'getSessionJoinedRow').mockRejectedValue(
+      Object.assign(
+        new Error('could not serialize access due to read/write dependencies among transactions'),
+        {
           name: 'PostgresError',
           code: '40001',
-        }),
-      );
+        },
+      ),
+    );
     try {
       const post = await postImport(show, deepgramConfiguredEnv());
       const { job_id } = (await post.json()) as { job_id: string };

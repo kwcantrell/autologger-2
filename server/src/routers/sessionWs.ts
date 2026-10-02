@@ -1,5 +1,6 @@
 // Session WebSocket — browser tabs + Companion attach for live pushes. The
-// login gate + requireSession run BEFORE the upgrade (same gate as the HTTP routes).
+// login gate + requireSession run BEFORE the upgrade (same gate as the HTTP routes):
+// a caller without access to the session's show gets the masked 404 (show-grants D3).
 
 import type { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';

@@ -1,5 +1,6 @@
-// Shared router helpers — the session access gate (_session_access_gate),
-// per-session hub resolution, timecode context, and marked-at parsing.
+// Shared router helpers — the session and show access gates (_session_access_gate,
+// requireShowAccess, canAccessSession; show-grants D3), per-session hub resolution, timecode
+// context, and marked-at parsing.
 
 import type { AuthUser, Row } from '@autologger/catalog';
 import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
@@ -37,11 +38,13 @@ export function requireUser(c: Context<AppEnv>): AuthUser {
   return user;
 }
 
-/** _session_access_gate — existence + studio-membership scope. Returns the
- * catalog row. Authentication (the unauthenticated-401 decision) happens once,
- * in the authContext middleware via apiRequestRequiresLogin — every caller of
- * this helper is an /api/ route that middleware already gates; membership is
- * always checked (require-login D3). */
+/** _session_access_gate — existence + show access (show-grants D3). Returns the catalog row.
+ * Authentication (the unauthenticated-401 decision) happens once, in the authContext middleware via
+ * apiRequestRequiresLogin — every caller of this helper is an /api/ route that middleware already
+ * gates. Authorization is the show access rule (`authCanAccessShow`: owner or admin of the show's
+ * team, or a member with a grant for the show). A nonexistent session, a session with no show, a
+ * foreign team's session and an ungranted member's session all get the same masked
+ * `404 Session not found`, so the existence oracle stays closed. */
 export async function requireSession(
   c: Context<AppEnv>,
   sessionId: string,
@@ -53,11 +56,38 @@ export async function requireSession(
     includeHidden: opts.includeHidden,
   });
   if (row === null) throw new ApiError(404, 'Session not found');
-  const studioId = await catalog.sessions.getSessionStudioId(sessionId);
-  if (!studioId || !(await catalog.auth.authUserHasStudio(user.id, studioId))) {
+  const showId = row.show_id == null ? '' : String(row.show_id);
+  if (!showId || !(await catalog.auth.authCanAccessShow(user.id, showId))) {
     throw new ApiError(404, 'Session not found');
   }
   return row;
+}
+
+/** The show-scoped gate (show-grants D3): the show row when the signed-in user can access the
+ * show; a nonexistent show and a show the user can't access throw the same masked 404. */
+export async function requireShowAccess(
+  c: Context<AppEnv>,
+  showId: string,
+  notFoundDetail = 'Show not found.',
+): Promise<Row> {
+  const user = requireUser(c);
+  const catalog = c.get('catalog');
+  const show = await catalog.shows.getShowRow(showId);
+  if (!show || !(await catalog.auth.authCanAccessShow(user.id, showId))) {
+    throw new ApiError(404, notFoundDetail);
+  }
+  return show;
+}
+
+/** The non-throwing form of `requireSession` (show-grants D3, D12): whether the signed-in user can
+ * access the session, hidden sessions included. False for a nonexistent session or one with no
+ * show. */
+export async function canAccessSession(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
+  const user = requireUser(c);
+  const catalog = c.get('catalog');
+  const row = await catalog.sessions.getSessionIndexRow(sessionId, { includeHidden: true });
+  if (row === null || row.show_id == null || !String(row.show_id)) return false;
+  return catalog.auth.authCanAccessShow(user.id, String(row.show_id));
 }
 
 /** _parse_optional_marked_at — validate an ISO-8601 instant; throw 400 on garbage. */

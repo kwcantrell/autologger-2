@@ -30,8 +30,16 @@ export async function seedMemberStudio(opts: { id?: string; name?: string } = {}
   return id;
 }
 
+/** A user, optionally a member of `studios`: with the column default role (`member`), or with
+ * `role` (show-grants D14: an `admin` reaches every show of the team without a grant). */
 export async function seedUser(
-  opts: { id?: string; email?: string; sub?: string; studios?: string[] } = {},
+  opts: {
+    id?: string;
+    email?: string;
+    sub?: string;
+    studios?: string[];
+    role?: 'owner' | 'admin' | 'member';
+  } = {},
 ): Promise<string> {
   const cat = catalogFor();
   const created = await cat.auth.authCreateUserGoogle({
@@ -44,7 +52,12 @@ export async function seedUser(
   });
   if (created === null) throw new Error(`seedUser: a user with that sub already exists`);
   const id = created;
-  if (opts.studios?.length) await cat.auth.authAddMemberships(id, opts.studios);
+  if (opts.studios?.length) {
+    if (opts.role === undefined) await cat.auth.authAddMemberships(id, opts.studios);
+    else {
+      for (const sid of opts.studios) await cat.auth.authAddMembershipWithRole(id, sid, opts.role);
+    }
+  }
   return id;
 }
 

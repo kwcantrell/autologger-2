@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { anonApp, envWith } from '../test/harness';
 import {
+  catalogFor,
   loginCookie,
   seededSession,
   seedStudio,
@@ -84,9 +85,10 @@ describe('cross-studio masking (task 7.3)', () => {
     expect(((await res.json()) as { detail: string }).detail).toBe('Session not found');
   });
 
-  it('a member of the session’s studio gets 200', async () => {
-    const { studioId: studio, sessionId: session } = await seededSession();
+  it('a member of the session’s studio granted its show gets 200 (show-grants D3)', async () => {
+    const { studioId: studio, showId: show, sessionId: session } = await seededSession();
     const user = await seedUser({ studios: [studio] });
+    await catalogFor().auth.authGrantShow(user, show, user, new Date().toISOString());
     const res = await anonApp.request(
       `/api/sessions/${session}/status`,
       { method: 'GET', headers: { Cookie: await loginCookie(user) } },

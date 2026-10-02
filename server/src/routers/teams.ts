@@ -9,8 +9,9 @@
 // member need owner or admin; role changes, removing an admin, delete and transfer need the
 // owner. The owner anchors the team: no route here removes, demotes or lets the owner leave
 // (409 `Transfer ownership first.`); ownership moves only by transfer. Each write re-checks the
-// caller's role and the target's inside its transaction. `requireSession` and content routers
-// are untouched — role checks live ONLY here.
+// caller's role and the target's inside its transaction. Session content follows show access
+// (show-grants D3): `requireSession` admits owners and admins of the show's team and members with
+// a grant for the show; the grants themselves are managed here (show-grants D5).
 
 import type { AuthUser, CatalogFacade, Row, TeamRole } from '@autologger/catalog';
 import {
