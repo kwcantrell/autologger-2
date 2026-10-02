@@ -74,7 +74,8 @@ another service.
 Other rules:
 - **Tags.** `WEB_TAG` and `API_TAG` are the 12-character git SHA that `make prod-push` prints.
   `latest` is refused.
-- **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ADMIN_TOKEN`, plus
+- **Required prod keys.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `BOOTSTRAP_OWNER_EMAIL` and
+  `ADMIN_TOKEN`, plus
   `API_TOKEN` if Companion is used (at least 32 random bytes).
 - **`GOOGLE_CLIENT_ID` is also read by GoTrue** (gotrue-sign-in D3), as the audience of the ID
   tokens it accepts. It is public, so it has no secret scope. `GOOGLE_CLIENT_SECRET` stays with
@@ -84,6 +85,15 @@ Other rules:
   without them. Dev needs its own Google OAuth client (authorized redirect
   `http://localhost:8787/auth/google/callback`) and an `API_TOKEN` in `autologger-dev`, set also
   in the dev Companion connection; without it the dev Companion gets `401`.
+- **Every stack needs `BOOTSTRAP_OWNER_EMAIL`** (owner-bootstrap D8). It names the bootstrap
+  owner: at every sign-in whose verified Google email matches it (trimmed, ASCII
+  case-insensitive; an email with any non-ASCII character never matches), that user becomes the
+  owner of every team that has no owner, and each claimed team id is logged. Set it in
+  `autologger-dev`, `-stage` and `-prod`. A missing or blank value refuses `make <env>-up`
+  (`compose-run`) and refuses the server's boot; a non-ASCII value also refuses boot. At boot the
+  server logs a masked form, `bootstrap owner: <domain> #<8 hex>`, never the local part, so you
+  can check the value for a typo. Prod's catalog starts with ownerless teams, so set the key
+  before the first deploy of an image that requires it.
 - **Never reuse prod secrets in dev or stage.** Use separate, low-limit keys and separate OAuth
   clients.
 - **Ports are set in Infisical.** `DEV_PORT=9000 make dev-up` no longer overrides them, because

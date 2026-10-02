@@ -245,7 +245,12 @@ anything in it. In every stack, it SHALL refuse to boot when
 empty or only whitespace counts as blank), because no one could sign in, and when `REQUIRE_LOGIN`
 is set to any value, the empty string included, so a stale setting fails loudly instead of being
 ignored; each message names the variable and prints no value. A running server therefore always
-reports `auth.oauth_configured: true`. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
+reports `auth.oauth_configured: true`. In every stack, it SHALL also refuse to boot when
+`BOOTSTRAP_OWNER_EMAIL` is unset or blank (the same trimmed rule), because no one could claim
+the teams that have no owner (team-management, "Bootstrap owner"), and when it contains any
+non-ASCII character, because the claim matches exact ASCII only; each message names the variable
+and prints no value. A server that boots SHALL log a masked form of the value so the operator
+can check it: the domain and a short hash of the normalized address, never the local part. `npm run dev` SHALL apply the same checks before starting its file watcher, so a
 refused run exits instead of waiting for changes. No package script SHALL read a `server/.env`
 file.
 
@@ -284,6 +289,21 @@ file.
   and `GOOGLE_CLIENT_SECRET`, and `PUBLIC_BASE_URL` set to only spaces
 - **THEN** it exits non-zero naming `PUBLIC_BASE_URL`, prints no environment value, and
   nothing listens
+
+#### Scenario: A blank bootstrap owner refuses boot
+- **WHEN** the server or `npm run dev` starts with a valid `AUTOLOGGER_STACK`, the sign-in
+  settings set, and `BOOTSTRAP_OWNER_EMAIL` unset or only spaces
+- **THEN** it exits non-zero naming `BOOTSTRAP_OWNER_EMAIL`, prints no environment value, and
+  nothing listens
+
+#### Scenario: A non-ASCII bootstrap owner refuses boot
+- **WHEN** the server starts with `BOOTSTRAP_OWNER_EMAIL` set to `Kalen@gmail.com`
+- **THEN** it exits non-zero naming `BOOTSTRAP_OWNER_EMAIL` and prints no value
+
+#### Scenario: The bootstrap owner is logged masked
+- **WHEN** the server boots with `BOOTSTRAP_OWNER_EMAIL=Owner@Example.com`
+- **THEN** its startup log names `example.com` and a short hash of `owner@example.com`, and
+  contains neither `owner` nor `Owner` as the local part
 
 #### Scenario: No package script reads server/.env
 - **WHEN** every `package.json` script in the repository is inspected

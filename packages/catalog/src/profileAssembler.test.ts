@@ -18,7 +18,6 @@ function assembler(): ProfileAssembler {
       if (allowed === null || allowed.size !== 0) throw new Error('expected the empty allowed set');
       return {};
     },
-    resolveActiveStudio: untouched('the global active studio'),
     getSetting: untouched('a global setting'),
     setSetting: untouched('a global setting'),
     listStudiosBrief: untouched('the studio list'),

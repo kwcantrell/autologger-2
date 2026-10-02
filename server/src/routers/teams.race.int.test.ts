@@ -1,6 +1,7 @@
-// team-management "Concurrent team writes" (catalog-concurrency-hazards D2, D3): each test holds
-// one request at a chosen catalog statement, commits a competing request, then lets the first go,
-// and checks the outcome is the one a serial order gives.
+// team-management "Concurrent team and ownership writes" (catalog-concurrency-hazards D2, D3;
+// owner-bootstrap D2, D3): each test holds one request at a chosen catalog statement, commits a
+// competing request, then lets the first go, and checks the outcome is the one a serial order
+// gives.
 
 import { describe, expect, it } from 'vitest';
 import { GatedCatalog } from '../test/gatedCatalog';
@@ -9,15 +10,19 @@ import { catalogFor, loginCookie, seedStudio, seedUser } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 /** The early (root) role check every admin route makes before its write. */
-const EARLY_ROLE_READ = /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/;
+const EARLY_ROLE_READ =
+  /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/;
 
-async function teamWithAdmins(n: number): Promise<{ team: string; ids: string[]; cookies: string[] }> {
+/** A team of `n` users: `ids[0]` is the owner, the rest are admins. */
+async function teamWithAdmins(
+  n: number,
+): Promise<{ team: string; ids: string[]; cookies: string[] }> {
   const team = await seedStudio();
   const ids: string[] = [];
   const cookies: string[] = [];
   for (let i = 0; i < n; i++) {
     const id = await seedUser();
-    await catalogFor().auth.authAddMembershipWithRole(id, team, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(id, team, i === 0 ? 'owner' : 'admin');
     ids.push(id);
     cookies.push(await loginCookie(id));
   }
@@ -31,37 +36,56 @@ function send(
   body?: unknown,
   bindings = env,
 ): Promise<Response> {
-  return Promise.resolve(app.request(
-    path,
-    {
-      method,
-      headers: body === undefined ? { cookie } : { ...J, cookie },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    },
-    bindings,
-  ));
+  return Promise.resolve(
+    app.request(
+      path,
+      {
+        method,
+        headers: body === undefined ? { cookie } : { ...J, cookie },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+      bindings,
+    ),
+  );
 }
 
 const role = (userId: string, team: string) =>
   catalogFor().auth.authGetMembershipRole(userId, team);
 
-describe('admin re-check inside the write (#8)', () => {
-  it('a demoted admin’s in-flight delete gets 403 and the team survives', async () => {
+/** The ids of the team's owners; the one-owner index means at most one. */
+async function owners(team: string): Promise<string[]> {
+  return (
+    await env.ports.catalog.all<{ user_id: string }>(
+      "SELECT user_id FROM user_studio_memberships WHERE studio_id = ? AND role = 'owner'",
+      team,
+    )
+  ).map((r) => r.user_id);
+}
+
+describe('role re-check inside the write (#8)', () => {
+  it('an owner who transferred ownership mid-delete gets 403 and the team survives', async () => {
     const { team, ids, cookies } = await teamWithAdmins(3);
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(EARLY_ROLE_READ);
-    const del = send('DELETE', `/api/teams/${team}`, cookies[1] as string, undefined, envWith({}, { catalog: gated }));
+    const del = send(
+      'DELETE',
+      `/api/teams/${team}`,
+      cookies[0] as string,
+      undefined,
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    const demote = await send('POST', `/api/teams/${team}/members/${ids[1]}/role`, cookies[0] as string, {
-      role: 'member',
+    const transfer = await send('POST', `/api/teams/${team}/owner`, cookies[0] as string, {
+      user_id: ids[1],
     });
-    expect(demote.status).toBe(200);
+    expect(transfer.status).toBe(200);
     h.release();
     expect((await del).status).toBe(403);
+    expect(await owners(team)).toEqual([ids[1]]);
     expect(await role(ids[0] as string, team)).toBe('admin');
   });
 
-  it('a demoted admin’s in-flight rename gets 403 and the name is unchanged', async () => {
+  it('the owner’s demotion of admin B racing B’s rename: B gets 403 and the name is unchanged', async () => {
     const { team, ids, cookies } = await teamWithAdmins(3);
     const before = await env.ports.catalog.first<{ display_name: string }>(
       'SELECT display_name FROM studio_definitions WHERE id = ?',
@@ -69,9 +93,21 @@ describe('admin re-check inside the write (#8)', () => {
     );
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(EARLY_ROLE_READ);
-    const rename = send('PATCH', `/api/teams/${team}`, cookies[1] as string, { display_name: 'Renamed' }, envWith({}, { catalog: gated }));
+    const rename = send(
+      'PATCH',
+      `/api/teams/${team}`,
+      cookies[1] as string,
+      { display_name: 'Renamed' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    await send('POST', `/api/teams/${team}/members/${ids[1]}/role`, cookies[0] as string, { role: 'member' });
+    const demote = await send(
+      'POST',
+      `/api/teams/${team}/members/${ids[1]}/role`,
+      cookies[0] as string,
+      { role: 'member' },
+    );
+    expect(demote.status).toBe(200);
     h.release();
     expect((await rename).status).toBe(403);
     const after = await env.ports.catalog.first<{ display_name: string }>(
@@ -79,14 +115,101 @@ describe('admin re-check inside the write (#8)', () => {
       team,
     );
     expect(after).toEqual(before);
+    expect(await owners(team)).toEqual([ids[0]]);
+  });
+});
+
+describe('ownership transfer races (owner-bootstrap D3)', () => {
+  async function teamWithMembers(): Promise<{
+    team: string;
+    o: string;
+    m: string;
+    n: string;
+    cookies: Record<string, string>;
+  }> {
+    const team = await seedStudio();
+    const o = await seedUser();
+    const m = await seedUser();
+    const n = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(o, team, 'owner');
+    await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
+    await catalogFor().auth.authAddMembershipWithRole(n, team, 'member');
+    const cookies = { o: await loginCookie(o), m: await loginCookie(m), n: await loginCookie(n) };
+    return { team, o, m, n, cookies };
+  }
+
+  it('two concurrent transfers to different members: one 200, one 403, exactly one owner', async () => {
+    const { team, o, m, n, cookies } = await teamWithMembers();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(EARLY_ROLE_READ);
+    const toM = send(
+      'POST',
+      `/api/teams/${team}/owner`,
+      cookies.o,
+      { user_id: m },
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    const toN = await send('POST', `/api/teams/${team}/owner`, cookies.o, { user_id: n });
+    expect(toN.status).toBe(200);
+    h.release();
+    expect((await toM).status).toBe(403);
+    expect(await owners(team)).toEqual([n]);
+    expect(await role(o, team)).toBe('admin');
+    expect(await role(m, team)).toBe('member');
+  });
+
+  it('a transfer racing the target’s leave, leave first: the transfer gets 404, one owner', async () => {
+    const { team, o, m, cookies } = await teamWithMembers();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(EARLY_ROLE_READ);
+    const transfer = send(
+      'POST',
+      `/api/teams/${team}/owner`,
+      cookies.o,
+      { user_id: m },
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    expect((await send('POST', `/api/teams/${team}/leave`, cookies.m)).status).toBe(200);
+    h.release();
+    const res = await transfer;
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ detail: 'Member not found' });
+    expect(await owners(team)).toEqual([o]);
+    expect(await role(m, team)).toBeNull();
+  });
+
+  it('a transfer racing the target’s leave, transfer first: the leave gets 409, one owner', async () => {
+    const { team, o, m, cookies } = await teamWithMembers();
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(EARLY_ROLE_READ);
+    const leave = send(
+      'POST',
+      `/api/teams/${team}/leave`,
+      cookies.m,
+      undefined,
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    expect((await send('POST', `/api/teams/${team}/owner`, cookies.o, { user_id: m })).status).toBe(
+      200,
+    );
+    h.release();
+    const res = await leave;
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ detail: 'Transfer ownership first.' });
+    expect(await owners(team)).toEqual([m]);
+    expect(await role(o, team)).toBe('admin');
   });
 });
 
 const ADMIN_TOKEN = 'race-admin-token';
 const ADMIN_ENV = envWith({ ADMIN_TOKEN });
 const ADMIN_H = { Authorization: `Bearer ${ADMIN_TOKEN}`, ...J };
-/** The creation cap's count of the caller's admin teams. */
-const CAP_COUNT = /SELECT COUNT\(\*\) AS n FROM user_studio_memberships\s+WHERE user_id = \? AND role = 'admin'/;
+/** The creation cap's count of the caller's owned teams. */
+const CAP_COUNT =
+  /SELECT COUNT\(\*\) AS n FROM user_studio_memberships WHERE user_id = \? AND role = 'owner'/;
 
 async function members(team: string): Promise<string[]> {
   return (
@@ -123,26 +246,32 @@ async function leaveOrphans(team: string, strangerId: string): Promise<void> {
     strangerId,
   );
   await env.ports.catalog.run(
-    "INSERT INTO app_settings (key, value) VALUES (?, '{\"stale\":true}')",
+    'INSERT INTO app_settings (key, value) VALUES (?, \'{"stale":true}\')',
     `studio_config:${team}`,
   );
 }
 
 describe('team creation (#9, #18)', () => {
-  it('concurrent creates by a user at 19 teams: one 200, one 400', async () => {
+  it('concurrent creates by a user owning 19 teams: one 200, one 400', async () => {
     const userId = await seedUser();
     for (let i = 0; i < 19; i++) {
-      await catalogFor().auth.authAddMembershipWithRole(userId, await seedStudio(), 'admin');
+      await catalogFor().auth.authAddMembershipWithRole(userId, await seedStudio(), 'owner');
     }
     const cookie = await loginCookie(userId);
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(CAP_COUNT);
-    const a = send('POST', '/api/teams', cookie, { id: 'cap-a', display_name: 'A' }, envWith({}, { catalog: gated }));
+    const a = send(
+      'POST',
+      '/api/teams',
+      cookie,
+      { id: 'cap-a', display_name: 'A' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
     const b = await send('POST', '/api/teams', cookie, { id: 'cap-b', display_name: 'B' });
     h.release();
     expect([b.status, (await a).status].sort()).toEqual([200, 400]);
-    const owned = await catalogFor().auth.authCountAdminTeams(userId, ['test-studios', 'test-studio-2']);
+    const owned = await catalogFor().auth.authCountOwnedTeams(userId);
     expect(owned).toBe(20);
   });
 
@@ -150,7 +279,13 @@ describe('team creation (#9, #18)', () => {
     const { team, cookies } = await teamWithAdmins(2);
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(EARLY_ROLE_READ);
-    const invite = send('POST', `/api/teams/${team}/invites`, cookies[1] as string, { email: 'late@example.com' }, envWith({}, { catalog: gated }));
+    const invite = send(
+      'POST',
+      `/api/teams/${team}/invites`,
+      cookies[1] as string,
+      { email: 'late@example.com' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
     expect((await send('DELETE', `/api/teams/${team}`, cookies[0] as string)).status).toBe(200);
     h.release();
@@ -163,7 +298,10 @@ describe('team creation (#9, #18)', () => {
     const stranger = await seedUser();
     await leaveOrphans(team, stranger);
     const creator = await seedUser();
-    const res = await send('POST', '/api/teams', await loginCookie(creator), { id: team, display_name: 'Reused' });
+    const res = await send('POST', '/api/teams', await loginCookie(creator), {
+      id: team,
+      display_name: 'Reused',
+    });
     expect(res.status).toBe(200);
     expect(await members(team)).toEqual([creator]);
     expect(await invites(team)).toBe(0);
@@ -174,15 +312,21 @@ describe('team creation (#9, #18)', () => {
     await env.ports.catalog.run(
       "INSERT INTO shows (id, studio_id, name, show_code, created_at_utc) VALUES ('ghost-show', 'ghost-team', 'G', 'G', '2026-01-01T00:00:00Z')",
     );
-    const res = await send('POST', '/api/teams', await loginCookie(await seedUser()), { id: 'ghost-team', display_name: 'G' });
+    const res = await send('POST', '/api/teams', await loginCookie(await seedUser()), {
+      id: 'ghost-team',
+      display_name: 'G',
+    });
     expect(res.status).toBe(400);
     expect(await members('ghost-team')).toEqual([]);
   });
 
-  it('a built-in id is refused and its memberships are untouched', async () => {
+  it('a former built-in id is refused as an existing team and its memberships are untouched', async () => {
     const member = await seedUser({ studios: ['test-studios'] });
     const before = await members('test-studios');
-    const res = await send('POST', '/api/teams', await loginCookie(member), { id: 'test-studios', display_name: 'X' });
+    const res = await send('POST', '/api/teams', await loginCookie(member), {
+      id: 'test-studios',
+      display_name: 'X',
+    });
     expect(res.status).toBe(400);
     expect(await members('test-studios')).toEqual(before);
   });
@@ -192,7 +336,11 @@ describe('team creation (#9, #18)', () => {
     await leaveOrphans('admin-reused', stranger);
     const create = await app.request(
       '/api/admin/studios',
-      { method: 'POST', headers: ADMIN_H, body: JSON.stringify({ id: 'admin-reused', display_name: 'R' }) },
+      {
+        method: 'POST',
+        headers: ADMIN_H,
+        body: JSON.stringify({ id: 'admin-reused', display_name: 'R' }),
+      },
       ADMIN_ENV,
     );
     expect(create.status).toBe(200);
@@ -205,7 +353,11 @@ describe('team creation (#9, #18)', () => {
     );
     const ghost = await app.request(
       '/api/admin/studios',
-      { method: 'POST', headers: ADMIN_H, body: JSON.stringify({ id: 'admin-ghost', display_name: 'G' }) },
+      {
+        method: 'POST',
+        headers: ADMIN_H,
+        body: JSON.stringify({ id: 'admin-ghost', display_name: 'G' }),
+      },
       ADMIN_ENV,
     );
     expect(ghost.status).toBe(400);
@@ -220,9 +372,17 @@ describe('invite cap (#10)', () => {
     }
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(/FROM team_invites WHERE studio_id = \?/);
-    const a = send('POST', `/api/teams/${team}/invites`, cookies[0] as string, { email: 'new-a@example.com' }, envWith({}, { catalog: gated }));
+    const a = send(
+      'POST',
+      `/api/teams/${team}/invites`,
+      cookies[0] as string,
+      { email: 'new-a@example.com' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    const b = await send('POST', `/api/teams/${team}/invites`, cookies[1] as string, { email: 'new-b@example.com' });
+    const b = await send('POST', `/api/teams/${team}/invites`, cookies[1] as string, {
+      email: 'new-b@example.com',
+    });
     h.release();
     expect([b.status, (await a).status].sort()).toEqual([200, 400]);
     expect(await invites(team)).toBe(200);
@@ -243,9 +403,17 @@ describe('role change and removal (#11, #12)', () => {
     await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
     const gated = new GatedCatalog(env.ports.catalog);
     const h = holdTargetRoleRead(gated);
-    const promote = send('POST', `/api/teams/${team}/members/${m}/role`, cookies[0] as string, { role: 'admin' }, envWith({}, { catalog: gated }));
+    const promote = send(
+      'POST',
+      `/api/teams/${team}/members/${m}/role`,
+      cookies[0] as string,
+      { role: 'admin' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    expect((await send('DELETE', `/api/teams/${team}/members/${m}`, cookies[1] as string)).status).toBe(200);
+    expect(
+      (await send('DELETE', `/api/teams/${team}/members/${m}`, cookies[1] as string)).status,
+    ).toBe(200);
     h.release();
     expect((await promote).status).toBe(404);
     expect(await role(m, team)).toBeNull();
@@ -257,7 +425,13 @@ describe('role change and removal (#11, #12)', () => {
     await catalogFor().auth.authAddMembershipWithRole(m, team, 'member');
     const gated = new GatedCatalog(env.ports.catalog);
     const h = holdTargetRoleRead(gated);
-    const first = send('DELETE', `/api/teams/${team}/members/${m}`, cookies[0] as string, undefined, envWith({}, { catalog: gated }));
+    const first = send(
+      'DELETE',
+      `/api/teams/${team}/members/${m}`,
+      cookies[0] as string,
+      undefined,
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
     const second = await send('DELETE', `/api/teams/${team}/members/${m}`, cookies[1] as string);
     h.release();
@@ -269,15 +443,26 @@ describe('show create and admin membership add vs team delete (#13, #14)', () =>
   it('a show create racing the team delete gets 400 Unknown studio id. and no show exists', async () => {
     const { team, cookies } = await teamWithAdmins(2);
     const gated = new GatedCatalog(env.ports.catalog);
-    const h = gated.holdAfter(/^SELECT 1 FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/);
-    const create = send('POST', '/api/shows', cookies[0] as string, { studio_id: team, name: 'Late Show', show_code: 'LS' }, envWith({}, { catalog: gated }));
+    const h = gated.holdAfter(
+      /^SELECT 1 FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/,
+    );
+    const create = send(
+      'POST',
+      '/api/shows',
+      cookies[1] as string,
+      { studio_id: team, name: 'Late Show', show_code: 'LS' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    expect((await send('DELETE', `/api/teams/${team}`, cookies[1] as string)).status).toBe(200);
+    expect((await send('DELETE', `/api/teams/${team}`, cookies[0] as string)).status).toBe(200);
     h.release();
     const res = await create;
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ detail: 'Unknown studio id.' });
-    const n = await env.ports.catalog.first<{ n: number }>('SELECT COUNT(*) AS n FROM shows WHERE studio_id = ?', team);
+    const n = await env.ports.catalog.first<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM shows WHERE studio_id = ?',
+      team,
+    );
     expect(Number(n?.n)).toBe(0);
   });
 
@@ -305,9 +490,18 @@ describe('cross-team independence (D12)', () => {
   it('creates of two different teams by two users both succeed', async () => {
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(INSERT_DEFINITION);
-    const a = send('POST', '/api/teams', await loginCookie(await seedUser()), { id: 'indep-a', display_name: 'A' }, envWith({}, { catalog: gated }));
+    const a = send(
+      'POST',
+      '/api/teams',
+      await loginCookie(await seedUser()),
+      { id: 'indep-a', display_name: 'A' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    const b = await send('POST', '/api/teams', await loginCookie(await seedUser()), { id: 'indep-b', display_name: 'B' });
+    const b = await send('POST', '/api/teams', await loginCookie(await seedUser()), {
+      id: 'indep-b',
+      display_name: 'B',
+    });
     h.release();
     expect([b.status, (await a).status]).toEqual([200, 200]);
     // On tables this small SERIALIZABLE tracks reads by whole index page (or table, when the
@@ -322,9 +516,17 @@ describe('cross-team independence (D12)', () => {
     const UPSERT_INVITE = /^INSERT INTO team_invites/;
     const gated = new GatedCatalog(env.ports.catalog);
     const h = gated.holdAfter(UPSERT_INVITE);
-    const a = send('POST', `/api/teams/${t1.team}/invites`, t1.cookies[0] as string, { email: 'x1@example.com' }, envWith({}, { catalog: gated }));
+    const a = send(
+      'POST',
+      `/api/teams/${t1.team}/invites`,
+      t1.cookies[0] as string,
+      { email: 'x1@example.com' },
+      envWith({}, { catalog: gated }),
+    );
     await h.reached;
-    const b = await send('POST', `/api/teams/${t2.team}/invites`, t2.cookies[0] as string, { email: 'x2@example.com' });
+    const b = await send('POST', `/api/teams/${t2.team}/invites`, t2.cookies[0] as string, {
+      email: 'x2@example.com',
+    });
     h.release();
     expect([b.status, (await a).status]).toEqual([200, 200]);
     expect(gated.count(UPSERT_INVITE)).toBeLessThanOrEqual(2);

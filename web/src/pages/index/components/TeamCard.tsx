@@ -2,24 +2,38 @@ import { useState } from 'react';
 import { ApiError } from '../../../api/client';
 import {
   useChangeMemberRole,
+  useDeleteTeam,
   useInviteToTeam,
   useLeaveTeam,
   useRemoveMember,
   useRenameTeam,
   useRevokeInvite,
   useTeam,
+  useTransferOwnership,
 } from '../../../api/hooks/useTeams';
-import type { TeamDetail, TeamMember, TeamMembershipBrief, TeamRole } from '../../../api/types';
+import type {
+  TeamDetail,
+  TeamMember,
+  TeamMembershipBrief,
+  TeamRole,
+  TeamRoleChangeBody,
+} from '../../../api/types';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 
-// --- TeamCard (teams-self-serve, task 6.2; design D7) ---
+// --- TeamCard (teams-self-serve, task 6.2; owner-bootstrap D12) ---
 //
-// One expandable row per non-built-in team the caller belongs to (built-in
-// memberships render as a separate, non-expandable read-only row — see
-// TeamsRoute — and never mount this component, so they never issue a detail
-// fetch). Collapsed by construction: `useTeam` is only enabled while
-// `expanded` is true, so opening `/teams` never fetches every team's detail
-// up front (design D7 — "expanding a team fetches GET /api/teams/:id").
+// One expandable row per team the caller belongs to; the former built-ins are ordinary teams
+// (owner-bootstrap D9). Collapsed by construction: `useTeam` is only enabled while `expanded` is
+// true, so opening `/teams` never fetches every team's detail up front (design D7 — "expanding a
+// team fetches GET /api/teams/:id").
+//
+// Three views by the caller's role in the team:
+// - owner: the admin controls plus role toggles, "Transfer ownership" on each other member, and
+//   delete; no leave (the owner can't leave until they transfer);
+// - admin: rename, invites, and remove on `member` rows only; no role toggles; leave;
+// - member: the read-only members list and leave.
+// A team with no owner shows the no-owner notice: a member sees only the notice, an admin sees it
+// above the admin controls. `enabled_admin_count` is not read (owner decision B).
 
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return err.message;
@@ -36,20 +50,27 @@ function RoleBadge({ role }: { role: TeamRole }) {
 
 function MemberRow({
   member,
-  canManage,
+  canChangeRole,
+  canTransfer,
+  canRemove,
   onPromote,
   onDemote,
+  onTransfer,
   onRemove,
   busy,
 }: {
   member: TeamMember;
-  canManage: boolean;
+  canChangeRole: boolean;
+  canTransfer: boolean;
+  canRemove: boolean;
   onPromote: () => void;
   onDemote: () => void;
+  onTransfer: () => void;
   onRemove: () => void;
   busy: boolean;
 }) {
   const label = `${member.given_name} ${member.family_name}`.trim() || member.email;
+  const anyControl = canChangeRole || canTransfer || canRemove;
   return (
     <li
       data-testid={`team-member-${member.id}`}
@@ -59,27 +80,37 @@ function MemberRow({
         {label} <span className="text-v5-muted">({member.email})</span>
         <RoleBadge role={member.role} />
       </span>
-      {canManage && (
+      {anyControl && (
         <span className="flex gap-2">
-          {member.role === 'member' ? (
-            <button type="button" className="btn" disabled={busy} onClick={onPromote}>
-              Make admin
-            </button>
-          ) : (
-            <button type="button" className="btn" disabled={busy} onClick={onDemote}>
-              Make member
+          {canChangeRole &&
+            (member.role === 'member' ? (
+              <button type="button" className="btn" disabled={busy} onClick={onPromote}>
+                Make admin
+              </button>
+            ) : (
+              <button type="button" className="btn" disabled={busy} onClick={onDemote}>
+                Make member
+              </button>
+            ))}
+          {canTransfer && (
+            <button type="button" className="btn" disabled={busy} onClick={onTransfer}>
+              Transfer ownership
             </button>
           )}
-          <button type="button" className="btn danger" disabled={busy} onClick={onRemove}>
-            Remove
-          </button>
+          {canRemove && (
+            <button type="button" className="btn danger" disabled={busy} onClick={onRemove}>
+              Remove
+            </button>
+          )}
         </span>
       )}
     </li>
   );
 }
 
-function AdminPanel({ detail }: { detail: TeamDetail }) {
+/** The owner's and the admins' view (owner-bootstrap D12). `isOwner` adds role toggles, transfer,
+ * removing admins and delete, and drops leave. */
+function ManagePanel({ detail, isOwner }: { detail: TeamDetail; isOwner: boolean }) {
   const [name, setName] = useState(detail.name);
   const [inviteEmail, setInviteEmail] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -89,13 +120,19 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
   const revoke = useRevokeInvite(detail.id);
   const changeRole = useChangeMemberRole(detail.id);
   const removeMember = useRemoveMember(detail.id);
+  const transfer = useTransferOwnership(detail.id);
+  const deleteTeam = useDeleteTeam(detail.id);
+  const leave = useLeaveTeam(detail.id);
 
   const busy =
     rename.isPending ||
     invite.isPending ||
     revoke.isPending ||
     changeRole.isPending ||
-    removeMember.isPending;
+    removeMember.isPending ||
+    transfer.isPending ||
+    deleteTeam.isPending ||
+    leave.isPending;
 
   function handleRename(e: React.FormEvent) {
     e.preventDefault();
@@ -120,12 +157,26 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
 
   const { confirm, confirmElement } = useConfirm();
 
-  function handleRoleChange(userId: string, role: TeamRole) {
+  function handleRoleChange(userId: string, role: TeamRoleChangeBody['role']) {
     setActionError(null);
     changeRole.mutate(
       { userId, role },
       { onError: (err) => setActionError(errorMessage(err, 'Role change failed.')) },
     );
+  }
+
+  async function handleTransfer(userId: string, email: string) {
+    const ok = await confirm({
+      title: 'Transfer ownership',
+      message: `Make ${email} the owner of this team? You will become an admin.`,
+      confirmLabel: 'Transfer',
+      danger: true,
+    });
+    if (!ok) return;
+    setActionError(null);
+    transfer.mutate(userId, {
+      onError: (err) => setActionError(errorMessage(err, 'Transfer failed.')),
+    });
   }
 
   async function handleRemove(userId: string, email: string) {
@@ -142,12 +193,43 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
     });
   }
 
+  async function handleDelete() {
+    const ok = await confirm({
+      title: 'Delete team',
+      message: 'Delete this team? A team that still has shows cannot be deleted.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    setActionError(null);
+    deleteTeam.mutate(undefined, {
+      onError: (err) => setActionError(errorMessage(err, 'Delete failed.')),
+    });
+  }
+
+  async function handleLeave() {
+    const ok = await confirm({
+      title: 'Leave team',
+      message: 'Leave this team? You will have to be re-invited to rejoin.',
+      confirmLabel: 'Leave team',
+      danger: true,
+    });
+    if (!ok) return;
+    setActionError(null);
+    leave.mutate(undefined, {
+      onError: (err) => setActionError(errorMessage(err, 'Leave failed.')),
+    });
+  }
+
   function handleRevoke(email: string) {
     revoke.mutate(email, { onError: (err) => setActionError(errorMessage(err, 'Revoke failed.')) });
   }
 
   return (
-    <div className="mt-3 space-y-4" data-testid={`team-admin-panel-${detail.id}`}>
+    <div
+      className="mt-3 space-y-4"
+      data-testid={isOwner ? `team-owner-panel-${detail.id}` : `team-admin-panel-${detail.id}`}
+    >
       {confirmElement}
       {actionError && (
         <p role="alert" className="modal-hint text-[#ff8a8a]">
@@ -174,17 +256,24 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
       <div>
         <p className="modal-hint mb-1">Members</p>
         <ul>
-          {detail.members.map((m) => (
-            <MemberRow
-              key={m.id}
-              member={m}
-              canManage
-              busy={busy}
-              onPromote={() => handleRoleChange(m.id, 'admin')}
-              onDemote={() => handleRoleChange(m.id, 'member')}
-              onRemove={() => handleRemove(m.id, m.email)}
-            />
-          ))}
+          {detail.members.map((m) => {
+            // No control ever targets the owner; an admin removes plain members only.
+            const target = m.role !== 'owner';
+            return (
+              <MemberRow
+                key={m.id}
+                member={m}
+                canChangeRole={isOwner && target}
+                canTransfer={isOwner && target}
+                canRemove={target && (isOwner || m.role === 'member')}
+                busy={busy}
+                onPromote={() => handleRoleChange(m.id, 'admin')}
+                onDemote={() => handleRoleChange(m.id, 'member')}
+                onTransfer={() => handleTransfer(m.id, m.email)}
+                onRemove={() => handleRemove(m.id, m.email)}
+              />
+            );
+          })}
         </ul>
       </div>
 
@@ -230,6 +319,16 @@ function AdminPanel({ detail }: { detail: TeamDetail }) {
           </ul>
         )}
       </div>
+
+      {isOwner ? (
+        <button type="button" className="btn danger" disabled={busy} onClick={handleDelete}>
+          {deleteTeam.isPending ? 'Deleting…' : 'Delete team'}
+        </button>
+      ) : (
+        <button type="button" className="btn danger" disabled={busy} onClick={handleLeave}>
+          {leave.isPending ? 'Leaving…' : 'Leave team'}
+        </button>
+      )}
     </div>
   );
 }
@@ -286,9 +385,24 @@ function MemberPanel({ detail }: { detail: TeamDetail }) {
 function OrphanedNotice() {
   return (
     <p role="status" className="modal-hint" data-testid="team-orphaned-notice">
-      This team has no admins. Contact support to regain management access.
+      This team has no owner. Contact support.
     </p>
   );
+}
+
+/** The view for the caller's role; the no-owner notice keys on the members' roles. */
+function TeamView({ detail }: { detail: TeamDetail }) {
+  const hasOwner = detail.members.some((m) => m.role === 'owner');
+  if (detail.role === 'owner') return <ManagePanel detail={detail} isOwner />;
+  if (detail.role === 'admin') {
+    return (
+      <>
+        {!hasOwner && <OrphanedNotice />}
+        <ManagePanel detail={detail} isOwner={false} />
+      </>
+    );
+  }
+  return hasOwner ? <MemberPanel detail={detail} /> : <OrphanedNotice />;
 }
 
 interface TeamCardProps {
@@ -332,14 +446,7 @@ export function TeamCard({ team }: TeamCardProps) {
               </button>
             </div>
           )}
-          {query.data && query.data.enabled_admin_count === 0 && <OrphanedNotice />}
-          {query.data &&
-            query.data.enabled_admin_count > 0 &&
-            (query.data.role === 'admin' ? (
-              <AdminPanel detail={query.data} />
-            ) : (
-              <MemberPanel detail={query.data} />
-            ))}
+          {query.data && <TeamView detail={query.data} />}
         </>
       )}
     </li>

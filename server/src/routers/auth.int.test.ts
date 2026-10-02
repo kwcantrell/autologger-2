@@ -511,6 +511,27 @@ describe('callback -- invite materialization (task 3.1, design D2)', () => {
     // test below for that assertion.
   });
 
+  it('a new user is not seeded from the global active team and show (owner-bootstrap D10)', async () => {
+    await env.ports.catalog.run(
+      `INSERT INTO app_settings (key, value) VALUES ('active_studio_id', 'test-studios'),
+         ('active_show_id', 'show-autolog-test')
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    );
+    const res = await runCallback({
+      sub: 'sub-no-global-seed',
+      email: 'no-global-seed@example.com',
+      state: 'state-no-global-seed',
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    const uid = String((await catalogFor().auth.authGetUserByGoogleSub('sub-no-global-seed'))?.id);
+    const prefs = await catalogFor().auth.authGetPrefs(uid);
+    if (prefs !== null) {
+      expect(String(prefs.active_studio_id ?? '')).toBe('');
+      expect(String(prefs.active_show_id ?? '')).toBe('');
+    }
+  });
+
   it('a disabled account signing in is redirected without a cookie or any write (design D11)', async () => {
     const sub = 'sub-disabled';
     const userId = await seedUser({ sub, email: 'disabled@example.com' });
@@ -690,5 +711,243 @@ describe('callback -- concurrent first sign-in for one sub', () => {
       'sub-twin',
     );
     expect(Number(n?.n)).toBe(1);
+  });
+});
+
+// owner-bootstrap D7 (team-management "Bootstrap owner"): a sign-in whose verified email matches
+// BOOTSTRAP_OWNER_EMAIL (the harness sets `bootstrap-owner@example.com`) becomes owner of every
+// team with no owner, after either callback branch and before the login session is issued.
+describe('callback -- bootstrap owner claim (owner-bootstrap 7.1)', () => {
+  const BOOT = 'bootstrap-owner@example.com';
+  const FORMER_BUILTINS = ['test-studios', 'test-studio-2'];
+
+  async function ownerOf(team: string): Promise<string | null> {
+    const owner = (await catalogFor().auth.authListTeamMembers(team)).find(
+      (m) => m.role === 'owner',
+    );
+    return owner?.id ?? null;
+  }
+
+  /** Every `console.info` / `console.warn` line the callback logs, flattened to strings. */
+  function captureLogs(): { lines: () => string[]; restore: () => void } {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let kept: string[] | null = null;
+    const read = () =>
+      [...info.mock.calls, ...warn.mock.calls].map((args) => args.map(String).join(' '));
+    return {
+      lines: () => kept ?? read(),
+      // mockRestore clears the recorded calls, so keep them first.
+      restore: () => {
+        kept = read();
+        info.mockRestore();
+        warn.mockRestore();
+      },
+    };
+  }
+  const claimedIds = (lines: string[]) =>
+    lines
+      .map((l) => /bootstrap owner claimed team (\S+)/.exec(l)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .sort();
+
+  it('the first sign-in claims the former built-ins and logs one line per claimed team', async () => {
+    const logs = captureLogs();
+    let res: Response;
+    try {
+      res = await runCallback({ sub: 'sub-boot-first', email: BOOT, state: 'state-boot-first' });
+    } finally {
+      logs.restore();
+    }
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    const cookie = res.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('autologger_sid=');
+    const uid = 'gt-sub-boot-first';
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBe(uid);
+    expect(claimedIds(logs.lines())).toEqual([...FORMER_BUILTINS].sort());
+    expect(logs.lines().join('\n')).not.toContain(BOOT);
+
+    const detail = await anonApp.request(
+      '/api/teams/test-studios',
+      { method: 'GET', headers: { Cookie: cookie.split(';')[0] as string } },
+      OAUTH_ENV,
+    );
+    expect(detail.status).toBe(200);
+    expect(((await detail.json()) as { role: string }).role).toBe('owner');
+  });
+
+  it('claims a team another user created as its admin; that user stays admin and the id is logged', async () => {
+    const team = await seedStudio({ id: 'my-studio' });
+    const creator = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(creator, team, 'admin');
+    const logs = captureLogs();
+    try {
+      const res = await runCallback({
+        sub: 'sub-boot-stage',
+        email: BOOT,
+        state: 'state-boot-stage',
+      });
+      expect(res.status).toBe(302);
+    } finally {
+      logs.restore();
+    }
+    expect(await ownerOf(team)).toBe('gt-sub-boot-stage');
+    expect(await catalogFor().auth.authGetMembershipRole(creator, team)).toBe('admin');
+    expect(claimedIds(logs.lines())).toContain('my-studio');
+  });
+
+  it('a non-ASCII Google email against an ASCII configured address claims nothing, signs in, and logs the refusal', async () => {
+    const kelvinEnv = envWith({
+      GOOGLE_CLIENT_ID: CLIENT,
+      GOOGLE_CLIENT_SECRET: 'secret',
+      PUBLIC_BASE_URL: 'http://127.0.0.1:8787',
+      BOOTSTRAP_OWNER_EMAIL: 'kalen@gmail.com',
+    });
+    const logs = captureLogs();
+    let res: Response;
+    try {
+      res = await runCallback(
+        { sub: 'sub-boot-kelvin', email: 'Kalen@gmail.com', state: 'state-boot-kelvin' },
+        kelvinEnv,
+      );
+    } finally {
+      logs.restore();
+    }
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
+    expect(
+      logs.lines().some((l) => /bootstrap owner claim refused \(non-ASCII email\)/.test(l)),
+    ).toBe(true);
+  });
+
+  it('a repeat sign-in claims a team the admin plane created meanwhile; other memberships unchanged', async () => {
+    const first = await runCallback({
+      sub: 'sub-boot-repeat',
+      email: BOOT,
+      state: 'state-boot-r1',
+    });
+    expect(first.status).toBe(302);
+    const uid = 'gt-sub-boot-repeat';
+    const adminEnv = envWith({ ADMIN_TOKEN: 'boot-admin-token' });
+    const create = await anonApp.request(
+      '/api/admin/studios',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer boot-admin-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'support-team', display_name: 'Support Team' }),
+      },
+      adminEnv,
+    );
+    expect(create.status).toBe(200);
+    expect(await ownerOf('support-team')).toBeNull();
+    const before = await catalogFor().auth.authListMembershipsForUser(uid);
+
+    const again = await runCallback({
+      sub: 'sub-boot-repeat',
+      email: BOOT,
+      state: 'state-boot-r2',
+    });
+    expect(again.status).toBe(302);
+    expect(again.headers.get('location')).toBe('/');
+    expect(await ownerOf('support-team')).toBe(uid);
+    const after = await catalogFor().auth.authListMembershipsForUser(uid);
+    expect(after.filter((m) => m.studioId !== 'support-team')).toEqual(before);
+  });
+
+  it('`Bootstrap-Owner@Example.com ` as the Google email matches', async () => {
+    const res = await runCallback({
+      sub: 'sub-boot-case',
+      email: 'Bootstrap-Owner@Example.com ',
+      state: 'state-boot-case',
+    });
+    expect(res.status).toBe(302);
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBe('gt-sub-boot-case');
+  });
+
+  it('a team that already has an owner keeps it, and its admins stay admins', async () => {
+    const team = await seedStudio();
+    const owner = await seedUser();
+    const admin = await seedUser();
+    await catalogFor().auth.authAddMembershipWithRole(owner, team, 'owner');
+    await catalogFor().auth.authAddMembershipWithRole(admin, team, 'admin');
+    await catalogFor().auth.authAddMembershipWithRole(admin, 'test-studios', 'admin');
+    const res = await runCallback({
+      sub: 'sub-boot-owned',
+      email: BOOT,
+      state: 'state-boot-owned',
+    });
+    expect(res.status).toBe(302);
+    expect(await ownerOf(team)).toBe(owner);
+    expect(await catalogFor().auth.authGetMembershipRole('gt-sub-boot-owned', team)).toBeNull();
+    expect(await catalogFor().auth.authGetMembershipRole(admin, team)).toBe('admin');
+    expect(await ownerOf('test-studios')).toBe('gt-sub-boot-owned');
+    expect(await catalogFor().auth.authGetMembershipRole(admin, 'test-studios')).toBe('admin');
+  });
+
+  it('a non-matching email claims nothing', async () => {
+    const res = await runCallback({
+      sub: 'sub-boot-other',
+      email: 'someone-else@example.com',
+      state: 'state-boot-other',
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
+    expect(await catalogFor().auth.authListMembershipsForUser('gt-sub-boot-other')).toEqual([]);
+  });
+
+  it('an unverified bootstrap email is refused before the claim (email_unverified)', async () => {
+    const res = await runCallback({
+      sub: 'sub-boot-unverified',
+      email: BOOT,
+      emailVerified: false,
+      state: 'state-boot-unverified',
+      gotrue: null,
+    });
+    expect(res.headers.get('location')).toBe('/?login_error=email_unverified');
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
+  });
+
+  it('a disabled bootstrap account claims nothing (account_disabled)', async () => {
+    const sub = 'sub-boot-disabled';
+    const userId = await seedUser({ sub, email: BOOT });
+    await catalogFor().auth.authSetUserDisabled(userId, true);
+    const res = await runCallback({
+      sub,
+      email: BOOT,
+      state: 'state-boot-disabled',
+      gotrue: { id: userId, sub },
+    });
+    expect(res.headers.get('location')).toBe('/?login_error=account_disabled');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
+  });
+
+  it('a failing claim still gives 302 / with a cookie, and the log line has no email', async () => {
+    const spy = vi
+      .spyOn(AuthStore.prototype, 'authClaimOwnerlessStudios')
+      .mockImplementation(async () => {
+        throw new Error('simulated claim failure');
+      });
+    const logs = captureLogs();
+    let res: Response;
+    try {
+      res = await runCallback({ sub: 'sub-boot-fail', email: BOOT, state: 'state-boot-fail' });
+    } finally {
+      logs.restore();
+      spy.mockRestore();
+    }
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toContain('autologger_sid=');
+    const failure = logs.lines().filter((l) => /bootstrap owner claim failed/.test(l));
+    expect(failure).toHaveLength(1);
+    expect(failure[0]).not.toContain(BOOT);
+    expect(logs.lines().join('\n')).not.toContain(BOOT);
+    for (const team of FORMER_BUILTINS) expect(await ownerOf(team)).toBeNull();
+    expect(await catalogFor().auth.authGetUserByGoogleSub('sub-boot-fail')).not.toBeNull();
   });
 });

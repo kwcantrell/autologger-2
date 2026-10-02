@@ -3,7 +3,6 @@
 import { showApiDict } from '@autologger/catalog';
 import { showCreateBodySchema } from '@autologger/contract';
 import {
-  DEFAULT_STUDIO_ID,
   defaultSettingsBlob,
   freshCategoryIds,
   normalizeEventPaletteNine,
@@ -67,7 +66,7 @@ showsRouter.post('/api/shows', async (c) => {
   try {
     norm = validateCategoriesList(defaultSettingsBlob(body.studio_id).categories);
   } catch {
-    norm = validateCategoriesList(defaultSettingsBlob(DEFAULT_STUDIO_ID).categories);
+    norm = validateCategoriesList(defaultSettingsBlob('').categories);
   }
   norm = freshCategoryIds(norm);
 

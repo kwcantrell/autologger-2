@@ -688,6 +688,9 @@ the fix and prints no secret value, when:
   offending names that are valid identifiers;
 - `GOOGLE_CLIENT_ID` or `GOOGLE_CLIENT_SECRET` is unset or empty in the environment. This
   applies to every stack, dev included, because the server refuses to boot without them.
+- `BOOTSTRAP_OWNER_EMAIL` is unset, empty or only whitespace in the environment. This applies
+  to every stack, dev included, because the server refuses to boot without it. The shared
+  allowlist file SHALL list it, so the app container receives it.
 
 **Secret handling.** The client secret and the access token SHALL NOT appear on any command line
 and SHALL NOT be written to disk by the Makefile or its scripts. Secret values SHALL be fetched
@@ -719,6 +722,12 @@ and the fetch SHALL be refused as a whole if any secret fails validation.
 #### Scenario: Dev without a Google client is refused
 - **WHEN** the Infisical `dev` environment has no `GOOGLE_CLIENT_SECRET`, and `make dev-up` runs
 - **THEN** it exits non-zero naming `GOOGLE_CLIENT_SECRET`, prints no value, and runs no
+  docker command
+
+#### Scenario: A stack without a bootstrap owner is refused
+- **WHEN** the Infisical `stage` environment has no `BOOTSTRAP_OWNER_EMAIL`, or holds only
+  spaces in it, and `make stage-up` runs
+- **THEN** it exits non-zero naming `BOOTSTRAP_OWNER_EMAIL`, prints no value, and runs no
   docker command
 
 #### Scenario: Plain HTTP is refused

@@ -1,5 +1,5 @@
 // src/bootGuard.ts — the server boots only inside a compose stack (retire-host-dev D1), with
-// sign-in configured (require-login D1).
+// sign-in configured (require-login D1) and a bootstrap owner named (owner-bootstrap D8).
 // The stacks set AUTOLOGGER_STACK (docker/secrets-env.yaml), an absolute DATA_DIR and the catalog's
 // PG* settings (catalog-on-postgres D2); a host run has none. Messages name variables only, never
 // their values.
@@ -39,6 +39,16 @@ export function checkBootEnv(env: Record<string, string | undefined>): string | 
   const signIn = SIGN_IN_VARS.filter((k) => !(env[k] ?? '').trim());
   if (signIn.length) {
     return `sign-in settings missing or blank: ${signIn.join(', ')} (login is always required; set the Google client in Infisical, see docs/infisical-secrets.md).`;
+  }
+  // owner-bootstrap D8, D16: the bootstrap owner is required, and only as ASCII (the claim's match
+  // is exact ASCII, so a non-ASCII value could never match). Kept out of SIGN_IN_VARS, which
+  // mirrors `oauthConfigured()`.
+  const owner = env.BOOTSTRAP_OWNER_EMAIL ?? '';
+  if (!owner.trim()) {
+    return 'BOOTSTRAP_OWNER_EMAIL is missing or blank (the bootstrap owner claims teams that have no owner; set it in Infisical, see docs/infisical-secrets.md).';
+  }
+  if ([...owner].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f)) {
+    return 'BOOTSTRAP_OWNER_EMAIL has a non-ASCII character (the bootstrap owner match is exact ASCII; fix it in Infisical, see docs/infisical-secrets.md).';
   }
   return null;
 }

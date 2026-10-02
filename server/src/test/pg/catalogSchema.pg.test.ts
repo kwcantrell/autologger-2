@@ -50,7 +50,7 @@ afterEach(async () => {
   await Promise.all(open.splice(0).map((s) => s.end()));
 });
 
-/** Per table: columns, primary key, foreign keys; plus `$unique` and `$indexes`. */
+/** Per table: columns, primary key, foreign keys; plus `$unique`, `$checks` and `$indexes`. */
 type SchemaRecord = Record<string, unknown>;
 
 /** The catalog schema as text, for comparison with the recorded expectation (retire-sqlite-catalog D3). */
@@ -85,10 +85,15 @@ async function readSchema(sql: postgres.Sql): Promise<SchemaRecord> {
   const uniques = await sql`
     select conrelid::regclass::text || ' ' || pg_get_constraintdef(oid) as u from pg_constraint
     where contype = 'u' and connamespace = 'catalog'::regnamespace order by u`;
+  const checks = await sql`
+    select conrelid::regclass::text || ' ' || conname || ' ' || pg_get_constraintdef(oid) as c
+    from pg_constraint
+    where contype = 'c' and connamespace = 'catalog'::regnamespace order by c`;
   const idx = await sql`
     select indexdef from pg_indexes
     where schemaname = 'catalog' and indexname like 'idx\\_%' order by indexname`;
   out.$unique = uniques.map((r) => r.u);
+  out.$checks = checks.map((r) => r.c);
   out.$indexes = idx.map((r) => r.indexdef);
   return out;
 }
@@ -201,9 +206,14 @@ const EXPECTED_SCHEMA: SchemaRecord = {
     foreignKeys: [],
   },
   $unique: ['catalog.users UNIQUE (google_sub)'],
+  // owner-bootstrap D1: the role check and at most one owner per team.
+  $checks: [
+    "catalog.user_studio_memberships user_studio_memberships_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))",
+  ],
   $indexes: [
     'CREATE INDEX idx_sessions_show ON catalog.sessions USING btree (show_id)',
     'CREATE INDEX idx_shows_studio ON catalog.shows USING btree (studio_id)',
+    "CREATE UNIQUE INDEX idx_user_studio_memberships_one_owner ON catalog.user_studio_memberships USING btree (studio_id) WHERE (role = 'owner'::text)",
     'CREATE INDEX idx_user_studio_memberships_studio ON catalog.user_studio_memberships USING btree (studio_id)',
     'CREATE INDEX idx_users_email ON catalog.users USING btree (email)',
   ],

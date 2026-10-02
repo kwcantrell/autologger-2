@@ -6,12 +6,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   adminMeta,
   adminTokenConfigured,
+  bootstrapEmailMatch,
+  bootstrapOwnerEmail,
   cookieSecureForRequest,
   eventGenerateMaxBudgetUsd,
   eventGenerateMaxCreatedEvents,
   eventGenerateMaxInstructionBytes,
   eventGenerateMaxInstructionEntries,
   eventGenerateTimeoutSec,
+  maskBootstrapOwnerEmail,
   newUserAllTeamsEnabled,
   oauthConfigured,
   publicBaseUrl,
@@ -244,5 +247,28 @@ describe('yt-dlp binary resolution (design D2, youtube-audio-import)', () => {
     expect(resolveYtDlpPath({})).toBeNull();
     expect(ytDlpConfigured(E({ YTDLP_RESOLVED_PATH: null }))).toBe(false);
     expect(ytDlpConfigured(E({}))).toBe(false);
+  });
+});
+
+// owner-bootstrap D8, D16: the bootstrap owner email is matched as exact ASCII, and logged masked.
+describe('bootstrap owner email (owner-bootstrap D8, D16)', () => {
+  it('bootstrapOwnerEmail trims and ASCII-lowercases', () => {
+    expect(bootstrapOwnerEmail(E({ BOOTSTRAP_OWNER_EMAIL: '  Owner@Example.COM \t' }))).toBe(
+      'owner@example.com',
+    );
+    expect(bootstrapOwnerEmail(E({}))).toBe('');
+  });
+  it('bootstrapEmailMatch refuses a non-ASCII token email and matches ASCII case-insensitively', () => {
+    expect(bootstrapEmailMatch('\u212Aalen@gmail.com', 'kalen@gmail.com')).toBe('non-ascii');
+    expect(bootstrapEmailMatch(' Kalen@Gmail.com', 'kalen@gmail.com')).toBe(true);
+    expect(bootstrapEmailMatch('other@gmail.com', 'kalen@gmail.com')).toBe(false);
+    expect(bootstrapEmailMatch('', '')).toBe(false);
+  });
+  it('maskBootstrapOwnerEmail keeps the domain and an 8-hex hash, never the local part', () => {
+    const m = maskBootstrapOwnerEmail('Owner@Example.com');
+    expect(m).toContain('example.com');
+    expect(m).toMatch(/#[0-9a-f]{8}\b/);
+    expect(m.toLowerCase()).not.toContain('owner');
+    expect(maskBootstrapOwnerEmail(' owner@example.com ')).toBe(m);
   });
 });

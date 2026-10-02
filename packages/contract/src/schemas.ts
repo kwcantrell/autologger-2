@@ -123,7 +123,8 @@ export type AdminStudioCreateBody = z.infer<typeof adminStudioCreateBodySchema>;
 
 export const adminMembershipBodySchema = z.object({
   studio_id: z.string().min(1).max(120),
-  role: z.enum(['admin', 'member']).optional(),
+  // owner-bootstrap D6: `owner` demotes the current owner to admin in the same transaction.
+  role: z.enum(['owner', 'admin', 'member']).optional(),
 });
 export type AdminMembershipBody = z.infer<typeof adminMembershipBodySchema>;
 
@@ -266,6 +267,12 @@ export const teamRoleChangeBodySchema = z.object({
   role: z.enum(['admin', 'member']),
 });
 export type TeamRoleChangeBody = z.infer<typeof teamRoleChangeBodySchema>;
+
+/** owner-bootstrap D3: `POST /api/teams/:id/owner` hands ownership to an existing member. */
+export const teamOwnerTransferBodySchema = z.object({
+  user_id: z.string().trim().min(1),
+});
+export type TeamOwnerTransferBody = z.infer<typeof teamOwnerTransferBodySchema>;
 
 // -- youtube-audio-import: request body + exact-hostname allowlist (D6) ------
 // `url`/`use_publish_date` are the verbatim snake_case keys the client sends

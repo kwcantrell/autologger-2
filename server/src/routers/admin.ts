@@ -3,7 +3,7 @@
 // restart (adminMeta already returns restart_supported:false).
 
 import { adminMembershipBodySchema, adminStudioCreateBodySchema } from '@autologger/contract';
-import { BUILTIN_STUDIO_ORDER, ValidationError } from '@autologger/domain';
+import { ValidationError } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { requestHasValidAdminToken } from '../auth/identity';
@@ -24,12 +24,13 @@ function requireAdminToken(c: Context<AppEnv>): void {
 adminRouter.get('/api/admin/users', async (c) => {
   requireAdminToken(c);
   const catalog = c.get('catalog');
-  const builtin = new Set(BUILTIN_STUDIO_ORDER);
   const names = catalog.studios.studioNamesDict();
+  // `builtin` stays in the frozen shape, always false: there are no built-in teams
+  // (owner-bootstrap D9).
   const studiosCatalog = catalog.studios.studioOrderTuple().map((sid) => ({
     id: sid,
     name: names[sid],
-    builtin: builtin.has(sid),
+    builtin: false,
   }));
   const usersOut: Record<string, unknown>[] = [];
   for (const r of await catalog.auth.authListUsersAdmin()) {
@@ -59,10 +60,9 @@ adminRouter.post('/api/admin/studios', async (c) => {
     if (e instanceof ValidationError) throw new ApiError(400, e.message);
     throw e;
   }
-  const builtin = new Set(BUILTIN_STUDIO_ORDER);
   const names = catalog.studios.studioNamesDict();
   const id = body.id.trim();
-  return c.json({ studio: { id, name: names[id], builtin: builtin.has(id) } });
+  return c.json({ studio: { id, name: names[id], builtin: false } });
 });
 
 adminRouter.delete('/api/admin/studios/:studioId', async (c) => {
@@ -87,11 +87,26 @@ adminRouter.post('/api/admin/users/:userId/memberships', async (c) => {
     if (!(await catalog.studios.studioExists(sid))) throw new ApiError(400, 'Unknown team id.');
     const row = await catalog.auth.authGetUserRowAny(c.req.param('userId').trim());
     if (row === null) throw new ApiError(404, 'User not found.');
+    const userId = String(row.id);
+    // owner-bootstrap D6: an owner upsert demotes the current owner to admin and makes the target
+    // owner, in this transaction, so the team never has two owners.
+    if (body.role === 'owner') {
+      await catalog.auth.authSetOwner(sid, userId);
+      return;
+    }
+    // A role-less body defaults to 'member', which would demote the owner by accident (owner
+    // decision C): refuse it; an explicit role still applies.
+    if (
+      body.role === undefined &&
+      (await catalog.auth.authGetMembershipRole(userId, sid)) === 'owner'
+    ) {
+      throw new ApiError(409, 'Explicit role required to change the team owner.');
+    }
     // Upsert (not the ON CONFLICT DO NOTHING of authAddMemberships): with the role
     // column present, a re-POST on an existing membership must update its role
     // (defaulting to 'member' when absent) — the orphaned-team rescue path
     // (teams-self-serve) needs promotion to actually take effect, not no-op.
-    await catalog.auth.authUpsertMembershipRole(String(row.id), sid, body.role ?? 'member');
+    await catalog.auth.authUpsertMembershipRole(userId, sid, body.role ?? 'member');
   });
   return c.json({ ok: true });
 });

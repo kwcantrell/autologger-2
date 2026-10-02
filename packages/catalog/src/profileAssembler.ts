@@ -4,7 +4,6 @@
 
 import type { AuthUser, ProfileCtx, Row, StudioProfile } from '@autologger/domain';
 import {
-  DEFAULT_STUDIO_ID,
   emptyActiveStudioApiDict,
   newSessionTitlePrefix,
   studioToApiDict,
@@ -65,7 +64,8 @@ export class ProfileAssembler implements ProfileAssemblerFacade {
         }
       }
     }
-    if (!studioId) studioId = DEFAULT_STUDIO_ID;
+    // owner-bootstrap D10: no membership names a known team, so no profile (as with none).
+    if (!studioId) return [null, '', alset, []];
     const prefShow = rawS === studioId ? rawSh : '';
     const activeShows = await this.shows.listShowsForStudio(studioId);
     const activeShowId = this.resolveActiveShowIdForStudio(activeShows, prefShow);

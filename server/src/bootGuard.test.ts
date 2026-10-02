@@ -17,6 +17,7 @@ const ok = {
   GOOGLE_CLIENT_ID: 'client-id-value',
   GOOGLE_CLIENT_SECRET: 'client-secret-value',
   PUBLIC_BASE_URL: 'https://autologger.example',
+  BOOTSTRAP_OWNER_EMAIL: 'owner-value@example.com',
 };
 
 describe('checkBootEnv', () => {
@@ -78,6 +79,24 @@ describe('checkBootEnv', () => {
     const msg = checkBootEnv({ ...ok, REQUIRE_LOGIN: 'sentinel-value-should-not-appear' }) ?? '';
     expect(msg).not.toContain('sentinel-value-should-not-appear');
     expect(msg).not.toContain('client-secret-value');
+  });
+  // owner-bootstrap D8, D16: the bootstrap owner is required in every stack, and only as ASCII.
+  it('refuses a missing, empty or whitespace-only BOOTSTRAP_OWNER_EMAIL, naming it and no value', () => {
+    for (const v of [undefined, '', '   ', '\t\n']) {
+      const msg = checkBootEnv({ ...ok, BOOTSTRAP_OWNER_EMAIL: v });
+      expect(msg, JSON.stringify(v)).toMatch(/BOOTSTRAP_OWNER_EMAIL/);
+      for (const val of ['client-id-value', 'client-secret-value', 'owner-value']) {
+        expect(msg).not.toContain(val);
+      }
+    }
+  });
+  it('refuses a non-ASCII BOOTSTRAP_OWNER_EMAIL, naming it and not the value', () => {
+    const kelvin = '\u212Aalen@gmail.com';
+    const msg = checkBootEnv({ ...ok, BOOTSTRAP_OWNER_EMAIL: kelvin });
+    expect(msg).toMatch(/BOOTSTRAP_OWNER_EMAIL/);
+    expect(msg).toMatch(/ASCII/);
+    expect(msg).not.toContain(kelvin);
+    expect(msg).not.toContain('alen@gmail.com');
   });
   it('allows exactly the environments the compose wrapper sets (docker/scripts/compose-run.mjs ENVS)', () => {
     const src = readFileSync(join(__dirname, '../../docker/scripts/compose-run.mjs'), 'utf8');

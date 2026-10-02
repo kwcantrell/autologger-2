@@ -1,11 +1,6 @@
 // Auth routes — ported from src/autologger/web/routers/auth.py.
 
-import {
-  DEFAULT_STUDIO_ID,
-  normalizeEmail,
-  SETTING_ACTIVE_SHOW,
-  SETTING_ACTIVE_STUDIO,
-} from '@autologger/domain';
+import { normalizeEmail } from '@autologger/domain';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv } from '../appEnv';
@@ -19,6 +14,8 @@ import {
   takeOauthState,
 } from '../auth/identity';
 import {
+  bootstrapEmailMatch,
+  bootstrapOwnerEmail,
   cookieSecureForRequest,
   googleClientId,
   googleClientSecret,
@@ -168,7 +165,10 @@ authRouter.get('/auth/google/callback', async (c) => {
     console.warn('OAuth callback: id_token subject or email claim contains NUL.');
     return c.redirect('/?login_error=token_invalid', 302);
   }
-  const noNul = (v: unknown) => String(v ?? '').replaceAll('\u0000', '').trim();
+  const noNul = (v: unknown) =>
+    String(v ?? '')
+      .replaceAll('\u0000', '')
+      .trim();
   const gn = noNul(claims.given_name);
   const fn = noNul(claims.family_name);
   const pic = noNul(claims.picture);
@@ -229,11 +229,8 @@ authRouter.get('/auth/google/callback', async (c) => {
       });
       // A concurrent first sign-in for this sub won (catalog-concurrency-hazards D5).
       if (newUid === null) return null;
-      await cat.auth.authSeedPrefsFromGlobals(
-        newUid,
-        (await cat.studios.getSetting(SETTING_ACTIVE_STUDIO)) || DEFAULT_STUDIO_ID,
-        (await cat.studios.getSetting(SETTING_ACTIVE_SHOW)) || '',
-      );
+      // No prefs seed (owner-bootstrap D10): a new user's prefs start empty, so their first team
+      // (or onboarding) applies.
       // Materialize pending invites ONLY when the id_token asserts a
       // verified email (team-management delta, "Email invites") -- the
       // email claim becomes an authorization join key here, so an
@@ -269,6 +266,25 @@ authRouter.get('/auth/google/callback', async (c) => {
       familyName: fn,
       pictureUrl: pic,
     });
+  }
+
+  // owner-bootstrap D7: the bootstrap owner claims every team with no owner, after either branch
+  // (enabled, verified, identity matched) and before the session is issued. It fails open: a
+  // failed claim is logged without the email and the next sign-in retries it.
+  const match = bootstrapEmailMatch(email, bootstrapOwnerEmail(c.env.config));
+  if (match === 'non-ascii') {
+    console.warn('OAuth callback: bootstrap owner claim refused (non-ASCII email)');
+  } else if (match) {
+    try {
+      const ids = await catalog.tx((cat) => cat.auth.authClaimOwnerlessStudios(uid));
+      for (const id of ids) console.info(`OAuth callback: bootstrap owner claimed team ${id}`);
+    } catch (e) {
+      const code =
+        (e as { code?: unknown } | null)?.code ?? (e instanceof Error ? e.name : 'error');
+      console.warn(
+        `OAuth callback: bootstrap owner claim failed (${sanitizeForLog(String(code))})`,
+      );
+    }
   }
 
   const ttlDays = sessionTtlDays(c.env.config);

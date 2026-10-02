@@ -188,7 +188,7 @@ after(() => {
 });
 beforeEach(() => {
   seen = [];
-  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+  handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
   rmSync(join(T, 'log'), { recursive: true, force: true });
   rmSync(join(T, 'cred'), { recursive: true, force: true });
 });
@@ -424,7 +424,7 @@ describe('start-up checks (H1, H10, H11)', () => {
 describe('success path (D1 steps 5-6, H12)', () => {
   it('logs in once, fetches with the right query, and spawns docker with only the clean env', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', `a'b"c$d\`e\nf`), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
     const r = await run(['dev', 'compose version']);
     assert.equal(r.code, 0, r.out);
     assert.equal(seen.length, 2);
@@ -449,7 +449,7 @@ describe('success path (D1 steps 5-6, H12)', () => {
     assert.match(env, /^TERM=xterm$/m);
     assert.ok(env.includes(`GOOGLE_CLIENT_ID=a'b"c$d\`e\nf`));
     const names = env.split('\n').filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split('=')[0]).sort();
-    assert.deepEqual(names, ['ANON_KEY', 'APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
+    assert.deepEqual(names, ['ANON_KEY', 'APP_DB_PASSWORD', 'AUTOLOGGER_STACK', 'BOOTSTRAP_OWNER_EMAIL', 'DEV_PORT', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'HOME', 'JWT_SECRET', 'PATH', 'POSTGRES_PASSWORD', 'PWD', 'REALTIME_DB_ENC_KEY', 'SECRET_KEY_BASE', 'SERVICE_ROLE_KEY', 'SUPABASE_PORT', 'SUPABASE_ROLES_PASSWORD', 'TERM']);
     assert.match(env, new RegExp(`^POSTGRES_PASSWORD=${PGPW}$`, 'm'));
   });
   it('a multi-step call logs in once and runs the steps in order', async () => {
@@ -490,7 +490,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   it('resolved refuses 8080, 80/443 in dev, and a non-numeric port', async () => {
     writeCreds('dev');
     for (const p of ['8080', '443', 'abc']) {
-      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('DEV_PORT', p), ...sbSecrets()]);
+      handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', p), ...sbSecrets()]);
       const r = await run(['dev', 'resolved', 'compose up -d']);
       assert.notEqual(r.code, 0, p);
       assert.doesNotMatch(log('argv'), / up /, p);
@@ -517,7 +517,7 @@ describe('guard steps (resolved, urls, prod-tags, reset; H8)', () => {
   });
   it('a failing guard stops before the destructive step', async () => {
     writeCreds('dev');
-    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('DEV_PORT', '8080'), ...sbSecrets()]);
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('BOOTSTRAP_OWNER_EMAIL', 'owner@example.com'), secret('DEV_PORT', '8080'), ...sbSecrets()]);
     const r = await run(['dev', 'reset', 'resolved', 'compose down -v'], { env: { CONFIRM: 'yes' } });
     assert.notEqual(r.code, 0);
     assert.doesNotMatch(log('argv'), /down/);
@@ -691,13 +691,14 @@ describe('published ports with the Supabase gateway (supabase-services D4)', () 
   });
 });
 
-describe('sign-in client (gotrue-sign-in D3, require-login D1)', () => {
-  const full = () => new Map([['GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com'], ['GOOGLE_CLIENT_SECRET', 'secret-value']]);
-  it('every stack refuses a missing or empty GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET', async () => {
+describe('sign-in client and bootstrap owner (gotrue-sign-in D3, require-login D1, owner-bootstrap D8)', () => {
+  const KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'BOOTSTRAP_OWNER_EMAIL'];
+  const full = () => new Map([['GOOGLE_CLIENT_ID', 'id.apps.googleusercontent.com'], ['GOOGLE_CLIENT_SECRET', 'secret-value'], ['BOOTSTRAP_OWNER_EMAIL', 'owner-value@example.com']]);
+  it('every stack refuses a missing or empty GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET or BOOTSTRAP_OWNER_EMAIL', async () => {
     const { checkSignInClient } = await import('./compose-run.mjs');
     for (const env of ['dev', 'stage', 'prod']) {
       assert.throws(() => checkSignInClient(env, new Map()), /GOOGLE_CLIENT_ID/, env);
-      for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']) {
+      for (const k of KEYS) {
         const missing = full();
         missing.delete(k);
         assert.throws(() => checkSignInClient(env, missing), new RegExp(k), `${env} ${k} missing`);
@@ -709,13 +710,21 @@ describe('sign-in client (gotrue-sign-in D3, require-login D1)', () => {
   it('every stack refuses a whitespace-only value, without printing values', async () => {
     const { checkSignInClient } = await import('./compose-run.mjs');
     for (const env of ['dev', 'stage', 'prod']) {
-      for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']) {
+      for (const k of KEYS) {
         assert.throws(() => checkSignInClient(env, new Map([...full(), [k, '  \t ']])), new RegExp(k), `${env} ${k}`);
         let msg = '';
         try { checkSignInClient(env, new Map([...full(), [k, ' ']])); } catch (err) { msg = err.message; }
-        assert.doesNotMatch(msg, /secret-value|googleusercontent/, `${env} ${k}`);
+        assert.doesNotMatch(msg, /secret-value|googleusercontent|owner-value/, `${env} ${k}`);
       }
     }
+  });
+  it('a dev run without BOOTSTRAP_OWNER_EMAIL in Infisical refuses before docker runs', async () => {
+    writeCreds('dev');
+    handler = standIn([secret('GOOGLE_CLIENT_ID', 'gid'), secret('GOOGLE_CLIENT_SECRET', 'gsecret'), secret('DEV_PORT', '18787'), ...sbSecrets()]);
+    const r = await run(['dev', 'compose up -d']);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /BOOTSTRAP_OWNER_EMAIL/);
+    assert.equal(log('argv'), '');
   });
   it('a dev run without GOOGLE_CLIENT_SECRET in Infisical refuses before docker runs', async () => {
     writeCreds('dev');

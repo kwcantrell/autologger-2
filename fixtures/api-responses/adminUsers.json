@@ -3,12 +3,12 @@
     {
       "id": "test-studios",
       "name": "Test Studio",
-      "builtin": true
+      "builtin": false
     },
     {
       "id": "test-studio-2",
       "name": "Test Studio 2",
-      "builtin": true
+      "builtin": false
     },
     {
       "id": "my-crew",

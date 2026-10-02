@@ -6,7 +6,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Catalog } from '@autologger/catalog';
-import { BUILTIN_STUDIO_ORDER } from '@autologger/domain';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
 import { createTestDatabase } from '../../../test/pg/testDb';
@@ -64,6 +63,8 @@ export async function resetTestEnv(): Promise<void> {
       // D1/D7), so oauthConfigured() is true in the base test env.
       GOOGLE_CLIENT_ID: 'test-client-id',
       GOOGLE_CLIENT_SECRET: 'test-secret',
+      // owner-bootstrap D13: an address no suite signs in with, so no sign-in claims by accident.
+      BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
       SESSION_COOKIE: 'autologger_sid',
       SESSION_DAYS: '14',
       NEW_USER_ALL_TEAMS: '0',
@@ -86,7 +87,8 @@ export async function resetTestEnv(): Promise<void> {
   current = { ...made, dir, defaultUser: null };
 }
 
-/** The default signed-in caller (require-login D7): a plain `member` of the built-in studios only.
+/** The default signed-in caller (require-login D7): a plain `member` of the two seed teams
+ * (`test-studios`, `test-studio-2`; owner-bootstrap D13) only.
  * `seededSession()` adds the same membership for its fresh studio; `seedStudio` adds none, so team
  * and admin suites see no extra member. Created on first use (the wrapped `app` adding its cookie,
  * or `seededSession()`), so a suite that never signs in as it — the admin users capture — sees no
@@ -105,7 +107,7 @@ export function defaultUser(): Promise<{ id: string; cookie: string }> {
       familyName: 'User',
       pictureUrl: '',
     });
-    for (const sid of BUILTIN_STUDIO_ORDER) {
+    for (const sid of ['test-studios', 'test-studio-2']) {
       await catalog.auth.authAddMembershipWithRole(id, sid, 'member');
     }
     const raw = await createLoginSession(cur.bindings.ports.kv, id, 14);

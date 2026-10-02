@@ -1,5 +1,6 @@
 // teams-self-serve (design D1/D2): role-aware membership ops + invite storage.
 import { describe, expect, it } from 'vitest';
+import { env } from './harness';
 import { catalogFor, seedStudio, seedUser } from './helpers';
 
 describe('AuthStore: role-aware memberships (design D1)', () => {
@@ -70,6 +71,32 @@ describe('AuthStore: role-aware memberships (design D1)', () => {
     expect(await cat.auth.authCountEnabledAdmins(studio)).toBe(0);
   });
 
+  it('authListTeamMembers orders owner, admin, member (owner-bootstrap D11)', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const owner = await seedUser({ email: 'zz-owner@example.com' });
+    const admin = await seedUser({ email: 'yy-admin@example.com' });
+    const member = await seedUser({ email: 'aa-member@example.com' });
+    await cat.auth.authAddMembershipWithRole(member, studio, 'member');
+    await cat.auth.authAddMembershipWithRole(admin, studio, 'admin');
+    await cat.auth.authAddMembershipWithRole(owner, studio, 'owner');
+    const rows = await cat.auth.authListTeamMembers(studio);
+    expect(rows.map((r) => [r.id, r.role])).toEqual([
+      [owner, 'owner'],
+      [admin, 'admin'],
+      [member, 'member'],
+    ]);
+  });
+
+  it('authCountEnabledAdmins does not count the owner (owner decision B)', async () => {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    await cat.auth.authAddMembershipWithRole(await seedUser(), studio, 'owner');
+    expect(await cat.auth.authCountEnabledAdmins(studio)).toBe(0);
+    await cat.auth.authAddMembershipWithRole(await seedUser(), studio, 'admin');
+    expect(await cat.auth.authCountEnabledAdmins(studio)).toBe(1);
+  });
+
   it('authListTeamMembers returns joined user fields + role, admins first', async () => {
     const cat = catalogFor();
     const studio = await seedStudio();
@@ -90,34 +117,16 @@ describe('AuthStore: role-aware memberships (design D1)', () => {
     });
   });
 
-  it('authCountAdminTeams counts admin memberships, excluding the given studio ids', async () => {
+  // owner-bootstrap D5: the creation cap counts owned teams only.
+  it('authCountOwnedTeams counts owner memberships only', async () => {
     const cat = catalogFor();
-    const admined1 = await seedStudio();
-    const admined2 = await seedStudio();
-    const excluded = await seedStudio();
-    const memberOnly = await seedStudio();
     const user = await seedUser();
-    await cat.auth.authAddMembershipWithRole(user, admined1, 'admin');
-    await cat.auth.authAddMembershipWithRole(user, admined2, 'admin');
-    await cat.auth.authAddMembershipWithRole(user, excluded, 'admin');
-    await cat.auth.authAddMembershipWithRole(user, memberOnly, 'member');
-    expect(await cat.auth.authCountAdminTeams(user, [excluded])).toBe(2);
-  });
-
-  it('authCountAdminTeams with no exclusions counts every admin membership', async () => {
-    const cat = catalogFor();
-    const studio = await seedStudio();
-    const user = await seedUser();
-    await cat.auth.authAddMembershipWithRole(user, studio, 'admin');
-    expect(await cat.auth.authCountAdminTeams(user, [])).toBe(1);
-  });
-
-  it('authCountAdminTeams is 0 for a user with no admin memberships', async () => {
-    const cat = catalogFor();
-    const studio = await seedStudio();
-    const user = await seedUser();
-    await cat.auth.authAddMembershipWithRole(user, studio, 'member');
-    expect(await cat.auth.authCountAdminTeams(user, [])).toBe(0);
+    await cat.auth.authAddMembershipWithRole(user, await seedStudio(), 'owner');
+    await cat.auth.authAddMembershipWithRole(user, await seedStudio(), 'owner');
+    await cat.auth.authAddMembershipWithRole(user, await seedStudio(), 'admin');
+    await cat.auth.authAddMembershipWithRole(user, await seedStudio(), 'member');
+    expect(await cat.auth.authCountOwnedTeams(user)).toBe(2);
+    expect(await cat.auth.authCountOwnedTeams(await seedUser())).toBe(0);
   });
 
   it('authListTeamMembers scopes to the team', async () => {
@@ -304,5 +313,108 @@ describe('AuthStore: user lookup by normalized email (design D2 multi-match)', (
     const cat = catalogFor();
     await seedUser({ email: 'someone@example.com' });
     expect(await cat.auth.authListUsersByEmailNorm('nobody@example.com')).toEqual([]);
+  });
+});
+
+// owner-bootstrap D3, D6, D7: ownership writes keep at most one owner and change nothing on failure.
+describe('AuthStore: team ownership (owner-bootstrap D3, D6, D7)', () => {
+  async function team(): Promise<{ studio: string; owner: string; admin: string; member: string }> {
+    const cat = catalogFor();
+    const studio = await seedStudio();
+    const owner = await seedUser();
+    const admin = await seedUser();
+    const member = await seedUser();
+    await cat.auth.authAddMembershipWithRole(owner, studio, 'owner');
+    await cat.auth.authAddMembershipWithRole(admin, studio, 'admin');
+    await cat.auth.authAddMembershipWithRole(member, studio, 'member');
+    return { studio, owner, admin, member };
+  }
+  async function roles(studio: string): Promise<Record<string, string>> {
+    const rows = await catalogFor().auth.authListTeamMembers(studio);
+    return Object.fromEntries(rows.map((r) => [r.id, r.role]));
+  }
+
+  it('authTransferOwnership makes the target owner and the old owner admin', async () => {
+    const t = await team();
+    await catalogFor().auth.authTransferOwnership(t.studio, t.owner, t.member);
+    expect(await roles(t.studio)).toEqual({
+      [t.owner]: 'admin',
+      [t.admin]: 'admin',
+      [t.member]: 'owner',
+    });
+  });
+
+  it('authTransferOwnership throws and changes nothing when the target has no membership', async () => {
+    const t = await team();
+    const before = await roles(t.studio);
+    await expect(
+      catalogFor().auth.authTransferOwnership(t.studio, t.owner, await seedUser()),
+    ).rejects.toThrow();
+    expect(await roles(t.studio)).toEqual(before);
+  });
+
+  it('authTransferOwnership throws and changes nothing when the source is not the owner', async () => {
+    const t = await team();
+    const before = await roles(t.studio);
+    await expect(
+      catalogFor().auth.authTransferOwnership(t.studio, t.admin, t.member),
+    ).rejects.toThrow();
+    expect(await roles(t.studio)).toEqual(before);
+  });
+
+  it('authSetOwner demotes the current owner to admin and makes the target owner', async () => {
+    const t = await team();
+    await catalogFor().auth.authSetOwner(t.studio, t.member);
+    expect(await roles(t.studio)).toEqual({
+      [t.owner]: 'admin',
+      [t.admin]: 'admin',
+      [t.member]: 'owner',
+    });
+    const outsider = await seedUser();
+    await catalogFor().auth.authSetOwner(t.studio, outsider);
+    expect((await roles(t.studio))[outsider]).toBe('owner');
+    expect((await roles(t.studio))[t.member]).toBe('admin');
+  });
+
+  it('authSetOwner on the current owner is a no-op', async () => {
+    const t = await team();
+    const before = await roles(t.studio);
+    await catalogFor().auth.authSetOwner(t.studio, t.owner);
+    expect(await roles(t.studio)).toEqual(before);
+  });
+
+  it('authClaimOwnerlessStudios claims every ownerless team, leaving owned teams and other roles alone', async () => {
+    const cat = catalogFor();
+    const owned = await team();
+    const ownerless = await seedStudio();
+    const otherAdmin = await seedUser();
+    await cat.auth.authAddMembershipWithRole(otherAdmin, ownerless, 'admin');
+    const memberOf = await seedStudio();
+    const claimant = await seedUser();
+    await cat.auth.authAddMembershipWithRole(claimant, memberOf, 'member');
+    const expected = (
+      await env.ports.catalog.all<{ id: string }>(
+        `SELECT d.id FROM studio_definitions d WHERE NOT EXISTS (
+           SELECT 1 FROM user_studio_memberships m WHERE m.studio_id = d.id AND m.role = 'owner')
+         ORDER BY d.id`,
+      )
+    ).map((r) => r.id);
+    expect(expected).toEqual(
+      expect.arrayContaining(['test-studios', 'test-studio-2', ownerless, memberOf]),
+    );
+    const claimed = await cat.auth.authClaimOwnerlessStudios(claimant);
+    expect([...claimed].sort()).toEqual(expected);
+    expect(claimed).not.toContain(owned.studio);
+    for (const sid of expected) {
+      expect(await cat.auth.authGetMembershipRole(claimant, sid), sid).toBe('owner');
+    }
+    expect(await cat.auth.authGetMembershipRole(otherAdmin, ownerless)).toBe('admin');
+    expect(await cat.auth.authGetMembershipRole(claimant, owned.studio)).toBeNull();
+    expect(await roles(owned.studio)).toEqual({
+      [owned.owner]: 'owner',
+      [owned.admin]: 'admin',
+      [owned.member]: 'member',
+    });
+    expect(await cat.auth.authClaimOwnerlessStudios(claimant)).toEqual([]);
   });
 });

@@ -8,8 +8,8 @@ import { renderStrict } from '../../../test/renderStrict';
 import { setNavigationImplForTesting } from '../navigation';
 import { TeamsRoute } from './TeamsRoute';
 
-// --- TeamsRoute page tests (teams-self-serve, task 6.2; spec:
-// team-management "Teams management UI", all four scenarios) ---
+// --- TeamsRoute page tests (teams-self-serve, task 6.2; owner-bootstrap 8.2; spec:
+// team-management "Teams management page") ---
 //
 // Mocked at module boundaries (the SessionRoute.test.tsx idiom): `useProfile`
 // is replaced (this page reads the teams list + roles off it, and the real
@@ -17,7 +17,7 @@ import { TeamsRoute } from './TeamsRoute';
 // elsewhere) and `apiFetch` is the sole network seam — every team-detail
 // fetch and management mutation runs through the REAL `useTeam`/mutation
 // hooks and a REAL QueryClient, so invalidation-driven UI updates (the invite
-// round-trip, last-admin 409) are exercised for real, not simulated.
+// round-trip, the owner 409) are exercised for real, not simulated.
 
 vi.mock('../../../api/hooks/useProfile', () => ({
   useProfile: vi.fn(),
@@ -83,8 +83,15 @@ function detailFixture(overrides: Partial<TeamDetail> = {}): TeamDetail {
     id: 'team-a',
     name: 'Team A',
     role: 'admin',
-    enabled_admin_count: 2,
+    enabled_admin_count: 1,
     members: [
+      {
+        id: 'owner-1',
+        email: 'owner@example.com',
+        given_name: 'Ow',
+        family_name: 'Ner',
+        role: 'owner',
+      },
       {
         id: 'caller-1',
         email: 'caller@example.com',
@@ -162,14 +169,19 @@ describe('back-to-sessions affordance (spec: "Teams page offers a way back in ev
   });
 });
 
-describe('built-in team memberships', () => {
-  it('render read-only with no expand affordance and no detail fetch', () => {
-    renderPage(teamsProfile([{ id: 'test-studios', name: 'Test Studios', role: 'member' }]));
+describe('former built-in teams (owner-bootstrap D9)', () => {
+  it('render as ordinary expandable team cards', async () => {
+    mockedApiFetch.mockResolvedValue(
+      detailFixture({ id: 'test-studios', name: 'Test Studio', role: 'member' }),
+    );
+    renderPage(teamsProfile([{ id: 'test-studios', name: 'Test Studio', role: 'member' }]));
 
-    const row = screen.getByTestId('team-row-test-studios');
-    expect(within(row).getByText('Legacy team — managed by support.')).not.toBeNull();
-    expect(within(row).queryByRole('button')).toBeNull();
-    expect(teamsApiCalls()).toHaveLength(0);
+    expect(screen.queryByText('Legacy team — managed by support.')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-toggle-test-studios'));
+    await waitFor(() =>
+      expect(screen.getByTestId('team-member-panel-test-studios')).not.toBeNull(),
+    );
+    expect(teamsApiCalls()).toHaveLength(1);
   });
 });
 
@@ -253,49 +265,56 @@ describe('invite flow round-trip (scenario: Invite flow round-trip)', () => {
   });
 });
 
-describe('last-admin protection surfaced as an actionable message', () => {
-  it('demoting the sole enabled admin (self) shows the 409 detail text', async () => {
+describe('owner rules surfaced as an actionable message', () => {
+  it('a refused role change shows the 409 detail text', async () => {
     mockedApiFetch.mockImplementation(async (path: string, opts?: RequestInit) => {
       const method = opts?.method ?? 'GET';
       if (path === 'teams/team-a' && method === 'GET') {
         return detailFixture({
-          enabled_admin_count: 1,
+          role: 'owner',
           members: [
             {
               id: 'caller-1',
               email: 'caller@example.com',
               given_name: 'Cal',
               family_name: 'Ler',
+              role: 'owner',
+            },
+            {
+              id: 'u2',
+              email: 'other@example.com',
+              given_name: 'Ot',
+              family_name: 'Her',
               role: 'admin',
             },
           ],
         });
       }
-      if (path === 'teams/team-a/members/caller-1/role' && method === 'POST') {
-        throw new ApiError(409, 'This would leave the team with no enabled admin.');
+      if (path === 'teams/team-a/members/u2/role' && method === 'POST') {
+        throw new ApiError(409, 'Transfer ownership first.');
       }
       throw new Error(`unexpected apiFetch: ${method} ${path}`);
     });
 
-    renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'admin' }]));
+    renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'owner' }]));
     fireEvent.click(screen.getByTestId('team-toggle-team-a'));
-    await waitFor(() => expect(screen.getByTestId('team-admin-panel-team-a')).not.toBeNull());
+    await waitFor(() => expect(screen.getByTestId('team-owner-panel-team-a')).not.toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Make member' }));
 
     await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toBe(
-        'This would leave the team with no enabled admin.',
-      ),
+      expect(screen.getByRole('alert').textContent).toBe('Transfer ownership first.'),
     );
   });
 });
 
 describe('orphaned team is visible as such (scenario: Orphaned team is visible as such)', () => {
-  it('a zero-enabled-admin team renders the contact-support notice instead of management controls', async () => {
-    mockedApiFetch.mockResolvedValue(
-      detailFixture({ role: 'member', enabled_admin_count: 0 }) satisfies TeamDetail,
-    );
+  it('a team with no owner renders the contact-support notice instead of member controls', async () => {
+    const base = detailFixture({ role: 'member' });
+    mockedApiFetch.mockResolvedValue({
+      ...base,
+      members: base.members.filter((m) => m.role !== 'owner'),
+    } satisfies TeamDetail);
 
     renderPage(teamsProfile([{ id: 'team-a', name: 'Team A', role: 'member' }]));
     fireEvent.click(screen.getByTestId('team-toggle-team-a'));
@@ -309,7 +328,7 @@ describe('orphaned team is visible as such (scenario: Orphaned team is visible a
 describe('create-team form', () => {
   it('surfaces the {detail} cap error inline', async () => {
     mockedApiFetch.mockRejectedValue(
-      new ApiError(400, 'You already admin 20 teams; the limit has been reached.'),
+      new ApiError(400, 'You already own 20 teams; the limit has been reached.'),
     );
 
     renderPage(teamsProfile([]));
@@ -320,7 +339,7 @@ describe('create-team form', () => {
 
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe(
-        'You already admin 20 teams; the limit has been reached.',
+        'You already own 20 teams; the limit has been reached.',
       ),
     );
   });

@@ -3,7 +3,7 @@
 // with the cross-store calls rewritten to the injected studios/shows stores.
 
 import type { Row, SettingsBlob, StudioProfile } from '@autologger/domain';
-import { blobToProfile, ValidationError } from '@autologger/domain';
+import { blobToProfile, defaultSettingsBlob, ValidationError } from '@autologger/domain';
 import type { CatalogDb } from '@autologger/ports';
 import { allocateTitleForBase, dateSuffixBase, padEpisodeToken } from './sessionTitleDerivation';
 import type { ShowsStore } from './showsStore';
@@ -365,11 +365,18 @@ export class SessionIndexStore implements SessionIndexStoreFacade {
     };
   }
 
-  /** studio_profile_for_session — categories from the session's show, else active studio. */
+  /** studio_profile_for_session — categories from the session's show. A session whose team is
+   * empty or unknown gets a team-less profile: the show's categories, else the default ones
+   * (owner-bootstrap D10; there is no global active studio). */
   async studioProfileForSession(sessionId: string): Promise<StudioProfile> {
     const raw = await this.getSessionShowCategories(sessionId);
-    let stu = await this.getSessionStudioId(sessionId);
-    if (!stu || !this.studios.isKnownStudio(stu)) stu = (await this.studios.resolveActiveStudio()).id;
+    const stu = await this.getSessionStudioId(sessionId);
+    if (!stu || !this.studios.isKnownStudio(stu)) {
+      return blobToProfile('', '', {
+        ...defaultSettingsBlob(''),
+        ...(raw === null ? {} : { categories: raw.categories }),
+      } as unknown as SettingsBlob);
+    }
     if (raw === null) return this.studios.loadStudioProfile(stu);
     const name = this.studios.studioNamesDict()[stu] ?? stu;
     return blobToProfile(stu, name, {

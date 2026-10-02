@@ -8,6 +8,9 @@ export interface Config {
   HOST: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  /** The bootstrap owner's email (owner-bootstrap D8): required in every stack; a matching
+   * verified sign-in claims every team that has no owner. */
+  BOOTSTRAP_OWNER_EMAIL: string;
   SESSION_COOKIE: string;
   SESSION_DAYS: string;
   NEW_USER_ALL_TEAMS: string;

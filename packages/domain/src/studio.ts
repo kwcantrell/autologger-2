@@ -1,6 +1,6 @@
 // Studio profiles, categories, palette helpers — ported from src/autologger/studio.py.
-// Pure functions + built-in constants only. The DB-backed studio *registry* merge
-// (built-ins + studio_definitions rows) lives in db/catalog.ts.
+// Pure functions only. The DB-backed studio registry (studio_definitions rows) lives in
+// packages/catalog/src/studioRegistry.ts; no team id is known by name (owner-bootstrap D9).
 
 /** Thrown by validators on bad input; routers map this to HTTP 400. */
 export class ValidationError extends Error {
@@ -58,23 +58,7 @@ export interface SettingsBlob {
   default_frame_rate: number;
 }
 
-export const SETTING_ACTIVE_STUDIO = 'active_studio_id';
-export const SETTING_ACTIVE_SHOW = 'active_show_id';
 export const STUDIO_CONFIG_PREFIX = 'studio_config:';
-
-// Built-in teams shipped with the product (always present; merged with DB-defined teams).
-export const BUILTIN_STUDIO_ORDER: readonly string[] = ['test-studios', 'test-studio-2'];
-export const BUILTIN_STUDIO_NAMES: Record<string, string> = {
-  'test-studios': 'Test Studio',
-  'test-studio-2': 'Test Studio 2',
-};
-export const DEFAULT_STUDIO_ID = 'test-studios';
-
-export const LEGACY_STUDIO_MAP: Record<string, string> = {
-  'test-studios-admin': 'test-studios',
-  'docu-field': 'test-studios',
-  'stream-ops': 'test-studio-2',
-};
 
 const COLOR_HEX = /^#[0-9A-Fa-f]{6}$/;
 
@@ -160,29 +144,7 @@ export function studioConfigKey(studioId: string): string {
   return `${STUDIO_CONFIG_PREFIX}${studioId}`;
 }
 
-function defaultCategoriesForNewStudio(studioId: string): CategoryRecord[] {
-  if (studioId === 'test-studio-2') {
-    return [
-      {
-        id: newId(),
-        name: 'Note',
-        color: '#7cb7ff',
-        type: 'TEXT',
-        dropdown_options: [],
-        on_label: '',
-        off_label: '',
-      },
-      {
-        id: newId(),
-        name: 'Mark',
-        color: '#f4a82e',
-        type: 'BUTTON',
-        dropdown_options: [],
-        on_label: '',
-        off_label: '',
-      },
-    ];
-  }
+function defaultCategoriesForNewStudio(): CategoryRecord[] {
   return [
     {
       id: newId(),
@@ -217,9 +179,10 @@ function defaultCategoriesForNewStudio(studioId: string): CategoryRecord[] {
   ];
 }
 
-export function defaultSettingsBlob(studioId: string): SettingsBlob {
+/** The default settings for a team; the same for every id (owner-bootstrap D9). */
+export function defaultSettingsBlob(_studioId: string): SettingsBlob {
   return {
-    categories: defaultCategoriesForNewStudio(studioId),
+    categories: defaultCategoriesForNewStudio(),
     show_title_format: '',
     default_frame_rate: 24.0,
   };

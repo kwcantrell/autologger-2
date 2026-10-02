@@ -349,9 +349,53 @@ Slice order:
      - rolling back to the old image with the new compose is safe: the old server treats an
        unset `REQUIRE_LOGIN` as login required;
      - prod's `api` must not have `REQUIRE_LOGIN` set by hand (Infisical can't inject it).
-   - 5c `owner-bootstrap`: the `owner` role (one per studio, in the database), the bootstrap
-     owner (`BOOTSTRAP_OWNER_EMAIL`: that verified email becomes owner of every studio without
-     one, at sign-in), and dropping the built-in studios.
+   - 5c `owner-bootstrap`: the `owner` role, the bootstrap owner and the built-in studios as
+     data. Implemented 2026-10-02 on `supabase-5c-owner-bootstrap`; verification, merge and the
+     live dev and stage checks are pending (the owner sets `BOOTSTRAP_OWNER_EMAIL` first). Owner
+     decisions (owner, 2026-10-02):
+     - **one change;**
+     - **the built-ins become real teams:** a migration (`20261004000000`) inserts
+       `studio_definitions` rows for `test-studios` and `test-studio-2` with the same ids and
+       names, so their shows, sessions and settings survive; they start with no owner. Every
+       built-in constant, `DEFAULT_STUDIO_ID` and both global active team/show defaults go;
+     - **the owner anchors the team:** the owner can't leave, be removed or be demoted
+       (`409 Transfer ownership first.`); only the owner changes roles, removes admins and
+       deletes the team; admins keep rename, invites and removing members. Last-admin protection
+       is retired;
+     - **transfer:** `POST /api/teams/:id/owner {user_id}` makes an existing member owner and the
+       old owner admin in one transaction; the support plane's membership upsert also accepts
+       `role: "owner"` and demotes the current owner to admin in the same transaction;
+     - **`BOOTSTRAP_OWNER_EMAIL` is required in every stack:** boot and `compose-run` refuse a
+       blank value, and boot also refuses a non-ASCII one and logs a masked form (domain and a
+       short hash);
+     - **the bootstrap owner claims every ownerless team** at each sign-in whose verified email
+       matches it exactly in ASCII (trimmed, `A`-`Z` folded, any non-ASCII character refused);
+       existing admins stay admins, no migration promotes anyone, and a failed claim is logged
+       and the sign-in still succeeds.
+
+     After the adversarial panel (owner, 2026-10-02):
+     - **A. takeover accepted:** on dev and stage the bootstrap owner's first sign-in claims every
+       ownerless team, including teams other users created after 5a (stage: `my-crew2`,
+       `my-studio`, `my-crew`); each claimed team id is logged;
+     - **B.** `enabled_admin_count` keeps its meaning (enabled `admin` rows only; the owner is not
+       counted, so a new team reports `0`); the web no longer reads it;
+     - **C.** a role-less support upsert never demotes the owner (`409 Explicit role required to
+       change the team owner.`); an explicit `admin`/`member` upsert or a membership delete still
+       applies and leaves the team ownerless until the bootstrap claim;
+     - **D.** transfer returns `200 {ok: true}`; a disabled target gets `400`, a non-member `404`,
+       and a self-transfer is `200` with no change.
+
+     This refines the permission model above: "exactly one owner, enforced in the database"
+     becomes **at most one owner in the database** (a check constraint on the role and a partial
+     unique index on `(studio_id) where role = 'owner'`), with "exactly one" kept by the
+     application for teams that have an owner. Ownerless teams are legal: the former built-ins
+     before the claim, teams the admin plane creates, and teams whose owner support removed. And
+     "the built-in studios are dropped" becomes **the built-ins are ordinary teams**: the
+     `builtin` field stays in the admin plane's frozen shapes, always `false`. Cutover: prod's
+     catalog is created at cutover, so the teams start ownerless and the first bootstrap sign-in
+     claims them; the image refuses to boot without `BOOTSTRAP_OWNER_EMAIL`, so **prod's
+     Infisical needs `BOOTSTRAP_OWNER_EMAIL` before the first deploy of this image**, and the
+     owner of `test-studios` is checked right after the first prod sign-in.
 6. RLS for the permission model above.
 7. Session tables, revision, version checks and the audited overwrite.
 8. Session leases.

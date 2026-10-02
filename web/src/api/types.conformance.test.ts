@@ -72,6 +72,8 @@ import { showsList } from '../../../fixtures/api-responses/showsList';
 import { teamCreate } from '../../../fixtures/api-responses/teamCreate';
 import { teamDetailAdmin } from '../../../fixtures/api-responses/teamDetailAdmin';
 import { teamDetailMember } from '../../../fixtures/api-responses/teamDetailMember';
+import { teamDetailOwner } from '../../../fixtures/api-responses/teamDetailOwner';
+import teamOwnerTransfer from '../../../fixtures/api-responses/teamOwnerTransfer.json';
 import teamRename from '../../../fixtures/api-responses/teamRename.json';
 import { teamRoleChange } from '../../../fixtures/api-responses/teamRoleChange';
 import topicCreate from '../../../fixtures/api-responses/topicCreate.json';
@@ -112,6 +114,7 @@ import type {
   TeamCreateResponse,
   TeamDetail,
   TeamMember,
+  TeamOwnerTransferResponse,
   TeamRenameResponse,
   TeamRoleChangeResponse,
   TranscriptWord,
@@ -437,9 +440,9 @@ describe('GET /api/profile — the two branches with no CW finding', () => {
     // the authenticated shape while it really is the authenticated capture.
     expect(check.auth.logged_in).toBe(true);
     expect(check.auth.user).not.toBeNull();
-    // Both `TeamRole` literals appear here, which is why this fixture is a `.ts`
+    // `TeamRole` literals appear here, which is why this fixture is a `.ts`
     // module with `as const` (audit §9) — a `.json` import would widen them.
-    expect(check.auth.user?.teams.map((t) => t.role)).toEqual(['admin', 'member']);
+    expect(check.auth.user?.teams.map((t) => t.role)).toEqual(['owner', 'member']);
   });
 
   // profile-shows-slimming. `ProfilePayload.shows` is `ShowBrief[]`, and the
@@ -564,10 +567,15 @@ describe('GET /api/shows/:showId — useShow', () => {
   });
 });
 
-describe('Teams — the four responses `useTeams.ts` types', () => {
+describe('Teams — the responses `useTeams.ts` types', () => {
   it('POST /api/teams is assignable to TeamCreateResponse', () => {
     const check: TeamCreateResponse = teamCreate;
-    expect(check.role).toBe('admin');
+    expect(check.role).toBe('owner');
+  });
+
+  it('POST /api/teams/:id/owner is assignable to TeamOwnerTransferResponse', () => {
+    const check: TeamOwnerTransferResponse = teamOwnerTransfer;
+    expect(check).toEqual({ ok: true });
   });
 
   it('PATCH /api/teams/:id is assignable to TeamRenameResponse', () => {
@@ -583,24 +591,27 @@ describe('Teams — the four responses `useTeams.ts` types', () => {
     expect(check.role).toBe('admin');
   });
 
-  it('both caller branches of GET /api/teams/:id are assignable to TeamDetail', () => {
+  it('all three caller branches of GET /api/teams/:id are assignable to TeamDetail', () => {
+    const asOwner: TeamDetail = teamDetailOwner;
     const asAdmin: TeamDetail = teamDetailAdmin;
     const asMember: TeamDetail = teamDetailMember;
     // The caller-dependent key (audit row 26): `invites` is emitted only for
-    // admins, which is why `TeamDetail.invites` is optional. Captured from the
+    // the owner and admins, which is why `TeamDetail.invites` is optional. Captured from the
     // same seeded state with the same pending invite present, so the member
     // body's missing key is an observation about the caller branch, not about
     // there being nothing to send.
+    expect(asOwner.role).toBe('owner');
     expect(asAdmin.role).toBe('admin');
     expect(asMember.role).toBe('member');
+    expect(asOwner.invites?.[0]?.email).toBe('pending@example.com');
     expect(asAdmin.invites?.[0]?.email).toBe('pending@example.com');
     expect('invites' in teamDetailMember).toBe(false);
     expect(asMember.invites).toBeUndefined();
   });
 
-  it('a member row is assignable to TeamMember and carries both roles', () => {
+  it('a member row is assignable to TeamMember and carries all three roles, owner first', () => {
     const members: TeamMember[] = teamDetailAdmin.members;
-    expect(members.map((m) => m.role)).toEqual(['admin', 'member']);
+    expect(members.map((m) => m.role)).toEqual(['owner', 'admin', 'member']);
   });
 });
 

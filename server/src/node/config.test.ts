@@ -24,6 +24,7 @@ function freshProcEnv(overrides: Record<string, string | undefined> = {}) {
     PUBLIC_BASE_URL: 'https://example.com',
     GOOGLE_CLIENT_ID: '',
     GOOGLE_CLIENT_SECRET: '',
+    BOOTSTRAP_OWNER_EMAIL: 'bootstrap-owner@example.com',
     // Dummy catalog settings: the adapter connects lazily, so nothing here dials them
     // (catalog-on-postgres A14). Port 1 is never listening.
     PGHOST: '127.0.0.1',
@@ -204,6 +205,23 @@ describe('createBindings -- the catalog is Postgres (catalog-on-postgres D1)', (
       expect(connections).toBe(0);
     } finally {
       await new Promise((r) => server.close(r));
+    }
+  });
+});
+
+describe('createBindings -- BOOTSTRAP_OWNER_EMAIL (owner-bootstrap D8)', () => {
+  it('passes the value through to Config, and defaults to empty', async () => {
+    const set = createBindings(freshProcEnv());
+    try {
+      expect(set.bindings.config.BOOTSTRAP_OWNER_EMAIL).toBe('bootstrap-owner@example.com');
+    } finally {
+      await set.close();
+    }
+    const unset = createBindings(freshProcEnv({ BOOTSTRAP_OWNER_EMAIL: undefined }));
+    try {
+      expect(unset.bindings.config.BOOTSTRAP_OWNER_EMAIL).toBe('');
+    } finally {
+      await unset.close();
     }
   });
 });

@@ -3,8 +3,12 @@
 // tier (changesReaders.int.test.ts) alongside its setSessionArchived /
 // setSessionUiHidden siblings.
 
+import type { Row } from '@autologger/domain';
+import type { CatalogDb } from '@autologger/ports';
 import { describe, expect, it } from 'vitest';
-import { normalizeUploadDate } from './sessionIndexStore';
+import { normalizeUploadDate, SessionIndexStore } from './sessionIndexStore';
+import type { ShowsStore } from './showsStore';
+import type { StudioRegistry } from './studioRegistry';
 
 describe('normalizeUploadDate (yt-dlp YYYYMMDD -> catalog YYYY-MM-DD)', () => {
   it('converts a well-formed YYYYMMDD string', () => {
@@ -32,5 +36,63 @@ describe('normalizeUploadDate (yt-dlp YYYYMMDD -> catalog YYYY-MM-DD)', () => {
 
   it('trims surrounding whitespace before validating', () => {
     expect(normalizeUploadDate('  20240115  ')).toBe('2024-01-15');
+  });
+});
+
+// owner-bootstrap D10: with no global active studio, a session whose show's team is unknown gets a
+// team-less profile (empty id and name) carrying the show's categories, or the default categories
+// when the session has no show. It never reads a global setting.
+describe('studioProfileForSession without a known team (owner-bootstrap D10)', () => {
+  const showCats = [
+    { id: 'c1', name: 'Clap', color: '#112233', type: 'BUTTON', dropdown_options: [] },
+  ];
+  function store(rows: { session: Row | null; studioId: string | null; show: Row | null }) {
+    const db = {
+      first: async (sql: string) => {
+        if (sql.includes('LEFT JOIN shows')) {
+          return rows.session === null ? null : { studio_id: rows.studioId };
+        }
+        if (sql.startsWith('SELECT * FROM sessions')) return rows.session;
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    } as unknown as CatalogDb;
+    const never = (what: string) => () => {
+      throw new Error(`${what} must not be read`);
+    };
+    const studios = {
+      isKnownStudio: () => false,
+      studioNamesDict: () => ({}),
+      getSetting: never('a global setting'),
+      loadStudioProfile: never('a team profile'),
+    } as unknown as StudioRegistry;
+    const shows = { getShowRow: async () => rows.show } as unknown as ShowsStore;
+    return new SessionIndexStore(db, studios, shows);
+  }
+
+  it("an unknown team gets id '', name '' and the show's categories", async () => {
+    const s = store({
+      session: { id: 's1', show_id: 'sh1' },
+      studioId: 'gone-team',
+      show: { id: 'sh1', name: 'Show', show_code: 'S', categories_json: JSON.stringify(showCats) },
+    });
+    const p = await s.studioProfileForSession('s1');
+    expect(p.id).toBe('');
+    expect(p.name).toBe('');
+    expect(p.categories.map((c) => c.label)).toEqual(['Clap']);
+  });
+
+  it('a session with no show gets the default categories', async () => {
+    const s = store({ session: { id: 's1', show_id: null }, studioId: null, show: null });
+    const p = await s.studioProfileForSession('s1');
+    expect(p.id).toBe('');
+    expect(p.name).toBe('');
+    expect(p.categories.map((c) => c.label)).toEqual(['Scene', 'Audio issue', 'Note']);
+  });
+
+  it('an unknown session gets the default categories, not an error', async () => {
+    const s = store({ session: null, studioId: null, show: null });
+    const p = await s.studioProfileForSession('nope');
+    expect(p.id).toBe('');
+    expect(p.categories.map((c) => c.label)).toEqual(['Scene', 'Audio issue', 'Note']);
   });
 });

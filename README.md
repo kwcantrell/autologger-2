@@ -812,7 +812,7 @@ Content-coding is transport applied above the frozen representation: the decoded
 | `/api/companion/presence\|state\|log\|transport\|command\|categories\|commands/*` | `routers/companion.py` |
 | `/api/admin/users` · `/api/admin/studios` · `…/users/{id}/memberships\|disable\|enable` | `routers/admin.py` |
 | `POST /api/teams` · `GET\|PATCH\|DELETE /api/teams/{id}` | `routers/teams.ts` (new, teams-self-serve) |
-| `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` | `routers/teams.ts` (new, teams-self-serve) |
+| `POST …/invites` · `DELETE …/invites/{email}` · `POST …/members/{userId}/role` · `DELETE …/members/{userId}` · `POST …/leave` · `POST …/owner` (transfer ownership, owner only: **200** `{ok: true}`) | `routers/teams.ts` (new, teams-self-serve; owner-bootstrap) |
 | `GET /sessions/:id` (SPA shell) | (app.ts frontend bridge) |
 | `GET /teams` (SPA shell) | (app.ts frontend bridge) |
 
@@ -873,6 +873,7 @@ only: nothing reads `server/.env`. The stacks take values from Infisical
 | `ADMIN_TOKEN` | *(empty)* | Bearer token gating the `/api/admin/*` routes (user + studio-definition admin). |
 | `SESSION_COOKIE` / `SESSION_DAYS` | `autologger_sid` / `14` | Session cookie name and lifetime (days). |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | *(required)* | Google OAuth credentials. The server refuses to boot when either, or `PUBLIC_BASE_URL`, is blank. |
+| `BOOTSTRAP_OWNER_EMAIL` | *(required)* | The bootstrap owner's email. A sign-in whose verified Google email matches it (trimmed, ASCII case-insensitive) becomes owner of every team with no owner. The server refuses to boot when it is blank or non-ASCII, and logs it masked (domain plus a short hash). |
 
 **Config-gated feature keys** (each endpoint returns a frozen `503` until its key/binary is
 present — see the linked sections above): `DEEPGRAM_API_KEY` (+ `DEEPGRAM_MODEL`) for
@@ -1029,6 +1030,7 @@ hand-typed `docker compose up` fails on purpose. Nothing reads `server/.env`.
 | `WEB_TAG`, `API_TAG` | yes | Git-SHA image tags (see above). Compose refuses to start without them. |
 | `PUBLIC_BASE_URL` | yes | The public HTTPS origin (e.g. `https://autologger.nrvo.ai`). Builds the OAuth redirect `${PUBLIC_BASE_URL}/auth/google/callback`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | yes | Google sign-in, the only way in for people; the server refuses to boot without them. |
+| `BOOTSTRAP_OWNER_EMAIL` | yes | The bootstrap owner; their first sign-in claims every ownerless team. Compose and the server refuse to start without it. |
 | `API_TOKEN` | if Companion is used | Companion bearer token, **≥ 32 random bytes**. Authenticates **only** `/api/companion/*`. |
 | `ADMIN_TOKEN` | yes for cutover | Gates `/api/admin/*` (membership bootstrap). |
 | `ROUTER_PORT` | no (`8080`) | Host loopback port the router publishes; the Newt target. |
