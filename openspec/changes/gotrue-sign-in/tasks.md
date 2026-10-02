@@ -161,7 +161,7 @@ the failure line) and green after.
   server-side exchange, no CORS); `docs/infisical-secrets.md` gains the `GOOGLE_CLIENT_ID` rule;
   README:834 lists `email_unverified` and `identity_unavailable`; ADR 0021 slice 5 entry (5a/5b/5c,
   decisions, the reversal, the slice 11 binding note on item 11) and seven `(5a)` revisit items.
-- [ ] 6.2 Live checks:
+- [x] 6.2 Live checks:
   - `make dev-up`:
     - auth is `healthy`;
     - `test_gateway.sh dev` passes;
@@ -176,7 +176,29 @@ the failure line) and green after.
     - with `auth` stopped, sign-in redirects with `login_error=identity_unavailable`;
     - `test_gateway.sh stage` passes.
     If the real token is refused for lack of a GoTrue secret, stop and ask the owner (design D3).
-- [ ] 6.3 Gates:
+  Evidence: dev: `5a-6.2-dev-up.log` (`make dev-up` exit 0), `5a-6.2-gateway-dev.log`
+  (`test_gateway (dev): 50 passed, 0 failed`), `5a-6.2-dev-live.log` (migrations through
+  `20261003000000`, the gate aborts auth's request, app -> `auth health 200`, profile 200).
+  Stage (owner allowed `make stage-up`): `5a-6.2-stage-up.log` exit 0, api and auth `healthy`,
+  0 users after the migration; `5a-6.2-gateway-stage.log` -> `test_gateway (stage): 50 passed,
+  0 failed`; auth `CLIENT_ID_len=72`, and app -> `auth health 200`.
+  `5a-6.2-stage-signin.log`, after the owner's Google sign-in:
+  - one `auth.users` row and one `catalog.users` row with the same id (`9b383da1…`);
+  - the email is confirmed;
+  - exactly one Google identity, whose `provider_id` equals the catalog `google_sub`;
+  - one login session;
+  - no GoTrue secret was configured, so the real token was accepted without one.
+
+  The owner reached the app signed in (stage has `REQUIRE_LOGIN=1`). The owner signed out, leaving
+  0 `session:` rows. With `autologger-stage-auth-1` stopped, the owner's sign-in showed the
+  generic "Sign-in didn't complete" message, the api logged `OAuth callback: Supabase Auth
+  exchange failed network` (the `identity_unavailable` branch), and the counts stayed `1|1|0`
+  (no new user, no session). Auth was restarted and is `healthy`.
+- [x] 6.3 Gates:
   - `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage hook` passes;
   - `openspec validate gotrue-sign-in --strict` passes;
   - append the consistency read to `panel.md`.
+  Evidence: `5a-6.3-hook.log`: `GITHUB_BASE_REF=supabase-migration scripts/check-change.sh --stage
+  hook` -> exit 0, every gate PASS including `size 242/400 changed lines` and `commands ran
+  ['typecheck', 'test']`. `openspec validate gotrue-sign-in --strict` -> valid. Consistency read
+  appended to `panel.md` (scope change: no).

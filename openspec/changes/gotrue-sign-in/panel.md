@@ -38,3 +38,10 @@ One critical finding, owner-decided. Every other finding is resolved in the arti
 - [x] [minor] Tasks and Impact missed invariant 3's dev `app` network set, the Caddyfile's "one CIDR" comment, and an enforcing check for the `api` network scenario. Resolved: all three are in task 2.1, D6 and the static-invariant delta.
 - [x] [minor] Parts of the migration are optional (the KV delete; `team_invites` goes beyond the ADR's wording). Resolved: the KV delete stays as one line; the invite delete is justified in D8 (it stops an old invite granting a membership to a re-registered person).
 - [x] [minor] ADR 0021 says "supabase-js on the server is for Auth admin", which D1 reverses. Resolved: the reversal is recorded in D1 and by task 6.1.
+
+## Consistency read 2026-10-02
+Edits since approval (`6440edb`): tasks.md only (ticks and evidence; blank lines inside items removed for the evidence gate).
+Scope change: no
+- [x] [minor] Every delta requirement has a task and a test: the api-contract-freeze callback rows (`email_unverified`, `identity_unavailable`, the account id is the Supabase Auth id, both mismatch directions, the disabled account changes no catalog row) → 4.1/4.2/4.3; the gateway settings (Google only, auto-confirm off) → 3.1 `test_gateway.sh`; the static invariant, the stage subnets, the dev gate and the container-deployment topology and `api` network set → 2.1 guard cases plus the 1.1/6.2 live gate checks. Resolved: no gaps.
+- [x] [minor] Task 4.3's overlapping same-subject case passes under both the old and the new conflict clause (Postgres's arbiter wait catches it); only the id-held-by-another-account case is red against the old clause. Resolved: recorded in 4.3's evidence; the overlapping case stays as a guard.
+- [x] [minor] In 6.2 the owner saw the generic "Sign-in didn't complete" message rather than reading `login_error=identity_unavailable` from the URL. Resolved: the api log shows the `identity_unavailable` branch (`Supabase Auth exchange failed network`), and 4.2's integration tests pin the redirect code; that the account was signed in is the owner's report on a `REQUIRE_LOGIN=1` stack, plus the KV session row.
