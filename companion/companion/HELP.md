@@ -5,7 +5,7 @@ AutoLogger session** — the module acts on whichever session that browser repor
 
 ## Configuration
 - **Server URL** — e.g. `http://127.0.0.1:8787`.
-- **API token** — only if the server runs with `API_TOKEN` set (`REQUIRE_LOGIN=1`). Leave blank on an open LAN box.
+- **API token** — required: the server's `API_TOKEN`. Without it every request gets `401`.
 - **Poll interval (ms)** — default 1000.
 
 ## Notes

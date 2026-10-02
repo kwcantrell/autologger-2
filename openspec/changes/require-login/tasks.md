@@ -237,7 +237,7 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   (`5b-5.1-green.log`) -> `check-envs: ok (all)`, exit 0; `bash docker/scripts/test_check_envs.sh`
   (`5b-5.1-guards.log`) -> `test_check_envs: 47 passed, 0 failed`. The stage overlay's header
   comment is updated too.
-- [ ] 5.2 Docs:
+- [x] 5.2 Docs:
   - README: the env table and the auth section, where `REQUIRE_LOGIN`, anonymous dev mode and
     the open-network refusals go;
   - the `server/.env.example` and `docker/.env*.example` files;
@@ -252,6 +252,14 @@ reloads and refuses to boot. That is expected. Don't change compose early to "fi
   Verify: `grep -rn REQUIRE_LOGIN --exclude-dir=node_modules --exclude-dir=archive .` hits only:
   `docs/superpowers/` (historical plans), ADR text about the removal, and the boot guard and its
   tests.
+  Evidence: `grep -rn REQUIRE_LOGIN --exclude-dir=node_modules --exclude-dir=archive
+  --exclude-dir=.git .` -> `docs/superpowers/**` (historical); ADR 0021 lines on the removal;
+  `server/src/bootGuard.ts:36-37` and `bootGuard.test.ts`; three more lines that state the
+  refusal (`README.md:837`, `server/.env.example:12`, `docker/compose.stage.yaml:13`); the change's
+  own artifacts; and the main specs this change's deltas rewrite at archive (checked again in 6.6).
+  `grep -n "checkSignInClient" -A3 docker/scripts/compose-run.mjs` -> both Google values are
+  required in every stack, as the docs now say. `npx biome check companion/src/config.ts` -> `No
+  fixes applied`. The hook gates passed (`5b-5.2-hook.log`).
 
 ## 6. Verification
 
