@@ -3,13 +3,22 @@
 // over it, and raw reads and writes of the session tables with `session_id` filled in. Test
 // infrastructure.
 
-import { systemCaller } from '@autologger/session-core/sessionCaller';
 import type { Row, SessionStorage, SqlValue } from '@autologger/session-core/sessionCore';
-import { SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import type { SessionHubEntry } from '@autologger/session-core/SessionHub';
 import type { Clock } from '@autologger/ports';
 import { PostgresCatalogDb, PostgresSessionDb } from '@autologger/storage';
 import type { vi } from 'vitest';
 import { env } from '../harness';
+import { TEST_CALLER, type TestHubMembers, TestRegistry, testHub } from './testHub';
+
+export {
+  openTestHub,
+  TEST_CALLER,
+  type TestHub,
+  type TestHubMembers,
+  TestRegistry,
+  testHub,
+} from './testHub';
 
 /** The harness's adapter, under the retry counter when `CATALOG_RETRY_LOG` wraps it. */
 export function catalogRoot(): PostgresCatalogDb {
@@ -27,9 +36,6 @@ export function sessionDb(root: PostgresCatalogDb = catalogRoot()): PostgresSess
   return new PostgresSessionDb(root);
 }
 
-/** The caller of the harness's own storage calls (session-content-policies D12): a system task, so
- * raw reads and writes see every row. */
-export const TEST_CALLER = systemCaller('test-harness');
 
 let made = 0;
 
@@ -53,6 +59,11 @@ export function testStorage(sessionId: string, db: PostgresSessionDb = sessionDb
   };
 }
 
+/** The harness registry's hub for `sessionId`, bound to `TEST_CALLER` (`testHub`). */
+export async function harnessHub(sessionId: string): Promise<SessionHubEntry & TestHubMembers> {
+  return testHub(await env.ports.sessions.get(sessionId));
+}
+
 /** A registry over the harness's adapter, as the composition root builds it. `autoCreate` inserts
  * a session's catalog row on its first use, for tests that name sessions freely; `wrap` wraps each
  * session's storage (a slow or failing one). */
@@ -63,7 +74,7 @@ export function testRegistry(
     db?: PostgresSessionDb;
     wrap?: (storage: SessionStorage, sessionId: string) => SessionStorage;
   } = {},
-): SessionHubRegistry {
+): TestRegistry {
   const db = opts.db ?? sessionDb();
   const rows = new Map<string, { promise: Promise<unknown> }>();
   const ensureRow = (id: string): Promise<unknown> => {
@@ -94,7 +105,7 @@ export function testRegistry(
       : inner;
     return opts.wrap ? opts.wrap(base, id) : base;
   };
-  return new SessionHubRegistry({ storage, clock: opts.clock });
+  return new TestRegistry({ storage, clock: opts.clock });
 }
 
 /** The session's rows of `table`, without `session_id`. */

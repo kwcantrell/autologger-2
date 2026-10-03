@@ -9,9 +9,8 @@
 // session-tables D12).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionHub } from '@autologger/session-core/SessionHub';
 import { makeFakeClock } from '../fakeClock';
-import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, testStorage } from './sessionRows';
+import { createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testStorage } from './sessionRows';
 
 describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
   let id: string;
@@ -25,7 +24,7 @@ describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
 
   it('claim → advance past stale threshold → alarm frees the lease, no real time', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = await SessionHub.open(id, testStorage(id), clock);
+    const hub = await openTestHub(id, testStorage(id), clock);
 
     expect(await hub.claimLease('tab-a')).toBe(true);
     expect((await hub.leaseStatus()).holder_client_id).toBe('tab-a');
@@ -46,7 +45,7 @@ describe('lease expiry through the hub with a fake clock (task 5.3)', () => {
 
   it('heartbeat keeps the lease alive across would-be expiry', async () => {
     const { clock, tick } = makeFakeClock();
-    const hub = await SessionHub.open(id, testStorage(id), clock);
+    const hub = await openTestHub(id, testStorage(id), clock);
 
     await hub.claimLease('tab-a');
     tick(30_000);

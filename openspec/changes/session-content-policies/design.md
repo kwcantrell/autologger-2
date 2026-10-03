@@ -486,6 +486,26 @@ Test plumbing found in group 3 (post-approval; no scope change; the last bullet 
   (2026-10-03, after the 3.2 stop): commit 3a's `config.ts` already stops binding `session-hub`
   at construction, so the old assertion cannot hold there. Same assertion, earlier commit.
 
+Test plumbing found in group 4 (post-approval; no scope change, no expected value changed):
+- `server/src/test/session/testHub.ts` holds `TEST_CALLER` and `testHub(hub)`, one proxy per hub
+  whose storage members are `hub.as(TEST_CALLER)`'s and whose other members (sockets, `as`,
+  `close`, counters, spies) are the hub's; `openTestHub` and `TestRegistry` (what `testRegistry`
+  and the real-AI `realSessionRegistry` build) resolve such hubs, and `sessionRows.ts`'s
+  `harnessHub(id)` does for the harness registry. `SessionHubView` (the bound view's class) is
+  exported from session-core for the test hub type and for spies.
+- Spies on a route's hub member (`statusLive`, `anchorImportedTake` in the import late-guard tests,
+  `createAnchoredEvent` in `aiMcpServer.int.test.ts`) target `SessionHubView.prototype`: each
+  request binds its own view.
+- `registerTurn` spies read the context at argument index 2 (`ai.int`, `topicGenerate.int`); test
+  calls of `registerTurn`, `driveAiTurn`, `generateTopicsTurn` and `buildAggregateMcpServer` pass
+  `TEST_CALLER`; `transcribe.int`'s `generateTopicsTurn` mock binds with `opts.caller`;
+  `aiMcpServer.int`'s source-marker test reads `create_event`'s new destructuring.
+- `logImport.int`'s between-sheets hook wraps the view the job's `as` returns.
+- `policyWindow.int`'s revokes run in an `AsyncResource` scope outside the hub body (another
+  request), as `snapshot.int` does; inside it the adapter refuses the root handle.
+- `catalogSystem.repo.test.ts`'s session rules are a separate `scanSessionCallers`, so the existing
+  fixtures' result shapes are unchanged.
+
 ## D13. Specs, README and ADR 0021
 
 - Specs: the deltas (catalog-database, core-ports-architecture). api-contract-freeze and

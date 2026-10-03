@@ -50,7 +50,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { aiV2CredentialsRefused } from '../env';
-import { anonApp, app, env, envWith } from '../test/harness';
+import { anonApp, app, envWith } from '../test/harness';
 import {
   loginCookie,
   parseSse,
@@ -60,6 +60,7 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
 // The real hermetic fake-claude fixture (ai-topics-chat) — used ONLY by
@@ -1293,7 +1294,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     // created_by is recorded in the session DB, not surfaced on the wire
     // (the port's save() returns void; GET's response is config-only, per
     // the port's shape) — check it the way the hub itself would.
-    const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
+    const stored = await (await harnessHub(s)).getDashboard('primary');
     expect(stored?.createdBy).toBe(user);
   });
 
@@ -1301,7 +1302,7 @@ describe('ai/v2/dashboard — write scoped at least as tightly, whole-config val
     const s = (await seededSession()).sessionId;
     const res = await putDashboard(s, VALID_DASHBOARD, loopbackEnv(), J, '?turnId=turn-abc');
     expect(res.status).toBe(200);
-    const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
+    const stored = await (await harnessHub(s)).getDashboard('primary');
     expect(stored?.createdByTurnId).toBe('turn-abc');
   });
 
@@ -1560,7 +1561,7 @@ describe("ai/v2/design — propose_dashboard's validated config reaches the dash
         `?turnId=${encodeURIComponent(dashboardPayload.turnId)}`,
       );
       expect(putRes.status).toBe(200);
-      const stored = await (await env.ports.sessions.get(s)).getDashboard('primary');
+      const stored = await (await harnessHub(s)).getDashboard('primary');
       expect(stored?.createdByTurnId).toBe(dashboardPayload.turnId);
     },
   );

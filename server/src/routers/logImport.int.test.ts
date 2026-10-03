@@ -16,6 +16,7 @@ import {
   seedStudio,
   seedUser,
 } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const NOT_CONFIGURED_DETAIL =
   'Google Sheets log import is not configured on this deployment. Set SHEETS_LOG_IMPORT_ENABLED=1 to enable it.';
@@ -249,7 +250,7 @@ describe('log-import job HTTP surface', () => {
     // Timed transcript words — real rows via the hub (ensureTimedTranscript
     // sees them and skips DeepGram entirely). The phrase sits at session
     // ~527 s while the sheet clock says 8:48 (= 528 s) → offset −1 s.
-    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
+    await (await harnessHub(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
@@ -559,7 +560,7 @@ describe('the log-import job re-checks its creator’s show access before each s
       env,
     );
     expect(res.status).toBe(200);
-    await (await env.ports.sessions.get(session)).replaceTranscriptWords([
+    await (await harnessHub(session)).replaceTranscriptWords([
       { session_time: '00:08:47', speaker: '0', word: 'almost', start_sec: 527, end_sec: 527.2 },
       { session_time: '00:08:47', speaker: '0', word: 'called', start_sec: 527.3, end_sec: 527.4 },
       { session_time: '00:08:47', speaker: '0', word: 'a', start_sec: 527.5, end_sec: 527.6 },
@@ -610,7 +611,8 @@ describe('the log-import job re-checks its creator’s show access before each s
     );
     const realSessions = env.ports.sessions;
     let hooked = false;
-    // s1's hub, with its row insert followed by `between` once; every other member is the hub's.
+    // s1's bound hub, with its row insert followed by `between` once; every other member is the
+    // hub's.
     const hookedHub = (hub: SessionHubFacade): SessionHubFacade =>
       new Proxy(hub, {
         get(target, prop) {
@@ -632,8 +634,19 @@ describe('the log-import job re-checks its creator’s show access before each s
       get(target, prop) {
         if (prop === 'get') {
           return async (sessionId: string) => {
-            const hub = await target.get(sessionId);
-            return sessionId === s1 ? hookedHub(hub) : hub;
+            const entry = await target.get(sessionId);
+            if (sessionId !== s1) return entry;
+            // The job binds its creator with `as` (session-content-policies D7): hook the bound
+            // view it gets back.
+            return new Proxy(entry, {
+              get(e, prop) {
+                if (prop === 'as') {
+                  return (caller: Parameters<typeof e.as>[0]) => hookedHub(e.as(caller));
+                }
+                const value = Reflect.get(e, prop, e);
+                return typeof value === 'function' ? value.bind(e) : value;
+              },
+            });
           };
         }
         const value = Reflect.get(target, prop, target);

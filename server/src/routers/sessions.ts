@@ -38,6 +38,8 @@ import {
   type AudioSeamPart,
   ImportWhileRollingError,
   parseAudioSeamPartsHeader,
+  type SessionHubFacade,
+  systemCaller,
 } from '@autologger/session-core';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
@@ -52,6 +54,14 @@ import {
   timecodeCtx,
 } from './_helpers';
 import { enforceLocalAudioImportByteLimit, readLocalAudioImportBody } from './audio';
+
+/** An undo step's hub (session-content-policies D7, owner decision P1): a request whose later step
+ * failed, or was refused after a revoke, removes only what it wrote itself (the segment it just
+ * created, or the snapshot its regenerate replaced) as the reviewed system task `session-undo`, so
+ * the undo cannot itself be refused. */
+async function undoHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  return (await c.env.ports.sessions.get(sessionId)).as(systemCaller('session-undo'));
+}
 
 export const sessionsRouter = new Hono<AppEnv>();
 
@@ -226,8 +236,9 @@ sessionsRouter.post('/api/sessions', async (c) => {
     throw e;
   }
   if (created === null) throw new ApiError(403, 'No access to this show.');
-  // Instantiate the hub so its transport row exists.
-  await (await getSessionHub(c, created.id)).ensure();
+  // Open the hub so the session's rows are seeded (the open runs as `session-open`,
+  // session-content-policies D6); no user-bound call is made.
+  await c.env.ports.sessions.get(created.id);
   return c.json({
     id: created.id,
     title: created.title,
@@ -362,7 +373,7 @@ async function rollbackLocalAudioImportSegment(
   sessionId: string,
   seg: { id: string; r2_key: string },
 ): Promise<void> {
-  await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+  await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
   await c.env.ports.audio.delete(seg.r2_key).catch(() => {});
 }
 
@@ -409,7 +420,7 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
   try {
     await c.env.ports.audio.put(seg.r2_key, payload, { contentType: mimeType });
   } catch (err) {
-    await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+    await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
     throw err;
   }
 
@@ -527,7 +538,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     } catch (err) {
       // Atomic rollback (D7): a put failure must never leave a metadata row
       // pointing at a missing blob — mirrors audio.ts's own rollback.
-      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+      await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
       throw err;
     }
 
@@ -537,7 +548,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
     // put-failure rollback shape above: the segment is already attached, so a
     // refusal here rolls it back rather than leaving an unanchored orphan.
     if ((await (await getSessionHub(c, sessionId)).statusLive(ctx)).is_rolling) {
-      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+      await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
       throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
     }
 
@@ -555,7 +566,7 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
         startedAtUtc,
       });
     } catch (err) {
-      await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+      await (await undoHub(c, sessionId)).deleteAudioSegment(seg.id);
       // A take started after the final guard: the anchor refused it inside its transaction
       // (session-tables D7), so the request ends as that guard's refusal does, not as a 502.
       if (err instanceof ImportWhileRollingError) {

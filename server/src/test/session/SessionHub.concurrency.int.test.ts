@@ -26,7 +26,7 @@ import { SessionHub } from '@autologger/session-core/SessionHub';
 import type { SessionCore } from '@autologger/session-core/sessionCore';
 import { testDatabase } from '../harness';
 import { type SlowStorage, slowStorage } from './slowStorage';
-import { createSessionRow, sessionDb, testRegistry, testStorage } from './sessionRows';
+import { createSessionRow, openTestHub, sessionDb, testRegistry, testStorage } from './sessionRows';
 
 const unhandled: unknown[] = [];
 const trap = (reason: unknown): void => {
@@ -69,7 +69,7 @@ const clock = { now: () => Date.now() };
 async function slowHub() {
   const id = await createSessionRow();
   const storage: SlowStorage = slowStorage(testStorage(id));
-  const hub = await SessionHub.open(id, storage, clock);
+  const hub = await openTestHub(id, storage, clock);
   const frames: Record<string, unknown>[] = [];
   hub.attachSocket({ send: (d: string) => void frames.push(JSON.parse(d)) }, 'browser');
   return { hub, frames, storage, tx: hub as unknown as TxHub };

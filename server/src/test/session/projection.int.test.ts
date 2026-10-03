@@ -7,10 +7,17 @@
 
 import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
 import type { SessionProjection } from '@autologger/session-core/sessionCore';
-import type { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
+import type { SessionHubRegistry } from '@autologger/session-core/SessionHub';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type SlowStorage, slowStorage } from './slowStorage';
-import { catalogRoot, createSessionRow, rawRows, testRegistry, testStorage } from './sessionRows';
+import {
+  catalogRoot,
+  createSessionRow,
+  rawRows,
+  type TestHub,
+  testRegistry,
+  testStorage,
+} from './sessionRows';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 const STARTED_AT = '2026-10-01T10:00:00.000Z';
@@ -43,7 +50,7 @@ async function catalogProjection(sessionId: string): Promise<SessionProjection> 
 
 async function openHub(
   wrap?: (s: SlowStorage) => void,
-): Promise<{ id: string; hub: SessionHub; frames: unknown[] }> {
+): Promise<{ id: string; hub: TestHub; frames: unknown[] }> {
   const id = await createSessionRow();
   const registry = testRegistry({
     wrap: wrap
@@ -61,10 +68,10 @@ async function openHub(
   return { id, hub, frames };
 }
 
-const add = (hub: SessionHub, message: string, metadataJson = '{}', category = 'cam') =>
+const add = (hub: TestHub, message: string, metadataJson = '{}', category = 'cam') =>
   hub.addEvent({ category, message, metadataJson, markedAtUtc: null, ctx: CTX });
 
-async function expectCurrent(id: string, hub: SessionHub): Promise<SessionProjection> {
+async function expectCurrent(id: string, hub: TestHub): Promise<SessionProjection> {
   const projection = await catalogProjection(id);
   expect(projection).toEqual(await hub.ensure());
   return projection;

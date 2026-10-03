@@ -11,13 +11,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MEDIA_IMPORT_FIXTURES_DIR, youtubeImportGuard } from '@autologger/media-import';
-import type { SessionHub, SessionHubRegistry } from '@autologger/session-core/SessionHub';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Bindings } from '../../appEnv';
 import { app, env, envWith } from '../harness';
 import { seededSession } from '../helpers';
 import { slowStorage } from './slowStorage';
-import { testRegistry } from './sessionRows';
+import { type TestHub, type TestRegistry, testRegistry } from './sessionRows';
 
 const LOCAL_ROLLING_DETAIL =
   'Local audio import is refused while this session is actively recording; stop the recording and try again.';
@@ -50,7 +49,7 @@ function fakeYtDlp(): string {
  * `POST …/transport/start` and waits until that request is queued on the hub. */
 function startTakeAtPostBlobCheck(sessionId: string, overrides: Record<string, unknown>) {
   let bindings!: Bindings;
-  let registry!: SessionHubRegistry;
+  let registry!: TestRegistry;
   const started: { response: Response | Promise<Response> | null } = { response: null };
   registry = testRegistry({
     wrap: (storage) =>
@@ -59,7 +58,7 @@ function startTakeAtPostBlobCheck(sessionId: string, overrides: Record<string, u
         hooks: {
           async beforeSnapshot(n) {
             if (n !== 2) return;
-            const hub = (await registry.get(sessionId)) as SessionHub;
+            const hub = (await registry.get(sessionId)) as TestHub;
             const queued = hub.inFlightCount + 1;
             started.response = app.request(
               `/api/sessions/${sessionId}/transport/start`,

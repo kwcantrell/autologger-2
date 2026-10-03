@@ -20,10 +20,11 @@ import {
   sessionDeckDisplayTitle,
 } from '@autologger/domain';
 import type { PresenceMeta } from '@autologger/ports';
+import { type SessionHubFacade, systemCaller } from '@autologger/session-core';
 import { type Context, Hono } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
-import { canAccessSession, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import { canAccessSession, requireSession, sessionCaller, timecodeCtx } from './_helpers';
 
 export const companionRouter = new Hono<AppEnv>();
 
@@ -94,6 +95,13 @@ function companionCatalog(c: Context<AppEnv>): CatalogFacade {
   return c.get('user') === null ? catalog.system('companion-token') : catalog;
 }
 
+/** The Companion routes' hub (session-content-policies D7): a token-only caller runs as the
+ * system task `companion-token` (until slice 9's credential); a signed-in caller as their user. */
+async function companionHub(c: Context<AppEnv>, sessionId: string): Promise<SessionHubFacade> {
+  const entry = await c.env.ports.sessions.get(sessionId);
+  return entry.as(c.get('user') === null ? systemCaller('companion-token') : sessionCaller(c));
+}
+
 async function callerMaySee(c: Context<AppEnv>, sessionId: string): Promise<boolean> {
   if (c.get('user') === null) return true;
   return canAccessSession(c, sessionId);
@@ -156,7 +164,7 @@ companionRouter.get('/api/companion/state', async (c) => {
     if (row === null) {
       resolvedSid = null;
     } else {
-      const hub = await getSessionHub(c, activeSid);
+      const hub = await companionHub(c, activeSid);
       const live = await hub.statusLive(timecodeCtx(row));
       const lease = await hub.leaseStatus();
       const isPlaying = presences.some((p) => p.session_id === activeSid && p.is_playing);
@@ -208,7 +216,7 @@ companionRouter.post('/api/companion/log', async (c) => {
     throw new ApiError(400, "Unknown category for the active session's show (by id or label).");
   }
   const meta = mergeCategoryUiSnapshotsIntoMetadata({}, cat);
-  const { event } = await (await getSessionHub(c, sid)).addEvent({
+  const { event } = await (await companionHub(c, sid)).addEvent({
     category: cat.id,
     message: body.message,
     metadataJson: JSON.stringify(meta),
@@ -222,7 +230,7 @@ companionRouter.post('/api/companion/transport', async (c) => {
   const body = companionTransportBodySchema.parse(await c.req.json());
   const { sid, row } = await requireActiveSession(c);
   const ctx = timecodeCtx(row);
-  const hub = await getSessionHub(c, sid);
+  const hub = await companionHub(c, sid);
   // A toggle reads the transport and starts or stops the take in one hub transaction
   // (async-session-hub design D7, S6), so two concurrent toggles equal a serial order.
   const { state } =
@@ -253,7 +261,7 @@ companionRouter.post('/api/companion/command', async (c) => {
   };
   // Stored before the broadcast, so a fast ack always finds it (async-session-callers D5).
   await c.env.ports.kv.put(LAST_COMMAND_KEY, JSON.stringify(last));
-  (await getSessionHub(c, sid)).broadcastCommand(body.type);
+  (await companionHub(c, sid)).broadcastCommand(body.type);
   return c.json({ ok: true, command_id: commandId, active_session_id: sid });
 });
 

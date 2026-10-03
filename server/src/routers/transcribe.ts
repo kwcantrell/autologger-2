@@ -36,7 +36,13 @@ import {
   topicGenerateTimeoutSec,
 } from '../env';
 import { ApiError } from '../httpError';
-import { canAccessSession, getSessionHub, requireSession, timecodeCtx } from './_helpers';
+import {
+  canAccessSession,
+  getSessionHub,
+  requireSession,
+  sessionCaller,
+  timecodeCtx,
+} from './_helpers';
 
 export const transcribeRouter = new Hono<AppEnv>();
 
@@ -280,6 +286,7 @@ transcribeRouter.post('/api/sessions/:sessionId/topics/generate', async (c) => {
     const outcome = await generateTopicsTurn({
       clock: c.env.ports.clock,
       registry: c.env.ports.sessions,
+      caller: sessionCaller(c),
       cliPath: c.env.config.CLAUDE_CLI_PATH.trim(),
       sessionId,
       maxBudgetUsd: topicGenerateMaxBudgetUsd(c.env.config),

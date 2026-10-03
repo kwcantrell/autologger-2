@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 // --- System catalog bindings are reviewed (catalog-roles design D11) ---
-// (core-ports-architecture "Every catalog call is bound to a caller": "System reasons are
-// reviewed".)
+// (core-ports-architecture "Every catalog and session call is bound to a caller": "System reasons
+// are reviewed".)
 //
 // Every `.system('<reason>')` / `.bindSystem('<reason>')` / `systemCaller('<reason>')` call in
 // production sources of `server/src`, `server/scripts` and `packages/*/src` must name its reason as
@@ -16,6 +16,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 // site, a new reason or a reason moved to another file fails as unlisted, and an entry no longer
 // used fails as stale. `.forUser(` / `.bindUser(` may appear only in the auth middleware.
 //
+// Session callers (session-content-policies D9, `scanSessionCallers`): `userCaller(` may appear
+// only in USER_SESSION_CALLERS (the signed-in route helper and the log-import job), `new
+// PostgresSessionDb(` only in the composition root and the merge script, and no production file
+// outside the implementing modules builds a caller from a `kind: 'system'` or `kind: 'user'`
+// object literal.
+//
 // The implementing modules (the catalog facade, the Postgres adapter, the session storage over it
 // and session-core's caller constructors) are exempt: they define the bindings and forward the
 // caller's reason or handle. Tests are
@@ -23,8 +29,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 //
 // LIMITS (stated, not papered over): this is a textual scan. An alias (`const s = c.system;
 // s('x')`), a computed member (`c['system']('x')`) or a dynamic import slips past it. The
-// database's refusal of the bare login role is the backstop. The scan function is
-// mutation-checked against synthetic trees below, so it cannot silently go vacuous.
+// database's refusal of the bare login role is the backstop. The storage seam has a further limit:
+// storage declares the caller structurally (no brand), so a caller object built without a `kind`
+// literal (spread from another object, say) slips past the literal rule. session-core's brand
+// closes object literals in its consumers; the content policies are the backstop for a user
+// caller, and a forged system caller is the one hole a reviewer must catch. The scan functions are
+// mutation-checked against synthetic trees below, so they cannot silently go vacuous.
 
 const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   {
@@ -39,8 +49,28 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   },
   {
     file: 'packages/session-core/src/SessionHub.ts',
-    reason: 'session-hub',
-    why: 'every session hub storage call, until commit 3b binds each hub call to its caller',
+    reason: 'session-open',
+    why: "a hub's open seeds the session's rows and frees a lease that went stale while down",
+  },
+  {
+    file: 'packages/session-core/src/SessionHub.ts',
+    reason: 'session-lease-alarm',
+    why: 'the lease alarm frees a stale lease even if its holder lost access',
+  },
+  {
+    file: 'server/src/routers/audio.ts',
+    reason: 'session-undo',
+    why: "the upload's undo deletes only the segment row the same request created",
+  },
+  {
+    file: 'server/src/routers/sessions.ts',
+    reason: 'session-undo',
+    why: "the audio imports' undo steps delete only the segment the same request created",
+  },
+  {
+    file: 'server/src/routers/events.ts',
+    reason: 'session-undo',
+    why: "the regenerate deletes only the snapshot ids it read and replaced in the same request",
   },
   {
     file: 'server/scripts/merge-session-audio.ts',
@@ -71,7 +101,7 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   {
     file: 'server/src/routers/companion.ts',
     reason: 'companion-token',
-    why: 'token-only Companion calls (no user) until the slice 9 credential',
+    why: 'token-only Companion calls (no user), catalog and session hub, until the slice 9 credential',
   },
   {
     file: 'server/src/routers/_helpers.ts',
@@ -97,6 +127,16 @@ const IMPLEMENTING = new Set([
   'packages/storage/src/postgresSessionSql.ts',
 ]);
 const USER_BINDERS = new Set(['server/src/middleware/auth.ts']);
+/** Where `userCaller(` may appear (session-content-policies D7, D9). */
+const USER_SESSION_CALLERS = new Set([
+  'server/src/routers/_helpers.ts',
+  'server/src/routers/logImport.ts',
+]);
+/** Where `new PostgresSessionDb(` may appear (session-content-policies D9). */
+const SESSION_DB_BUILDERS = new Set([
+  'server/src/node/config.ts',
+  'server/scripts/merge-session-audio.ts',
+]);
 const REASON_LITERAL = /^'[a-z][a-z0-9-]*'$/;
 
 interface ScanResult {
@@ -154,6 +194,31 @@ function scanCatalogBindings(repoRoot: string): ScanResult {
   return result;
 }
 
+interface SessionCallerScan {
+  /** `userCaller(` outside USER_SESSION_CALLERS. */
+  strayUserCaller: string[];
+  /** `new PostgresSessionDb(` outside SESSION_DB_BUILDERS. */
+  straySessionDb: string[];
+  /** A `kind: 'system'` / `kind: 'user'` literal outside the implementing modules. */
+  kindLiteral: string[];
+}
+
+function scanSessionCallers(repoRoot: string): SessionCallerScan {
+  const result: SessionCallerScan = { strayUserCaller: [], straySessionDb: [], kindLiteral: [] };
+  for (const file of productionFiles(repoRoot)) {
+    const implementing = IMPLEMENTING.has(file);
+    const text = fs.readFileSync(path.join(repoRoot, file), 'utf8');
+    if (/\buserCaller\(/.test(text) && !USER_SESSION_CALLERS.has(file) && !implementing) {
+      result.strayUserCaller.push(file);
+    }
+    if (/\bnew PostgresSessionDb\(/.test(text) && !SESSION_DB_BUILDERS.has(file)) {
+      result.straySessionDb.push(file);
+    }
+    if (/\bkind:\s*'(?:system|user)'/.test(text) && !implementing) result.kindLiteral.push(file);
+  }
+  return result;
+}
+
 const key = (e: { file: string; reason: string }) => `${e.file} ${e.reason}`;
 
 /** The allowlist comparison, both directions. */
@@ -180,6 +245,14 @@ describe('system catalog bindings are reviewed (catalog-roles D11)', () => {
 
   it('only the auth middleware binds a user', () => {
     expect(scanCatalogBindings(REPO).strayUser).toEqual([]);
+  });
+
+  it('user session callers, the session storage and caller literals stay where they are reviewed (session-content-policies D9)', () => {
+    expect(scanSessionCallers(REPO)).toEqual({
+      strayUserCaller: [],
+      straySessionDb: [],
+      kindLiteral: [],
+    });
   });
 
   it('every allowlist entry says why', () => {
@@ -293,6 +366,55 @@ describe('the scan is mutation-checked against synthetic trees (catalog-roles D1
       { file: 'server/scripts/tool.ts', reason: 'script-read' },
     ]);
     expect(r.nonLiteral).toEqual([{ file: 'server/scripts/tool.ts', arg: 'r' }]);
+  });
+
+  // session-content-policies design D9 (commit 3b): user session callers, the storage seam and
+  // caller literals.
+  it('a userCaller(id) outside the two router files fails; inside them it passes', () => {
+    const root = tree({
+      'server/src/routers/_helpers.ts': 'return userCaller(requireUser(c).id);\n',
+      'server/src/routers/logImport.ts': 'hub.as(userCaller(job.createdByUserId));\n',
+      'server/src/routers/events.ts': 'hub.as(userCaller(id));\n',
+      'packages/ai-runtime/src/x.ts': 'const c = userCaller(uid);\n',
+      'server/src/routers/x.test.ts': "userCaller('u');\n",
+    });
+    expect(scanSessionCallers(root).strayUserCaller).toEqual([
+      'packages/ai-runtime/src/x.ts',
+      'server/src/routers/events.ts',
+    ]);
+  });
+
+  it('new PostgresSessionDb( outside the composition root and the merge script fails', () => {
+    const root = tree({
+      'server/src/node/config.ts': 'const sessions = new PostgresSessionDb(catalogDb);\n',
+      'server/scripts/merge-session-audio.ts': 'new PostgresSessionDb(catalogDb).forSession(id);\n',
+      'server/src/routers/sneaky.ts': 'new PostgresSessionDb(root).forSession(id);\n',
+      'server/src/test/helpers.ts': 'new PostgresSessionDb(root);\n',
+    });
+    expect(scanSessionCallers(root).straySessionDb).toEqual(['server/src/routers/sneaky.ts']);
+  });
+
+  it("a { kind: 'system', reason: 'x' } literal outside the implementing modules fails", () => {
+    const root = tree({
+      'server/src/routers/forged.ts': "storage.tx({ kind: 'system', reason: 'x' }, fn);\n",
+      'packages/ai-runtime/src/forged.ts': "const c = { kind:'user', userId: id };\n",
+      'packages/storage/src/postgresSessionSql.ts': "| { readonly kind: 'user'; readonly userId: string }\n",
+      'packages/session-core/src/sessionCaller.ts': "Object.freeze({ kind: 'system', reason });\n",
+      'server/src/routers/fine.ts': "attachSocket(ws, 'browser'); const k = { kind: 'catalog' };\n",
+    });
+    expect(scanSessionCallers(root).kindLiteral).toEqual([
+      'packages/ai-runtime/src/forged.ts',
+      'server/src/routers/forged.ts',
+    ]);
+  });
+
+  it('a stale session-open entry fails', () => {
+    const root = tree({ 'packages/session-core/src/SessionHub.ts': 'export const nothing = 1;\n' });
+    expect(
+      compareWithAllowlist(scanCatalogBindings(root).system, [
+        { file: 'packages/session-core/src/SessionHub.ts', reason: 'session-open' },
+      ]),
+    ).toEqual({ unlisted: [], stale: ['packages/session-core/src/SessionHub.ts session-open'] });
   });
 
   it('a stray forUser or bindUser fails', () => {

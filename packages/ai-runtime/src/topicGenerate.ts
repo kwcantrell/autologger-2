@@ -30,7 +30,7 @@
 // `topics/generate` — design D2).
 
 import type { Clock } from '@autologger/ports';
-import type { SessionHubRegistryFacade } from '@autologger/session-core';
+import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import type { AiGenerationSnapshotWord } from './aiMcpServer';
 import { type DriveAiTurnResult, driveAiTurn } from './aiTurn';
 
@@ -77,6 +77,8 @@ export interface GenerateTopicsTurnOptions {
    * the ladder through this in-package intermediary, not directly. */
   clock: Clock;
   registry: SessionHubRegistryFacade;
+  /** The route's caller: the snapshot read and the turn's tool bodies run as it (D7). */
+  caller: SessionCaller;
   /** `CLAUDE_CLI_PATH`, already trimmed. */
   cliPath: string;
   sessionId: string;
@@ -104,7 +106,7 @@ export async function generateTopicsTurn(
   // computed from THIS list, and a concurrent transcript replacement or
   // single-word edit can shift neither their content nor their boundaries
   // mid-run. Never re-read the words for a page.
-  const hub = await opts.registry.get(opts.sessionId);
+  const hub = (await opts.registry.get(opts.sessionId)).as(opts.caller);
   const pagedWords: readonly AiGenerationSnapshotWord[] = (await hub.listTranscriptWords()).map(
     (w) => ({
       word: String(w.word ?? ''),
@@ -115,6 +117,7 @@ export async function generateTopicsTurn(
   return driveAiTurn({
     clock: opts.clock,
     registry: opts.registry,
+    caller: opts.caller,
     cliPath: opts.cliPath,
     sessionId: opts.sessionId,
     message: TOPIC_GENERATE_MESSAGE,

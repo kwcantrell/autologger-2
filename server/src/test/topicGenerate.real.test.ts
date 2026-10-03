@@ -36,10 +36,10 @@ import {
 } from '@autologger/ai-runtime/aiMcpServer';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import type { Clock, Config } from '@autologger/ports';
-import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { realSessionRegistry } from './realSessionStorage';
 import { topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
+import { TEST_CALLER, type TestRegistry } from './session/testHub';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-
@@ -334,7 +334,7 @@ function renderAllPages(): string[] {
 
 describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1)', () => {
   let closeStorage: (() => Promise<void>) | undefined;
-  let registry: SessionHubRegistry;
+  let registry: TestRegistry;
   const sessionId = 'real-topic-gen';
 
   beforeAll(async () => {
@@ -385,6 +385,7 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
       const outcome = await generateTopicsTurn({
         clock: systemClock,
         registry,
+        caller: TEST_CALLER,
         cliPath: cliPath as string,
         sessionId,
         maxBudgetUsd: PROD_MAX_BUDGET_USD,

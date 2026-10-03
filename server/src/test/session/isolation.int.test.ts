@@ -3,10 +3,9 @@
 // all nine session tables, and B's rows are byte-identical afterwards; no read on A returns a row
 // of B. A's calls name B's ids wherever they take one.
 
-import type { SessionHub } from '@autologger/session-core/SessionHub';
 import { UI_SNAPSHOT_LABEL_KEY } from '@autologger/domain';
 import { describe, expect, it } from 'vitest';
-import { catalogRoot, createSessionRow, testRegistry } from './sessionRows';
+import { catalogRoot, createSessionRow, type TestHub, testRegistry } from './sessionRows';
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 
@@ -43,7 +42,7 @@ const DASHBOARD = {
 /** Rows in every session table: events (one auto-generated, one with a snapshot label), the
  * transport, an audio segment with seam parts, words with enrichment, a topic, a dashboard and the
  * lease's meta keys. Returns the ids A's calls will name. */
-async function fill(hub: SessionHub, sessionId: string) {
+async function fill(hub: TestHub, sessionId: string) {
   const { event: plain } = await hub.addEvent({
     category: 'cam',
     message: `plain ${sessionId}`,

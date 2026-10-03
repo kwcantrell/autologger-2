@@ -85,7 +85,7 @@ import {
   aiV2MaxBudgetUsd,
 } from '../env';
 import { ApiError } from '../httpError';
-import { getSessionHub, requireSession, requireUser } from './_helpers';
+import { getSessionHub, requireSession, requireUser, sessionCaller } from './_helpers';
 
 export const aiV2Router = new Hono<AppEnv>();
 
@@ -274,7 +274,7 @@ aiV2Router.post('/api/sessions/:sessionId/ai/v2/design', async (c) => {
         configDir: workspace.configDir,
         apiKey: apiKey || undefined,
         maxBudgetUsd,
-        mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions, {
+        mcpServer: buildAggregateMcpServer(sessionId, c.env.ports.sessions, sessionCaller(c), {
           // Task 5.4/5.5 (design D10). The propose_dashboard tool has ALREADY
           // validated the whole config (the same validator a user write is
           // held to, @autologger/contract's aiV2Catalog.ts) before this callback ever runs — an

@@ -16,8 +16,9 @@
 // closures would cross and one turn's tools could read another session's
 // data.
 //
-// Each tool handler resolves the hub via `await registry.get(sessionId)` AT
-// CALL TIME, inside the handler body, and uses it only for that invocation's
+// Each tool handler resolves the hub via `(await registry.get(sessionId)).as(caller)`
+// AT CALL TIME, inside the handler body, bound to the route's caller
+// (session-content-policies D7), and uses it only for that invocation's
 // own hub calls, never keeping it across invocations — the idle-eviction
 // sweeper can close a hub between calls on a long-running turn
 // (async-session-hub design D6). This mirrors the identical invariant already shipped
@@ -44,7 +45,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { DashboardConfig } from '@autologger/contract';
 import { validateDashboardConfig } from '@autologger/contract';
-import type { SessionHubRegistryFacade } from '@autologger/session-core';
+import type { SessionCaller, SessionHubRegistryFacade } from '@autologger/session-core';
 import { z } from 'zod';
 import {
   computeEventCounts,
@@ -109,6 +110,7 @@ export interface BuildAggregateMcpServerDeps {
 export function buildAggregateMcpServer(
   sessionId: string,
   registry: SessionHubRegistryFacade,
+  caller: SessionCaller,
   deps: BuildAggregateMcpServerDeps = {},
 ) {
   const speakerStats = tool(
@@ -122,7 +124,7 @@ export function buildAggregateMcpServer(
     {},
     async () => {
       // Hub resolved AT CALL TIME, used for this invocation only.
-      const words = await (await registry.get(sessionId)).listTranscriptWords();
+      const words = await (await registry.get(sessionId)).as(caller).listTranscriptWords();
       const duration = computeSessionDuration(words);
       const talkTime = computeTalkTimeBySpeaker(words);
       return {
@@ -152,7 +154,7 @@ export function buildAggregateMcpServer(
       'missing value as zero.',
     {},
     async () => {
-      const hub = await registry.get(sessionId);
+      const hub = (await registry.get(sessionId)).as(caller);
       const words = await hub.listTranscriptWords();
       const { paragraphs } = await hub.listTranscriptEnrichment();
       const utterances = computeUtteranceStats(paragraphs);
@@ -171,7 +173,7 @@ export function buildAggregateMcpServer(
       '— never treat the returned entries as the complete set.',
     {},
     async () => {
-      const topics = await (await registry.get(sessionId)).listTopics();
+      const topics = await (await registry.get(sessionId)).as(caller).listTopics();
       const timeline = computeTopicTimeline(topics);
       const truncated = timeline.entries.length > MAX_TOPIC_ENTRIES;
       return {
@@ -197,7 +199,7 @@ export function buildAggregateMcpServer(
       '`density.available` before reading `density.eventsPerMinute`.',
     {},
     async () => {
-      const hub = await registry.get(sessionId);
+      const hub = (await registry.get(sessionId)).as(caller);
       const words = await hub.listTranscriptWords();
       const events = await hub.exportEvents();
       const duration = computeSessionDuration(words);
@@ -234,7 +236,7 @@ export function buildAggregateMcpServer(
     },
     async (args) => {
       // Hub resolved AT CALL TIME, used for this invocation only.
-      const words = await (await registry.get(sessionId)).listTranscriptWords();
+      const words = await (await registry.get(sessionId)).as(caller).listTranscriptWords();
       const offset = Math.max(0, Math.trunc(args.offset ?? 0));
       const limit = Math.min(
         MAX_EXCERPT_WORDS,

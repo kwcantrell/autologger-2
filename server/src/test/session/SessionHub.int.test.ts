@@ -5,14 +5,7 @@ import {
   DashboardValidationError,
 } from '@autologger/session-core/dashboardStore';
 import { EventStore } from '@autologger/session-core/eventStore';
-import { SessionHub } from '@autologger/session-core/SessionHub';
-import {
-  catalogRoot,
-  createSessionRow,
-  DRIVER_SAFE_FAKE_TIMERS,
-  testRegistry,
-  testStorage,
-} from './sessionRows';
+import { catalogRoot, createSessionRow, DRIVER_SAFE_FAKE_TIMERS, openTestHub, testRegistry, testStorage } from './sessionRows';
 
 // One session per test (session-tables D12): a hub over its storage; reopening is a second hub on
 // the same session.
@@ -20,7 +13,7 @@ let sessionId: string;
 beforeEach(async () => {
   sessionId = await createSessionRow();
 });
-const openHub = () => SessionHub.open(sessionId, testStorage(sessionId));
+const openHub = () => openTestHub(sessionId, testStorage(sessionId));
 
 const CTX = { frameRate: 24, startOffsetFrames: 0 };
 

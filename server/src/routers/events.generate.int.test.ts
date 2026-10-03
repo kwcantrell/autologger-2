@@ -38,7 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Bindings } from '../appEnv';
 import { app, defaultUser, env, envWith } from '../test/harness';
 import { catalogFor, seededSession as seedSessionChain, testDb } from '../test/helpers';
-import { testRegistry } from '../test/session/sessionRows';
+import { harnessHub, testRegistry } from '../test/session/sessionRows';
 import { slowStorage } from '../test/session/slowStorage';
 
 const EVENTS_SUCCESS_FIXTURE = fileURLToPath(
@@ -204,7 +204,7 @@ function generateReq(sessionId: string, envOverride: ReturnType<typeof envWith>,
 /** Anchored transcript: words carrying session-time anchors around the
  * fixtures' create_event timecodes. */
 async function seedAnchoredTranscript(sessionId: string): Promise<void> {
-  const hub = await env.ports.sessions.get(sessionId);
+  const hub = await harnessHub(sessionId);
   await hub.replaceTranscriptWords([
     { session_time: '00:00:01:00', speaker: 'A', word: 'roll', start_sec: 1, end_sec: 2 },
     { session_time: '00:00:03:00', speaker: 'A', word: 'slate', start_sec: 3, end_sec: 4 },
@@ -214,7 +214,7 @@ async function seedAnchoredTranscript(sessionId: string): Promise<void> {
 
 /** Words that exist but carry NO session-time anchors. */
 async function seedAnchorlessTranscript(sessionId: string): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).replaceTranscriptWords([
+  await (await harnessHub(sessionId)).replaceTranscriptWords([
     { session_time: '', speaker: 'A', word: 'unanchored', start_sec: 1, end_sec: 2 },
   ]);
 }
@@ -222,7 +222,7 @@ async function seedAnchorlessTranscript(sessionId: string): Promise<void> {
 /** A pre-existing manual `slate` event at 00:00:01:00 — the dedup basis the
  * prompt must embed, and the run's one timecode↔wall anchor. */
 async function seedManualSlateEvent(sessionId: string): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).addEvent({
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message: 'Pre-existing slate',
     metadataJson: '{}',
@@ -236,7 +236,7 @@ async function seedAutoSlateEvent(
   sessionId: string,
   message = 'Old generated slate',
 ): Promise<void> {
-  await (await env.ports.sessions.get(sessionId)).addEvent({
+  await (await harnessHub(sessionId)).addEvent({
     category: 'slate',
     message,
     metadataJson: '{"auto_generated":true,"auto_generate_run_id":"old-run"}',
@@ -247,7 +247,7 @@ async function seedAutoSlateEvent(
 }
 
 async function listEvents(sessionId: string) {
-  return (await (await env.ports.sessions.get(sessionId)).listEvents({ limit: 1000, offset: 0 }))
+  return (await (await harnessHub(sessionId)).listEvents({ limit: 1000, offset: 0 }))
     .events;
 }
 

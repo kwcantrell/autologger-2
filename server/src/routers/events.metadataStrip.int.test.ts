@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { app, env } from '../test/harness';
 import { seededSession } from '../test/helpers';
+import { harnessHub } from '../test/session/sessionRows';
 
 const J = { 'content-type': 'application/json' };
 
@@ -149,7 +150,7 @@ describe("PUT event update — preserves an existing auto row's attribution", ()
     // Simulate a row the generation run wrote (server-side create_event
     // merge — never reachable through the POST route): stamped directly at
     // the hub, same as aiMcpServer.ts's create_event tool does.
-    const hub = await env.ports.sessions.get(sessionId);
+    const hub = await harnessHub(sessionId);
     const { event } = await hub.addEvent({
       category: 'cam',
       message: 'generated',

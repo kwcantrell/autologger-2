@@ -17,7 +17,6 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Clock } from '@autologger/ports';
-import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_CHAT_SYSTEM_PROMPT_BRIEF, stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import { __resetAiMcpListenerForTests, AiMcpListener } from '@autologger/ai-runtime/aiMcpServer';
@@ -27,7 +26,7 @@ import {
   TOPIC_GENERATE_MESSAGE,
   TOPIC_GENERATE_SYSTEM_PROMPT,
 } from '@autologger/ai-runtime/topicGenerate';
-import { testRegistry } from './sessionRows';
+import { TEST_CALLER, testRegistry, type TestRegistry } from './sessionRows';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-
@@ -38,7 +37,7 @@ const systemClock: Clock = { now: () => Date.now() };
 const SUCCESS_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude.mjs');
 const ERROR_FIXTURE = join(AI_RUNTIME_FIXTURES_DIR, 'fake-claude-error.mjs');
 
-let registry: SessionHubRegistry;
+let registry: TestRegistry;
 let sessionId: string;
 
 beforeEach(() => {
@@ -66,6 +65,7 @@ describe('generateTopicsTurn', () => {
     const outcome = await generateTopicsTurn({
       clock: systemClock,
       registry,
+      caller: TEST_CALLER,
       cliPath: SUCCESS_FIXTURE,
       sessionId,
       maxBudgetUsd: 2.0,
@@ -90,6 +90,7 @@ describe('generateTopicsTurn', () => {
     await generateTopicsTurn({
       clock: systemClock,
       registry,
+      caller: TEST_CALLER,
       cliPath: SUCCESS_FIXTURE,
       sessionId,
       maxBudgetUsd: 2.0,
@@ -107,6 +108,7 @@ describe('generateTopicsTurn', () => {
     const outcome = await generateTopicsTurn({
       clock: systemClock,
       registry,
+      caller: TEST_CALLER,
       cliPath: ERROR_FIXTURE,
       sessionId,
       maxBudgetUsd: 2.0,
@@ -131,6 +133,7 @@ describe('generateTopicsTurn', () => {
       const outcome = await generateTopicsTurn({
         clock: systemClock,
         registry,
+        caller: TEST_CALLER,
         cliPath: SUCCESS_FIXTURE,
         sessionId,
         maxBudgetUsd: 2.0,
@@ -152,6 +155,7 @@ describe('generateTopicsTurn', () => {
       await generateTopicsTurn({
         clock: systemClock,
         registry,
+        caller: TEST_CALLER,
         cliPath: SUCCESS_FIXTURE,
         sessionId,
         maxBudgetUsd: 2.0,
@@ -193,6 +197,7 @@ describe('generateTopicsTurn', () => {
         await generateTopicsTurn({
           clock: systemClock,
           registry,
+          caller: TEST_CALLER,
           cliPath: SUCCESS_FIXTURE,
           sessionId,
           maxBudgetUsd: 2.0,
@@ -204,14 +209,14 @@ describe('generateTopicsTurn', () => {
         // words-only snapshot — projected to the 3-field rendering shape and
         // NOTHING else (no event-run fields: no categories, cap, run id, or
         // frame rate, and no raw hub columns like start_sec/ordinal/id).
-        expect(call?.[1]).toEqual({
+        expect(call?.[2]).toEqual({
           tools: ['get_transcript_words', 'create_topic'],
           pagedWords: [
             { word: 'hello', session_time: '00:00:01', speaker: 'Host' },
             { word: 'world', session_time: '00:00:02', speaker: 'Guest' },
           ],
         });
-        expect(Object.keys(call?.[1] ?? {}).sort()).toEqual(['pagedWords', 'tools']);
+        expect(Object.keys(call?.[2] ?? {}).sort()).toEqual(['pagedWords', 'tools']);
       } finally {
         spy.mockRestore();
       }
@@ -232,6 +237,7 @@ describe('generateTopicsTurn', () => {
         const pending = generateTopicsTurn({
           clock: systemClock,
           registry,
+          caller: TEST_CALLER,
           cliPath: SUCCESS_FIXTURE,
           sessionId,
           maxBudgetUsd: 2.0,
@@ -248,7 +254,7 @@ describe('generateTopicsTurn', () => {
         ]);
         await pending;
         const call = spy.mock.calls.find(([id]) => id === sessionId);
-        expect(call?.[1]?.pagedWords).toEqual([
+        expect(call?.[2]?.pagedWords).toEqual([
           { word: 'original', session_time: '00:00:01', speaker: 'Host' },
         ]);
       } finally {
@@ -265,6 +271,7 @@ describe('generateTopicsTurn', () => {
       await generateTopicsTurn({
         clock: systemClock,
         registry,
+        caller: TEST_CALLER,
         cliPath: SUCCESS_FIXTURE,
         sessionId,
         maxBudgetUsd: 2.0,

@@ -4,7 +4,12 @@
 // and marked-at parsing.
 
 import type { AuthUser, CatalogFacade, Row } from '@autologger/catalog';
-import type { SessionHubFacade, TimecodeCtx } from '@autologger/session-core';
+import {
+  type SessionCaller,
+  type SessionHubFacade,
+  type TimecodeCtx,
+  userCaller,
+} from '@autologger/session-core';
 import type { Context } from 'hono';
 import type { AppEnv } from '../appEnv';
 import { ApiError } from '../httpError';
@@ -16,15 +21,21 @@ export function timecodeCtx(row: Row): TimecodeCtx {
   };
 }
 
-/** Resolve the in-process per-session hub (addressed by session id); the first `get` of a
- * session opens it. A handler may use the hub across its own hub calls, and re-resolves it after
- * a long non-hub `await` (an AI turn, a download), since an idle hub can be evicted meanwhile
- * (async-session-hub design D6). */
+/** The signed-in route's session caller (session-content-policies D7): every hub call it makes
+ * runs as its user, under the database's content policies. */
+export function sessionCaller(c: Context<AppEnv>): SessionCaller {
+  return userCaller(requireUser(c).id);
+}
+
+/** Resolve the in-process per-session hub (addressed by session id), bound to the signed-in
+ * caller (session-content-policies D7); the first `get` of a session opens it. A handler may use
+ * the hub across its own hub calls, and re-resolves it after a long non-hub `await` (an AI turn,
+ * a download), since an idle hub can be evicted meanwhile (async-session-hub design D6). */
 export async function getSessionHub(
   c: Context<AppEnv>,
   sessionId: string,
 ): Promise<SessionHubFacade> {
-  return c.env.ports.sessions.get(sessionId);
+  return (await c.env.ports.sessions.get(sessionId)).as(sessionCaller(c));
 }
 
 /** A route that needs a signed-in user ran without one. The authContext middleware makes the one
