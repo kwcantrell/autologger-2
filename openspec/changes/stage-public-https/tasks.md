@@ -181,12 +181,14 @@ and the working-tree code as it was before the re-panel fixes (re-run: `ℹ test
   to `openbao-secrets`; see the PR note on the "one change per branch" gate).
   Evidence: after `npm ci`, at 5215462 plus this tasks.md edit (2026-10-03), `scripts/check-change.sh --stage hook --base openbao-secrets` -> `PASS openspec`, `PASS yaml 84 YAML file(s) parse`, `PASS workflows`, `PASS skills-sync`, `PASS guide-size`, `PASS change tier 2 (openspec/changes/stage-public-https)`, `PASS risk-floor`, `PASS evidence every ticked task cites evidence`, `PASS commands ran ['typecheck', 'test']; not configured: ['lint']`, rc=0. Without a base (origin/main) the `change` gate reports every stacked change dir ("one change per branch"), hence the base.
 
-## 5. Archive
+## Owner-owed after merge
 
-- [ ] 5.1 (panel S1) Archive only after `openbao-secrets` is archived: refuse while
+- (panel S1; formerly task 5.1, converted by the owner on 2026-10-03 because it can only happen
+  after `openbao-secrets` is archived) Archive only after `openbao-secrets` is archived: refuse while
   `openspec/changes/openbao-secrets/` exists (`test ! -e openspec/changes/openbao-secrets || { echo "archive openbao-secrets first" >&2; exit 1; }`);
   then re-diff this change's MODIFIED "Stage behaves as production, with local sign-in" block
   against the then-durable `openspec/specs/local-container-environments/spec.md` requirement
   (only the intended deltas: images/tag, `PUBLIC_BASE_URL`/`COOKIE_SECURE` defaults, the public
   OAuth URI, `TRUST_PROXY` in every mode, the new scenario) and update it if the durable text moved,
-  before `/opsx:archive`.
+  before `/opsx:archive`. (No checkbox: it can only happen after merge, so the tasks gate ignores
+  it, as in openbao-secrets.)
