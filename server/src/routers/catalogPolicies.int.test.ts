@@ -4,8 +4,9 @@
 
 import { createCatalog } from '@autologger/catalog';
 import { describe, expect, it } from 'vitest';
-import { anonApp, env } from '../test/harness';
-import { loginCookie, seedShow, seedStudio, seedUser } from '../test/helpers';
+import { GatedCatalog } from '../test/gatedCatalog';
+import { anonApp, env, envWith } from '../test/harness';
+import { loginCookie, seedShow, seedStudio, seedUser, testDb } from '../test/helpers';
 
 const J = { 'content-type': 'application/json' };
 
@@ -63,5 +64,120 @@ describe('existence probes keep their statuses (design D6)', () => {
     expect(await cat.studios.studioExistsAnywhere('no-such-team')).toBe(false);
     expect(await cat.shows.showExistsAnywhere(foreignShow)).toBe(true);
     expect(await cat.shows.showExistsAnywhere('no-such-show')).toBe(false);
+  });
+});
+
+const SETTINGS = {
+  categories: [{ id: 'c-new', name: 'New cat', color: '#112233', type: 'BUTTON' }],
+  show_title_format: '',
+  default_frame_rate: 25,
+};
+/** The early, unlocked role check of `PUT /api/profile` (not the in-transaction `FOR SHARE`). */
+const EARLY_ROLE = /^SELECT role FROM user_studio_memberships WHERE user_id = \? AND studio_id = \?$/;
+
+/** A team with an owner, an admin (the caller) and one show. */
+async function teamWithAdmin() {
+  const team = await seedStudio();
+  const ownerId = await seedUser({ studios: [team], role: 'owner' });
+  const adminId = await seedUser({ studios: [team], role: 'admin' });
+  const show = await seedShow({ studioId: team, name: 'Original' });
+  return {
+    team,
+    ownerId,
+    adminId,
+    show,
+    ownerCookie: await loginCookie(ownerId),
+    adminCookie: await loginCookie(adminId),
+  };
+}
+
+const settingsValue = async (team: string) =>
+  (
+    await testDb().first<{ value: string }>(
+      'SELECT value FROM app_settings WHERE key = ?',
+      `studio_config:${team}`,
+    )
+  )?.value ?? null;
+const showName = async (id: string) =>
+  (await testDb().first<{ name: string }>('SELECT name FROM shows WHERE id = ?', id))?.name;
+const prefsOf = async (id: string) =>
+  testDb().first('SELECT active_studio_id, active_show_id FROM user_prefs WHERE user_id = ?', id);
+const namesOf = async (id: string) =>
+  testDb().first('SELECT given_name, family_name FROM users WHERE id = ?', id);
+
+describe('PUT /api/profile re-checks the role in its write transaction (design D8)', () => {
+  it('an admin demoted after the early check gets 403 and nothing is written', async () => {
+    const { team, adminId, show, ownerCookie, adminCookie } = await teamWithAdmin();
+    const before = {
+      settings: await settingsValue(team),
+      show: await showName(show),
+      prefs: await prefsOf(adminId),
+      names: await namesOf(adminId),
+    };
+    const gated = new GatedCatalog(env.ports.catalog);
+    const h = gated.holdAfter(EARLY_ROLE);
+    const put = send(
+      'PUT',
+      '/api/profile',
+      adminCookie,
+      {
+        active_studio_id: team,
+        settings: SETTINGS,
+        show_updates: [{ show_id: show, name: 'Renamed' }],
+        active_show_id: show,
+        given_name: 'Changed',
+      },
+      envWith({}, { catalog: gated }),
+    );
+    await h.reached;
+    const demote = await send('POST', `/api/teams/${team}/members/${adminId}/role`, ownerCookie, {
+      role: 'member',
+    });
+    expect(demote.status).toBe(200);
+    h.release();
+    const res = await put;
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ detail: 'Admin role required.' });
+    expect({
+      settings: await settingsValue(team),
+      show: await showName(show),
+      prefs: await prefsOf(adminId),
+      names: await namesOf(adminId),
+    }).toEqual(before);
+  });
+
+  it('a serial request saves the settings and the first show before a 400 for a foreign show', async () => {
+    const { team, show, adminCookie } = await teamWithAdmin();
+    const other = await seedShow({ studioId: await seedStudio(), name: 'Other' });
+    const res = await send('PUT', '/api/profile', adminCookie, {
+      active_studio_id: team,
+      settings: SETTINGS,
+      show_updates: [
+        { show_id: show, name: 'Renamed' },
+        { show_id: other, name: 'Nope' },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail: `Show '${other}' is not part of the selected team.` });
+    expect(JSON.parse(String(await settingsValue(team))).default_frame_rate).toBe(25);
+    expect(await showName(show)).toBe('Renamed');
+    expect(await showName(other)).toBe('Other');
+  });
+
+  it('a serial request with invalid categories in the second entry keeps the first entry (400)', async () => {
+    const { team, adminCookie } = await teamWithAdmin();
+    const second = await seedShow({ studioId: team, name: 'Second' });
+    const first = await seedShow({ studioId: team, name: 'First' });
+    const res = await send('PUT', '/api/profile', adminCookie, {
+      active_studio_id: team,
+      show_updates: [
+        { show_id: first, name: 'First renamed' },
+        { show_id: second, name: 'Second renamed', categories: [] },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail: 'Add at least one log category.' });
+    expect(await showName(first)).toBe('First renamed');
+    expect(await showName(second)).toBe('Second');
   });
 });

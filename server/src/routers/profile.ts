@@ -6,6 +6,7 @@ import {
   normalizeEventPaletteNine,
   studioToApiDict,
   validateCategoriesList,
+  ValidationError,
   validateEventPalettePreset,
 } from '@autologger/domain';
 import type { Config } from '@autologger/ports';
@@ -66,44 +67,65 @@ profileRouter.put('/api/profile', async (c) => {
     }
   }
 
-  if (body.settings != null) {
-    await catalog.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError
-  }
-
-  if (body.show_updates?.length) {
-    for (const ent of body.show_updates) {
-      const sid = ent.show_id.trim();
-      const row = await catalog.shows.getShowRow(sid);
-      if (row === null || String(row.studio_id) !== rawSid) {
-        return c.json({ detail: `Show '${ent.show_id}' is not part of the selected team.` }, 400);
+  // catalog-policies D8: the settings and show writes run in one transaction that first re-reads
+  // the caller's role FOR SHARE, so a demotion committed after the early check gets the 403 with
+  // nothing written. A returned (not thrown) answer commits the writes made before it, so a serial
+  // request keeps today's outcome: earlier entries saved, then the 400. The body has only catalog
+  // effects, so a serialization retry may re-run it.
+  if (body.settings != null || body.show_updates?.length) {
+    const refused = await catalog.tx(async (cat) => {
+      const role = await cat.auth.authGetMembershipRoleForShare(user.id, rawSid);
+      if (role !== 'owner' && role !== 'admin') {
+        return { status: 403, detail: 'Admin role required.' } as const;
       }
-      const fields: Parameters<typeof catalog.shows.updateShowFields>[1] = {};
-      if (ent.name != null) fields.name = ent.name.trim();
-      if (ent.show_code != null) fields.show_code = ent.show_code.trim();
-      // session-title-suffix (design D1/D8): legacy `next_episode` is gone
-      // from the wire schema entirely (stripped before reaching here) —
-      // there is deliberately no `ent.next_episode` mapping below.
-      if (ent.title_suffix != null) fields.title_suffix = ent.title_suffix;
-      if (ent.categories != null) {
-        fields.categories_json = JSON.stringify(validateCategoriesList(ent.categories));
+      if (body.settings != null) {
+        await cat.studios.saveStudioSettingsBlob(rawSid, body.settings); // ValidationError → 400 via onError
       }
-      if (ent.event_palette != null) {
-        fields.event_palette_json = JSON.stringify(normalizeEventPaletteNine(ent.event_palette));
+      for (const ent of body.show_updates ?? []) {
+        const sid = ent.show_id.trim();
+        const row = await cat.shows.getShowRow(sid);
+        if (row === null || String(row.studio_id) !== rawSid) {
+          return {
+            status: 400,
+            detail: `Show '${ent.show_id}' is not part of the selected team.`,
+          } as const;
+        }
+        const fields: Parameters<typeof cat.shows.updateShowFields>[1] = {};
+        try {
+          if (ent.name != null) fields.name = ent.name.trim();
+          if (ent.show_code != null) fields.show_code = ent.show_code.trim();
+          // session-title-suffix (design D1/D8): legacy `next_episode` is gone
+          // from the wire schema entirely (stripped before reaching here) —
+          // there is deliberately no `ent.next_episode` mapping below.
+          if (ent.title_suffix != null) fields.title_suffix = ent.title_suffix;
+          if (ent.categories != null) {
+            fields.categories_json = JSON.stringify(validateCategoriesList(ent.categories));
+          }
+          if (ent.event_palette != null) {
+            fields.event_palette_json = JSON.stringify(normalizeEventPaletteNine(ent.event_palette));
+          }
+          if (ent.event_palette_preset != null) {
+            fields.event_palette_preset = validateEventPalettePreset(ent.event_palette_preset);
+          }
+          if (ent.event_palette_custom != null) {
+            fields.event_palette_custom_json = JSON.stringify(
+              normalizeEventPaletteNine(ent.event_palette_custom),
+            );
+          }
+        } catch (e) {
+          // Returned, not thrown, so the earlier entries stay saved, as before (design D9).
+          if (e instanceof ValidationError) return { status: 400, detail: e.message } as const;
+          throw e;
+        }
+        if (Object.keys(fields).length) {
+          await cat.shows.updateShowFields(sid, fields);
+          // bump_events_stream_revision_for_show: the events stream lives in the
+          // session hub, not the catalog — nothing to bump here.
+        }
       }
-      if (ent.event_palette_preset != null) {
-        fields.event_palette_preset = validateEventPalettePreset(ent.event_palette_preset);
-      }
-      if (ent.event_palette_custom != null) {
-        fields.event_palette_custom_json = JSON.stringify(
-          normalizeEventPaletteNine(ent.event_palette_custom),
-        );
-      }
-      if (Object.keys(fields).length) {
-        await catalog.shows.updateShowFields(sid, fields);
-        // bump_events_stream_revision_for_show: the events stream lives in the
-        // session hub, not the catalog — nothing to bump here.
-      }
-    }
+      return null;
+    });
+    if (refused) return c.json({ detail: refused.detail }, refused.status);
   }
 
   const showsNow = await catalog.shows.listShowsForStudio(rawSid);
