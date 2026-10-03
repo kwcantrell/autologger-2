@@ -127,3 +127,22 @@ describe('multi-chunk live recording segment uploads (task 6.1)', () => {
     expect(matches.map((s) => s.id).sort()).toEqual([first.id, retry.id].sort());
   });
 });
+
+// session-tables design D5 (A11): a `recording_ordinal` digit string whose number is not a safe
+// integer is treated as absent, as a non-digit value already is, so it never reaches a session
+// `bigint` out of range; the segment is stored and the response stays 200.
+describe('POST …/audio/segments with an oversized recording_ordinal', () => {
+  it('answers 200 and stores the segment with no recording ordinal', async () => {
+    const session = (await seededSession()).sessionId;
+    const res = await app.request(
+      `/api/sessions/${session}/audio/segments?recording_ordinal=123456789012345678901`,
+      { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: new Uint8Array([9, 9]) },
+      { ...env },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as SegmentDict).recording_ordinal).toBeNull();
+    const listed = await listSegments(session);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].recording_ordinal).toBeNull();
+  });
+});

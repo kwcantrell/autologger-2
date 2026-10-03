@@ -14,8 +14,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 // site, a new reason or a reason moved to another file fails as unlisted, and an entry no longer
 // used fails as stale. `.forUser(` / `.bindUser(` may appear only in the auth middleware.
 //
-// The implementing modules (the catalog facade and the Postgres adapter) are exempt: they define
-// the bindings and forward the caller's reason. Tests are exempt (`*.test.ts`, `**/test/**`).
+// The implementing modules (the catalog facade, the Postgres adapter and the session storage over
+// it) are exempt: they define the bindings and forward the caller's reason or handle. Tests are
+// exempt (`*.test.ts`, `**/test/**`).
 //
 // LIMITS (stated, not papered over): this is a textual scan. An alias (`const s = c.system;
 // s('x')`), a computed member (`c['system']('x')`) or a dynamic import slips past it. The
@@ -35,8 +36,8 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
   },
   {
     file: 'server/src/node/config.ts',
-    reason: 'session-mirror',
-    why: "the mirror's session-index writes, outside any request",
+    reason: 'session-hub',
+    why: 'every session hub statement, until slice 7b-2 binds hub calls to their caller',
   },
   { file: 'server/src/main.ts', reason: 'boot-wait', why: 'the boot-time readiness wait' },
   {
@@ -84,6 +85,7 @@ const ALLOWLIST: readonly { file: string; reason: string; why: string }[] = [
 const IMPLEMENTING = new Set([
   'packages/catalog/src/catalog.ts',
   'packages/storage/src/postgresCatalogStore.ts',
+  'packages/storage/src/postgresSessionSql.ts',
 ]);
 const USER_BINDERS = new Set(['server/src/middleware/auth.ts']);
 const REASON_LITERAL = /^'[a-z][a-z0-9-]*'$/;

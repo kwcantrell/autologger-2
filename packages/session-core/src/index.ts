@@ -3,11 +3,9 @@
 // + the SessionRuntime seam, the seven domain stores (audio/dashboard/event/
 // lease/topic/transcript/transport), eventAnchors, audioSeamParts, and
 // storeHelpers — moved verbatim from server/src/session/. Depends on
-// @autologger/domain, @autologger/contract, @autologger/ports;
-// better-sqlite3 as a peerDependency (design D1/D5) — the server workspace
-// remains the installing dependency, so there is exactly one resolved copy
-// in the tree (load-bearing for the `DashboardValidationError`/
-// `DashboardBoundsError` → 422 `instanceof` mapping).
+// @autologger/domain, @autologger/contract, @autologger/ports, and on no
+// database driver: its storage (the Postgres session adapter) is supplied by
+// the composition root (session-tables design D9).
 //
 // `SessionHub.ts`'s own re-exports (`AudioSegmentMeta`, `StoredDashboard`,
 // `DashboardBoundsError`/`DashboardValidationError`, `SessionProjection`/

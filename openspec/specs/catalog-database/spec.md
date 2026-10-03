@@ -10,7 +10,8 @@ the catalog away from the Supabase API roles; and the pinned-image Postgres that
 ### Requirement: The catalog schema lives in Postgres schema `catalog`
 Migrations in `supabase/migrations/` SHALL create the schema `catalog` with the catalog tables
 `users`, `user_studio_memberships`, `user_prefs`, `studio_definitions`, `shows`, `app_settings`,
-`sessions`, `kv`, `team_invites` and `show_grants`. Their columns, nullability, defaults, primary keys, unique
+`sessions`, `kv`, `team_invites` and `show_grants`, and the nine session tables (catalog-database
+"Session content tables"). Their columns, nullability, defaults, primary keys, unique
 constraint, check constraints, foreign keys (every column) and index definitions SHALL equal a
 recorded schema expectation that the catalog schema tests hold as literal values, under this
 type mapping (the
@@ -18,7 +19,8 @@ expectation was first captured from the retired SQLite catalog's migrations 0001
 slice 4e):
 - every text column SHALL be `text` with `COLLATE "C"`, so comparison and ordering are bytewise;
 - every integer column SHALL be `bigint` (8 bytes);
-- `sessions.frame_rate` SHALL be `double precision`.
+- `sessions.frame_rate` and every real-valued session column (frame rates, seconds, scores, the
+  waveform floor) SHALL be `double precision`.
 
 A later migration that changes the catalog schema SHALL update the recorded expectation in the
 same change.
@@ -77,6 +79,12 @@ run. The catalog SHALL NOT be created in schema `public`.
   deletes user U
 - **THEN** after the first delete only U's grant on B remains, and after the second no grant
   remains; a grant naming a user or show that does not exist fails with `23503`
+
+#### Scenario: The session tables match the recorded expectation
+- **WHEN** the migrations are applied to a fresh database
+- **THEN** the nine session tables exist in schema `catalog` with exactly the recorded columns,
+  types, collations, nullability, defaults, primary keys, foreign keys and indexes, and none of
+  them exists in schema `public`
 
 ### Requirement: The app connects as a least-privilege role
 The migration SHALL create the role `autologger_app` and SHALL always reset it to no `CREATEDB`,
@@ -227,28 +235,6 @@ constraint and table, and SHALL NOT include the values involved.
 - **WHEN** an unexpected unique violation on a user's email reaches the server's error handler
 - **THEN** the response is the generic `500`, and the log line names the code and constraint but not the email
 
-### Requirement: Session live projection is mirrored in order
-The catalog's copy of a session's live projection SHALL be written by one ordered writer per
-session in the server process. Each write SHALL carry the session's state at the moment it is
-sent, not when it was queued, so a slower earlier write never overwrites a later state. The
-columns are:
-- event count;
-- latest timecode;
-- rolling;
-- current take;
-- elapsed frames;
-- roll start.
-
-A write that fails SHALL be logged at warning level and SHALL NOT fail the request. When a write
-times out on the client, the next write for that session SHALL wait until the timed-out
-statement has finished on the server, so the order holds. A detached job that outlives its
-request SHALL NOT use the request's catalog. After shutdown begins, the writer SHALL write
-nothing.
-
-#### Scenario: Out-of-order completion
-- **WHEN** two changes to one session commit in order A then B, and A's mirror write would reach the database after B's
-- **THEN** the catalog ends with the projection of B's state
-
 ### Requirement: Settings defaults are race-free and never recreate a deleted team
 Reading a team's settings SHALL NOT write anything: no insert, update or delete of any settings
 row, whether the stored blob is present, missing or corrupt.
@@ -365,8 +351,11 @@ rolls back or fails, the connection is back to `autologger_app` with no user id.
 
 ### Requirement: Row-level security is enabled on every catalog table
 Every table in schema `catalog` SHALL have row-level security enabled. Every catalog table SHALL
-have at least one policy for `catalog_system`. Every table except `kv` SHALL also have at least
-one policy for `catalog_user`.
+have at least one policy for `catalog_system`. Every table except `kv` and the nine session tables
+SHALL also have at least one policy for `catalog_user`. The session tables SHALL have no
+`catalog_user` policy and `catalog_user` SHALL hold no privilege on them, so every statement a
+user binding sends to them is refused (ADR 0021 slice 7b-1; slice 7b-2 adds their user
+policies).
 
 The `catalog_system` policies SHALL be permissive and allow every row for reading and writing.
 
@@ -381,8 +370,9 @@ A migration that creates a catalog table SHALL, in the same migration:
 #### Scenario: No catalog table is left without row-level security
 - **WHEN** the tables of schema `catalog` are listed with their row-level security flag and the
   roles their policies apply to
-- **THEN** every table has row-level security enabled and a policy for `catalog_system`, and
-  every table other than `kv` has at least one policy for `catalog_user`
+- **THEN** every table has row-level security enabled and a policy for `catalog_system`, every
+  table other than `kv` and the session tables has at least one policy for `catalog_user`, and
+  the session tables have none
 
 #### Scenario: No user policy allows everything
 - **WHEN** the `catalog_user` policies of schema `catalog` are listed with their `USING` and
@@ -393,6 +383,11 @@ A migration that creates a catalog table SHALL, in the same migration:
 - **WHEN** `catalog_system` inserts, selects, updates and deletes rows of every catalog table,
   including rows that name another user and rows of teams no user is a member of
 - **THEN** every statement affects the same rows it would without row-level security
+
+#### Scenario: A user binding is refused on the session tables
+- **WHEN** `autologger_app`, switched to `catalog_user` with a user id, selects from, inserts
+  into, updates or deletes from any session table
+- **THEN** each statement is refused with `42501`
 
 ### Requirement: User policies enforce the team permission model
 For a statement run as `catalog_user`, the database SHALL decide row by row from the
@@ -526,3 +521,70 @@ that remain are retried by the adapter.
   `anon`, `authenticated` and `service_role` on each helper, and for `catalog_user`
 - **THEN** every check is false except `catalog_user`'s, and each helper is `SECURITY DEFINER`
   with `search_path=pg_catalog, pg_temp` and `enable_seqscan=off` in its configuration
+
+### Requirement: Session content tables
+Each session's live content SHALL be stored in schema `catalog`, in nine tables that port the
+retired per-session SQLite schema faithfully: `session_events`, `session_transport`,
+`session_audio_segments`, `session_transcript_words`, `session_topics`,
+`session_transcript_paragraphs`, `session_transcript_sentiment`, `session_dashboards` and
+`session_meta`. They SHALL keep the per-session schema's columns, nullability and defaults under
+the catalog's type mapping (timestamps as ISO-8601 text, flags as 0/1 integers, JSON as text),
+with these changes only:
+- every table SHALL have a non-null `session_id` that references `catalog.sessions (id)` with no
+  cascade, so a content row for a session that does not exist is refused (`23503`);
+- every primary key SHALL lead with `session_id` (`(session_id, id)`; `session_meta`'s
+  `(session_id, key)`), `session_transport` SHALL hold at most one row per session, keyed by
+  `session_id`, and every index SHALL lead with `session_id`;
+- `session_audio_segments` SHALL have an index on `(session_id, r2_key)`.
+
+The server SHALL store session content only in these tables. It SHALL NOT create, open or write a
+per-session SQLite file, and it SHALL leave existing `DATA_DIR/sessions/*.db` files untouched
+(slice 11 imports them).
+
+**Start empty (ADR 0021 slice 7b-1).** The migration that creates these tables SHALL import no
+content, and SHALL reset the live projection columns of every existing `catalog.sessions` row to
+the values of an empty session: `event_count` 0, `max_timecode_total_frames` null, `is_rolling`
+0, `current_take` 0, `transport_elapsed_frames` 0 and `roll_started_at_utc` null.
+
+#### Scenario: A content row needs its session
+- **WHEN** `catalog_system` inserts an event row whose `session_id` names no session
+- **THEN** the insert fails with `23503` and no row is stored
+
+#### Scenario: Existing sessions start empty
+- **WHEN** the migration is applied to a database whose sessions have non-zero live projections
+- **THEN** every session's projection columns read as an empty session's, and every session's
+  events, transcript, topics, audio list and dashboards read as empty
+
+#### Scenario: No session file is written
+- **WHEN** the server creates a session, logs an event in it, and is restarted
+- **THEN** the event is read back after the restart, and no file exists under
+  `DATA_DIR/sessions/` that did not exist before
+
+### Requirement: The session live projection commits with the session write
+The catalog's copy of a session's live projection SHALL be written inside the session write that
+changes it, in the same transaction. A write that changes the session's events or transport
+SHALL set the six columns to the session's state as of its own commit:
+- event count;
+- latest timecode;
+- rolling;
+- current take;
+- elapsed frames;
+- roll start.
+
+If the projection cannot be written, the whole write SHALL fail: none of its changes persist and
+none of its broadcasts are sent. A request that reads the session list after a write's response
+arrives SHALL see that write's projection. Because writes to one session are serialized, the
+projection of the last committed write is the one that remains.
+
+#### Scenario: The list is current after the response
+- **WHEN** a client logs an event and, as soon as the response arrives, lists the sessions
+- **THEN** the session's `event_count` includes the new event
+
+#### Scenario: Concurrent writes leave the last state
+- **WHEN** two writes to one session from two server connections commit in order A then B
+- **THEN** the catalog holds the projection of B's state
+
+#### Scenario: A failed projection fails the write
+- **WHEN** a session write's projection update fails
+- **THEN** the write rejects, the session's events and transport are unchanged, and no
+  `*.changed` broadcast is sent

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createCatalog } from '@autologger/catalog';
 import { Hono } from 'hono';
 import type { UpgradeWebSocket } from 'hono/ws';
-import { createTestDatabase } from '../../../test/pg/testDb';
+import { type ConnOptions, createTestDatabase } from '../../../test/pg/testDb';
 import { wireApp } from '../app';
 import type { AppEnv, Bindings } from '../appEnv';
 import { createLoginSession } from '../auth/identity';
@@ -20,6 +20,7 @@ let current: {
   bindings: Bindings;
   close(): Promise<void>;
   dir: string;
+  db: ConnOptions;
   defaultUser: Promise<{ id: string; cookie: string }> | null;
 } | null = null;
 
@@ -86,13 +87,20 @@ export async function resetTestEnv(): Promise<void> {
     rmSync(fakeHome, { recursive: true, force: true });
   }
   // catalog-policies D11: with CATALOG_RETRY_LOG set, count the retries of every transaction the
-  // routes and suites run on the catalog (KV and the mirror keep their own handles; their root
-  // statements never retry). A `GatedCatalog(env.ports.catalog)` then wraps the counting root.
+  // routes and suites run on the catalog (KV and the session hubs keep their own handles; KV's
+  // root statements never retry). A `GatedCatalog(env.ports.catalog)` then wraps the counting root.
   const retryLog = process.env.CATALOG_RETRY_LOG;
   if (retryLog) {
     made.bindings.ports.catalog = new RetryCountingRoot(made.bindings.ports.catalog, retryLog);
   }
-  current = { ...made, dir, defaultUser: null };
+  current = { ...made, dir, db, defaultUser: null };
+}
+
+/** The current test's database as the app role, for a second adapter over it (a second server
+ * process, session-tables D12). */
+export function testDatabase(): ConnOptions {
+  if (!current) throw new Error('test env not initialized — is setup.int.ts registered?');
+  return current.db;
 }
 
 /** The default signed-in caller (require-login D7): an `admin` of the two seed teams

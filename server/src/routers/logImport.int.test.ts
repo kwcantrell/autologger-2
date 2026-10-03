@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SessionIndexStore } from '@autologger/catalog';
 import { clearLogImportJobs } from '@autologger/log-import';
+import type { SessionHubFacade } from '@autologger/session-core';
 import { TRANSCRIPTION_FIXTURES_DIR } from '@autologger/transcription';
 import ExcelJS from 'exceljs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -594,7 +595,8 @@ describe('the log-import job re-checks its creator’s show access before each s
   }
 
   /** Runs a two-sheet import as `creator`, calling `between` once after the first sheet's import
-   * wrote its events (its live-projection mirror call) and before the second sheet. */
+   * wrote its events (its insert, which commits the live projection with it, session-tables D8)
+   * and before the second sheet. */
   async function runTwoSheetImport(creator: string, between: () => Promise<void>) {
     const studio = await seedMemberStudio();
     const show = await seedShow({ studioId: studio, categoriesJson: CATEGORIES });
@@ -606,22 +608,39 @@ describe('the log-import job re-checks its creator’s show access before each s
       'fetch',
       vi.fn(async () => new Response(new Uint8Array(xlsx), { status: 200 })),
     );
-    const realMirror = env.ports.mirror;
+    const realSessions = env.ports.sessions;
     let hooked = false;
-    const bindings = envWith(
-      { SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' },
-      {
-        mirror: {
-          mirror: async (sessionId: string) => {
-            await realMirror.mirror(sessionId);
-            if (sessionId === s1 && !hooked) {
-              hooked = true;
-              await between();
-            }
-          },
+    // s1's hub, with its row insert followed by `between` once; every other member is the hub's.
+    const hookedHub = (hub: SessionHubFacade): SessionHubFacade =>
+      new Proxy(hub, {
+        get(target, prop) {
+          if (prop === 'addEventAtTotalFramesIfAbsent') {
+            return async (input: Parameters<SessionHubFacade['addEventAtTotalFramesIfAbsent']>[0]) => {
+              const result = await target.addEventAtTotalFramesIfAbsent(input);
+              if (!hooked) {
+                hooked = true;
+                await between();
+              }
+              return result;
+            };
+          }
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
         },
+      });
+    const sessions = new Proxy(realSessions, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return async (sessionId: string) => {
+            const hub = await target.get(sessionId);
+            return sessionId === s1 ? hookedHub(hub) : hub;
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
       },
-    );
+    });
+    const bindings = envWith({ SHEETS_LOG_IMPORT_ENABLED: '1', HOST: '127.0.0.1' }, { sessions });
     return { studio, show, s1, s2, bindings, hookedRef: () => hooked };
   }
 

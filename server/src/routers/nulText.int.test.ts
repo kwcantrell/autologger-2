@@ -9,6 +9,8 @@ import {
   COMPANION_BEARER,
   catalogFor,
   loginCookie,
+  SEED_CATEGORY_ID,
+  seededSession,
   seedStudio,
   seedUser,
   testDb,
@@ -31,6 +33,34 @@ async function member(): Promise<{ studioId: string; cookie: string }> {
   const userId = await seedUser({ studios: [studioId], role: 'admin' });
   return { studioId, cookie: await loginCookie(userId) };
 }
+
+// session-tables task 6.4 (design D5; api-contract-freeze "Text containing NUL is refused", which
+// now covers session content): an event message with NUL was stored by the SQLite session file
+// (200); on the session tables the adapter refuses it before sending, so the write saves nothing
+// and sends no frame.
+describe('NUL in session content is a 400', () => {
+  it('POST …/events with a NUL message: 400 with detail, no event, no frame', async () => {
+    const { sessionId } = await seededSession();
+    const hub = await env.ports.sessions.get(sessionId);
+    const frames: string[] = [];
+    const socket = { send: (d: string) => void frames.push(d) };
+    hub.attachSocket(socket, 'browser');
+    const res = await app.request(
+      `/api/sessions/${sessionId}/events`,
+      {
+        method: 'POST',
+        headers: J,
+        body: JSON.stringify({ category: SEED_CATEGORY_ID, message: `a${NUL}b` }),
+      },
+      { ...env },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ detail: expect.any(String) });
+    expect((await hub.listEvents({ limit: 10, offset: 0 })).total).toBe(0);
+    expect(frames).toEqual([]);
+    hub.detachSocket(socket);
+  });
+});
 
 describe('NUL in request values reaching the catalog is a 400', () => {
   it('a show name with NUL: 400 with detail, and no show is created', async () => {

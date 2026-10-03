@@ -28,9 +28,7 @@
 // Deterministic skip otherwise (no spawn, no spend).
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import {
   __resetAiMcpListenerForTests,
@@ -38,8 +36,9 @@ import {
 } from '@autologger/ai-runtime/aiMcpServer';
 import { generateTopicsTurn } from '@autologger/ai-runtime/topicGenerate';
 import type { Clock, Config } from '@autologger/ports';
-import { SessionHubRegistry } from '@autologger/session-core';
+import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { realSessionRegistry } from './realSessionStorage';
 import { topicGenerateMaxBudgetUsd, topicGenerateTimeoutSec } from '../env';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
@@ -334,13 +333,12 @@ function renderAllPages(): string[] {
 }
 
 describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1)', () => {
-  let dataDir: string;
+  let closeStorage: (() => Promise<void>) | undefined;
   let registry: SessionHubRegistry;
   const sessionId = 'real-topic-gen';
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'real-topics-'));
-    registry = new SessionHubRegistry(join(dataDir, 'sessions'));
+    ({ registry, close: closeStorage } = await realSessionRegistry(sessionId));
     // One transaction for ~15k words (a per-word insert loop is the slow path).
     await (await registry.get(sessionId)).replaceTranscriptWords(TRANSCRIPT);
   }, 120_000);
@@ -349,8 +347,7 @@ describe.skipIf(!RUN)('REAL claude topic generation (opt-in: RUN_REAL_AI_TESTS=1
     // `driveAiTurn` starts the process-wide MCP listener singleton — close it
     // here (the event real test's convention) rather than leaking the port.
     await __resetAiMcpListenerForTests();
-    await registry?.closeAll();
-    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    await closeStorage?.();
     rmSync(stableSessionCwd(sessionId), { recursive: true, force: true });
   });
 

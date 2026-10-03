@@ -150,7 +150,6 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
 
   const job = createLogImportJob(c.env.ports.clock, user.id);
   const env = c.env;
-  const mirror = env.ports.mirror;
   const spreadsheetUrl = parsed.data.spreadsheet_url;
   const categories = categoriesFromShowRow(show);
 
@@ -209,7 +208,6 @@ logImportRouter.post('/api/shows/:showId/log-import', async (c) => {
             categories,
             ctx,
             transcript,
-            projectLive: () => mirror.mirror(sessionId),
           });
           for (const line of result.lines) {
             appendLogImportLine(job.id, `  ${title}: ${line}`);

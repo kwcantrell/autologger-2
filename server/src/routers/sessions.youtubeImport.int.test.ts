@@ -58,6 +58,8 @@ import { resolveYtDlpPath } from '../env';
 import { createBindings } from '../node/config';
 import { anonApp, app, env, envWith } from '../test/harness';
 import { catalogFor, seedAccessMatrix, seededSession, testDb } from '../test/helpers';
+import { slowStorage } from '../test/session/slowStorage';
+import { testRegistry } from '../test/session/sessionRows';
 
 const FIXTURE_PATH = join(MEDIA_IMPORT_FIXTURES_DIR, 'fake-ytdlp.mjs');
 
@@ -901,6 +903,56 @@ describe('task 9.5 — failed import: zero events, transport not advanced', () =
     expect(total).toBe(0); // no Recording N Started/Stopped
     expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0); // no advance
     expect((await listSegments(session, testEnv)).segments).toHaveLength(0);
+  });
+});
+
+// session-tables task 6.4 (design D8; api-contract-freeze "YouTube import endpoint behavior",
+// scenario "A failed anchor leaves no segment"): the anchor's transaction writes the take's
+// `Recording N` events, the transport advance and the live projection together. When it fails
+// for a reason other than a rolling transport (here, its projection update), the import answers
+// 502, the segment is rolled back, and the events, the transport and the listed count are as they
+// were.
+describe('session-tables 6.4 — an anchor transaction that fails answers 502 with nothing kept', () => {
+  it('a failed projection inside the anchor: 502, no segment, no events, no transport advance, event_count unchanged', async () => {
+    const session = (await seededSession()).sessionId;
+    const { binaryPath } = freshBinary();
+    const failing = testRegistry({
+      wrap: (storage) =>
+        slowStorage(storage, {
+          delayMs: 0,
+          hooks: {
+            beforeStatement(sql) {
+              if (/^\s*UPDATE sessions\b/i.test(sql)) {
+                throw new Error('simulated projection failure');
+              }
+            },
+          },
+        }),
+    });
+    const testEnv = envWith(
+      { YTDLP_RESOLVED_PATH: binaryPath, HOST: '127.0.0.1', IP_ALLOWLIST: '' },
+      { sessions: failing },
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await postImport(session, VALID_BODY, testEnv);
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ detail: expect.any(String) });
+
+      const listed = configuredEnv(binaryPath);
+      expect((await listSegments(session, listed)).segments).toHaveLength(0);
+      expect((await listEvents(session, listed)).total).toBe(0);
+      const hub = await env.ports.sessions.get(session);
+      expect((await hub.transportSnapshot(CTX)).elapsed_frames).toBe(0);
+      const row = await testDb().first<{ event_count: number }>(
+        'SELECT event_count FROM sessions WHERE id = ?',
+        session,
+      );
+      expect(Number(row?.event_count)).toBe(0);
+    } finally {
+      warn.mockRestore();
+      await failing.closeAll();
+    }
   });
 });
 

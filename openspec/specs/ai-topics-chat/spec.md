@@ -126,7 +126,7 @@ client SHALL echo the id from the most recent `done`.
 
 ### Requirement: Ephemeral chat history
 The server MUST NOT persist chat conversation content: no chat tables in the catalog DB
-or session DBs, no chat blobs under `DATA_DIR`, and no chat-history read endpoint.
+or the session tables, no chat blobs under `DATA_DIR`, and no chat-history read endpoint.
 Server-side conversation state lives only in the client's page state; CLI-side session
 storage lives outside `DATA_DIR` in the CLI's own store. The server MUST NOT write chat
 message or assistant reply content to stdout, stderr, or any log output (there is no

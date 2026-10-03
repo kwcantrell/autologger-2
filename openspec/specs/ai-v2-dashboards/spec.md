@@ -5,7 +5,7 @@
 The **AI v2 dashboards** capability lets an operator design a per-session dashboard
 conversationally: an agent reads the session's computed aggregates, proposes a starting
 dashboard (which the operator then edits directly), and the result renders from the
-session's own data and persists in the session DB. It adds new HTTP routes under
+session's own data and persists in the session tables. It adds new HTTP routes under
 `/api/sessions/:sessionId/ai/v2/*` and a client-only SSE event vocabulary on the design
 turn stream; all surface is additive and frozen under `api-contract-freeze`. The agent runs
 the Agent SDK under a closed-world security lockdown, no agent-authored markup is ever

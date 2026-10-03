@@ -1,33 +1,28 @@
 // SessionHub — the in-process live spine. One hub per session, opened lazily
-// by SessionHubRegistry, backed by a per-session better-sqlite3 file (same
-// schema; SessionCore.initSchema is idempotent).
+// by SessionHubRegistry, over the session's storage (the session tables in
+// Postgres, through the session adapter the composition root supplies;
+// session-tables design D9). The hub owns no connection.
 //
-// Concurrency model (async-session-hub design D3-D7; ADR 0021 slice 7a): every
-// storage call is async and runs through this hub's FIFO lock, reads included,
-// one at a time per session in arrival order. A write runs BEGIN → body →
-// COMMIT → flush its held broadcasts before the lock is released; a read runs
-// its statements under the lock without a transaction, so it never sees an
-// open write's rows. A body works only on stores bound to its transaction
-// handle; a hub call from inside this hub's own transaction rejects with
-// SessionTxMisuseError instead of deadlocking. A read-then-write sequence that
-// must be atomic is ONE hub method (createAnchoredEvent, anchorImportedTake,
-// updateEvent's merge, addImportedAudioSegment, toggleTake,
-// replaceTranscriptWordsRemapped, addEventAtTotalFramesIfAbsent): two handlers
-// that resume in one tick alternate between their hub calls, so a sequence
-// spread over several calls can interleave.
+// Concurrency model (async-session-hub design D3-D7, session-tables D6-D7; ADR
+// 0021 slices 7a, 7b-1): every storage call is async and runs through this
+// hub's FIFO lock, reads included, one at a time per session in arrival order.
+// A write is one storage transaction, which holds the session's row lock
+// before its body runs, so writes from every connection and process serialize;
+// its held broadcasts flush and its alarm is armed after COMMIT, before the
+// lock is released. A read is one read-only snapshot, so its statements see
+// one committed state and never an open write's rows. A body works only on
+// stores bound to its transaction handle; a hub call from inside this hub's
+// own transaction rejects with SessionTxMisuseError instead of deadlocking. A
+// read-then-write sequence that must be atomic is ONE hub method
+// (createAnchoredEvent, anchorImportedTake, updateEvent's merge,
+// addImportedAudioSegment, toggleTake, replaceTranscriptWordsRemapped,
+// addEventAtTotalFramesIfAbsent): a sequence spread over several calls can
+// interleave with any concurrent request.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { type EventRpc, isoZ, parseUtcMs } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
-import Database from 'better-sqlite3';
-import {
-  SessionHubClosedError,
-  SessionTxMisuseError,
-  type SqliteSessionSql,
-  sqliteSessionSql,
-} from './asyncSessionSql';
+import { SessionHubClosedError, SessionTxMisuseError } from './asyncSessionSql';
 import {
   AUDIO_SEAM_PARTS_META_KEY,
   type AudioSeamPart,
@@ -42,7 +37,13 @@ import { timecodeWallAnchors, wallTimeUtcForTimecode } from './eventAnchors';
 import { EventStore } from './eventStore';
 import { FifoLock } from './fifoLock';
 import { LeaseStore } from './leaseStore';
-import type { AttachedSocket, SessionProjection, TimecodeCtx, TransportState } from './sessionCore';
+import type {
+  AttachedSocket,
+  SessionProjection,
+  SessionStorage,
+  TimecodeCtx,
+  TransportState,
+} from './sessionCore';
 import { SessionCore } from './sessionCore';
 import type { Topic } from './topicStore';
 import { TopicStore } from './topicStore';
@@ -338,15 +339,22 @@ interface HubSocket extends AttachedSocket {
 // exists to remove.
 const DEFAULT_CLOCK: Clock = { now: () => Date.now() };
 
-/** Options for opening a hub. `sql` builds the SQL adapter over the hub's connection; tests pass
- * one that yields between statements or injects failures (test/slowSql.ts). */
-export interface SessionHubOptions {
-  sql?: (db: Database.Database) => SqliteSessionSql;
+/** `anchorImportedTake` found the transport rolling inside its transaction and wrote nothing
+ * (session-tables design D7, owner decision 1): a take started after the import route's rolling
+ * check. The import routes answer it as their own rolling refusal. */
+export class ImportWhileRollingError extends Error {
+  override name = 'ImportWhileRollingError';
+}
+
+/** The registry's construction (session-tables design D9): each session's storage, and the clock. */
+export interface SessionHubRegistryOptions {
+  storage: (sessionId: string) => SessionStorage;
+  clock?: Clock;
 }
 
 /** What a hub body runs against (design D3): the stores over one core. A write body gets them
  * over a core bound to its transaction handle; `tx` joins that transaction (design D2). A read
- * body gets the root stores, outside any transaction. */
+ * body gets them over a core bound to its snapshot. */
 interface HubStores {
   core: SessionCore;
   events: EventStore;
@@ -417,8 +425,8 @@ export class SessionHub implements SessionHubFacade {
    * outside it (design D6, spike A11). */
   private static readonly txContext = new AsyncLocalStorage<TxContext>();
 
+  /** The root core: sockets, the alarm and the relayed command; no SQL handle. */
   private readonly core: SessionCore;
-  private readonly root: HubStores;
   /** Every storage call takes it, reads included (design D3). */
   private readonly lock = new FifoLock();
   private socketSet = new Set<HubSocket>();
@@ -432,50 +440,42 @@ export class SessionHub implements SessionHubFacade {
   /** Calls admitted and not yet finished, queued ones included (design D6). */
   private inFlight = 0;
   private lockWaits = 0;
-  /** Set by the registry: drops this hub from its map when a failed ROLLBACK closed it. */
-  onBroken: (() => void) | null = null;
   lastTouchedMs: number;
 
   private constructor(
-    private readonly db: Database.Database,
-    private readonly sql: SqliteSessionSql,
+    sessionId: string,
+    private readonly storage: SessionStorage,
     private readonly clock: Clock,
   ) {
     this.lastTouchedMs = clock.now();
     this.core = new SessionCore({
-      sql,
+      sessionId,
       clock,
       sockets: () => this.socketSet,
       setAlarm: (atMs) => this.armAlarm(atMs),
     });
-    this.root = storesFor(this.core);
   }
 
-  /** Opens the session's database file and runs `initSchema` and the stale-lease cleanup through
-   * the lock (design D5), so no caller can use a hub whose schema is not initialized. A failure
-   * closes the connection and rejects. */
+  /** Opens session `sessionId`'s hub over `storage` (session-tables design D9): in one write
+   * transaction, which locks the session's catalog row first, it seeds the session's rows and runs
+   * the stale-lease cleanup, so no caller can use a hub whose session is not seeded. A session with
+   * no catalog row rejects (the adapter's `SessionNotFoundError`). */
   static async open(
-    dbPath: string,
+    sessionId: string,
+    storage: SessionStorage,
     clock: Clock = DEFAULT_CLOCK,
-    opts: SessionHubOptions = {},
   ): Promise<SessionHub> {
-    const db = new Database(dbPath);
-    let hub: SessionHub | null = null;
+    const hub = new SessionHub(sessionId, storage, clock);
     try {
-      db.pragma('journal_mode = WAL');
-      db.pragma('synchronous = NORMAL');
-      db.pragma('foreign_keys = ON'); // spec: both catalog AND session DBs
-      db.pragma('busy_timeout = 5000');
-      hub = new SessionHub(db, (opts.sql ?? sqliteSessionSql)(db), clock);
-      const opened = hub;
-      await opened.read((s) => s.core.initSchema());
       // A lease that went stale while the process was down: clean it up now and
       // re-arm the timer if it is still live (spec: expireIfStale on open).
-      await opened.inTxn((s) => s.lease.expireIfStale());
-      return opened;
+      await hub.inTxn(async (s) => {
+        await s.core.seed();
+        await s.lease.expireIfStale();
+      });
+      return hub;
     } catch (err) {
-      hub?.stopAlarm();
-      if (db.open) db.close();
+      hub.stopAlarm();
       throw err;
     }
   }
@@ -484,7 +484,7 @@ export class SessionHub implements SessionHubFacade {
    * from inside this hub's own open transaction (that call would wait for the lock its own
    * transaction holds). Otherwise the call counts as in flight, touches the hub, and runs under
    * the lock: a write as one transaction whose held broadcasts flush after COMMIT and before the
-   * lock is released, a read on the root stores. */
+   * lock is released, a read as one snapshot (session-tables design D6). */
   private async call<T>(mode: 'read' | 'write', body: (s: HubStores) => Promise<T>): Promise<T> {
     if (this.state !== 'open') throw new SessionHubClosedError('the session hub is closed');
     if (this.insideOwnTransaction()) {
@@ -498,9 +498,9 @@ export class SessionHub implements SessionHubFacade {
     try {
       const release = await this.lock.acquire();
       try {
-        // A failed ROLLBACK may have closed the hub while this call waited.
-        if (this.isClosed) throw new SessionHubClosedError('the session hub is closed');
-        return mode === 'write' ? await this.transaction(body) : await body(this.root);
+        return mode === 'write'
+          ? await this.transaction(body)
+          : await this.storage.snapshot((t) => body(storesFor(this.core.forSnapshot(t))));
       } finally {
         release();
       }
@@ -525,25 +525,40 @@ export class SessionHub implements SessionHubFacade {
     return this.call('write', body);
   }
 
+  /** The storage runs the body once per attempt (a deadlock runs it again, session-tables design
+   * D2, D7): each attempt gets a fresh transaction-bound core, and the previous attempt's held
+   * broadcasts and alarm are dropped, so only the committed attempt's are applied, after COMMIT.
+   * The alarm is armed here, outside the storage call's async context. A body that changed the
+   * events or the transport writes the catalog projection after it returns, before COMMIT
+   * (session-tables design D8), so a failed projection fails the write. */
   private async transaction<T>(body: (s: HubStores) => Promise<T>): Promise<T> {
-    const ctx: TxContext = { hub: this, open: true, parent: SessionHub.txContext.getStore() };
+    const parent = SessionHub.txContext.getStore();
     const bound: { core: SessionCore | null } = { core: null };
+    const drop = () => {
+      bound.core?.discardHeldBroadcasts();
+      bound.core?.discardHeldAlarm();
+    };
     try {
-      const value = await this.sql.tx((t) =>
-        SessionHub.txContext.run(ctx, async () => {
+      const value = await this.storage.tx((t) => {
+        drop();
+        const ctx: TxContext = { hub: this, open: true, parent };
+        return SessionHub.txContext.run(ctx, async () => {
           try {
             bound.core = this.core.forTransaction(t);
-            return await body(storesFor(bound.core));
+            const result = await body(storesFor(bound.core));
+            // The live projection commits with the write (session-tables design D8).
+            await bound.core.writeProjectionIfDirty();
+            return result;
           } finally {
             ctx.open = false;
           }
-        }),
-      );
+        });
+      });
       bound.core?.flushHeldBroadcasts();
+      bound.core?.armHeldAlarm();
       return value;
     } catch (err) {
-      bound.core?.discardHeldBroadcasts();
-      if (this.sql.rollbackFailed) this.closeAfterFailedRollback();
+      drop();
       throw err;
     }
   }
@@ -553,22 +568,6 @@ export class SessionHub implements SessionHubFacade {
       if (c.hub === this && c.open) return true;
     }
     return false;
-  }
-
-  /** A failed ROLLBACK left the connection inside a transaction (design D2, D6): queued and later
-   * calls reject with SessionHubClosedError, the registry drops this hub, and the connection
-   * closes (SQLite rolls back an open transaction on close). The next `get` opens a fresh hub. */
-  private closeAfterFailedRollback(): void {
-    if (this.state === 'closed') return;
-    this.state = 'closed';
-    this.stopAlarm();
-    this.onBroken?.();
-    try {
-      if (this.db.open) this.db.close();
-    } catch (err) {
-      console.error('[hub] close after failed rollback failed', err);
-    }
-    this.closing ??= { promise: Promise.resolve() };
   }
 
   /** Single alarm slot: arming replaces any pending timer. The delay is
@@ -581,8 +580,9 @@ export class SessionHub implements SessionHubFacade {
   private scheduleAlarm(delayMs: number): void {
     this.stopAlarm();
     if (this.state !== 'open') return;
-    // Armed outside any transaction's async context (design D6, spike A11): the lease store arms
-    // it from inside a transaction body, and a timer keeps the context it was created in.
+    // Armed outside any transaction's async context (design D6, spike A11): a timer keeps the
+    // context it was created in. A transaction's alarm is armed after its COMMIT (session-tables
+    // D7); a failed alarm run re-arms from the alarm's own context.
     const timer = SessionHub.txContext.exit(() =>
       setTimeout(() => {
         this.alarmTimer = null;
@@ -617,10 +617,6 @@ export class SessionHub implements SessionHubFacade {
     }
   }
 
-  private get isClosed(): boolean {
-    return this.state === 'closed';
-  }
-
   get hasArmedAlarm(): boolean {
     return this.alarmTimer !== null;
   }
@@ -640,8 +636,9 @@ export class SessionHub implements SessionHubFacade {
     return this.lockWaits;
   }
 
-  /** Refuses new calls, clears the alarm, waits for the calls already admitted, then closes the
-   * connection (design D6). Idempotent: every call returns the same promise. */
+  /** Refuses new calls, clears the alarm and waits for the calls already admitted (design D6);
+   * the hub holds no connection to close (session-tables D9). Idempotent: every call returns the
+   * same promise. */
   close(): Promise<void> {
     if (this.closing) return this.closing.promise;
     this.state = 'closing';
@@ -650,7 +647,6 @@ export class SessionHub implements SessionHubFacade {
       promise: (async () => {
         await this.lock.run(() => undefined);
         this.state = 'closed';
-        if (this.db.open) this.db.close();
       })(),
     };
     return this.closing.promise;
@@ -737,7 +733,8 @@ export class SessionHub implements SessionHubFacade {
         { created: false } | { created: true; event: EventRpc; projection: SessionProjection }
       > => {
         const same = await s.core.all(
-          'SELECT category FROM events WHERE timecode_total_frames = ? AND message = ?',
+          'SELECT category FROM session_events WHERE session_id = ? AND timecode_total_frames = ? AND message = ?',
+          s.core.sessionId,
           input.timecodeTotalFrames,
           input.message,
         );
@@ -819,7 +816,12 @@ export class SessionHub implements SessionHubFacade {
    * ever observed — plus stopTakeWithDuration's `transport.changed`) instead of the
    * published two. So the body suppresses the intermediate store-level frames and ends by
    * queueing the composite's two frames itself; they flush after COMMIT, never on a
-   * rollback. */
+   * rollback.
+   *
+   * session-tables design D7 (owner decision 1, S4/S5): the transport is read first, under the
+   * session's row lock, and a rolling transport (a take started after the import route's rolling
+   * check) rejects with ImportWhileRollingError before anything is written, so the anchor never
+   * clobbers a live take. */
   anchorImportedTake(input: {
     recordingOrdinal: number;
     durationS: number;
@@ -842,6 +844,9 @@ export class SessionHub implements SessionHubFacade {
       ? isoZ(new Date(parseUtcMs(input.startedAtUtc) + input.durationS * 1000))
       : undefined;
     return this.inTxn(async (s) => {
+      if ((await s.core.transportRow()).is_rolling) {
+        throw new ImportWhileRollingError('the transport started rolling before the import was anchored');
+      }
       const { event: started } = await s.events.addEvent({
         category: 'internal',
         message: `Recording ${input.recordingOrdinal} Started`,
@@ -1062,8 +1067,7 @@ export class SessionHub implements SessionHubFacade {
   }
 
   // --- dashboard delegates (ai-v2-dashboards task 5.1/5.2, design D5) ---
-  /** A read: runs under the lock without a transaction (matches
-   * listTopics/listTranscriptWords). */
+  /** A read: one snapshot under the lock (matches listTopics/listTranscriptWords). */
   getDashboard(id: string) {
     return this.read((s) => s.dashboards.getDashboard(id));
   }
@@ -1093,17 +1097,19 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
   private sweeper: ReturnType<typeof setInterval> | null = null;
   private closed = false;
 
-  constructor(
-    private sessionsDir: string,
-    private clock: Clock = DEFAULT_CLOCK,
-    private options: SessionHubOptions = {},
-  ) {
-    mkdirSync(sessionsDir, { recursive: true });
+  private readonly storage: (sessionId: string) => SessionStorage;
+  private readonly clock: Clock;
+
+  /** session-tables design D9: each hub runs over `storage(sessionId)`; the registry owns no
+   * connection and creates nothing. */
+  constructor(options: SessionHubRegistryOptions) {
+    this.storage = options.storage;
+    this.clock = options.clock ?? DEFAULT_CLOCK;
   }
 
   /** An open hub is touched and returned; otherwise the hub is opened, and joins the map only
-   * once it is open, so a failed open leaves nothing behind (design D5). Rejects after
-   * `closeAll` started. */
+   * once it is open, so a failed open leaves nothing behind (design D5): a session with no
+   * catalog row rejects and is not kept (session-tables D9). Rejects after `closeAll` started. */
   async get(sessionId: string): Promise<SessionHub> {
     if (!SESSION_ID_RE.test(sessionId)) {
       throw new Error(`Invalid session id for hub storage: ${sessionId}`);
@@ -1124,14 +1130,7 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
 
   private async openHub(sessionId: string): Promise<SessionHub> {
     try {
-      const hub = await SessionHub.open(
-        join(this.sessionsDir, `${sessionId}.db`),
-        this.clock,
-        this.options,
-      );
-      hub.onBroken = () => {
-        if (this.hubs.get(sessionId) === hub) this.hubs.delete(sessionId);
-      };
+      const hub = await SessionHub.open(sessionId, this.storage(sessionId), this.clock);
       this.hubs.set(sessionId, hub);
       return hub;
     } finally {
@@ -1152,9 +1151,9 @@ export class SessionHubRegistry implements SessionHubRegistryFacade {
     return closed;
   }
 
-  /** Close hubs holding nothing live — fd hygiene, everything is on disk. A hub with a call in
-   * flight or queued is never idle (design D6). An idle hub has nothing to drain, so its close
-   * is not awaited. */
+  /** Close hubs holding nothing live — memory hygiene (sockets, the alarm, the lock), everything
+   * is in the database. A hub with a call in flight or queued is never idle (design D6). An idle
+   * hub has nothing to drain, so its close is not awaited. */
   evictIdle(idleMs: number = DEFAULT_IDLE_MS): void {
     const now = this.clock.now();
     for (const [id, hub] of this.hubs) {

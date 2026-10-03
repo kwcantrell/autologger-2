@@ -89,7 +89,8 @@ export class AudioStore {
     const ordinal = Number(
       (
         await this.core.first(
-          'SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments',
+          'SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM session_audio_segments WHERE session_id = ?',
+          this.core.sessionId,
         )
       )?.n ?? 1,
     );
@@ -101,8 +102,9 @@ export class AudioStore {
     }
     await this.core.db.run(
       `INSERT INTO session_audio_segments
-         (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (session_id, id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      this.core.sessionId,
       segId,
       ordinal,
       input.startedAtUtc,
@@ -127,19 +129,27 @@ export class AudioStore {
   }
 
   async listAudioSegments(): Promise<AudioSegmentMeta[]> {
-    const rows = await this.core.all('SELECT * FROM session_audio_segments ORDER BY ordinal ASC');
+    const rows = await this.core.all(
+      'SELECT * FROM session_audio_segments WHERE session_id = ? ORDER BY ordinal ASC, id ASC',
+      this.core.sessionId,
+    );
     return rows.map((r) => audioRowToMeta(r));
   }
 
   async deleteAudioSegment(segmentId: string): Promise<void> {
-    await this.core.db.run('DELETE FROM session_audio_segments WHERE id = ?', segmentId);
+    await this.core.db.run(
+      'DELETE FROM session_audio_segments WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
+      segmentId,
+    );
   }
 
   async getAudioSegmentKey(
     segmentId: string,
   ): Promise<{ r2_key: string; mime_type: string } | null> {
     const r = await this.core.first(
-      'SELECT r2_key, mime_type FROM session_audio_segments WHERE id = ?',
+      'SELECT r2_key, mime_type FROM session_audio_segments WHERE session_id = ? AND id = ?',
+      this.core.sessionId,
       segmentId,
     );
     return r ? { r2_key: String(r.r2_key), mime_type: String(r.mime_type) } : null;
@@ -148,9 +158,10 @@ export class AudioStore {
   async setAudioSegmentWaveform(input: { segmentId: string; peaks: number[] }): Promise<boolean> {
     const blob = JSON.stringify(input.peaks);
     const r = await this.core.db.run(
-      'UPDATE session_audio_segments SET waveform_peaks_json = ?, waveform_db_floor = ? WHERE id = ?',
+      'UPDATE session_audio_segments SET waveform_peaks_json = ?, waveform_db_floor = ? WHERE session_id = ? AND id = ?',
       blob,
       -48.0,
+      this.core.sessionId,
       input.segmentId,
     );
     if (r.changes > 0) this.core.broadcast({ type: 'audio.changed' });
@@ -165,7 +176,8 @@ export class AudioStore {
     const now = isoZ(new Date(this.core.now()));
     for (const k of known) {
       const exists = await this.core.first(
-        'SELECT 1 AS x FROM session_audio_segments WHERE r2_key = ?',
+        'SELECT 1 AS x FROM session_audio_segments WHERE session_id = ? AND r2_key = ?',
+        this.core.sessionId,
         k.r2_key,
       );
       if (exists !== null) continue;
@@ -175,8 +187,9 @@ export class AudioStore {
       const mime = mimeForExt(m[3].toLowerCase());
       await this.core.db.run(
         `INSERT INTO session_audio_segments
-           (id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
-         VALUES (?, ?, NULL, NULL, ?, ?, NULL, ?)`,
+           (session_id, id, ordinal, started_at_utc, ended_at_utc, mime_type, r2_key, recording_ordinal, created_at_utc)
+         VALUES (?, ?, ?, NULL, NULL, ?, ?, NULL, ?)`,
+        this.core.sessionId,
         segId,
         k.ordinal,
         mime,

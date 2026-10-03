@@ -25,9 +25,7 @@
 // direct-drive pattern; the route's guard ladder is the int suite's concern.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { rmSync } from 'node:fs';
 import { stableSessionCwd } from '@autologger/ai-runtime/aiChatRunner';
 import {
   __resetAiMcpListenerForTests,
@@ -42,8 +40,9 @@ import {
 } from '@autologger/ai-runtime/eventGeneratePrompt';
 import { parseTimecodeString, toTotalFrames } from '@autologger/domain';
 import type { Clock } from '@autologger/ports';
-import { SessionHubRegistry } from '@autologger/session-core';
+import type { SessionHubRegistry } from '@autologger/session-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { realSessionRegistry } from './realSessionStorage';
 
 // ai-runtime-package (task 2.2) — a plain real-time clock literal, defined
 // locally rather than importing `server/src/node/systemClock` (composition-
@@ -188,7 +187,7 @@ const EVENT_GENERATE_ALLOWED_TOOLS = [
 ] as const satisfies readonly AiMcpToolName[];
 
 describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1)', () => {
-  let dataDir: string;
+  let closeStorage: (() => Promise<void>) | undefined;
   let registry: SessionHubRegistry;
   const sessionId = 'real-event-gen';
 
@@ -261,8 +260,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
   let run1Snapshot: Array<{ id: string; timecode: string | null; message: string }> = [];
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'real-events-'));
-    registry = new SessionHubRegistry(join(dataDir, 'sessions'));
+    ({ registry, close: closeStorage } = await realSessionRegistry(sessionId));
     const hub = await registry.get(sessionId);
     for (const w of TRANSCRIPT) await hub.insertTranscriptWord(w);
     // The two timecode↔wall anchor rows interpolation brackets against —
@@ -288,8 +286,7 @@ describe.skipIf(!RUN)('REAL claude event generation (opt-in: RUN_REAL_AI_TESTS=1
 
   afterAll(async () => {
     await __resetAiMcpListenerForTests(); // driveAiTurn started the singleton
-    await registry?.closeAll();
-    if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+    await closeStorage?.();
     rmSync(stableSessionCwd(sessionId), { recursive: true, force: true });
   });
 

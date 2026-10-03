@@ -215,7 +215,6 @@ companionRouter.post('/api/companion/log', async (c) => {
     markedAtUtc: null,
     ctx: timecodeCtx(row),
   });
-  await c.env.ports.mirror.mirror(sid);
   return c.json(enrichEventRpc(event, profile));
 });
 
@@ -232,7 +231,6 @@ companionRouter.post('/api/companion/transport', async (c) => {
       : body.action === 'start'
         ? await hub.startTake(ctx)
         : await hub.stopTake(ctx);
-  await c.env.ports.mirror.mirror(sid);
   return c.json({
     ok: true,
     is_rolling: Boolean(state.is_rolling),

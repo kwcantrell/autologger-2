@@ -1,4 +1,4 @@
-// Transport domain — the single session_transport row: rolling state, take
+// Transport domain — the session's session_transport row: rolling state, take
 // counter, elapsed frames, and the live timecode snapshot. Moved verbatim out
 // of the original single-file session spine.
 
@@ -43,10 +43,12 @@ export class TransportStore {
     }
     const nextTake = tr.current_take + 1;
     await this.core.db.run(
-      'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE id = 1',
+      'UPDATE session_transport SET is_rolling = 1, current_take = ?, roll_started_at_utc = ? WHERE session_id = ?',
       nextTake,
       isoZ(new Date(this.core.now())),
+      this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     this.core.broadcast({ type: 'transport.changed', is_rolling: true, current_take: nextTake });
     const st = await this.transportStateDict(ctx);
     return { state: { ...st, started: true }, projection: await this.core.projection() };
@@ -71,9 +73,11 @@ export class TransportStore {
     }
     const totalElapsed = tr.elapsed_frames + extra;
     await this.core.db.run(
-      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
+      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE session_id = ?',
       totalElapsed,
+      this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     this.core.broadcast({
       type: 'transport.changed',
       is_rolling: false,
@@ -106,9 +110,11 @@ export class TransportStore {
     const tr = await this.core.transportRow();
     const extra = Math.max(0, Math.trunc(input.durationS * input.ctx.frameRate));
     await this.core.db.run(
-      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE id = 1',
+      'UPDATE session_transport SET is_rolling = 0, roll_started_at_utc = NULL, elapsed_frames = ? WHERE session_id = ?',
       tr.elapsed_frames + extra,
+      this.core.sessionId,
     );
+    this.core.markProjectionDirty();
     // Matches stopTake's exact emitted shape (design D11) — stopTakeWithDuration
     // previously broadcast nothing, which was a gap masked by having zero
     // non-test callers until the youtube-import anchor composite.

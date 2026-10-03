@@ -36,6 +36,7 @@ import {
 import {
   AUDIO_SEAM_PARTS_HEADER,
   type AudioSeamPart,
+  ImportWhileRollingError,
   parseAudioSeamPartsHeader,
 } from '@autologger/session-core';
 import type { Context } from 'hono';
@@ -427,9 +428,13 @@ sessionsRouter.post('/api/sessions/:sessionId/local-audio-import', async (c) => 
     await (await getSessionHub(c, sessionId)).appendAudioSeamParts(seamParts);
   } catch (err) {
     await rollbackLocalAudioImportSegment(c, sessionId, seg);
+    // A take started after the check above: the anchor refused it inside its transaction
+    // (session-tables D7), so the request ends as that check's refusal does.
+    if (err instanceof ImportWhileRollingError) {
+      throw new ApiError(409, LOCAL_AUDIO_IMPORT_ROLLING_DETAIL);
+    }
     throw err;
   }
-  await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
 
   return c.json({ ok: true });
 });
@@ -551,10 +556,13 @@ sessionsRouter.post('/api/sessions/:sessionId/youtube-import', async (c) => {
       });
     } catch (err) {
       await (await getSessionHub(c, sessionId)).deleteAudioSegment(seg.id);
+      // A take started after the final guard: the anchor refused it inside its transaction
+      // (session-tables D7), so the request ends as that guard's refusal does, not as a 502.
+      if (err instanceof ImportWhileRollingError) {
+        throw new ApiError(409, YOUTUBE_IMPORT_ROLLING_DETAIL);
+      }
       throw err;
     }
-
-    await c.env.ports.mirror.mirror(sessionId); // the new take (catalog-concurrency-hazards D6)
 
     // Publish-date opt-in (D4) — catalog write, not a hub RPC; a missing/
     // unusable date is a no-op, never a failure. The audio is attached by now, so a failed write

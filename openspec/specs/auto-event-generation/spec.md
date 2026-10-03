@@ -146,13 +146,16 @@ side effect a manual insert performs**: the same transactional hub write path,
 server-assigned id, one `event.changed` broadcast per insert (unchanged
 emission semantics), category label/color UI snapshots merged into metadata
 (so later button deletion/rename degrades and relinks identically to manual
-rows), and the catalog live projection (`event_count` / max-timecode mirror)
-so `GET /api/sessions` stays truthful — the run SHALL leave the catalog
-projection current by the time the route responds (on regenerate, current
-**including** the post-success delete's decrement) whenever the catalog mirror
-write succeeds; if that write fails, the run's own outcome is still returned, a
-warning is logged, and the session's next change rewrites the projection
-(api-contract-freeze "Catalog mirror failures don't fail saved session changes").
+rows), and the catalog live projection (`event_count` / max-timecode) so
+`GET /api/sessions` stays truthful. Each insert, and the regenerate's
+post-success delete, SHALL commit the session's live projection in its own
+transaction (catalog-database "The session live projection commits with the
+session write"), so the projection is current by the time the route responds (on
+regenerate, current **including** the post-success delete's decrement). An insert
+or delete whose projection cannot be written SHALL fail as a whole: the insert is
+then a failed `create_event` (an internal-error tool result, not counted in
+`created`), and a failed post-success delete answers the generic `500` with every
+snapshotted row kept.
 
 #### Scenario: Generate All appends without deleting
 
@@ -188,6 +191,11 @@ warning is logged, and the session's next change rewrites the projection
 - **WHEN** a run creates 40 events and completes
 - **THEN** `GET /api/sessions` reflects the updated `event_count` without any
   intervening manual write
+
+#### Scenario: A regenerate's delete updates the list in the same commit
+- **WHEN** a regenerate run creates 3 events and then deletes 5 snapshotted auto rows
+- **THEN** a `GET /api/sessions` issued as soon as the response arrives reports the
+  `event_count` after the delete
 
 ### Requirement: Optional generate body for regenerate and selection
 

@@ -497,7 +497,7 @@ transcript list routes.
 
 `session_id` and `created_at_utc` SHALL NOT appear on any transcript-word wire object: the
 former was redundant with the path parameter the caller already holds, the latter is
-server-internal bookkeeping. The store and the per-session database keep both, so
+server-internal bookkeeping. The store and the session tables keep both, so
 server-internal consumers that read the hub directly are unaffected. Full float precision
 for `start_sec`/`end_sec` likewise stays in the store; the rounding is a wire-only
 projection.
@@ -559,7 +559,7 @@ configuration-dependent behavior, which becomes frozen surface on shipping:
 | no `yt-dlp` available (no configured path and none on `PATH`) | `503 {detail}` — identical to the current unavailable response |
 | configured, malformed body or non-allowlisted / unparseable `url` | `400 {detail}`; no subprocess spawned |
 | configured, another import for the same session in flight, OR the global concurrency ceiling is reached | `409 {detail}`; no subprocess spawned |
-| configured, success | `200 {ok: true}` — one downloaded audio segment attached to the session; if `use_publish_date` is true and the video reports an upload date, the session's `episode_date` is set from it (best-effort: a failed episode-date or catalog-mirror write after the segment is attached is logged and still returns this success) |
+| configured, success | `200 {ok: true}` — one downloaded audio segment attached to the session; if `use_publish_date` is true and the video reports an upload date, the session's `episode_date` is set from it (best-effort: a failed episode-date write after the segment is attached is logged and still returns this success; the session's live projection commits with the anchor, so it cannot fail separately) |
 | configured, download/extraction failure, hang timeout, over the 4-hour duration cap, over the byte-size cap, a live/unknown-duration stream, an unsupported produced container, or a blob-write failure | `502 {detail}`; no audio segment attached (any inserted metadata row is rolled back) |
 
 Existing route semantics are otherwise unchanged: an unknown or inaccessible session →
@@ -621,6 +621,12 @@ their current frozen `503`.
 - **WHEN** a session that was populated by an opt-in import is listed or fetched
 - **THEN** its JSON has the same fields as before, with `episode_date` now carrying the
   imported date rather than `null` — no field added, removed, or retyped
+
+#### Scenario: A failed anchor leaves no segment
+- **WHEN** a configured import's audio is fetched and stored, and the transaction that anchors the
+  take (its `Recording N` events, the transport advance and the live projection) then fails
+- **THEN** the response is `502 {detail}`, the session has no new audio segment, and its events,
+  transport and listed `event_count` are unchanged
 
 ### Requirement: YouTube import success anchors a take; refuses while a recording is live
 
@@ -705,7 +711,7 @@ its frozen `503`. The topics CRUD routes (`GET/POST/PATCH/DELETE …/topics`) ar
 
 WS `*.changed` broadcasts SHALL be emitted only for mutations whose owning transaction
 has committed. The server SHALL NOT emit a broadcast for a write that is subsequently
-rolled back (e.g. a commit-time `SQLITE_FULL` failure). On the success path, the set of
+rolled back (e.g. a failed commit). On the success path, the set of
 broadcasts emitted for a given mutation, their payloads, and their relative order SHALL
 be identical to the current published behavior — this requirement authorizes suppressing
 emission on failure, not any change to emission on success.
@@ -1393,6 +1399,13 @@ reach a catalog statement, whether from a path segment, a query value or a body 
 refused with status `400` and a JSON body `{"detail": "<message>"}`. The statement carrying it
 SHALL NOT be sent, and a catalog transaction it belongs to SHALL write nothing.
 
+Session content is catalog content (ADR 0021 slice 7b-1), so this covers it too: an event's
+category, message or metadata, a transcript word, a topic, a dashboard and every other value a
+session write stores. A session write carrying NUL SHALL save nothing and send no `*.changed`
+broadcast, whether the value came from the request or from a server-side source (a transcription
+provider, an AI tool call, an imported sheet); such a source's run reports the failure through
+its existing failure path.
+
 These cases are handled explicitly:
 - `POST /api/companion/presence` with a `session_id` containing NUL SHALL be refused with `400`,
   and SHALL store no presence.
@@ -1433,6 +1446,11 @@ Values without NUL SHALL behave as before.
 - **WHEN** a first Google sign-in carries a `given_name` containing NUL and valid other claims
 - **THEN** the user is created, and the stored given name is the claim with NUL removed
 
+#### Scenario: NUL in an event message is a 400
+- **WHEN** a client logs an event whose `message` contains `\u0000`
+- **THEN** the response is `400` with a JSON `detail`, the session has no new event, and no
+  `event.changed` frame is sent
+
 ### Requirement: Catalog integer fields are bounded
 A request integer that the server stores in a 64-bit catalog column (session
 `start_offset_frames`, on create and on update) SHALL be at most `9007199254740991`
@@ -1442,28 +1460,6 @@ validation-error body, instead of failing on storage.
 #### Scenario: An oversized frame offset is a 422
 - **WHEN** a client creates a session with `start_offset_frames` of `1e20`
 - **THEN** the response is `422` with a validation-error body, and no session is created
-
-### Requirement: Catalog mirror failures don't fail saved session changes
-A session route that saves a change to the session's own store and then mirrors the session's live
-projection into the catalog SHALL return its normal success response when the session change was
-saved, even if the catalog mirror write fails. This covers:
-- Companion log and transport;
-- event start, stop, log, update and delete;
-- event generation;
-- local and YouTube audio import.
-
-The failure SHALL be logged at warning level. A later change to the session SHALL rewrite the
-whole projection. A YouTube import SHALL also succeed when only its episode-date write fails.
-Before, these paths returned `500` (or `502` for YouTube import) for work already saved, and a
-client retry repeated it.
-
-#### Scenario: A mirror failure after an event is logged
-- **WHEN** a client logs an event and the catalog mirror write fails after the event is saved
-- **THEN** the response is the normal success body, the event exists once, and a warning is logged
-
-#### Scenario: The next change heals the mirror
-- **WHEN** a mirror write failed, and the session then receives another change whose mirror succeeds
-- **THEN** the catalog's live projection matches the session's state
 
 ### Requirement: Concurrent first sign-in succeeds
 Two OAuth callbacks for the same Google subject, carrying different valid states, that both find
