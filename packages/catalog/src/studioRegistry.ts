@@ -273,10 +273,12 @@ export class StudioRegistry implements StudioRegistryFacade {
       if (nshows > 0) {
         throw new ValidationError(`Team still has ${nshows} show(s); delete or move them first.`);
       }
+      // catalog-policies D5: memberships last, so each earlier delete still passes the
+      // member-team policies while the caller is a member.
       await t.run('DELETE FROM team_invites WHERE studio_id = ?', sid);
-      await t.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
       await t.run('DELETE FROM studio_definitions WHERE id = ?', sid);
       await t.run('DELETE FROM app_settings WHERE key = ?', studioConfigKey(sid));
+      await t.run('DELETE FROM user_studio_memberships WHERE studio_id = ?', sid);
     });
   }
 
