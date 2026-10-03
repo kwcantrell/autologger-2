@@ -52,7 +52,7 @@ gets the definitions only. Its keys and first start wait for the cutover.
   | `supabase_admin` (superuser), `postgres` | `db`, `migrate`, realtime | `POSTGRES_PASSWORD` |
   | `authenticator` (rest), `supabase_auth_admin` (auth), `supabase_storage_admin` (storage) | those services | `SUPABASE_ROLES_PASSWORD` |
   | `autologger_app`: no table privileges (`USAGE` on schema `catalog` only); member (set only) of `catalog_user` and `catalog_system`; at most 20 connections, 30 s statement and 15 s idle-in-transaction timeouts, `search_path` `catalog` | the app (`PGUSER`) | `APP_DB_PASSWORD`, set by the migrations runner |
-  | `catalog_user` (NOLOGIN): DML on every catalog table, under row-level security; statements made for a signed-in user, whose id the transaction sets in `app.user_id` | the app, per transaction (`set_config('role', …, true)`) | none |
+  | `catalog_user` (NOLOGIN): DML under the 6b-2 policies on every catalog table except `kv` (none); `users`: `SELECT` and `UPDATE (given_name, family_name)`; no `INSERT` on memberships and invites; executes the policy helpers; statements made for a signed-in user, whose id the transaction sets in `app.user_id` | the app, per transaction (`set_config('role', …, true)`) | none |
   | `catalog_system` (NOLOGIN): DML on every catalog table, under row-level security; statements made for a named system task | the app, per transaction (`set_config('role', …, true)`) | none |
 
   The public-facing API services never hold the superuser password. Realtime does, because
